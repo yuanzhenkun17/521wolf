@@ -15,6 +15,7 @@ Two-stage flow (when LLM is available):
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,8 @@ from agent.skill_system.loader import MarkdownSkill, load_markdown_skills
 class _ModelLike(Protocol):
     async def complete(self, messages: list[dict[str, str]], *, name: str = "") -> str: ...
 
+
+_log = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_SKILL_ROOT: Path = _PROJECT_ROOT / "skills"
@@ -74,6 +77,8 @@ def _get_skill_index(skill_root: Path | None = None) -> SkillIndex:
 
 def _requirements_match(requires: dict, ctx: AgentContext) -> bool:
     """Check whether request metadata satisfies the skill requires."""
+    if not ctx.request.metadata:
+        return not requires
     for key, expected in requires.items():
         if ctx.request.metadata.get(key) != expected:
             return False
@@ -173,7 +178,7 @@ def _parse_skill_names(raw: str) -> list[str]:
     except (json.JSONDecodeError, TypeError):
         pass
     # Try extracting JSON array from text
-    match = re.search(r'\[.*?\]', raw, re.DOTALL)
+    match = re.search(r'\[\s*"(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")*\s*\]', raw, re.DOTALL)
     if match:
         try:
             parsed = json.loads(match.group())
@@ -196,17 +201,12 @@ async def select_skills_by_llm(
     Returns the selected skills, or None if the LLM call fails (caller
     should fall back to ``select_skills()``).
     """
-    idx = _get_skill_index(skill_root)
-    candidates: list[MarkdownSkill] = list(idx.common)
-    for skill in idx.by_role.get(role, []):
-        if not skill.applicable_actions or ctx.request.action_type in skill.applicable_actions:
-            if _requirements_match(skill.requires, ctx):
-                candidates.append(skill)
+    candidates = select_skills(ctx, role, skill_root=skill_root)
 
     if not candidates:
         return []
 
-    claims = {k: v for k, v in ctx.request.metadata.items() if "claim" in k.lower()}
+    claims = {k: v for k, v in (ctx.request.metadata or {}).items() if "claim" in k.lower()}
     claims_str = str(claims) if claims else "{}"
 
     prompt = _SELECTION_PROMPT.format(
@@ -220,6 +220,7 @@ async def select_skills_by_llm(
     try:
         raw = await model.complete(messages, name=f"skill_select/{ctx.player_id}")
     except Exception:
+        _log.debug("skill_select LLM call failed for player %s", ctx.player_id, exc_info=True)
         return None
 
     selected_names = set(_parse_skill_names(raw))
@@ -227,7 +228,7 @@ async def select_skills_by_llm(
         return None
 
     # Always include common skills
-    selected = [s for s in idx.common]
+    selected = [s for s in candidates if s.scope == "common"]
     # Add LLM-selected role skills
     for skill in candidates:
         if skill.name in selected_names and skill.scope != "common":

@@ -28,11 +28,15 @@ class AgentContext:
     belief_context: dict[str, Any] = field(default_factory=dict)
 
     # Skill routing
+    # Stage 2 output: final routed skill(s) chosen by skill_router_node.
     selected_skill: str | None = None
     selected_skills: list[str] = field(default_factory=list)
     skill_context: str = ""
     strategy_advice: dict[str, Any] = field(default_factory=dict)
-    skill_selection: set[str] | None = None  # LLM-selected skill names (Stage 1)
+    # Stage 1 output: raw LLM-selected skill names from skill_select_node.
+    # Kept separate from selected_skills because they serve different pipeline
+    # stages (LLM selection vs. deterministic routing).
+    skill_selection: set[str] | None = None
 
     # LLM interaction
     messages: list[dict[str, str]] = field(default_factory=list)

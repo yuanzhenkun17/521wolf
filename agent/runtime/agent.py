@@ -111,41 +111,44 @@ class AgentRuntime:
         )
 
         with propagate_attributes(session_id=self.game_id) if self.game_id else _noop():
-            # -- synchronous nodes -------------------------------------------------
-            ctx = observe_node(ctx)
-            ctx = memory_node(ctx, self.memory)
-            ctx = belief_node(ctx, self.belief, self.memory)
+            try:
+                # -- synchronous nodes -------------------------------------------------
+                ctx = observe_node(ctx)
+                ctx = memory_node(ctx, self.memory)
+                ctx = belief_node(ctx, self.belief, self.memory)
 
-            # -- async skill selection (Stage 1) ------------------------------------
-            ctx = await skill_select_node(ctx, self.model, skill_root=self.skill_dir)
+                # -- async skill selection (Stage 1) ------------------------------------
+                ctx = await skill_select_node(ctx, self.model, skill_root=self.skill_dir)
 
-            # -- skill routing (Stage 2) + prompt assembly -------------------------
-            ctx = skill_router_node(ctx, skill_root=self.skill_dir)
-            ctx = prompt_node(ctx, persona=self.persona)
+                # -- skill routing (Stage 2) + prompt assembly -------------------------
+                ctx = skill_router_node(ctx, skill_root=self.skill_dir)
+                ctx = prompt_node(ctx, persona=self.persona)
 
-            # -- GoT/ToT reasoning for key actions --------------------------------
-            if self.got_enabled:
-                ctx = await got_node(ctx, self.model, threshold=self.got_trigger_threshold)
-            if self.tot_enabled and ctx.source != "got":
-                ctx = await tot_node(ctx, self.model)
+                # -- GoT/ToT reasoning for key actions --------------------------------
+                if self.got_enabled:
+                    ctx = await got_node(ctx, self.model, threshold=self.got_trigger_threshold)
+                if self.tot_enabled and ctx.source != "got":
+                    ctx = await tot_node(ctx, self.model)
 
-            # -- async LLM call (skipped when GoT/ToT succeeded) ------------------
-            if ctx.source in {"got", "tot"}:
-                ctx = parse_node(ctx)
-            else:
-                ctx = await llm_node(ctx, self.model)
-                ctx = parse_node(ctx)
-            ctx = policy_node(ctx)
-            ctx = log_node(ctx, self.recorder)
+                # -- async LLM call (skipped when GoT/ToT succeeded) ------------------
+                if ctx.source in {"got", "tot"}:
+                    ctx = parse_node(ctx)
+                else:
+                    ctx = await llm_node(ctx, self.model)
+                    ctx = parse_node(ctx)
+                ctx = policy_node(ctx)
+                ctx = log_node(ctx, self.recorder)
+            finally:
+                # -- optional trace recording for archive ------------------------------
+                if self.trace_recorder:
+                    self.trace_recorder.record(ctx)
 
-            # -- optional trace recording for archive ------------------------------
-            if self.trace_recorder:
-                self.trace_recorder.record(ctx)
+                # -- write decision record back to memory ------------------------------
+                self.memory.remember_action(request, ctx.response, ctx.decision_record)
 
-            # -- write decision record back to memory ------------------------------
-            self.memory.remember_action(request, ctx.response, ctx.decision_record)
-
-        return ctx.response  # type: ignore[return-value]
+        if ctx.response is None:
+            raise RuntimeError("Pipeline produced no response")
+        return ctx.response
 
 
 class LLMPlayerAgent:
@@ -190,11 +193,11 @@ class LLMPlayerAgent:
         return self.runtime.persona
 
     @property
-    def memory(self):
+    def memory(self) -> AgentMemory:
         return self.runtime.memory
 
     @property
-    def belief(self):
+    def belief(self) -> BeliefState:
         return self.runtime.belief
 
     async def act(self, request: ActionRequest) -> ActionResponse:

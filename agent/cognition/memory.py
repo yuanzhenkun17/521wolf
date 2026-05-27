@@ -12,8 +12,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
-from engine.models import ActionRequest, ActionType, Role
+from engine.models import ActionRequest, ActionResponse, ActionType, Role
 
 
 @dataclass(slots=True)
@@ -242,7 +243,7 @@ class AgentMemory:
         self.role = role
         self.events: list[MemoryEvent] = []
         self.self_history: list[str] = []
-        self.decision_history: list = []
+        self.decision_history: list[Any] = []
         self.suspicions: dict[int, str] = {}
         self.claims_seen: dict[int, str] = {}
         self.errors: list[str] = []
@@ -269,24 +270,23 @@ class AgentMemory:
         ctx["field_notes"] = self.field_notes.to_prompt_dict()
         return ctx
 
-    def remember_action(self, request: ActionRequest, response, decision=None):
+    def remember_action(self, request: ActionRequest, response: ActionResponse, decision=None):
         self.self_history.append(
             f"{request.action_type.value}: choice={response.choice!r} target={response.target!r} text={response.text!r}"
         )
         if decision is not None:
             self.decision_history.append(decision)
         # Update field notes from own action
-        if response is not None:
-            action_type = request.action_type
-            if action_type in {ActionType.EXILE_VOTE, ActionType.PK_VOTE, ActionType.SHERIFF_VOTE}:
-                if response.target is not None:
-                    self.field_notes.record_vote(
-                        request.player_id, response.target,
-                        request.observation.day, request.phase.value,
-                    )
-            if action_type in {ActionType.SPEAK, ActionType.PK_SPEAK, ActionType.LAST_WORD}:
-                if response.text:
-                    self.field_notes.record_speech(request.player_id, response.text)
+        action_type = request.action_type
+        if action_type in {ActionType.EXILE_VOTE, ActionType.PK_VOTE, ActionType.SHERIFF_VOTE}:
+            if response.target is not None:
+                self.field_notes.record_vote(
+                    request.player_id, response.target,
+                    request.observation.day, request.phase.value,
+                )
+        if action_type in {ActionType.SPEAK, ActionType.PK_SPEAK, ActionType.LAST_WORD}:
+            if response.text:
+                self.field_notes.record_speech(request.player_id, response.text)
 
     def reset(self) -> None:
         self._seen_public_entries.clear()

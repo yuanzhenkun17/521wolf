@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from engine.models import ActionRequest, Role, Team
 
-from agent.cognition.memory import AgentMemory
+from agent.cognition.memory import AgentMemory, MemoryEvent
 from agent.cognition.memory import extract_claimed_role, extract_suspected_player
 
 
@@ -183,7 +183,7 @@ class BeliefState:
         alive = set(request.observation.alive_players)
 
         def _has_evidence(b: PlayerBelief) -> bool:
-            return bool(b.top_evidence or b.wolf_evidence or b.good_evidence)
+            return bool(b.evidence)
 
         ordered = sorted(
             (b for b in self.players.values()
@@ -376,7 +376,7 @@ class BeliefState:
                 source=speaker,
             )
 
-    def _apply_death_evidence(self, event) -> None:
+    def _apply_death_evidence(self, event: MemoryEvent) -> None:
         target = event.target
         if target is None:
             return

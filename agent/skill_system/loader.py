@@ -217,14 +217,21 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
     if isinstance(hints, str):
         hints = [hints]
 
+    requires = front.get("requires", {})
+    if not isinstance(requires, dict):
+        requires = {}
+    output_constraints = front.get("output_constraints", {})
+    if not isinstance(output_constraints, dict):
+        output_constraints = {}
+
     return MarkdownSkill(
         name=name,
         description=description,
         scope=scope,
         role=role,
         applicable_actions=actions,
-        requires=front.get("requires", {}),
-        output_constraints=front.get("output_constraints", {}),
+        requires=requires,
+        output_constraints=output_constraints,
         body=body.strip(),
         prompt_hints=hints,
         category=front.get("category", "strategy"),

@@ -22,7 +22,7 @@ def build_messages(
     strategy_advice: dict[str, Any] | None = None,
     selected_skill: str | None = None,
     skill_context: str = "",
-):
+) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
@@ -67,7 +67,7 @@ def build_request_prompt(
     skill_context: str = "",
 ) -> str:
     observation = request.observation
-    private_facts = memory_context["private_facts"]
+    private_facts = memory_context.get("private_facts", {})
     advice = strategy_advice or {}
 
     skill_line = ""

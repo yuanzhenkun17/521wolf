@@ -34,6 +34,8 @@ from agent.runtime.agent import LLMPlayerAgent
 from agent.runtime.factory import load_llm_client
 from agent.skill_system.router import configure_skill_root
 
+MAX_REVIEW_SCORE = 10.0
+
 
 @dataclass(slots=True)
 class SelfPlayConfig:
@@ -247,7 +249,7 @@ async def run_selfplay(
     config: SelfPlayConfig,
     *,
     model: ModelAdapter | None = None,
-    client_factory=None,
+    client_factory: Callable[[], ModelAdapter] | None = None,
     on_game_complete: "Callable[[int, SelfPlayGameResult], None] | None" = None,
 ) -> SelfPlayResult:
     """Run a multi-game selfplay session.
@@ -289,9 +291,8 @@ async def run_selfplay(
     batch_client: ModelAdapter | None = None
 
     for i in range(config.games):
-        assert config.skill_dir == _frozen_skill_dir, (
-            f"skill_dir changed mid-run: {_frozen_skill_dir} -> {config.skill_dir}"
-        )
+        if config.skill_dir != _frozen_skill_dir:
+            raise ValueError(f"skill_dir changed mid-run: {_frozen_skill_dir} -> {config.skill_dir}")
         seed = config.seed_start + i
         game_id = f"game_{i + 1:03d}"
         game_dir = run_dir / "games" / game_id
@@ -327,17 +328,17 @@ async def run_selfplay(
 
         # Run game
         engine = GameEngine(roles, agents, config.game_config)
+        game_started_at = _now()
+        game_error: str | None = None
         try:
             winner = await engine.run_until_finished(max_days=config.max_days)
         except Exception as exc:
-            winner = type("Winner", (), {"value": f"error:{exc}"})()
+            game_error = str(exc)
+            winner = None
 
-        winner_str = winner.value if hasattr(winner, "value") else str(winner)
-
-        # Determine if game failed
-        game_error: str | None = None
-        if winner_str.startswith("error:"):
-            game_error = winner_str[6:]
+        if winner is not None:
+            winner_str = winner.value if hasattr(winner, "value") else str(winner)
+        else:
             winner_str = "error"
 
         # Write game events
@@ -359,7 +360,7 @@ async def run_selfplay(
             },
             player_roles=player_roles,
             winner=winner_str,
-            started_at=_now(),
+            started_at=game_started_at,
             finished_at=_now(),
             public_events=[e.to_dict() for e in engine.state.events],
             decisions=all_decisions,
@@ -413,8 +414,8 @@ async def run_selfplay(
             avg_speech_score = sum(s.speech_score for s in player_scores) / denominator
             avg_vote_score = sum(s.vote_score for s in player_scores) / denominator
             avg_skill_score = sum(s.skill_score for s in player_scores) / denominator
-            vote_accuracy = avg_vote_score / 10.0
-            skill_accuracy = avg_skill_score / 10.0
+            vote_accuracy = avg_vote_score / MAX_REVIEW_SCORE
+            skill_accuracy = avg_skill_score / MAX_REVIEW_SCORE
             mistake_count = len(review_report.mistakes)
             counterfactual_count = len(review_report.counterfactuals)
             turning_point_count = len(review_report.key_turning_points)
@@ -617,7 +618,7 @@ def _collect_run_experience_cards(run_dir: Path) -> dict[Role, list[dict]]:
 
 def _create_agents(
     roles: dict[int, Role],
-    client: ModelAdapter | None,
+    client: ModelAdapter,
     decision_recorder: AgentDecisionRecorder,
     trace_recorders: dict[int, AgentTraceRecorder],
     game_id: str | None = None,
