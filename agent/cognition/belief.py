@@ -195,10 +195,14 @@ class BeliefState:
              if b.player_id in alive and b.player_id != self.player_id and b.player_id not in self._known_relation_ids and _has_evidence(b)),
             key=lambda b: (-b.wolf_prob, b.player_id),
         )
+        relations = [
+            r for r in self.relations.to_list()
+            if r.get("type") != "teammate"
+        ]
         return {
             "top_suspicions": [b.to_prompt_dict() for b in ordered],
             "self_belief": self.players[self.player_id].to_prompt_dict(),
-            "relations": self.relations.to_list(),
+            "relations": relations,
         }
 
     def most_suspicious(self, candidates: tuple[int, ...]) -> list[int]:

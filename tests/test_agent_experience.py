@@ -112,9 +112,9 @@ class ExtractExperienceTests(unittest.TestCase):
         self.roles = {1: Role.VILLAGER, 2: Role.WEREWOLF}
         self.decisions = {
             1: [{"source": "llm", "day": 1, "phase": "day", "action_type": "speak",
-                 "selected_skill": "game_rules", "selected_target": None}],
+                 "selected_skills": ["game_rules"], "selected_target": None}],
             2: [{"source": "fallback", "day": 1, "phase": "night", "action_type": "werewolf_kill",
-                 "selected_skill": "deep_wolf", "selected_target": 3}],
+                 "selected_skills": ["deep_wolf"], "selected_target": 3}],
         }
         self.review = GameReviewReport(
             game_id="test_g1",

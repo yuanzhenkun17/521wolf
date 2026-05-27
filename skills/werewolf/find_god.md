@@ -26,6 +26,6 @@ applicable_actions:
 {
   "private_reasoning": "P3疑似的预言家，他白天带节奏最狠。P8像女巫，昨天救人了。今晚优先刀P3。",
   "confidence": 0.75,
-  "selected_skill": "werewolf_find_god"
+  "selected_skills": ["werewolf_find_god"]
 }
 ```

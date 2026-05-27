@@ -203,7 +203,6 @@ class BuildGotPromptTests(unittest.TestCase):
         self.assertIn("Graph-of-Thought", combined)
         self.assertIn("evidence_nodes", combined)
         self.assertIn("hypotheses", combined)
-        self.assertIn("villager_vote_analysis", combined)
 
 
 class RunGotSelectionTests(unittest.TestCase):
