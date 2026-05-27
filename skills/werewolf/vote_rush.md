@@ -4,7 +4,6 @@ description: 冲票：狼人集中投票推动好人出局的策略
 scope: role
 role: werewolf
 applicable_actions:
-  - werewolf_kill
   - exile_vote
   - pk_vote
 ---
