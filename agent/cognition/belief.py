@@ -192,7 +192,7 @@ class BeliefState:
 
         ordered = sorted(
             (b for b in self.players.values()
-             if b.player_id in alive and b.player_id != self.player_id and _has_evidence(b)),
+             if b.player_id in alive and b.player_id != self.player_id and b.player_id not in self._known_relation_ids and _has_evidence(b)),
             key=lambda b: (-b.wolf_prob, b.player_id),
         )
         return {
