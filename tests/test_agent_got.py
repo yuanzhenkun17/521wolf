@@ -302,7 +302,7 @@ class GotRuntimeIntegrationTests(unittest.TestCase):
         )
         response = asyncio.run(runtime.act(_make_request(metadata={"enable_got": True})))
 
-        self.assertEqual(model.call_count, 1)
+        self.assertEqual(model.call_count, 2)  # skill_select + got
         self.assertEqual(response.target, 3)
         self.assertEqual(response.choice, "vote")
         traces = trace_recorder.snapshot()
