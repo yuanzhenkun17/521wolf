@@ -35,7 +35,6 @@ from agent.runtime.context import AgentContext
 from agent.runtime.model import ModelAdapter
 from agent.nodes.memory import memory_node
 from agent.nodes.belief import belief_node
-from agent.nodes.observe import observe_node
 from agent.nodes.skill_router import skill_router_node
 from agent.nodes.prompt import prompt_node
 from agent.nodes.llm import llm_node
@@ -105,7 +104,6 @@ class AgentRuntime:
         with propagate_attributes(session_id=self.game_id) if self.game_id else nullcontext():
             try:
                 # -- synchronous nodes -------------------------------------------------
-                ctx = observe_node(ctx)
                 ctx = memory_node(ctx, self.memory)
                 ctx = belief_node(ctx, self.belief, self.memory)
 

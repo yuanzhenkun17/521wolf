@@ -7,15 +7,6 @@ def format_field_notes(field_notes: dict) -> str:
     """Format structured field notes into a compact prompt block."""
     parts = []
 
-    gs = field_notes.get("game_state", {})
-    if gs:
-        alive = gs.get("alive_players", [])
-        dead = gs.get("dead_players", [])
-        parts.append(
-            f"当前状态: 第{gs.get('day', '?')}天 {gs.get('phase', '?')}，"
-            f"存活 {alive}，死亡 {dead}"
-        )
-
     profiles = field_notes.get("player_profiles", {})
     if profiles:
         profile_lines = []

@@ -574,9 +574,7 @@ class FieldNotesPromptTests(unittest.TestCase):
         )
         combined = " ".join(m.get("content", "") for m in messages)
         self.assertIn("结构化现场笔记", combined)
-        self.assertIn("第2天", combined)
-        self.assertIn("exile_vote", combined)
-        # New schema fields
+        # Player profiles (not game_state which duplicates observation)
         self.assertIn("投票给P7", combined)
         self.assertIn("攻击过P8", combined)
         self.assertIn("辩护过P2", combined)

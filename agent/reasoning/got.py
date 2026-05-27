@@ -169,7 +169,7 @@ def build_got_prompt(ctx: AgentContext) -> list[dict[str, str]]:
         "content": (
             f"当前行为: {ctx.request.action_type.value}\n"
             f"可选目标 candidates: {list(ctx.request.candidates)}\n"
-            f"你的观察: {json.dumps(ctx.observation_summary, ensure_ascii=False, default=str)}\n"
+            f"你的观察: {json.dumps(ctx.request.observation, ensure_ascii=False, default=str)}\n"
             f"你的记忆: {json.dumps(ctx.memory_context, ensure_ascii=False, default=str)}\n"
             f"你的信念: {json.dumps(ctx.belief_context, ensure_ascii=False, default=str)}\n"
             f"已注入 skills: {ctx.selected_skills}\n"

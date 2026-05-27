@@ -171,6 +171,9 @@ class ArchiveMergeTest(unittest.TestCase):
             for i in range(2):
                 mock_req = MagicMock()
                 mock_req.observation.day = 1
+                mock_req.observation.alive_players = [1, 3, 7]
+                mock_req.observation.dead_players = []
+                mock_req.observation.sheriff_id = None
                 mock_req.phase.value = "day"
                 mock_req.action_type.value = "speak"
                 mock_req.candidates = []

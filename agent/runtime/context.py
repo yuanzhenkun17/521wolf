@@ -24,9 +24,6 @@ class AgentContext:
     # Belief
     belief_context: dict[str, Any] = field(default_factory=dict)
 
-    # Observation
-    observation_summary: dict[str, Any] = field(default_factory=dict)
-
     # Skill routing
     selected_skills: list[str] = field(default_factory=list)
     skill_context: str = ""

@@ -116,7 +116,7 @@ def _build_tot_prompt(ctx: AgentContext) -> list[dict[str, str]]:
             "content": (
                 f"当前行为: {ctx.request.action_type.value}\n"
                 f"可选目标 candidates: {list(ctx.request.candidates)}\n"
-                f"你的观察: {ctx.observation_summary}\n"
+                f"你的观察: {ctx.request.observation}\n"
                 f"你的记忆: {ctx.memory_context}\n"
                 f"你的信念: {ctx.belief_context}\n\n"
                 + _TOT_USER_PROMPT

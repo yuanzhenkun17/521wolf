@@ -19,7 +19,7 @@ scope: common
   "alternatives": [number],
   "rejected_reasons": [string],
   "memory_refs": [string],
-  "selected_skill": string
+  "selected_skills": [string]
 }
 ```
 
