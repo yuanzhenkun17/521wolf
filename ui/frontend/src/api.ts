@@ -177,6 +177,7 @@ export type SelfplayRun = {
   status: "pending" | "running" | "completed" | "failed";
   num_games: number;
   completed_games: number;
+  agent_version?: string;
   skill_dir?: string;
   max_days?: number;
   enable_sheriff?: boolean;
@@ -188,6 +189,7 @@ export type SelfplayRun = {
 
 export type SelfplayConfig = {
   num_games: number;
+  agent_version?: string;
   skill_dir?: string;
   max_days?: number;
   enable_sheriff?: boolean;

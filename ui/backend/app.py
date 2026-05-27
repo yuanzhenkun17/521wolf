@@ -14,6 +14,7 @@ from agent.versioning.manifest import (
     load_manifest,
     evaluate_promotion,
     create_agent_version,
+    resolve_manifest_path,
 )
 from agent.evaluation.leaderboard import LeaderboardEntry
 from ui.backend.game_runner import GameManager
@@ -32,6 +33,7 @@ class StartGameRequest(BaseModel):
 
 class SelfplayRequest(BaseModel):
     num_games: int = 10
+    agent_version: str | None = None
     skill_dir: str | None = None
     max_days: int = 20
     enable_sheriff: bool = True
@@ -480,9 +482,27 @@ async def start_selfplay(request: SelfplayRequest | None = None) -> dict[str, An
     """Start a batch selfplay run in the background. Returns the run_id."""
     if request is None:
         request = SelfplayRequest()
+    agent_version = request.agent_version or "agent"
+    skill_dir = request.skill_dir
+    model_name: str | None = None
+    temperature = 0.2
+    if request.agent_version:
+        manifest_path = _find_manifest_for_version(request.agent_version)
+        if manifest_path is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"agent version '{request.agent_version}' not found",
+            )
+        manifest = load_manifest(manifest_path)
+        skill_dir = str(resolve_manifest_path(manifest_path, manifest.paths.skills))
+        model_name = manifest.model.model or None
+        temperature = manifest.model.temperature
     run = await selfplay_manager.start_run(
         num_games=request.num_games,
-        skill_dir=request.skill_dir,
+        agent_version=agent_version,
+        skill_dir=skill_dir,
+        model_name=model_name,
+        temperature=temperature,
         max_days=request.max_days,
         enable_sheriff=request.enable_sheriff,
         enable_batch_dream=request.enable_batch_dream,

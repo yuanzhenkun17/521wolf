@@ -220,6 +220,65 @@ class UiBackendTests(unittest.TestCase):
             app_module.mixed_battle_manager = old_manager
             app_module._find_manifest_for_version = old_find_manifest
 
+    def test_start_selfplay_endpoint_resolves_agent_version(self):
+        class FakeRun:
+            def snapshot(self):
+                return {
+                    "run_id": "selfplay_fake",
+                    "status": "running",
+                    "agent_version": "v1-baseline",
+                    "skill_dir": "agent_versions/v1-baseline/skills",
+                }
+
+        class FakeSelfplayManager:
+            async def start_run(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeRun()
+
+        class FakeModel:
+            model = "mimo-v2.5"
+            temperature = 0.7
+
+        class FakePaths:
+            skills = "./skills"
+
+        class FakeManifest:
+            model = FakeModel()
+            paths = FakePaths()
+
+        client = TestClient(app)
+        old_manager = app_module.selfplay_manager
+        old_find_manifest = app_module._find_manifest_for_version
+        old_load_manifest = app_module.load_manifest
+        old_resolve_manifest_path = app_module.resolve_manifest_path
+        fake_manager = FakeSelfplayManager()
+        try:
+            app_module.selfplay_manager = fake_manager
+            app_module._find_manifest_for_version = lambda version: Path("agent_versions") / version / "manifest.json"
+            app_module.load_manifest = lambda _path: FakeManifest()
+            app_module.resolve_manifest_path = lambda manifest_path, raw: manifest_path.parent / "skills"
+
+            response = client.post(
+                "/api/selfplay",
+                json={
+                    "num_games": 2,
+                    "agent_version": "v1-baseline",
+                    "max_days": 5,
+                },
+            )
+
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(response.json()["run_id"], "selfplay_fake")
+            self.assertEqual(fake_manager.kwargs["agent_version"], "v1-baseline")
+            self.assertEqual(fake_manager.kwargs["model_name"], "mimo-v2.5")
+            self.assertEqual(fake_manager.kwargs["temperature"], 0.7)
+            self.assertTrue(str(fake_manager.kwargs["skill_dir"]).endswith("agent_versions\\v1-baseline\\skills") or str(fake_manager.kwargs["skill_dir"]).endswith("agent_versions/v1-baseline/skills"))
+        finally:
+            app_module.selfplay_manager = old_manager
+            app_module._find_manifest_for_version = old_find_manifest
+            app_module.load_manifest = old_load_manifest
+            app_module.resolve_manifest_path = old_resolve_manifest_path
+
 
 if __name__ == "__main__":
     unittest.main()

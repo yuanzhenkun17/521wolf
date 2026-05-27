@@ -17,6 +17,7 @@ class RunningSelfplay:
     total_games: int = 0
     completed_games: int = 0
     label: str = ""
+    agent_version: str = "agent"
     skill_dir: str | None = None
     max_days: int = 20
     enable_sheriff: bool = True
@@ -37,6 +38,7 @@ class RunningSelfplay:
             "num_games": self.total_games,
             "completed_games": self.completed_games,
             "label": self.label,
+            "agent_version": self.agent_version,
             "skill_dir": self.skill_dir,
             "max_days": self.max_days,
             "enable_sheriff": self.enable_sheriff,
@@ -62,7 +64,10 @@ class SelfplayManager:
         self,
         *,
         num_games: int = 10,
+        agent_version: str = "agent",
         skill_dir: str | None = None,
+        model_name: str | None = None,
+        temperature: float = 0.2,
         max_days: int = 20,
         enable_sheriff: bool = True,
         enable_batch_dream: bool = False,
@@ -74,8 +79,11 @@ class SelfplayManager:
         config = SelfPlayConfig(
             games=num_games,
             output_dir=self.output_dir,
+            agent_version=agent_version,
+            model_name=model_name,
             max_days=max_days,
             enable_batch_dream=enable_batch_dream,
+            temperature=temperature,
             skill_dir=Path(skill_dir) if skill_dir else None,
         )
 
@@ -85,6 +93,7 @@ class SelfplayManager:
             total_games=num_games,
             started_at=started_at,
             label=label or "",
+            agent_version=agent_version,
             skill_dir=skill_dir,
             max_days=max_days,
             enable_sheriff=enable_sheriff,
