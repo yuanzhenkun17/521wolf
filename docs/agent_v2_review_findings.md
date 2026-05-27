@@ -132,10 +132,10 @@ def validate_witch_act(request, response):
 
 问题位置：
 
-- `agent/skills/__init__.py`
-- `agent/skills/werewolf.py`
-- `agent/skills/witch.py`
-- `agent/skills/seer.py`
+- `skills/__init__.py`
+- `skills/werewolf.py`
+- `skills/witch.py`
+- `skills/seer.py`
 
 当前 `route_skill()` 逻辑是：
 
@@ -419,7 +419,7 @@ agent/
 
 推荐使用 Markdown + YAML front matter。
 
-示例：`agent/skills_md/witch/poison.md`
+示例：`skills_md/witch/poison.md`
 
 ```markdown
 ---

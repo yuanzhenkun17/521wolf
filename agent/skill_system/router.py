@@ -5,10 +5,12 @@ Logic::
     1. Always inject common skills (scope="common").
     2. Inject role skills matching ctx.role and ctx.request.action_type.
     3. Filter by requires metadata match.
+    4. Empty applicable_actions = always inject for that role.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from engine.models import ActionType, Role
@@ -17,61 +19,77 @@ from agent.runtime.context import AgentContext
 from agent.skill_system.loader import MarkdownSkill, load_markdown_skills
 
 
-# Module-level caches — loaded once at import time
-_COMMON_SKILLS: list[MarkdownSkill] = []
-_ROLE_SKILLS: dict[Role, list[MarkdownSkill]] = {}
-_SKILL_ROOT: Path = Path(__file__).parent.parent / "skills"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_SKILL_ROOT: Path = _PROJECT_ROOT / "skills"
+
+
+@dataclass
+class SkillIndex:
+    """Indexed skill collection for one skill root."""
+    common: list[MarkdownSkill]
+    by_role: dict[Role, list[MarkdownSkill]]
+
+
+_SKILL_CACHE: dict[Path, SkillIndex] = {}
 
 
 def configure_skill_root(root: Path | str | None = None) -> None:
-    """Configure the Markdown skill root and clear the cached index."""
-    global _SKILL_ROOT
-    _SKILL_ROOT = Path(root) if root is not None else Path(__file__).parent.parent / "skills"
-    _COMMON_SKILLS.clear()
-    _ROLE_SKILLS.clear()
+    """Configure the default skill root and clear the cache. For testing."""
+    global DEFAULT_SKILL_ROOT
+    DEFAULT_SKILL_ROOT = Path(root) if root is not None else _PROJECT_ROOT / "skills"
+    _SKILL_CACHE.clear()
 
 
-def _init_skills() -> None:
-    """Load all markdown skills and index by scope + role."""
-    all_skills = load_markdown_skills(_SKILL_ROOT)
-
-    _COMMON_SKILLS.clear()
-    _ROLE_SKILLS.clear()
-
+def _load_skill_index(root: Path) -> SkillIndex:
+    """Load all markdown skills from root and index by scope + role."""
+    all_skills = load_markdown_skills(root)
+    common: list[MarkdownSkill] = []
+    by_role: dict[Role, list[MarkdownSkill]] = {}
     for skill in all_skills:
         if skill.scope == "common":
-            _COMMON_SKILLS.append(skill)
+            common.append(skill)
         elif skill.role is not None:
-            _ROLE_SKILLS.setdefault(skill.role, []).append(skill)
+            by_role.setdefault(skill.role, []).append(skill)
+    return SkillIndex(common=common, by_role=by_role)
+
+
+def _get_skill_index(skill_root: Path | None = None) -> SkillIndex:
+    """Get or load the skill index for the given root."""
+    root = (skill_root or DEFAULT_SKILL_ROOT).resolve()
+    if root not in _SKILL_CACHE:
+        _SKILL_CACHE[root] = _load_skill_index(root)
+    return _SKILL_CACHE[root]
 
 
 def _requirements_match(requires: dict, ctx: AgentContext) -> bool:
-    """Check whether request metadata satisfies the skill's ``requires``."""
+    """Check whether request metadata satisfies the skill requires."""
     for key, expected in requires.items():
         if ctx.request.metadata.get(key) != expected:
             return False
     return True
 
 
-def select_skills(ctx: AgentContext, role: Role) -> list[MarkdownSkill]:
+def select_skills(
+    ctx: AgentContext,
+    role: Role,
+    *,
+    skill_root: Path | None = None,
+) -> list[MarkdownSkill]:
     """Select common + role skills matching the current context.
 
     Returns:
-        A list of :class:`MarkdownSkill` instances.  Common skills first,
-        then role skills, sorted by name within each group.
+        Common skills first, then role skills, sorted by name within each group.
     """
-    if not _COMMON_SKILLS and not _ROLE_SKILLS:
-        _init_skills()
-
+    idx = _get_skill_index(skill_root)
     selected: list[MarkdownSkill] = []
 
     # 1. Always inject common skills
-    selected.extend(_COMMON_SKILLS)
+    selected.extend(idx.common)
 
     # 2. Inject role skills matching role + action_type
     action_type = ctx.request.action_type
-    for skill in _ROLE_SKILLS.get(role, []):
-        if action_type in skill.applicable_actions:
+    for skill in idx.by_role.get(role, []):
+        if not skill.applicable_actions or action_type in skill.applicable_actions:
             if _requirements_match(skill.requires, ctx):
                 selected.append(skill)
 
@@ -79,11 +97,10 @@ def select_skills(ctx: AgentContext, role: Role) -> list[MarkdownSkill]:
 
 
 def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType) -> str:
-    """Format a list of skills into a prompt block.
+    """Format selected skills into a prompt block.
 
-    Common skills are grouped under "通用规则 Skill", role skills under
-    "角色策略 Skill".  Skills matching the current action type are listed
-    first within the role section.
+    Common skills under generic header, role skills under role header.
+    Action-relevant skills listed first within the role section.
     """
     parts: list[str] = []
 
@@ -91,7 +108,7 @@ def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType)
     role_skills = [s for s in selected if s.scope == "role"]
 
     if common:
-        parts.append("## 通用规则 Skill")
+        parts.append("## common rules Skill")
         parts.append("")
         for skill in common:
             parts.append(f"### {skill.name}")
@@ -100,9 +117,8 @@ def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType)
             parts.append("")
 
     if role_skills:
-        parts.append("## 角色策略 Skill")
+        parts.append("## role strategy Skill")
         parts.append("")
-        # Action-relevant skills first, then others
         action_skills = [s for s in role_skills if action_type in s.applicable_actions]
         other_skills = [s for s in role_skills if action_type not in s.applicable_actions]
         for skill in action_skills + other_skills:
@@ -111,4 +127,4 @@ def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType)
             parts.append(skill.body)
             parts.append("")
 
-    return "\n".join(parts).strip()
+    return chr(10).join(parts).strip()

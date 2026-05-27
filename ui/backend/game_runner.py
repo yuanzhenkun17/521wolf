@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent.observability.archive import AgentTraceRecorder
+from agent.observability.archive import AgentTraceRecorder, GameArchive
 from agent.observability.decision_log import AgentDecisionRecorder
 from agent.observability.stream import DecisionBroadcaster, set_broadcaster
 from agent.runtime.factory import create_agents, load_llm_client
@@ -156,7 +156,7 @@ class GameManager:
             if game.trace_recorder is not None:
                 archive = game.trace_recorder.flush(
                     game_id=game.log_name,
-                    output_dir=self.log_dir,
+                    output_dir=self.log_dir / game.log_name,
                     seed=game.seed or 0,
                     config={},
                     player_roles={pid: r.value for pid, r in roles.items()},

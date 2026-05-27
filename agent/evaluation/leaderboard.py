@@ -33,6 +33,14 @@ class LeaderboardEntry:
     vote_accuracy: float = 0.0
     skill_accuracy: float = 0.0
     policy_adjusted_rate: float = 0.0
+    bad_case_count: float = 0.0
+    turning_point_quality: float = 0.0
+    tot_usage_rate: float = 0.0
+    got_trigger_count: int = 0
+    got_failure_count: int = 0
+    information_score: float = 0.0
+    cooperation_score: float = 0.0
+    by_role: dict = field(default_factory=dict)
     notes: str = ""
     run_ids: list[str] = field(default_factory=list)
 
@@ -52,6 +60,14 @@ class LeaderboardEntry:
             "vote_accuracy": round(self.vote_accuracy, 3),
             "skill_accuracy": round(self.skill_accuracy, 3),
             "policy_adjusted_rate": round(self.policy_adjusted_rate, 4),
+            "bad_case_count": round(self.bad_case_count, 1),
+            "turning_point_quality": round(self.turning_point_quality, 3),
+            "tot_usage_rate": round(self.tot_usage_rate, 3),
+            "got_trigger_count": self.got_trigger_count,
+            "got_failure_count": self.got_failure_count,
+            "information_score": round(self.information_score, 3),
+            "cooperation_score": round(self.cooperation_score, 3),
+            "by_role": self.by_role,
             "notes": self.notes,
             "run_ids": self.run_ids,
         }
@@ -85,6 +101,22 @@ def aggregate_summaries(
     vote_acc = sum(s.get("vote_accuracy", 0) * s.get("games", 0) for s in summaries)
     skill_acc = sum(s.get("skill_accuracy", 0) * s.get("games", 0) for s in summaries)
     policy_adj = sum(s.get("policy_adjusted_rate", 0) * s.get("games", 0) for s in summaries)
+    bad_case = sum(s.get("bad_case_count", 0) * s.get("games", 0) for s in summaries)
+    tp_quality = sum(s.get("turning_point_quality", 0) * s.get("games", 0) for s in summaries)
+    tot_usage = sum(s.get("tot_usage_rate", 0) * s.get("games", 0) for s in summaries)
+    got_trigger = sum(s.get("got_trigger_count", 0) for s in summaries)
+    got_failure = sum(s.get("got_failure_count", 0) for s in summaries)
+    info_score = sum(s.get("information_score", 0) * s.get("games", 0) for s in summaries)
+    coop_score = sum(s.get("cooperation_score", 0) * s.get("games", 0) for s in summaries)
+    # Merge by_role dicts: sum counts per role
+    by_role: dict[str, dict] = {}
+    for s in summaries:
+        for role_name, role_data in s.get("by_role", {}).items():
+            if role_name not in by_role:
+                by_role[role_name] = dict(role_data)
+            else:
+                for k, v in role_data.items():
+                    by_role[role_name][k] = by_role[role_name].get(k, 0) + v
     run_ids = [s.get("run_id", "") for s in summaries if s.get("run_id")]
 
     return LeaderboardEntry(
@@ -102,6 +134,14 @@ def aggregate_summaries(
         vote_accuracy=vote_acc / total_games if total_games else 0.0,
         skill_accuracy=skill_acc / total_games if total_games else 0.0,
         policy_adjusted_rate=policy_adj / total_games if total_games else 0.0,
+        bad_case_count=bad_case / total_games if total_games else 0.0,
+        turning_point_quality=tp_quality / total_games if total_games else 0.0,
+        tot_usage_rate=tot_usage / total_games if total_games else 0.0,
+        got_trigger_count=got_trigger,
+        got_failure_count=got_failure,
+        information_score=info_score / total_games if total_games else 0.0,
+        cooperation_score=coop_score / total_games if total_games else 0.0,
+        by_role=by_role,
         run_ids=run_ids,
     )
 

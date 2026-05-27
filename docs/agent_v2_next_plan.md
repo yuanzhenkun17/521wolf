@@ -165,7 +165,7 @@ prompt_node 构造普通 prompt
 - `review.json`：玩家评分、失误、转折点。
 - `experience cards`：每个角色的关键经验。
 - `long memory`：跨局沉淀出的长期策略。
-- 当前 `agent/skills/**/*.md`：已有策略内容。
+- 当前 `skills/**/*.md`：已有策略内容。
 
 ### 4.3 输出
 
@@ -215,7 +215,7 @@ data/skill_suggestions/
 
 - 能从复盘和经验卡片生成按角色分组的 skill 修改建议。
 - 建议中包含证据，不是泛泛而谈。
-- 不直接覆盖正式 `agent/skills`。
+- 不直接覆盖正式 `skills`。
 - 可以把建议复制成一个新 `skill_dir` 用于版本对战。
 
 ## 5. P3：候选 Skill 版本生成

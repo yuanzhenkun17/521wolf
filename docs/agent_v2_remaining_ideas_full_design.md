@@ -441,7 +441,7 @@ game_001/
   "game_id": "game_001",
   "seed": 1,
   "agent_version": "agent_v2",
-  "skill_dir": "agent/skills",
+  "skill_dir": "skills",
   "model_name": "doubao-seed-2.0-pro",
   "started_at": "2026-05-26T14:00:00+08:00",
   "finished_at": "2026-05-26T14:02:31+08:00",
@@ -1230,7 +1230,7 @@ skillsets/
 
 - 文件重复。
 
-#### 方案 B：保留默认 `agent/skills`，额外记录 git commit
+#### 方案 B：保留默认 `skills`，额外记录 git commit
 
 ```text
 data/skill_versions/
@@ -1264,7 +1264,7 @@ skill_dir: Path | None = None
 如果为 `None`，使用默认：
 
 ```text
-agent/skills
+skills
 ```
 
 如果指定：

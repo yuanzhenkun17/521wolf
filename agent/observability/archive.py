@@ -43,6 +43,9 @@ class DecisionArchive:
     errors: list[str]
     tot_candidates: list[dict] = field(default_factory=list)
     tot_judge_reason: str = ""
+    got_evidence_nodes: list[dict] = field(default_factory=list)
+    got_hypotheses: list[dict] = field(default_factory=list)
+    got_judge_reason: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -68,6 +71,9 @@ class DecisionArchive:
             "errors": self.errors,
             "tot_candidates": self.tot_candidates,
             "tot_judge_reason": self.tot_judge_reason,
+            "got_evidence_nodes": self.got_evidence_nodes,
+            "got_hypotheses": self.got_hypotheses,
+            "got_judge_reason": self.got_judge_reason,
         }
 
     @classmethod
@@ -97,6 +103,9 @@ class DecisionArchive:
             errors=list(ctx.errors),
             tot_candidates=list(ctx.tot_candidates),
             tot_judge_reason=ctx.tot_judge_reason,
+            got_evidence_nodes=list(ctx.got_evidence_nodes),
+            got_hypotheses=list(ctx.got_hypotheses),
+            got_judge_reason=ctx.got_judge_reason,
         )
 
 

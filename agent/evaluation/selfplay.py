@@ -20,7 +20,14 @@ from engine.models import Role
 from engine.roles import assign_roles
 
 from agent.observability.archive import AgentTraceRecorder, DecisionArchive, GameArchive
+from agent.cognition.dream import dream_for_role, write_dream_report
 from agent.cognition.experience import extract_experiences, write_game_experiences
+from agent.cognition.long_memory import consolidate_role_memory, write_memory_candidate, write_role_memory
+from agent.cognition.skill_evolution import (
+    apply_skill_proposals,
+    proposals_from_dream,
+    write_skill_proposals,
+)
 from agent.evaluation.review_enhanced import GameReviewReport, generate_enhanced_review
 from agent.runtime.agent import LLMPlayerAgent
 from agent.runtime.factory import load_llm_client
@@ -39,6 +46,10 @@ class SelfPlayConfig:
     max_days: int = 20
     enable_review: bool = True
     enable_experience: bool = True
+    enable_dream: bool = False
+    enable_batch_dream: bool = False
+    enable_skill_proposals: bool = True
+    auto_apply_skill_proposals: bool = False
     temperature: float = 0.2
     game_config: GameConfig = STANDARD_12
     skill_dir: Path | None = None
@@ -64,6 +75,11 @@ class SelfPlayGameResult:
     avg_skill_score: float = 0.0
     vote_accuracy: float = 0.0
     skill_accuracy: float = 0.0
+    mistake_count: int = 0
+    counterfactual_count: int = 0
+    turning_point_count: int = 0
+    information_score: float = 0.0
+    cooperation_score: float = 0.0
     error: str | None = None
 
     def to_dict(self) -> dict:
@@ -84,6 +100,11 @@ class SelfPlayGameResult:
             "vote_accuracy": round(self.vote_accuracy, 3),
             "skill_accuracy": round(self.skill_accuracy, 3),
             "output_dir": str(self.output_dir),
+            "mistake_count": self.mistake_count,
+            "counterfactual_count": self.counterfactual_count,
+            "turning_point_count": self.turning_point_count,
+            "information_score": round(self.information_score, 3),
+            "cooperation_score": round(self.cooperation_score, 3),
         }
         if self.error:
             d["error"] = self.error
@@ -138,6 +159,18 @@ class SelfPlayResult:
             "fallback_rate": round(total_fallbacks / total_decisions, 4) if total_decisions else 0.0,
             "policy_adjusted_rate": round(total_adjusted / total_decisions, 4) if total_decisions else 0.0,
             "avg_confidence": round(sum(g.avg_confidence for g in self.games) / n, 3) if n else 0.0,
+            "mistake_count": sum(g.mistake_count for g in self.games),
+            "counterfactual_count": sum(g.counterfactual_count for g in self.games),
+            "turning_point_count": sum(g.turning_point_count for g in self.games),
+            # Leaderboard fields — aggregated by aggregate_summaries in leaderboard.py
+            "bad_case_count": sum(g.mistake_count for g in self.games),
+            "turning_point_quality": 0.0,  # TODO: wire up when turning point quality scoring is implemented
+            "tot_usage_rate": 0.0,  # TODO: wire up when ToT usage tracking is implemented
+            "got_trigger_count": 0,  # TODO: wire up when GoT trigger tracking is implemented
+            "got_failure_count": 0,  # TODO: wire up when GoT failure tracking is implemented
+            "information_score": round(sum(g.information_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
+            "cooperation_score": round(sum(g.cooperation_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
+            "by_role": {},  # TODO: wire up per-role stats aggregation
             "started_at": self.started_at,
             "finished_at": self.finished_at,
         }
@@ -217,12 +250,20 @@ async def run_selfplay(
         "temperature": config.temperature,
         "enable_review": config.enable_review,
         "enable_experience": config.enable_experience,
+        "enable_dream": config.enable_dream,
+        "enable_batch_dream": config.enable_batch_dream,
+        "enable_skill_proposals": config.enable_skill_proposals,
+        "auto_apply_skill_proposals": config.auto_apply_skill_proposals,
         "skill_dir": str(config.skill_dir) if config.skill_dir else None,
     })
 
     results: list[SelfPlayGameResult] = []
+    _frozen_skill_dir = config.skill_dir
 
     for i in range(config.games):
+        assert config.skill_dir == _frozen_skill_dir, (
+            f"skill_dir changed mid-run: {_frozen_skill_dir} -> {config.skill_dir}"
+        )
         seed = config.seed_start + i
         game_id = f"game_{i + 1:03d}"
         game_dir = run_dir / "games" / game_id
@@ -248,6 +289,7 @@ async def run_selfplay(
             )
         agents = _create_agents(
             roles, client, decision_recorder, trace_recorders,
+            skill_dir=config.skill_dir,
         )
 
         # Run game
@@ -316,6 +358,11 @@ async def run_selfplay(
         avg_skill_score = 0.0
         vote_accuracy = 0.0
         skill_accuracy = 0.0
+        mistake_count = 0
+        counterfactual_count = 0
+        turning_point_count = 0
+        information_score = 0.0
+        cooperation_score = 0.0
         if config.enable_review and not game_error:
             agent_decisions = _collect_decisions(decision_recorder)
             review_report = generate_enhanced_review(
@@ -333,6 +380,11 @@ async def run_selfplay(
             avg_skill_score = sum(s.skill_score for s in player_scores) / denominator
             vote_accuracy = avg_vote_score / 10.0
             skill_accuracy = avg_skill_score / 10.0
+            mistake_count = len(review_report.mistakes)
+            counterfactual_count = len(review_report.counterfactuals)
+            turning_point_count = len(review_report.key_turning_points)
+            information_score = sum(s.information_score for s in player_scores) / denominator
+            cooperation_score = sum(s.cooperation_score for s in player_scores) / denominator
             _write_json(game_dir / "review.json", review_report.to_dict())
             _write_text(game_dir / "review.md", review_report.to_markdown())
 
@@ -350,6 +402,47 @@ async def run_selfplay(
                 cards=cards,
                 game_dir=game_dir,
             )
+            if config.enable_dream:
+                by_role: dict[Role, list] = {}
+                for card in cards:
+                    try:
+                        role = Role(card.role)
+                    except ValueError:
+                        continue
+                    by_role.setdefault(role, []).append(card)
+                for role, role_cards in sorted(by_role.items(), key=lambda item: item[0].value):
+                    rule_memory = consolidate_role_memory(role)
+                    write_role_memory(
+                        rule_memory,
+                        output_dir=game_dir / "long_memory",
+                    )
+                    write_memory_candidate(
+                        rule_memory,
+                        output_dir=run_dir / "memory_candidate",
+                    )
+                    report = await dream_for_role(
+                        role=role,
+                        model=client,
+                        cards=role_cards,
+                        rule_memory=rule_memory,
+                        skill_root=config.skill_dir,
+                    )
+                    write_dream_report(
+                        report,
+                        output_dir=game_dir / "dreams" / role.value,
+                    )
+                    if config.enable_skill_proposals:
+                        proposals = proposals_from_dream(report)
+                        write_skill_proposals(
+                            proposals,
+                            output_dir=game_dir / "skill_proposals" / role.value,
+                        )
+                        if config.auto_apply_skill_proposals:
+                            apply_skill_proposals(
+                                proposals,
+                                target_skill_root=config.skill_dir,
+                                patch_dir=game_dir / "skill_patches" / role.value,
+                            )
 
         # Write meta
         _write_json(game_dir / "meta.json", {
@@ -378,6 +471,11 @@ async def run_selfplay(
             avg_skill_score=avg_skill_score,
             vote_accuracy=vote_accuracy,
             skill_accuracy=skill_accuracy,
+            mistake_count=mistake_count,
+            counterfactual_count=counterfactual_count,
+            turning_point_count=turning_point_count,
+            information_score=information_score,
+            cooperation_score=cooperation_score,
             error=game_error,
         )
         results.append(result)
@@ -401,6 +499,7 @@ def _create_agents(
     decision_recorder: AgentDecisionRecorder,
     trace_recorders: dict[int, AgentTraceRecorder],
     game_id: str | None = None,
+    skill_dir: Path | None = None,
 ) -> dict[int, LLMPlayerAgent]:
     """Create a full set of LLMPlayerAgent with trace recorders."""
     agents: dict[int, LLMPlayerAgent] = {}
@@ -411,6 +510,7 @@ def _create_agents(
             client=client,
             decision_recorder=decision_recorder,
             game_id=game_id,
+            skill_dir=skill_dir,
         )
         # Wire trace recorder into the runtime
         agent.runtime.trace_recorder = trace_recorders.get(player_id)

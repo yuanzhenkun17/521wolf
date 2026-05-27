@@ -37,6 +37,8 @@ class MarkdownSkill:
     output_constraints: dict = field(default_factory=dict)
     body: str = ""
     prompt_hints: list[str] = field(default_factory=list)
+    category: str = "strategy"  # "foundation" | "strategy"
+    evolvable: bool = False
 
 
 _FRONT_MATTER_SEP = "---"
@@ -222,4 +224,6 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
         output_constraints=front.get("output_constraints", {}),
         body=body.strip(),
         prompt_hints=hints,
+        category=front.get("category", "strategy"),
+        evolvable=bool(front.get("evolvable", False)),
     )

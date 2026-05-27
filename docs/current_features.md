@@ -323,7 +323,7 @@ WEREWOLF_LLM_TEMPERATURE=0.4
 ### 5.1 Skill 目录结构
 
 ```text
-agent/skills/
+skills/
 ├── common/
 │   ├── game_rules.md
 │   └── output_schema.md

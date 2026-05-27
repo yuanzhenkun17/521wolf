@@ -68,7 +68,7 @@ class VersionBattleTests(unittest.TestCase):
                 VersionBattleConfig(
                     versions=[
                         VersionSpec(name="v1", notes="baseline"),
-                        VersionSpec(name="v2", skill_dir=Path("agent/skills")),
+                        VersionSpec(name="v2", skill_dir=Path("skills")),
                     ],
                     games_per_version=1,
                     seed_start=42,

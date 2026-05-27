@@ -85,12 +85,12 @@ Agent 层会输出两类记录：
 Skill 使用 Markdown 文件维护：
 
 ```text
-agent/skills/common/
-agent/skills/werewolf/
-agent/skills/seer/
-agent/skills/witch/
-agent/skills/hunter/
-agent/skills/villager/
+skills/common/
+skills/werewolf/
+skills/seer/
+skills/witch/
+skills/hunter/
+skills/villager/
 ```
 
 `common` skill 对所有角色注入；角色 skill 只在对应身份和动作条件满足时注入。

@@ -46,7 +46,7 @@ class AgentContext:
     decision_record: Any = None
 
     # Tracking
-    source: Literal["llm", "policy_adjusted", "fallback", "tot"] = "llm"
+    source: Literal["llm", "policy_adjusted", "fallback", "tot", "got"] = "llm"
     policy_adjustments: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -54,3 +54,9 @@ class AgentContext:
     tot_enabled: bool = False
     tot_candidates: list[dict[str, Any]] = field(default_factory=list)
     tot_judge_reason: str = ""
+
+    # GoT (Graph-of-Thought) evidence/hypothesis reasoning
+    got_enabled: bool = False
+    got_evidence_nodes: list[dict[str, Any]] = field(default_factory=list)
+    got_hypotheses: list[dict[str, Any]] = field(default_factory=list)
+    got_judge_reason: str = ""

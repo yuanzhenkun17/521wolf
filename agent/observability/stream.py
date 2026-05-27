@@ -65,5 +65,7 @@ def stream_decision(ctx: AgentContext) -> dict[str, Any]:
         "errors": ctx.errors,
         "tot_enabled": ctx.tot_enabled,
         "tot_judge_reason": ctx.tot_judge_reason,
+        "got_enabled": ctx.got_enabled,
+        "got_judge_reason": ctx.got_judge_reason,
         "policy_adjustments": ctx.policy_adjustments,
     }

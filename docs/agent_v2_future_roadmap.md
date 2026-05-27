@@ -563,7 +563,7 @@ agent/skill_versions/
 或者：
 
 ```text
-agent/skills/
+skills/
   current/
   versions/
 ```
@@ -921,7 +921,7 @@ class LeaderboardEntry:
   "versions": [
     {
       "name": "v2_base",
-      "skill_dir": "agent/skills"
+      "skill_dir": "skills"
     },
     {
       "name": "v2_exp_witch",

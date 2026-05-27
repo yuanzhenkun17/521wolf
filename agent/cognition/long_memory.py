@@ -202,6 +202,22 @@ def write_role_memory(
     return json_path, md_path
 
 
+def write_memory_candidate(
+    memory: RoleLongTermMemory,
+    *,
+    output_dir: Path | str,
+) -> Path:
+    """Write memory candidate JSON for version management."""
+    base = Path(output_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    json_path = base / f"{memory.role}.json"
+    json_path.write_text(
+        json.dumps(memory.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return json_path
+
+
 def load_role_memory(
     role: Role | str,
     *,

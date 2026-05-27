@@ -36,7 +36,7 @@ class DecisionRecord:
     raw_output: str = ""
     errors: list[str] = field(default_factory=list)
     policy_adjustments: list[str] = field(default_factory=list)
-    source: Literal["llm", "fallback", "policy_adjusted", "tot"] = "llm"
+    source: Literal["llm", "fallback", "policy_adjusted", "tot", "got"] = "llm"
 
     def to_dict(self) -> dict:
         return {

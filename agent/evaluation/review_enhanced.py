@@ -582,6 +582,41 @@ def _collect_mistakes(
                             severity="high",
                         ))
 
+            # Wolf kills teammate
+            if d.get("action_type") == "werewolf_kill":
+                target = d.get("selected_target")
+                if target is not None and target in roles:
+                    t_role = roles[target]
+                    if role and role.team is Team.WEREWOLVES and t_role.team is Team.WEREWOLVES:
+                        mistakes.append(DecisionMistake(
+                            player_id=pid, role=role_name,
+                            day=d.get("day", 0), phase=d.get("phase", ""),
+                            action_type="werewolf_kill",
+                            mistake_type=MISTAKE_KILLED_TEAMMATE,
+                            description=f"狼人P{pid} 刀杀队友 P{target}({t_role.value})",
+                            severity="high",
+                        ))
+
+            # Ignored seer check (voted for verified good player)
+            if d.get("action_type") in ("exile_vote", "pk_vote"):
+                target = d.get("selected_target")
+                if target is not None:
+                    for other_pid, other_decisions in agent_decisions.items():
+                        other_role = roles.get(other_pid)
+                        if other_role is Role.SEER:
+                            for sd in other_decisions:
+                                if (sd.get("action_type") == "seer_check"
+                                    and sd.get("selected_target") == target
+                                    and sd.get("selected_choice") == "good"):
+                                    mistakes.append(DecisionMistake(
+                                        player_id=pid, role=role_name,
+                                        day=d.get("day", 0), phase=d.get("phase", ""),
+                                        action_type=d.get("action_type", ""),
+                                        mistake_type=MISTAKE_IGNORED_SEER,
+                                        description=f"P{pid} 投票放逐了预言家查验为好人的 P{target}",
+                                        severity="medium",
+                                    ))
+
     return mistakes
 
 
@@ -627,29 +662,62 @@ def _generate_counterfactuals(
     counterfactuals: list[Counterfactual] = []
 
     for m in mistakes:
-        if m.mistake_type in (MISTAKE_POISONED_GOOD, MISTAKE_SHOT_GOOD):
-            if m.mistake_type == MISTAKE_POISONED_GOOD:
-                counterfactuals.append(Counterfactual(
-                    decision_index=0,
-                    player_id=m.player_id,
-                    role=m.role,
-                    fact=f"女巫P{m.player_id}毒杀{m.description.split('——')[0] if '——' in m.description else m.description}",
-                    counterfactual=f"如果女巫没有毒杀该目标，好人阵营可能保留关键神职继续提供信息。该决策大概率降低了好人胜率。",
-                    impact_assessment="该决策使好人阵营失去关键角色，信息链断裂，轮次落后。",
-                    likelihood="likely",
-                ))
-            else:
-                counterfactuals.append(Counterfactual(
-                    decision_index=0,
-                    player_id=m.player_id,
-                    role=m.role,
-                    fact=f"猎人P{m.player_id}开枪{m.description.split('——')[0] if '——' in m.description else m.description}",
-                    counterfactual=f"如果猎人没有开枪带走该目标，好人阵营可以保留战斗力。该决策大概率降低了好人胜率。",
-                    impact_assessment="该决策使好人阵营失去关键战力。",
-                    likelihood="likely",
-                ))
+        if m.mistake_type == MISTAKE_POISONED_GOOD:
+            counterfactuals.append(Counterfactual(
+                decision_index=0,
+                player_id=m.player_id,
+                role=m.role,
+                fact=f"女巫P{m.player_id}毒杀{m.description.split('——')[0] if '——' in m.description else m.description}",
+                counterfactual=f"如果女巫没有毒杀该目标，好人阵营可能保留关键神职继续提供信息。该决策大概率降低了好人胜率。",
+                impact_assessment="该决策使好人阵营失去关键角色，信息链断裂，轮次落后。",
+                likelihood="likely",
+            ))
 
-    return counterfactuals[:5]
+        elif m.mistake_type == MISTAKE_SHOT_GOOD:
+            counterfactuals.append(Counterfactual(
+                decision_index=0,
+                player_id=m.player_id,
+                role=m.role,
+                fact=f"猎人P{m.player_id}开枪{m.description.split('——')[0] if '——' in m.description else m.description}",
+                counterfactual=f"如果猎人没有开枪带走该目标，好人阵营可以保留战斗力。该决策大概率降低了好人胜率。",
+                impact_assessment="该决策使好人阵营失去关键战力。",
+                likelihood="likely",
+            ))
+
+        elif m.mistake_type == MISTAKE_WRONG_VOTE:
+            counterfactuals.append(Counterfactual(
+                decision_index=0,
+                player_id=m.player_id,
+                role=m.role,
+                fact=f"P{m.player_id}({m.role}) 投票放逐了好人",
+                counterfactual="如果该玩家投票给了正确的狼人目标，好人阵营可能多一轮次优势。",
+                impact_assessment="错误投票导致好人阵营浪费放逐机会，狼人获得轮次优势。",
+                likelihood="possible",
+            ))
+
+        elif m.mistake_type == MISTAKE_KILLED_TEAMMATE:
+            counterfactuals.append(Counterfactual(
+                decision_index=0,
+                player_id=m.player_id,
+                role=m.role,
+                fact=f"狼人P{m.player_id} 刀杀了队友",
+                counterfactual="如果狼人没有刀杀队友，狼人阵营可以保持人数优势。",
+                impact_assessment="刀杀队友直接减少狼人阵营人数，严重损害胜率。",
+                likelihood="likely",
+            ))
+
+        elif m.mistake_type == MISTAKE_IGNORED_SEER:
+            counterfactuals.append(Counterfactual(
+                decision_index=0,
+                player_id=m.player_id,
+                role=m.role,
+                fact=f"P{m.player_id} 忽略了预言家查验结果",
+                counterfactual="如果该玩家尊重预言家查验，投票给真正的狼人，好人阵营胜率会提升。",
+                impact_assessment="忽略预言家信息导致好人阵营失去关键信息优势。",
+                likelihood="possible",
+            ))
+
+    return counterfactuals[:10]
 
 
 def _generate_player_suggestions(player_id: int, role: Role, pr: PlayerReview) -> list[str]:

@@ -19,6 +19,7 @@ from agent.evaluation.leaderboard import (
     write_leaderboard,
 )
 from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayResult, run_selfplay
+from agent.versioning.manifest import AgentVersionManifest, load_manifest
 
 
 RunSelfplayFunc = Callable[..., Awaitable[SelfPlayResult]]
@@ -33,6 +34,10 @@ class VersionSpec:
     model_name: str | None = None
     temperature: float | None = None
     notes: str = ""
+    tot_enabled: bool = False
+    got_enabled: bool = True
+    got_trigger_policy: str = "auto"
+    got_trigger_threshold: float = 0.3
 
     def to_dict(self) -> dict:
         return {
@@ -41,7 +46,32 @@ class VersionSpec:
             "model_name": self.model_name,
             "temperature": self.temperature,
             "notes": self.notes,
+            "tot_enabled": self.tot_enabled,
+            "got_enabled": self.got_enabled,
+            "got_trigger_policy": self.got_trigger_policy,
+            "got_trigger_threshold": self.got_trigger_threshold,
         }
+
+
+def version_spec_from_manifest(manifest_path: Path | str) -> VersionSpec:
+    """Build a VersionSpec from an agent version manifest."""
+    manifest_path = Path(manifest_path)
+    manifest = load_manifest(manifest_path)
+    skill_dir = None
+    if manifest.paths and manifest.paths.skills:
+        raw = Path(manifest.paths.skills)
+        skill_dir = raw if raw.is_absolute() else manifest_path.parent / raw
+    return VersionSpec(
+        name=manifest.display_name or manifest.version,
+        skill_dir=skill_dir,
+        model_name=manifest.model.model if manifest.model else None,
+        temperature=manifest.model.temperature if manifest.model else None,
+        notes="\n".join(manifest.notes) if manifest.notes else "",
+        tot_enabled=manifest.runtime.tot_enabled if manifest.runtime else False,
+        got_enabled=manifest.runtime.got_enabled if manifest.runtime else True,
+        got_trigger_policy=manifest.runtime.got_trigger_policy if manifest.runtime else "auto",
+        got_trigger_threshold=manifest.runtime.got_trigger_threshold if manifest.runtime else 0.3,
+    )
 
 
 @dataclass(slots=True)
@@ -95,8 +125,11 @@ async def run_version_battle(
     model: ModelAdapter | None = None,
     client_factory=None,
     runner: RunSelfplayFunc = run_selfplay,
+    versions: list[str] | None = None,
 ) -> VersionBattleResult:
     """Run all versions with the same seed range and write a leaderboard."""
+    if versions:
+        config.versions = [version_spec_from_manifest(v) for v in versions]
     config.output_dir.mkdir(parents=True, exist_ok=True)
     (config.output_dir / "version_battle_config.json").write_text(
         json.dumps(config.to_dict(), ensure_ascii=False, indent=2),

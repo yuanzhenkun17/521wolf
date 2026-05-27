@@ -1,0 +1,12 @@
+[
+  {
+    "patch_id": "test_role_test_skill_Always_do_X_in_situation_Y",
+    "role": "test_role",
+    "skill": "test_skill",
+    "operation": "append_rule",
+    "proposal_id": "test_001",
+    "skill_path": "C:\\Users\\10939\\AppData\\Local\\Temp\\tmpc0ypuc01\\test_role\\test_skill.md",
+    "applied_at": "2026-05-27T11:57:57.324929+00:00",
+    "inserted_text": "<!-- agent-skill-proposal: test_001 -->\n## 经验沉淀规则\n\n- Always do X in situation Y\n- 证据: card_1, card_2, card_3\n- 置信度: 90.0%\n- 风险: low\n<!-- /agent-skill-proposal -->"
+  }
+]

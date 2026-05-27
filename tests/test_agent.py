@@ -514,7 +514,7 @@ class PromptHintsTests(unittest.TestCase):
         )
         combined = " ".join(m.get("content", "") for m in messages)
         # Multi-skill block should be present
-        self.assertIn("通用规则 Skill", combined)
+        self.assertIn("common rules Skill", combined)
         self.assertIn("game_rules", combined)
 
     def test_skill_advice_includes_skill_count(self):
@@ -821,17 +821,13 @@ output_constraints:
         from pathlib import Path
 
         ROOT = Path(__file__).resolve().parent.parent
-        skills = load_markdown_skills(ROOT / "agent" / "skills")
+        skills = load_markdown_skills(ROOT / "skills")
         names = {s.name for s in skills}
         self.assertIn("witch_poison", names)
         self.assertIn("villager_vote_analysis", names)
         for s in skills:
-            # Common skills may not have applicable_actions; role skills should
-            if s.scope != "common":
-                self.assertGreater(
-                    len(s.applicable_actions), 0,
-                    f"Skill {s.name} (scope={s.scope}) has no applicable_actions",
-                )
+            # Common skills have no applicable_actions; role skills may have
+            # empty applicable_actions (= always inject for that role)
             self.assertTrue(hasattr(s, "scope"))
 
     def test_markdown_skill_does_not_require_priority(self):
@@ -928,9 +924,9 @@ output_constraints:
     def test_game_rules_skill_exists(self):
         from pathlib import Path
         ROOT = Path(__file__).resolve().parent.parent
-        rules = ROOT / "agent" / "skills" / "common" / "game_rules.md"
+        rules = ROOT / "skills" / "common" / "game_rules.md"
         self.assertTrue(rules.exists(), "game_rules.md must exist")
-        output = ROOT / "agent" / "skills" / "common" / "output_schema.md"
+        output = ROOT / "skills" / "common" / "output_schema.md"
         self.assertTrue(output.exists(), "output_schema.md must exist")
 
     def test_skill_context_includes_common_and_role_skills(self):
@@ -939,8 +935,8 @@ output_constraints:
         ctx = skill_router_node(ctx)
         skill_context = ctx.skill_context
         # Should include common sections
-        self.assertIn("通用规则", skill_context)
-        self.assertIn("角色策略", skill_context)
+        self.assertIn("common rules", skill_context)
+        self.assertIn("role strategy", skill_context)
         # Should include actual skills
         self.assertIn("game_rules", skill_context)
         self.assertIn("villager_vote_analysis", skill_context)

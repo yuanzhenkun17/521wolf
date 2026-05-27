@@ -1,0 +1,93 @@
+"""Tests for leaderboard metric extensions."""
+from agent.evaluation.leaderboard import aggregate_summaries, LeaderboardEntry
+
+
+def _make_summary(**overrides):
+    base = {
+        "run_id": "test_run",
+        "games": 10,
+        "werewolf_wins": 5,
+        "villager_wins": 5,
+        "error_count": 0,
+        "avg_days": 4.0,
+        "avg_decision_score": 6.0,
+        "avg_speech_score": 7.0,
+        "avg_vote_score": 5.5,
+        "avg_skill_score": 6.5,
+        "avg_confidence": 0.8,
+        "fallback_rate": 0.05,
+        "vote_accuracy": 0.7,
+        "skill_accuracy": 0.6,
+        "policy_adjusted_rate": 0.02,
+        "bad_case_count": 2.0,
+        "turning_point_quality": 0.65,
+        "tot_usage_rate": 0.3,
+        "got_trigger_count": 4,
+        "got_failure_count": 1,
+        "information_score": 5.5,
+        "cooperation_score": 6.0,
+        "by_role": {
+            "werewolf": {"wins": 5, "losses": 5},
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def test_aggregate_bad_case_count():
+    s = _make_summary()
+    entry = aggregate_summaries([s])
+    assert entry.bad_case_count == 2.0
+
+
+def test_aggregate_turning_point_quality():
+    s = _make_summary()
+    entry = aggregate_summaries([s])
+    assert abs(entry.turning_point_quality - 0.65) < 0.001
+
+
+def test_aggregate_tot_usage_rate():
+    s = _make_summary()
+    entry = aggregate_summaries([s])
+    assert abs(entry.tot_usage_rate - 0.3) < 0.001
+
+
+def test_aggregate_got_counts_are_sums():
+    s1 = _make_summary(got_trigger_count=3, got_failure_count=1)
+    s2 = _make_summary(got_trigger_count=5, got_failure_count=2)
+    entry = aggregate_summaries([s1, s2])
+    assert entry.got_trigger_count == 8
+    assert entry.got_failure_count == 3
+
+
+def test_aggregate_information_cooperation_weighted():
+    s1 = _make_summary(games=10, information_score=4.0, cooperation_score=5.0)
+    s2 = _make_summary(games=20, information_score=8.0, cooperation_score=7.0)
+    entry = aggregate_summaries([s1, s2])
+    # weighted: (4*10 + 8*20) / 30 = 200/30 = 6.667
+    assert abs(entry.information_score - 6.667) < 0.01
+    # weighted: (5*10 + 7*20) / 30 = 190/30 = 6.333
+    assert abs(entry.cooperation_score - 6.333) < 0.01
+
+
+def test_aggregate_by_role_merging():
+    s1 = _make_summary(by_role={"werewolf": {"wins": 3, "losses": 2}})
+    s2 = _make_summary(by_role={"werewolf": {"wins": 4, "losses": 1}, "seer": {"wins": 2, "losses": 0}})
+    entry = aggregate_summaries([s1, s2])
+    assert entry.by_role["werewolf"]["wins"] == 7
+    assert entry.by_role["werewolf"]["losses"] == 3
+    assert entry.by_role["seer"]["wins"] == 2
+
+
+def test_to_dict_includes_new_fields():
+    s = _make_summary()
+    entry = aggregate_summaries([s])
+    d = entry.to_dict()
+    assert "bad_case_count" in d
+    assert "turning_point_quality" in d
+    assert "tot_usage_rate" in d
+    assert "got_trigger_count" in d
+    assert "got_failure_count" in d
+    assert "information_score" in d
+    assert "cooperation_score" in d
+    assert "by_role" in d

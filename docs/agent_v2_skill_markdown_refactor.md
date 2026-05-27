@@ -27,19 +27,19 @@
 1. 删除当前 Python skill 目录：
 
 ```text
-agent/skills/
+skills/
 ```
 
 2. 将当前 Markdown skill 目录改名：
 
 ```text
-agent/skills_md/
+skills_md/
 ```
 
 改为：
 
 ```text
-agent/skills/
+skills/
 ```
 
 3. skill 全部使用 Markdown 表达。
@@ -104,7 +104,7 @@ agent/
 需要新增：
 
 ```text
-agent/skills/common/game_rules.md
+skills/common/game_rules.md
 ```
 
 这个 skill 所有角色都必须注入。
@@ -159,7 +159,7 @@ scope: common
 也可以新增：
 
 ```text
-agent/skills/common/output_schema.md
+skills/common/output_schema.md
 ```
 
 专门维护输出格式。
@@ -279,7 +279,7 @@ output_constraints:
 
 `skill_loader.py` 负责：
 
-1. 读取 `agent/skills/**/*.md`。
+1. 读取 `skills/**/*.md`。
 2. 解析 front matter。
 3. 返回 `MarkdownSkill` 对象。
 
@@ -453,7 +453,7 @@ selected_skill=",".join(selected_skills)
 ### Step 1：新增 Markdown 目录
 
 ```text
-agent/skills_new/
+skills_new/
 ```
 
 先放 Markdown skill。
@@ -465,8 +465,8 @@ agent/skills_new/
 ### Step 3：测试通过后重命名
 
 ```text
-删除 agent/skills/
-将 agent/skills_new/ 改为 agent/skills/
+删除 skills/
+将 skills_new/ 改为 skills/
 ```
 
 ### Step 4：清理 import
@@ -655,7 +655,7 @@ skills:
 按顺序做：
 
 1. 修复 Markdown skill 路径错误。
-2. 删除 Python `agent/skills/` 目录。
+2. 删除 Python `skills/` 目录。
 3. 将 `skills_md` 改名为 `skills`。
 4. 新增 `common/game_rules.md`。
 5. 新增 `common/output_schema.md`。

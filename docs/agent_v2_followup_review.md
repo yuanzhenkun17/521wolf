@@ -229,7 +229,7 @@ def format_field_notes(field_notes: dict) -> str:
 目前 skill 仍然全部是 Python 类：
 
 ```text
-agent/skills/
+skills/
   werewolf.py
   seer.py
   witch.py

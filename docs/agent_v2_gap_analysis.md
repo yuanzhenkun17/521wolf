@@ -156,7 +156,7 @@ agent/strategies/
   guard.py
   white_wolf_king.py
 
-agent/skills/
+skills/
   werewolf_fake_seer.py
   werewolf_vote_rush.py
   seer_badge_flow.py

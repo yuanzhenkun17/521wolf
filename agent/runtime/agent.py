@@ -8,6 +8,8 @@ Key responsibilities:
 - Node orchestration: each node reads from / writes to ``AgentContext``.
 - ToT integration: for key actions, the reasoning node generates multiple
   candidates and a judge selects the best one, bypassing the normal LLM call.
+- GoT integration: for high-conflict key actions, the reasoning node builds
+  an evidence/hypothesis graph before selecting the final action.
 - Decision recording: writes ``DecisionRecord`` entries to the shared recorder.
 - Trace recording: if a ``trace_recorder`` is attached, every decision context
   is archived for post-game analysis.
@@ -19,6 +21,7 @@ drops into any existing game without rule-layer changes.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from collections.abc import Iterator
 
 from langfuse import observe, propagate_attributes
@@ -40,6 +43,7 @@ from agent.nodes.llm import llm_node
 from agent.nodes.parse import parse_node
 from agent.nodes.policy import policy_node
 from agent.nodes.log import log_node
+from agent.nodes.got import got_node
 from agent.nodes.tot import tot_node
 from agent.observability.stream import get_broadcaster, stream_decision
 
@@ -79,6 +83,7 @@ class AgentRuntime:
         recorder: AgentDecisionRecorder | None = None,
         trace_recorder: AgentTraceRecorder | None = None,
         game_id: str | None = None,
+        skill_dir: Path | str | None = None,
     ) -> None:
         self.player_id = player_id
         self.role = role
@@ -89,6 +94,7 @@ class AgentRuntime:
         self.belief = belief or BeliefState(player_id=player_id, role=role)
         self.recorder = recorder
         self.trace_recorder = trace_recorder
+        self.skill_dir = Path(skill_dir) if skill_dir else None
 
     @observe(name="act")
     async def act(self, request: ActionRequest) -> ActionResponse:
@@ -103,14 +109,16 @@ class AgentRuntime:
             ctx = observe_node(ctx)
             ctx = memory_node(ctx, self.memory)
             ctx = belief_node(ctx, self.belief, self.memory)
-            ctx = skill_router_node(ctx)
+            ctx = skill_router_node(ctx, skill_root=self.skill_dir)
             ctx = prompt_node(ctx, persona=self.persona)
 
-            # -- ToT (multi-candidate reasoning) for key actions -------------------
-            ctx = await tot_node(ctx, self.model)
+            # -- GoT/ToT reasoning for key actions --------------------------------
+            ctx = await got_node(ctx, self.model)
+            if ctx.source != "got":
+                ctx = await tot_node(ctx, self.model)
 
-            # -- async LLM call (skipped when ToT succeeded) ----------------------
-            if ctx.source == "tot":
+            # -- async LLM call (skipped when GoT/ToT succeeded) ------------------
+            if ctx.source in {"got", "tot"}:
                 ctx = parse_node(ctx)
             else:
                 ctx = await llm_node(ctx, self.model)
@@ -149,6 +157,7 @@ class LLMPlayerAgent:
         decision_recorder: AgentDecisionRecorder | None = None,
         trace_recorder: AgentTraceRecorder | None = None,
         game_id: str | None = None,
+        skill_dir: Path | str | None = None,
     ) -> None:
         self.player_id = player_id
         self.role = role
@@ -160,6 +169,7 @@ class LLMPlayerAgent:
             recorder=decision_recorder,
             trace_recorder=trace_recorder,
             game_id=game_id,
+            skill_dir=skill_dir,
         )
 
     @property
