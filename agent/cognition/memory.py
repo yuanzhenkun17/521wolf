@@ -33,7 +33,7 @@ class MemoryEvent:
         return f"第{self.day}天 {self.phase} {self.event_type} {actor}{target}: {self.content}"
 
 
-def as_int(value) -> int | None:
+def as_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
@@ -81,8 +81,8 @@ def parse_public_entry(item: str, *, fallback_day: int, fallback_phase: str) -> 
     if not isinstance(data, dict):
         return _parse_text_public_entry(item, fallback_day=fallback_day, fallback_phase=fallback_phase)
     return MemoryEvent(
-        day=int(data.get("day") or fallback_day),
-        phase=str(data.get("phase") or fallback_phase),
+        day=int(data.get("day", fallback_day)),
+        phase=str(data.get("phase", fallback_phase)),
         event_type=str(data.get("type") or "public_log"),
         actor=as_int(data.get("actor")),
         target=as_int(data.get("target")),
@@ -270,7 +270,7 @@ class AgentMemory:
         ctx["field_notes"] = self.field_notes.to_prompt_dict()
         return ctx
 
-    def remember_action(self, request: ActionRequest, response: ActionResponse, decision=None):
+    def remember_action(self, request: ActionRequest, response: ActionResponse, decision: Any = None) -> None:
         self.self_history.append(
             f"{request.action_type.value}: choice={response.choice!r} target={response.target!r} text={response.text!r}"
         )
@@ -291,7 +291,7 @@ class AgentMemory:
     def reset(self) -> None:
         self._seen_public_entries.clear()
 
-    def remember_error(self, message: str):
+    def remember_error(self, message: str) -> None:
         self.errors.append(message)
 
     def _observe_request(self, request: ActionRequest) -> None:
@@ -305,20 +305,22 @@ class AgentMemory:
             self._index_public_event(event)
 
     def _index_public_event(self, event: MemoryEvent) -> None:
-        if event.event_type in {"exile_vote", "pk_vote", "sheriff_vote"} and event.target is not None:
+        if event.event_type in {"exile_vote", "pk_vote", "sheriff_vote", "vote"} and event.actor is not None and event.target is not None:
             self.suspicions[event.target] = f"P{event.actor} 投票给 P{event.target}"
         suspected = extract_suspected_player(event.content)
-        if suspected is not None:
+        if event.actor is not None and suspected is not None:
             self.suspicions[suspected] = f"P{event.actor} 发言怀疑 P{suspected}"
         claimed_role = extract_claimed_role(event.content)
         if event.actor is not None and claimed_role is not None:
             self.claims_seen[event.actor] = claimed_role
 
-        # Also update field notes from the same event
-        if event.event_type in {"exile_vote", "pk_vote", "sheriff_vote", "vote"} and event.actor is not None and event.target is not None:
-            self.field_notes.record_vote(event.actor, event.target, event.day, event.phase)
-        if event.event_type in {"speak", "sheriff_speak", "pk_speak", "last_word", "speech"} and event.actor is not None:
-            self.field_notes.record_speech(event.actor, event.content)
+        # Also update field notes from the same event, but skip own actions
+        # (already recorded immediately in remember_action to avoid duplicates)
+        if event.actor != self.player_id:
+            if event.event_type in {"exile_vote", "pk_vote", "sheriff_vote", "vote"} and event.actor is not None and event.target is not None:
+                self.field_notes.record_vote(event.actor, event.target, event.day, event.phase)
+            if event.event_type in {"speak", "sheriff_speak", "pk_speak", "last_word", "speech"} and event.actor is not None:
+                self.field_notes.record_speech(event.actor, event.content)
 
     def _update_field_notes(self, request: ActionRequest) -> None:
         obs = request.observation

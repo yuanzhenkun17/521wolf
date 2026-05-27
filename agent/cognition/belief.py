@@ -82,7 +82,11 @@ class PlayerBelief:
         self._evidence_keys.add(key)
 
         self.evidence.append(EvidenceItem(etype, weight, description, direction, source))
-        self.evidence = self.evidence[-10:]
+        if len(self.evidence) > 10:
+            self.evidence = self.evidence[-10:]
+            self._evidence_keys = {
+                f"{e.type}|{e.direction}|{e.source}|{e.description}" for e in self.evidence
+            }
         if description not in self.reasons:
             self.reasons.append(description)
         self.reasons = self.reasons[-8:]
@@ -129,7 +133,7 @@ class PlayerBelief:
             "claimed_role": self.claimed_role,
             "stance": self.stance,
             "top_evidence": [e.to_dict() for e in self.evidence[-5:]],
-            "wolf_evidence": positive[-3:],
+            "notable_evidence": positive[-3:],
             "good_evidence": negative[-3:],
             "reasons": self.reasons,
         }
@@ -164,6 +168,7 @@ class BeliefState:
     players: dict[int, PlayerBelief] = field(default_factory=dict)
     relations: RelationGraph = field(default_factory=RelationGraph)
     _processed_memory_count: int = 0
+    _known_relation_ids: set[int] = field(default_factory=set)
 
     def update_from_request(self, request: ActionRequest, memory: AgentMemory | None = None) -> None:
         observation = request.observation
@@ -236,7 +241,9 @@ class BeliefState:
                     direction="wolf",
                     source=self.player_id,
                 )
-                self.relations.add(self.player_id, known_id, "teammate", 0.9)
+                if known_id not in self._known_relation_ids:
+                    self._known_relation_ids.add(known_id)
+                    self.relations.add(self.player_id, known_id, "teammate", 0.9)
 
     def _apply_seer_checks(self, request: ActionRequest) -> None:
         for checked_id, team in request.observation.seer_checks.items():
@@ -267,6 +274,7 @@ class BeliefState:
 
     def reset(self) -> None:
         self._processed_memory_count = 0
+        self._known_relation_ids.clear()
 
     def _apply_memory_events(self, memory: AgentMemory) -> None:
         new_events = memory.events[self._processed_memory_count:]
@@ -315,8 +323,6 @@ class BeliefState:
                 self._apply_death_evidence(event)
 
     def _apply_vote_evidence(self, voter: int, target: int, day: int) -> None:
-        if target == self.player_id:
-            return
         voter_belief = self.players.setdefault(voter, PlayerBelief(player_id=voter))
         target_belief = self.players.setdefault(target, PlayerBelief(player_id=target))
         voter_trust = _source_trust(voter_belief)
@@ -351,8 +357,6 @@ class BeliefState:
             )
 
     def _apply_speech_suspicion(self, speaker: int, suspected: int) -> None:
-        if suspected == self.player_id:
-            return
         speaker_belief = self.players.setdefault(speaker, PlayerBelief(player_id=speaker))
         target_belief = self.players.setdefault(suspected, PlayerBelief(player_id=suspected))
         speaker_trust = _source_trust(speaker_belief)
@@ -382,14 +386,14 @@ class BeliefState:
             return
         b = self.players.setdefault(target, PlayerBelief(player_id=target))
         content = event.content.lower()
-        if "werewolf" in content or "狼刀" in event.content or "夜" in event.phase:
+        if "werewolf" in content or "狼刀" in content or "night" in event.phase.lower():
             b.add_evidence(
                 "death",
                 0.35,
                 f"P{target} 夜间死亡，通常更偏好人或神职",
                 direction="good",
             )
-        elif "white_wolf" in content or "白狼王" in event.content:
+        elif "white_wolf" in content or "白狼王" in content:
             b.add_evidence(
                 "death",
                 0.3,

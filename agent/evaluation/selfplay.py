@@ -7,6 +7,7 @@ generates per-game reviews, experiences, and a run summary.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +34,8 @@ from agent.evaluation.review_enhanced import generate_enhanced_review
 from agent.runtime.agent import LLMPlayerAgent
 from agent.runtime.factory import load_llm_client
 from agent.skill_system.router import configure_skill_root
+
+_log = logging.getLogger(__name__)
 
 MAX_REVIEW_SCORE = 10.0
 
@@ -289,6 +292,7 @@ async def run_selfplay(
     results: list[SelfPlayGameResult] = []
     _frozen_skill_dir = config.skill_dir
     batch_client: ModelAdapter | None = None
+    configure_skill_root(config.skill_dir)
 
     for i in range(config.games):
         if config.skill_dir != _frozen_skill_dir:
@@ -309,7 +313,6 @@ async def run_selfplay(
 
         # Create agents with trace recorders
         decision_recorder = AgentDecisionRecorder()
-        configure_skill_root(config.skill_dir)
         client = client_factory() if client_factory else model
         if client is None:
             client = load_llm_client(
@@ -333,6 +336,7 @@ async def run_selfplay(
         try:
             winner = await engine.run_until_finished(max_days=config.max_days)
         except Exception as exc:
+            _log.error("game %s failed", game_id, exc_info=True)
             game_error = str(exc)
             winner = None
 
@@ -399,8 +403,9 @@ async def run_selfplay(
         information_score = 0.0
         cooperation_score = 0.0
         role_weighted_score = 0.0
+        agent_decisions = _collect_decisions(decision_recorder)
+
         if config.enable_review and not game_error:
-            agent_decisions = _collect_decisions(decision_recorder)
             review_report = generate_enhanced_review(
                 game_log={"entries": [e.to_dict() for e in engine.logger.entries]},
                 agent_decisions=agent_decisions,
@@ -427,7 +432,6 @@ async def run_selfplay(
 
         # Experience cards — skip for errored games
         if config.enable_experience and review_report is not None:
-            agent_decisions = _collect_decisions(decision_recorder)
             cards = extract_experiences(
                 game_id=game_id,
                 roles=roles,
@@ -488,7 +492,7 @@ async def run_selfplay(
             "seed": seed,
             "agent_version": config.agent_version,
             "winner": winner_str,
-            "days": engine.state.day,
+            "days": getattr(engine.state, "day", 0) or 0,
             "players": player_roles,
         })
 
@@ -496,7 +500,7 @@ async def run_selfplay(
             game_id=game_id,
             seed=seed,
             winner=winner_str,
-            days=engine.state.day,
+            days=getattr(engine.state, "day", 0) or 0,
             player_roles=player_roles,
             decision_count=total_decisions,
             fallback_count=fallback_count,
@@ -522,7 +526,10 @@ async def run_selfplay(
         )
         results.append(result)
         if on_game_complete is not None:
-            on_game_complete(i, result)
+            try:
+                on_game_complete(i, result)
+            except Exception:
+                _log.warning("on_game_complete callback raised for game %s", game_id, exc_info=True)
 
     if (
         config.enable_batch_dream
@@ -642,7 +649,7 @@ def _create_agents(
             got_trigger_threshold=got_trigger_threshold,
         )
         # Wire trace recorder into the runtime
-        agent.runtime.trace_recorder = trace_recorders.get(player_id)
+        agent.runtime.trace_recorder = trace_recorders[player_id]
         agents[player_id] = agent
     return agents
 

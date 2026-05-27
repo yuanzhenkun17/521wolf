@@ -27,12 +27,20 @@ async def skill_select_node(
     skill_root: Path | None = None,
 ) -> AgentContext:
     """Ask the LLM to select relevant skills from descriptions."""
+    import logging
     from engine.models import Role
 
-    role = Role(ctx.role)
+    try:
+        role = Role(ctx.role)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "Unknown role %r in context, skipping skill selection", ctx.role
+        )
+        return ctx
+
     selected = await select_skills_by_llm(ctx, role, model, skill_root=skill_root)
 
-    if selected is not None:
+    if selected is not None and selected:
         ctx.skill_selection = {s.name for s in selected}
     # else: leave skill_selection as None → fallback in skill_router_node
     return ctx

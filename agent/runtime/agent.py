@@ -20,9 +20,9 @@ drops into any existing game without rule-layer changes.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import logging
+from contextlib import nullcontext
 from pathlib import Path
-from collections.abc import Iterator
 
 from langfuse import observe, propagate_attributes
 from engine.models import ActionRequest, ActionResponse, Role
@@ -47,10 +47,7 @@ from agent.nodes.got import got_node
 from agent.nodes.tot import tot_node
 from agent.nodes.skill_select import skill_select_node
 
-
-@contextmanager
-def _noop() -> Iterator[None]:
-    yield
+_log = logging.getLogger(__name__)
 
 
 class AgentRuntime:
@@ -110,7 +107,7 @@ class AgentRuntime:
             role=self.role.value,
         )
 
-        with propagate_attributes(session_id=self.game_id) if self.game_id else _noop():
+        with propagate_attributes(session_id=self.game_id) if self.game_id else nullcontext():
             try:
                 # -- synchronous nodes -------------------------------------------------
                 ctx = observe_node(ctx)
@@ -140,11 +137,18 @@ class AgentRuntime:
                 ctx = log_node(ctx, self.recorder)
             finally:
                 # -- optional trace recording for archive ------------------------------
-                if self.trace_recorder:
-                    self.trace_recorder.record(ctx)
+                try:
+                    if self.trace_recorder:
+                        self.trace_recorder.record(ctx)
+                except Exception:
+                    _log.warning("trace_recorder.record failed", exc_info=True)
 
                 # -- write decision record back to memory ------------------------------
-                self.memory.remember_action(request, ctx.response, ctx.decision_record)
+                try:
+                    if ctx.response is not None:
+                        self.memory.remember_action(request, ctx.response, ctx.decision_record)
+                except Exception:
+                    _log.warning("remember_action failed in finally", exc_info=True)
 
         if ctx.response is None:
             raise RuntimeError("Pipeline produced no response")

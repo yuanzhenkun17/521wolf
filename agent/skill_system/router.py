@@ -19,7 +19,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from engine.models import ActionType, Role
 
@@ -75,7 +75,7 @@ def _get_skill_index(skill_root: Path | None = None) -> SkillIndex:
     return _SKILL_CACHE[root]
 
 
-def _requirements_match(requires: dict, ctx: AgentContext) -> bool:
+def _requirements_match(requires: dict[str, Any], ctx: AgentContext) -> bool:
     """Check whether request metadata satisfies the skill requires."""
     if not ctx.request.metadata:
         return not requires
@@ -220,7 +220,7 @@ async def select_skills_by_llm(
     try:
         raw = await model.complete(messages, name=f"skill_select/{ctx.player_id}")
     except Exception:
-        _log.debug("skill_select LLM call failed for player %s", ctx.player_id, exc_info=True)
+        _log.warning("skill_select_by_llm failed, falling back", exc_info=True)
         return None
 
     selected_names = set(_parse_skill_names(raw))

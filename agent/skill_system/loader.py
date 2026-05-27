@@ -34,8 +34,8 @@ class MarkdownSkill:
     scope: str = "role"  # "common" | "role"
     role: Role | None = None
     applicable_actions: set[ActionType] = field(default_factory=set)
-    requires: dict = field(default_factory=dict)
-    output_constraints: dict = field(default_factory=dict)
+    requires: dict[str, Any] = field(default_factory=dict)
+    output_constraints: dict[str, Any] = field(default_factory=dict)
     body: str = ""
     prompt_hints: list[str] = field(default_factory=list)
     category: str = "strategy"  # "foundation" | "strategy"

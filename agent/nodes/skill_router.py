@@ -17,7 +17,13 @@ def skill_router_node(ctx: AgentContext, *, skill_root: Path | None = None, **kw
     skills are injected.  Otherwise falls back to injecting all role-matched
     skills.
     """
-    role = Role(ctx.role)
+    try:
+        role = Role(ctx.role)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "Unknown role %r in context, skipping skill routing", ctx.role
+        )
+        return ctx
     selected = select_skills(ctx, role, skill_root=skill_root)
 
     # Stage 2: filter by LLM selection if available
