@@ -12,7 +12,7 @@ def parse_node(ctx: AgentContext) -> AgentContext:
 
     Accepts both legacy output aliases (``text``, ``reasoning``) and current field
     names (``public_text``, ``private_reasoning``, ``confidence``,
-    ``memory_refs``, ``selected_skill``).
+    ``memory_refs``, ``selected_skills``).
     """
     if not ctx.raw_output:
         ctx.errors.append("Empty LLM output, will fall back to policy.")
@@ -49,7 +49,7 @@ def parse_node(ctx: AgentContext) -> AgentContext:
     memory_refs = [
         str(r) for r in data.get("memory_refs", []) if r is not None
     ]
-    selected_skill = str(data.get("selected_skill") or "")
+    selected_skills = str(data.get("selected_skills") or data.get("selected_skill") or "")
 
     ctx.response = ActionResponse(
         ctx.request.action_type,
@@ -67,7 +67,7 @@ def parse_node(ctx: AgentContext) -> AgentContext:
         "alternatives": alternatives,
         "rejected_reasons": rejected_reasons,
         "memory_refs": memory_refs,
-        "selected_skill": selected_skill,
+        "selected_skills": selected_skills,
     }
     ctx.confidence = confidence
 

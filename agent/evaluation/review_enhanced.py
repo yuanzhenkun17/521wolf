@@ -847,7 +847,7 @@ def _analyze_skills(agent_decisions: dict[int, list[dict]]) -> dict[str, SkillRe
 
     for pid, decisions in agent_decisions.items():
         for d in decisions:
-            skill_name = d.get("selected_skill", "")
+            skill_name = d.get("selected_skills") or d.get("selected_skill", "")
             if not skill_name or skill_name == "unknown":
                 continue
 

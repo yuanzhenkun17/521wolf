@@ -39,7 +39,7 @@ async def got_node(ctx: AgentContext, model: ModelAdapter, *, threshold: float =
             "alternatives": [],
             "rejected_reasons": [],
             "memory_refs": [],
-            "selected_skill": "",
+            "selected_skills": "",
         },
         ensure_ascii=False,
     )

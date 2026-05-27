@@ -29,7 +29,7 @@ class DecisionRecord:
     confidence: float = 0.0
     alternatives: list[int] = field(default_factory=list)
     rejected_reasons: list[str] = field(default_factory=list)
-    selected_skill: str = ""
+    selected_skills: str = ""
     memory_refs: list[str] = field(default_factory=list)
     belief_snapshot: dict = field(default_factory=dict)
     memory_summary: list[str] = field(default_factory=list)
@@ -53,7 +53,7 @@ class DecisionRecord:
             "confidence": self.confidence,
             "alternatives": self.alternatives,
             "rejected_reasons": self.rejected_reasons,
-            "selected_skill": self.selected_skill,
+            "selected_skills": self.selected_skills,
             "memory_refs": self.memory_refs,
             "belief_snapshot": self.belief_snapshot,
             "memory_summary": self.memory_summary,

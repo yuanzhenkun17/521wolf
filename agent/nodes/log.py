@@ -26,7 +26,7 @@ def log_node(ctx: AgentContext, recorder: AgentDecisionRecorder | None = None) -
         rejected_reasons=[
             str(r) for r in pd.get("rejected_reasons", []) if r is not None
         ],
-        selected_skill=", ".join(ctx.selected_skills),
+        selected_skills=", ".join(ctx.selected_skills),
         memory_refs=list(pd.get("memory_refs", [])),
         belief_snapshot=ctx.belief_context,
         memory_summary=ctx.memory_context.get("memory_events", [])[-6:],

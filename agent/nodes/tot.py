@@ -45,7 +45,7 @@ async def tot_node(ctx: AgentContext, model: ModelAdapter) -> AgentContext:
             "alternatives": [],
             "rejected_reasons": [],
             "memory_refs": [],
-            "selected_skill": "",
+            "selected_skills": "",
         },
         ensure_ascii=False,
     )
