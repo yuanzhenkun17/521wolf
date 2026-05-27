@@ -70,8 +70,6 @@ def parse_node(ctx: AgentContext) -> AgentContext:
         "selected_skill": selected_skill,
     }
     ctx.confidence = confidence
-    if selected_skill:
-        ctx.selected_skill = selected_skill
 
     return ctx
 
