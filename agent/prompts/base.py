@@ -50,8 +50,7 @@ def build_system_prompt(*, player_id: int, role: Role) -> str:
         "请有基本判断：好人应找狼、狼人应隐藏身份并推动好人出局、神职应合理使用技能。\n"
         "如果竞选警长对你的身份有帮助，可以主动竞选；如果局势不明，可以保守发言。\n"
         "必须区分 private_reasoning 和 public_text：内部判断不能直接泄露到公开发言。\n"
-        "不要在公开发言中泄露你不可公开解释的私有视角，例如狼人队友、上帝视角或系统真实身份。\n"
-        "必须只输出 JSON，不要输出解释性自然语言。"
+        "不要在公开发言中泄露你不可公开解释的私有视角，例如狼人队友、上帝视角或系统真实身份。"
     )
 
 
@@ -66,10 +65,6 @@ def build_request_prompt(
 ) -> str:
     observation = request.observation
     private_facts = memory_context.get("private_facts", {})
-
-    skill_line = ""
-    if selected_skills:
-        skill_line = f"当前启用策略技能: {', '.join(selected_skills)}\n"
 
     # Skill-specific hints from skill router
     hints = (strategy_advice or {}).get("prompt_hints", [])
@@ -101,8 +96,6 @@ def build_request_prompt(
         )
 
     return (
-        f"你是 {request.player_id} 号玩家。\n"
-        f"身份: {observation.self_role.value}\n"
         f"当前阶段: {request.phase.value}\n"
         f"当前天数: {observation.day}\n"
         f"本次行动: {request.action_type.value}\n"
@@ -120,7 +113,6 @@ def build_request_prompt(
         f"{field_notes_block}"
         f"{skill_context_block}"
         f"{long_memory_block}"
-        f"{skill_line}"
         f"{hints_block}"
         f"{action_instruction(request.action_type)}\n"
         f"{strategy_instruction(request)}\n"
