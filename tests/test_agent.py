@@ -10,7 +10,6 @@ from engine.actions import ActionType
 from engine.models import ActionRequest, Observation, Phase, Role
 
 from agent.runtime.context import AgentContext
-from agent.nodes.observe import observe_node
 from agent.nodes.memory import memory_node as mem_node
 from agent.nodes.belief import belief_node
 from agent.nodes.skill_router import skill_router_node
@@ -188,12 +187,10 @@ class AgentContextTests(unittest.TestCase):
         self.assertEqual(ctx.response, None)
         self.assertEqual(ctx.errors, [])
 
-    def test_context_allows_nodes_to_set_fields(self):
+    def test_context_has_request_observation(self):
         request = _make_speak_request()
         ctx = AgentContext(request=request, player_id=2, role="villager")
-        ctx = observe_node(ctx)
-        self.assertIn("day", ctx.observation_summary)
-        self.assertEqual(ctx.observation_summary["day"], 2)
+        self.assertEqual(ctx.request.observation.day, 2)
 
     def test_context_has_selected_skills_field(self):
         """New multi-skill fields exist on AgentContext."""
@@ -209,13 +206,12 @@ class NodesTests(unittest.TestCase):
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
         self.belief = BeliefState(player_id=5, role=Role.VILLAGER)
 
-    def test_observe_node_extracts_structured_summary(self):
+    def test_request_observation_has_expected_data(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = observe_node(ctx)
-        self.assertEqual(ctx.observation_summary["day"], 2)
-        self.assertEqual(ctx.observation_summary["phase"], "exile_vote")
-        self.assertEqual(ctx.observation_summary["alive_players"], [1, 2, 3, 5, 6, 8, 9, 10])
-        self.assertEqual(ctx.observation_summary["candidates"], [3, 7, 9])
+        self.assertEqual(ctx.request.observation.day, 2)
+        self.assertEqual(ctx.request.phase.value, "exile_vote")
+        self.assertEqual(list(ctx.request.observation.alive_players), [1, 2, 3, 5, 6, 8, 9, 10])
+        self.assertEqual(list(ctx.request.candidates), [3, 7, 9])
 
     def test_memory_node_builds_context(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
@@ -245,7 +241,6 @@ class NodesTests(unittest.TestCase):
 
     def test_prompt_node_builds_system_and_user_messages(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = observe_node(ctx)
         ctx = mem_node(ctx, self.memory)
         ctx = belief_node(ctx, self.belief, self.memory)
         ctx = skill_router_node(ctx)
@@ -359,8 +354,7 @@ class AgentRuntimeTests(unittest.TestCase):
 
         # Manually step through pipeline to verify AgentContext flow
         ctx = AgentContext(request=request, player_id=runtime.player_id, role=runtime.role.value)
-        ctx = observe_node(ctx)
-        self.assertIn("day", ctx.observation_summary)
+        self.assertEqual(ctx.request.observation.day, 2)
         ctx = mem_node(ctx, runtime.memory)
         self.assertIn("memory_events", ctx.memory_context)
         ctx = belief_node(ctx, runtime.belief, runtime.memory)
@@ -492,7 +486,6 @@ class PromptHintsTests(unittest.TestCase):
     def test_skill_context_appears_in_messages(self):
         """Multi-skill context is injected into the prompt."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = observe_node(ctx)
         ctx = mem_node(ctx, self.memory)
         ctx = belief_node(ctx, self.belief, self.memory)
         ctx = skill_router_node(ctx)
@@ -507,7 +500,7 @@ class PromptHintsTests(unittest.TestCase):
             memory_context=ctx.memory_context,
             belief_context=ctx.belief_context,
             strategy_advice=strategy_advice,
-            selected_skill=ctx.selected_skill,
+            selected_skills=ctx.selected_skills,
             skill_context=ctx.skill_context,
         )
         combined = " ".join(m.get("content", "") for m in messages)
@@ -518,7 +511,6 @@ class PromptHintsTests(unittest.TestCase):
     def test_skill_advice_includes_skill_count(self):
         """Check that the skill router returns skill metadata in strategy_advice."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = observe_node(ctx)
         ctx = mem_node(ctx, self.memory)
         ctx = belief_node(ctx, self.belief, self.memory)
         ctx = skill_router_node(ctx)
@@ -538,7 +530,6 @@ class FieldNotesPromptTests(unittest.TestCase):
     def test_field_notes_appear_in_prompt_when_present(self):
         """When memory_context has field_notes, they appear in the prompt."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = observe_node(ctx)
         ctx = mem_node(ctx, self.memory)
         ctx = belief_node(ctx, self.belief, self.memory)
         ctx = skill_router_node(ctx)
@@ -578,7 +569,7 @@ class FieldNotesPromptTests(unittest.TestCase):
             },
             belief_context=ctx.belief_context,
             strategy_advice=strategy_advice,
-            selected_skill=ctx.selected_skill,
+            selected_skills=ctx.selected_skills,
             skill_context=ctx.skill_context,
         )
         combined = " ".join(m.get("content", "") for m in messages)

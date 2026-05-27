@@ -42,13 +42,16 @@ def _make_vote_context() -> AgentContext:
     )
     ctx = AgentContext(request=request, player_id=5, role="villager")
     ctx.observation_summary = {
-        "day": 2, "phase": "exile_vote", "alive_players": [1, 2, 3, 5, 6, 8, 9, 10],
+        "day": 2,
+        "phase": "exile_vote",
+        "alive_players": [1, 2, 3, 5, 6, 8, 9, 10],
+        "dead_players": [4, 7],
+        "sheriff_id": 5,
         "candidates": [3, 7, 9],
     }
     ctx.memory_context = {"memory_events": ["P8发言"], "private_facts": {}}
     ctx.belief_context = {"top_suspicions": [{"player_id": 7, "reason": "可疑"}]}
     ctx.selected_skills = ["output_schema", "villager_vote_analysis"]
-    ctx.selected_skill = "output_schema,villager_vote_analysis"
     ctx.messages = [{"role": "system", "content": "你是一个村民"}, {"role": "user", "content": "请投票"}]
     ctx.raw_output = '{"target": 7, "choice": null, "text": "出7号", "reasoning": "7号可疑"}'
     ctx.parsed_decision = {"target": 7, "choice": None, "text": "出7号", "reasoning": "7号可疑"}

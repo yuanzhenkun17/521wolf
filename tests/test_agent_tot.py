@@ -74,12 +74,6 @@ def _make_ctx(
 ) -> AgentContext:
     request = _make_request(action_type)
     ctx = AgentContext(request=request, player_id=5, role="villager")
-    ctx.observation_summary = {
-        "day": 2,
-        "phase": "exile_vote",
-        "alive_players": [1, 2, 3, 5, 6, 8, 9, 10],
-        "candidates": [3, 7, 9],
-    }
     ctx.memory_context = {"memory_events": ["P8发言"], "private_facts": {}}
     ctx.belief_context = {"top_suspicions": [{"player_id": 7, "reason": "可疑"}]}
     ctx.selected_skills = ["output_schema", "villager_vote_analysis"]

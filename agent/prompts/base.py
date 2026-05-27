@@ -19,7 +19,7 @@ def build_messages(
     memory_context: dict,
     belief_context: dict | None = None,
     strategy_advice: dict[str, Any] | None = None,
-    selected_skill: str | None = None,
+    selected_skills: list[str] | None = None,
     skill_context: str = "",
 ) -> list[dict[str, str]]:
     return [
@@ -36,7 +36,7 @@ def build_messages(
                 memory_context,
                 belief_context=belief_context or {},
                 strategy_advice=strategy_advice or {},
-                selected_skill=selected_skill,
+                selected_skills=selected_skills or [],
                 skill_context=skill_context,
             ),
         },
@@ -61,19 +61,18 @@ def build_request_prompt(
     *,
     belief_context: dict,
     strategy_advice: dict[str, Any] | None = None,
-    selected_skill: str | None = None,
+    selected_skills: list[str] | None = None,
     skill_context: str = "",
 ) -> str:
     observation = request.observation
     private_facts = memory_context.get("private_facts", {})
-    advice = strategy_advice or {}
 
     skill_line = ""
-    if selected_skill:
-        skill_line = f"当前启用策略技能: {selected_skill}\n"
+    if selected_skills:
+        skill_line = f"当前启用策略技能: {', '.join(selected_skills)}\n"
 
     # Skill-specific hints from skill router
-    hints = advice.get("prompt_hints", [])
+    hints = (strategy_advice or {}).get("prompt_hints", [])
     hints_block = ""
     if hints:
         hints_block = "技能提示:\n" + "\n".join(f"- {h}" for h in hints) + "\n\n"
@@ -86,7 +85,7 @@ def build_request_prompt(
         if formatted:
             field_notes_block = f"结构化现场笔记:\n{formatted}\n\n"
 
-    # Multi-skill context block (new — replaces old single skill)
+    # Multi-skill context block
     skill_context_block = ""
     if skill_context:
         skill_context_block = f"已注入策略 Skill:\n{skill_context}\n\n"
@@ -117,10 +116,7 @@ def build_request_prompt(
         f"行动补充信息: {private_facts.get('metadata', {})}\n"
         f"你的历史动作摘要: {memory_context.get('self_history', [])}\n"
         f"你的近期私有决策理由: {memory_context.get('decisions', [])}\n"
-        f"你记录的怀疑对象: {memory_context.get('suspicions', [])}\n"
-        f"你听到的身份声明: {memory_context.get('claims_seen', [])}\n"
         f"当前主观判断 Belief: {belief_context}\n"
-        f"当前角色策略建议: {advice}\n"
         f"{field_notes_block}"
         f"{skill_context_block}"
         f"{long_memory_block}"

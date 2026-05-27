@@ -18,18 +18,16 @@ class AgentContext:
     player_id: int
     role: str
 
-    # Observation
-    observation_summary: dict[str, Any] = field(default_factory=dict)
-
     # Memory
     memory_context: dict[str, Any] = field(default_factory=dict)
 
     # Belief
     belief_context: dict[str, Any] = field(default_factory=dict)
 
+    # Observation
+    observation_summary: dict[str, Any] = field(default_factory=dict)
+
     # Skill routing
-    # Stage 2 output: final routed skill(s) chosen by skill_router_node.
-    selected_skill: str | None = None
     selected_skills: list[str] = field(default_factory=list)
     skill_context: str = ""
     strategy_advice: dict[str, Any] = field(default_factory=dict)

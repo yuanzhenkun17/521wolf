@@ -33,9 +33,9 @@ from agent.observability.archive import AgentTraceRecorder
 from agent.observability.decision_log import AgentDecisionRecorder
 from agent.runtime.context import AgentContext
 from agent.runtime.model import ModelAdapter
-from agent.nodes.observe import observe_node
 from agent.nodes.memory import memory_node
 from agent.nodes.belief import belief_node
+from agent.nodes.observe import observe_node
 from agent.nodes.skill_router import skill_router_node
 from agent.nodes.prompt import prompt_node
 from agent.nodes.llm import llm_node
@@ -54,7 +54,6 @@ class AgentRuntime:
     Pipeline::
 
         ActionRequest
-        -> observe_node
         -> memory_node
         -> belief_node
         -> skill_router_node

@@ -22,10 +22,8 @@ def skill_router_node(ctx: AgentContext, *, skill_root: Path | None = None, **kw
     selected = select_skills(ctx, role, skill_root=skill_root)
 
     ctx.selected_skills = [s.name for s in selected]
-    ctx.selected_skill = ",".join(s.name for s in selected)
     ctx.skill_context = format_skill_context(selected, ctx.request.action_type)
     ctx.strategy_advice = {
-        "selected_skills": ctx.selected_skills,
         "skill_count": len(selected),
         "prompt_hints": [hint for s in selected for hint in s.prompt_hints],
     }

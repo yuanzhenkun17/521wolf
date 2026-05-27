@@ -196,7 +196,7 @@ class BeliefState:
             key=lambda b: (-b.wolf_prob, b.player_id),
         )
         return {
-            "top_suspicions": [b.to_prompt_dict() for b in ordered[:5]],
+            "top_suspicions": [b.to_prompt_dict() for b in ordered],
             "self_belief": self.players[self.player_id].to_prompt_dict(),
             "relations": self.relations.to_list(),
         }

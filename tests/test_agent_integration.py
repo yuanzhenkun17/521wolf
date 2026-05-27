@@ -54,7 +54,7 @@ def _make_archive_decision(
         phase=phase,
         action_type=action,
         candidates=[],
-        observation_summary={},
+        observation_summary={"day": day, "phase": phase, "alive_players": [], "dead_players": [], "sheriff_id": None, "candidates": []},
         memory_context={},
         belief_context={},
         selected_skills=[],
