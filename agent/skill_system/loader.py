@@ -119,7 +119,7 @@ def _parse_nested_value(lines: list[str]) -> Any:
     """Parse indented lines as either a list (if lines start with ``-``) or a dict."""
     if not lines:
         return {}
-    first = next((l for l in lines if l.strip()), "")
+    first = next((line for line in lines if line.strip()), "")
     if first.startswith("-"):
         return _parse_simple_list(lines)
     return _parse_nested_dict(lines)

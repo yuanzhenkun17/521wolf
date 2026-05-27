@@ -28,7 +28,7 @@ from agent.cognition.skill_evolution import (
     proposals_from_dream,
     write_skill_proposals,
 )
-from agent.evaluation.review_enhanced import GameReviewReport, generate_enhanced_review
+from agent.evaluation.review_enhanced import generate_enhanced_review
 from agent.runtime.agent import LLMPlayerAgent
 from agent.runtime.factory import load_llm_client
 from agent.skill_system.router import configure_skill_root
@@ -186,8 +186,8 @@ class SelfPlayResult:
             "",
             "## Summary",
             "",
-            f"| Metric | Value |",
-            f"|--------|-------|",
+            "| Metric | Value |",
+            "|--------|-------|",
             f"| 狼人胜率 | {s['werewolf_win_rate']:.1%} ({s['werewolf_wins']}/{s['games'] - s.get('error_count', 0)}) |",
             f"| 好人胜率 | {s['villager_win_rate']:.1%} ({s['villager_wins']}/{s['games'] - s.get('error_count', 0)}) |",
             f"| 失败局 | {s.get('error_count', 0)} |",

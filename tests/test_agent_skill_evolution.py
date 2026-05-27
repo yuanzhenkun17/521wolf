@@ -49,6 +49,7 @@ scope: role
 role: witch
 applicable_actions:
   - witch_act
+evolvable: true
 ---
 
 # 女巫毒人
@@ -100,7 +101,7 @@ class SkillEvolutionTests(unittest.TestCase):
 
             records = apply_skill_proposals(
                 proposals,
-                skill_root=root,
+                target_skill_root=root,
                 patch_dir=patch_dir,
                 min_confidence=0.75,
                 min_evidence_cards=3,
@@ -118,8 +119,8 @@ class SkillEvolutionTests(unittest.TestCase):
             skill_path = _write_skill(root)
             proposals = proposals_from_dream(_report())
 
-            first = apply_skill_proposals(proposals, skill_root=root)
-            second = apply_skill_proposals(proposals, skill_root=root)
+            first = apply_skill_proposals(proposals, target_skill_root=root)
+            second = apply_skill_proposals(proposals, target_skill_root=root)
 
             self.assertEqual(len(first), 1)
             self.assertEqual(len(second), 0)

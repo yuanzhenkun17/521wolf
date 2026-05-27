@@ -19,7 +19,7 @@ from agent.evaluation.leaderboard import (
     write_leaderboard,
 )
 from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayResult, run_selfplay
-from agent.versioning.manifest import AgentVersionManifest, load_manifest
+from agent.versioning.manifest import load_manifest
 
 
 RunSelfplayFunc = Callable[..., Awaitable[SelfPlayResult]]
