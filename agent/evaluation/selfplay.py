@@ -405,7 +405,7 @@ async def run_selfplay(
         role_weighted_score = 0.0
         agent_decisions = _collect_decisions(decision_recorder)
 
-        if config.enable_review and not game_error:
+        if config.enable_review and not game_error and winner is not None:
             review_report = generate_enhanced_review(
                 game_log={"entries": [e.to_dict() for e in engine.logger.entries]},
                 agent_decisions=agent_decisions,
