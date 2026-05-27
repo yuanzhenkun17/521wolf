@@ -369,7 +369,7 @@ def _detect_turning_points(game_log: dict, agent_decisions: dict[int, list[dict]
     # Find seer reveal
     for pid, decisions in agent_decisions.items():
         for d in decisions:
-            if d.get("action_type") in {"sheriff_speak", "speak"} and d.get("selected_skills") == "seer_claim":
+            if d.get("action_type") in {"sheriff_speak", "speak"} and "seer_claim" in d.get("selected_skills", []):
                 points.append(f"预言家 P{pid} 跳身份公布查验链")
                 break
     return points[:5]

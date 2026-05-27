@@ -297,10 +297,10 @@ def _extract_situation_tags(
             elif mt == MISTAKE_WRONG_VOTE:
                 tags.append("wrong_vote")
     for d in decisions:
-        skill = d.get("selected_skills") or d.get("selected_skill", "")
-        if "fake_seer" in skill and "fake_seer" not in tags:
+        skills = d.get("selected_skills", [])
+        if any("fake_seer" in s for s in skills) and "fake_seer" not in tags:
             tags.append("fake_seer")
-        if "claim" in skill and "claim" not in tags:
+        if any("claim" in s for s in skills) and "claim" not in tags:
             tags.append("claim")
     if outcome == "win":
         tags.append("win")
@@ -327,8 +327,7 @@ def _extract_key_decisions(
         if not is_notable:
             continue
 
-        skills = d.get("selected_skills") or d.get("selected_skill", "")
-        skill_list = [s.strip() for s in skills.split(",") if s.strip()]
+        skill_list = d.get("selected_skills", [])
 
         notable.append(ExperienceDecision(
             day=d.get("day", 0),
@@ -424,9 +423,7 @@ def _extract_reusable_strategies(
 def _extract_related_skills(decisions: list[dict]) -> list[str]:
     skills: set[str] = set()
     for d in decisions:
-        skill_str = d.get("selected_skills") or d.get("selected_skill", "")
-        for sk in skill_str.split(","):
-            sk = sk.strip()
+        for sk in d.get("selected_skills", []):
             if sk and sk != "unknown":
                 skills.add(sk)
     return sorted(skills)

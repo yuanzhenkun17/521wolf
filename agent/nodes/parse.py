@@ -49,7 +49,7 @@ def parse_node(ctx: AgentContext) -> AgentContext:
     memory_refs = [
         str(r) for r in data.get("memory_refs", []) if r is not None
     ]
-    selected_skills = str(data.get("selected_skills") or data.get("selected_skill") or "")
+    selected_skills = data.get("selected_skills", [])
 
     ctx.response = ActionResponse(
         ctx.request.action_type,
@@ -67,7 +67,7 @@ def parse_node(ctx: AgentContext) -> AgentContext:
         "alternatives": alternatives,
         "rejected_reasons": rejected_reasons,
         "memory_refs": memory_refs,
-        "selected_skills": selected_skills,
+        "selected_skills": selected_skills if isinstance(selected_skills, list) else [],
     }
     ctx.confidence = confidence
 

@@ -847,14 +847,12 @@ def _analyze_skills(agent_decisions: dict[int, list[dict]]) -> dict[str, SkillRe
 
     for pid, decisions in agent_decisions.items():
         for d in decisions:
-            skill_name = d.get("selected_skills") or d.get("selected_skill", "")
-            if not skill_name or skill_name == "unknown":
+            skills = d.get("selected_skills", [])
+            if not skills:
                 continue
 
-            # Split comma-separated skills
-            for sk in skill_name.split(","):
-                sk = sk.strip()
-                if not sk:
+            for sk in skills:
+                if not sk or sk == "unknown":
                     continue
                 if sk not in skill_map:
                     skill_map[sk] = SkillReview(skill_name=sk)
