@@ -31,7 +31,6 @@ from agent.cognition.belief import BeliefState
 from agent.cognition.memory import AgentMemory
 from agent.observability.archive import AgentTraceRecorder
 from agent.observability.decision_log import AgentDecisionRecorder
-from agent.prompts.instructions import default_persona
 from agent.runtime.context import AgentContext
 from agent.runtime.model import ModelAdapter
 from agent.nodes.observe import observe_node
@@ -45,7 +44,6 @@ from agent.nodes.policy import policy_node
 from agent.nodes.log import log_node
 from agent.nodes.got import got_node
 from agent.nodes.tot import tot_node
-from agent.nodes.skill_select import skill_select_node
 
 _log = logging.getLogger(__name__)
 
@@ -74,7 +72,6 @@ class AgentRuntime:
         player_id: int,
         role: Role,
         model: ModelAdapter,
-        persona: str | None = None,
         memory: AgentMemory | None = None,
         belief: BeliefState | None = None,
         recorder: AgentDecisionRecorder | None = None,
@@ -89,7 +86,6 @@ class AgentRuntime:
         self.role = role
         self.model = model
         self.game_id = game_id
-        self.persona = persona or default_persona(player_id, role)
         self.memory = memory or AgentMemory(player_id=player_id, role=role)
         self.belief = belief or BeliefState(player_id=player_id, role=role)
         self.recorder = recorder
@@ -114,12 +110,9 @@ class AgentRuntime:
                 ctx = memory_node(ctx, self.memory)
                 ctx = belief_node(ctx, self.belief, self.memory)
 
-                # -- async skill selection (Stage 1) ------------------------------------
-                ctx = await skill_select_node(ctx, self.model, skill_root=self.skill_dir)
-
-                # -- skill routing (Stage 2) + prompt assembly -------------------------
+                # -- skill routing + prompt assembly ---------------------------------
                 ctx = skill_router_node(ctx, skill_root=self.skill_dir)
-                ctx = prompt_node(ctx, persona=self.persona)
+                ctx = prompt_node(ctx)
 
                 # -- GoT/ToT reasoning for key actions --------------------------------
                 if self.got_enabled:
@@ -167,7 +160,6 @@ class LLMPlayerAgent:
         player_id: int,
         role: Role,
         client: ModelAdapter,
-        persona: str | None = None,
         decision_recorder: AgentDecisionRecorder | None = None,
         trace_recorder: AgentTraceRecorder | None = None,
         game_id: str | None = None,
@@ -182,7 +174,6 @@ class LLMPlayerAgent:
             player_id=player_id,
             role=role,
             model=client,
-            persona=persona,
             recorder=decision_recorder,
             trace_recorder=trace_recorder,
             game_id=game_id,
@@ -191,10 +182,6 @@ class LLMPlayerAgent:
             got_enabled=got_enabled,
             got_trigger_threshold=got_trigger_threshold,
         )
-
-    @property
-    def persona(self) -> str:
-        return self.runtime.persona
 
     @property
     def memory(self) -> AgentMemory:

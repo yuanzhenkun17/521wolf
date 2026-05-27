@@ -1,28 +1,8 @@
-"""Persona, action instructions, and strategy hints for prompt construction."""
+"""Action instructions and strategy hints for prompt construction."""
 
 from __future__ import annotations
 
-from engine.models import ActionRequest, ActionType, Role, Team
-
-
-def default_persona(player_id: int, role: Role) -> str:
-    base = [
-        "发言简洁，优先保命。",
-        "愿意竞选警长，喜欢带队归票。",
-        "谨慎观察，投票跟随自己认为可信的人。",
-        "攻击性稍强，会主动给出怀疑对象。",
-    ][(player_id - 1) % 4]
-    if role.team is Team.WEREWOLVES:
-        return base + " 作为狼人时注意隐藏视角，尽量把票引向好人。"
-    if role is Role.SEER:
-        return base + " 作为预言家时可以积极争取警徽并表达查验逻辑。"
-    if role is Role.WITCH:
-        return base + " 作为女巫时谨慎用药，不轻易暴露身份。"
-    if role is Role.GUARD:
-        return base + " 作为守卫时关注可能被刀的位置。"
-    if role is Role.HUNTER:
-        return base + " 作为猎人时避免过早暴露，但可强势站边。"
-    return base
+from engine.models import ActionRequest, ActionType
 
 
 def action_instruction(action_type: ActionType) -> str:

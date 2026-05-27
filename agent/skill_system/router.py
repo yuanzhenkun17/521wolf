@@ -6,29 +6,19 @@ Logic::
     2. Inject role skills matching ctx.role and ctx.request.action_type.
     3. Filter by requires metadata match.
     4. Empty applicable_actions = always inject for that role.
-
-Two-stage flow (when LLM is available):
-    Stage 1: ``select_skills_by_llm()`` sends descriptions, LLM picks relevant skills.
-    Stage 2: ``filter_by_selection()`` keeps only LLM-selected skills for full injection.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from engine.models import ActionType, Role
 
 from agent.runtime.context import AgentContext
 from agent.skill_system.loader import MarkdownSkill, load_markdown_skills
-
-
-class _ModelLike(Protocol):
-    async def complete(self, messages: list[dict[str, str]], *, name: str = "") -> str: ...
 
 
 _log = logging.getLogger(__name__)
@@ -146,99 +136,3 @@ def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType)
     return chr(10).join(parts).strip()
 
 
-# ── Two-stage skill selection ────────────────────────────────────────────────
-
-
-_SELECTION_PROMPT = (
-    "你是狼人杀 AI，需要选择当前场景最相关的策略技能。\n\n"
-    "当前角色: {role}\n"
-    "当前动作: {action_type}\n"
-    "已有身份声明: {claims}\n\n"
-    "可用技能:\n{skill_list}\n\n"
-    "请选择最相关的技能，输出 JSON 数组（技能名称列表），如 [\"skill_a\", \"skill_b\"]。\n"
-    "只输出 JSON 数组，不要输出其他内容。"
-)
-
-
-def _build_skill_list(skills: list[MarkdownSkill]) -> str:
-    lines = []
-    for s in skills:
-        desc = s.description or "(无描述)"
-        lines.append(f"- {s.name}: {desc}")
-    return "\n".join(lines)
-
-
-def _parse_skill_names(raw: str) -> list[str]:
-    """Extract a JSON array of skill names from LLM output."""
-    # Try direct parse first
-    try:
-        parsed = json.loads(raw.strip())
-        if isinstance(parsed, list):
-            return [str(item) for item in parsed]
-    except (json.JSONDecodeError, TypeError):
-        pass
-    # Try extracting JSON array from text
-    match = re.search(r'\[\s*"(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")*\s*\]', raw, re.DOTALL)
-    if match:
-        try:
-            parsed = json.loads(match.group())
-            if isinstance(parsed, list):
-                return [str(item) for item in parsed]
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return []
-
-
-async def select_skills_by_llm(
-    ctx: AgentContext,
-    role: Role,
-    model: _ModelLike,
-    *,
-    skill_root: Path | None = None,
-) -> list[MarkdownSkill] | None:
-    """Stage 1: Ask LLM to select relevant skills from descriptions.
-
-    Returns the selected skills, or None if the LLM call fails (caller
-    should fall back to ``select_skills()``).
-    """
-    candidates = select_skills(ctx, role, skill_root=skill_root)
-
-    if not candidates:
-        return []
-
-    claims = {k: v for k, v in (ctx.request.metadata or {}).items() if "claim" in k.lower()}
-    claims_str = str(claims) if claims else "{}"
-
-    prompt = _SELECTION_PROMPT.format(
-        role=role.value,
-        action_type=ctx.request.action_type.value,
-        claims=claims_str,
-        skill_list=_build_skill_list(candidates),
-    )
-    messages = [{"role": "user", "content": prompt}]
-
-    try:
-        raw = await model.complete(messages, name=f"skill_select/{ctx.player_id}")
-    except Exception:
-        _log.warning("skill_select_by_llm failed, falling back", exc_info=True)
-        return None
-
-    selected_names = set(_parse_skill_names(raw))
-    if not selected_names:
-        return None
-
-    # Always include common skills
-    selected = [s for s in candidates if s.scope == "common"]
-    # Add LLM-selected role skills
-    for skill in candidates:
-        if skill.name in selected_names and skill.scope != "common":
-            selected.append(skill)
-    return selected
-
-
-def filter_by_selection(
-    skills: list[MarkdownSkill],
-    selected_names: set[str],
-) -> list[MarkdownSkill]:
-    """Keep only skills whose names are in ``selected_names``."""
-    return [s for s in skills if s.name in selected_names or s.scope == "common"]

@@ -16,7 +16,6 @@ def build_messages(
     *,
     player_id: int,
     role: Role,
-    persona: str,
     memory_context: dict,
     belief_context: dict | None = None,
     strategy_advice: dict[str, Any] | None = None,
@@ -27,7 +26,7 @@ def build_messages(
         {
             "role": "system",
             "content": build_system_prompt(
-                player_id=player_id, role=role, persona=persona
+                player_id=player_id, role=role
             ),
         },
         {
@@ -44,11 +43,10 @@ def build_messages(
     ]
 
 
-def build_system_prompt(*, player_id: int, role: Role, persona: str) -> str:
+def build_system_prompt(*, player_id: int, role: Role) -> str:
     return (
         "你正在扮演一名狼人杀玩家。你只能根据自己可见的信息行动，不能假设上帝视角。\n"
         f"你是 {player_id} 号玩家，身份: {role.value}。\n"
-        f"你的简单性格: {persona}\n"
         "请有基本判断：好人应找狼、狼人应隐藏身份并推动好人出局、神职应合理使用技能。\n"
         "如果竞选警长对你的身份有帮助，可以主动竞选；如果局势不明，可以保守发言。\n"
         "必须区分 private_reasoning 和 public_text：内部判断不能直接泄露到公开发言。\n"
@@ -130,5 +128,4 @@ def build_request_prompt(
         f"{hints_block}"
         f"{action_instruction(request.action_type)}\n"
         f"{strategy_instruction(request)}\n"
-        "必须只输出 JSON，格式参见 output_schema 技能。"
     )

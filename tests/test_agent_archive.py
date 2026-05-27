@@ -47,8 +47,8 @@ def _make_vote_context() -> AgentContext:
     }
     ctx.memory_context = {"memory_events": ["P8发言"], "private_facts": {}}
     ctx.belief_context = {"top_suspicions": [{"player_id": 7, "reason": "可疑"}]}
-    ctx.selected_skills = ["game_rules", "output_schema", "villager_vote_analysis"]
-    ctx.selected_skill = "game_rules,output_schema,villager_vote_analysis"
+    ctx.selected_skills = ["output_schema", "villager_vote_analysis"]
+    ctx.selected_skill = "output_schema,villager_vote_analysis"
     ctx.messages = [{"role": "system", "content": "你是一个村民"}, {"role": "user", "content": "请投票"}]
     ctx.raw_output = '{"target": 7, "choice": null, "text": "出7号", "reasoning": "7号可疑"}'
     ctx.parsed_decision = {"target": 7, "choice": None, "text": "出7号", "reasoning": "7号可疑"}
@@ -75,7 +75,6 @@ class DecisionArchiveTests(unittest.TestCase):
     def test_from_context_includes_skills(self):
         ctx = _make_vote_context()
         archive = DecisionArchive.from_context(ctx)
-        self.assertIn("game_rules", archive.selected_skills)
         self.assertIn("output_schema", archive.selected_skills)
 
     def test_from_context_includes_raw_output(self):

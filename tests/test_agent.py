@@ -238,10 +238,9 @@ class NodesTests(unittest.TestCase):
         self.assertNotEqual(ctx.skill_context, "")
 
     def test_skill_router_includes_common_skills(self):
-        """Common skills like game_rules and output_schema are always injected."""
+        """Common skills like output_schema are always injected."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = skill_router_node(ctx)
-        self.assertIn("game_rules", ctx.selected_skills)
         self.assertIn("output_schema", ctx.selected_skills)
 
     def test_prompt_node_builds_system_and_user_messages(self):
@@ -369,7 +368,7 @@ class AgentRuntimeTests(unittest.TestCase):
         ctx = skill_router_node(ctx)
         self.assertGreater(len(ctx.selected_skills), 0)
         self.assertNotEqual(ctx.skill_context, "")
-        ctx = prompt_node(ctx, persona=runtime.persona)
+        ctx = prompt_node(ctx)
         self.assertGreater(len(ctx.messages), 0)
 
 
@@ -505,7 +504,6 @@ class PromptHintsTests(unittest.TestCase):
             ctx.request,
             player_id=5,
             role=Role.VILLAGER,
-            persona="你是一个村民",
             memory_context=ctx.memory_context,
             belief_context=ctx.belief_context,
             strategy_advice=strategy_advice,
@@ -515,7 +513,7 @@ class PromptHintsTests(unittest.TestCase):
         combined = " ".join(m.get("content", "") for m in messages)
         # Multi-skill block should be present
         self.assertIn("common rules Skill", combined)
-        self.assertIn("game_rules", combined)
+        self.assertIn("output_schema", combined)
 
     def test_skill_advice_includes_skill_count(self):
         """Check that the skill router returns skill metadata in strategy_advice."""
@@ -551,7 +549,6 @@ class FieldNotesPromptTests(unittest.TestCase):
             ctx.request,
             player_id=5,
             role=Role.VILLAGER,
-            persona="你是一个村民",
             memory_context={
                 "private_facts": {"known_roles": {}, "seer_checks": {}, "metadata": {}},
                 "public_summary": "",
@@ -837,7 +834,7 @@ output_constraints:
         # No priority attribute
         self.assertFalse(hasattr(skill, "priority"))
 
-    def test_common_game_rules_injected_for_all_roles(self):
+    def test_common_skills_injected_for_all_roles(self):
         from agent.skill_system.router import select_skills
 
         for role in (Role.WEREWOLF, Role.WITCH, Role.VILLAGER, Role.SEER):
@@ -845,7 +842,6 @@ output_constraints:
             ctx = AgentContext(request=request, player_id=5, role=role.value)
             selected = select_skills(ctx, role)
             names = [s.name for s in selected]
-            self.assertIn("game_rules", names, f"{role.value} should get game_rules")
             self.assertIn("output_schema", names, f"{role.value} should get output_schema")
 
     def test_only_current_role_skills_are_injected(self):
@@ -921,11 +917,9 @@ output_constraints:
         self.assertIn("witch_save", names, "witch_save should be injected when can_save=true")
         self.assertIn("witch_poison", names, "witch_poison should be injected when can_poison=true")
 
-    def test_game_rules_skill_exists(self):
+    def test_output_schema_skill_exists(self):
         from pathlib import Path
         ROOT = Path(__file__).resolve().parent.parent
-        rules = ROOT / "skills" / "common" / "game_rules.md"
-        self.assertTrue(rules.exists(), "game_rules.md must exist")
         output = ROOT / "skills" / "common" / "output_schema.md"
         self.assertTrue(output.exists(), "output_schema.md must exist")
 
@@ -938,7 +932,7 @@ output_constraints:
         self.assertIn("common rules", skill_context)
         self.assertIn("role strategy", skill_context)
         # Should include actual skills
-        self.assertIn("game_rules", skill_context)
+        self.assertIn("output_schema", skill_context)
         self.assertIn("villager_vote_analysis", skill_context)
 
     def test_configure_skill_root_can_load_alternate_skill_dir(self):

@@ -82,7 +82,7 @@ def _make_ctx(
     }
     ctx.memory_context = {"memory_events": ["P8发言"], "private_facts": {}}
     ctx.belief_context = {"top_suspicions": [{"player_id": 7, "reason": "可疑"}]}
-    ctx.selected_skills = ["game_rules", "output_schema", "villager_vote_analysis"]
+    ctx.selected_skills = ["output_schema", "villager_vote_analysis"]
     ctx.messages = [
         {"role": "system", "content": "你是 5 号玩家，身份: villager。"},
         {"role": "user", "content": "当前是第 2 天 exile_vote 阶段。"},

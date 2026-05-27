@@ -88,8 +88,8 @@ def _make_ctx(
             {"player_id": 9, "wolf_prob": 0.49, "evidence": ["跟票"]},
         ],
     }
-    ctx.selected_skills = ["game_rules", "output_schema", "villager_vote_analysis"]
-    ctx.skill_context = "## 通用规则 Skill\n### game_rules\n只能使用可见信息。"
+    ctx.selected_skills = ["output_schema", "villager_vote_analysis"]
+    ctx.skill_context = "## common rules Skill\n### output_schema\n必须只输出 JSON。"
     ctx.messages = [
         {"role": "system", "content": "你是 5 号玩家，身份: villager。"},
         {"role": "user", "content": "当前是第 3 天 exile_vote 阶段。"},
@@ -302,7 +302,7 @@ class GotRuntimeIntegrationTests(unittest.TestCase):
         )
         response = asyncio.run(runtime.act(_make_request(metadata={"enable_got": True})))
 
-        self.assertEqual(model.call_count, 2)  # skill_select + got
+        self.assertEqual(model.call_count, 1)  # got only
         self.assertEqual(response.target, 3)
         self.assertEqual(response.choice, "vote")
         traces = trace_recorder.snapshot()

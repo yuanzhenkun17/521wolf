@@ -33,10 +33,6 @@ class AgentContext:
     selected_skills: list[str] = field(default_factory=list)
     skill_context: str = ""
     strategy_advice: dict[str, Any] = field(default_factory=dict)
-    # Stage 1 output: raw LLM-selected skill names from skill_select_node.
-    # Kept separate from selected_skills because they serve different pipeline
-    # stages (LLM selection vs. deterministic routing).
-    skill_selection: set[str] | None = None
 
     # LLM interaction
     messages: list[dict[str, str]] = field(default_factory=list)
