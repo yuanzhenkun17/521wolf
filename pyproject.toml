@@ -6,16 +6,15 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "httpx>=0.28",
+    "langfuse>=4.6.1",
+    "openai>=2.38.0",
     "uvicorn[standard]>=0.34",
 ]
-
-[project.scripts]
-werewolf-demo-llm = "werewolf.demo_llm:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src", "."]
-include = ["werewolf*", "playeragent*"]
+where = ["."]
+include = ["engine*", "agent*"]

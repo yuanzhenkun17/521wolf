@@ -229,7 +229,7 @@ function latestNightActions(events: GameEvent[], decisions: AgentDecision[], day
           label: "守卫",
           actorId: event.actor,
           targetId: event.target,
-          detail: `${event.actor} 号守护 ${event.target} 号`,
+          detail: event.target != null ? `${event.actor} 号守护 ${event.target} 号` : `${event.actor} 号未守护`,
           decisions: matchingDecisions(decisions, day, "night", "guard_protect", event.actor),
         }];
       }

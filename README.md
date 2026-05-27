@@ -20,10 +20,10 @@ The core package intentionally does not depend on LangChain. A LangChain player 
 
 ## Project Layout
 
-- `src/werewolf/`: first-layer rules engine. It owns phases, role rules, voting, death chains, victory checks, logs, and the `ActionRequest` / `ActionResponse` contract.
-- `playeragent/`: second-layer player brain. It owns memory, belief, role strategy, prompt construction, model calls, parsing, fallback policy, and LLM player implementations.
-- `ui/`: third-layer UI. It starts or reads games through the backend, consumes logs/snapshots, and renders the game experience.
-- `src/werewolf/agent_runtime/` and `src/werewolf/llm_agents.py`: backward-compatible import shims that forward to `playeragent/`.
+- `engine/werewolf/`: rules engine. It owns phases, role rules, voting, death chains, victory checks, logs, and the `ActionRequest` / `ActionResponse` contract.
+- `agent/`: main Agent implementation. It owns runtime nodes, memory, belief, Markdown skills, ToT reasoning, LLM calls, parsing, policy repair, archive logs, review, self-play, and leaderboard evaluation.
+- `ui/`: observer UI. It starts or reads games through the backend, consumes logs/snapshots, and renders the game experience.
+- `docs/`: design notes, ideas, review records, and architecture documents.
 
 ## Agent Boundary
 
@@ -34,7 +34,7 @@ async def act(request: ActionRequest) -> ActionResponse:
     ...
 ```
 
-LLM prompting, model calls, structured memory, belief, role strategy, output parsing, and fallback behavior live in root-level `playeragent/`. This keeps the first layer rules system independent from the second layer player reasoning system. A future LangChain implementation should be added as another model adapter behind the same runtime contract, not inside the rules engine.
+LLM prompting, model calls, structured memory, belief, skill routing, output parsing, and fallback behavior live in root-level `agent/`. This keeps the rules system independent from player reasoning. A future LangGraph implementation should be added behind the same `act(request)` contract, not inside the rules engine.
 
 ## Test
 
@@ -42,44 +42,34 @@ LLM prompting, model calls, structured memory, belief, role strategy, output par
 uv run python -m unittest discover -s tests -v
 ```
 
-## Run LLM Agents Demo
+## Run With LLM Agents
 
-LLM players use an OpenAI-compatible chat completions endpoint. You can configure it with a local ignored config file:
-
-```bash
-cp config/llm.example.json config/llm.local.json
-```
-
-Then edit `config/llm.local.json`:
-
-```json
-{
-  "api_key": "your-api-key",
-  "base_url": "https://router.shengsuanyun.com/api/v1",
-  "model": "ali/qwen3.5-flash",
-  "timeout": 45
-}
-```
-
-Run:
+LLM players use an OpenAI-compatible chat completions endpoint. Configure it with a local ignored `.env` file:
 
 ```bash
-uv run python -m werewolf.demo_llm
-# or
-uv run werewolf-demo-llm
+cp .env.example .env
 ```
 
-Environment variables can also override the local config:
+Then edit `.env`:
+
+```bash
+WEREWOLF_LLM_API_KEY=your-api-key
+WEREWOLF_LLM_BASE_URL=https://router.shengsuanyun.com/api/v1
+WEREWOLF_LLM_MODEL=ali/qwen3.5-flash
+WEREWOLF_LLM_TIMEOUT=45
+WEREWOLF_LLM_TEMPERATURE=0.4
+```
+
+Shell environment variables override values loaded from `.env`:
 
 ```bash
 export WEREWOLF_LLM_API_KEY="your-api-key"
 export WEREWOLF_LLM_BASE_URL="https://router.shengsuanyun.com/api/v1"
 export WEREWOLF_LLM_MODEL="ali/qwen3.5-flash"
-uv run python -m werewolf.demo_llm
 ```
 
-The LLM demo creates 12 `LLMPlayerAgent` objects in one Python process. Each player receives a seat/role/persona prompt plus the current `ActionRequest`, then returns JSON that is parsed into `ActionResponse`.
-It writes full god-view logs to numbered files such as:
+The UI backend uses `agent.runtime.factory.load_llm_client()` and `agent.runtime.factory.create_v2_agents()` to create one Agent per player. Each player receives a seat/role/persona prompt plus the current `ActionRequest`, then returns an `ActionResponse`.
+Game logs are written to numbered files such as:
 
 ```text
 logs/game1.jsonl

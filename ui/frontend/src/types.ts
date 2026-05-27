@@ -31,11 +31,17 @@ export type AgentDecision = {
   selected_choice: string | null;
   public_text: string;
   private_reasoning: string;
+  confidence: number;
   alternatives: number[];
   rejected_reasons: string[];
+  selected_skill: string;
+  memory_refs: string[];
   belief_snapshot: Record<string, unknown>;
   memory_summary: string[];
-  source: "llm" | "fallback" | "policy_adjusted";
+  raw_output: string;
+  errors: string[];
+  policy_adjustments: string[];
+  source: "llm" | "fallback" | "policy_adjusted" | "tot";
 };
 
 export type GameSnapshot = {
@@ -52,4 +58,9 @@ export type GameSnapshot = {
   events: GameEvent[];
   decisions: AgentDecision[];
   error: string | null;
+};
+
+export type GameArchive = {
+  decisions: Array<Record<string, unknown>>;
+  [key: string]: unknown;
 };

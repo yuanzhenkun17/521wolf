@@ -1,8 +1,8 @@
 import asyncio
 
-from werewolf.models import ActionResponse, ActionType
-from werewolf.players import ScriptedAgent
-from werewolf.roles import standard_roles as standard_game_roles
+from engine.models import ActionResponse, ActionType
+from engine.players import ScriptedAgent
+from engine.roles import standard_roles as standard_game_roles
 
 
 def run(coro):

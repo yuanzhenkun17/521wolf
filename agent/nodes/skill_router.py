@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from langfuse import observe
+from engine.models import Role
+
+from agent.runtime.context import AgentContext
+from agent.skill_system.router import select_skills, format_skill_context
+
+
+@observe(name="skill_router_node")
+def skill_router_node(ctx: AgentContext, **kwargs) -> AgentContext:
+    """Select common + role skills for the current context.
+
+    Injects all matching Markdown skills into ``ctx.skill_context`` as a
+    formatted string.  Sets ``ctx.selected_skills`` with the skill names.
+    """
+    role = Role(ctx.role)
+    selected = select_skills(ctx, role)
+
+    ctx.selected_skills = [s.name for s in selected]
+    ctx.selected_skill = ",".join(s.name for s in selected)
+    ctx.skill_context = format_skill_context(selected, ctx.request.action_type)
+    ctx.strategy_advice = {
+        "selected_skills": ctx.selected_skills,
+        "skill_count": len(selected),
+        "prompt_hints": [hint for s in selected for hint in s.prompt_hints],
+    }
+
+    return ctx

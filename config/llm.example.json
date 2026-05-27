@@ -1,6 +1,0 @@
-{
-  "api_key": "put-your-api-key-here",
-  "base_url": "https://router.shengsuanyun.com/api/v1",
-  "model": "ali/qwen3.5-flash",
-  "timeout": 45
-}

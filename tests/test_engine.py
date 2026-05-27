@@ -2,9 +2,9 @@ import json
 import unittest
 
 from helpers import agents_with, run, standard_roles
-from werewolf.config import GameConfig
-from werewolf.engine import GameEngine
-from werewolf.models import (
+from engine.config import GameConfig
+from engine.engine import GameEngine
+from engine.models import (
     ActionResponse,
     ActionType,
     DeathCause,

@@ -1,0 +1,458 @@
+"""Selfplay — multi-game batch runner for agent evaluation.
+
+Runs N games with configurable seeds, collects full archives,
+generates per-game reviews, experiences, and a run summary.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from agent.observability.decision_log import AgentDecisionRecorder
+from agent.runtime.model import ModelAdapter
+from engine.config import GameConfig, STANDARD_12
+from engine.engine import GameEngine
+from engine.models import Role
+from engine.roles import assign_roles
+
+from agent.observability.archive import AgentTraceRecorder, DecisionArchive, GameArchive
+from agent.cognition.experience import extract_experiences, write_game_experiences
+from agent.evaluation.review_enhanced import GameReviewReport, generate_enhanced_review
+from agent.runtime.agent import LLMPlayerAgent
+from agent.runtime.factory import load_llm_client
+from agent.skill_system.router import configure_skill_root
+
+
+@dataclass(slots=True)
+class SelfPlayConfig:
+    """Configuration for a selfplay run."""
+
+    games: int
+    seed_start: int = 1
+    output_dir: Path = Path("logs/selfplay")
+    agent_version: str = "agent"
+    model_name: str | None = None
+    max_days: int = 20
+    enable_review: bool = True
+    enable_experience: bool = True
+    temperature: float = 0.2
+    game_config: GameConfig = STANDARD_12
+    skill_dir: Path | None = None
+
+
+@dataclass(slots=True)
+class SelfPlayGameResult:
+    """Result of a single selfplay game."""
+
+    game_id: str
+    seed: int
+    winner: str
+    days: int
+    player_roles: dict[int, str]
+    decision_count: int
+    fallback_count: int
+    policy_adjusted_count: int
+    avg_confidence: float
+    review_score: float | None
+    output_dir: Path
+    avg_speech_score: float = 0.0
+    avg_vote_score: float = 0.0
+    avg_skill_score: float = 0.0
+    vote_accuracy: float = 0.0
+    skill_accuracy: float = 0.0
+    error: str | None = None
+
+    def to_dict(self) -> dict:
+        d = {
+            "game_id": self.game_id,
+            "seed": self.seed,
+            "winner": self.winner,
+            "days": self.days,
+            "player_roles": {str(k): v for k, v in self.player_roles.items()},
+            "decision_count": self.decision_count,
+            "fallback_count": self.fallback_count,
+            "policy_adjusted_count": self.policy_adjusted_count,
+            "avg_confidence": round(self.avg_confidence, 3),
+            "review_score": round(self.review_score, 2) if self.review_score is not None else None,
+            "avg_speech_score": round(self.avg_speech_score, 2),
+            "avg_vote_score": round(self.avg_vote_score, 2),
+            "avg_skill_score": round(self.avg_skill_score, 2),
+            "vote_accuracy": round(self.vote_accuracy, 3),
+            "skill_accuracy": round(self.skill_accuracy, 3),
+            "output_dir": str(self.output_dir),
+        }
+        if self.error:
+            d["error"] = self.error
+        return d
+
+
+@dataclass(slots=True)
+class SelfPlayResult:
+    """Aggregated result of a selfplay run."""
+
+    config: SelfPlayConfig
+    games: list[SelfPlayGameResult]
+    run_id: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+
+    @property
+    def summary(self) -> dict:
+        n = len(self.games)
+        if n == 0:
+            return {"games": 0}
+
+        normal = [g for g in self.games if not g.error]
+        error_count = n - len(normal)
+
+        werewolf_wins = sum(1 for g in normal if _is_werewolf_winner(g.winner))
+        villager_wins = len(normal) - werewolf_wins
+        total_decisions = sum(g.decision_count for g in self.games)
+        total_fallbacks = sum(g.fallback_count for g in self.games)
+        total_adjusted = sum(g.policy_adjusted_count for g in self.games)
+        scores = [g.review_score for g in self.games if g.review_score is not None]
+        reviewed = [g for g in self.games if g.review_score is not None]
+
+        return {
+            "run_id": self.run_id,
+            "games": n,
+            "error_count": error_count,
+            "werewolf_wins": werewolf_wins,
+            "villager_wins": villager_wins,
+            "werewolf_win_rate": round(werewolf_wins / len(normal), 3) if normal else 0.0,
+            "villager_win_rate": round(villager_wins / len(normal), 3) if normal else 0.0,
+            "avg_days": round(sum(g.days for g in self.games) / n, 2) if n else 0.0,
+            "avg_decision_score": round(sum(scores) / len(scores), 2) if scores else 0.0,
+            "avg_speech_score": round(sum(g.avg_speech_score for g in reviewed) / len(reviewed), 2) if reviewed else 0.0,
+            "avg_vote_score": round(sum(g.avg_vote_score for g in reviewed) / len(reviewed), 2) if reviewed else 0.0,
+            "avg_skill_score": round(sum(g.avg_skill_score for g in reviewed) / len(reviewed), 2) if reviewed else 0.0,
+            "vote_accuracy": round(sum(g.vote_accuracy for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
+            "skill_accuracy": round(sum(g.skill_accuracy for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
+            "total_decisions": total_decisions,
+            "fallback_count": total_fallbacks,
+            "policy_adjusted_count": total_adjusted,
+            "fallback_rate": round(total_fallbacks / total_decisions, 4) if total_decisions else 0.0,
+            "policy_adjusted_rate": round(total_adjusted / total_decisions, 4) if total_decisions else 0.0,
+            "avg_confidence": round(sum(g.avg_confidence for g in self.games) / n, 3) if n else 0.0,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
+
+    def summary_markdown(self) -> str:
+        s = self.summary
+        lines = [
+            f"# Selfplay Run: {self.run_id}",
+            "",
+            f"**Agent**: {self.config.agent_version}",
+            f"**Games**: {s['games']}",
+            f"**Seeds**: {self.config.seed_start}–{self.config.seed_start + s['games'] - 1}",
+            "",
+            "## Summary",
+            "",
+            f"| Metric | Value |",
+            f"|--------|-------|",
+            f"| 狼人胜率 | {s['werewolf_win_rate']:.1%} ({s['werewolf_wins']}/{s['games'] - s.get('error_count', 0)}) |",
+            f"| 好人胜率 | {s['villager_win_rate']:.1%} ({s['villager_wins']}/{s['games'] - s.get('error_count', 0)}) |",
+            f"| 失败局 | {s.get('error_count', 0)} |",
+            f"| 平均天数 | {s['avg_days']} |",
+            f"| 平均决策评分 | {s['avg_decision_score']} |",
+            f"| Fallback 率 | {s['fallback_rate']:.1%} |",
+            f"| Policy 修正率 | {s['policy_adjusted_rate']:.1%} |",
+            f"| 平均置信度 | {s['avg_confidence']:.1%} |",
+            "",
+            "## Per-Game Results",
+            "",
+        ]
+        lines.append("| Game | Seed | Winner | Days | Decisions | Fallback | Adjusted | Conf | Score |")
+        lines.append("|------|------|--------|------|-----------|----------|----------|------|-------|")
+        for g in self.games:
+            desc = g.game_id
+            score_str = f"{g.review_score:.1f}" if g.review_score is not None else "-"
+            lines.append(
+                f"| {desc} | {g.seed} | {g.winner} | {g.days} | "
+                f"{g.decision_count} | {g.fallback_count} | {g.policy_adjusted_count} | "
+                f"{g.avg_confidence:.2f} | {score_str} |"
+            )
+        lines.append("")
+        return "\n".join(lines)
+
+    def write_summary(self, output_dir: Path) -> None:
+        """Write summary.json and summary.md to the output directory."""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
+            json.dump(self.summary, f, ensure_ascii=False, indent=2)
+        with open(output_dir / "summary.md", "w", encoding="utf-8") as f:
+            f.write(self.summary_markdown())
+
+
+async def run_selfplay(
+    config: SelfPlayConfig,
+    *,
+    model: ModelAdapter | None = None,
+    client_factory=None,
+) -> SelfPlayResult:
+    """Run a multi-game selfplay session.
+
+    Args:
+        config: Selfplay configuration.
+        model: Shared model adapter. If None, uses load_llm_client() per game.
+        client_factory: Optional callable that returns a ModelAdapter per game.
+    """
+    run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    started_at = _now()
+    run_dir = config.output_dir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write config
+    _write_json(run_dir / "config.json", {
+        "games": config.games,
+        "seed_start": config.seed_start,
+        "agent_version": config.agent_version,
+        "model_name": config.model_name,
+        "max_days": config.max_days,
+        "temperature": config.temperature,
+        "enable_review": config.enable_review,
+        "enable_experience": config.enable_experience,
+        "skill_dir": str(config.skill_dir) if config.skill_dir else None,
+    })
+
+    results: list[SelfPlayGameResult] = []
+
+    for i in range(config.games):
+        seed = config.seed_start + i
+        game_id = f"game_{i + 1:03d}"
+        game_dir = run_dir / "games" / game_id
+        game_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create roles using the game config
+        roles = assign_roles(config.game_config, seed=seed)
+        player_roles = {pid: r.value for pid, r in roles.items()}
+
+        # Create per-agent trace recorders
+        trace_recorders: dict[int, AgentTraceRecorder] = {
+            pid: AgentTraceRecorder() for pid in roles
+        }
+
+        # Create agents with trace recorders
+        decision_recorder = AgentDecisionRecorder()
+        configure_skill_root(config.skill_dir)
+        client = client_factory() if client_factory else model
+        if client is None:
+            client = load_llm_client(
+                model_name=config.model_name,
+                temperature=config.temperature,
+            )
+        agents = _create_agents(
+            roles, client, decision_recorder, trace_recorders,
+        )
+
+        # Run game
+        engine = GameEngine(roles, agents, config.game_config)
+        try:
+            winner = await engine.run_until_finished(max_days=config.max_days)
+        except Exception as exc:
+            winner = type("Winner", (), {"value": f"error:{exc}"})()
+
+        winner_str = winner.value if hasattr(winner, "value") else str(winner)
+
+        # Determine if game failed
+        game_error: str | None = None
+        if winner_str.startswith("error:"):
+            game_error = winner_str[6:]
+            winner_str = "error"
+
+        # Write game events
+        _write_jsonl(game_dir / "game_events.jsonl", engine.logger.entries)
+        _write_jsonl(game_dir / "agent_decisions.jsonl", decision_recorder.records)
+
+        # Collect trace snapshots — merge all players into one archive
+        all_decisions: list[DecisionArchive] = []
+        for recorder in trace_recorders.values():
+            all_decisions.extend(recorder.snapshot())
+
+        # Write single merged archive and trace file
+        merged_archive = GameArchive(
+            game_id=game_id,
+            seed=seed,
+            config={
+                "agent_version": config.agent_version,
+                "skill_dir": str(config.skill_dir) if config.skill_dir else None,
+            },
+            player_roles=player_roles,
+            winner=winner_str,
+            started_at=_now(),
+            finished_at=_now(),
+            public_events=[e.to_dict() for e in engine.state.events],
+            decisions=all_decisions,
+            final_state={"player_roles": player_roles, "winner": winner_str},
+        )
+        merged_archive.write_json(game_dir / "archive.json")
+        _write_jsonl(game_dir / "agent_traces.jsonl", all_decisions)
+
+        # Collect stats
+        fallback_count = 0
+        policy_adjusted_count = 0
+        total_decisions = 0
+        total_confidence = 0.0
+        for rec in decision_recorder.records:
+            total_decisions += 1
+            if getattr(rec, "source", "") == "fallback":
+                fallback_count += 1
+            elif getattr(rec, "source", "") == "policy_adjusted":
+                policy_adjusted_count += 1
+            total_confidence += getattr(rec, "confidence", 0.0) or 0.0
+
+        avg_confidence = total_confidence / total_decisions if total_decisions else 0.0
+
+        # Review (enhanced) — skip for errored games
+        review_score = None
+        review_report = None
+        avg_speech_score = 0.0
+        avg_vote_score = 0.0
+        avg_skill_score = 0.0
+        vote_accuracy = 0.0
+        skill_accuracy = 0.0
+        if config.enable_review and not game_error:
+            agent_decisions = _collect_decisions(decision_recorder)
+            review_report = generate_enhanced_review(
+                game_log={"entries": [e.to_dict() for e in engine.logger.entries]},
+                agent_decisions=agent_decisions,
+                roles=roles,
+                winner_team=winner.value if hasattr(winner, "value") else winner,
+                game_id=game_id,
+            )
+            player_scores = list(review_report.player_scores.values())
+            denominator = max(len(player_scores), 1)
+            review_score = sum(s.total_score for s in player_scores) / denominator
+            avg_speech_score = sum(s.speech_score for s in player_scores) / denominator
+            avg_vote_score = sum(s.vote_score for s in player_scores) / denominator
+            avg_skill_score = sum(s.skill_score for s in player_scores) / denominator
+            vote_accuracy = avg_vote_score / 10.0
+            skill_accuracy = avg_skill_score / 10.0
+            _write_json(game_dir / "review.json", review_report.to_dict())
+            _write_text(game_dir / "review.md", review_report.to_markdown())
+
+        # Experience cards — skip for errored games
+        if config.enable_experience and review_report is not None:
+            agent_decisions = _collect_decisions(decision_recorder)
+            cards = extract_experiences(
+                game_id=game_id,
+                roles=roles,
+                agent_decisions=agent_decisions,
+                review=review_report,
+                winner_team=winner_str,
+            )
+            write_game_experiences(
+                cards=cards,
+                game_dir=game_dir,
+            )
+
+        # Write meta
+        _write_json(game_dir / "meta.json", {
+            "game_id": game_id,
+            "seed": seed,
+            "agent_version": config.agent_version,
+            "winner": winner_str,
+            "days": engine.state.day,
+            "players": player_roles,
+        })
+
+        result = SelfPlayGameResult(
+            game_id=game_id,
+            seed=seed,
+            winner=winner_str,
+            days=engine.state.day,
+            player_roles=player_roles,
+            decision_count=total_decisions,
+            fallback_count=fallback_count,
+            policy_adjusted_count=policy_adjusted_count,
+            avg_confidence=avg_confidence,
+            review_score=review_score,
+            output_dir=game_dir,
+            avg_speech_score=avg_speech_score,
+            avg_vote_score=avg_vote_score,
+            avg_skill_score=avg_skill_score,
+            vote_accuracy=vote_accuracy,
+            skill_accuracy=skill_accuracy,
+            error=game_error,
+        )
+        results.append(result)
+
+    selfplay_result = SelfPlayResult(
+        config=config,
+        games=results,
+        run_id=run_id,
+        started_at=started_at,
+        finished_at=_now(),
+    )
+
+    # Write summary
+    selfplay_result.write_summary(run_dir)
+    return selfplay_result
+
+
+def _create_agents(
+    roles: dict[int, Role],
+    client: ModelAdapter | None,
+    decision_recorder: AgentDecisionRecorder,
+    trace_recorders: dict[int, AgentTraceRecorder],
+    game_id: str | None = None,
+) -> dict[int, LLMPlayerAgent]:
+    """Create a full set of LLMPlayerAgent with trace recorders."""
+    agents: dict[int, LLMPlayerAgent] = {}
+    for player_id, role in sorted(roles.items()):
+        agent = LLMPlayerAgent(
+            player_id=player_id,
+            role=role,
+            client=client,
+            decision_recorder=decision_recorder,
+            game_id=game_id,
+        )
+        # Wire trace recorder into the runtime
+        agent.runtime.trace_recorder = trace_recorders.get(player_id)
+        agents[player_id] = agent
+    return agents
+
+
+def _collect_decisions(recorder: AgentDecisionRecorder) -> dict[int, list[dict]]:
+    """Group decision records by player_id."""
+    decisions: dict[int, list[dict]] = {}
+    for rec in recorder.records:
+        pid = getattr(rec, "player_id", None)
+        if pid is not None:
+            decisions.setdefault(pid, []).append(rec.to_dict() if hasattr(rec, "to_dict") else {})
+    return decisions
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _write_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _write_jsonl(path: Path, entries: list) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for entry in entries:
+            data = entry.to_dict() if hasattr(entry, "to_dict") else entry
+            f.write(json.dumps(data, ensure_ascii=False) + "\n")
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _is_werewolf_winner(winner: str) -> bool:
+    """Check if winner string indicates werewolf victory."""
+    w = winner.lower()
+    return w in ("werewolves", "werewolf") or "werewolf" in w

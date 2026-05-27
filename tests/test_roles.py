@@ -1,7 +1,7 @@
 import unittest
 
-from werewolf.config import STANDARD_12
-from werewolf.roles import assign_roles, random_standard_roles, roles_from_config, standard_roles
+from engine.config import STANDARD_12
+from engine.roles import assign_roles, random_standard_roles, roles_from_config, standard_roles
 
 
 class RolesTests(unittest.TestCase):

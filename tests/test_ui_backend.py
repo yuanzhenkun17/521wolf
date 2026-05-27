@@ -109,6 +109,26 @@ class UiBackendTests(unittest.TestCase):
             self.assertEqual(detailed["decisions"][0]["index"], 1)
             self.assertEqual(detailed["decisions"][0]["private_reasoning"], "夜间优先刀 2 号。")
 
+    def test_read_archive_requires_game_specific_archive(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_dir = Path(temp_dir)
+            (log_dir / "archive.json").write_text(
+                json.dumps({"game_id": "other", "decisions": []}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            manager = GameManager(log_dir=log_dir)
+
+            self.assertIsNone(manager.read_archive("game1"))
+
+            (log_dir / "game1.archive.json").write_text(
+                json.dumps({"game_id": "game1", "decisions": [{"index": 1}]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            archive = manager.read_archive("game1")
+
+            self.assertIsNotNone(archive)
+            self.assertEqual(archive["game_id"], "game1")
+
 
 if __name__ == "__main__":
     unittest.main()
