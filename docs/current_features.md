@@ -484,21 +484,18 @@ UI 后端会为完成的游戏写出：
 
 - `gameN.jsonl`
 - `gameN.txt`
-- `gameN.agent.jsonl`
-- `gameN.archive.json`
+- `logs/gameN/agent_decisions.jsonl`
+- `logs/gameN/archive.json`
 
-### 7.3 实时调试流
+### 7.3 决策归档
 
-当前已实现调试 WebSocket 广播能力：
-
-- 决策后向前端推送轻量 decision summary。
-- 包含 player、role、action、source、confidence、target、choice、skill、errors、ToT 状态等。
+当前不再提供 WebSocket 调试流。Agent 决策通过 recorder 和 archive 持久化，前端在对局完成后通过 HTTP 读取完整归档。
 
 实现位置：
 
-- `agent/observability/stream.py`
+- `agent/observability/decision_log.py`
+- `agent/observability/archive.py`
 - `ui/backend/app.py`
-- `ui/frontend/src/components/DebugPanel.tsx`
 
 ## 8. 评测与复盘已实现功能
 
@@ -577,7 +574,8 @@ UI 后端会为完成的游戏写出：
 - 读取游戏日志。
 - 读取 Agent archive。
 - 生成复盘报告。
-- WebSocket 推送实时日志和调试信息。
+- SSE 推送实时对局事件。
+- HTTP 读取 Agent archive 和复盘报告。
 
 实现位置：
 
@@ -593,7 +591,7 @@ UI 后端会为完成的游戏写出：
 - 玩家状态展示。
 - 事件日志展示。
 - 决策信息展示。
-- DebugPanel 展示 Agent 决策摘要。
+- 通过归档展示 Agent 决策细节。
 - 调用后端 API。
 
 实现位置：
@@ -601,7 +599,6 @@ UI 后端会为完成的游戏写出：
 - `ui/frontend/src/App.tsx`
 - `ui/frontend/src/api.ts`
 - `ui/frontend/src/presentation.ts`
-- `ui/frontend/src/components/DebugPanel.tsx`
 
 ## 10. 测试覆盖现状
 

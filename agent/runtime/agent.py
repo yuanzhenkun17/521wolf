@@ -45,7 +45,6 @@ from agent.nodes.policy import policy_node
 from agent.nodes.log import log_node
 from agent.nodes.got import got_node
 from agent.nodes.tot import tot_node
-from agent.observability.stream import get_broadcaster, stream_decision
 
 
 @contextmanager
@@ -129,11 +128,6 @@ class AgentRuntime:
             # -- optional trace recording for archive ------------------------------
             if self.trace_recorder:
                 self.trace_recorder.record(ctx)
-
-            # -- debug WebSocket stream (if a broadcaster is active) ---------------
-            bc = get_broadcaster()
-            if bc is not None:
-                bc.broadcast(stream_decision(ctx))
 
             # -- write decision record back to memory ------------------------------
             self.memory.remember_action(request, ctx.response, ctx.decision_record)

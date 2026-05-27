@@ -15,6 +15,18 @@ def _make_summary(**overrides):
         "avg_vote_score": 5.5,
         "avg_skill_score": 6.5,
         "avg_confidence": 0.8,
+        "confidence_calibration_error": 0.0,
+        "confidence_calibration_count": 2,
+        "confidence_buckets": {
+            "0.8-1.0": {
+                "count": 2,
+                "correct": 1,
+                "confidence_sum": 1.7,
+                "avg_confidence": 0.85,
+                "accuracy": 0.5,
+                "error": 0.35,
+            },
+        },
         "fallback_rate": 0.05,
         "vote_accuracy": 0.7,
         "skill_accuracy": 0.6,
@@ -91,3 +103,13 @@ def test_to_dict_includes_new_fields():
     assert "information_score" in d
     assert "cooperation_score" in d
     assert "by_role" in d
+    assert "confidence_calibration_error" in d
+    assert "confidence_calibration_count" in d
+    assert "confidence_buckets" in d
+
+
+def test_aggregate_confidence_calibration():
+    entry = aggregate_summaries([_make_summary()])
+    assert entry.confidence_calibration_count == 2
+    assert abs(entry.confidence_calibration_error - 0.35) < 0.001
+    assert entry.confidence_buckets["0.8-1.0"]["correct"] == 1

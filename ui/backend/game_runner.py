@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent.observability.archive import AgentTraceRecorder, GameArchive
+from agent.observability.archive import AgentTraceRecorder
 from agent.observability.decision_log import AgentDecisionRecorder
-from agent.observability.stream import DecisionBroadcaster, set_broadcaster
 from agent.runtime.factory import create_agents, load_llm_client
 from agent.evaluation.review_enhanced import generate_enhanced_review
+from engine.config import GameConfig, STANDARD_12
 from engine.engine import GameEngine
 from engine.logging import next_game_log_name
 from engine.models import Role
@@ -26,6 +26,10 @@ class RunningGame:
     game_id: str
     log_name: str
     seed: int | None
+    max_days: int = 20
+    enable_sheriff: bool = True
+    skill_dir: str | None = None
+    player_count: int = 12
     status: str = "starting"
     winner: str | None = None
     engine: GameEngine | None = None
@@ -47,14 +51,29 @@ class GameManager:
         self._games: dict[str, RunningGame] = {}
         self._lock = asyncio.Lock()
 
-    async def start_game(self, seed: int | None = None) -> RunningGame:
+    async def start_game(
+        self,
+        seed: int | None = None,
+        max_days: int = 20,
+        enable_sheriff: bool = True,
+        skill_dir: str | None = None,
+        player_count: int = 12,
+    ) -> RunningGame:
         async with self._lock:
             active = next((game for game in self._games.values() if game.is_active), None)
             if active is not None:
                 raise RuntimeError(f"{active.game_id} is still running")
 
             log_name = next_game_log_name(self.log_dir)
-            game = RunningGame(game_id=log_name, log_name=log_name, seed=seed)
+            game = RunningGame(
+                game_id=log_name,
+                log_name=log_name,
+                seed=seed,
+                max_days=max_days,
+                enable_sheriff=enable_sheriff,
+                skill_dir=skill_dir,
+                player_count=player_count,
+            )
             self._games[game.game_id] = game
             game.task = asyncio.create_task(self._run_game(game), name=f"werewolf-{game.game_id}")
             return game
@@ -68,13 +87,17 @@ class GameManager:
         for game in self._games.values():
             games.append(self.snapshot(game, include_events=False))
             seen.add(game.log_name)
-        for path in self.log_dir.glob("game*.jsonl"):
-            if not _is_game_log_path(path):
+        for path in self.log_dir.glob("game*"):
+            game_id = _game_id_from_log_path(path)
+            if game_id is None:
                 continue
-            if path.stem in seen:
+            if game_id in seen:
                 continue
-            events = self._read_events(path)
-            games.append(self._snapshot_from_events(path.stem, events, include_events=False))
+            events_path = self._events_path(game_id)
+            if events_path is None:
+                continue
+            events = self._read_events(events_path)
+            games.append(self._snapshot_from_events(game_id, events, include_events=False))
         return sorted(games, key=lambda game: _game_sort_key(str(game["game_id"])), reverse=True)
 
     def snapshot(self, game: RunningGame, include_events: bool = True) -> dict[str, Any]:
@@ -126,13 +149,17 @@ class GameManager:
     async def _run_game(self, game: RunningGame) -> None:
         game.status = "running"
         cursor = 0
-        bc = DecisionBroadcaster()
-        set_broadcaster(bc)
         try:
             roles = random_standard_roles(seed=game.seed)
             game.decision_recorder = AgentDecisionRecorder()
             game.trace_recorder = AgentTraceRecorder()
             client = load_llm_client()
+            game_config = GameConfig(
+                name=STANDARD_12.name,
+                role_counts=STANDARD_12.role_counts,
+                enable_sheriff=game.enable_sheriff,
+                night_order=STANDARD_12.night_order,
+            )
             game.engine = GameEngine(
                 roles,
                 create_agents(
@@ -141,30 +168,30 @@ class GameManager:
                     decision_recorder=game.decision_recorder,
                     trace_recorder=game.trace_recorder,
                     game_id=game.game_id,
+                    skill_dir=game.skill_dir,
                 ),
+                config=game_config,
             )
-            task = asyncio.create_task(game.engine.run_until_finished(max_days=20))
+            task = asyncio.create_task(game.engine.run_until_finished(max_days=game.max_days))
             while not task.done():
                 cursor = await self._publish_new_entries(game, cursor)
                 await asyncio.sleep(0.1)
             winner = await task
             cursor = await self._publish_new_entries(game, cursor)
             game.winner = winner.value
-            game.engine.logger.write_jsonl(self.log_dir / f"{game.log_name}.jsonl")
-            game.engine.logger.write_text(self.log_dir / f"{game.log_name}.txt")
-            game.decision_recorder.write_jsonl(self.log_dir / f"{game.log_name}.agent.jsonl")
+            game_dir = self._game_dir(game.log_name)
+            game.engine.logger.write_jsonl(game_dir / "events.jsonl")
+            game.decision_recorder.write_jsonl(game_dir / "agent_decisions.jsonl")
             if game.trace_recorder is not None:
-                archive = game.trace_recorder.flush(
+                game.trace_recorder.flush(
                     game_id=game.log_name,
-                    output_dir=self.log_dir / game.log_name,
+                    output_dir=game_dir,
                     seed=game.seed or 0,
                     config={},
                     player_roles={pid: r.value for pid, r in roles.items()},
                     winner=game.winner,
                     public_events=game.events,
                 )
-                # Also write game-specific copy for the UI to reference
-                archive.write_json(self.log_dir / f"{game.log_name}.archive.json")
             game.status = "completed"
             done_snapshot = self.snapshot(game, include_events=False)
             done_snapshot["decisions"] = self._decision_dicts(game)
@@ -173,8 +200,6 @@ class GameManager:
             game.error = str(exc)
             game.status = "failed"
             await self._broadcast(game, {"kind": "error", "payload": {"message": str(exc)}})
-        finally:
-            set_broadcaster(None)
 
     async def _publish_new_entries(self, game: RunningGame, cursor: int) -> int:
         if game.engine is None:
@@ -191,8 +216,8 @@ class GameManager:
             queue.put_nowait(item)
 
     def _load_completed_game(self, game_id: str) -> RunningGame | None:
-        path = self.log_dir / f"{game_id}.jsonl"
-        if not path.exists():
+        path = self._events_path(game_id)
+        if path is None:
             return None
         events = self._read_events(path)
         game = RunningGame(game_id=game_id, log_name=game_id, seed=None, status="completed")
@@ -240,8 +265,8 @@ class GameManager:
         return self._read_decisions(game.log_name)
 
     def _read_decisions(self, game_id: str) -> list[dict[str, Any]]:
-        path = self.log_dir / f"{game_id}.agent.jsonl"
-        if not path.exists():
+        path = self._decisions_path(game_id)
+        if path is None:
             return []
         decisions: list[dict[str, Any]] = []
         try:
@@ -286,8 +311,8 @@ class GameManager:
 
     def build_review(self, game_id: str) -> dict[str, Any] | None:
         """Build enhanced review report for a completed game."""
-        events_path = self.log_dir / f"{game_id}.jsonl"
-        if not events_path.exists():
+        events_path = self._events_path(game_id)
+        if events_path is None:
             return None
         events = self._read_events(events_path)
         if not events:
@@ -309,9 +334,9 @@ class GameManager:
             return None
 
         # Read agent decisions, grouped by player_id
-        decisions_path = self.log_dir / f"{game_id}.agent.jsonl"
+        decisions_path = self._decisions_path(game_id)
         agent_decisions: dict[int, list[dict]] = {}
-        if decisions_path.exists():
+        if decisions_path is not None:
             try:
                 for line in decisions_path.read_text(encoding="utf-8").splitlines():
                     if not line.strip():
@@ -339,14 +364,29 @@ class GameManager:
 
     def read_archive(self, game_id: str) -> dict[str, Any] | None:
         """Read archive.json for a completed game, if it exists."""
-        path = self.log_dir / f"{game_id}.archive.json"
-        if not path.exists():
+        path = self._archive_path(game_id)
+        if path is None:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             return data if isinstance(data, dict) else None
         except (OSError, json.JSONDecodeError):
             return None
+
+    def _game_dir(self, game_id: str) -> Path:
+        return self.log_dir / game_id
+
+    def _events_path(self, game_id: str) -> Path | None:
+        path = self._game_dir(game_id) / "events.jsonl"
+        return path if path.exists() else None
+
+    def _decisions_path(self, game_id: str) -> Path | None:
+        path = self._game_dir(game_id) / "agent_decisions.jsonl"
+        return path if path.exists() else None
+
+    def _archive_path(self, game_id: str) -> Path | None:
+        path = self._game_dir(game_id) / "archive.json"
+        return path if path.exists() else None
 
     def _sheriff_from_events(self, events: list[dict[str, Any]]) -> int | None:
         sheriff_id = None
@@ -379,5 +419,7 @@ def _game_sort_key(game_id: str) -> tuple[int, str]:
     return 0, game_id
 
 
-def _is_game_log_path(path: Path) -> bool:
-    return re.fullmatch(r"game\d+", path.stem) is not None
+def _game_id_from_log_path(path: Path) -> str | None:
+    if path.is_dir():
+        return path.name if re.fullmatch(r"game\d+", path.name) else None
+    return None

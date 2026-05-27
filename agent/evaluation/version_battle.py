@@ -15,6 +15,7 @@ from agent.runtime.model import ModelAdapter
 from agent.evaluation.leaderboard import (
     LeaderboardEntry,
     aggregate_summaries,
+    annotate_vs_baseline,
     build_leaderboard,
     write_leaderboard,
 )
@@ -81,7 +82,7 @@ class VersionBattleConfig:
     versions: list[VersionSpec]
     games_per_version: int
     seed_start: int = 1
-    output_dir: Path = Path("logs/version_battle")
+    output_dir: Path = Path("runs/version_battle")
     max_days: int = 20
     enable_review: bool = True
     enable_experience: bool = True
@@ -165,6 +166,8 @@ async def run_version_battle(
         entry.notes = version.notes
         entries.append(entry)
 
+    if entries:
+        annotate_vs_baseline(entries, entries[0].version)
     leaderboard = build_leaderboard(entries)
     write_leaderboard(leaderboard, config.output_dir)
 

@@ -32,4 +32,3 @@ export function Button({ className, variant = "default", size = "default", ...pr
     />
   );
 }
-

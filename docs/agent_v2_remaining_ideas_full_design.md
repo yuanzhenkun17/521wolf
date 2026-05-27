@@ -301,7 +301,7 @@ agent/logs/
 推荐：
 
 ```text
-logs/selfplay/
+runs/selfplay/
 data/experiences/
 data/long_memory/
 ```

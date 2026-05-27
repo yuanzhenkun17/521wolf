@@ -130,7 +130,7 @@ class SelfPlayConfig:
     max_days: int = 20
     seed_start: int = 1
     agent_version: str = "v2"
-    log_dir: Path = Path("logs/selfplay")
+    log_dir: Path = Path("runs/selfplay")
     model_name: str = ""
     skill_dir: Path | None = None
 
@@ -151,13 +151,12 @@ async def run_selfplay(config: SelfPlayConfig) -> SelfPlayResult:
 建议输出：
 
 ```text
-logs/selfplay/run_2026xxxx/
+runs/selfplay/run_2026xxxx/
   config.json
   summary.json
   summary.md
   game_001/
     game.jsonl
-    game.txt
     agent.jsonl
     archive.json
     review.json
@@ -424,7 +423,7 @@ memories/experience/
 或者：
 
 ```text
-logs/selfplay/run_xxx/game_001/experience/
+runs/selfplay/run_xxx/game_001/experience/
 ```
 
 ### 6.7 验证方式
@@ -1150,4 +1149,3 @@ selfplay → archive → review → experience → leaderboard
 ```
 
 这条路线最贴近评分标准，也最容易在答辩中展示 Agent 调优能力。
-

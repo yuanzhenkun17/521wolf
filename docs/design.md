@@ -507,7 +507,7 @@ Prompt 分层：
 
 其中 `source` 字段表示决策来源：`"llm"`（正常 LLM 输出）、`"fallback"`（异常回退）、`"policy_adjusted"`（策略修正）、`"tot"`（Tree of Thought 多候选推理）。
 
-除了上述 `DecisionRecord`（每步决策日志，写 `.agent.jsonl`），还会通过 `AgentTraceRecorder` 记录完整上下文 `DecisionArchive` 包含 `observation_summary`、`memory_context`、`belief_context`、`selected_skills`、`prompt_messages`、`raw_output`、`tot_candidates`、`tot_judge_reason`（写 `.archive.json`）。
+除了上述 `DecisionRecord`（每步决策日志，写 `logs/gameX/agent_decisions.jsonl`），还会通过 `AgentTraceRecorder` 记录完整上下文 `DecisionArchive` 包含 `observation_summary`、`memory_context`、`belief_context`、`selected_skills`、`prompt_messages`、`raw_output`、`tot_candidates`、`tot_judge_reason`（写 `logs/gameX/archive.json`）。
 
 ### 3.7 决策输出格式
 
@@ -777,8 +777,8 @@ POST /api/games
   → create_v2_agents(roles, decision_recorder, trace_recorder)
   → GameEngine(...).run_until_finished()
   → 写 game log (.jsonl / .txt)
-  → 写 agent decision log (.agent.jsonl)
-  → 写 archive (.archive.json)
+  → 写 agent decision log (logs/gameX/agent_decisions.jsonl)
+  → 写 archive (logs/gameX/archive.json)
   → 返回 game_id
 ```
 
@@ -892,7 +892,7 @@ uv run uvicorn ui.backend.app:app --reload --host 127.0.0.1 --port 8000
 **后端接口：**
 
 - `GET /api/leaderboards` — 排行榜
-- 读取 `logs/version_battle/` 或 `data/version_battle/` 中的 `leaderboard.json`、`leaderboard.md`、`version_battle_result.json`
+- 读取 `runs/version_battle/`、`logs/version_battle/` 或 `data/version_battle/` 中的 `leaderboard.json`、`leaderboard.md`、`version_battle_result.json`
 
 **展示指标：**
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import ui.backend.app as app_module
 from ui.backend.app import app
 from ui.backend.game_runner import GameManager
 
@@ -25,7 +26,7 @@ class UiBackendTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_list_games_reads_completed_jsonl_logs(self):
+    def test_list_games_reads_completed_game_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             log_dir = Path(temp_dir)
             init_event = {
@@ -66,8 +67,10 @@ class UiBackendTests(unittest.TestCase):
             }
             events = [init_event, death_event, end_event]
             content = "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n"
-            (log_dir / "game1.jsonl").write_text(content, encoding="utf-8")
-            (log_dir / "game1.agent.jsonl").write_text(
+            game_dir = log_dir / "game1"
+            game_dir.mkdir()
+            (game_dir / "events.jsonl").write_text(content, encoding="utf-8")
+            (game_dir / "agent_decisions.jsonl").write_text(
                 json.dumps(
                     {
                         "day": 1,
@@ -120,7 +123,9 @@ class UiBackendTests(unittest.TestCase):
 
             self.assertIsNone(manager.read_archive("game1"))
 
-            (log_dir / "game1.archive.json").write_text(
+            game_dir = log_dir / "game1"
+            game_dir.mkdir()
+            (game_dir / "archive.json").write_text(
                 json.dumps({"game_id": "game1", "decisions": [{"index": 1}]}, ensure_ascii=False),
                 encoding="utf-8",
             )
@@ -128,6 +133,92 @@ class UiBackendTests(unittest.TestCase):
 
             self.assertIsNotNone(archive)
             self.assertEqual(archive["game_id"], "game1")
+
+    def test_start_evolution_endpoint_uses_ui_manager(self):
+        class FakeRun:
+            def snapshot(self):
+                return {
+                    "run_id": "evolution_fake",
+                    "status": "running",
+                    "stage": "queued",
+                    "config": {
+                        "base_version": "baseline",
+                        "candidate_version": "dream_v1",
+                    },
+                }
+
+        class FakeEvolutionManager:
+            async def start_run(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeRun()
+
+        client = TestClient(app)
+        old_manager = app_module.evolution_manager
+        old_find_manifest = app_module._find_manifest_for_version
+        fake_manager = FakeEvolutionManager()
+        try:
+            app_module.evolution_manager = fake_manager
+            app_module._find_manifest_for_version = lambda version: Path("manifest.json") if version == "baseline" else None
+
+            response = client.post(
+                "/api/evolution",
+                json={
+                    "base_version": "baseline",
+                    "candidate_version": "dream_v1",
+                    "training_games": 1,
+                    "battle_games": 2,
+                },
+            )
+
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(response.json()["run_id"], "evolution_fake")
+            self.assertEqual(fake_manager.kwargs["training_games"], 1)
+            self.assertEqual(fake_manager.kwargs["battle_games"], 2)
+        finally:
+            app_module.evolution_manager = old_manager
+            app_module._find_manifest_for_version = old_find_manifest
+
+    def test_start_mixed_battle_endpoint_uses_ui_manager(self):
+        class FakeRun:
+            def snapshot(self):
+                return {
+                    "run_id": "mixed_fake",
+                    "status": "running",
+                    "config": {},
+                }
+
+        class FakeMixedBattleManager:
+            async def start_run(self, **kwargs):
+                self.kwargs = kwargs
+                return FakeRun()
+
+        client = TestClient(app)
+        old_manager = app_module.mixed_battle_manager
+        old_find_manifest = app_module._find_manifest_for_version
+        fake_manager = FakeMixedBattleManager()
+        try:
+            app_module.mixed_battle_manager = fake_manager
+            app_module._find_manifest_for_version = lambda version: Path(f"{version}/manifest.json")
+
+            response = client.post(
+                "/api/mixed-battles",
+                json={
+                    "wolves_version": "v2",
+                    "villagers_version": "v1",
+                    "games_per_side": 3,
+                    "seed_start": 10,
+                },
+            )
+
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(response.json()["run_id"], "mixed_fake")
+            self.assertEqual(fake_manager.kwargs["games_per_side"], 3)
+            self.assertEqual(fake_manager.kwargs["seed_start"], 10)
+            self.assertEqual(fake_manager.kwargs["wolves_manifest_path"], Path("v2/manifest.json"))
+            self.assertEqual(fake_manager.kwargs["villagers_manifest_path"], Path("v1/manifest.json"))
+        finally:
+            app_module.mixed_battle_manager = old_manager
+            app_module._find_manifest_for_version = old_find_manifest
 
 
 if __name__ == "__main__":

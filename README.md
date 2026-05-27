@@ -72,6 +72,7 @@ The UI backend uses `agent.runtime.factory.load_llm_client()` and `agent.runtime
 Game logs are written to numbered files such as:
 
 ```text
-logs/game1.jsonl
-logs/game1.txt
+logs/game1/events.jsonl
+logs/game1/agent_decisions.jsonl
+logs/game1/archive.json
 ```

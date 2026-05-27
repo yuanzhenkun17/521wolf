@@ -110,11 +110,11 @@ class GameLogger:
 def next_game_log_name(log_dir: str | Path, prefix: str = "game") -> str:
     directory = Path(log_dir)
     max_index = 0
-    for path in directory.glob(f"{prefix}*.*"):
-        stem = path.stem
-        if not stem.startswith(prefix):
+    for path in directory.glob(f"{prefix}*"):
+        name = path.name if path.is_dir() else path.stem
+        if not name.startswith(prefix):
             continue
-        suffix = stem[len(prefix) :]
+        suffix = name[len(prefix) :]
         if suffix.isdigit():
             max_index = max(max_index, int(suffix))
     return f"{prefix}{max_index + 1}"

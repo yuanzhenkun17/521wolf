@@ -9,6 +9,11 @@ __pycache__/
 .env.*
 !.env.example
 logs/
+runs/*
+!runs/README.md
+data/skill_patches/
+data/skill_proposals/
+data/dreams/
 node_modules/
 dist/
 *.tsbuildinfo

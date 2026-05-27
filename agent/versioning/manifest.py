@@ -45,10 +45,12 @@ class RuntimeConfig:
 
 @dataclass
 class ModelConfig:
-    provider: str = "volcengine"
-    model: str = "doubao-seed-2.0-pro"
+    provider: str = ""
+    model: str = ""
     temperature: float = 0.7
     max_tokens: int = 2048
+    base_url: str = ""
+    api_key: str = ""
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -241,13 +243,24 @@ def evaluate_promotion(
 ) -> PromotionVerdict:
     reasons = []
     metrics = {}
-    if base.avg_score > 0:
-        score_imp = (candidate.avg_score - base.avg_score) / base.avg_score
+    candidate_score = candidate.role_weighted_score or candidate.avg_score
+    base_score = base.role_weighted_score or base.avg_score
+    if base_score > 0:
+        score_imp = (candidate_score - base_score) / base_score
     else:
-        score_imp = 1.0 if candidate.avg_score > 0 else 0.0
+        score_imp = 1.0 if candidate_score > 0 else 0.0
     metrics["score_improvement"] = score_imp
+    metrics["candidate_score"] = candidate_score
+    metrics["base_score"] = base_score
     if score_imp < min_score_improvement:
         reasons.append(f"score improvement {score_imp:.1%} < {min_score_improvement:.1%}")
+    if (
+        candidate.games >= 20
+        and base.games >= 20
+        and candidate.score_delta_vs_base != 0
+        and not candidate.significant_vs_base
+    ):
+        reasons.append("score improvement is not statistically significant")
     if candidate.bad_case_count > base.bad_case_count:
         reasons.append(f"bad_case increased: {candidate.bad_case_count} > {base.bad_case_count}")
     if candidate.fallback_rate > base.fallback_rate:

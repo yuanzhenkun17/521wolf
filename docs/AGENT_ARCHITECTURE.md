@@ -14,7 +14,7 @@ agent/
   reasoning/        推理增强：Tree-of-Thought 多候选推理
   prompts/          Prompt 构建：模板、指令、格式化、JSON 解析
   skill_system/     Skill 加载与路由
-  observability/    可观测性：决策日志、存档、WebSocket 推流
+  observability/    可观测性：决策日志、完整决策存档
   evaluation/       评估系统：复盘、自对弈、排行榜、版本对战
   skills/           Markdown 策略文件（按角色组织）
 ```
@@ -108,8 +108,7 @@ DreamAgent 读取经验卡 + 当前 skill，调用 LLM 生成 DreamReport（insi
 ## 7. Observability 层
 
 - decision_log.py: AgentDecisionRecorder 记录 DecisionRecord（轻量），导出 JSONL
-- archive.py: AgentTraceRecorder 记录完整决策上下文（重量级），GameArchive 写入 logs/gameN.archive.json
-- stream.py: DecisionBroadcaster WebSocket 实时推送决策摘要
+- archive.py: AgentTraceRecorder 记录完整决策上下文（重量级），GameArchive 写入 `logs/gameN/archive.json`
 
 ---
 

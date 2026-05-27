@@ -48,9 +48,10 @@ class LoggingTests(unittest.TestCase):
 
             (log_dir / "game1.txt").write_text("第一局", encoding="utf-8")
             (log_dir / "game2.jsonl").write_text("{}", encoding="utf-8")
+            (log_dir / "game3").mkdir()
             (log_dir / "latest.txt").write_text("旧日志", encoding="utf-8")
 
-            self.assertEqual(next_game_log_name(log_dir), "game3")
+            self.assertEqual(next_game_log_name(log_dir), "game4")
 
     def test_engine_logs_night_cycle_and_role_actions(self):
         agents = agents_with()

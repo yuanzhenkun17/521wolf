@@ -25,6 +25,7 @@ class SelfPlayConfigTests(unittest.TestCase):
         self.assertTrue(config.enable_review)
         self.assertTrue(config.enable_experience)
         self.assertEqual(config.temperature, 0.2)
+        self.assertEqual(config.output_dir, Path("runs/selfplay"))
 
     def test_custom_config(self):
         config = SelfPlayConfig(
@@ -65,6 +66,8 @@ class SelfPlayGameResultTests(unittest.TestCase):
         self.assertEqual(d["decision_count"], 50)
         self.assertEqual(d["fallback_count"], 2)
         self.assertEqual(d["review_score"], 7.5)
+        self.assertIn("confidence_calibration_error", d)
+        self.assertIn("confidence_buckets", d)
 
     def test_to_dict_none_review_score(self):
         result = SelfPlayGameResult(
@@ -115,6 +118,8 @@ class SelfPlayResultTests(unittest.TestCase):
         self.assertEqual(s["werewolf_win_rate"], 1.0)
         self.assertEqual(s["avg_days"], 3.0)
         self.assertEqual(s["avg_decision_score"], 6.0)
+        self.assertIn("confidence_calibration_error", s)
+        self.assertIn("confidence_buckets", s)
 
     def test_mixed_games_summary(self):
         config = SelfPlayConfig(games=3)

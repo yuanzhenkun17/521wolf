@@ -7,10 +7,10 @@ generates per-game reviews, experiences, and a run summary.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from agent.observability.decision_log import AgentDecisionRecorder
 from agent.runtime.model import ModelAdapter
@@ -28,6 +28,7 @@ from agent.cognition.skill_evolution import (
     proposals_from_dream,
     write_skill_proposals,
 )
+from agent.evaluation.confidence_calibration import calibrate_decisions, merge_calibration_reports
 from agent.evaluation.review_enhanced import generate_enhanced_review
 from agent.runtime.agent import LLMPlayerAgent
 from agent.runtime.factory import load_llm_client
@@ -40,7 +41,7 @@ class SelfPlayConfig:
 
     games: int
     seed_start: int = 1
-    output_dir: Path = Path("logs/selfplay")
+    output_dir: Path = Path("runs/selfplay")
     agent_version: str = "agent"
     model_name: str | None = None
     max_days: int = 20
@@ -70,6 +71,10 @@ class SelfPlayGameResult:
     avg_confidence: float
     review_score: float | None
     output_dir: Path
+    confidence_calibration_error: float = 0.0
+    confidence_calibration_count: int = 0
+    confidence_buckets: dict = field(default_factory=dict)
+    role_weighted_score: float = 0.0
     avg_speech_score: float = 0.0
     avg_vote_score: float = 0.0
     avg_skill_score: float = 0.0
@@ -93,8 +98,12 @@ class SelfPlayGameResult:
             "fallback_count": self.fallback_count,
             "policy_adjusted_count": self.policy_adjusted_count,
             "avg_confidence": round(self.avg_confidence, 3),
+            "confidence_calibration_error": round(self.confidence_calibration_error, 3),
+            "confidence_calibration_count": self.confidence_calibration_count,
+            "confidence_buckets": self.confidence_buckets or {},
             "review_score": round(self.review_score, 2) if self.review_score is not None else None,
             "avg_speech_score": round(self.avg_speech_score, 2),
+            "role_weighted_score": round(self.role_weighted_score, 2),
             "avg_vote_score": round(self.avg_vote_score, 2),
             "avg_skill_score": round(self.avg_skill_score, 2),
             "vote_accuracy": round(self.vote_accuracy, 3),
@@ -136,7 +145,9 @@ class SelfPlayResult:
         total_fallbacks = sum(g.fallback_count for g in self.games)
         total_adjusted = sum(g.policy_adjusted_count for g in self.games)
         scores = [g.review_score for g in self.games if g.review_score is not None]
+        role_weighted_scores = [g.role_weighted_score for g in self.games if g.review_score is not None]
         reviewed = [g for g in self.games if g.review_score is not None]
+        calibration = merge_calibration_reports([g.to_dict() for g in self.games])
 
         return {
             "run_id": self.run_id,
@@ -148,6 +159,9 @@ class SelfPlayResult:
             "villager_win_rate": round(villager_wins / len(normal), 3) if normal else 0.0,
             "avg_days": round(sum(g.days for g in self.games) / n, 2) if n else 0.0,
             "avg_decision_score": round(sum(scores) / len(scores), 2) if scores else 0.0,
+            "score_samples": [round(score, 3) for score in scores],
+            "role_weighted_score": round(sum(role_weighted_scores) / len(role_weighted_scores), 2) if role_weighted_scores else 0.0,
+            "role_weighted_score_samples": [round(score, 3) for score in role_weighted_scores],
             "avg_speech_score": round(sum(g.avg_speech_score for g in reviewed) / len(reviewed), 2) if reviewed else 0.0,
             "avg_vote_score": round(sum(g.avg_vote_score for g in reviewed) / len(reviewed), 2) if reviewed else 0.0,
             "avg_skill_score": round(sum(g.avg_skill_score for g in reviewed) / len(reviewed), 2) if reviewed else 0.0,
@@ -159,6 +173,9 @@ class SelfPlayResult:
             "fallback_rate": round(total_fallbacks / total_decisions, 4) if total_decisions else 0.0,
             "policy_adjusted_rate": round(total_adjusted / total_decisions, 4) if total_decisions else 0.0,
             "avg_confidence": round(sum(g.avg_confidence for g in self.games) / n, 3) if n else 0.0,
+            "confidence_calibration_error": round(calibration["confidence_calibration_error"], 3),
+            "confidence_calibration_count": calibration["confidence_calibration_count"],
+            "confidence_buckets": calibration["confidence_buckets"],
             "mistake_count": sum(g.mistake_count for g in self.games),
             "counterfactual_count": sum(g.counterfactual_count for g in self.games),
             "turning_point_count": sum(g.turning_point_count for g in self.games),
@@ -196,6 +213,7 @@ class SelfPlayResult:
             f"| Fallback 率 | {s['fallback_rate']:.1%} |",
             f"| Policy 修正率 | {s['policy_adjusted_rate']:.1%} |",
             f"| 平均置信度 | {s['avg_confidence']:.1%} |",
+            f"| 置信度校准误差 | {s['confidence_calibration_error']:.1%} ({s['confidence_calibration_count']} samples) |",
             "",
             "## Per-Game Results",
             "",
@@ -227,6 +245,7 @@ async def run_selfplay(
     *,
     model: ModelAdapter | None = None,
     client_factory=None,
+    on_game_complete: "Callable[[int, SelfPlayGameResult], None] | None" = None,
 ) -> SelfPlayResult:
     """Run a multi-game selfplay session.
 
@@ -234,8 +253,10 @@ async def run_selfplay(
         config: Selfplay configuration.
         model: Shared model adapter. If None, uses load_llm_client() per game.
         client_factory: Optional callable that returns a ModelAdapter per game.
+        on_game_complete: Optional callback ``(game_index, game_result)``
+            invoked after each game finishes.  *game_index* is zero-based.
     """
-    run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     started_at = _now()
     run_dir = config.output_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -259,6 +280,7 @@ async def run_selfplay(
 
     results: list[SelfPlayGameResult] = []
     _frozen_skill_dir = config.skill_dir
+    batch_client: ModelAdapter | None = None
 
     for i in range(config.games):
         assert config.skill_dir == _frozen_skill_dir, (
@@ -287,6 +309,7 @@ async def run_selfplay(
                 model_name=config.model_name,
                 temperature=config.temperature,
             )
+        batch_client = client
         agents = _create_agents(
             roles, client, decision_recorder, trace_recorders,
             skill_dir=config.skill_dir,
@@ -349,6 +372,7 @@ async def run_selfplay(
             total_confidence += getattr(rec, "confidence", 0.0) or 0.0
 
         avg_confidence = total_confidence / total_decisions if total_decisions else 0.0
+        calibration = calibrate_decisions(decision_recorder.records, roles)
 
         # Review (enhanced) — skip for errored games
         review_score = None
@@ -363,6 +387,7 @@ async def run_selfplay(
         turning_point_count = 0
         information_score = 0.0
         cooperation_score = 0.0
+        role_weighted_score = 0.0
         if config.enable_review and not game_error:
             agent_decisions = _collect_decisions(decision_recorder)
             review_report = generate_enhanced_review(
@@ -385,6 +410,7 @@ async def run_selfplay(
             turning_point_count = len(review_report.key_turning_points)
             information_score = sum(s.information_score for s in player_scores) / denominator
             cooperation_score = sum(s.cooperation_score for s in player_scores) / denominator
+            role_weighted_score = sum(s.role_weighted_score for s in player_scores) / denominator
             _write_json(game_dir / "review.json", review_report.to_dict())
             _write_text(game_dir / "review.md", review_report.to_markdown())
 
@@ -401,6 +427,7 @@ async def run_selfplay(
             write_game_experiences(
                 cards=cards,
                 game_dir=game_dir,
+                output_dir=run_dir / "experiences",
             )
             if config.enable_dream:
                 by_role: dict[Role, list] = {}
@@ -464,8 +491,12 @@ async def run_selfplay(
             fallback_count=fallback_count,
             policy_adjusted_count=policy_adjusted_count,
             avg_confidence=avg_confidence,
+            confidence_calibration_error=calibration["confidence_calibration_error"],
+            confidence_calibration_count=calibration["confidence_calibration_count"],
+            confidence_buckets=calibration["confidence_buckets"],
             review_score=review_score,
             output_dir=game_dir,
+            role_weighted_score=role_weighted_score,
             avg_speech_score=avg_speech_score,
             avg_vote_score=avg_vote_score,
             avg_skill_score=avg_skill_score,
@@ -479,6 +510,26 @@ async def run_selfplay(
             error=game_error,
         )
         results.append(result)
+        if on_game_complete is not None:
+            on_game_complete(i, result)
+
+    if (
+        config.enable_batch_dream
+        and config.enable_experience
+        and results
+    ):
+        if batch_client is None:
+            batch_client = load_llm_client(
+                model_name=config.model_name,
+                temperature=config.temperature,
+            )
+        await _run_batch_dream(
+            run_dir=run_dir,
+            model=batch_client,
+            skill_dir=config.skill_dir,
+            enable_skill_proposals=config.enable_skill_proposals,
+            auto_apply_skill_proposals=config.auto_apply_skill_proposals,
+        )
 
     selfplay_result = SelfPlayResult(
         config=config,
@@ -491,6 +542,67 @@ async def run_selfplay(
     # Write summary
     selfplay_result.write_summary(run_dir)
     return selfplay_result
+
+
+async def _run_batch_dream(
+    *,
+    run_dir: Path,
+    model: ModelAdapter,
+    skill_dir: Path | None,
+    enable_skill_proposals: bool,
+    auto_apply_skill_proposals: bool,
+) -> None:
+    cards_by_role = _collect_run_experience_cards(run_dir)
+    for role, cards in sorted(cards_by_role.items(), key=lambda item: item[0].value):
+        rule_memory = consolidate_role_memory(
+            role,
+            experience_dir=run_dir / "experiences",
+            min_evidence=2,
+        )
+        write_role_memory(rule_memory, output_dir=run_dir / "long_memory")
+        write_memory_candidate(rule_memory, output_dir=run_dir / "memory_candidate")
+        report = await dream_for_role(
+            role=role,
+            model=model,
+            cards=cards,
+            rule_memory=rule_memory,
+            skill_root=skill_dir,
+        )
+        write_dream_report(
+            report,
+            output_dir=run_dir / "batch_dreams" / role.value,
+        )
+        if not enable_skill_proposals:
+            continue
+        proposals = proposals_from_dream(
+            report,
+            min_confidence=0.75,
+            min_evidence_cards=2,
+        )
+        write_skill_proposals(
+            proposals,
+            output_dir=run_dir / "batch_skill_proposals" / role.value,
+        )
+        if auto_apply_skill_proposals and skill_dir is not None:
+            apply_skill_proposals(
+                proposals,
+                target_skill_root=skill_dir,
+                patch_dir=run_dir / "batch_skill_patches" / role.value,
+                min_confidence=0.75,
+                min_evidence_cards=2,
+            )
+
+
+def _collect_run_experience_cards(run_dir: Path) -> dict[Role, list[dict]]:
+    cards_by_role: dict[Role, list[dict]] = {}
+    for path in sorted((run_dir / "games").glob("*/experiences/*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            role = Role(str(data.get("role", "")))
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        cards_by_role.setdefault(role, []).append(data)
+    return cards_by_role
 
 
 def _create_agents(

@@ -108,8 +108,7 @@ Agent 层只能读取 `ActionRequest`，不能直接读取完整 `GameState`。
 规则层输出完整对局日志：
 
 ```text
-logs/gameX.jsonl
-logs/gameX.txt
+logs/gameX/events.jsonl
 ```
 
 UI 读取这些日志还原：

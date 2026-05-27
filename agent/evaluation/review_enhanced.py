@@ -41,6 +41,15 @@ MISTAKE_IGNORED_VOTE = "ignored_vote_pattern"
 MISTAKE_OVER_TRUSTED = "over_trusted_wolf"
 MISTAKE_FAILED_COORDINATE = "failed_to_coordinate"
 
+ATTR_PROMPT_FAILURE = "prompt_failure"
+ATTR_SKILL_MISSING = "skill_missing"
+ATTR_BELIEF_ERROR = "belief_error"
+ATTR_MEMORY_ERROR = "memory_error"
+ATTR_GOT_BAD_REASONING = "got_bad_reasoning"
+ATTR_POLICY_ADJUSTMENT = "policy_adjustment"
+ATTR_FORMAT_ERROR = "format_error"
+ATTR_STRATEGY_ERROR = "strategy_error"
+
 
 # ── enhanced data structures ──────────────────────────────────────────────────
 
@@ -59,6 +68,7 @@ class PlayerReview:
     skill_score: float = 0.0
     information_score: float = 0.0
     cooperation_score: float = 0.0
+    role_weighted_score: float = 0.0
     highlights: list[str] = field(default_factory=list)
     mistakes: list[str] = field(default_factory=list)
     mistake_types: list[str] = field(default_factory=list)
@@ -77,6 +87,7 @@ class PlayerReview:
                 "skill": round(self.skill_score, 2),
                 "information": round(self.information_score, 2),
                 "cooperation": round(self.cooperation_score, 2),
+                "role_weighted": round(self.role_weighted_score, 2),
             },
             "highlights": self.highlights,
             "mistakes": self.mistakes,
@@ -118,6 +129,7 @@ class DecisionMistake:
     mistake_type: str
     description: str
     severity: str = "medium"  # "low" | "medium" | "high"
+    attribution: str = ATTR_STRATEGY_ERROR
 
     def to_dict(self) -> dict:
         return {
@@ -129,6 +141,41 @@ class DecisionMistake:
             "mistake_type": self.mistake_type,
             "description": self.description,
             "severity": self.severity,
+            "attribution": self.attribution,
+        }
+
+
+@dataclass(slots=True)
+class KeyDecisionReview:
+    """Judge result for a high-impact decision."""
+
+    player_id: int
+    role: str
+    day: int
+    phase: str
+    action_type: str
+    target: int | None
+    quality_score: float
+    verdict: str
+    mistake_type: str = ""
+    attribution: str = ""
+    counterfactual: str = ""
+    suggestion: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "player_id": self.player_id,
+            "role": self.role,
+            "day": self.day,
+            "phase": self.phase,
+            "action_type": self.action_type,
+            "target": self.target,
+            "quality_score": round(self.quality_score, 2),
+            "verdict": self.verdict,
+            "mistake_type": self.mistake_type,
+            "attribution": self.attribution,
+            "counterfactual": self.counterfactual,
+            "suggestion": self.suggestion,
         }
 
 
@@ -193,7 +240,8 @@ class GameReviewReport:
     mistakes: list[DecisionMistake]
     skill_summary: dict[str, SkillReview]
     counterfactuals: list[Counterfactual]
-    suggestions: list[str]
+    suggestions: list[str] = field(default_factory=list)
+    key_decision_reviews: list[KeyDecisionReview] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -206,6 +254,7 @@ class GameReviewReport:
             "mistakes": [m.to_dict() for m in self.mistakes],
             "skill_summary": {k: v.to_dict() for k, v in self.skill_summary.items()},
             "counterfactuals": [c.to_dict() for c in self.counterfactuals],
+            "key_decision_reviews": [r.to_dict() for r in self.key_decision_reviews],
             "suggestions": self.suggestions,
         }
 
@@ -275,7 +324,21 @@ class GameReviewReport:
             lines.append("无非关键性反事实。")
             lines.append("")
 
-        lines.append("## 8. 改进建议")
+        lines.append("## 8. 关键决策评审")
+        lines.append("")
+        if self.key_decision_reviews:
+            lines.append("| 玩家 | 行动 | 质量 | 归因 | 评语 |")
+            lines.append("|------|------|------|------|------|")
+            for r in self.key_decision_reviews:
+                lines.append(
+                    f"| P{r.player_id}({r.role}) | {r.action_type} | {r.quality_score:.1f} | "
+                    f"{r.attribution or '-'} | {r.verdict} |"
+                )
+        else:
+            lines.append("无关键决策评审。")
+        lines.append("")
+
+        lines.append("## 9. 改进建议")
         lines.append("")
         for s in self.suggestions:
             lines.append(f"- {s}")
@@ -342,6 +405,7 @@ def generate_enhanced_review(
         # Information score: based on known role type
         known_count = sum(1 for d in agent_decisions.get(pid, []) if d.get("action_type") == "seer_check")
         pr.information_score = min(known_count * 3, 10) if role is Role.SEER else 5.0
+        pr.role_weighted_score = role_weighted_score(role, pr)
 
         # Suggestions
         pr.suggestions = _generate_player_suggestions(pid, role, pr)
@@ -370,6 +434,7 @@ def generate_enhanced_review(
 
     # Counterfactuals
     counterfactuals = _generate_counterfactuals(mistakes, agent_decisions, roles)
+    key_decision_reviews = _generate_key_decision_reviews(agent_decisions, roles, mistakes)
 
     # Summary
     summary = _generate_summary(winner_str, team_scores, turning_points)
@@ -390,6 +455,7 @@ def generate_enhanced_review(
         mistakes=mistakes,
         skill_summary=skill_summary,
         counterfactuals=counterfactuals,
+        key_decision_reviews=key_decision_reviews,
         suggestions=suggestions,
     )
 
@@ -536,6 +602,7 @@ def _collect_mistakes(
                     mistake_type=MISTAKE_FALLBACK_USED,
                     description=f"{d.get('action_type')} 使用了回退策略",
                     severity="high",
+                    attribution=ATTR_FORMAT_ERROR,
                 ))
 
             # Policy adjusted
@@ -550,6 +617,7 @@ def _collect_mistakes(
                     mistake_type=MISTAKE_POLICY_ADJUSTED,
                     description=adj_text,
                     severity=severity,
+                    attribution=ATTR_POLICY_ADJUSTMENT,
                 ))
 
             # Witch poisoned good
@@ -565,6 +633,7 @@ def _collect_mistakes(
                             mistake_type=MISTAKE_POISONED_GOOD,
                             description=f"毒杀 P{target}({t_role.value})——毒错好人",
                             severity="high",
+                            attribution=ATTR_BELIEF_ERROR,
                         ))
 
             # Hunter shot good
@@ -580,6 +649,7 @@ def _collect_mistakes(
                             mistake_type=MISTAKE_SHOT_GOOD,
                             description=f"带走 P{target}({t_role.value})——带错好人",
                             severity="high",
+                            attribution=ATTR_BELIEF_ERROR,
                         ))
 
             # Wolf kills teammate
@@ -595,6 +665,7 @@ def _collect_mistakes(
                             mistake_type=MISTAKE_KILLED_TEAMMATE,
                             description=f"狼人P{pid} 刀杀队友 P{target}({t_role.value})",
                             severity="high",
+                            attribution=ATTR_POLICY_ADJUSTMENT,
                         ))
 
             # Ignored seer check (voted for verified good player)
@@ -615,9 +686,153 @@ def _collect_mistakes(
                                         mistake_type=MISTAKE_IGNORED_SEER,
                                         description=f"P{pid} 投票放逐了预言家查验为好人的 P{target}",
                                         severity="medium",
+                                        attribution=ATTR_MEMORY_ERROR,
                                     ))
 
     return mistakes
+
+
+def role_weighted_score(role: Role, review: PlayerReview) -> float:
+    """Role-specific weighted score aligned to Werewolf responsibilities."""
+    if role.team is Team.WEREWOLVES:
+        return (
+            review.speech_score * 0.30
+            + review.vote_score * 0.25
+            + review.skill_score * 0.25
+            + review.cooperation_score * 0.20
+        )
+    if role is Role.SEER:
+        return (
+            review.skill_score * 0.35
+            + review.information_score * 0.30
+            + review.vote_score * 0.20
+            + review.speech_score * 0.15
+        )
+    if role is Role.WITCH:
+        return (
+            review.skill_score * 0.35
+            + review.information_score * 0.20
+            + review.speech_score * 0.15
+            + review.vote_score * 0.15
+            + review.cooperation_score * 0.15
+        )
+    if role is Role.HUNTER:
+        return (
+            review.skill_score * 0.30
+            + review.vote_score * 0.25
+            + review.speech_score * 0.25
+            + review.cooperation_score * 0.20
+        )
+    return (
+        review.speech_score * 0.35
+        + review.vote_score * 0.35
+        + review.information_score * 0.20
+        + review.cooperation_score * 0.10
+    )
+
+
+def _generate_key_decision_reviews(
+    agent_decisions: dict[int, list[dict]],
+    roles: dict[int, Role],
+    mistakes: list[DecisionMistake],
+) -> list[KeyDecisionReview]:
+    mistake_by_key = {
+        (m.player_id, m.day, m.phase, m.action_type): m
+        for m in mistakes
+    }
+    reviews: list[KeyDecisionReview] = []
+    key_actions = {
+        "exile_vote", "pk_vote", "witch_act", "hunter_shoot", "seer_check",
+        "werewolf_kill", "white_wolf_explode", "sheriff_speak", "speak",
+    }
+    for player_id, decisions in agent_decisions.items():
+        role = roles.get(player_id)
+        if role is None:
+            continue
+        for d in decisions:
+            action = d.get("action_type", "")
+            if action not in key_actions:
+                continue
+            mistake = mistake_by_key.get((player_id, d.get("day", 0), d.get("phase", ""), action))
+            quality = _judge_decision_quality(d, role, roles, mistake)
+            reviews.append(KeyDecisionReview(
+                player_id=player_id,
+                role=role.value,
+                day=d.get("day", 0),
+                phase=d.get("phase", ""),
+                action_type=action,
+                target=d.get("selected_target"),
+                quality_score=quality,
+                verdict=_decision_verdict(quality, mistake),
+                mistake_type=mistake.mistake_type if mistake else "",
+                attribution=mistake.attribution if mistake else "",
+                counterfactual=_decision_counterfactual(mistake),
+                suggestion=_decision_suggestion(mistake, role),
+            ))
+    reviews.sort(key=lambda item: (item.quality_score, item.day, item.player_id))
+    return reviews[:12]
+
+
+def _judge_decision_quality(
+    decision: dict,
+    role: Role,
+    roles: dict[int, Role],
+    mistake: DecisionMistake | None,
+) -> float:
+    if mistake is not None:
+        return 2.0 if mistake.severity == "high" else 4.0
+    source = decision.get("source", "llm")
+    confidence = float(decision.get("confidence", 0.5) or 0.5)
+    score = 5.0 + min(confidence, 1.0) * 3.0
+    target = decision.get("selected_target")
+    target_role = roles.get(target) if target is not None else None
+    action = decision.get("action_type", "")
+    if target_role is not None:
+        if action in {"exile_vote", "pk_vote", "hunter_shoot", "witch_act"}:
+            good_target = (
+                (role.team is Team.WEREWOLVES and target_role.team is not Team.WEREWOLVES)
+                or (role.team is not Team.WEREWOLVES and target_role.team is Team.WEREWOLVES)
+            )
+            score += 1.5 if good_target else -2.5
+        if action == "werewolf_kill":
+            score += 1.5 if target_role.team is not Team.WEREWOLVES else -4.0
+    if source == "got":
+        score += 0.5
+    elif source == "fallback":
+        score -= 3.0
+    elif source == "policy_adjusted":
+        score -= 1.5
+    return max(0.0, min(10.0, score))
+
+
+def _decision_verdict(quality: float, mistake: DecisionMistake | None) -> str:
+    if mistake is not None:
+        return mistake.description
+    if quality >= 8:
+        return "关键决策质量较高，目标与身份收益一致。"
+    if quality >= 5:
+        return "关键决策基本可接受，但证据强度一般。"
+    return "关键决策质量偏低，需要复盘证据链。"
+
+
+def _decision_counterfactual(mistake: DecisionMistake | None) -> str:
+    if mistake is None:
+        return ""
+    return f"若避免该决策，可能减少 {mistake.attribution} 类风险。"
+
+
+def _decision_suggestion(mistake: DecisionMistake | None, role: Role) -> str:
+    if mistake is None:
+        return ""
+    if mistake.attribution == ATTR_BELIEF_ERROR:
+        return "加强 belief 证据权重和反向证据校验。"
+    if mistake.attribution == ATTR_FORMAT_ERROR:
+        return "加强输出格式约束和 few-shot。"
+    if mistake.attribution == ATTR_MEMORY_ERROR:
+        return "将已知查验、票型和身份声明写入短期记忆摘要。"
+    if role.team is Team.WEREWOLVES:
+        return "补充狼人团队协同和伪装策略 skill。"
+    return "补充好人站边、投票和技能使用策略 skill。"
 
 
 def _analyze_skills(agent_decisions: dict[int, list[dict]]) -> dict[str, SkillReview]:

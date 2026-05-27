@@ -75,8 +75,8 @@ WEREWOLF_LLM_TEMPERATURE=0.4
 
 Agent 层会输出两类记录：
 
-- `logs/gameX.agent.jsonl`：轻量决策日志，供 UI 快速展示。
-- `logs/gameX.archive.json`：完整决策链路，包括 observation、memory、belief、selected skills、prompt、raw output、ToT candidates、policy adjustments。
+- `logs/gameX/agent_decisions.jsonl`：轻量决策日志，供 UI 快速展示。
+- `logs/gameX/archive.json`：完整决策链路，包括 observation、memory、belief、selected skills、prompt、raw output、ToT candidates、policy adjustments。
 
 这些数据用于 UI 展示、复盘评测、经验提取和 leaderboard。
 
