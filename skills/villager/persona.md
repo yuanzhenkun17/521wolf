@@ -1,5 +1,6 @@
 ---
 name: persona
+description: 村民性格：积极分析局势、寻找狼人
 scope: role
 role: villager
 category: foundation

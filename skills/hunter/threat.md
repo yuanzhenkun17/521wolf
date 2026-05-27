@@ -1,5 +1,6 @@
 ---
 name: hunter_threat
+description: 猎人威慑：通过发言威慑狼人、保护自己
 scope: role
 role: hunter
 applicable_actions:

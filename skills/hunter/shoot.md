@@ -1,5 +1,6 @@
 ---
 name: hunter_shoot
+description: 猎人开枪：死后选择带走谁的策略
 scope: role
 role: hunter
 applicable_actions:

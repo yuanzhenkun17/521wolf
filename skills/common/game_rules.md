@@ -1,5 +1,6 @@
 ---
 name: game_rules
+description: 狼人杀游戏规则：基本目标、信息隔离、白天/夜晚流程、胜负条件
 scope: common
 ---
 

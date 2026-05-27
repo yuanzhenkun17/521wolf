@@ -318,6 +318,7 @@ async def run_selfplay(
         batch_client = client
         agents = _create_agents(
             roles, client, decision_recorder, trace_recorders,
+            game_id=game_id,
             skill_dir=config.skill_dir,
             tot_enabled=config.tot_enabled,
             got_enabled=config.got_enabled,

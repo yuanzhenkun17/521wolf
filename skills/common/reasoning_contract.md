@@ -1,5 +1,6 @@
 ---
 name: reasoning_contract
+description: 推理契约：public_text/private_reasoning/confidence 字段约束
 scope: common
 category: foundation
 evolvable: false

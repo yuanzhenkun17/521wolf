@@ -1,5 +1,6 @@
 ---
 name: werewolf_fake_seer
+description: 悍跳预言家：伪造查验结果扰乱好人视野、扛推真预言家
 scope: role
 role: werewolf
 applicable_actions:

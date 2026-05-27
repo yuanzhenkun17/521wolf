@@ -1,5 +1,6 @@
 ---
 name: werewolf_deep_wolf
+description: 深水狼：隐藏身份混入好人阵营、中后期发力
 scope: role
 role: werewolf
 applicable_actions:

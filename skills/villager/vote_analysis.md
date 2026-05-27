@@ -1,5 +1,6 @@
 ---
 name: villager_vote_analysis
+description: 投票分析：通过投票行为判断狼人的方法
 scope: role
 role: villager
 applicable_actions:

@@ -1,5 +1,6 @@
 ---
 name: villager_wolf_pit
+description: 找狼坑：通过逻辑推理定位狼人位置
 scope: role
 role: villager
 applicable_actions:

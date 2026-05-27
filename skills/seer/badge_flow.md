@@ -1,5 +1,6 @@
 ---
 name: seer_badge_flow
+description: 警徽流：死后通过警徽传递查验信息的策略
 scope: role
 role: seer
 applicable_actions:

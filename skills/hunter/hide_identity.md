@@ -1,5 +1,6 @@
 ---
 name: hunter_hide_identity
+description: 猎人隐藏身份：避免被狼人针对的发言策略
 scope: role
 role: hunter
 applicable_actions:

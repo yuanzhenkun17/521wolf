@@ -45,6 +45,7 @@ from agent.nodes.policy import policy_node
 from agent.nodes.log import log_node
 from agent.nodes.got import got_node
 from agent.nodes.tot import tot_node
+from agent.nodes.skill_select import skill_select_node
 
 
 @contextmanager
@@ -114,6 +115,11 @@ class AgentRuntime:
             ctx = observe_node(ctx)
             ctx = memory_node(ctx, self.memory)
             ctx = belief_node(ctx, self.belief, self.memory)
+
+            # -- async skill selection (Stage 1) ------------------------------------
+            ctx = await skill_select_node(ctx, self.model, skill_root=self.skill_dir)
+
+            # -- skill routing (Stage 2) + prompt assembly -------------------------
             ctx = skill_router_node(ctx, skill_root=self.skill_dir)
             ctx = prompt_node(ctx, persona=self.persona)
 

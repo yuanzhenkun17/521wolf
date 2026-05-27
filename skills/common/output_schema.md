@@ -1,5 +1,6 @@
 ---
 name: output_schema
+description: 输出格式要求：JSON schema、字段说明
 scope: common
 ---
 

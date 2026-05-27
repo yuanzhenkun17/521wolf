@@ -1,5 +1,6 @@
 ---
 name: witch_hide_identity
+description: 女巫隐藏身份：通过发言和投票掩盖身份避免暴露
 scope: role
 role: witch
 applicable_actions:

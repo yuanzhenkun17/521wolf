@@ -254,7 +254,6 @@ class AgentMemory:
         self._update_field_notes(request)
         observation = request.observation
         ctx = {
-            "public_summary": list(observation.public_log[-12:]),
             "memory_events": [event.to_prompt_text() for event in self.events[-16:]],
             "private_facts": {
                 "known_roles": {player_id: role.value for player_id, role in observation.known_roles.items()},

@@ -32,6 +32,7 @@ class AgentContext:
     selected_skills: list[str] = field(default_factory=list)
     skill_context: str = ""
     strategy_advice: dict[str, Any] = field(default_factory=dict)
+    skill_selection: set[str] | None = None  # LLM-selected skill names (Stage 1)
 
     # LLM interaction
     messages: list[dict[str, str]] = field(default_factory=list)

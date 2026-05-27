@@ -6,14 +6,23 @@ from langfuse import observe
 from engine.models import Role
 
 from agent.runtime.context import AgentContext
-from agent.skill_system.router import select_skills, format_skill_context
+from agent.skill_system.router import select_skills, format_skill_context, filter_by_selection
 
 
 @observe(name="skill_router_node")
 def skill_router_node(ctx: AgentContext, *, skill_root: Path | None = None, **kwargs) -> AgentContext:
-    """Select common + role skills for the current context."""
+    """Select common + role skills for the current context.
+
+    If ``ctx.skill_selection`` is set (by ``skill_select_node``), only those
+    skills are injected.  Otherwise falls back to injecting all role-matched
+    skills.
+    """
     role = Role(ctx.role)
     selected = select_skills(ctx, role, skill_root=skill_root)
+
+    # Stage 2: filter by LLM selection if available
+    if ctx.skill_selection is not None:
+        selected = filter_by_selection(selected, ctx.skill_selection)
 
     ctx.selected_skills = [s.name for s in selected]
     ctx.selected_skill = ",".join(s.name for s in selected)

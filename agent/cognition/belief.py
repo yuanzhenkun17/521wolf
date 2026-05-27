@@ -181,8 +181,13 @@ class BeliefState:
     def build_context(self, request: ActionRequest, memory: AgentMemory | None = None) -> dict:
         self.update_from_request(request, memory)
         alive = set(request.observation.alive_players)
+
+        def _has_evidence(b: PlayerBelief) -> bool:
+            return bool(b.top_evidence or b.wolf_evidence or b.good_evidence)
+
         ordered = sorted(
-            (b for b in self.players.values() if b.player_id in alive and b.player_id != self.player_id),
+            (b for b in self.players.values()
+             if b.player_id in alive and b.player_id != self.player_id and _has_evidence(b)),
             key=lambda b: (-b.wolf_prob, b.player_id),
         )
         return {

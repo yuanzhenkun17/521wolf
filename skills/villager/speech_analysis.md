@@ -1,5 +1,6 @@
 ---
 name: villager_speech_analysis
+description: 发言分析：通过发言内容判断身份的方法
 scope: role
 role: villager
 applicable_actions:

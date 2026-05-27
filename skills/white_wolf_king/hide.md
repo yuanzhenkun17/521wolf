@@ -1,5 +1,6 @@
 ---
 name: white_wolf_king_hide
+description: 白狼王隐藏：伪装成好人混入阵营的策略
 scope: role
 role: white_wolf_king
 applicable_actions:

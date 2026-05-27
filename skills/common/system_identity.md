@@ -1,5 +1,6 @@
 ---
 name: system_identity
+description: 系统身份设定：角色扮演规则、信息隔离、公私分离
 scope: common
 category: foundation
 evolvable: false

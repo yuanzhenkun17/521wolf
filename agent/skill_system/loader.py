@@ -30,6 +30,7 @@ class MarkdownSkill:
     """A skill defined in a Markdown file (YAML front matter + body)."""
 
     name: str
+    description: str = ""
     scope: str = "role"  # "common" | "role"
     role: Role | None = None
     applicable_actions: set[ActionType] = field(default_factory=set)
@@ -191,6 +192,7 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
         return None
 
     name = front.get("name", path.stem)
+    description = front.get("description", "")
     scope = front.get("scope", "role")
 
     role: Role | None = None
@@ -217,6 +219,7 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
 
     return MarkdownSkill(
         name=name,
+        description=description,
         scope=scope,
         role=role,
         applicable_actions=actions,

@@ -113,7 +113,6 @@ def build_request_prompt(
         f"存活玩家: {list(observation.alive_players)}\n"
         f"死亡玩家: {list(observation.dead_players)}\n"
         f"当前警长: {observation.sheriff_id}\n"
-        f"公开局势摘要: {memory_context['public_summary']}\n"
         f"结构化事实记忆: {memory_context.get('memory_events', [])}\n"
         f"你知道的身份: {private_facts['known_roles']}\n"
         f"预言家查验结果: {private_facts['seer_checks']}\n"
@@ -131,13 +130,5 @@ def build_request_prompt(
         f"{hints_block}"
         f"{action_instruction(request.action_type)}\n"
         f"{strategy_instruction(request)}\n"
-        "必须只输出 JSON，字段如下：\n"
-        '{"choice": string|null, "target": number|null, "public_text": string, '
-        '"private_reasoning": string, "confidence": 0.0~1.0, '
-        '"alternatives": [number], "rejected_reasons": [string], '
-        '"memory_refs": [string], "selected_skill": string}\n'
-        "public_text 是公开内容，private_reasoning 是私有推理。\n"
-        "confidence 是你对此决策的置信度 (0.0 到 1.0)。\n"
-        "memory_refs 可选，用于标注引用的记忆条目。\n"
-        "target 必须是 candidates 里的数字，除非该行动允许弃权或不需要目标。"
+        "必须只输出 JSON，格式参见 output_schema 技能。"
     )

@@ -1,5 +1,6 @@
 ---
 name: persona
+description: 狼人性格：隐藏视角、把票引向好人
 scope: role
 role: werewolf
 category: foundation

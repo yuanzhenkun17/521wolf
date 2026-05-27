@@ -1,5 +1,6 @@
 ---
 name: witch_poison
+description: 女巫毒药：使用毒药的时机和目标选择
 scope: role
 role: witch
 applicable_actions:
