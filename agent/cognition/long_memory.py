@@ -21,6 +21,10 @@ from agent.cognition.experience import EXPERIENCE_BASE_DIR, ROLE_DIR_MAP, load_r
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 LONG_MEMORY_BASE_DIR = _PROJECT_ROOT / "data" / "long_memory"
+PLACEHOLDER_TEXTS = {
+    "本局无显著失误，继续保持",
+    "继续保持当前策略",
+}
 
 
 @dataclass(slots=True)
@@ -269,7 +273,7 @@ def _collect_counter(cards: list[dict], field_name: str) -> dict[str, dict]:
         card_id = str(card.get("card_id") or "")
         for item in card.get(field_name, []) or []:
             text = str(item).strip()
-            if not text:
+            if not text or text in PLACEHOLDER_TEXTS:
                 continue
             grouped[text]["count"] += 1
             if card_id:
@@ -301,13 +305,21 @@ def _principles_from_counter(
                 title=f"{title_prefix} {index}",
                 description=text,
                 evidence_count=count,
-                confidence=min(0.95, 0.35 + 0.6 * count / max_count),
+                confidence=_principle_confidence(count, max_count, min_evidence),
                 source_cards=list(dict.fromkeys(info["cards"]))[:10],
             )
         )
         if len(principles) >= max_items:
             break
     return principles
+
+
+def _principle_confidence(count: int, max_count: int, min_evidence: int) -> float:
+    if count < max(min_evidence, 2):
+        return 0.45
+    support = count / max(max_count, 1)
+    sample_factor = min(count / 5.0, 1.0)
+    return min(0.9, 0.35 + 0.35 * support + 0.2 * sample_factor)
 
 
 def _skill_update_suggestions(

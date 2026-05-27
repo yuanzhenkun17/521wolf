@@ -142,7 +142,6 @@ export async function createVersion(config: {
   temperature?: number;
   max_tokens?: number;
   base_url?: string;
-  api_key?: string;
   tot_enabled?: boolean;
   got_enabled?: boolean;
   got_trigger_threshold?: number;
@@ -178,6 +177,7 @@ export type SelfplayRun = {
   num_games: number;
   completed_games: number;
   agent_version?: string;
+  artifact_run_id?: string;
   skill_dir?: string;
   max_days?: number;
   enable_sheriff?: boolean;
@@ -248,6 +248,7 @@ export type EvolutionRun = {
   status: "running" | "completed" | "failed";
   stage: string;
   started_at: string;
+  artifact_run_id?: string;
   config: EvolutionConfig & Record<string, unknown>;
   result?: Record<string, unknown>;
   candidate_version?: string;

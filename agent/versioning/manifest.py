@@ -6,6 +6,7 @@ Reference: docs/agent_version_management_plan.md Section 4
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -14,6 +15,9 @@ from enum import Enum
 from pathlib import Path
 
 from agent.evaluation.leaderboard import LeaderboardEntry
+
+
+VERSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 class VersionStatus(str, Enum):
@@ -50,7 +54,6 @@ class ModelConfig:
     temperature: float = 0.7
     max_tokens: int = 2048
     base_url: str = ""
-    api_key: str = ""
 
     def to_dict(self) -> dict:
         return self.__dict__.copy()
@@ -133,13 +136,36 @@ class AgentVersionManifest:
 def resolve_manifest_path(manifest_path: Path, raw: str) -> Path:
     path = Path(raw)
     if path.is_absolute():
-        resolved = path.resolve()
-    else:
-        resolved = (manifest_path.parent / path).resolve()
+        raise ValueError(f"Absolute manifest paths are not allowed: {raw}")
+    resolved = (manifest_path.parent / path).resolve()
     base = manifest_path.parent.resolve()
-    if not str(resolved).startswith(str(base)):
-        raise ValueError(f"Path {raw} escapes manifest root {base}")
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise ValueError(f"Path {raw} escapes manifest root {base}") from exc
     return resolved
+
+
+def validate_version_id(version_id: str) -> str:
+    """Validate a version id before it is used in filesystem paths."""
+    if not VERSION_ID_RE.fullmatch(version_id):
+        raise ValueError(
+            "version id must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        )
+    if ".." in version_id or "/" in version_id or "\\" in version_id:
+        raise ValueError("version id must not contain path separators or '..'")
+    return version_id
+
+
+def resolve_version_dir(versions_root: Path | str, version_id: str) -> Path:
+    validate_version_id(version_id)
+    root = Path(versions_root).resolve()
+    path = (root / version_id).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Version path escapes versions root: {version_id}") from exc
+    return path
 
 
 def load_manifest(path: Path) -> AgentVersionManifest:
@@ -199,8 +225,8 @@ def create_agent_version(
     source_memory_dir: Path | None = None,
     notes: str = "",
 ) -> Path:
-    base_dir = versions_root / base
-    candidate_dir = versions_root / name
+    base_dir = resolve_version_dir(versions_root, base)
+    candidate_dir = resolve_version_dir(versions_root, name)
     if candidate_dir.exists():
         raise FileExistsError(f"Version {name} already exists at {candidate_dir}")
     base_manifest = load_manifest(base_dir / "manifest.json")
@@ -209,22 +235,41 @@ def create_agent_version(
         shutil.copytree(src_skills, candidate_dir / "skills")
     else:
         (candidate_dir / "skills").mkdir(parents=True)
-    src_memory = source_memory_dir or base_dir / "memory"
-    if src_memory.exists():
-        shutil.copytree(src_memory, candidate_dir / "memory")
+    memory_dir = candidate_dir / "memory"
+    base_memory = base_dir / "memory"
+    if base_memory.exists():
+        shutil.copytree(base_memory, memory_dir)
     else:
-        (candidate_dir / "memory").mkdir(parents=True)
+        memory_dir.mkdir(parents=True)
+    if source_memory_dir and source_memory_dir.exists():
+        _overlay_tree(source_memory_dir, memory_dir)
+    elif not source_memory_dir:
+        src_memory = base_dir / "memory"
+        if src_memory.exists() and not memory_dir.exists():
+            shutil.copytree(src_memory, memory_dir)
     manifest = AgentVersionManifest(
         version=name,
         base_version=base,
         status=VersionStatus.CANDIDATE,
-        runtime=RuntimeConfig(git_commit=current_git_commit()),
+        runtime=base_manifest.runtime,
         model=base_manifest.model,
         evolution=base_manifest.evolution,
         notes=[notes] if notes else [],
     )
+    manifest.runtime.git_commit = current_git_commit()
     save_manifest(manifest, candidate_dir / "manifest.json")
     return candidate_dir
+
+
+def _overlay_tree(source: Path, target: Path) -> None:
+    for item in source.rglob("*"):
+        rel = item.relative_to(source)
+        destination = target / rel
+        if item.is_dir():
+            destination.mkdir(parents=True, exist_ok=True)
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, destination)
 
 
 @dataclass
@@ -282,10 +327,32 @@ def update_manifest_status(manifest_path: Path, status: VersionStatus, evaluatio
     save_manifest(manifest, manifest_path)
 
 
+def promote_version(
+    base: str,
+    candidate: str,
+    *,
+    versions_root: Path = Path("agent_versions"),
+    evaluation_update: dict | None = None,
+) -> None:
+    base_path = resolve_version_dir(versions_root, base) / "manifest.json"
+    candidate_path = resolve_version_dir(versions_root, candidate) / "manifest.json"
+    base_manifest = load_manifest(base_path)
+    candidate_manifest = load_manifest(candidate_path)
+    candidate_manifest.status = VersionStatus.VALIDATED
+    candidate_manifest.evaluation.update({
+        "promoted_from": base_manifest.version,
+        **(evaluation_update or {}),
+    })
+    base_manifest.status = VersionStatus.ARCHIVED
+    base_manifest.evaluation.update({"promoted_to": candidate_manifest.version})
+    save_manifest(base_manifest, base_path)
+    save_manifest(candidate_manifest, candidate_path)
+
+
 def rollback_version(current_validated: str, target: str, *, versions_root: Path = Path("agent_versions"), reason: str = "") -> None:
     versions_root = Path(versions_root)
-    current_path = versions_root / current_validated / "manifest.json"
-    target_path = versions_root / target / "manifest.json"
+    current_path = resolve_version_dir(versions_root, current_validated) / "manifest.json"
+    target_path = resolve_version_dir(versions_root, target) / "manifest.json"
 
     # Pre-checks
     current_manifest = load_manifest(current_path)

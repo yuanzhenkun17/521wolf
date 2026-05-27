@@ -245,6 +245,9 @@ async def _run_mixed_game(
             trace_recorder=trace_recorders[player_id],
             game_id=config.game_id,
             skill_dir=spec.skill_dir,
+            tot_enabled=spec.tot_enabled,
+            got_enabled=spec.got_enabled,
+            got_trigger_threshold=spec.got_trigger_threshold,
         )
 
     engine = GameEngine(roles, agents, config.game_config)
@@ -340,6 +343,7 @@ def _build_mixed_leaderboard(games: list[MixedGameResult]) -> list[LeaderboardEn
         ):
             row = stats.setdefault(version, {
                 "games": 0,
+                "normal_games": 0,
                 "wolves_games": 0,
                 "villager_games": 0,
                 "wolves_wins": 0,
@@ -362,6 +366,9 @@ def _build_mixed_leaderboard(games: list[MixedGameResult]) -> list[LeaderboardEn
                 "role_weighted_samples": [],
             })
             row["games"] += 1
+            if game.error:
+                continue
+            row["normal_games"] += 1
             row["days"] += game.days
             row["score"] += game.review_score_by_version.get(version, 0.0)
             row["role_weighted"] += game.role_weighted_score_by_version.get(version, 0.0)
@@ -394,6 +401,7 @@ def _build_mixed_leaderboard(games: list[MixedGameResult]) -> list[LeaderboardEn
     entries: list[LeaderboardEntry] = []
     for version, row in stats.items():
         games_count = int(row["games"])
+        normal_games = int(row["normal_games"])
         decisions = row["decisions"]
         calibration = merge_calibration_reports(row["calibration_reports"])
         entries.append(LeaderboardEntry(
@@ -403,23 +411,23 @@ def _build_mixed_leaderboard(games: list[MixedGameResult]) -> list[LeaderboardEn
             villager_win_rate=row["villager_wins"] / row["villager_games"] if row["villager_games"] else 0.0,
             werewolf_win_rate_ci95=wilson_ci95(int(row["wolves_wins"]), int(row["wolves_games"])),
             villager_win_rate_ci95=wilson_ci95(int(row["villager_wins"]), int(row["villager_games"])),
-            avg_days=row["days"] / games_count if games_count else 0.0,
-            avg_score=row["score"] / games_count if games_count else 0.0,
+            avg_days=row["days"] / normal_games if normal_games else 0.0,
+            avg_score=row["score"] / normal_games if normal_games else 0.0,
             avg_score_ci95=mean_ci95(row["score_samples"]),
-            role_weighted_score=row["role_weighted"] / games_count if games_count else 0.0,
+            role_weighted_score=row["role_weighted"] / normal_games if normal_games else 0.0,
             role_weighted_score_ci95=mean_ci95(row["role_weighted_samples"]),
-            avg_speech_score=row["speech"] / games_count if games_count else 0.0,
-            avg_vote_score=row["vote"] / games_count if games_count else 0.0,
-            avg_skill_score=row["skill"] / games_count if games_count else 0.0,
-            avg_confidence=row["confidence"] / games_count if games_count else 0.0,
+            avg_speech_score=row["speech"] / normal_games if normal_games else 0.0,
+            avg_vote_score=row["vote"] / normal_games if normal_games else 0.0,
+            avg_skill_score=row["skill"] / normal_games if normal_games else 0.0,
+            avg_confidence=row["confidence"] / normal_games if normal_games else 0.0,
             confidence_calibration_error=calibration["confidence_calibration_error"],
             confidence_calibration_count=calibration["confidence_calibration_count"],
             confidence_buckets=calibration["confidence_buckets"],
             fallback_rate=row["fallbacks"] / decisions if decisions else 0.0,
             policy_adjusted_rate=row["adjusted"] / decisions if decisions else 0.0,
-            bad_case_count=row["mistakes"] / games_count if games_count else 0.0,
-            information_score=row["information"] / games_count if games_count else 0.0,
-            cooperation_score=row["cooperation"] / games_count if games_count else 0.0,
+            bad_case_count=row["mistakes"] / normal_games if normal_games else 0.0,
+            information_score=row["information"] / normal_games if normal_games else 0.0,
+            cooperation_score=row["cooperation"] / normal_games if normal_games else 0.0,
             notes="team-level mixed battle",
         ))
     return entries

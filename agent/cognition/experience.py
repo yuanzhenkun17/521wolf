@@ -383,8 +383,6 @@ def _extract_lessons(
             lessons.append("投票决策需要结合更多信息")
         if player_review.skill_score < 4.0:
             lessons.append("技能使用需要更谨慎，确认目标后再行动")
-    if not lessons:
-        lessons.append("本局无显著失误，继续保持")
     return lessons[:4]
 
 
@@ -404,8 +402,6 @@ def _extract_avoid_next_time(
                 avoid.append("仅凭发言印象投票，忽略票型分析")
             elif mt == MISTAKE_FALLBACK_USED:
                 avoid.append("输出格式不合规导致回退")
-    if not avoid:
-        avoid.append("继续保持当前策略")
     return avoid[:3]
 
 

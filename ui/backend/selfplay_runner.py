@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
+from engine.config import STANDARD_12
 
 
 @dataclass(slots=True)
@@ -23,6 +24,7 @@ class RunningSelfplay:
     enable_sheriff: bool = True
     enable_batch_dream: bool = False
     result: SelfPlayResult | None = None
+    artifact_run_id: str | None = None
     error: str | None = None
     started_at: str = ""
     task: asyncio.Task[None] | None = None
@@ -45,6 +47,7 @@ class RunningSelfplay:
             "enable_batch_dream": self.enable_batch_dream,
             "created_at": self.started_at,
             "started_at": self.started_at,
+            "artifact_run_id": self.artifact_run_id,
         }
         if self.status == "completed" and self.result is not None:
             data["summary"] = self.result.summary
@@ -68,6 +71,9 @@ class SelfplayManager:
         skill_dir: str | None = None,
         model_name: str | None = None,
         temperature: float = 0.2,
+        tot_enabled: bool = True,
+        got_enabled: bool = True,
+        got_trigger_threshold: float = 0.3,
         max_days: int = 20,
         enable_sheriff: bool = True,
         enable_batch_dream: bool = False,
@@ -84,7 +90,11 @@ class SelfplayManager:
             max_days=max_days,
             enable_batch_dream=enable_batch_dream,
             temperature=temperature,
+            game_config=replace(STANDARD_12, enable_sheriff=enable_sheriff),
             skill_dir=Path(skill_dir) if skill_dir else None,
+            tot_enabled=tot_enabled,
+            got_enabled=got_enabled,
+            got_trigger_threshold=got_trigger_threshold,
         )
 
         run = RunningSelfplay(
@@ -121,10 +131,7 @@ class SelfplayManager:
                 on_game_complete=lambda idx, res: self._on_game_complete(run, idx, res),
             )
             run.result = result
-            old_run_id = run.run_id
-            run.run_id = result.run_id
-            if old_run_id != result.run_id:
-                self._runs[result.run_id] = self._runs.pop(old_run_id, run)
+            run.artifact_run_id = result.run_id
             run.status = "completed"
         except Exception as exc:
             run.status = "failed"

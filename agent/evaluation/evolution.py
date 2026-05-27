@@ -48,7 +48,7 @@ class EvolutionPipelineConfig:
     versions_root: Path = Path("agent_versions")
     enable_dream: bool = True
     enable_skill_proposals: bool = True
-    auto_apply_skill_proposals: bool = True
+    auto_apply_skill_proposals: bool = False
     min_score_improvement: float = 0.05
     max_win_rate_drop: float = 0.10
     notes: str = ""
@@ -153,7 +153,7 @@ async def run_evolution_pipeline(
 
     training_run_dir = training_config.output_dir / training_result.run_id
     memory_candidate_dir = training_run_dir / "memory_candidate"
-    source_memory_dir = memory_candidate_dir if memory_candidate_dir.exists() else base_memory_dir
+    source_memory_dir = memory_candidate_dir if memory_candidate_dir.exists() else None
 
     candidate_dir = create_agent_version(
         config.candidate_version,
@@ -170,7 +170,8 @@ async def run_evolution_pipeline(
         "training_run_id": training_result.run_id,
         "training_output_dir": str(training_run_dir),
         "source_skill_dir": str(training_skill_dir),
-        "source_memory_dir": str(source_memory_dir),
+        "base_memory_dir": str(base_memory_dir),
+        "source_memory_dir": str(source_memory_dir) if source_memory_dir else "",
     })
     save_manifest(candidate_manifest, candidate_manifest_path)
 
@@ -203,19 +204,29 @@ async def run_evolution_pipeline(
         min_score_improvement=config.min_score_improvement,
         max_win_rate_drop=config.max_win_rate_drop,
     )
-    status = VersionStatus.VALIDATED if verdict.promoted else VersionStatus.REJECTED
-    update_manifest_status(
-        candidate_manifest_path,
-        status,
-        evaluation_update={
-            "pipeline_run_id": run_id,
-            "battle_output_dir": str(battle_result.output_dir),
-            "promoted": verdict.promoted,
-            "reasons": verdict.reasons,
-            "metrics": verdict.metrics,
-            "leaderboard": [entry.to_dict() for entry in battle_result.leaderboard],
-        },
-    )
+    evaluation_update = {
+        "pipeline_run_id": run_id,
+        "battle_output_dir": str(battle_result.output_dir),
+        "promoted": verdict.promoted,
+        "reasons": verdict.reasons,
+        "metrics": verdict.metrics,
+        "leaderboard": [entry.to_dict() for entry in battle_result.leaderboard],
+    }
+    if verdict.promoted:
+        from agent.versioning.manifest import promote_version
+
+        promote_version(
+            base_manifest.version,
+            candidate_manifest.version,
+            versions_root=config.versions_root,
+            evaluation_update=evaluation_update,
+        )
+    else:
+        update_manifest_status(
+            candidate_manifest_path,
+            VersionStatus.REJECTED,
+            evaluation_update=evaluation_update,
+        )
 
     result = EvolutionPipelineResult(
         config=config,

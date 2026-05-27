@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from pydantic import Field
 
 from agent.versioning.manifest import (
     AgentVersionManifest,
@@ -15,6 +16,7 @@ from agent.versioning.manifest import (
     evaluate_promotion,
     create_agent_version,
     resolve_manifest_path,
+    validate_version_id,
 )
 from agent.evaluation.leaderboard import LeaderboardEntry
 from ui.backend.game_runner import GameManager
@@ -25,17 +27,17 @@ from ui.backend.selfplay_runner import SelfplayManager
 
 class StartGameRequest(BaseModel):
     seed: int | None = None
-    max_days: int = 20
+    max_days: int = Field(default=20, ge=1, le=100)
     enable_sheriff: bool = True
     skill_dir: str | None = None
-    player_count: int = 12
+    player_count: int = Field(default=12, ge=12, le=12)
 
 
 class SelfplayRequest(BaseModel):
-    num_games: int = 10
+    num_games: int = Field(default=10, ge=1, le=100)
     agent_version: str | None = None
     skill_dir: str | None = None
-    max_days: int = 20
+    max_days: int = Field(default=20, ge=1, le=100)
     enable_sheriff: bool = True
     enable_batch_dream: bool = False
     label: str | None = None
@@ -44,14 +46,14 @@ class SelfplayRequest(BaseModel):
 class EvolutionRequest(BaseModel):
     base_version: str
     candidate_version: str
-    training_games: int = 5
-    battle_games: int = 20
-    training_seed_start: int = 1
-    battle_seed_start: int = 1001
-    max_days: int = 20
+    training_games: int = Field(default=5, ge=1, le=100)
+    battle_games: int = Field(default=20, ge=1, le=100)
+    training_seed_start: int = Field(default=1, ge=0)
+    battle_seed_start: int = Field(default=1001, ge=0)
+    max_days: int = Field(default=20, ge=1, le=100)
     enable_dream: bool = True
     enable_skill_proposals: bool = True
-    auto_apply_skill_proposals: bool = True
+    auto_apply_skill_proposals: bool = False
     min_score_improvement: float = 0.05
     max_win_rate_drop: float = 0.10
     notes: str = ""
@@ -60,9 +62,9 @@ class EvolutionRequest(BaseModel):
 class MixedBattleRequest(BaseModel):
     wolves_version: str
     villagers_version: str
-    games_per_side: int = 5
-    seed_start: int = 1
-    max_days: int = 20
+    games_per_side: int = Field(default=5, ge=1, le=100)
+    seed_start: int = Field(default=1, ge=0)
+    max_days: int = Field(default=20, ge=1, le=100)
     enable_review: bool = True
 
 
@@ -76,7 +78,6 @@ class CreateVersionRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     base_url: str = ""
-    api_key: str = ""
     # Runtime config
     tot_enabled: bool = True
     got_enabled: bool = True
@@ -116,7 +117,7 @@ async def start_game(request: StartGameRequest | None = None) -> dict[str, Any]:
             seed=request.seed if request is not None else None,
             max_days=request.max_days if request is not None else 20,
             enable_sheriff=request.enable_sheriff if request is not None else True,
-            skill_dir=request.skill_dir if request is not None else None,
+            skill_dir=_resolve_allowed_skill_dir(request.skill_dir) if request is not None else None,
             player_count=request.player_count if request is not None else 12,
         )
     except RuntimeError as exc:
@@ -223,6 +224,10 @@ def _find_manifests() -> list[Path]:
 
 def _find_manifest_for_version(version_id: str) -> Path | None:
     """Locate the manifest.json for a given version_id."""
+    try:
+        validate_version_id(version_id)
+    except ValueError:
+        return None
     for root in _VERSIONS_DIRS:
         candidate = root / version_id / "manifest.json"
         if candidate.exists():
@@ -239,6 +244,25 @@ def _manifest_summary(manifest: AgentVersionManifest) -> dict[str, Any]:
         "created_at": manifest.created_at,
         "description": manifest.description,
     }
+
+
+def _resolve_allowed_skill_dir(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    path = Path(raw)
+    candidate = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
+    allowed_roots = [
+        (Path.cwd() / "skills").resolve(),
+        (Path.cwd() / "agent_versions").resolve(),
+        (Path.cwd() / "runs").resolve(),
+    ]
+    for root in allowed_roots:
+        try:
+            candidate.relative_to(root)
+            return str(candidate)
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail=f"skill_dir is outside allowed roots: {raw}")
 
 
 @app.get("/api/versions")
@@ -269,6 +293,13 @@ def create_version(request: CreateVersionRequest) -> dict[str, Any]:
     from datetime import datetime, timezone
     import shutil
 
+    try:
+        validate_version_id(request.name)
+        if request.base:
+            validate_version_id(request.base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     versions_root = Path("agent_versions")
     candidate_dir = versions_root / request.name
     if candidate_dir.exists():
@@ -280,7 +311,6 @@ def create_version(request: CreateVersionRequest) -> dict[str, Any]:
         temperature=request.temperature,
         max_tokens=request.max_tokens,
         base_url=request.base_url,
-        api_key=request.api_key,
     )
     runtime_cfg = RuntimeConfig(
         git_commit=current_git_commit(),
@@ -363,6 +393,7 @@ def get_version(version_id: str) -> dict[str, Any]:
     except (OSError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=500, detail=f"failed to load manifest: {exc}") from exc
     data = manifest.to_dict()
+    model_config = manifest.model.to_dict()
     return {
         **data,
         "version_id": manifest.version,
@@ -371,7 +402,7 @@ def get_version(version_id: str) -> dict[str, Any]:
         "config": {
             "runtime": manifest.runtime.to_dict(),
             "evolution": manifest.evolution.to_dict(),
-            "model": manifest.model.to_dict(),
+            "model": model_config,
             "paths": manifest.paths.to_dict(),
         },
         "metrics": manifest.evaluation,
@@ -482,10 +513,18 @@ async def start_selfplay(request: SelfplayRequest | None = None) -> dict[str, An
     """Start a batch selfplay run in the background. Returns the run_id."""
     if request is None:
         request = SelfplayRequest()
+    if request.agent_version:
+        try:
+            validate_version_id(request.agent_version)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     agent_version = request.agent_version or "agent"
-    skill_dir = request.skill_dir
+    skill_dir = _resolve_allowed_skill_dir(request.skill_dir)
     model_name: str | None = None
     temperature = 0.2
+    tot_enabled = True
+    got_enabled = True
+    got_trigger_threshold = 0.3
     if request.agent_version:
         manifest_path = _find_manifest_for_version(request.agent_version)
         if manifest_path is None:
@@ -493,16 +532,25 @@ async def start_selfplay(request: SelfplayRequest | None = None) -> dict[str, An
                 status_code=404,
                 detail=f"agent version '{request.agent_version}' not found",
             )
-        manifest = load_manifest(manifest_path)
-        skill_dir = str(resolve_manifest_path(manifest_path, manifest.paths.skills))
+        try:
+            manifest = load_manifest(manifest_path)
+            skill_dir = str(resolve_manifest_path(manifest_path, manifest.paths.skills))
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"invalid agent version manifest: {exc}") from exc
         model_name = manifest.model.model or None
         temperature = manifest.model.temperature
+        tot_enabled = manifest.runtime.tot_enabled
+        got_enabled = manifest.runtime.got_enabled
+        got_trigger_threshold = manifest.runtime.got_trigger_threshold
     run = await selfplay_manager.start_run(
         num_games=request.num_games,
         agent_version=agent_version,
         skill_dir=skill_dir,
         model_name=model_name,
         temperature=temperature,
+        tot_enabled=tot_enabled,
+        got_enabled=got_enabled,
+        got_trigger_threshold=got_trigger_threshold,
         max_days=request.max_days,
         enable_sheriff=request.enable_sheriff,
         enable_batch_dream=request.enable_batch_dream,
@@ -532,7 +580,13 @@ def get_selfplay(run_id: str) -> dict[str, Any]:
 @app.post("/api/evolution", status_code=201)
 async def start_evolution(request: EvolutionRequest) -> dict[str, Any]:
     """Start one self-evolution iteration from UI."""
-    if _find_manifest_for_version(request.base_version) is None:
+    try:
+        validate_version_id(request.base_version)
+        validate_version_id(request.candidate_version)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    base_manifest_path = _find_manifest_for_version(request.base_version)
+    if base_manifest_path is None:
         raise HTTPException(
             status_code=404,
             detail=f"base version '{request.base_version}' not found",
@@ -545,6 +599,7 @@ async def start_evolution(request: EvolutionRequest) -> dict[str, Any]:
     run = await evolution_manager.start_run(
         base_version=request.base_version,
         candidate_version=request.candidate_version,
+        versions_root=base_manifest_path.parent.parent,
         training_games=request.training_games,
         battle_games=request.battle_games,
         training_seed_start=request.training_seed_start,
@@ -579,6 +634,11 @@ def get_evolution_run(run_id: str) -> dict[str, Any]:
 @app.post("/api/mixed-battles", status_code=201)
 async def start_mixed_battle(request: MixedBattleRequest) -> dict[str, Any]:
     """Start a team-level mixed-version battle."""
+    try:
+        validate_version_id(request.wolves_version)
+        validate_version_id(request.villagers_version)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     wolves_manifest = _find_manifest_for_version(request.wolves_version)
     if wolves_manifest is None:
         raise HTTPException(
@@ -591,14 +651,17 @@ async def start_mixed_battle(request: MixedBattleRequest) -> dict[str, Any]:
             status_code=404,
             detail=f"villagers version '{request.villagers_version}' not found",
         )
-    run = await mixed_battle_manager.start_run(
-        wolves_manifest_path=wolves_manifest,
-        villagers_manifest_path=villagers_manifest,
-        games_per_side=request.games_per_side,
-        seed_start=request.seed_start,
-        max_days=request.max_days,
-        enable_review=request.enable_review,
-    )
+    try:
+        run = await mixed_battle_manager.start_run(
+            wolves_manifest_path=wolves_manifest,
+            villagers_manifest_path=villagers_manifest,
+            games_per_side=request.games_per_side,
+            seed_start=request.seed_start,
+            max_days=request.max_days,
+            enable_review=request.enable_review,
+        )
+    except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid version manifest: {exc}") from exc
     return run.snapshot()
 
 

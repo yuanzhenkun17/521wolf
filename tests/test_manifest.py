@@ -24,10 +24,14 @@ def test_resolve_relative_path(tmp_path):
     assert resolved == tmp_path / "skills"
 
 
-def test_resolve_absolute_path(tmp_path):
+def test_resolve_absolute_path_rejected(tmp_path):
     abs_path = tmp_path / "absolute_skills"
-    resolved = resolve_manifest_path(tmp_path / "manifest.json", str(abs_path))
-    assert resolved == abs_path
+    try:
+        resolve_manifest_path(tmp_path / "manifest.json", str(abs_path))
+    except ValueError as exc:
+        assert "Absolute manifest paths" in str(exc)
+    else:
+        raise AssertionError("absolute manifest path should be rejected")
 
 
 def test_create_agent_version(tmp_path):

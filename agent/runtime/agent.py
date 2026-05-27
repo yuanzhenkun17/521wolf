@@ -83,6 +83,9 @@ class AgentRuntime:
         trace_recorder: AgentTraceRecorder | None = None,
         game_id: str | None = None,
         skill_dir: Path | str | None = None,
+        tot_enabled: bool = True,
+        got_enabled: bool = True,
+        got_trigger_threshold: float = 0.3,
     ) -> None:
         self.player_id = player_id
         self.role = role
@@ -94,6 +97,9 @@ class AgentRuntime:
         self.recorder = recorder
         self.trace_recorder = trace_recorder
         self.skill_dir = Path(skill_dir) if skill_dir else None
+        self.tot_enabled = tot_enabled
+        self.got_enabled = got_enabled
+        self.got_trigger_threshold = got_trigger_threshold
 
     @observe(name="act")
     async def act(self, request: ActionRequest) -> ActionResponse:
@@ -112,8 +118,9 @@ class AgentRuntime:
             ctx = prompt_node(ctx, persona=self.persona)
 
             # -- GoT/ToT reasoning for key actions --------------------------------
-            ctx = await got_node(ctx, self.model)
-            if ctx.source != "got":
+            if self.got_enabled:
+                ctx = await got_node(ctx, self.model, threshold=self.got_trigger_threshold)
+            if self.tot_enabled and ctx.source != "got":
                 ctx = await tot_node(ctx, self.model)
 
             # -- async LLM call (skipped when GoT/ToT succeeded) ------------------
@@ -152,6 +159,9 @@ class LLMPlayerAgent:
         trace_recorder: AgentTraceRecorder | None = None,
         game_id: str | None = None,
         skill_dir: Path | str | None = None,
+        tot_enabled: bool = True,
+        got_enabled: bool = True,
+        got_trigger_threshold: float = 0.3,
     ) -> None:
         self.player_id = player_id
         self.role = role
@@ -164,6 +174,9 @@ class LLMPlayerAgent:
             trace_recorder=trace_recorder,
             game_id=game_id,
             skill_dir=skill_dir,
+            tot_enabled=tot_enabled,
+            got_enabled=got_enabled,
+            got_trigger_threshold=got_trigger_threshold,
         )
 
     @property

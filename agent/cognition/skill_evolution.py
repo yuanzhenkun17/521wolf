@@ -253,13 +253,14 @@ def find_skill_path(
 
 def _normalize_dream_proposal(item: SkillEditProposal) -> SkillEditProposal:
     operation = item.operation if item.operation in ALLOWED_OPERATIONS else "append_rule"
+    confidence = max(0.0, min(1.0, float(item.confidence or 0.0)))
     return SkillEditProposal(
         skill=item.skill.strip(),
         operation=operation,
         proposal=item.proposal.strip(),
         risk=item.risk.strip(),
         evidence_cards=list(dict.fromkeys(item.evidence_cards)),
-        confidence=float(item.confidence or 0.0),
+        confidence=confidence,
     )
 
 

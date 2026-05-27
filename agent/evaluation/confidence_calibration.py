@@ -23,8 +23,6 @@ CHECKABLE_ACTIONS = {
     ActionType.PK_VOTE.value,
     ActionType.WITCH_ACT.value,
     ActionType.HUNTER_SHOOT.value,
-    ActionType.GUARD_PROTECT.value,
-    ActionType.SEER_CHECK.value,
     ActionType.WEREWOLF_KILL.value,
 }
 
@@ -157,20 +155,10 @@ def decision_correctness(record: DecisionRecord, roles: dict[int, Role]) -> bool
             return None
         return _target_is_wolf(target_role)
 
-    if action == ActionType.SEER_CHECK.value:
-        return True if target_role is not None else None
-
-    if action == ActionType.GUARD_PROTECT.value:
-        if target_role is None:
-            return None
-        return not _target_is_wolf(target_role)
-
     if action == ActionType.WITCH_ACT.value:
         choice = (getattr(record, "selected_choice", None) or "").lower()
         if choice == "poison":
             return _target_is_wolf(target_role) if target_role is not None else None
-        if choice == "save":
-            return not _target_is_wolf(target_role) if target_role is not None else None
         return None
 
     return None

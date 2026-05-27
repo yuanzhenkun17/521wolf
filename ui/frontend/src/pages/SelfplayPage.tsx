@@ -183,15 +183,9 @@ function SelfplayForm({
   const [maxDays, setMaxDays] = useState(20);
   const [enableSheriff, setEnableSheriff] = useState(true);
   const [enableBatchDream, setEnableBatchDream] = useState(false);
-  const [agentVersion, setAgentVersion] = useState(versions[0]?.version_id ?? "");
+  const [agentVersion, setAgentVersion] = useState("");
   const [skillDir, setSkillDir] = useState("");
   const [label, setLabel] = useState("");
-
-  useEffect(() => {
-    if (!agentVersion && versions.length > 0) {
-      setAgentVersion(versions[0].version_id);
-    }
-  }, [agentVersion, versions]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

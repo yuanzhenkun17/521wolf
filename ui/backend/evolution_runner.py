@@ -23,6 +23,7 @@ class RunningEvolution:
     status: str = "running"
     stage: str = "queued"
     result: EvolutionPipelineResult | None = None
+    artifact_run_id: str | None = None
     error: str | None = None
     started_at: str = ""
     task: asyncio.Task[None] | None = None
@@ -34,6 +35,7 @@ class RunningEvolution:
             "stage": self.stage,
             "started_at": self.started_at,
             "config": self.config.to_dict(),
+            "artifact_run_id": self.artifact_run_id,
         }
         if self.result is not None:
             data["result"] = self.result.to_dict()
@@ -61,6 +63,7 @@ class EvolutionManager:
         *,
         base_version: str,
         candidate_version: str,
+        versions_root: Path = Path("agent_versions"),
         training_games: int = 5,
         battle_games: int = 20,
         training_seed_start: int = 1,
@@ -68,7 +71,7 @@ class EvolutionManager:
         max_days: int = 20,
         enable_dream: bool = True,
         enable_skill_proposals: bool = True,
-        auto_apply_skill_proposals: bool = True,
+        auto_apply_skill_proposals: bool = False,
         min_score_improvement: float = 0.05,
         max_win_rate_drop: float = 0.10,
         notes: str = "",
@@ -83,6 +86,7 @@ class EvolutionManager:
             battle_seed_start=battle_seed_start,
             max_days=max_days,
             output_dir=self.output_dir,
+            versions_root=versions_root,
             enable_dream=enable_dream,
             enable_skill_proposals=enable_skill_proposals,
             auto_apply_skill_proposals=auto_apply_skill_proposals,
@@ -109,13 +113,10 @@ class EvolutionManager:
         try:
             run.stage = "selfplay"
             result = await self._runner(run.config)
-            old_run_id = run.run_id
             run.result = result
-            run.run_id = result.run_id
+            run.artifact_run_id = result.run_id
             run.stage = "completed"
             run.status = "completed"
-            if old_run_id != result.run_id:
-                self._runs[result.run_id] = self._runs.pop(old_run_id, run)
         except Exception as exc:
             run.stage = "failed"
             run.status = "failed"

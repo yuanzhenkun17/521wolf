@@ -9,8 +9,8 @@ from agent.runtime.context import AgentContext
 from agent.runtime.model import ModelAdapter
 
 
-async def got_node(ctx: AgentContext, model: ModelAdapter) -> AgentContext:
-    if not need_got(ctx):
+async def got_node(ctx: AgentContext, model: ModelAdapter, *, threshold: float = 0.3) -> AgentContext:
+    if not need_got(ctx, threshold=threshold):
         return ctx
 
     try:

@@ -148,7 +148,6 @@ export function VersionsPage() {
     temperature?: number;
     max_tokens?: number;
     base_url?: string;
-    api_key?: string;
     tot_enabled?: boolean;
     got_enabled?: boolean;
     got_trigger_threshold?: number;
@@ -537,7 +536,6 @@ function CreateVersionForm({
     temperature?: number;
     max_tokens?: number;
     base_url?: string;
-    api_key?: string;
     tot_enabled?: boolean;
     got_enabled?: boolean;
     got_trigger_threshold?: number;
@@ -548,10 +546,9 @@ function CreateVersionForm({
   const [name, setName] = useState("");
   const [base, setBase] = useState("");
   const [notes, setNotes] = useState("");
-  const [provider, setProvider] = useState("xiaomi");
-  const [model, setModel] = useState("mimo-v2.5");
-  const [baseUrl, setBaseUrl] = useState("https://token-plan-cn.xiaomimimo.com/v1");
-  const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] = useState("volcengine");
+  const [model, setModel] = useState("doubao-seed-2.0-pro");
+  const [baseUrl, setBaseUrl] = useState("");
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(2048);
   const [totEnabled, setTotEnabled] = useState(true);
@@ -571,7 +568,6 @@ function CreateVersionForm({
       temperature,
       max_tokens: maxTokens,
       base_url: baseUrl || undefined,
-      api_key: apiKey || undefined,
       tot_enabled: totEnabled,
       got_enabled: gotEnabled,
       got_trigger_threshold: gotThreshold,
@@ -620,10 +616,6 @@ function CreateVersionForm({
               <div className="space-y-1.5">
                 <label className="text-sm font-medium" htmlFor="cv-baseurl">Base URL<span className="ml-1 text-xs font-normal text-muted-foreground">(可选)</span></label>
                 <input id="cv-baseurl" type="text" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium" htmlFor="cv-apikey">API Key<span className="ml-1 text-xs font-normal text-muted-foreground">(可选)</span></label>
-                <input id="cv-apikey" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -698,7 +690,7 @@ function EvolutionPanel({
   const [maxDays, setMaxDays] = useState(20);
   const [enableDream, setEnableDream] = useState(true);
   const [enableSkillProposals, setEnableSkillProposals] = useState(true);
-  const [autoApplySkillProposals, setAutoApplySkillProposals] = useState(true);
+  const [autoApplySkillProposals, setAutoApplySkillProposals] = useState(false);
   const [notes, setNotes] = useState("");
 
   useEffect(() => {
@@ -987,7 +979,7 @@ function MixedBattlePanel({
                             <td className="py-2 pr-3">{entry.games}</td>
                             <td className="py-2 pr-3">{pct(entry.werewolf_win_rate)}</td>
                             <td className="py-2 pr-3">{pct(entry.villager_win_rate)}</td>
-                            <td className="py-2">{entry.avg_score.toFixed(1)}</td>
+                            <td className="py-2">{num(entry.avg_score, 1)}</td>
                             <td className="py-2">{pct(entry.confidence_calibration_error ?? 0)}</td>
                           </tr>
                         ))}
@@ -1129,10 +1121,10 @@ function LeaderboardTable({
                 <td className="py-3 pr-4">{entry.games}</td>
                 <td className="py-3 pr-4">{pct(entry.werewolf_win_rate)}</td>
                 <td className="py-3 pr-4">{pct(entry.villager_win_rate)}</td>
-                <td className="py-3 pr-4 font-semibold">{entry.avg_score.toFixed(1)}</td>
-                <td className="py-3 pr-4">{entry.avg_speech_score.toFixed(1)}</td>
-                <td className="py-3 pr-4">{entry.avg_vote_score.toFixed(1)}</td>
-                <td className="py-3 pr-4">{entry.avg_skill_score.toFixed(1)}</td>
+                <td className="py-3 pr-4 font-semibold">{num(entry.avg_score, 1)}</td>
+                <td className="py-3 pr-4">{num(entry.avg_speech_score, 1)}</td>
+                <td className="py-3 pr-4">{num(entry.avg_vote_score, 1)}</td>
+                <td className="py-3 pr-4">{num(entry.avg_skill_score, 1)}</td>
                 <td className="py-3 pr-4">{pct(entry.confidence_calibration_error ?? 0)}</td>
                 <td className="py-3 pr-4">{pct(entry.fallback_rate)}</td>
                 <td className="py-3">{pct(entry.policy_adjusted_rate)}</td>
@@ -1201,7 +1193,11 @@ function formatMetric(value: unknown): string {
 }
 
 function pct(value: number): string {
-  return `${(value * 100).toFixed(0)}%`;
+  return `${(Number.isFinite(value) ? value * 100 : 0).toFixed(0)}%`;
+}
+
+function num(value: unknown, digits = 1): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : (0).toFixed(digits);
 }
 
 function leaderboardName(entry: VersionLeaderboardEntry): string {

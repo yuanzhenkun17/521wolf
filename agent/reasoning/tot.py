@@ -28,8 +28,6 @@ KEY_ACTIONS: frozenset[str] = frozenset({
     "werewolf_kill",
     "hunter_shoot",
     "white_wolf_explode",
-    "sheriff_run",
-    "sheriff_speak",
 })
 
 

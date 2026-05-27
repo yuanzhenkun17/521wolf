@@ -8,7 +8,7 @@ from ui.backend.evolution_runner import EvolutionManager
 
 
 class EvolutionRunnerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_manager_runs_pipeline_and_adopts_real_run_id(self):
+    async def test_manager_keeps_ui_run_id_and_records_artifact_id(self):
         async def fake_runner(config):
             return SimpleNamespace(
                 run_id="evolution_real",
@@ -35,8 +35,9 @@ class EvolutionRunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(run.task)
         await run.task
 
-        snapshot = manager.get_run("evolution_real").snapshot()
+        snapshot = manager.get_run(run.run_id).snapshot()
         self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["artifact_run_id"], "evolution_real")
         self.assertEqual(snapshot["candidate_version"], "dream_v1")
         self.assertTrue(snapshot["promoted"])
         self.assertEqual(snapshot["metrics"]["score_delta"], 0.2)

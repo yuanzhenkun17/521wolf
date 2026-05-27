@@ -27,7 +27,7 @@ GOT_ACTIONS: frozenset[str] = frozenset({
 })
 
 
-def need_got(ctx: AgentContext) -> bool:
+def need_got(ctx: AgentContext, *, threshold: float = 0.3) -> bool:
     """Return whether the current decision should use GoT.
 
     Explicit request metadata has priority. Automatic triggering is deliberately
@@ -45,7 +45,7 @@ def need_got(ctx: AgentContext) -> bool:
     if str(metadata.get("reasoning_mode", "")).lower() == "got":
         return True
 
-    return _belief_conflict_high(ctx)
+    return _belief_conflict_high(ctx, threshold=threshold)
 
 
 @dataclass(slots=True)
@@ -237,7 +237,7 @@ async def run_got_selection(ctx: AgentContext, model: ModelAdapter) -> GoTResult
     )
 
 
-def _belief_conflict_high(ctx: AgentContext) -> bool:
+def _belief_conflict_high(ctx: AgentContext, *, threshold: float = 0.3) -> bool:
     suspects = ctx.belief_context.get("top_suspicions", [])
     if not isinstance(suspects, list) or len(suspects) < 3:
         return False
@@ -258,7 +258,7 @@ def _belief_conflict_high(ctx: AgentContext) -> bool:
 
     if len(probs) < 3:
         return False
-    return max(probs) >= 0.45 and (max(probs) - min(probs)) <= 0.2
+    return max(probs) >= 0.45 and (max(probs) - min(probs)) <= threshold
 
 
 def _as_float(value: Any, default: float) -> float:

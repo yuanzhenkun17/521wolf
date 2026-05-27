@@ -39,7 +39,7 @@ def test_skill_correctness_is_objective():
     assert decision_correctness(_record(1, ActionType.WITCH_ACT, target=2, choice="poison"), roles) is True
     assert decision_correctness(_record(1, ActionType.WITCH_ACT, target=3, choice="poison"), roles) is False
     assert decision_correctness(_record(4, ActionType.HUNTER_SHOOT, target=2), roles) is True
-    assert decision_correctness(_record(5, ActionType.GUARD_PROTECT, target=3), roles) is True
+    assert decision_correctness(_record(5, ActionType.GUARD_PROTECT, target=3), roles) is None
 
 
 def test_calibrate_decisions_computes_bucketed_ece():

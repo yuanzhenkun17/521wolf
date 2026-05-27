@@ -245,6 +245,11 @@ class UiBackendTests(unittest.TestCase):
         class FakeManifest:
             model = FakeModel()
             paths = FakePaths()
+            runtime = type("FakeRuntime", (), {
+                "tot_enabled": True,
+                "got_enabled": False,
+                "got_trigger_threshold": 0.4,
+            })()
 
         client = TestClient(app)
         old_manager = app_module.selfplay_manager
@@ -272,6 +277,9 @@ class UiBackendTests(unittest.TestCase):
             self.assertEqual(fake_manager.kwargs["agent_version"], "v1-baseline")
             self.assertEqual(fake_manager.kwargs["model_name"], "mimo-v2.5")
             self.assertEqual(fake_manager.kwargs["temperature"], 0.7)
+            self.assertTrue(fake_manager.kwargs["tot_enabled"])
+            self.assertFalse(fake_manager.kwargs["got_enabled"])
+            self.assertEqual(fake_manager.kwargs["got_trigger_threshold"], 0.4)
             self.assertTrue(str(fake_manager.kwargs["skill_dir"]).endswith("agent_versions\\v1-baseline\\skills") or str(fake_manager.kwargs["skill_dir"]).endswith("agent_versions/v1-baseline/skills"))
         finally:
             app_module.selfplay_manager = old_manager

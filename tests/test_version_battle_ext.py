@@ -19,7 +19,7 @@ def _write_manifest(tmpdir: str, name: str = "test_v1") -> Path:
         display_name=name,
         status=VersionStatus.CANDIDATE,
         notes=["test version"],
-        paths=PathConfig(skills=str(Path(tmpdir) / "skills")),
+        paths=PathConfig(skills="./skills"),
         model=ModelConfig(model="gpt-4o", temperature=0.3),
         runtime=RuntimeConfig(
             tot_enabled=True,

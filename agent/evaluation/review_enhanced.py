@@ -788,12 +788,18 @@ def _judge_decision_quality(
     target_role = roles.get(target) if target is not None else None
     action = decision.get("action_type", "")
     if target_role is not None:
-        if action in {"exile_vote", "pk_vote", "hunter_shoot", "witch_act"}:
+        if action in {"exile_vote", "pk_vote", "hunter_shoot"}:
             good_target = (
                 (role.team is Team.WEREWOLVES and target_role.team is not Team.WEREWOLVES)
                 or (role.team is not Team.WEREWOLVES and target_role.team is Team.WEREWOLVES)
             )
             score += 1.5 if good_target else -2.5
+        if action == "witch_act":
+            choice = str(decision.get("selected_choice") or "").lower()
+            if choice == "poison":
+                score += 1.5 if target_role.team is Team.WEREWOLVES else -4.0
+            elif choice == "save":
+                score += 1.0 if target_role.team is not Team.WEREWOLVES else -2.5
         if action == "werewolf_kill":
             score += 1.5 if target_role.team is not Team.WEREWOLVES else -4.0
     if source == "got":

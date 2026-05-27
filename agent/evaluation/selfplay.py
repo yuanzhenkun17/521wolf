@@ -54,6 +54,9 @@ class SelfPlayConfig:
     temperature: float = 0.2
     game_config: GameConfig = STANDARD_12
     skill_dir: Path | None = None
+    tot_enabled: bool = True
+    got_enabled: bool = True
+    got_trigger_threshold: float = 0.3
 
 
 @dataclass(slots=True)
@@ -276,6 +279,9 @@ async def run_selfplay(
         "enable_skill_proposals": config.enable_skill_proposals,
         "auto_apply_skill_proposals": config.auto_apply_skill_proposals,
         "skill_dir": str(config.skill_dir) if config.skill_dir else None,
+        "tot_enabled": config.tot_enabled,
+        "got_enabled": config.got_enabled,
+        "got_trigger_threshold": config.got_trigger_threshold,
     })
 
     results: list[SelfPlayGameResult] = []
@@ -313,6 +319,9 @@ async def run_selfplay(
         agents = _create_agents(
             roles, client, decision_recorder, trace_recorders,
             skill_dir=config.skill_dir,
+            tot_enabled=config.tot_enabled,
+            got_enabled=config.got_enabled,
+            got_trigger_threshold=config.got_trigger_threshold,
         )
 
         # Run game
@@ -612,6 +621,9 @@ def _create_agents(
     trace_recorders: dict[int, AgentTraceRecorder],
     game_id: str | None = None,
     skill_dir: Path | None = None,
+    tot_enabled: bool = True,
+    got_enabled: bool = True,
+    got_trigger_threshold: float = 0.3,
 ) -> dict[int, LLMPlayerAgent]:
     """Create a full set of LLMPlayerAgent with trace recorders."""
     agents: dict[int, LLMPlayerAgent] = {}
@@ -623,6 +635,9 @@ def _create_agents(
             decision_recorder=decision_recorder,
             game_id=game_id,
             skill_dir=skill_dir,
+            tot_enabled=tot_enabled,
+            got_enabled=got_enabled,
+            got_trigger_threshold=got_trigger_threshold,
         )
         # Wire trace recorder into the runtime
         agent.runtime.trace_recorder = trace_recorders.get(player_id)

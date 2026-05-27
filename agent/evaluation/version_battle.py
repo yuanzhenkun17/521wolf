@@ -20,7 +20,7 @@ from agent.evaluation.leaderboard import (
     write_leaderboard,
 )
 from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayResult, run_selfplay
-from agent.versioning.manifest import load_manifest
+from agent.versioning.manifest import load_manifest, resolve_manifest_path
 
 
 RunSelfplayFunc = Callable[..., Awaitable[SelfPlayResult]]
@@ -60,8 +60,7 @@ def version_spec_from_manifest(manifest_path: Path | str) -> VersionSpec:
     manifest = load_manifest(manifest_path)
     skill_dir = None
     if manifest.paths and manifest.paths.skills:
-        raw = Path(manifest.paths.skills)
-        skill_dir = raw if raw.is_absolute() else manifest_path.parent / raw
+        skill_dir = resolve_manifest_path(manifest_path, manifest.paths.skills)
     return VersionSpec(
         name=manifest.display_name or manifest.version,
         skill_dir=skill_dir,
@@ -153,6 +152,9 @@ async def run_version_battle(
             enable_experience=config.enable_experience,
             temperature=version.temperature if version.temperature is not None else 0.2,
             skill_dir=version.skill_dir,
+            tot_enabled=version.tot_enabled,
+            got_enabled=version.got_enabled,
+            got_trigger_threshold=version.got_trigger_threshold,
         )
 
         result = await runner(
