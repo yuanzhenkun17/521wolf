@@ -22,7 +22,6 @@ const ROLE_LABELS: Record<string, string> = {
 
 export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: GameConfigDialogProps) {
   const [maxDays, setMaxDays] = useState(20);
-  const [enableSheriff, setEnableSheriff] = useState(true);
   const [seed, setSeed] = useState("");
 
   // Per-role version selection: {role: {versions, selectedHash}}
@@ -65,7 +64,6 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
     const config: GameConfig = {
       player_count: 12,
       max_days: maxDays,
-      enable_sheriff: enableSheriff,
       role_versions: rv,
     };
     if (seed.trim()) config.seed = Number(seed);
@@ -123,18 +121,6 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
               onChange={(e) => setMaxDays(Number(e.target.value))}
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
-          </div>
-
-          {/* Enable sheriff */}
-          <div className="flex items-center gap-3">
-            <input
-              id="enable-sheriff"
-              type="checkbox"
-              checked={enableSheriff}
-              onChange={(e) => setEnableSheriff(e.target.checked)}
-              className="h-4 w-4 rounded border-border"
-            />
-            <label htmlFor="enable-sheriff" className="text-sm font-medium">启用警长模式</label>
           </div>
 
           {/* Seed */}
