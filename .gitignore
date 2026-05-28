@@ -12,7 +12,7 @@ logs/*
 runs/*
 data/*
 !runs/README.md
-agent_versions/*
+role_versions/*
 node_modules/
 dist/
 *.tsbuildinfo

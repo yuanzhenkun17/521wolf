@@ -43,7 +43,7 @@ agent/
 ### 版本存储
 
 ```
-agent_versions/
+role_versions/
   <role>/
     <hash>/
       skills/
@@ -192,7 +192,7 @@ class VersionStore:
     def list_roles(self) -> list[str]: ...
     def list_versions(self, role: str) -> list[RoleVersion]: ...
     def get_skill_dir(self, role: str, hash: str) -> Path:
-        """返回 agent_versions/<role>/<hash>/skills/ 路径"""
+        """返回 role_versions/<role>/<hash>/skills/ 路径"""
 ```
 
 ### 并发与原子写入
@@ -233,7 +233,7 @@ class SkillVersionConfig:
 def skill_dir_for_role(store: VersionStore, config: SkillVersionConfig, role: str) -> Path:
     """返回指定角色的技能目录路径。agent 构造时直接传此路径作为 skill_dir。"""
     hash = config.role_versions[role]
-    return store.get_skill_dir(role, hash)  # agent_versions/<role>/<hash>/skills/
+    return store.get_skill_dir(role, hash)  # role_versions/<role>/<hash>/skills/
 ```
 
 运行时集成：`_create_agents()` 改造 — 对每个 player，根据其角色调用 `skill_dir_for_role()` 获取路径，传给 `LLMPlayerAgent(skill_dir=...)`。现有 `_SKILL_CACHE` 按 Path 键自动隔离不同版本，无需额外改造。
