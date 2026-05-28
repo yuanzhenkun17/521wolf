@@ -324,6 +324,9 @@ async def promote(run: EvolutionRun, store: VersionStore):
     # 终态冲突
     if run.status in {"rejected", "failed"}:
         raise InvalidRunStateError(f"Cannot promote a {run.status} run")
+    # 只有 reviewing 状态才能 promote
+    if run.status != "reviewing":
+        raise InvalidRunStateError(f"Cannot promote a {run.status} run (must be reviewing)")
 
     # baseline 已是 candidate（幂等）
     current = store.get_history(run.role).baseline
@@ -345,6 +348,8 @@ async def reject(run: EvolutionRun, store: VersionStore):
         return
     if run.status in {"promoted", "failed"}:
         raise InvalidRunStateError(f"Cannot reject a {run.status} run")
+    if run.status != "reviewing":
+        raise InvalidRunStateError(f"Cannot reject a {run.status} run (must be reviewing)")
     run.status = "rejected"
 ```
 
@@ -585,7 +590,7 @@ target_side 映射：
 - werewolf, white_wolf_king → 狼人阵营
 - seer, witch, hunter, guard, villager → 好人阵营
 
-默认门槛（字段名与 RoleLeaderboardEntry schema 一致）：
+默认门槛（字段名与 RoleLeaderboardEntry schema 一致，baseline 指同批 battle seed 下的对照指标，不是排行榜历史）：
 - target_role_role_weighted_score >= baseline
 - target_role_fallback_rate <= baseline
 - target_role_bad_case_rate <= baseline
