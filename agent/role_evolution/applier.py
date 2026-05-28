@@ -32,6 +32,14 @@ CONFIDENCE_THRESHOLD = 0.5
 MAX_SKILL_LENGTH = 5000  # chars per file
 MAX_CHANGED_FILES = 5
 
+# Global whitelist — code defines what action types exist.
+# Skills declare which subset they allow via evolution.allowed_actions.
+GLOBAL_ALLOWED_PROPOSAL_ACTIONS = {
+    "append_rule",
+    "rewrite_section",
+    "deprecate_rule",
+}
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -267,6 +275,23 @@ def _validate_all(
         if fname not in eligible_targets:
             errors.append(f"File '{fname}' was not targeted by any eligible proposal")
 
+    # 1b. Check proposal action_type against global whitelist and per-skill allowed_actions
+    for p in eligible:
+        if p.action_type not in GLOBAL_ALLOWED_PROPOSAL_ACTIONS:
+            errors.append(f"[{p.target_file}] action_type '{p.action_type}' not in global whitelist")
+        # Per-skill check: load old content to get evolution.allowed_actions
+        old_content = current_skills.get(p.target_file, "")
+        if old_content:
+            old_fm, _ = parse_front_matter(old_content)
+            evo = old_fm.get("evolution", {})
+            if isinstance(evo, dict) and evo.get("enabled"):
+                allowed = set(evo.get("allowed_actions", []))
+                if allowed and p.action_type not in allowed:
+                    errors.append(
+                        f"[{p.target_file}] action_type '{p.action_type}' "
+                        f"not in skill's evolution.allowed_actions {allowed}"
+                    )
+
     # 2. No file deletion — all current files must be present
     for fname in current_skills:
         if fname not in proposed_files:
@@ -293,6 +318,11 @@ def _validate_all(
 
         # 6. evolution.enabled not changed from false to true without proposal
         err = _validate_evolvable_not_flipped(new_content, old_content, eligible, fname)
+        if err:
+            errors.append(f"[{fname}] {err}")
+
+        # 6b. evolution field must not be modified by applier
+        err = _validate_evolution_unchanged(new_content, old_content)
         if err:
             errors.append(f"[{fname}] {err}")
 
@@ -380,6 +410,18 @@ def _validate_name_unchanged(new_content: str, old_content: str) -> str | None:
     old_fm, _ = parse_front_matter(old_content)
     if old_fm.get("name") and new_fm.get("name") != old_fm.get("name"):
         return f"name changed from '{old_fm['name']}' to '{new_fm.get('name')}'"
+    return None
+
+
+def _validate_evolution_unchanged(new_content: str, old_content: str) -> str | None:
+    """Return error if the evolution field was modified."""
+    import json as _json
+    new_fm, _ = parse_front_matter(new_content)
+    old_fm, _ = parse_front_matter(old_content)
+    old_evo = _json.dumps(old_fm.get("evolution", {}), sort_keys=True)
+    new_evo = _json.dumps(new_fm.get("evolution", {}), sort_keys=True)
+    if old_evo != new_evo:
+        return "evolution field must not be modified by applier"
     return None
 
 
