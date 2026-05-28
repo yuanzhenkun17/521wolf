@@ -188,7 +188,7 @@ class RoleEvolutionRunner:
                 item = await queue.get()
                 event_name = item.get("event", "message")
                 data = json.dumps(item.get("data", {}), ensure_ascii=False)
-                yield f"event: {event_name}\ndata: {data}\n\n"
+                yield f"data: {data}\n\n"
                 if event_name in ("promoted", "rejected", "failed", "done"):
                     break
         finally:
