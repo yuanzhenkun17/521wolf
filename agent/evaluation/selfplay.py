@@ -23,7 +23,6 @@ from engine.roles import assign_roles
 from agent.observability.archive import AgentTraceRecorder, DecisionArchive, GameArchive
 from agent.cognition.dream import dream_for_role, write_dream_report
 from agent.cognition.experience import extract_experiences, write_game_experiences
-from agent.cognition.long_memory import consolidate_role_memory, write_memory_candidate, write_role_memory
 from agent.cognition.skill_evolution import (
     apply_skill_proposals,
     proposals_from_dream,
@@ -453,20 +452,10 @@ async def run_selfplay(
                         continue
                     by_role.setdefault(role, []).append(card)
                 for role, role_cards in sorted(by_role.items(), key=lambda item: item[0].value):
-                    rule_memory = consolidate_role_memory(role)
-                    write_role_memory(
-                        rule_memory,
-                        output_dir=game_dir / "long_memory",
-                    )
-                    write_memory_candidate(
-                        rule_memory,
-                        output_dir=run_dir / "memory_candidate",
-                    )
                     report = await dream_for_role(
                         role=role,
                         model=client,
                         cards=role_cards,
-                        rule_memory=rule_memory,
                         skill_root=config.skill_dir,
                     )
                     write_dream_report(
@@ -572,18 +561,10 @@ async def _run_batch_dream(
 ) -> None:
     cards_by_role = _collect_run_experience_cards(run_dir)
     for role, cards in sorted(cards_by_role.items(), key=lambda item: item[0].value):
-        rule_memory = consolidate_role_memory(
-            role,
-            experience_dir=run_dir / "experiences",
-            min_evidence=2,
-        )
-        write_role_memory(rule_memory, output_dir=run_dir / "long_memory")
-        write_memory_candidate(rule_memory, output_dir=run_dir / "memory_candidate")
         report = await dream_for_role(
             role=role,
             model=model,
             cards=cards,
-            rule_memory=rule_memory,
             skill_root=skill_dir,
         )
         write_dream_report(

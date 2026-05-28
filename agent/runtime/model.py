@@ -32,6 +32,7 @@ class ChatCompletionClient:
     model: str = DEFAULT_MODEL
     timeout: float = 45.0
     temperature: float = 0.4
+    thinking: str = "disabled"
 
     _client: AsyncOpenAI | None = field(default=None, init=False, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
@@ -54,6 +55,8 @@ class ChatCompletionClient:
             "messages": messages,
             "temperature": self.temperature,
         }
+        if self.thinking:
+            kwargs["extra_body"] = {"thinking": {"type": self.thinking}}
         if name:
             kwargs["name"] = name
         response = await client.chat.completions.create(**kwargs)
@@ -82,6 +85,7 @@ def load_llm_client(
             os.environ.get("WEREWOLF_LLM_TEMPERATURE")
             or (temperature if temperature is not None else 0.4)
         ),
+        thinking=os.environ.get("WEREWOLF_LLM_THINKING") or "disabled",
     )
 
 

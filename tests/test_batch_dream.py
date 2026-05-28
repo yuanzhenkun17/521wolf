@@ -76,7 +76,6 @@ class BatchDreamTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((run_dir / "batch_dreams" / "werewolf").exists())
             self.assertTrue((run_dir / "batch_skill_proposals" / "werewolf").exists())
             self.assertTrue((run_dir / "batch_skill_patches" / "werewolf").exists())
-            self.assertTrue((run_dir / "memory_candidate" / "werewolf.json").exists())
             self.assertIn("两轮查验链", skill_path.read_text(encoding="utf-8"))
 
 

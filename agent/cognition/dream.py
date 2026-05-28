@@ -17,7 +17,6 @@ from typing import Any
 from engine.models import Role
 
 from agent.cognition.experience import ExperienceCard
-from agent.cognition.long_memory import RoleLongTermMemory
 from agent.prompts.parsing import load_json_object
 from agent.runtime.model import ModelAdapter
 from agent.skill_system.loader import MarkdownSkill, load_markdown_skills
@@ -71,7 +70,7 @@ class DreamReport:
     role: str
     generated_at: str
     source_card_count: int
-    rule_memory_summary: dict[str, Any]
+    rule_memory_summary: dict[str, Any] = field(default_factory=dict)
     insights: list[DreamInsight] = field(default_factory=list)
     skill_edit_proposals: list[SkillEditProposal] = field(default_factory=list)
     raw_output: str = ""
@@ -140,7 +139,6 @@ class DreamAgent:
     role: Role
     model: ModelAdapter
     experience_cards: list[ExperienceCard | dict]
-    rule_memory: RoleLongTermMemory | None = None
     memory_snapshot: dict[str, Any] | None = None
     belief_snapshot: dict[str, Any] | None = None
     skills: list[MarkdownSkill] = field(default_factory=list)
@@ -157,14 +155,12 @@ class DreamAgent:
                 role=self.role,
                 raw_output=raw,
                 source_card_count=len(self.experience_cards),
-                rule_memory=self.rule_memory,
             )
             return report
         except Exception as exc:
             return fallback_dream_report(
                 role=self.role,
                 cards=self.experience_cards,
-                rule_memory=self.rule_memory,
                 raw_output=raw,
                 error=str(exc),
             )
@@ -184,8 +180,7 @@ class DreamAgent:
                 "content": build_dream_prompt(
                     role=self.role,
                     cards=self.experience_cards,
-                    rule_memory=self.rule_memory,
-                    memory_snapshot=self.memory_snapshot or {},
+                        memory_snapshot=self.memory_snapshot or {},
                     belief_snapshot=self.belief_snapshot or {},
                     skills=self.skills,
                 ),
@@ -197,14 +192,12 @@ def build_dream_prompt(
     *,
     role: Role,
     cards: list[ExperienceCard | dict],
-    rule_memory: RoleLongTermMemory | None = None,
     memory_snapshot: dict[str, Any] | None = None,
     belief_snapshot: dict[str, Any] | None = None,
     skills: list[MarkdownSkill] | None = None,
 ) -> str:
     return (
         f"反思角色: {role.value}\n\n"
-        f"规则统计长期记忆:\n{_compact_json(_rule_memory_summary(rule_memory))}\n\n"
         f"经验卡片:\n{_compact_json([_card_dict(card) for card in cards])}\n\n"
         f"Memory snapshot:\n{_compact_json(memory_snapshot or {})}\n\n"
         f"Belief snapshot:\n{_compact_json(belief_snapshot or {})}\n\n"
@@ -244,7 +237,6 @@ def parse_dream_report(
     role: Role,
     raw_output: str,
     source_card_count: int,
-    rule_memory: RoleLongTermMemory | None = None,
 ) -> DreamReport:
     data = load_json_object(raw_output)
     insights = [
@@ -274,7 +266,6 @@ def parse_dream_report(
         role=role.value,
         generated_at=_now(),
         source_card_count=source_card_count,
-        rule_memory_summary=_rule_memory_summary(rule_memory),
         insights=insights[:8],
         skill_edit_proposals=proposals[:8],
         raw_output=raw_output,
@@ -285,12 +276,11 @@ def fallback_dream_report(
     *,
     role: Role,
     cards: list[ExperienceCard | dict],
-    rule_memory: RoleLongTermMemory | None,
     raw_output: str = "",
     error: str = "",
 ) -> DreamReport:
     """Build a deterministic report if LLM reflection fails."""
-    summary = _rule_memory_summary(rule_memory)
+    summary: dict[str, Any] = {}
     insights: list[DreamInsight] = []
     for item in summary.get("recurring_mistakes", [])[:3]:
         insights.append(DreamInsight(
@@ -316,7 +306,6 @@ async def dream_for_role(
     role: Role,
     model: ModelAdapter,
     cards: list[ExperienceCard | dict],
-    rule_memory: RoleLongTermMemory | None = None,
     memory_snapshot: dict[str, Any] | None = None,
     belief_snapshot: dict[str, Any] | None = None,
     skill_root: Path | str | None = None,
@@ -325,7 +314,6 @@ async def dream_for_role(
         role=role,
         model=model,
         experience_cards=cards,
-        rule_memory=rule_memory,
         memory_snapshot=memory_snapshot,
         belief_snapshot=belief_snapshot,
         skills=load_role_skills(role, skill_root=skill_root),
@@ -364,25 +352,6 @@ def load_role_skills(
     ]
 
 
-def _rule_memory_summary(memory: RoleLongTermMemory | None) -> dict[str, Any]:
-    if memory is None:
-        return {}
-    return {
-        "role": memory.role,
-        "source_card_count": memory.source_card_count,
-        "win_rate": memory.win_rate,
-        "avg_score": memory.avg_score,
-        "effective_strategies": [
-            item.to_dict() for item in memory.effective_strategies[:5]
-        ],
-        "recurring_mistakes": [
-            item.to_dict() for item in memory.recurring_mistakes[:5]
-        ],
-        "situational_rules": [
-            item.to_dict() for item in memory.situational_rules[:5]
-        ],
-        "skill_update_suggestions": memory.skill_update_suggestions,
-    }
 
 
 def _card_dict(card: ExperienceCard | dict) -> dict:

@@ -15,7 +15,6 @@ from agent.cognition.dream import (
     parse_dream_report,
     write_dream_report,
 )
-from agent.cognition.long_memory import RoleLongTermMemory, StrategyPrinciple
 from engine.models import Role
 
 
@@ -29,28 +28,6 @@ class StubModel:
         self.messages = messages
         self.name = name
         return self.response
-
-
-def _rule_memory() -> RoleLongTermMemory:
-    return RoleLongTermMemory(
-        role="witch",
-        generated_at="2026-01-01T00:00:00Z",
-        source_card_count=2,
-        win_rate=0.5,
-        avg_score=6.0,
-        recurring_mistakes=[
-            StrategyPrinciple(
-                title="高频教训 1",
-                description="毒人前必须确认目标身份",
-                evidence_count=2,
-                confidence=0.8,
-                source_cards=["g1_p4_witch", "g2_p4_witch"],
-            )
-        ],
-        skill_update_suggestions={
-            "witch_poison": ["考虑加入经验规则：毒人前必须确认目标身份"]
-        },
-    )
 
 
 def _cards() -> list[dict]:
@@ -93,7 +70,6 @@ class DreamReportTests(unittest.TestCase):
             role=Role.WITCH,
             raw_output=raw,
             source_card_count=1,
-            rule_memory=_rule_memory(),
         )
 
         self.assertEqual(report.role, "witch")
@@ -101,17 +77,15 @@ class DreamReportTests(unittest.TestCase):
         self.assertEqual(report.insights[0].title, "女巫毒人过早")
         self.assertEqual(report.skill_edit_proposals[0].skill, "witch_poison")
 
-    def test_fallback_uses_rule_memory_mistakes(self):
+    def test_fallback_returns_empty_insights(self):
         report = fallback_dream_report(
             role=Role.WITCH,
             cards=_cards(),
-            rule_memory=_rule_memory(),
             error="model failed",
         )
 
         self.assertEqual(report.role, "witch")
-        self.assertEqual(len(report.insights), 1)
-        self.assertIn("毒人前", report.insights[0].suggested_rule)
+        self.assertEqual(len(report.insights), 0)
         self.assertEqual(report.errors, ["model failed"])
 
     def test_write_dream_report_outputs_json_and_markdown(self):
@@ -145,11 +119,10 @@ class DreamReportTests(unittest.TestCase):
             self.assertTrue(md_path.exists())
             self.assertIn("测试洞察", md_path.read_text(encoding="utf-8"))
 
-    def test_build_prompt_contains_cards_rule_memory_and_schema(self):
+    def test_build_prompt_contains_cards_and_schema(self):
         prompt = build_dream_prompt(
             role=Role.WITCH,
             cards=_cards(),
-            rule_memory=_rule_memory(),
             memory_snapshot={"self_history": ["witch_act"]},
             belief_snapshot={"top_suspicions": []},
             skills=[],
@@ -178,7 +151,6 @@ class DreamAgentTests(unittest.IsolatedAsyncioTestCase):
             role=Role.WITCH,
             model=model,
             experience_cards=_cards(),
-            rule_memory=_rule_memory(),
         )
 
         report = await agent.reflect()
