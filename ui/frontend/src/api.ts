@@ -6,6 +6,7 @@ export interface GameConfig {
   enable_sheriff?: boolean;
   skill_dir?: string;
   player_count?: number;
+  role_versions?: Record<string, string>;  // {role: hash} per-role version selection
 }
 
 export async function listGames(): Promise<GameSnapshot[]> {

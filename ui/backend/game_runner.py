@@ -29,6 +29,7 @@ class RunningGame:
     max_days: int = 20
     enable_sheriff: bool = True
     skill_dir: str | None = None
+    role_skill_dirs: dict[str, Path] | None = None
     player_count: int = 12
     status: str = "starting"
     winner: str | None = None
@@ -58,6 +59,7 @@ class GameManager:
         enable_sheriff: bool = True,
         skill_dir: str | None = None,
         player_count: int = 12,
+        role_skill_dirs: dict[str, Path] | None = None,
     ) -> RunningGame:
         async with self._lock:
             active = next((game for game in self._games.values() if game.is_active), None)
@@ -72,6 +74,7 @@ class GameManager:
                 max_days=max_days,
                 enable_sheriff=enable_sheriff,
                 skill_dir=skill_dir,
+                role_skill_dirs=role_skill_dirs,
                 player_count=player_count,
             )
             self._games[game.game_id] = game
@@ -169,6 +172,7 @@ class GameManager:
                     trace_recorder=game.trace_recorder,
                     game_id=game.game_id,
                     skill_dir=game.skill_dir,
+                    role_skill_dirs=game.role_skill_dirs,
                 ),
                 config=game_config,
             )

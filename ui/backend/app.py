@@ -22,6 +22,7 @@ class StartGameRequest(BaseModel):
     enable_sheriff: bool = True
     skill_dir: str | None = None
     player_count: int = Field(default=12, ge=12, le=12)
+    role_versions: dict[str, str] | None = None  # {role: hash} per-role version selection
 
 
 class SelfplayRequest(BaseModel):
@@ -71,12 +72,18 @@ def list_games() -> dict[str, Any]:
 @app.post("/api/games", status_code=201)
 async def start_game(request: StartGameRequest | None = None) -> dict[str, Any]:
     try:
+        role_skill_dirs = None
+        if request is not None and request.role_versions:
+            role_skill_dirs = {}
+            for role, hash_val in request.role_versions.items():
+                role_skill_dirs[role] = Path("role_versions") / role / hash_val / "skills"
         game = await manager.start_game(
             seed=request.seed if request is not None else None,
             max_days=request.max_days if request is not None else 20,
             enable_sheriff=request.enable_sheriff if request is not None else True,
             skill_dir=_resolve_allowed_skill_dir(request.skill_dir) if request is not None else None,
             player_count=request.player_count if request is not None else 12,
+            role_skill_dirs=role_skill_dirs,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

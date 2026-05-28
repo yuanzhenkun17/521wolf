@@ -25,113 +25,95 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
   const [enableSheriff, setEnableSheriff] = useState(true);
   const [seed, setSeed] = useState("");
 
-  // Role version selection
+  // Per-role version selection: {role: {versions, selectedHash}}
   const [roles, setRoles] = useState<string[]>([]);
-  const [selectedRole, setSelectedRole] = useState<string>("");
-  const [versions, setVersions] = useState<RoleVersion[]>([]);
-  const [selectedHash, setSelectedHash] = useState<string>("");
+  const [roleVersions, setRoleVersions] = useState<Record<string, RoleVersion[]>>({});
+  const [selectedHashes, setSelectedHashes] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (open) {
-      listRoles().then((r) => {
-        setRoles(r);
-        if (r.length > 0) setSelectedRole(r[0]);
-      }).catch(() => {});
-    }
+    if (!open) return;
+    listRoles().then(async (r) => {
+      setRoles(r);
+      const allVersions: Record<string, RoleVersion[]> = {};
+      const allHashes: Record<string, string> = {};
+      for (const role of r) {
+        try {
+          const v = await listRoleVersions(role);
+          allVersions[role] = v;
+          const baseline = v.find((ver) => ver.is_baseline);
+          allHashes[role] = baseline?.hash ?? v[0]?.hash ?? "";
+        } catch {
+          allVersions[role] = [];
+          allHashes[role] = "";
+        }
+      }
+      setRoleVersions(allVersions);
+      setSelectedHashes(allHashes);
+    }).catch(() => {});
   }, [open]);
-
-  useEffect(() => {
-    if (selectedRole) {
-      listRoleVersions(selectedRole).then((v) => {
-        setVersions(v);
-        const baseline = v.find((ver) => ver.is_baseline);
-        setSelectedHash(baseline?.hash ?? v[0]?.hash ?? "");
-      }).catch(() => setVersions([]));
-    }
-  }, [selectedRole]);
 
   if (!open) return null;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const rv: Record<string, string> = {};
+    for (const role of roles) {
+      if (selectedHashes[role]) {
+        rv[role] = selectedHashes[role];
+      }
+    }
     const config: GameConfig = {
       player_count: 12,
       max_days: maxDays,
       enable_sheriff: enableSheriff,
+      role_versions: rv,
     };
-    if (selectedRole && selectedHash) {
-      config.skill_dir = `role_versions/${selectedRole}/${selectedHash}/skills`;
-    }
     if (seed.trim()) config.seed = Number(seed);
     onSubmit(config);
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Dialog */}
-      <div className="relative z-10 w-full max-w-md rounded-lg border border-border bg-card shadow-lg">
-        {/* Header */}
+      <div className="relative z-10 w-full max-w-lg rounded-lg border border-border bg-card shadow-lg">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div className="flex items-center gap-2">
             <Settings className="h-5 w-5 text-muted-foreground" />
             <h2 className="text-lg font-semibold">游戏配置</h2>
           </div>
-          <button
-            className="rounded-md p-1 hover:bg-muted"
-            onClick={onClose}
-          >
+          <button className="rounded-md p-1 hover:bg-muted" onClick={onClose}>
             <X className="h-5 w-5 text-muted-foreground" />
           </button>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-5 p-5">
-          {/* Role + Version selector */}
+          {/* Per-role version selectors */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">角色技能版本</label>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground" htmlFor="cfg-role">角色</label>
-                <select
-                  id="cfg-role"
-                  value={selectedRole}
-                  onChange={(e) => setSelectedRole(e.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {roles.map((r) => (
-                    <option key={r} value={r}>{ROLE_LABELS[r] ?? r}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground" htmlFor="cfg-version">版本</label>
-                <select
-                  id="cfg-version"
-                  value={selectedHash}
-                  onChange={(e) => setSelectedHash(e.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {versions.map((v) => (
-                    <option key={v.hash} value={v.hash}>
-                      {v.hash}{v.is_baseline ? " (baseline)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <label className="text-sm font-medium">各角色技能版本</label>
+            <p className="text-xs text-muted-foreground">12人局，每个角色可独立选择技能版本</p>
+            <div className="space-y-2 rounded-md border border-border p-3">
+              {roles.map((role) => (
+                <div key={role} className="flex items-center gap-3">
+                  <span className="w-16 text-sm font-medium">{ROLE_LABELS[role] ?? role}</span>
+                  <select
+                    value={selectedHashes[role] ?? ""}
+                    onChange={(e) => setSelectedHashes((prev) => ({ ...prev, [role]: e.target.value }))}
+                    className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {(roleVersions[role] ?? []).map((v) => (
+                      <option key={v.hash} value={v.hash}>
+                        {v.hash}{v.is_baseline ? " (baseline)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
             </div>
-            <p className="text-xs text-muted-foreground">
-              12人局，其他角色使用各自 baseline
-            </p>
           </div>
 
           {/* Max days */}
           <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="max-days">
-              最大天数
-            </label>
+            <label className="text-sm font-medium" htmlFor="max-days">最大天数</label>
             <input
               id="max-days"
               type="number"
@@ -152,9 +134,7 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
               onChange={(e) => setEnableSheriff(e.target.checked)}
               className="h-4 w-4 rounded border-border"
             />
-            <label htmlFor="enable-sheriff" className="text-sm font-medium">
-              启用警长模式
-            </label>
+            <label htmlFor="enable-sheriff" className="text-sm font-medium">启用警长模式</label>
           </div>
 
           {/* Seed */}
@@ -175,9 +155,7 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
 
           {/* Actions */}
           <div className="flex justify-end gap-3 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={starting}>
-              取消
-            </Button>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={starting}>取消</Button>
             <Button type="submit" disabled={starting}>
               {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               开始游戏
