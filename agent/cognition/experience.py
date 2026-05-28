@@ -154,7 +154,7 @@ def extract_experiences(
         # Lessons derived from review mistakes + low-score areas
         lessons = _extract_lessons(player_id, role, player_review)
         avoid = _extract_avoid_next_time(player_id, role, player_review)
-        strategies = _extract_reusable_strategies(player_id, role, player_review)
+        strategies = _extract_reusable_strategies(player_id, role, player_review, decisions)
 
         # Related skills from the decisions
         related_skills = _extract_related_skills(decisions)
@@ -314,48 +314,49 @@ def _extract_key_decisions(
     role: Role,
     decisions: list[dict],
 ) -> list[ExperienceDecision]:
-    """Pick the most notable decisions (mistakes, high-impact actions)."""
-    notable: list[ExperienceDecision] = []
+    """Extract all decisions with full context from the decision record."""
+    result: list[ExperienceDecision] = []
     for d in decisions:
-        source = d.get("source", "")
         action_type = d.get("action_type", "")
-        is_notable = (
-            source == "fallback"
-            or source == "policy_adjusted"
-            or action_type in {"witch_act", "hunter_shoot", "werewolf_kill", "seer_check"}
-        )
-        if not is_notable:
-            continue
+        parsed = d.get("parsed_decision") or {}
+        reasoning = parsed.get("private_reasoning", "")
+        rejected = parsed.get("rejected_reasons", [])
+        target = d.get("selected_target") or parsed.get("target")
+        choice = d.get("selected_choice") or parsed.get("choice", "")
+        skills = d.get("selected_skills", [])
+        confidence = d.get("confidence", 0)
 
-        skill_list = d.get("selected_skills", [])
+        # Build context from belief state at decision time
+        belief = d.get("belief_context") or {}
+        suspicions = belief.get("top_suspicions", [])
+        suspect_summary = ""
+        if suspicions:
+            top = suspicions[0]
+            suspect_summary = f"最大嫌疑: P{top.get('player_id')}(wolf_prob={top.get('wolf_prob', 0):.0%})"
 
-        notable.append(ExperienceDecision(
+        # Action description
+        action_desc = f"choice={choice}"
+        if target is not None:
+            action_desc += f", target=P{target}"
+
+        # Lesson from reasoning and rejected reasons
+        lesson = reasoning[:120] if reasoning else ""
+        if rejected:
+            lesson += f" 排除: {rejected[0][:60]}"
+
+        result.append(ExperienceDecision(
             day=d.get("day", 0),
             phase=d.get("phase", ""),
             action_type=action_type,
-            selected_skills=skill_list or ["unknown"],
-            context=d.get("action_type", ""),
-            action=f"target={d.get('selected_target')}, choice={d.get('selected_choice', '')}",
-            expected_outcome="N/A",
+            selected_skills=skills or ["unknown"],
+            context=suspect_summary or action_type,
+            action=action_desc,
+            expected_outcome=f"confidence={confidence:.0%}",
             actual_result=d.get("source", "unknown"),
-            lesson=_decision_lesson(d, role),
+            lesson=lesson or f"{action_type} 决策",
         ))
 
-    return notable[:5]
-
-
-def _decision_lesson(d: dict, role: Role) -> str:
-    source = d.get("source", "")
-    action = d.get("action_type", "")
-    if source == "fallback":
-        return f"{action} 使用了回退策略，需要检查输出格式"
-    if source == "policy_adjusted":
-        return f"{action} 被策略修正，需要检查推理准确性"
-    if action == "witch_act" and d.get("selected_choice") == "poison":
-        return f"女巫毒人决策需要更充分的证据"
-    if action == "hunter_shoot":
-        return f"猎人开枪决策需要更谨慎"
-    return f"{action} 决策可以进一步优化"
+    return result[-8:]  # Keep last 8 decisions (most relevant)
 
 
 def _extract_lessons(
@@ -382,7 +383,11 @@ def _extract_lessons(
             lessons.append("投票决策需要结合更多信息")
         if player_review.skill_score < 4.0:
             lessons.append("技能使用需要更谨慎，确认目标后再行动")
-    return lessons[:4]
+        if player_review.information_score < 4.0:
+            lessons.append("信息收集不足，需要更关注场上发言和票型")
+        if player_review.cooperation_score < 4.0:
+            lessons.append("团队配合需要加强，站边和联动不够")
+    return lessons[:5]
 
 
 def _extract_avoid_next_time(
@@ -408,16 +413,24 @@ def _extract_reusable_strategies(
     player_id: int,
     role: Role,
     player_review: PlayerReview | None,
+    decisions: list[dict] | None = None,
 ) -> list[str]:
     strategies: list[str] = []
-    if player_review and player_review.outcome == "win":
-        strategies.append("本局获胜策略可重复参考")
     if player_review and player_review.highlights:
         for h in player_review.highlights[:2]:
             strategies.append(h)
+    # Extract actual skill names used in decisions
+    if decisions:
+        skill_counts: dict[str, int] = {}
+        for d in decisions:
+            for sk in d.get("selected_skills", []):
+                if sk and sk not in ("unknown", "output_schema"):
+                    skill_counts[sk] = skill_counts.get(sk, 0) + 1
+        for sk, _count in sorted(skill_counts.items(), key=lambda x: -x[1])[:3]:
+            strategies.append(f"使用了 {sk} 策略")
     if not strategies:
         strategies.append("需进一步积累经验")
-    return strategies[:3]
+    return strategies[:4]
 
 
 def _extract_related_skills(decisions: list[dict]) -> list[str]:
