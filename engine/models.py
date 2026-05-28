@@ -101,6 +101,17 @@ class GameEvent:
     payload: dict[str, Any] = field(default_factory=dict)
     public: bool = True
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "day": self.day,
+            "phase": self.phase.value if hasattr(self.phase, "value") else self.phase,
+            "actor": self.actor,
+            "target": self.target,
+            "payload": dict(self.payload),
+            "public": self.public,
+        }
+
 
 @dataclass(slots=True)
 class Observation:
