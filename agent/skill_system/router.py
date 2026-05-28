@@ -2,10 +2,9 @@
 
 Logic::
 
-    1. Always inject common skills (scope="common").
-    2. Inject role skills matching ctx.role and ctx.request.action_type.
-    3. Filter by requires metadata match.
-    4. Empty applicable_actions = always inject for that role.
+    1. Inject role skills matching ctx.role and ctx.request.action_type.
+    2. Filter by requires metadata match.
+    3. Empty applicable_actions = always inject for that role.
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ DEFAULT_SKILL_ROOT: Path = _PROJECT_ROOT / "skills"
 @dataclass
 class SkillIndex:
     """Indexed skill collection for one skill root."""
-    common: list[MarkdownSkill]
     by_role: dict[Role, list[MarkdownSkill]]
 
 
@@ -45,16 +43,13 @@ def configure_skill_root(root: Path | str | None = None) -> None:
 
 
 def _load_skill_index(root: Path) -> SkillIndex:
-    """Load all markdown skills from root and index by scope + role."""
+    """Load all markdown skills from root and index by role."""
     all_skills = load_markdown_skills(root)
-    common: list[MarkdownSkill] = []
     by_role: dict[Role, list[MarkdownSkill]] = {}
     for skill in all_skills:
-        if skill.scope == "common":
-            common.append(skill)
-        elif skill.role is not None:
+        if skill.role is not None:
             by_role.setdefault(skill.role, []).append(skill)
-    return SkillIndex(common=common, by_role=by_role)
+    return SkillIndex(by_role=by_role)
 
 
 def _get_skill_index(skill_root: Path | None = None) -> SkillIndex:
@@ -81,18 +76,15 @@ def select_skills(
     *,
     skill_root: Path | None = None,
 ) -> list[MarkdownSkill]:
-    """Select common + role skills matching the current context.
+    """Select role skills matching the current context.
 
     Returns:
-        Common skills first, then role skills, sorted by name within each group.
+        Role skills matching role + action_type, sorted by name.
     """
     idx = _get_skill_index(skill_root)
     selected: list[MarkdownSkill] = []
 
-    # 1. Always inject common skills
-    selected.extend(idx.common)
-
-    # 2. Inject role skills matching role + action_type
+    # Inject role skills matching role + action_type
     action_type = ctx.request.action_type
     for skill in idx.by_role.get(role, []):
         if not skill.applicable_actions or action_type in skill.applicable_actions:
@@ -105,28 +97,15 @@ def select_skills(
 def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType) -> str:
     """Format selected skills into a prompt block.
 
-    Common skills under generic header, role skills under role header.
-    Action-relevant skills listed first within the role section.
+    Role skills under role header, action-relevant skills listed first.
     """
     parts: list[str] = []
 
-    common = [s for s in selected if s.scope == "common"]
-    role_skills = [s for s in selected if s.scope == "role"]
-
-    if common:
-        parts.append("## common rules Skill")
-        parts.append("")
-        for skill in common:
-            parts.append(f"### {skill.name}")
-            parts.append("")
-            parts.append(skill.body)
-            parts.append("")
-
-    if role_skills:
+    if selected:
         parts.append("## role strategy Skill")
         parts.append("")
-        action_skills = [s for s in role_skills if action_type in s.applicable_actions]
-        other_skills = [s for s in role_skills if action_type not in s.applicable_actions]
+        action_skills = [s for s in selected if action_type in s.applicable_actions]
+        other_skills = [s for s in selected if action_type not in s.applicable_actions]
         for skill in action_skills + other_skills:
             parts.append(f"### {skill.name}")
             parts.append("")

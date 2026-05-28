@@ -233,11 +233,11 @@ class NodesTests(unittest.TestCase):
         self.assertGreater(len(ctx.selected_skills), 0)
         self.assertNotEqual(ctx.skill_context, "")
 
-    def test_skill_router_includes_common_skills(self):
-        """Common skills like output_schema are always injected."""
+    def test_skill_router_excludes_common_skills(self):
+        """Common skills like output_schema are NOT injected by router."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = skill_router_node(ctx)
-        self.assertIn("output_schema", ctx.selected_skills)
+        self.assertNotIn("output_schema", ctx.selected_skills)
 
     def test_prompt_node_builds_system_and_user_messages(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
@@ -504,9 +504,8 @@ class PromptHintsTests(unittest.TestCase):
             skill_context=ctx.skill_context,
         )
         combined = " ".join(m.get("content", "") for m in messages)
-        # Multi-skill block should be present
-        self.assertIn("common rules Skill", combined)
-        self.assertIn("output_schema", combined)
+        # Output schema is now hardcoded in the prompt, not from skill injection
+        self.assertIn("输出格式要求", combined)
 
     def test_skill_advice_includes_skill_count(self):
         """Check that the skill router returns skill metadata in strategy_advice."""
@@ -800,7 +799,7 @@ output_constraints:
         # No priority attribute
         self.assertFalse(hasattr(skill, "priority"))
 
-    def test_common_skills_injected_for_all_roles(self):
+    def test_output_schema_not_injected_by_router(self):
         from agent.skill_system.router import select_skills
 
         for role in (Role.WEREWOLF, Role.WITCH, Role.VILLAGER, Role.SEER):
@@ -808,7 +807,7 @@ output_constraints:
             ctx = AgentContext(request=request, player_id=5, role=role.value)
             selected = select_skills(ctx, role)
             names = [s.name for s in selected]
-            self.assertIn("output_schema", names, f"{role.value} should get output_schema")
+            self.assertNotIn("output_schema", names, f"{role.value} should NOT get output_schema from router")
 
     def test_only_current_role_skills_are_injected(self):
         from agent.skill_system.router import select_skills
@@ -883,23 +882,23 @@ output_constraints:
         self.assertIn("witch_save", names, "witch_save should be injected when can_save=true")
         self.assertIn("witch_poison", names, "witch_poison should be injected when can_poison=true")
 
-    def test_output_schema_skill_exists(self):
-        from pathlib import Path
-        ROOT = Path(__file__).resolve().parent.parent
-        output = ROOT / "skills" / "common" / "output_schema.md"
-        self.assertTrue(output.exists(), "output_schema.md must exist")
+    def test_output_schema_hardcoded_in_prompt(self):
+        from agent.prompts.base import _OUTPUT_FORMAT_INSTRUCTIONS
+        self.assertIn("输出格式要求", _OUTPUT_FORMAT_INSTRUCTIONS)
+        self.assertIn("public_text", _OUTPUT_FORMAT_INSTRUCTIONS)
+        self.assertIn("private_reasoning", _OUTPUT_FORMAT_INSTRUCTIONS)
 
-    def test_skill_context_includes_common_and_role_skills(self):
+    def test_skill_context_includes_role_skills_only(self):
         request = _make_vote_request()
         ctx = AgentContext(request=request, player_id=5, role="villager")
         ctx = skill_router_node(ctx)
         skill_context = ctx.skill_context
-        # Should include common sections
-        self.assertIn("common rules", skill_context)
+        # Should include role strategy section only (no common)
         self.assertIn("role strategy", skill_context)
-        # Should include actual skills
-        self.assertIn("output_schema", skill_context)
+        self.assertNotIn("common rules", skill_context)
+        # Should include role skills
         self.assertIn("villager_vote_analysis", skill_context)
+        self.assertNotIn("output_schema", skill_context)
 
     def test_configure_skill_root_can_load_alternate_skill_dir(self):
         from pathlib import Path
@@ -933,7 +932,7 @@ output_constraints:
             ctx = AgentContext(request=request, player_id=5, role="villager")
             ctx = skill_router_node(ctx)
 
-        self.assertIn("custom_rules", ctx.selected_skills)
+        self.assertNotIn("custom_rules", ctx.selected_skills)
         self.assertIn("custom_villager_vote", ctx.selected_skills)
         configure_skill_root(None)
 
