@@ -67,8 +67,7 @@ class EvolutionPipelineTests(unittest.IsolatedAsyncioTestCase):
             _write_base_version(versions_root)
 
             async def fake_selfplay(config, **_kwargs):
-                self.assertFalse(config.enable_dream)
-                self.assertTrue(config.enable_batch_dream)
+                self.assertTrue(config.enable_mid_memory)
                 return _training_result(config)
 
             async def fake_battle(config, **_kwargs):
@@ -113,8 +112,7 @@ class EvolutionPipelineTests(unittest.IsolatedAsyncioTestCase):
             _write_base_version(versions_root)
 
             async def fake_selfplay(config, **_kwargs):
-                self.assertFalse(config.enable_dream)
-                self.assertTrue(config.enable_batch_dream)
+                self.assertTrue(config.enable_mid_memory)
                 return _training_result(config)
 
             async def fake_battle(config, **_kwargs):

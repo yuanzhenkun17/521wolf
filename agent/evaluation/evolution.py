@@ -46,8 +46,8 @@ class EvolutionPipelineConfig:
     max_days: int = 20
     output_dir: Path = Path("runs/evolution")
     versions_root: Path = Path("agent_versions")
-    enable_dream: bool = True
-    enable_skill_proposals: bool = True
+    enable_mid_memory: bool = True
+    enable_long_term_consolidation: bool = True
     auto_apply_skill_proposals: bool = False
     min_score_improvement: float = 0.05
     max_win_rate_drop: float = 0.10
@@ -64,8 +64,8 @@ class EvolutionPipelineConfig:
             "max_days": self.max_days,
             "output_dir": str(self.output_dir),
             "versions_root": str(self.versions_root),
-            "enable_dream": self.enable_dream,
-            "enable_skill_proposals": self.enable_skill_proposals,
+            "enable_mid_memory": self.enable_mid_memory,
+            "enable_long_term_consolidation": self.enable_long_term_consolidation,
             "auto_apply_skill_proposals": self.auto_apply_skill_proposals,
             "min_score_improvement": self.min_score_improvement,
             "max_win_rate_drop": self.max_win_rate_drop,
@@ -137,10 +137,8 @@ async def run_evolution_pipeline(
         model_name=base_manifest.model.model or None,
         max_days=config.max_days,
         enable_review=True,
-        enable_experience=True,
-        enable_dream=False,
-        enable_batch_dream=config.enable_dream,
-        enable_skill_proposals=config.enable_skill_proposals,
+        enable_mid_memory=config.enable_mid_memory,
+        enable_long_term_consolidation=config.enable_long_term_consolidation,
         auto_apply_skill_proposals=config.auto_apply_skill_proposals,
         temperature=base_manifest.model.temperature,
         skill_dir=training_skill_dir,
@@ -185,7 +183,6 @@ async def run_evolution_pipeline(
         output_dir=run_dir / "battle",
         max_days=config.max_days,
         enable_review=True,
-        enable_experience=True,
     )
     battle_result = await battle_runner(
         battle_config,

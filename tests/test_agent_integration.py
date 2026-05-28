@@ -28,7 +28,6 @@ from agent.observability.archive import (
     GameArchive,
 )
 from agent.runtime.context import AgentContext
-from agent.cognition.experience import extract_experiences, write_game_experiences
 from agent.evaluation.review_enhanced import generate_enhanced_review
 from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
 
@@ -342,116 +341,6 @@ class ReviewEnhancedTest(unittest.TestCase):
         descs = " ".join(t.description for t in report.key_turning_points)
         self.assertIn("死亡", descs)
 
-
-# ── F2: Experience integration ─────────────────────────────────────────────────
-
-
-class ExperienceIntegrationTest(unittest.TestCase):
-    """F2: Experience extraction must produce output files."""
-
-    def test_experience_extraction_creates_per_role_files(self):
-        """extract_experiences + write_game_experiences must write cards."""
-        roles = _make_role_set()
-        game_log = {"entries": [
-            {"event_type": "death", "target": 5, "day": 1, "phase": "night"},
-        ]}
-        decisions = _make_minimal_decisions(roles)
-
-        report = generate_enhanced_review(
-            game_log=game_log,
-            agent_decisions=decisions,
-            roles=roles,
-            winner_team="villagers",
-            game_id="exp_test",
-        )
-
-        cards = extract_experiences(
-            game_id="exp_test",
-            roles=roles,
-            agent_decisions=decisions,
-            review=report,
-            winner_team="villagers",
-        )
-
-        # Every player must get a card
-        self.assertEqual(len(cards), len(roles))
-        card_pids = {c.player_id for c in cards}
-        self.assertEqual(card_pids, set(roles.keys()))
-
-        with tempfile.TemporaryDirectory() as tmp:
-            game_dir = Path(tmp) / "games" / "game_001"
-            write_game_experiences(cards=cards, game_dir=game_dir)
-
-            # Must write per-card file
-            card_files = list((game_dir / "experiences").glob("*.json"))
-            self.assertGreater(len(card_files), 0)
-
-    def test_experience_card_has_expected_structure(self):
-        """Each ExperienceCard must have all required fields populated."""
-        roles = _make_role_set()
-        decisions = _make_minimal_decisions(roles)
-        report = generate_enhanced_review(
-            game_log={"entries": []},
-            agent_decisions=decisions,
-            roles=roles,
-            winner_team="villagers",
-            game_id="struct_test",
-        )
-        cards = extract_experiences(
-            game_id="struct_test",
-            roles=roles,
-            agent_decisions=decisions,
-            review=report,
-            winner_team="villagers",
-        )
-
-        for card in cards:
-            with self.subTest(player=card.player_id, role=card.role):
-                self.assertTrue(card.card_id)
-                self.assertTrue(card.game_id)
-                # Team reflects the Role's native team (gods are Team.GODS)
-                self.assertIn(card.team, ("villagers", "werewolves", "gods"))
-                self.assertIn(card.outcome, ("win", "lose"))
-
-    def test_loser_gets_different_card_than_winner(self):
-        """Winning and losing players should have different content."""
-        roles = _make_role_set()
-        decisions = _make_minimal_decisions(roles)
-        report_villagers_win = generate_enhanced_review(
-            game_log={"entries": []},
-            agent_decisions=decisions,
-            roles=roles,
-            winner_team="villagers",
-            game_id="outcome_test",
-        )
-        report_wolves_win = generate_enhanced_review(
-            game_log={"entries": []},
-            agent_decisions=decisions,
-            roles=roles,
-            winner_team="werewolves",
-            game_id="outcome_test",
-        )
-
-        cards_v = extract_experiences(
-            game_id="outcome_test", roles=roles,
-            agent_decisions=decisions, review=report_villagers_win,
-            winner_team="villagers",
-        )
-        cards_w = extract_experiences(
-            game_id="outcome_test", roles=roles,
-            agent_decisions=decisions, review=report_wolves_win,
-            winner_team="werewolves",
-        )
-
-        v_outcomes = {c.player_id: c.outcome for c in cards_v}
-        w_outcomes = {c.player_id: c.outcome for c in cards_w}
-
-        # When villagers win, villagers/gods get "win", wolves get "lose"
-        self.assertEqual(v_outcomes[1], "lose")  # werewolf
-        self.assertEqual(v_outcomes[2], "win")  # villager
-        # When wolves win, reverse
-        self.assertEqual(w_outcomes[1], "win")  # werewolf
-        self.assertEqual(w_outcomes[2], "lose")  # villager
 
 # ── Error + config validation integration ─────────────────────────────────────
 

@@ -238,18 +238,16 @@ def write_game_analysis(
     analysis: GameAnalysis,
     *,
     output_dir: Path | str | None = None,
-) -> tuple[Path, Path]:
-    """Write GameAnalysis to JSON and markdown files."""
+) -> Path:
+    """Write GameAnalysis to JSON file."""
     base = Path(output_dir) if output_dir else MID_MEMORY_DIR
     base.mkdir(parents=True, exist_ok=True)
     json_path = base / f"{analysis.game_id}.json"
-    md_path = base / f"{analysis.game_id}.md"
     json_path.write_text(
         json.dumps(analysis.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    md_path.write_text(analysis.to_markdown(), encoding="utf-8")
-    return json_path, md_path
+    return json_path
 
 
 def load_game_analysis(game_id: str, *, mid_memory_dir: Path | str | None = None) -> GameAnalysis | None:

@@ -21,15 +21,8 @@ from engine.models import Role
 from engine.roles import assign_roles
 
 from agent.observability.archive import AgentTraceRecorder, DecisionArchive, GameArchive
-from agent.cognition.dream import dream_for_role, write_dream_report
-from agent.cognition.experience import extract_experiences, write_game_experiences
 from agent.cognition.mid_memory import analyze_game, write_game_analysis
 from agent.cognition.long_term_consolidator import consolidate_from_mid_memories, write_consolidation
-from agent.cognition.skill_evolution import (
-    apply_skill_proposals,
-    proposals_from_dream,
-    write_skill_proposals,
-)
 from agent.evaluation.confidence_calibration import calibrate_decisions, merge_calibration_reports
 from agent.evaluation.review_enhanced import generate_enhanced_review
 from agent.runtime.agent import LLMPlayerAgent
@@ -52,13 +45,9 @@ class SelfPlayConfig:
     model_name: str | None = None
     max_days: int = 20
     enable_review: bool = True
-    enable_experience: bool = True
-    enable_dream: bool = False
-    enable_batch_dream: bool = False
     enable_mid_memory: bool = True
     enable_long_term_consolidation: bool = True
     consolidation_window: int = 5
-    enable_skill_proposals: bool = True
     auto_apply_skill_proposals: bool = False
     temperature: float = 0.2
     game_config: GameConfig = STANDARD_12
@@ -396,7 +385,6 @@ async def run_selfplay(
         # Review (enhanced) — skip for errored games
         review_score = None
         review_report = None
-        cards = None
         avg_speech_score = 0.0
         avg_vote_score = 0.0
         avg_skill_score = 0.0
@@ -435,21 +423,6 @@ async def run_selfplay(
             _write_json(game_dir / "review.json", review_report.to_dict())
             _write_text(game_dir / "review.md", review_report.to_markdown())
 
-        # Experience cards — skip for errored games
-        if config.enable_experience and review_report is not None:
-            cards = extract_experiences(
-                game_id=game_id,
-                roles=roles,
-                agent_decisions=agent_decisions,
-                review=review_report,
-                winner_team=winner_str,
-            )
-            write_game_experiences(
-                cards=cards,
-                game_dir=game_dir,
-                output_dir=run_dir / "experiences",
-            )
-
         # Mid-term memory — LLM game analysis
         if config.enable_mid_memory and review_report is not None:
             try:
@@ -466,40 +439,7 @@ async def run_selfplay(
                     output_dir=game_dir / "mid_memory",
                 )
             except Exception as exc:
-                _log("mid_memory_error", str(exc))
-
-        # Dream — per-role LLM reflection
-        if config.enable_dream and cards is not None:
-                by_role: dict[Role, list] = {}
-                for card in cards:
-                    try:
-                        role = Role(card.role)
-                    except ValueError:
-                        continue
-                    by_role.setdefault(role, []).append(card)
-                for role, role_cards in sorted(by_role.items(), key=lambda item: item[0].value):
-                    report = await dream_for_role(
-                        role=role,
-                        model=client,
-                        cards=role_cards,
-                        skill_root=config.skill_dir,
-                    )
-                    write_dream_report(
-                        report,
-                        output_dir=game_dir / "dreams" / role.value,
-                    )
-                    if config.enable_skill_proposals:
-                        proposals = proposals_from_dream(report)
-                        write_skill_proposals(
-                            proposals,
-                            output_dir=game_dir / "skill_proposals" / role.value,
-                        )
-                        if config.auto_apply_skill_proposals:
-                            apply_skill_proposals(
-                                proposals,
-                                target_skill_root=config.skill_dir,
-                                patch_dir=game_dir / "skill_patches" / role.value,
-                            )
+                _log.warning("mid_memory_error for %s: %s", game_id, exc)
 
         # Write meta
         _write_json(game_dir / "meta.json", {
@@ -546,24 +486,6 @@ async def run_selfplay(
             except Exception:
                 _log.warning("on_game_complete callback raised for game %s", game_id, exc_info=True)
 
-    if (
-        config.enable_batch_dream
-        and config.enable_experience
-        and results
-    ):
-        if batch_client is None:
-            batch_client = load_llm_client(
-                model_name=config.model_name,
-                temperature=config.temperature,
-            )
-        await _run_batch_dream(
-            run_dir=run_dir,
-            model=batch_client,
-            skill_dir=config.skill_dir,
-            enable_skill_proposals=config.enable_skill_proposals,
-            auto_apply_skill_proposals=config.auto_apply_skill_proposals,
-        )
-
     # Long-term consolidation — every N games, LLM reads mid-memories and updates skills
     if (
         config.enable_long_term_consolidation
@@ -594,47 +516,6 @@ async def run_selfplay(
     # Write summary
     selfplay_result.write_summary(run_dir)
     return selfplay_result
-
-
-async def _run_batch_dream(
-    *,
-    run_dir: Path,
-    model: ModelAdapter,
-    skill_dir: Path | None,
-    enable_skill_proposals: bool,
-    auto_apply_skill_proposals: bool,
-) -> None:
-    cards_by_role = _collect_run_experience_cards(run_dir)
-    for role, cards in sorted(cards_by_role.items(), key=lambda item: item[0].value):
-        report = await dream_for_role(
-            role=role,
-            model=model,
-            cards=cards,
-            skill_root=skill_dir,
-        )
-        write_dream_report(
-            report,
-            output_dir=run_dir / "batch_dreams" / role.value,
-        )
-        if not enable_skill_proposals:
-            continue
-        proposals = proposals_from_dream(
-            report,
-            min_confidence=0.75,
-            min_evidence_cards=2,
-        )
-        write_skill_proposals(
-            proposals,
-            output_dir=run_dir / "batch_skill_proposals" / role.value,
-        )
-        if auto_apply_skill_proposals and skill_dir is not None:
-            apply_skill_proposals(
-                proposals,
-                target_skill_root=skill_dir,
-                patch_dir=run_dir / "batch_skill_patches" / role.value,
-                min_confidence=0.75,
-                min_evidence_cards=2,
-            )
 
 
 async def _run_long_term_consolidation(
@@ -688,40 +569,6 @@ async def _run_long_term_consolidation(
             consolidation,
             output_dir=run_dir / "consolidations" / role_str,
         )
-        if auto_apply and consolidation.skill_proposals and skill_dir is not None:
-            from agent.cognition.skill_evolution import apply_skill_proposals, SkillProposal
-
-            proposals = [
-                SkillProposal(
-                    skill=p.skill,
-                    operation=p.operation,
-                    proposal=p.proposal,
-                    risk=p.risk,
-                    evidence_cards=p.evidence_cards,
-                    confidence=p.confidence,
-                    status="pending",
-                )
-                for p in consolidation.skill_proposals
-            ]
-            apply_skill_proposals(
-                proposals,
-                target_skill_root=skill_dir,
-                patch_dir=run_dir / "consolidation_patches" / role_str,
-                min_confidence=0.7,
-                min_evidence_cards=2,
-            )
-
-
-def _collect_run_experience_cards(run_dir: Path) -> dict[Role, list[dict]]:
-    cards_by_role: dict[Role, list[dict]] = {}
-    for path in sorted((run_dir / "games").glob("*/experiences/*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            role = Role(str(data.get("role", "")))
-        except (OSError, json.JSONDecodeError, ValueError):
-            continue
-        cards_by_role.setdefault(role, []).append(data)
-    return cards_by_role
 
 
 def _create_agents(

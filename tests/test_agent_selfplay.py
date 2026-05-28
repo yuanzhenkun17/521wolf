@@ -23,7 +23,7 @@ class SelfPlayConfigTests(unittest.TestCase):
         self.assertEqual(config.seed_start, 1)
         self.assertEqual(config.max_days, 20)
         self.assertTrue(config.enable_review)
-        self.assertTrue(config.enable_experience)
+        self.assertTrue(config.enable_mid_memory)
         self.assertEqual(config.temperature, 0.2)
         self.assertEqual(config.output_dir, Path("runs/selfplay"))
 

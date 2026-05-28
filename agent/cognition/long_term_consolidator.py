@@ -16,7 +16,6 @@ from typing import Any
 from engine.models import Role
 
 from agent.cognition.mid_memory import GameAnalysis
-from agent.cognition.dream import SkillEditProposal
 from agent.prompts.parsing import load_json_object
 from agent.runtime.model import ModelAdapter
 from agent.skill_system.loader import MarkdownSkill, load_markdown_skills
@@ -24,6 +23,26 @@ from agent.skill_system.loader import MarkdownSkill, load_markdown_skills
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_SKILL_ROOT = _PROJECT_ROOT / "skills"
+
+
+@dataclass(slots=True)
+class SkillEditProposal:
+    skill: str
+    operation: str  # "append_rule" | "rewrite_section" | "deprecate_rule"
+    proposal: str
+    risk: str = ""
+    evidence_cards: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "skill": self.skill,
+            "operation": self.operation,
+            "proposal": self.proposal,
+            "risk": self.risk,
+            "evidence_cards": self.evidence_cards,
+            "confidence": round(self.confidence, 3),
+        }
 
 
 @dataclass(slots=True)
