@@ -246,12 +246,15 @@ def register_role_evolution_routes(app: FastAPI, runner: RoleEvolutionRunner) ->
         """List all versions for a role."""
         try:
             versions = runner.store.list_versions(role)
+            baseline = runner.store.get_baseline(role)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"role '{role}' not found")
-        return {
-            "role": role,
-            "versions": [v.to_dict() for v in versions],
-        }
+        result = []
+        for v in versions:
+            d = v.to_dict()
+            d["is_baseline"] = v.hash == baseline.hash
+            result.append(d)
+        return {"role": role, "versions": result}
 
     @app.get("/api/roles/{role}/versions/{hash}")
     def get_role_version(role: str, hash: str) -> dict[str, Any]:
