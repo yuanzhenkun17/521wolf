@@ -53,117 +53,144 @@ export async function getGameArchive(gameId: string): Promise<GameArchive> {
 }
 
 // ---------------------------------------------------------------------------
-// Version Management APIs
+// Role Evolution APIs
 // ---------------------------------------------------------------------------
 
-export type VersionManifest = {
-  version_id: string;
-  label: string;
-  skill_dir: string;
+export type RoleVersion = {
+  hash: string;
+  role: string;
   created_at: string;
+  parent_hash: string | null;
+  source: string;
+  notes: string[];
+  is_baseline: boolean;
+};
+
+export type RoleHistory = {
+  role: string;
+  baseline: string;
+  versions: string[];
+};
+
+export type RoleLeaderboardEntry = {
+  hash: string;
+  role: string;
+  is_baseline: boolean;
+  total_games: number;
+  target_role_role_weighted_score: number;
+  target_role_speech_score: number;
+  target_role_vote_score: number;
+  target_role_skill_score: number;
+  target_role_fallback_rate: number;
+  target_role_bad_case_rate: number;
+  target_side_win_rate: number;
+  target_side_win_rate_ci: [number, number];
+  delta_vs_baseline: Record<string, number>;
+  battle_record: string;
+  recommendation: string;
+  data_sufficient: boolean;
+};
+
+export type EvolutionRunStatus = {
+  run_id: string;
+  role: string;
+  parent_hash: string;
   status: string;
-  description?: string;
-  tags?: string[];
+  training_games: number;
+  battle_games: number;
+  training_completed: number;
+  battle_completed: number;
+  current_stage: string;
+  candidate_hash: string | null;
+  battle_result: { wins: number; losses: number; win_rate: number } | null;
+  diff: Array<{
+    filename: string;
+    action: string;
+    before: string | null;
+    after: string | null;
+    proposal_ref: string;
+  }> | null;
+  errors: string[];
+  kind: string;
+  schema_version: number;
 };
 
-export type VersionDetail = VersionManifest & {
-  config: Record<string, unknown>;
-  metrics?: Record<string, unknown>;
-};
-
-export type VersionLeaderboardEntry = {
-  version_id?: string;
-  version?: string;
-  label?: string;
-  games: number;
-  werewolf_win_rate: number;
-  villager_win_rate: number;
-  avg_score: number;
-  avg_score_ci95?: [number, number];
-  role_weighted_score?: number;
-  role_weighted_score_ci95?: [number, number];
-  score_delta_vs_base?: number;
-  significant_vs_base?: boolean;
-  avg_speech_score: number;
-  avg_vote_score: number;
-  avg_skill_score: number;
-  avg_confidence?: number;
-  confidence_calibration_error?: number;
-  confidence_calibration_count?: number;
-  confidence_buckets?: Record<string, {
-    count: number;
-    correct: number;
-    confidence_sum?: number;
-    avg_confidence: number;
-    accuracy: number;
-    error: number;
-  }>;
-  fallback_rate: number;
-  policy_adjusted_rate: number;
-  werewolf_win_rate_ci95?: [number, number];
-  villager_win_rate_ci95?: [number, number];
-};
-
-export type PromoteResult = {
-  version_id: string;
-  passed: boolean;
-  score: number;
-  details: Record<string, unknown>;
-};
-
-export async function listVersions(): Promise<VersionManifest[]> {
-  const response = await fetch("/api/versions");
-  if (!response.ok) throw new Error("无法读取版本列表");
+export async function listRoles(): Promise<string[]> {
+  const response = await fetch("/api/roles");
+  if (!response.ok) throw new Error("无法读取角色列表");
   const data = await response.json();
-  return data.versions ?? data;
+  return data.roles;
 }
 
-export async function getVersionDetail(versionId: string): Promise<VersionDetail> {
-  const response = await fetch(`/api/versions/${versionId}`);
+export async function listRoleVersions(role: string): Promise<RoleVersion[]> {
+  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/versions`);
+  if (!response.ok) throw new Error("无法读取角色版本");
+  const data = await response.json();
+  return data.versions;
+}
+
+export async function getRoleVersion(role: string, hash: string): Promise<RoleVersion & { skills: Record<string, string> }> {
+  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/versions/${hash}`);
   if (!response.ok) throw new Error("无法读取版本详情");
   return response.json();
 }
 
-export async function promoteVersion(versionId: string): Promise<PromoteResult> {
-  const response = await fetch(`/api/versions/${versionId}/promote`, { method: "POST" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "晋升评估失败");
-  }
-  return response.json();
+export async function getRoleLeaderboard(role: string): Promise<RoleLeaderboardEntry[]> {
+  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/leaderboard`);
+  if (!response.ok) throw new Error("无法读取排行榜");
+  const data = await response.json();
+  return data.entries;
 }
 
-export async function createVersion(config: {
-  name: string;
-  base?: string;
-  notes?: string;
-  provider?: string;
-  model?: string;
-  temperature?: number;
-  max_tokens?: number;
-  base_url?: string;
-  tot_enabled?: boolean;
-  got_enabled?: boolean;
-  got_trigger_threshold?: number;
-  batch_dream_enabled?: boolean;
-}): Promise<VersionManifest> {
-  const response = await fetch("/api/versions", {
+export async function rollbackRole(role: string, hash: string): Promise<void> {
+  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/rollback/${hash}`, { method: "POST" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? "回滚失败");
+  }
+}
+
+export async function startRoleEvolution(role: string, trainingGames: number, battleGames: number): Promise<{ run_id: string }> {
+  const response = await fetch("/api/role-evolution/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
+    body: JSON.stringify({ role, training_games: trainingGames, battle_games: battleGames }),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "创建版本失败");
+    throw new Error(data.detail ?? "无法启动自进化");
   }
   return response.json();
 }
 
-export async function getVersionLeaderboard(): Promise<VersionLeaderboardEntry[]> {
-  const response = await fetch("/api/versions/leaderboard");
-  if (!response.ok) throw new Error("排行榜数据不可用");
-  const data = await response.json();
-  return data.entries ?? data;
+export async function getRoleEvolutionStatus(runId: string): Promise<EvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/${runId}/status`);
+  if (!response.ok) throw new Error("无法读取演化状态");
+  return response.json();
+}
+
+export async function getRoleEvolutionDiff(runId: string): Promise<{ diffs: Array<{ filename: string; action: string; before: string | null; after: string | null }> }> {
+  const response = await fetch(`/api/role-evolution/${runId}/diff`);
+  if (!response.ok) throw new Error("无法读取变更清单");
+  return response.json();
+}
+
+export async function promoteRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/${runId}/promote`, { method: "POST" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? "推广失败");
+  }
+  return response.json();
+}
+
+export async function rejectRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/${runId}/reject`, { method: "POST" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? "拒绝失败");
+  }
+  return response.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -221,110 +248,6 @@ export async function startSelfplayRun(config: SelfplayConfig): Promise<Selfplay
     throw new Error(data.detail ?? "无法启动自对弈");
   }
   return response.json();
-}
-
-// ---------------------------------------------------------------------------
-// Evolution APIs
-// ---------------------------------------------------------------------------
-
-export type EvolutionConfig = {
-  base_version: string;
-  candidate_version: string;
-  training_games?: number;
-  battle_games?: number;
-  training_seed_start?: number;
-  battle_seed_start?: number;
-  max_days?: number;
-  enable_dream?: boolean;
-  enable_skill_proposals?: boolean;
-  auto_apply_skill_proposals?: boolean;
-  min_score_improvement?: number;
-  max_win_rate_drop?: number;
-  notes?: string;
-};
-
-export type EvolutionRun = {
-  run_id: string;
-  status: "running" | "completed" | "failed";
-  stage: string;
-  started_at: string;
-  artifact_run_id?: string;
-  config: EvolutionConfig & Record<string, unknown>;
-  result?: Record<string, unknown>;
-  candidate_version?: string;
-  promoted?: boolean;
-  reasons?: string[];
-  metrics?: Record<string, number>;
-  error?: string;
-};
-
-export async function startEvolutionRun(config: EvolutionConfig): Promise<EvolutionRun> {
-  const response = await fetch("/api/evolution", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "无法启动自进化");
-  }
-  return response.json();
-}
-
-export async function listEvolutionRuns(): Promise<EvolutionRun[]> {
-  const response = await fetch("/api/evolution");
-  if (!response.ok) throw new Error("无法读取自进化任务");
-  const data = await response.json();
-  return data.runs ?? data;
-}
-
-export async function getEvolutionRun(runId: string): Promise<EvolutionRun> {
-  const response = await fetch(`/api/evolution/${runId}`);
-  if (!response.ok) throw new Error("无法读取自进化任务状态");
-  return response.json();
-}
-
-// ---------------------------------------------------------------------------
-// Mixed Version Battle APIs
-// ---------------------------------------------------------------------------
-
-export type MixedBattleConfig = {
-  wolves_version: string;
-  villagers_version: string;
-  games_per_side?: number;
-  seed_start?: number;
-  max_days?: number;
-  enable_review?: boolean;
-};
-
-export type MixedBattleRun = {
-  run_id: string;
-  status: "running" | "completed" | "failed";
-  started_at: string;
-  config: Record<string, unknown>;
-  leaderboard?: VersionLeaderboardEntry[];
-  result?: Record<string, unknown>;
-  error?: string;
-};
-
-export async function startMixedBattle(config: MixedBattleConfig): Promise<MixedBattleRun> {
-  const response = await fetch("/api/mixed-battles", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "无法启动混编对战");
-  }
-  return response.json();
-}
-
-export async function listMixedBattles(): Promise<MixedBattleRun[]> {
-  const response = await fetch("/api/mixed-battles");
-  if (!response.ok) throw new Error("无法读取混编对战任务");
-  const data = await response.json();
-  return data.runs ?? data;
 }
 
 // ---------------------------------------------------------------------------

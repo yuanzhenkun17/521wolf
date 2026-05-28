@@ -16,7 +16,7 @@ import { Button } from "./components/ui/button";
 import { buildGamePages, latestPageId } from "./gamePages";
 import { phaseName } from "./presentation";
 import type { GameArchive, GameEvent, GameSnapshot } from "./types";
-import { VersionsPage } from "./pages/VersionsPage";
+import { RoleEvolutionPage } from "./pages/RoleEvolutionPage";
 import { SelfplayPage } from "./pages/SelfplayPage";
 import { ProposalsPage } from "./pages/ProposalsPage";
 
@@ -258,7 +258,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<GameView />} />
         <Route path="/games/:gameId" element={<GameView />} />
-        <Route path="/versions" element={<VersionsPage />} />
+        <Route path="/roles" element={<RoleEvolutionPage />} />
         <Route path="/selfplay" element={<SelfplayPage />} />
         <Route path="/proposals" element={<ProposalsPage />} />
       </Routes>

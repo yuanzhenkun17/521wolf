@@ -1,9 +1,9 @@
 import { NavLink } from "react-router-dom";
-import { BarChart3, Gamepad2, Swords, FileText } from "lucide-react";
+import { Gamepad2, Swords, FileText, GitBranch } from "lucide-react";
 
 const NAV_ITEMS = [
   { to: "/", label: "游戏", icon: Gamepad2 },
-  { to: "/versions", label: "版本管理", icon: BarChart3 },
+  { to: "/roles", label: "角色演化", icon: GitBranch },
   { to: "/selfplay", label: "自我对弈", icon: Swords },
   { to: "/proposals", label: "提案浏览", icon: FileText },
 ];

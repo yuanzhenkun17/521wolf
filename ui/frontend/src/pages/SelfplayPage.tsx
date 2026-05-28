@@ -13,12 +13,10 @@ import {
 } from "lucide-react";
 import {
   getSelfplayRun,
-  listVersions,
   listSelfplayRuns,
   startSelfplayRun,
   type SelfplayConfig,
   type SelfplayRun,
-  type VersionManifest,
 } from "../api";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -26,7 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 
 export function SelfplayPage() {
   const [runs, setRuns] = useState<SelfplayRun[]>([]);
-  const [versions, setVersions] = useState<VersionManifest[]>([]);
+  // versions removed — old versioning system deleted
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<SelfplayRun | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -48,22 +46,12 @@ export function SelfplayPage() {
     }
   }, []);
 
-  const loadVersions = useCallback(async () => {
-    try {
-      const data = await listVersions();
-      setVersions(data);
-    } catch {
-      setVersions([]);
-    }
-  }, []);
-
   useEffect(() => {
     void loadRuns();
-    void loadVersions();
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [loadRuns, loadVersions]);
+  }, [loadRuns]);
 
   // Poll the selected run while it's running
   useEffect(() => {
@@ -143,7 +131,6 @@ export function SelfplayPage() {
       {/* New run form */}
       {showForm ? (
         <SelfplayForm
-          versions={versions}
           onSubmit={handleStart}
           onCancel={() => setShowForm(false)}
           starting={starting}
@@ -169,12 +156,10 @@ export function SelfplayPage() {
 // ---------------------------------------------------------------------------
 
 function SelfplayForm({
-  versions,
   onSubmit,
   onCancel,
   starting,
 }: {
-  versions: VersionManifest[];
   onSubmit: (config: SelfplayConfig) => void;
   onCancel: () => void;
   starting: boolean;
@@ -183,7 +168,6 @@ function SelfplayForm({
   const [maxDays, setMaxDays] = useState(20);
   const [enableSheriff, setEnableSheriff] = useState(true);
   const [enableBatchDream, setEnableBatchDream] = useState(false);
-  const [agentVersion, setAgentVersion] = useState("");
   const [skillDir, setSkillDir] = useState("");
   const [label, setLabel] = useState("");
 
@@ -193,7 +177,6 @@ function SelfplayForm({
     if (maxDays !== 20) config.max_days = maxDays;
     if (!enableSheriff) config.enable_sheriff = false;
     if (enableBatchDream) config.enable_batch_dream = true;
-    if (agentVersion) config.agent_version = agentVersion;
     if (skillDir.trim()) config.skill_dir = skillDir.trim();
     if (label.trim()) config.label = label.trim();
     onSubmit(config);
@@ -241,25 +224,6 @@ function SelfplayForm({
 
             {/* skill_dir */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium" htmlFor="sp-agent-version">
-                Agent 版本
-              </label>
-              <select
-                id="sp-agent-version"
-                value={agentVersion}
-                onChange={(e) => setAgentVersion(e.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">默认 skills</option>
-                {versions.map((version) => (
-                  <option key={version.version_id} value={version.version_id}>
-                    {version.label || version.version_id}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
               <label className="text-sm font-medium" htmlFor="sp-skill-dir">
                 技能目录
                 <span className="ml-1 text-xs font-normal text-muted-foreground">(可选)</span>
@@ -269,7 +233,7 @@ function SelfplayForm({
                 type="text"
                 value={skillDir}
                 onChange={(e) => setSkillDir(e.target.value)}
-                placeholder="留空使用所选版本"
+                placeholder="留空使用默认 skills"
                 className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
