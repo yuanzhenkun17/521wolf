@@ -149,7 +149,7 @@ def _filter_eligible(proposals: list[SkillProposal]) -> list[SkillProposal]:
 
 
 def _resolve_conflicts(proposals: list[SkillProposal]) -> list[SkillProposal]:
-    """If proposal A conflicts_with B, skip both (set status='skipped')."""
+    """If proposal A conflicts_with B, skip both. Returns a new list, does not mutate input."""
     by_id = {p.proposal_id: p for p in proposals}
     skip_ids: set[str] = set()
 
@@ -159,11 +159,17 @@ def _resolve_conflicts(proposals: list[SkillProposal]) -> list[SkillProposal]:
                 skip_ids.add(p.proposal_id)
                 skip_ids.add(conflict_id)
 
-    for pid in skip_ids:
-        by_id[pid].status = "skipped"
-        _log.debug("Skipping %s due to conflict", pid)
-
-    return proposals
+    result = []
+    for p in proposals:
+        if p.proposal_id in skip_ids:
+            import copy
+            skipped = copy.copy(p)
+            skipped.status = "skipped"
+            _log.debug("Skipping %s due to conflict", p.proposal_id)
+            result.append(skipped)
+        else:
+            result.append(p)
+    return result
 
 
 # ---------------------------------------------------------------------------

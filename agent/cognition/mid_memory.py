@@ -563,15 +563,23 @@ def filter_mid_memory_for_role(analysis: GameAnalysis, role: str) -> dict:
     role_insights = []
     for si in analysis.strategic_insights:
         d = si.to_dict()
-        if si.source_roles:
-            d["relevance"] = "direct" if role in si.source_roles else "contextual"
+        if not si.source_roles:
+            d["relevance"] = "contextual"
+        elif role in si.source_roles:
+            d["relevance"] = "direct"
+        else:
+            d["relevance"] = "contextual"
         role_insights.append(d)
 
     role_errors = []
     for si in analysis.error_patterns:
         d = si.to_dict()
-        if si.source_roles:
-            d["relevance"] = "direct" if role in si.source_roles else "contextual"
+        if not si.source_roles:
+            d["relevance"] = "contextual"
+        elif role in si.source_roles:
+            d["relevance"] = "direct"
+        else:
+            d["relevance"] = "contextual"
         role_errors.append(d)
 
     all_tps = []

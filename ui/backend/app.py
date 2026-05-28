@@ -40,6 +40,12 @@ class RoleEvolutionStartRequest(BaseModel):
     battle_games: int = Field(default=10, ge=1, le=100)
 
 
+def _validate_role_param(role: str) -> None:
+    """Reject path traversal in role query parameters."""
+    if "/" in role or "\\" in role or ".." in role or "\0" in role or ":" in role:
+        raise HTTPException(status_code=400, detail=f"Invalid role name: {role}")
+
+
 def _default_version_store():
     from agent.role_evolution.store import VersionStore
     return VersionStore(Path("data/role_versions"))
@@ -254,6 +260,7 @@ def _scan_json_files(directory: Path, pattern: str) -> list[dict[str, Any]]:
 def list_proposals(role: str | None = None) -> dict[str, Any]:
     """List all skill proposals, optionally filtered by role."""
     if role:
+        _validate_role_param(role)
         items = _scan_json_files(_PROPOSAL_DIR / role, "proposal_*.json")
     else:
         items = []
@@ -304,6 +311,8 @@ def get_proposal(proposal_id: str) -> dict[str, Any]:
 @app.get("/api/memory-candidates")
 def list_memory_candidates(role: str | None = None) -> dict[str, Any]:
     """List long-term memory candidates."""
+    if role:
+        _validate_role_param(role)
     if not _MEMORY_CANDIDATE_DIR.is_dir():
         return {"candidates": []}
     results: list[dict[str, Any]] = []
@@ -332,6 +341,8 @@ def list_memory_candidates(role: str | None = None) -> dict[str, Any]:
 @app.get("/api/dreams")
 def list_dreams(role: str | None = None) -> dict[str, Any]:
     """List dream reports."""
+    if role:
+        _validate_role_param(role)
     if not _DREAM_DIR.is_dir():
         return {"dreams": []}
     items: list[dict[str, Any]] = []

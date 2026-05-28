@@ -150,10 +150,22 @@ class VersionStore:
         """Public access to the store's base directory."""
         return self._base
 
+    @staticmethod
+    def _validate_name(name: str, label: str) -> None:
+        """Reject path traversal in role/hash names."""
+        if not name or not name.strip():
+            raise ValueError(f"Empty {label}")
+        if "/" in name or "\\" in name or ".." in name or "\0" in name:
+            raise ValueError(f"Unsafe {label}: {name}")
+        if ":" in name:
+            raise ValueError(f"Unsafe {label}: {name}")
+
     def _role_dir(self, role: str) -> Path:
+        self._validate_name(role, "role")
         return self._base / role
 
     def _version_dir(self, role: str, hash: str) -> Path:
+        self._validate_name(hash, "hash")
         return self._role_dir(role) / hash
 
     def _history_path(self, role: str) -> Path:
