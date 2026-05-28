@@ -134,9 +134,16 @@ def normalize_skill_text(text: str) -> str:
     return text.rstrip() + "\n"
 
 def normalize_skill_path(path: str) -> str:
-    normalized = PurePosixPath(path).as_posix()
-    if ".." in normalized or normalized.startswith("/"):
+    """规范化并校验技能文件路径。store 层是最后防线，与 applier 校验一致。"""
+    if not path or not path.strip():
+        raise ValueError(f"Empty path")
+    p = PurePosixPath(path.replace("\\", "/"))
+    normalized = p.as_posix()
+    # 禁止绝对路径、parent traversal、drive paths、非 .md
+    if p.is_absolute() or ".." in p.parts or ":" in normalized:
         raise ValueError(f"Unsafe path: {path}")
+    if not normalized.endswith(".md"):
+        raise ValueError(f"Non-md file: {path}")
     return normalized
 
 def compute_hash(skills: dict[str, str]) -> str:
@@ -214,16 +221,18 @@ class SkillVersionConfig:
 ### 预设配置
 
 - `build_baseline_config(store)` — 所有角色用 baseline 哈希
-- `build_evolution_config(store, evolved_role, candidate_hash)` — 目标角色用候选哈希，其他用 baseline
+- `build_role_override_config(store, role, role_hash)` — 目标角色用指定哈希，其他用 baseline。训练阶段传 `parent_hash`（目标角色也用 baseline），对战阶段传 `candidate_hash`（目标角色用候选哈希）
 
 ### 运行时技能加载
 
 ```python
-def load_skills_for_game(store: VersionStore, config: SkillVersionConfig) -> dict[str, list[MarkdownSkill]]:
-    """根据 SkillVersionConfig 加载所有角色的技能。每个角色有独立的 skill_dir。"""
+def skill_dir_for_role(store: VersionStore, config: SkillVersionConfig, role: str) -> Path:
+    """返回指定角色的技能目录路径。agent 构造时直接传此路径作为 skill_dir。"""
+    hash = config.role_versions[role]
+    return store.get_skill_dir(role, hash)  # agent_versions/<role>/<hash>/skills/
 ```
 
-运行时集成：`_create_agents()` 改造 — 根据 `SkillVersionConfig.role_versions` 查映射，给每个 agent 传对应的 `agent_versions/<role>/<hash>/skills/` 路径。现有 `_SKILL_CACHE` 按 Path 键自动隔离不同版本。
+运行时集成：`_create_agents()` 改造 — 对每个 player，根据其角色调用 `skill_dir_for_role()` 获取路径，传给 `LLMPlayerAgent(skill_dir=...)`。现有 `_SKILL_CACHE` 按 Path 键自动隔离不同版本，无需额外改造。
 
 SkillVersionConfig 不持久化为独立文件，在 run 目录中记录为 `config.json`。
 
@@ -272,7 +281,7 @@ async def run_evolution(
 ```
 
 **阶段 1：训练**
-- 配置：`build_evolution_config(store, role, parent_hash)` — 目标角色用 baseline，其他角色也用 baseline
+- 配置：`build_role_override_config(store, role, parent_hash)` — 目标角色用 baseline，其他角色也用 baseline
 - 调用 `run_selfplay()`，启用 `enable_mid_memory=True`，禁用 `enable_long_term_consolidation`
 - 中期记忆存在 `training/games/game*/mid_memory/`
 
@@ -289,7 +298,7 @@ async def run_evolution(
 
 **阶段 4：对战验证**
 - 配置 A：`build_baseline_config(store)` — 全 baseline
-- 配置 B：`build_evolution_config(store, role, candidate_hash)` — 目标角色用候选哈希
+- 配置 B：`build_role_override_config(store, role, candidate_hash)` — 目标角色用候选哈希
 - 对战逻辑在 `pipeline.py` 内部实现（废弃 `version_battle.py` 和 `mixed_version_battle.py`）
 - 两组配置使用相同种子范围各跑 N 局，产出对战胜率和各项指标对比
 - 指标按目标角色聚合（per-role aggregation）
@@ -304,19 +313,28 @@ async def run_evolution(
 
 ```python
 async def promote(run: EvolutionRun, store: VersionStore):
-    """CAS 推广：baseline 指针移动到 candidate_hash。
-       如果 baseline 已变（CAS 失败），拒绝推广，提示需要重新验证。"""
+    """CAS 推广。幂等：已是 promoted 或 baseline 已是 candidate_hash → 直接成功。"""
+    # 幂等检查
+    if run.status == "promoted":
+        return
+    current_baseline = store.get_baseline(run.role)
+    if current_baseline.hash == run.candidate_hash:
+        run.status = "promoted"
+        return
+    # CAS 推广
     success = await store.set_baseline(
         role=run.role,
         target_hash=run.candidate_hash,
-        expected_current=run.parent_hash,
+        expected_current=current_baseline.hash,
     )
     if not success:
         raise BaselineChangedError("Baseline has changed since this evolution started")
     run.status = "promoted"
 
 async def reject(run: EvolutionRun, store: VersionStore):
-    """拒绝：candidate 保留在历史中，baseline 不变。"""
+    """拒绝：candidate 保留在历史中，baseline 不变。幂等。"""
+    if run.status == "rejected":
+        return
     run.status = "rejected"
 ```
 
@@ -328,6 +346,23 @@ async def reject(run: EvolutionRun, store: VersionStore):
 - 不支持断点续跑（每个阶段是原子的，失败就从头重跑该阶段）
 - 重启扫描时把 `reviewing` 视为该角色 active run，阻塞同角色新演化
 - 同角色 active run 检查用内存，启动时扫描 state.json 恢复
+
+state.json schema（每阶段更新，`os.replace()` 原子写入）：
+
+```json
+{
+  "run_id": "evol_werewolf_20260528_120000",
+  "role": "werewolf",
+  "parent_hash": "a3f2b1c4",
+  "candidate_hash": null,
+  "status": "training",
+  "updated_at": "2026-05-28T12:05:00Z",
+  "error": null,
+  "failed_stage": null,
+  "training_games": 20,
+  "battle_games": 10
+}
+```
 
 ## 应用建议（applier.py）
 
@@ -510,20 +545,26 @@ class RoleLeaderboardEntry:
     role: str
     is_baseline: bool
     total_games: int
-    win_rate: float
-    win_rate_ci: tuple[float, float]
-    role_weighted_score: float
-    speech_score: float
-    vote_score: float
-    skill_score: float
-    information_score: float
-    cooperation_score: float
-    fallback_rate: float
-    bad_case_rate: float              # bad_case_count / games
+
+    # 目标角色过滤后的指标（只统计该角色玩家的数据）
+    target_role_role_weighted_score: float
+    target_role_speech_score: float
+    target_role_vote_score: float
+    target_role_skill_score: float
+    target_role_information_score: float
+    target_role_cooperation_score: float
+    target_role_fallback_rate: float
+    target_role_bad_case_rate: float      # bad_case_count / games
+
+    # 阵营指标（按 target_side 映射：werewolf/white_wolf_king → 狼人，其他 → 好人）
+    target_side_win_rate: float
+    target_side_win_rate_ci: tuple[float, float]
+
+    # 对比 baseline
     delta_vs_baseline: dict[str, float]
-    battle_record: str                # "W:8 L:2"
-    recommendation: str               # "promote" | "caution" | "reject"
-    data_sufficient: bool             # battle_games >= 10
+    battle_record: str                    # "W:8 L:2"
+    recommendation: str                   # "promote" | "caution" | "reject"
+    data_sufficient: bool                 # battle_games >= 10
 ```
 
 按角色分组，展示该角色所有哈希版本的指标对比。支持回滚操作（baseline 指针移回指定哈希）。
