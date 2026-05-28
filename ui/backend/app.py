@@ -48,7 +48,7 @@ def _validate_role_param(role: str) -> None:
 
 def _default_version_store():
     from agent.role_evolution.store import VersionStore
-    return VersionStore(Path("data/role_versions"))
+    return VersionStore(Path("role_versions"))
 
 
 manager = GameManager()
@@ -176,7 +176,7 @@ def _resolve_allowed_skill_dir(raw: str | None) -> str | None:
     candidate = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
     allowed_roots = [
         (Path.cwd() / "skills").resolve(),
-        (Path.cwd() / "agent_versions").resolve(),
+        (Path.cwd() / "role_versions").resolve(),
         (Path.cwd() / "runs").resolve(),
     ]
     for root in allowed_roots:

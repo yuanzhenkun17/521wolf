@@ -87,7 +87,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
         """
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            store_dir = tmp_path / "agent_versions"
+            store_dir = tmp_path / "role_versions"
             store = VersionStore(store_dir)
 
             # Initialize from real skills/ directory
@@ -170,7 +170,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
         """
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            store_dir = tmp_path / "agent_versions"
+            store_dir = tmp_path / "role_versions"
             store = VersionStore(store_dir)
 
             # Initialize from real skills/ directory

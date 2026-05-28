@@ -87,7 +87,7 @@ def test_compute_hash_duplicate_normalized_path():
 
 @pytest.fixture
 def store(tmp_path):
-    return VersionStore(tmp_path / "agent_versions")
+    return VersionStore(tmp_path / "role_versions")
 
 
 @pytest.fixture
@@ -198,7 +198,7 @@ def test_initialize_from_skills(tmp_path):
         for name, content in files.items():
             (role_dir / name).write_text(content, encoding="utf-8")
 
-    store = VersionStore(tmp_path / "agent_versions")
+    store = VersionStore(tmp_path / "role_versions")
     store.initialize_from_skills(skills_root)
 
     roles = store.list_roles()

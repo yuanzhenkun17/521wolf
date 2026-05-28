@@ -155,7 +155,7 @@ async def _setup_store(tmp_path: Path, role: str = "seer") -> tuple[VersionStore
 
     Returns ``(store, parent_hash)``.
     """
-    store = VersionStore(tmp_path / "agent_versions")
+    store = VersionStore(tmp_path / "role_versions")
     baseline_skills = {"claim.md": "# Seer claim v1\n"}
     parent_hash = await store.save_version(
         role, baseline_skills, parent_hash=None, source="test_setup",
@@ -433,7 +433,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_state_json_recoverable(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            store = VersionStore(tmp_path / "agent_versions")
+            store = VersionStore(tmp_path / "role_versions")
             run_id = "evo_interrupted"
 
             # Manually write a state.json with non-terminal status

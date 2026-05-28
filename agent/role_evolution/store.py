@@ -133,7 +133,7 @@ class VersionStore:
     """Persistent store for role skill versions.
 
     Layout:
-        agent_versions/
+        role_versions/
           <role>/
             <hash>/
               skills/*.md
