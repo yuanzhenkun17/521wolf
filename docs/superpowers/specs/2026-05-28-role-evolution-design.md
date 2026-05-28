@@ -339,7 +339,9 @@ async def promote(run: EvolutionRun, store: VersionStore):
             f"Baseline has changed from {run.parent_hash} to {current} since this evolution started"
         )
 
-    await store.set_baseline(run.role, run.candidate_hash, expected_current=run.parent_hash)
+    success = await store.set_baseline(run.role, run.candidate_hash, expected_current=run.parent_hash)
+    if not success:
+        raise BaselineChangedError("CAS failed: baseline changed concurrently")
     run.status = "promoted"
 
 async def reject(run: EvolutionRun, store: VersionStore):
@@ -686,6 +688,8 @@ tests/test_role_evolution/
     - repeated promote/reject idempotency/conflict behavior
     - state.json written per stage and reloadable after restart
     - active same-role run blocked
+    - promote only allowed from reviewing (rejects queued/training/consolidating/applying/battling)
+    - reject only allowed from reviewing (rejects queued/training/consolidating/applying/battling)
 
   test_leaderboard.py
     - aggregates target-role metrics only
