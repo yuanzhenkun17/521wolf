@@ -296,7 +296,7 @@ def _validate_all(
             errors.append(f"[{fname}] {err}")
 
         # 8. evolvable not changed from false to true without proposal
-        err = _validate_evolvable_not_flipped(new_content, old_content, eligible)
+        err = _validate_evolvable_not_flipped(new_content, old_content, eligible, fname)
         if err:
             errors.append(f"[{fname}] {err}")
 
@@ -419,6 +419,7 @@ def _validate_evolvable_not_flipped(
     new_content: str,
     old_content: str,
     eligible: list[SkillProposal],
+    fname: str,
 ) -> str | None:
     """Return error if evolvable changed from false to true without a proposal for it."""
     new_fm, _ = parse_front_matter(new_content)
@@ -427,7 +428,7 @@ def _validate_evolvable_not_flipped(
     new_evolvable = bool(new_fm.get("evolvable", False))
     if not old_evolvable and new_evolvable:
         # Only allow if there's an eligible proposal targeting this file
-        has_proposal = any(p.target_file for p in eligible)
+        has_proposal = any(p.target_file == fname for p in eligible)
         if not has_proposal:
             return "evolvable changed from false to true without a proposal"
     return None

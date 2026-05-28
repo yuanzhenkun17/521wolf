@@ -274,7 +274,7 @@ def load_recent_analyses(count: int = 5, *, mid_memory_dir: Path | str | None = 
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             analyses.append(_analysis_from_dict(data))
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             continue
     return analyses
 
@@ -489,19 +489,26 @@ def _analysis_from_dict(data: dict[str, Any]) -> GameAnalysis:
         player_scores=data.get("player_scores", {}),
         team_scores=data.get("team_scores", {}),
         turning_points=[
-            TurningPointAnalysis(**tp) for tp in data.get("turning_points", [])
+            _safe_construct(TurningPointAnalysis, tp) for tp in data.get("turning_points", [])
         ],
         decision_reviews=[
-            DecisionReview(**dr) for dr in data.get("decision_reviews", [])
+            _safe_construct(DecisionReview, dr) for dr in data.get("decision_reviews", [])
         ],
         counterfactuals=[
-            CounterfactualAnalysis(**cf) for cf in data.get("counterfactuals", [])
+            _safe_construct(CounterfactualAnalysis, cf) for cf in data.get("counterfactuals", [])
         ],
         strategic_insights=[_to_scored_insight(s, data.get("game_id", "")) for s in data.get("strategic_insights", [])],
         error_patterns=[_to_scored_insight(s, data.get("game_id", "")) for s in data.get("error_patterns", [])],
         raw_output=str(data.get("raw_output", "")),
         errors=[str(e) for e in data.get("errors", [])],
     )
+
+
+def _safe_construct(cls, data: dict):
+    """Construct a dataclass from a dict, ignoring extra keys."""
+    import dataclasses as _dc
+    field_names = {f.name for f in _dc.fields(cls)}
+    return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
 def _to_scored_insight(raw: Any, game_id: str) -> ScoredInsight:
@@ -556,13 +563,15 @@ def filter_mid_memory_for_role(analysis: GameAnalysis, role: str) -> dict:
     role_insights = []
     for si in analysis.strategic_insights:
         d = si.to_dict()
-        d["relevance"] = "direct" if role in si.source_roles else "contextual"
+        if si.source_roles:
+            d["relevance"] = "direct" if role in si.source_roles else "contextual"
         role_insights.append(d)
 
     role_errors = []
     for si in analysis.error_patterns:
         d = si.to_dict()
-        d["relevance"] = "direct" if role in si.source_roles else "contextual"
+        if si.source_roles:
+            d["relevance"] = "direct" if role in si.source_roles else "contextual"
         role_errors.append(d)
 
     all_tps = []
