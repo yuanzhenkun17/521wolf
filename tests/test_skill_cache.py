@@ -32,7 +32,7 @@ def test_different_roots_different_indexes(tmp_path):
 
 def test_empty_applicable_actions_always_matches():
     skill = MarkdownSkill(
-        name="persona", scope="role", role=Role.WEREWOLF,
+        name="persona", role=Role.WEREWOLF,
         applicable_actions=set(),
     )
     assert not skill.applicable_actions or ActionType.SPEAK in skill.applicable_actions
@@ -41,7 +41,7 @@ def test_empty_applicable_actions_always_matches():
 
 def test_non_empty_applicable_actions_filters():
     skill = MarkdownSkill(
-        name="fake_seer", scope="role", role=Role.WEREWOLF,
+        name="fake_seer", role=Role.WEREWOLF,
         applicable_actions={ActionType.SPEAK, ActionType.SHERIFF_SPEAK},
     )
     assert ActionType.SPEAK in skill.applicable_actions

@@ -1,10 +1,15 @@
 ---
 name: white_wolf_king_explode
 description: 白狼王自爆：选择自爆带走关键好人的时机
-scope: role
 role: white_wolf_king
 applicable_actions:
   - white_wolf_explode
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 白狼王爆炸

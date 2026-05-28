@@ -1,11 +1,16 @@
 ---
 name: werewolf_vote_rush
 description: 冲票：狼人集中投票推动好人出局的策略
-scope: role
 role: werewolf
 applicable_actions:
   - exile_vote
   - pk_vote
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 狼队冲票

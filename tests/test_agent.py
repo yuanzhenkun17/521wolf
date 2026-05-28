@@ -790,12 +790,12 @@ output_constraints:
         for s in skills:
             # Common skills have no applicable_actions; role skills may have
             # empty applicable_actions (= always inject for that role)
-            self.assertTrue(hasattr(s, "scope"))
+            self.assertTrue(hasattr(s, "evolution"))
 
     def test_markdown_skill_does_not_require_priority(self):
         """Skills without priority field should load fine."""
         from agent.skill_system.loader import MarkdownSkill
-        skill = MarkdownSkill(name="test", scope="role")
+        skill = MarkdownSkill(name="test")
         # No priority attribute
         self.assertFalse(hasattr(skill, "priority"))
 
@@ -911,7 +911,7 @@ output_constraints:
             common = root / "common"
             common.mkdir()
             (common / "game_rules.md").write_text(
-                "---\nname: custom_rules\nscope: common\n---\n\ncustom rules body",
+                "---\nname: custom_rules\n---\n\ncustom rules body",
                 encoding="utf-8",
             )
             role_dir = root / "villager"
@@ -919,7 +919,6 @@ output_constraints:
             (role_dir / "vote.md").write_text(
                 "---\n"
                 "name: custom_villager_vote\n"
-                "scope: role\n"
                 "role: villager\n"
                 "applicable_actions:\n"
                 "  - exile_vote\n"

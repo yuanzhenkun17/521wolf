@@ -1,7 +1,6 @@
 ---
 name: hunter_hide_identity
 description: 猎人隐藏身份：避免被狼人针对的发言策略
-scope: role
 role: hunter
 applicable_actions:
   - speak
@@ -9,6 +8,12 @@ applicable_actions:
   - exile_vote
   - pk_vote
   - pk_speak
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 猎人隐藏身份

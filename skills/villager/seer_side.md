@@ -1,12 +1,17 @@
 ---
 name: villager_seer_side
 description: 站边预言家：判断和支援真预言家的策略
-scope: role
 role: villager
 applicable_actions:
   - speak
   - sheriff_speak
   - exile_vote
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 站边预言家

@@ -1,10 +1,15 @@
 ---
 name: guard_protect
 description: 守卫守护：选择守护目标的策略
-scope: role
 role: guard
 applicable_actions:
   - guard_protect
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 守卫守护

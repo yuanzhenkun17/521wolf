@@ -1,12 +1,16 @@
 ---
 name: witch_poison
 description: 女巫毒药：使用毒药的时机和目标选择
-scope: role
 role: witch
 applicable_actions:
   - witch_act
 requires:
   can_poison: true
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 女巫毒人

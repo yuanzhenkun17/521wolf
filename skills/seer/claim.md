@@ -1,12 +1,17 @@
 ---
 name: seer_claim
 description: 预言家起跳：跳预言家时机、查验报告、警徽流
-scope: role
 role: seer
 applicable_actions:
   - sheriff_run
   - sheriff_speak
   - speak
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 预言家起跳

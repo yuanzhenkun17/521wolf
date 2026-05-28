@@ -1,7 +1,6 @@
 ---
 name: white_wolf_king_hide
 description: 白狼王隐藏：伪装成好人混入阵营的策略
-scope: role
 role: white_wolf_king
 applicable_actions:
   - speak
@@ -9,6 +8,12 @@ applicable_actions:
   - exile_vote
   - pk_vote
   - pk_speak
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 白狼王隐藏

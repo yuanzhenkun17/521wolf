@@ -1,10 +1,15 @@
 ---
 name: seer_check_priority
 description: 查验优先级：选择查验目标的策略
-scope: role
 role: seer
 applicable_actions:
   - seer_check
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 查验优先级

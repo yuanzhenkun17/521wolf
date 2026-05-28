@@ -1,12 +1,16 @@
 ---
 name: witch_save
 description: 女巫救人：决定是否使用解药救人的策略
-scope: role
 role: witch
 applicable_actions:
   - witch_act
 requires:
   can_save: true
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 女巫救人

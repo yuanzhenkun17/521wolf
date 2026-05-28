@@ -1,10 +1,15 @@
 ---
 name: hunter_shoot
 description: 猎人开枪：死后选择带走谁的策略
-scope: role
 role: hunter
 applicable_actions:
   - hunter_shoot
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 猎人开枪

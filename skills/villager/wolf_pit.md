@@ -1,11 +1,16 @@
 ---
 name: villager_wolf_pit
 description: 找狼坑：通过逻辑推理定位狼人位置
-scope: role
 role: villager
 applicable_actions:
   - speak
   - sheriff_speak
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 找狼坑

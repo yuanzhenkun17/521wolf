@@ -1,10 +1,15 @@
 ---
 name: werewolf_find_god
 description: 找神：夜晚刀人时识别神职目标的策略
-scope: role
 role: werewolf
 applicable_actions:
   - werewolf_kill
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 找神

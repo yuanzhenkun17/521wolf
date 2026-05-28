@@ -69,6 +69,11 @@ class FakeModelAdapter:
 class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
     """Real engine integration tests for skill version config propagation."""
 
+    def tearDown(self):
+        """Restore default skill root after each test (selfplay changes it)."""
+        from agent.skill_system.router import configure_skill_root
+        configure_skill_root(None)
+
     # -- 1. skill version config propagation -----------------------------------
 
     async def test_real_engine_skill_version_config_propagation(self):

@@ -1,13 +1,18 @@
 ---
 name: werewolf_deep_wolf
 description: 深水狼：隐藏身份混入好人阵营、中后期发力
-scope: role
 role: werewolf
 applicable_actions:
   - speak
   - exile_vote
   - pk_vote
   - pk_speak
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 深水倒钩狼

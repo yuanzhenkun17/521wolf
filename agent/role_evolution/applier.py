@@ -286,22 +286,12 @@ def _validate_all(
         if err:
             errors.append(f"[{fname}] {err}")
 
-        # 5. scope not changed to common
-        err = _validate_scope_not_common(new_content)
-        if err:
-            errors.append(f"[{fname}] {err}")
-
-        # 6. role unchanged
+        # 5. role unchanged
         err = _validate_role_unchanged(new_content, old_content)
         if err:
             errors.append(f"[{fname}] {err}")
 
-        # 7. output_constraints present
-        err = _validate_output_constraints_present(new_content)
-        if err:
-            errors.append(f"[{fname}] {err}")
-
-        # 8. evolvable not changed from false to true without proposal
+        # 6. evolution.enabled not changed from false to true without proposal
         err = _validate_evolvable_not_flipped(new_content, old_content, eligible, fname)
         if err:
             errors.append(f"[{fname}] {err}")
@@ -360,14 +350,6 @@ def _validate_role_unchanged(new_content: str, old_content: str) -> str | None:
     return None
 
 
-def _validate_scope_not_common(content: str) -> str | None:
-    """Return error string if scope was changed to 'common'."""
-    fm, _ = parse_front_matter(content)
-    if fm.get("scope") == "common":
-        return "scope changed to 'common'"
-    return None
-
-
 def _validate_applicable_actions_not_expanded(
     new_content: str, old_content: str
 ) -> str | None:
@@ -401,14 +383,6 @@ def _validate_name_unchanged(new_content: str, old_content: str) -> str | None:
     return None
 
 
-def _validate_output_constraints_present(content: str) -> str | None:
-    """Return error string if output_constraints is missing."""
-    fm, _ = parse_front_matter(content)
-    if "output_constraints" not in fm:
-        return "output_constraints missing from front matter"
-    return None
-
-
 def _validate_path_safe(path: str) -> str | None:
     """Return error string if path is unsafe."""
     p = Path(path)
@@ -427,16 +401,17 @@ def _validate_evolvable_not_flipped(
     eligible: list[SkillProposal],
     fname: str,
 ) -> str | None:
-    """Return error if evolvable changed from false to true without a proposal for it."""
+    """Return error if evolution.enabled changed from false to true without a proposal."""
     new_fm, _ = parse_front_matter(new_content)
     old_fm, _ = parse_front_matter(old_content)
-    old_evolvable = bool(old_fm.get("evolvable", False))
-    new_evolvable = bool(new_fm.get("evolvable", False))
-    if not old_evolvable and new_evolvable:
-        # Only allow if there's an eligible proposal targeting this file
+    old_evo = old_fm.get("evolution", {})
+    new_evo = new_fm.get("evolution", {})
+    old_enabled = bool(old_evo.get("enabled", False)) if isinstance(old_evo, dict) else False
+    new_enabled = bool(new_evo.get("enabled", False)) if isinstance(new_evo, dict) else False
+    if not old_enabled and new_enabled:
         has_proposal = any(p.target_file == fname for p in eligible)
         if not has_proposal:
-            return "evolvable changed from false to true without a proposal"
+            return "evolution.enabled changed from false to true without a proposal"
     return None
 
 

@@ -31,15 +31,11 @@ class MarkdownSkill:
 
     name: str
     description: str = ""
-    scope: str = "role"  # "common" | "role"
     role: Role | None = None
     applicable_actions: set[ActionType] = field(default_factory=set)
     requires: dict[str, Any] = field(default_factory=dict)
-    output_constraints: dict[str, Any] = field(default_factory=dict)
     body: str = ""
-    prompt_hints: list[str] = field(default_factory=list)
-    category: str = "strategy"  # "foundation" | "strategy"
-    evolvable: bool = False
+    evolution: dict[str, Any] = field(default_factory=lambda: {"enabled": False, "allowed_actions": []})
 
 
 _FRONT_MATTER_SEP = "---"
@@ -123,7 +119,7 @@ def _parse_nested_value(lines: list[str]) -> Any:
     first = next((line for line in lines if line.strip()), "")
     if first.startswith("-"):
         return _parse_simple_list(lines)
-    return _parse_nested_dict(lines)
+    return _parse_nested_dict_with_lists(lines)
 
 
 def _parse_simple_list(lines: list[str]) -> list[str]:
@@ -136,13 +132,43 @@ def _parse_simple_list(lines: list[str]) -> list[str]:
     return items
 
 
-def _parse_nested_dict(lines: list[str]) -> dict[str, Any]:
-    """Parse indented ``key: value`` lines into a flat dict."""
+def _parse_nested_dict_with_lists(lines: list[str]) -> dict[str, Any]:
+    """Parse indented ``key: value`` lines into a dict, handling nested lists."""
     d: dict[str, Any] = {}
+    current_key: str | None = None
+    list_lines: list[str] | None = None
+
     for line in lines:
-        if ":" in line:
-            k, _, v = line.partition(":")
-            d[k.strip()] = _coerce_value(v.strip())
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Flush pending list
+        if list_lines is not None and not stripped.startswith("-"):
+            d[current_key] = _parse_simple_list(list_lines)
+            list_lines = None
+            current_key = None
+
+        if stripped.startswith("-") and current_key is not None:
+            if list_lines is None:
+                list_lines = []
+            list_lines.append(stripped)
+            continue
+
+        if ":" in stripped:
+            k, _, v = stripped.partition(":")
+            k = k.strip()
+            v = v.strip()
+            if not v:
+                current_key = k
+                list_lines = []
+                continue
+            d[k] = _coerce_value(v)
+
+    # Flush remaining list
+    if list_lines is not None and current_key is not None:
+        d[current_key] = _parse_simple_list(list_lines)
+
     return d
 
 
@@ -193,7 +219,6 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
 
     name = front.get("name", path.stem)
     description = front.get("description", "")
-    scope = front.get("scope", "role")
 
     role: Role | None = None
     role_name = front.get("role")
@@ -213,27 +238,20 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
         except (ValueError, KeyError):
             pass
 
-    hints = front.get("prompt_hints", [])
-    if isinstance(hints, str):
-        hints = [hints]
-
     requires = front.get("requires", {})
     if not isinstance(requires, dict):
         requires = {}
-    output_constraints = front.get("output_constraints", {})
-    if not isinstance(output_constraints, dict):
-        output_constraints = {}
+
+    evolution = front.get("evolution", {})
+    if not isinstance(evolution, dict):
+        evolution = {"enabled": False, "allowed_actions": []}
 
     return MarkdownSkill(
         name=name,
         description=description,
-        scope=scope,
         role=role,
         applicable_actions=actions,
         requires=requires,
-        output_constraints=output_constraints,
         body=body.strip(),
-        prompt_hints=hints,
-        category=front.get("category", "strategy"),
-        evolvable=bool(front.get("evolvable", False)),
+        evolution=evolution,
     )

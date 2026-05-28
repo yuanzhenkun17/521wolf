@@ -1,11 +1,16 @@
 ---
 name: seer_counter_claim
 description: 对跳预言家：与悍跳狼对抗、证明自己是真预言家
-scope: role
 role: seer
 applicable_actions:
   - speak
   - sheriff_speak
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 对跳预言家

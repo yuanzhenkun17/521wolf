@@ -21,14 +21,12 @@ _VALID_SKILL_FRONT_MATTER = (
     "---\n"
     "name: {name}\n"
     "role: {role}\n"
-    "scope: role\n"
     "applicable_actions:\n"
     "  - speak\n"
     "  - vote\n"
-    "output_constraints:\n"
-    "  format: text\n"
-    "category: strategy\n"
-    "evolvable: false\n"
+    "evolution:\n"
+    "  enabled: false\n"
+    "  allowed_actions: []\n"
     "---\n"
     "\n"
     "Base body content.\n"
@@ -45,27 +43,24 @@ _VALID_SKILL_BODY = "Base body content.\n"
 def _make_skill_content(
     name: str = "test_skill",
     role: str = "werewolf",
-    scope: str = "role",
     applicable_actions: list[str] | None = None,
-    output_constraints: str = "format: text",
-    evolvable: bool = False,
+    evolution_enabled: bool = False,
     body: str = "Base body content.",
 ) -> str:
     """Build a valid skill markdown file with YAML front matter."""
     if applicable_actions is None:
         applicable_actions = ["speak", "vote"]
     action_lines = "\n".join(f"  - {a}" for a in applicable_actions)
+    evo_str = "true" if evolution_enabled else "false"
     return (
         f"---\n"
         f"name: {name}\n"
         f"role: {role}\n"
-        f"scope: {scope}\n"
         f"applicable_actions:\n"
         f"{action_lines}\n"
-        f"output_constraints:\n"
-        f"  {output_constraints}\n"
-        f"category: strategy\n"
-        f"evolvable: {str(evolvable).lower()}\n"
+        f"evolution:\n"
+        f"  enabled: {evo_str}\n"
+        f"  allowed_actions: []\n"
         f"---\n"
         f"\n"
         f"{body}\n"
@@ -222,18 +217,6 @@ class ApplierValidationTests(unittest.IsolatedAsyncioTestCase):
         current = {"werewolf/strategy.md": original}
         # LLM changes role to seer
         tampered = _make_skill_content(role="seer", body="Updated content")
-        proposal = _make_proposal("p1", "werewolf/strategy.md")
-
-        new_skills, diffs = await self._run_with_llm_output(current, {"werewolf/strategy.md": tampered}, [proposal])
-
-        self.assertEqual(new_skills, current)
-        self.assertEqual(diffs, [])
-
-    async def test_rejects_scope_change_to_common(self):
-        """If LLM output changes scope to common, reject all."""
-        original = _make_skill_content(scope="role")
-        current = {"werewolf/strategy.md": original}
-        tampered = _make_skill_content(scope="common", body="Updated content")
         proposal = _make_proposal("p1", "werewolf/strategy.md")
 
         new_skills, diffs = await self._run_with_llm_output(current, {"werewolf/strategy.md": tampered}, [proposal])

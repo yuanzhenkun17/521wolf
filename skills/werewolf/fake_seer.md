@@ -1,12 +1,17 @@
 ---
 name: werewolf_fake_seer
 description: 悍跳预言家：伪造查验结果扰乱好人视野、扛推真预言家
-scope: role
 role: werewolf
 applicable_actions:
   - sheriff_run
   - sheriff_speak
   - speak
+requires: {}
+evolution:
+  enabled: true
+  allowed_actions:
+    - append_rule
+    - rewrite_section
 ---
 
 # 悍跳预言家
