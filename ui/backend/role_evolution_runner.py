@@ -45,6 +45,8 @@ class RoleEvolutionRun:
     error: str | None = None
     started_at: str = ""
     task: asyncio.Task[None] | None = None
+    training_completed: int = 0
+    battle_completed: int = 0
 
     def snapshot(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -55,6 +57,8 @@ class RoleEvolutionRun:
             "status": self.status,
             "stage": self.stage,
             "started_at": self.started_at,
+            "training_completed": self.training_completed,
+            "battle_completed": self.battle_completed,
         }
         if self.run is not None:
             data["parent_hash"] = self.run.parent_hash
@@ -222,6 +226,10 @@ class RoleEvolutionRunner:
         def _on_progress(stage: str, data: dict) -> None:
             tracked.stage = stage
             tracked.status = stage
+            if "completed" in data and stage == "training":
+                tracked.training_completed = data["completed"]
+            if "completed" in data and stage == "battling":
+                tracked.battle_completed = data["completed"]
             self._broadcast(tracked.run_id, stage, {"run_id": tracked.run_id, **data})
 
         try:
