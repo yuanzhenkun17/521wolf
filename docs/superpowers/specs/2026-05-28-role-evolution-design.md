@@ -148,8 +148,12 @@ def normalize_skill_path(path: str) -> str:
 
 def compute_hash(skills: dict[str, str]) -> str:
     files = []
+    seen_paths: set[str] = set()
     for path in sorted(skills.keys()):
         normalized_path = normalize_skill_path(path)
+        if normalized_path in seen_paths:
+            raise ValueError(f"Duplicate normalized path: {path} → {normalized_path}")
+        seen_paths.add(normalized_path)
         content = normalize_skill_text(skills[path])
         files.append({
             "path": normalized_path,
@@ -313,28 +317,34 @@ async def run_evolution(
 
 ```python
 async def promote(run: EvolutionRun, store: VersionStore):
-    """CAS 推广。幂等：已是 promoted 或 baseline 已是 candidate_hash → 直接成功。"""
-    # 幂等检查
+    """CAS 推广。幂等 + 终态保护。"""
+    # 幂等
     if run.status == "promoted":
         return
-    current_baseline = store.get_baseline(run.role)
-    if current_baseline.hash == run.candidate_hash:
+    # 终态冲突
+    if run.status in {"rejected", "failed"}:
+        raise InvalidRunStateError(f"Cannot promote a {run.status} run")
+
+    # baseline 已是 candidate（幂等）
+    current = store.get_history(run.role).baseline
+    if current == run.candidate_hash:
         run.status = "promoted"
         return
-    # CAS 推广
-    success = await store.set_baseline(
-        role=run.role,
-        target_hash=run.candidate_hash,
-        expected_current=current_baseline.hash,
-    )
-    if not success:
-        raise BaselineChangedError("Baseline has changed since this evolution started")
+    # baseline 已被其他人改过（既不是原始 baseline 也不是 candidate）
+    if current != run.parent_hash:
+        raise BaselineChangedError(
+            f"Baseline has changed from {run.parent_hash} to {current} since this evolution started"
+        )
+
+    await store.set_baseline(run.role, run.candidate_hash, expected_current=run.parent_hash)
     run.status = "promoted"
 
 async def reject(run: EvolutionRun, store: VersionStore):
-    """拒绝：candidate 保留在历史中，baseline 不变。幂等。"""
+    """拒绝：candidate 保留在历史中，baseline 不变。幂等 + 终态保护。"""
     if run.status == "rejected":
         return
+    if run.status in {"promoted", "failed"}:
+        raise InvalidRunStateError(f"Cannot reject a {run.status} run")
     run.status = "rejected"
 ```
 
@@ -575,11 +585,11 @@ target_side 映射：
 - werewolf, white_wolf_king → 狼人阵营
 - seer, witch, hunter, guard, villager → 好人阵营
 
-默认门槛：
-- target_role.role_weighted_score >= baseline
-- target_role.fallback_rate <= baseline
-- target_role.bad_case_rate <= baseline
-- target_side.win_rate_drop <= 10%
+默认门槛（字段名与 RoleLeaderboardEntry schema 一致）：
+- target_role_role_weighted_score >= baseline
+- target_role_fallback_rate <= baseline
+- target_role_bad_case_rate <= baseline
+- target_side_win_rate drop <= 10%
 - battle_games < 10 → 标注"数据不足，仅供参考"
 
 三档推荐：
