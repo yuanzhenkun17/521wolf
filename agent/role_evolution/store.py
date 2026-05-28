@@ -145,6 +145,11 @@ class VersionStore:
         self._base = base_dir
         self._locks: dict[str, asyncio.Lock] = {}
 
+    @property
+    def base_dir(self) -> Path:
+        """Public access to the store's base directory."""
+        return self._base
+
     def _role_dir(self, role: str) -> Path:
         return self._base / role
 

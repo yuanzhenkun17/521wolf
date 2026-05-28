@@ -72,7 +72,7 @@ _TERMINAL: set[str] = {EvolutionStatus.PROMOTED, EvolutionStatus.REJECTED, Evolu
 
 def _run_dir(store: VersionStore, run_id: str) -> Path:
     """Return the on-disk directory for an evolution run."""
-    return store._base / "runs" / "evolution" / run_id
+    return store.base_dir / "runs" / "evolution" / run_id
 
 
 def _state_path(store: VersionStore, run_id: str) -> Path:
@@ -113,7 +113,7 @@ def _load_state(store: VersionStore, run_id: str) -> dict | None:
 def scan_active_runs(store: VersionStore) -> list[dict]:
     """Scan all ``runs/evolution/*/state.json`` and return runs with non-terminal status."""
     active: list[dict] = []
-    evo_root = store._base / "runs" / "evolution"
+    evo_root = store.base_dir / "runs" / "evolution"
     if not evo_root.exists():
         return active
     for child in sorted(evo_root.iterdir()):
@@ -137,11 +137,12 @@ def recover_interrupted_runs(store: VersionStore) -> list[dict]:
     """
     interrupted: list[dict] = []
     for state in scan_active_runs(store):
+        original_status = state.get("status", "unknown")
         state["status"] = EvolutionStatus.FAILED
         state["error"] = "interrupted"
-        state["failed_stage"] = state.get("status", "unknown")
+        state["failed_stage"] = original_status
         state["updated_at"] = _now()
-        evo_root = store._base / "runs" / "evolution"
+        evo_root = store.base_dir / "runs" / "evolution"
         state_file = evo_root / state["run_id"] / "state.json"
         _write_json(state_file, state)
         interrupted.append(state)

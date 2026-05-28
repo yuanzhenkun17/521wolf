@@ -61,4 +61,4 @@ def skill_dir_for_role(
     role_hash = config.role_versions.get(role)
     if role_hash is None:
         raise KeyError(f"Role '{role}' not found in config '{config.name}'")
-    return store.version_dir(role_hash) / "skills"
+    return store.get_skill_dir(role, role_hash)

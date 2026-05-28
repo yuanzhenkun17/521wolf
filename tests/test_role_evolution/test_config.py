@@ -41,9 +41,9 @@ class MockVersionStore:
     def list_histories(self) -> list[_MockHistory]:
         return list(self._histories.values())
 
-    def version_dir(self, hash: str) -> Path:
-        """Map any hash to agent_versions/<hash> — role is resolved upstream."""
-        return self._base / hash
+    def get_skill_dir(self, role: str, hash: str) -> Path:
+        """Map (role, hash) to agent_versions/<role>/<hash>/skills."""
+        return self._base / role / hash / "skills"
 
 
 # ---------------------------------------------------------------------------
@@ -105,13 +105,13 @@ def test_override_config_changes_only_target_role(tmp_path: Path) -> None:
 
 
 def test_skill_dir_for_role_returns_correct_path(tmp_path: Path) -> None:
-    """skill_dir_for_role resolves to agent_versions/<hash>/skills/."""
+    """skill_dir_for_role resolves to agent_versions/<role>/<hash>/skills/."""
     store = _make_store(tmp_path)
     config = build_baseline_config(store)
 
     for role, expected_hash in ROLES.items():
         result = skill_dir_for_role(store, config, role)
-        expected = tmp_path / "agent_versions" / expected_hash / "skills"
+        expected = tmp_path / "agent_versions" / role / expected_hash / "skills"
         assert result == expected
 
 

@@ -426,10 +426,10 @@ def _validate_evolvable_not_flipped(
     old_evolvable = bool(old_fm.get("evolvable", False))
     new_evolvable = bool(new_fm.get("evolvable", False))
     if not old_evolvable and new_evolvable:
-        # Check if any eligible proposal explicitly targets evolvable
-        # We consider it safe if there's a proposal for this file
-        # (proposals are the only mechanism to justify such a change)
-        return None  # proposals are the mechanism — allow it
+        # Only allow if there's an eligible proposal targeting this file
+        has_proposal = any(p.target_file for p in eligible)
+        if not has_proposal:
+            return "evolvable changed from false to true without a proposal"
     return None
 
 
@@ -476,11 +476,6 @@ def _smoke_test(proposed_files: dict[str, str]) -> tuple[bool, str]:
             if not skills:
                 return False, "load_markdown_skills returned empty list"
             # Verify all proposed files produced a skill
-            expected_names = set(proposed_files.keys())
-            loaded_names = set()
-            for s in skills:
-                # load_markdown_skills uses path relative to root
-                pass  # skills loaded = at least some parsed OK
             if len(skills) < len(proposed_files):
                 return False, (
                     f"Expected {len(proposed_files)} skills, loaded {len(skills)}"
@@ -510,7 +505,9 @@ def _build_diffs(
     # Map filename -> change action from LLM output
     change_actions: dict[str, str] = {}
     for c in changes:
-        change_actions.get(c.get("filename", ""), "modified")
+        fname = c.get("filename", "")
+        if fname:
+            change_actions[fname] = c.get("action", "modified")
 
     diffs: list[SkillDiff] = []
     for fname, new_content in proposed_files.items():
