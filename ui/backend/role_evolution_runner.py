@@ -47,6 +47,8 @@ class RoleEvolutionRun:
     task: asyncio.Task[None] | None = None
     training_completed: int = 0
     battle_completed: int = 0
+    training_games: int = 0
+    battle_games: int = 0
 
     def snapshot(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -56,9 +58,17 @@ class RoleEvolutionRun:
             "role": self.role,
             "status": self.status,
             "stage": self.stage,
+            "current_stage": self.stage,
             "started_at": self.started_at,
             "training_completed": self.training_completed,
             "battle_completed": self.battle_completed,
+            "parent_hash": "",
+            "candidate_hash": None,
+            "training_games": self.training_games,
+            "battle_games": self.battle_games,
+            "battle_result": None,
+            "diff": None,
+            "errors": [],
         }
         if self.run is not None:
             data["parent_hash"] = self.run.parent_hash
@@ -66,6 +76,7 @@ class RoleEvolutionRun:
             data["training_games"] = self.run.training_games
             data["battle_games"] = self.run.battle_games
             data["battle_result"] = self.run.battle_result
+            data["diff"] = [d.to_dict() for d in self.run.diff] if self.run.diff is not None else None
             if self.run.proposals is not None:
                 data["proposal_count"] = len(self.run.proposals.proposals)
             if self.run.diff is not None:
@@ -74,6 +85,7 @@ class RoleEvolutionRun:
                 data["errors"] = list(self.run.errors)
         if self.error:
             data["error"] = self.error
+            data["errors"] = [*data["errors"], self.error]
         return data
 
 
@@ -109,6 +121,8 @@ class RoleEvolutionRunner:
             run_id=run_id,
             role=role,
             started_at=started_at,
+            training_games=training_games,
+            battle_games=battle_games,
         )
         self._active_runs[run_id] = tracked
 
@@ -145,7 +159,7 @@ class RoleEvolutionRunner:
         await pipeline_promote(tracked.run, self.store)
         tracked.status = tracked.run.status
         tracked.stage = tracked.run.status
-        self._broadcast(run_id, "promoted", {"run_id": run_id})
+        self._broadcast(run_id, "promoted", tracked.snapshot())
         return tracked
 
     async def reject_run(self, run_id: str) -> RoleEvolutionRun:
@@ -159,7 +173,7 @@ class RoleEvolutionRunner:
         await pipeline_reject(tracked.run, self.store)
         tracked.status = tracked.run.status
         tracked.stage = tracked.run.status
-        self._broadcast(run_id, "rejected", {"run_id": run_id})
+        self._broadcast(run_id, "rejected", tracked.snapshot())
         return tracked
 
     # ------------------------------------------------------------------
@@ -225,12 +239,21 @@ class RoleEvolutionRunner:
 
         def _on_progress(stage: str, data: dict) -> None:
             tracked.stage = stage
-            tracked.status = stage
-            if "completed" in data and stage == "training":
-                tracked.training_completed = data["completed"]
-            if "completed" in data and stage == "battling":
-                tracked.battle_completed = data["completed"]
-            self._broadcast(tracked.run_id, stage, {"run_id": tracked.run_id, **data})
+            if stage == "training_game":
+                tracked.status = "training"
+                idx = int(data.get("game_index", -1))
+                tracked.training_completed = max(tracked.training_completed, idx + 1)
+            elif stage == "battle_game":
+                tracked.status = "battling"
+                idx = int(data.get("game_index", -1))
+                tracked.battle_completed = max(tracked.battle_completed, idx + 1)
+            else:
+                tracked.status = stage
+                if "completed" in data and stage == "training":
+                    tracked.training_completed = data["completed"]
+                if "completed" in data and stage == "battling":
+                    tracked.battle_completed = data["completed"]
+            self._broadcast(tracked.run_id, stage, tracked.snapshot())
 
         try:
             result = await run_evolution(
@@ -244,13 +267,10 @@ class RoleEvolutionRunner:
             tracked.run = result
             tracked.status = result.status
             tracked.stage = result.status
-            self._broadcast(tracked.run_id, result.status, {"run_id": tracked.run_id})
+            self._broadcast(tracked.run_id, result.status, tracked.snapshot())
         except Exception as exc:
             _log.exception("Role evolution run %s failed", tracked.run_id)
             tracked.status = "failed"
             tracked.stage = "failed"
             tracked.error = str(exc)
-            self._broadcast(tracked.run_id, "failed", {
-                "run_id": tracked.run_id,
-                "error": str(exc),
-            })
+            self._broadcast(tracked.run_id, "failed", tracked.snapshot())
