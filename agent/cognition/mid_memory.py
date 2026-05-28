@@ -20,6 +20,7 @@ from engine.models import Role
 
 from agent.evaluation.review_enhanced import GameReviewReport
 from agent.prompts.parsing import load_json_object
+from agent.role_evolution.models import ScoredInsight
 from agent.runtime.model import ModelAdapter
 
 
@@ -35,6 +36,7 @@ class TurningPointAnalysis:
     impact: str  # "positive" | "negative" | "mixed"
     affected_team: str
     root_cause: str
+    involved_roles: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -44,6 +46,7 @@ class TurningPointAnalysis:
             "impact": self.impact,
             "affected_team": self.affected_team,
             "root_cause": self.root_cause,
+            "involved_roles": list(self.involved_roles),
         }
 
 
@@ -104,8 +107,8 @@ class GameAnalysis:
     turning_points: list[TurningPointAnalysis] = field(default_factory=list)
     decision_reviews: list[DecisionReview] = field(default_factory=list)
     counterfactuals: list[CounterfactualAnalysis] = field(default_factory=list)
-    strategic_insights: list[str] = field(default_factory=list)
-    error_patterns: list[str] = field(default_factory=list)
+    strategic_insights: list[ScoredInsight] = field(default_factory=list)
+    error_patterns: list[ScoredInsight] = field(default_factory=list)
     # Metadata
     raw_output: str = ""
     errors: list[str] = field(default_factory=list)
@@ -121,8 +124,8 @@ class GameAnalysis:
             "turning_points": [tp.to_dict() for tp in self.turning_points],
             "decision_reviews": [dr.to_dict() for dr in self.decision_reviews],
             "counterfactuals": [cf.to_dict() for cf in self.counterfactuals],
-            "strategic_insights": self.strategic_insights,
-            "error_patterns": self.error_patterns,
+            "strategic_insights": [si.to_dict() for si in self.strategic_insights],
+            "error_patterns": [si.to_dict() for si in self.error_patterns],
             "errors": self.errors,
         }
 
@@ -173,12 +176,12 @@ class GameAnalysis:
         if self.strategic_insights:
             lines.extend(["", "## Strategic Insights", ""])
             for insight in self.strategic_insights:
-                lines.append(f"- {insight}")
+                lines.append(f"- {insight.text}")
 
         if self.error_patterns:
             lines.extend(["", "## Error Patterns", ""])
             for pattern in self.error_patterns:
-                lines.append(f"- {pattern}")
+                lines.append(f"- {pattern.text}")
 
         if self.errors:
             lines.extend(["", "## Errors", ""])
@@ -324,8 +327,8 @@ def _build_messages(
                 "1. key_turning_points: 关键转折点，需要分析根因（不只是事件描述）\n"
                 "2. decision_reviews: 对高影响决策的深度复盘，给出 0-10 分质量评分和改进建议\n"
                 "3. counterfactuals: 反事实推演，分析'如果不是这样会怎样'\n"
-                "4. strategic_insights: 3-5 条可复用的策略洞察\n"
-                "5. error_patterns: 2-3 条反复出现的错误模式\n\n"
+                "4. strategic_insights: 3-5 条可复用的策略洞察，每条需要标注来源\n"
+                "5. error_patterns: 2-3 条反复出现的错误模式，每条需要标注来源\n\n"
                 "输出 JSON schema:\n"
                 "{\n"
                 '  "turning_points": [\n'
@@ -357,8 +360,26 @@ def _build_messages(
                 '      "insight": "洞察"\n'
                 "    }\n"
                 "  ],\n"
-                '  "strategic_insights": ["策略洞察1", "策略洞察2"],\n'
-                '  "error_patterns": ["错误模式1", "错误模式2"]\n'
+                '  "strategic_insights": [\n'
+                "    {\n"
+                '      "text": "策略洞察内容",\n'
+                '      "source_roles": ["seer", "werewolf"],\n'
+                '      "source_player_ids": [1, 3],\n'
+                '      "source_decision_ids": [],\n'
+                '      "confidence": 0.8,\n'
+                '      "relevance": "direct"\n'
+                "    }\n"
+                "  ],\n"
+                '  "error_patterns": [\n'
+                "    {\n"
+                '      "text": "错误模式描述",\n'
+                '      "source_roles": ["witch"],\n'
+                '      "source_player_ids": [3],\n'
+                '      "source_decision_ids": [],\n'
+                '      "confidence": 0.7,\n'
+                '      "relevance": "contextual"\n'
+                "    }\n"
+                "  ]\n"
                 "}"
             ),
         },
@@ -427,8 +448,12 @@ def _parse_analysis(
         turning_points=turning_points,
         decision_reviews=decision_reviews,
         counterfactuals=counterfactuals,
-        strategic_insights=[str(s) for s in data.get("strategic_insights", [])][:5],
-        error_patterns=[str(s) for s in data.get("error_patterns", [])][:3],
+        strategic_insights=[
+            _to_scored_insight(s, game_id) for s in data.get("strategic_insights", [])
+        ][:5],
+        error_patterns=[
+            _to_scored_insight(s, game_id) for s in data.get("error_patterns", [])
+        ][:3],
         raw_output=raw_output,
     )
 
@@ -472,10 +497,33 @@ def _analysis_from_dict(data: dict[str, Any]) -> GameAnalysis:
         counterfactuals=[
             CounterfactualAnalysis(**cf) for cf in data.get("counterfactuals", [])
         ],
-        strategic_insights=[str(s) for s in data.get("strategic_insights", [])],
-        error_patterns=[str(s) for s in data.get("error_patterns", [])],
+        strategic_insights=[_to_scored_insight(s, data.get("game_id", "")) for s in data.get("strategic_insights", [])],
+        error_patterns=[_to_scored_insight(s, data.get("game_id", "")) for s in data.get("error_patterns", [])],
         raw_output=str(data.get("raw_output", "")),
         errors=[str(e) for e in data.get("errors", [])],
+    )
+
+
+def _to_scored_insight(raw: Any, game_id: str) -> ScoredInsight:
+    """Convert a raw value (str or dict) into a ScoredInsight.
+
+    Handles backward compatibility: old analyses stored insights as plain
+    strings, new ones store them as ScoredInsight dicts.
+    """
+    if isinstance(raw, str):
+        return ScoredInsight(
+            text=raw,
+            game_id=game_id,
+            relevance="direct",
+            confidence=0.5,
+        )
+    if isinstance(raw, dict):
+        return ScoredInsight.from_dict({**raw, "game_id": raw.get("game_id", game_id)})
+    return ScoredInsight(
+        text=str(raw),
+        game_id=game_id,
+        relevance="direct",
+        confidence=0.5,
     )
 
 
@@ -485,6 +533,56 @@ def _compact_json(value: Any) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def filter_mid_memory_for_role(analysis: GameAnalysis, role: str) -> dict:
+    """Extract role-specific data from a game analysis.
+
+    Returns a dict with:
+    - decision_reviews: only reviews where role matches
+    - strategic_insights: all, but with relevance set
+      (direct if source_roles includes role, contextual otherwise)
+    - error_patterns: same as above
+    - turning_points: all, with involved_roles annotated
+    - counterfactuals: all (global context)
+    """
+    player_roles = {pid: r for pid, r in analysis.roles.items()}
+
+    role_reviews = [
+        dr.to_dict() for dr in analysis.decision_reviews
+        if dr.role == role
+    ]
+
+    role_insights = []
+    for si in analysis.strategic_insights:
+        d = si.to_dict()
+        d["relevance"] = "direct" if role in si.source_roles else "contextual"
+        role_insights.append(d)
+
+    role_errors = []
+    for si in analysis.error_patterns:
+        d = si.to_dict()
+        d["relevance"] = "direct" if role in si.source_roles else "contextual"
+        role_errors.append(d)
+
+    all_tps = []
+    for tp in analysis.turning_points:
+        td = tp.to_dict()
+        td["role_involved"] = role in tp.involved_roles
+        all_tps.append(td)
+
+    all_cfs = [cf.to_dict() for cf in analysis.counterfactuals]
+
+    return {
+        "game_id": analysis.game_id,
+        "winner": analysis.winner,
+        "player_roles": player_roles,
+        "decision_reviews": role_reviews,
+        "strategic_insights": role_insights,
+        "error_patterns": role_errors,
+        "turning_points": all_tps,
+        "counterfactuals": all_cfs,
+    }
 
 
 def _as_float(value: Any, default: float) -> float:

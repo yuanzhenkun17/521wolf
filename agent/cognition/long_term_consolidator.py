@@ -8,6 +8,7 @@ RoleLongTermMemory system with LLM-based consolidation.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,10 +16,17 @@ from typing import Any
 
 from engine.models import Role
 
-from agent.cognition.mid_memory import GameAnalysis
+from agent.cognition.mid_memory import GameAnalysis, filter_mid_memory_for_role, load_game_analysis
 from agent.prompts.parsing import load_json_object
+from agent.role_evolution.models import (
+    EvidenceRef,
+    SkillConsolidation as RoleSkillConsolidation,
+    SkillProposal,
+)
 from agent.runtime.model import ModelAdapter
 from agent.skill_system.loader import MarkdownSkill, load_markdown_skills
+
+_log = logging.getLogger(__name__)
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -163,8 +171,8 @@ def _build_messages(
         summary = {
             "game_id": m.game_id,
             "winner": m.winner,
-            "strategic_insights": m.strategic_insights,
-            "error_patterns": m.error_patterns,
+            "strategic_insights": [si.to_dict() for si in m.strategic_insights],
+            "error_patterns": [si.to_dict() for si in m.error_patterns],
             "turning_points": [
                 {"description": tp.description, "root_cause": tp.root_cause}
                 for tp in m.turning_points[:3]
@@ -269,3 +277,244 @@ def _as_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+# ── Role-specific consolidation (Phase 3.2) ──────────────────────────────
+
+
+async def consolidate_for_role(
+    run_dir: Path,
+    role: str,
+    model: ModelAdapter,
+    *,
+    run_id: str = "",
+    parent_hash: str = "",
+    window: int = 5,
+    prompt_version: str = "role_consolidation_v1",
+    skill_root: Path | str | None = None,
+) -> RoleSkillConsolidation:
+    """Consolidate mid-memory for a specific role, producing skill modification proposals.
+
+    Steps:
+    1. Scan run_dir for mid-memory files (games/game*/mid_memory/*.json)
+    2. Load the most recent ``window`` analyses
+    3. Filter each analysis for the target role using ``filter_mid_memory_for_role()``
+    4. Load current skills for the role
+    5. Build a prompt with filtered analyses + current skills
+    6. Ask LLM to produce structured proposals
+    7. Parse LLM output into :class:`SkillConsolidation`
+    8. Only direct insights can generate actionable proposals
+    """
+    # 1. Scan for mid-memory files
+    mid_dir = run_dir / "games"
+    if not mid_dir.exists():
+        _log.warning("No games directory found at %s", mid_dir)
+        return RoleSkillConsolidation(
+            role=role,
+            run_id=run_id,
+            parent_hash=parent_hash,
+            generated_at=_now(),
+            source_window=window,
+            prompt_version=prompt_version,
+        )
+
+    mid_memories: list[GameAnalysis] = []
+    for game_dir in sorted(mid_dir.glob("game*")):
+        analysis_path = game_dir / "mid_memory"
+        if not analysis_path.is_dir():
+            continue
+        for json_file in sorted(analysis_path.glob("*.json")):
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+                analysis = load_game_analysis(
+                    data.get("game_id", ""), mid_memory_dir=analysis_path,
+                )
+                if analysis is not None:
+                    mid_memories.append(analysis)
+            except Exception:
+                continue
+
+    # 2. Take most recent window
+    recent = mid_memories[-window:]
+    source_games = [m.game_id for m in recent]
+
+    # 3. Filter each analysis for the target role
+    filtered = [filter_mid_memory_for_role(m, role) for m in recent]
+
+    # 4. Load current skills for the role
+    skills = _load_role_skills_for_str(role, skill_root=skill_root)
+
+    # 5–7. Build prompt, call LLM, parse
+    messages = _build_role_messages(
+        filtered_analyses=filtered,
+        skills=skills,
+        role=role,
+        window=window,
+    )
+
+    raw = ""
+    try:
+        raw = await model.complete(messages, name=f"consolidation/{role}")
+        return _parse_role_consolidation(
+            role=role,
+            raw_output=raw,
+            run_id=run_id,
+            parent_hash=parent_hash,
+            source_window=window,
+            source_games=source_games,
+            prompt_version=prompt_version,
+        )
+    except Exception as exc:
+        _log.error("consolidate_for_role(%s) failed: %s", role, exc)
+        return RoleSkillConsolidation(
+            role=role,
+            run_id=run_id,
+            parent_hash=parent_hash,
+            generated_at=_now(),
+            source_window=window,
+            prompt_version=prompt_version,
+            source_games=source_games,
+        )
+
+
+def _build_role_messages(
+    *,
+    filtered_analyses: list[dict],
+    skills: list[MarkdownSkill],
+    role: str,
+    window: int,
+) -> list[dict[str, str]]:
+    """Build LLM messages for role-specific consolidation."""
+    summaries = []
+    for fa in filtered_analyses:
+        summary = {
+            "game_id": fa["game_id"],
+            "winner": fa["winner"],
+            "decision_reviews": fa["decision_reviews"],
+            "strategic_insights": fa["strategic_insights"],
+            "error_patterns": fa["error_patterns"],
+            "turning_points": fa["turning_points"][:3],
+            "counterfactuals": fa["counterfactuals"][:2],
+        }
+        summaries.append(summary)
+
+    skills_text = "\n".join(
+        f"## {s.name}\n{s.body[:800]}\n" for s in skills
+    )
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是狼人杀 Agent 的角色级长期记忆整合器。"
+                "你需要分析某角色最近 N 局的中期记忆，发现该角色的跨局趋势，并提出 skill 修改建议。"
+                "每条建议必须有证据支撑，且只有 direct 洞察可以生成 actionable 建议。"
+                "contextual 洞察仅可作为背景说明。必须输出 JSON，不要输出额外自然语言。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"分析角色: {role}\n\n"
+                f"最近 {len(filtered_analyses)} 局中期记忆（已按角色过滤）:\n"
+                f"{_compact_json(summaries)}\n\n"
+                f"当前角色 skills:\n{skills_text}\n\n"
+                "请分析跨局趋势并提出 skill 修改建议，要求:\n"
+                "1. trends: 3-5 条跨局趋势\n"
+                "2. proposals: 对 skill 的修改建议\n"
+                "   - 只有 relevance=direct 的洞察可以生成 proposals\n"
+                "   - relevance=contextual 的洞察仅作为背景参考\n"
+                "   - 每个 proposal 必须包含 evidence 引用具体 game_id 和 decision\n"
+                "   - 需要多局一致证据，不要基于单局数据做判断\n\n"
+                "输出 JSON schema:\n"
+                "{\n"
+                '  "trends": ["趋势1", "趋势2"],\n'
+                '  "proposals": [\n'
+                "    {\n"
+                '      "proposal_id": "prop_001",\n'
+                '      "target_file": "skill文件名.md",\n'
+                '      "action_type": "append_rule|rewrite_section|deprecate_rule",\n'
+                '      "section": "目标章节名(rewrite_section时必填)",\n'
+                '      "content": "具体修改内容",\n'
+                '      "rationale": "修改理由",\n'
+                '      "confidence": 0.0,\n'
+                '      "risk": "风险评估",\n'
+                '      "expected_metric": "期望影响的指标",\n'
+                '      "expected_direction": "improve|maintain|reduce",\n'
+                '      "evidence": [\n'
+                "        {\n"
+                '          "game_id": "game_001",\n'
+                '          "role": "seer",\n'
+                '          "player_id": 1,\n'
+                '          "decision_id": "",\n'
+                '          "action_type": "seer_check",\n'
+                '          "quote": "相关原文摘录"\n'
+                "        }\n"
+                "      ],\n"
+                '      "conflicts_with": ["proposal_id_of_conflicting_proposal"]\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            ),
+        },
+    ]
+
+
+def _parse_role_consolidation(
+    *,
+    role: str,
+    raw_output: str,
+    run_id: str,
+    parent_hash: str,
+    source_window: int,
+    source_games: list[str],
+    prompt_version: str,
+) -> RoleSkillConsolidation:
+    """Parse LLM output into a role-evolution SkillConsolidation."""
+    data = load_json_object(raw_output)
+
+    proposals: list[SkillProposal] = []
+    for p in data.get("proposals", []):
+        if not isinstance(p, dict):
+            continue
+        evidence = [
+            EvidenceRef.from_dict(e) for e in p.get("evidence", []) if isinstance(e, dict)
+        ]
+        proposals.append(SkillProposal(
+            proposal_id=str(p.get("proposal_id", "")),
+            target_file=str(p.get("target_file", "")),
+            action_type=str(p.get("action_type", "append_rule")),
+            content=str(p.get("content", "")),
+            rationale=str(p.get("rationale", "")),
+            confidence=_as_float(p.get("confidence"), 0.0),
+            risk=str(p.get("risk", "")),
+            expected_metric=str(p.get("expected_metric", "")),
+            expected_direction=str(p.get("expected_direction", "")),
+            section=p.get("section"),
+            evidence=evidence,
+            conflicts_with=[str(c) for c in p.get("conflicts_with", [])],
+        ))
+
+    return RoleSkillConsolidation(
+        role=role,
+        run_id=run_id,
+        parent_hash=parent_hash,
+        generated_at=_now(),
+        source_window=source_window,
+        prompt_version=prompt_version,
+        proposals=proposals[:8],
+        trends=[str(t) for t in data.get("trends", [])][:5],
+        source_games=source_games,
+    )
+
+
+def _load_role_skills_for_str(
+    role: str, *, skill_root: Path | str | None = None,
+) -> list[MarkdownSkill]:
+    """Load skills for a role identified by string (not Role enum)."""
+    root = Path(skill_root) if skill_root else DEFAULT_SKILL_ROOT
+    skills = load_markdown_skills(root)
+    return [
+        s for s in skills
+        if s.scope == "common" or (s.role is not None and s.role.value == role)
+    ]

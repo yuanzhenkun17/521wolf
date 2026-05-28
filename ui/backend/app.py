@@ -23,6 +23,7 @@ from ui.backend.game_runner import GameManager
 from ui.backend.evolution_runner import EvolutionManager
 from ui.backend.mixed_battle_runner import MixedBattleManager
 from ui.backend.selfplay_runner import SelfplayManager
+from ui.backend.role_evolution_runner import RoleEvolutionRunner
 
 
 class StartGameRequest(BaseModel):
@@ -86,10 +87,22 @@ class CreateVersionRequest(BaseModel):
     batch_dream_enabled: bool = True
 
 
+class RoleEvolutionStartRequest(BaseModel):
+    role: str
+    training_games: int = Field(default=20, ge=1, le=100)
+    battle_games: int = Field(default=10, ge=1, le=100)
+
+
+def _default_version_store():
+    from agent.role_evolution.store import VersionStore
+    return VersionStore(Path("data/role_versions"))
+
+
 manager = GameManager()
 selfplay_manager = SelfplayManager()
 evolution_manager = EvolutionManager()
 mixed_battle_manager = MixedBattleManager()
+role_evolution_runner = RoleEvolutionRunner(store=_default_version_store())
 app = FastAPI(title="521wolf UI Backend")
 
 app.add_middleware(
@@ -812,3 +825,195 @@ def list_dreams(role: str | None = None) -> dict[str, Any]:
         for item in items
     ]
     return {"dreams": summaries}
+
+
+# ── Role Evolution ──────────────────────────────────────────────────────────
+
+
+def register_role_evolution_routes(app: FastAPI, runner: RoleEvolutionRunner) -> None:
+    """Register all role-evolution and role-version routes on *app*."""
+
+    # -- Role versions -------------------------------------------------------
+
+    @app.get("/api/roles")
+    def list_roles() -> dict[str, Any]:
+        """List all roles that have stored versions."""
+        roles = runner.store.list_roles()
+        return {"roles": roles}
+
+    @app.get("/api/roles/{role}/versions")
+    def list_role_versions(role: str) -> dict[str, Any]:
+        """List all versions for a role."""
+        try:
+            versions = runner.store.list_versions(role)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"role '{role}' not found")
+        return {
+            "role": role,
+            "versions": [v.to_dict() for v in versions],
+        }
+
+    @app.get("/api/roles/{role}/versions/{hash}")
+    def get_role_version(role: str, hash: str) -> dict[str, Any]:
+        """Get full detail of a specific role version."""
+        try:
+            version = runner.store.load_version(role, hash)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"version {role}/{hash} not found",
+            )
+        data = version.to_dict()
+        data["kind"] = "role_version"
+        data["schema_version"] = 1
+        return data
+
+    @app.get("/api/roles/{role}/leaderboard")
+    def role_leaderboard(role: str) -> dict[str, Any]:
+        """Return the role evolution leaderboard for a role."""
+        from agent.role_evolution.leaderboard import aggregate_role_leaderboard
+
+        # Collect battle summaries from completed runs
+        battle_summaries: list[dict] = []
+        for tracked in runner.get_runs_for_role(role):
+            if tracked.run is not None and tracked.run.battle_result is not None:
+                battle_summaries.append(tracked.run.battle_result)
+
+        entries = aggregate_role_leaderboard(
+            role=role,
+            battle_summaries=battle_summaries,
+            store=runner.store,
+        )
+        return {
+            "kind": "role_leaderboard",
+            "schema_version": 1,
+            "role": role,
+            "entries": [e.to_dict() for e in entries],
+        }
+
+    @app.post("/api/roles/{role}/rollback/{hash}")
+    async def rollback_baseline(role: str, hash: str) -> dict[str, Any]:
+        """Rollback the baseline for a role to a specific version hash."""
+        # Verify the target hash exists
+        try:
+            runner.store.load_version(role, hash)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"version {role}/{hash} not found",
+            )
+
+        try:
+            history = runner.store.get_history(role)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"role '{role}' not found",
+            )
+
+        # CAS update
+        success = await runner.store.set_baseline(
+            role=role,
+            target_hash=hash,
+            expected_current=history.baseline,
+        )
+        if not success:
+            raise HTTPException(
+                status_code=409,
+                detail="baseline changed concurrently; retry",
+            )
+        return {
+            "kind": "role_rollback",
+            "schema_version": 1,
+            "role": role,
+            "new_baseline": hash,
+        }
+
+    # -- Role evolution runs -------------------------------------------------
+
+    @app.post("/api/role-evolution/start", status_code=201)
+    async def start_role_evolution(request: RoleEvolutionStartRequest) -> dict[str, Any]:
+        """Start a new role evolution run."""
+        # Verify the role has a baseline
+        try:
+            runner.store.get_baseline(request.role)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"role '{request.role}' has no baseline version",
+            )
+
+        tracked = await runner.start_evolution(
+            role=request.role,
+            training_games=request.training_games,
+            battle_games=request.battle_games,
+        )
+        return tracked.snapshot()
+
+    @app.get("/api/role-evolution/{run_id}/status")
+    def get_role_evolution_status(run_id: str) -> dict[str, Any]:
+        """Get status of a role evolution run."""
+        tracked = runner.get_run(run_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return tracked.snapshot()
+
+    @app.get("/api/role-evolution/{run_id}/diff")
+    def get_role_evolution_diff(run_id: str) -> dict[str, Any]:
+        """Get the skill diffs produced by a run."""
+        tracked = runner.get_run(run_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if tracked.run is None or tracked.run.diff is None:
+            return {
+                "kind": "role_evolution_diff",
+                "schema_version": 1,
+                "run_id": run_id,
+                "diffs": [],
+            }
+        return {
+            "kind": "role_evolution_diff",
+            "schema_version": 1,
+            "run_id": run_id,
+            "diffs": [d.to_dict() for d in tracked.run.diff],
+        }
+
+    @app.post("/api/role-evolution/{run_id}/promote")
+    async def promote_role_evolution(run_id: str) -> dict[str, Any]:
+        """Promote a reviewing run's candidate to baseline."""
+        try:
+            tracked = await runner.promote_run(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="run not found")
+        except InvalidRunStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except BaselineChangedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return tracked.snapshot()
+
+    @app.post("/api/role-evolution/{run_id}/reject")
+    async def reject_role_evolution(run_id: str) -> dict[str, Any]:
+        """Reject a reviewing run."""
+        try:
+            tracked = await runner.reject_run(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="run not found")
+        except InvalidRunStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return tracked.snapshot()
+
+    @app.get("/api/role-evolution/{run_id}/events")
+    async def stream_role_evolution_events(run_id: str) -> StreamingResponse:
+        """SSE stream of progress events for a role evolution run."""
+        tracked = runner.get_run(run_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="run not found")
+
+        async def event_stream():
+            async for chunk in runner.sse_events(run_id):
+                yield chunk
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+register_role_evolution_routes(app, role_evolution_runner)
