@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import unittest
-from pathlib import Path
 from typing import Any
 
-from agent.role_evolution.applier import apply_proposals, CONFIDENCE_THRESHOLD
+from agent.role_evolution.applier import apply_proposals
 from agent.role_evolution.models import (
     SkillConsolidation,
     SkillProposal,

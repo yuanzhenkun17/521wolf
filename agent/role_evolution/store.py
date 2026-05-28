@@ -202,7 +202,6 @@ class VersionStore:
         If history already records this hash, no duplicate append occurs.
         """
         h = compute_hash(skills)
-        version_dir = self._version_dir(role, h)
         meta_path = self._meta_path(role, h)
 
         async with self._lock_for(role):

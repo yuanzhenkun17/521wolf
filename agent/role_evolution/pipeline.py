@@ -22,7 +22,6 @@ from agent.role_evolution.models import (
     EvolutionRun,
     EvolutionStatus,
     SkillConsolidation,
-    SkillDiff,
     SkillVersionConfig,
 )
 from agent.role_evolution.store import VersionStore
@@ -412,7 +411,6 @@ async def _run_battle(
     Per-role metrics are aggregated and returned as a battle summary.
     """
     import shutil
-    import tempfile
 
     from agent.evaluation.selfplay import SelfPlayConfig
 

@@ -10,10 +10,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pydantic import Field
 
-from agent.evaluation.leaderboard import LeaderboardEntry
 from ui.backend.game_runner import GameManager
 from ui.backend.selfplay_runner import SelfplayManager
 from ui.backend.role_evolution_runner import RoleEvolutionRunner
+from agent.role_evolution.pipeline import InvalidRunStateError, BaselineChangedError
 
 
 class StartGameRequest(BaseModel):

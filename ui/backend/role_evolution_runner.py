@@ -9,26 +9,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.role_evolution.models import (
     EvolutionRun,
-    EvolutionStatus,
-    SkillConsolidation,
-    SkillDiff,
 )
 from agent.role_evolution.pipeline import (
-    BaselineChangedError,
     InvalidRunStateError,
     recover_interrupted_runs,
     reject as pipeline_reject,
     promote as pipeline_promote,
     run_evolution,
-    _load_state,
-    _run_dir,
 )
 from agent.role_evolution.store import VersionStore
 

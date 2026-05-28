@@ -1,13 +1,11 @@
 """Tests for VersionStore, compute_hash, and path/text normalization."""
 
 import pytest
-from pathlib import Path
 
 from agent.role_evolution.store import (
     VersionStore,
     compute_hash,
     normalize_skill_path,
-    normalize_skill_text,
     HashCollisionError,
 )
 
