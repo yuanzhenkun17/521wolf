@@ -85,16 +85,6 @@ def build_request_prompt(
     if skill_context:
         skill_context_block = f"已注入策略 Skill:\n{skill_context}\n\n"
 
-    # Long-term memory consolidated from prior games.
-    long_memory_hints = memory_context.get("long_memory_hints", [])
-    long_memory_block = ""
-    if long_memory_hints:
-        long_memory_block = (
-            "长期经验提示:\n"
-            + "\n".join(f"- {hint}" for hint in long_memory_hints[:5])
-            + "\n\n"
-        )
-
     return (
         f"当前阶段: {request.phase.value}\n"
         f"当前天数: {observation.day}\n"
@@ -112,7 +102,6 @@ def build_request_prompt(
         f"当前主观判断 Belief: {belief_context}\n"
         f"{field_notes_block}"
         f"{skill_context_block}"
-        f"{long_memory_block}"
         f"{hints_block}"
         f"{action_instruction(request.action_type)}\n"
         f"{strategy_instruction(request)}\n"

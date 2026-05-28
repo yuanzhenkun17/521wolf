@@ -610,29 +610,6 @@ class FieldNotesPromptTests(unittest.TestCase):
         self.assertIn("攻击过P4", result)
         self.assertIn("辩护过P5", result)
 
-    def test_long_memory_hints_appear_in_prompt_when_present(self):
-        """Consolidated long-term memory hints should appear in the prompt."""
-        from agent.prompts import build_request_prompt
-
-        request = _make_witch_poison_request()
-        memory_context = {
-            "private_facts": {"known_roles": {}, "seer_checks": {}, "metadata": {}},
-            "public_summary": "",
-            "memory_events": [],
-            "self_history": "",
-            "suspicions": [],
-            "claims_seen": {},
-            "long_memory_hints": ["避免重复失误: 毒人前必须确认目标身份"],
-        }
-        prompt = build_request_prompt(
-            request,
-            memory_context,
-            belief_context={},
-            strategy_advice={},
-        )
-
-        self.assertIn("长期经验提示", prompt)
-        self.assertIn("毒人前必须确认目标身份", prompt)
 
 
 class MemoryDedupTests(unittest.TestCase):
