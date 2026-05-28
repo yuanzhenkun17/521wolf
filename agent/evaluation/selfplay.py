@@ -23,6 +23,8 @@ from engine.roles import assign_roles
 from agent.observability.archive import AgentTraceRecorder, DecisionArchive, GameArchive
 from agent.cognition.dream import dream_for_role, write_dream_report
 from agent.cognition.experience import extract_experiences, write_game_experiences
+from agent.cognition.mid_memory import analyze_game, write_game_analysis
+from agent.cognition.long_term_consolidator import consolidate_from_mid_memories, write_consolidation
 from agent.cognition.skill_evolution import (
     apply_skill_proposals,
     proposals_from_dream,
@@ -53,6 +55,9 @@ class SelfPlayConfig:
     enable_experience: bool = True
     enable_dream: bool = False
     enable_batch_dream: bool = False
+    enable_mid_memory: bool = True
+    enable_long_term_consolidation: bool = True
+    consolidation_window: int = 5
     enable_skill_proposals: bool = True
     auto_apply_skill_proposals: bool = False
     temperature: float = 0.2
@@ -391,6 +396,7 @@ async def run_selfplay(
         # Review (enhanced) — skip for errored games
         review_score = None
         review_report = None
+        cards = None
         avg_speech_score = 0.0
         avg_vote_score = 0.0
         avg_skill_score = 0.0
@@ -443,7 +449,27 @@ async def run_selfplay(
                 game_dir=game_dir,
                 output_dir=run_dir / "experiences",
             )
-            if config.enable_dream:
+
+        # Mid-term memory — LLM game analysis
+        if config.enable_mid_memory and review_report is not None:
+            try:
+                game_analysis = await analyze_game(
+                    model=client,
+                    game_id=game_id,
+                    review=review_report,
+                    agent_decisions=agent_decisions,
+                    roles=roles,
+                    winner_team=winner_str,
+                )
+                write_game_analysis(
+                    game_analysis,
+                    output_dir=game_dir / "mid_memory",
+                )
+            except Exception as exc:
+                _log("mid_memory_error", str(exc))
+
+        # Dream — per-role LLM reflection
+        if config.enable_dream and cards is not None:
                 by_role: dict[Role, list] = {}
                 for card in cards:
                     try:
@@ -538,6 +564,25 @@ async def run_selfplay(
             auto_apply_skill_proposals=config.auto_apply_skill_proposals,
         )
 
+    # Long-term consolidation — every N games, LLM reads mid-memories and updates skills
+    if (
+        config.enable_long_term_consolidation
+        and config.enable_mid_memory
+        and len(results) >= config.consolidation_window
+    ):
+        if batch_client is None:
+            batch_client = load_llm_client(
+                model_name=config.model_name,
+                temperature=config.temperature,
+            )
+        await _run_long_term_consolidation(
+            run_dir=run_dir,
+            model=batch_client,
+            skill_dir=config.skill_dir,
+            window=config.consolidation_window,
+            auto_apply=config.auto_apply_skill_proposals,
+        )
+
     selfplay_result = SelfPlayResult(
         config=config,
         games=results,
@@ -588,6 +633,81 @@ async def _run_batch_dream(
                 target_skill_root=skill_dir,
                 patch_dir=run_dir / "batch_skill_patches" / role.value,
                 min_confidence=0.75,
+                min_evidence_cards=2,
+            )
+
+
+async def _run_long_term_consolidation(
+    *,
+    run_dir: Path,
+    model: ModelAdapter,
+    skill_dir: Path | None,
+    window: int,
+    auto_apply: bool,
+) -> None:
+    """Run long-term consolidation for all roles using recent mid-term memories."""
+    from agent.cognition.mid_memory import GameAnalysis, load_game_analysis
+
+    # Collect mid-memory analyses from game directories
+    mid_memories: list[GameAnalysis] = []
+    for game_dir in sorted((run_dir / "games").glob("game*")):
+        analysis_path = game_dir / "mid_memory"
+        for json_file in sorted(analysis_path.glob("*.json")):
+            try:
+                data = json.loads(json_file.read_text(encoding="utf-8"))
+                analysis = load_game_analysis(data.get("game_id", ""), mid_memory_dir=analysis_path)
+                if analysis is not None:
+                    mid_memories.append(analysis)
+            except Exception:
+                continue
+
+    if len(mid_memories) < window:
+        return
+
+    # Take the most recent N
+    recent = mid_memories[-window:]
+
+    # Consolidate per role
+    roles_seen: set[str] = set()
+    for m in recent:
+        for role_str in m.roles.values():
+            roles_seen.add(role_str)
+
+    for role_str in sorted(roles_seen):
+        try:
+            role = Role(role_str)
+        except ValueError:
+            continue
+        consolidation = await consolidate_from_mid_memories(
+            model=model,
+            mid_memories=recent,
+            role=role,
+            skill_root=skill_dir,
+        )
+        write_consolidation(
+            consolidation,
+            output_dir=run_dir / "consolidations" / role_str,
+        )
+        if auto_apply and consolidation.skill_proposals and skill_dir is not None:
+            from agent.cognition.skill_evolution import apply_skill_proposals, SkillProposal
+
+            proposals = [
+                SkillProposal(
+                    skill=p.skill,
+                    operation=p.operation,
+                    proposal=p.proposal,
+                    risk=p.risk,
+                    evidence_cards=p.evidence_cards,
+                    confidence=p.confidence,
+                    status="pending",
+                )
+                for p in consolidation.skill_proposals
+            ]
+            apply_skill_proposals(
+                proposals,
+                target_skill_root=skill_dir,
+                patch_dir=run_dir / "consolidation_patches" / role_str,
+                min_confidence=0.7,
                 min_evidence_cards=2,
             )
 
