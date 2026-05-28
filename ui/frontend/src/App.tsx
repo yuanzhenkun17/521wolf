@@ -18,7 +18,7 @@ import { phaseName } from "./presentation";
 import type { GameArchive, GameEvent, GameSnapshot } from "./types";
 import { RoleEvolutionPage } from "./pages/RoleEvolutionPage";
 import { SelfplayPage } from "./pages/SelfplayPage";
-import { ProposalsPage } from "./pages/ProposalsPage";
+
 
 // ---------------------------------------------------------------------------
 // GameView: main game observation page (used for both / and /games/:gameId)
@@ -260,7 +260,7 @@ export function App() {
         <Route path="/games/:gameId" element={<GameView />} />
         <Route path="/roles" element={<RoleEvolutionPage />} />
         <Route path="/selfplay" element={<SelfplayPage />} />
-        <Route path="/proposals" element={<ProposalsPage />} />
+
       </Routes>
     </main>
   );
