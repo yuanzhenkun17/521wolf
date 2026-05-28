@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, Play, Settings, X } from "lucide-react";
-import type { GameConfig } from "../api";
+import { listRoles, listRoleVersions, type GameConfig, type RoleVersion } from "../api";
 import { Button } from "./ui/button";
 
 interface GameConfigDialogProps {
@@ -10,25 +10,58 @@ interface GameConfigDialogProps {
   starting?: boolean;
 }
 
-const PLAYER_COUNTS = [6, 8, 10, 12];
+const ROLE_LABELS: Record<string, string> = {
+  werewolf: "狼人",
+  seer: "预言家",
+  witch: "女巫",
+  guard: "守卫",
+  hunter: "猎人",
+  villager: "村民",
+  white_wolf_king: "白狼王",
+};
 
 export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: GameConfigDialogProps) {
-  const [playerCount, setPlayerCount] = useState(12);
   const [maxDays, setMaxDays] = useState(20);
   const [enableSheriff, setEnableSheriff] = useState(true);
-  const [skillDir, setSkillDir] = useState("");
   const [seed, setSeed] = useState("");
+
+  // Role version selection
+  const [roles, setRoles] = useState<string[]>([]);
+  const [selectedRole, setSelectedRole] = useState<string>("");
+  const [versions, setVersions] = useState<RoleVersion[]>([]);
+  const [selectedHash, setSelectedHash] = useState<string>("");
+
+  useEffect(() => {
+    if (open) {
+      listRoles().then((r) => {
+        setRoles(r);
+        if (r.length > 0) setSelectedRole(r[0]);
+      }).catch(() => {});
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (selectedRole) {
+      listRoleVersions(selectedRole).then((v) => {
+        setVersions(v);
+        const baseline = v.find((ver) => ver.is_baseline);
+        setSelectedHash(baseline?.hash ?? v[0]?.hash ?? "");
+      }).catch(() => setVersions([]));
+    }
+  }, [selectedRole]);
 
   if (!open) return null;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const config: GameConfig = {
-      player_count: playerCount,
+      player_count: 12,
       max_days: maxDays,
       enable_sheriff: enableSheriff,
     };
-    if (skillDir.trim()) config.skill_dir = skillDir.trim();
+    if (selectedRole && selectedHash) {
+      config.skill_dir = `role_versions/${selectedRole}/${selectedHash}/skills`;
+    }
     if (seed.trim()) config.seed = Number(seed);
     onSubmit(config);
   }
@@ -56,25 +89,42 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-5 p-5">
-          {/* Player count */}
+          {/* Role + Version selector */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">玩家人数</label>
-            <div className="flex gap-2">
-              {PLAYER_COUNTS.map((count) => (
-                <button
-                  key={count}
-                  type="button"
-                  className={
-                    playerCount === count
-                      ? "flex-1 rounded-md bg-primary py-2 text-sm font-medium text-primary-foreground"
-                      : "flex-1 rounded-md border border-border bg-card py-2 text-sm hover:bg-muted"
-                  }
-                  onClick={() => setPlayerCount(count)}
+            <label className="text-sm font-medium">角色技能版本</label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground" htmlFor="cfg-role">角色</label>
+                <select
+                  id="cfg-role"
+                  value={selectedRole}
+                  onChange={(e) => setSelectedRole(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 >
-                  {count} 人
-                </button>
-              ))}
+                  {roles.map((r) => (
+                    <option key={r} value={r}>{ROLE_LABELS[r] ?? r}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground" htmlFor="cfg-version">版本</label>
+                <select
+                  id="cfg-version"
+                  value={selectedHash}
+                  onChange={(e) => setSelectedHash(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  {versions.map((v) => (
+                    <option key={v.hash} value={v.hash}>
+                      {v.hash}{v.is_baseline ? " (baseline)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">
+              12人局，其他角色使用各自 baseline
+            </p>
           </div>
 
           {/* Max days */}
@@ -105,22 +155,6 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
             <label htmlFor="enable-sheriff" className="text-sm font-medium">
               启用警长模式
             </label>
-          </div>
-
-          {/* Skill dir */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="skill-dir">
-              Agent 技能目录
-              <span className="ml-2 text-xs font-normal text-muted-foreground">（可选，默认使用内置技能）</span>
-            </label>
-            <input
-              id="skill-dir"
-              type="text"
-              value={skillDir}
-              onChange={(e) => setSkillDir(e.target.value)}
-              placeholder="留空使用默认值"
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
           </div>
 
           {/* Seed */}
