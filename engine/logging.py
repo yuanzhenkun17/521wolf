@@ -108,16 +108,18 @@ class GameLogger:
 
 
 def next_game_log_name(log_dir: str | Path, prefix: str = "game") -> str:
+    """Generate a timestamp-based game log name: yyyyMMdd_HHmmss_N."""
+    from datetime import datetime
     directory = Path(log_dir)
-    max_index = 0
-    for path in directory.glob(f"{prefix}*"):
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Find the max N for this timestamp
+    max_n = 0
+    for path in directory.glob(f"{ts}_*"):
         name = path.name if path.is_dir() else path.stem
-        if not name.startswith(prefix):
-            continue
-        suffix = name[len(prefix) :]
-        if suffix.isdigit():
-            max_index = max(max_index, int(suffix))
-    return f"{prefix}{max_index + 1}"
+        parts = name.rsplit("_", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            max_n = max(max_n, int(parts[1]))
+    return f"{ts}_{max_n + 1}"
 
 
 def _value(value: Any) -> Any:

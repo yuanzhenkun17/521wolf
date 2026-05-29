@@ -131,7 +131,7 @@ export async function listRoleVersions(role: string): Promise<RoleVersion[]> {
 }
 
 export async function getRoleVersion(role: string, hash: string): Promise<RoleVersion & { skills: Record<string, string> }> {
-  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/versions/${hash}`);
+  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/versions/${encodeURIComponent(hash)}`);
   if (!response.ok) throw new Error("无法读取版本详情");
   return response.json();
 }
@@ -144,7 +144,7 @@ export async function getRoleLeaderboard(role: string): Promise<RoleLeaderboardE
 }
 
 export async function rollbackRole(role: string, hash: string): Promise<void> {
-  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/rollback/${hash}`, { method: "POST" });
+  const response = await fetch(`/api/roles/${encodeURIComponent(role)}/rollback/${encodeURIComponent(hash)}`, { method: "POST" });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.detail ?? "回滚失败");
@@ -162,6 +162,13 @@ export async function startRoleEvolution(role: string, trainingGames: number, ba
     throw new Error(data.detail ?? "无法启动自进化");
   }
   return response.json();
+}
+
+export async function listRoleEvolutionRuns(): Promise<EvolutionRunStatus[]> {
+  const response = await fetch("/api/role-evolution");
+  if (!response.ok) throw new Error("无法读取演化任务列表");
+  const data = await response.json();
+  return data.runs ?? [];
 }
 
 export async function getRoleEvolutionStatus(runId: string): Promise<EvolutionRunStatus> {

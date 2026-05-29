@@ -90,7 +90,7 @@ class GameManager:
         for game in self._games.values():
             games.append(self.snapshot(game, include_events=False))
             seen.add(game.log_name)
-        for path in self.log_dir.glob("game*"):
+        for path in sorted(self.log_dir.iterdir()):
             game_id = _game_id_from_log_path(path)
             if game_id is None:
                 continue
@@ -416,14 +416,12 @@ def _team_for_role(role: str) -> str:
     return "gods"
 
 
-def _game_sort_key(game_id: str) -> tuple[int, str]:
-    match = re.fullmatch(r"game(\d+)", game_id)
-    if match:
-        return int(match.group(1)), game_id
-    return 0, game_id
+def _game_sort_key(game_id: str) -> tuple[str, str]:
+    """Sort by timestamp string (lexicographic works for yyyyMMdd_HHmmss_N)."""
+    return game_id, game_id
 
 
 def _game_id_from_log_path(path: Path) -> str | None:
     if path.is_dir():
-        return path.name if re.fullmatch(r"game\d+", path.name) else None
+        return path.name if re.fullmatch(r"\d{8}_\d{6}_\d+", path.name) else None
     return None

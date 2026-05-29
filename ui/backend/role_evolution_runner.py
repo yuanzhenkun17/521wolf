@@ -114,6 +114,11 @@ class RoleEvolutionRunner:
         model_adapter: Any | None = None,
     ) -> RoleEvolutionRun:
         """Start a new evolution run.  Returns the tracked run."""
+        # Check for existing active run on the same role
+        for existing in self._active_runs.values():
+            if existing.role == role and existing.status not in ("promoted", "rejected", "failed"):
+                raise RuntimeError(f"角色 {role} 已有一个活跃的演化任务: {existing.run_id}")
+
         run_id = f"evo_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
         started_at = datetime.now(timezone.utc).isoformat()
 

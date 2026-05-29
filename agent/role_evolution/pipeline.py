@@ -8,6 +8,7 @@ Any running stage may transition to -> failed on exception.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -24,7 +25,7 @@ from agent.role_evolution.models import (
     SkillConsolidation,
     SkillVersionConfig,
 )
-from agent.role_evolution.store import VersionStore
+from agent.role_evolution.store import VersionStore, _write_json
 from agent.runtime.model import ModelAdapter
 
 _log = logging.getLogger(__name__)
@@ -44,17 +45,8 @@ class BaselineChangedError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# JSON helper (atomic write via os.replace)
+# Timestamp helper
 # ---------------------------------------------------------------------------
-
-
-def _write_json(path: Path, data: dict) -> None:
-    """Atomically write JSON to *path* using a tmp file + os.replace."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    content = json.dumps(data, ensure_ascii=False, indent=2)
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(str(tmp), str(path))
 
 
 def _now() -> str:
@@ -88,7 +80,7 @@ def _save_state(run: EvolutionRun, store: VersionStore) -> None:
         "candidate_hash": run.candidate_hash,
         "status": run.status,
         "updated_at": _now(),
-        "error": run.errors[-1] if run.errors else None,
+        "errors": list(run.errors),
         "failed_stage": run.status if run.status == EvolutionStatus.FAILED else None,
         "training_games": run.training_games,
         "battle_games": run.battle_games,
@@ -441,7 +433,7 @@ async def _run_battle(
                 "game_index": idx,
             })
 
-        # Run baseline side
+        # Run both sides concurrently
         cfg_a = SelfPlayConfig(
             games=battle_games,
             seed_start=seed_start,
@@ -449,9 +441,6 @@ async def _run_battle(
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_a,
         )
-        await selfplay_runner(cfg_a, model=model_adapter, on_game_complete=_on_game_a)
-
-        # Run candidate side
         cfg_b = SelfPlayConfig(
             games=battle_games,
             seed_start=seed_start,
@@ -459,7 +448,10 @@ async def _run_battle(
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_b,
         )
-        await selfplay_runner(cfg_b, model=model_adapter, on_game_complete=_on_game_b)
+        await asyncio.gather(
+            selfplay_runner(cfg_a, model=model_adapter, on_game_complete=_on_game_a),
+            selfplay_runner(cfg_b, model=model_adapter, on_game_complete=_on_game_b),
+        )
     finally:
         # Clean up temporary directories
         for d in (skill_dir_a, skill_dir_b):

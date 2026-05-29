@@ -334,6 +334,15 @@ def register_role_evolution_routes(app: FastAPI, runner: RoleEvolutionRunner) ->
 
     # -- Role evolution runs -------------------------------------------------
 
+    @app.get("/api/role-evolution")
+    def list_role_evolution_runs() -> dict[str, Any]:
+        """List all tracked role evolution runs."""
+        return {
+            "kind": "role_evolution_runs",
+            "schema_version": 1,
+            "runs": runner.list_runs(),
+        }
+
     @app.post("/api/role-evolution/start", status_code=201)
     async def start_role_evolution(request: RoleEvolutionStartRequest) -> dict[str, Any]:
         """Start a new role evolution run."""

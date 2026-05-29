@@ -171,7 +171,7 @@ def _resolve_conflicts(proposals: list[SkillProposal]) -> list[SkillProposal]:
     for p in proposals:
         if p.proposal_id in skip_ids:
             import copy
-            skipped = copy.copy(p)
+            skipped = copy.deepcopy(p)
             skipped.status = "skipped"
             _log.debug("Skipping %s due to conflict", p.proposal_id)
             result.append(skipped)
@@ -321,28 +321,28 @@ def _validate_all(
         if err:
             errors.append(f"[{fname}] {err}")
 
-        # 6b. evolution field must not be modified by applier
+        # 7. evolution field must not be modified by applier
         err = _validate_evolution_unchanged(new_content, old_content)
         if err:
             errors.append(f"[{fname}] {err}")
 
-        # 9. Path safety
+        # 8. Path safety
         err = _validate_path_safe(fname)
         if err:
             errors.append(err)
 
-        # 10. YAML front matter parseable
+        # 9. YAML front matter parseable
         fm = _validate_front_matter(new_content)
         if fm is None:
             errors.append(f"[{fname}] YAML front matter is not parseable")
 
-        # 11. File length limit
+        # 10. File length limit
         if len(new_content) > MAX_SKILL_LENGTH:
             errors.append(
                 f"[{fname}] File length {len(new_content)} exceeds limit {MAX_SKILL_LENGTH}"
             )
 
-        # 13. No other role's private strategy leakage
+        # 11. No other role's private strategy leakage
         err = _validate_no_foreign_strategy_leakage(new_content, eligible)
         if err:
             errors.append(f"[{fname}] {err}")
@@ -427,7 +427,8 @@ def _validate_evolution_unchanged(new_content: str, old_content: str) -> str | N
 
 def _validate_path_safe(path: str) -> str | None:
     """Return error string if path is unsafe."""
-    p = Path(path)
+    from pathlib import PurePosixPath
+    p = PurePosixPath(path)
     if p.is_absolute():
         return f"Path '{path}' is absolute"
     if ".." in p.parts:

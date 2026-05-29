@@ -40,18 +40,23 @@ class LoggingTests(unittest.TestCase):
             self.assertIn("night_start", json_path.read_text(encoding="utf-8"))
             self.assertIn("第 1 夜开始", text_path.read_text(encoding="utf-8"))
 
-    def test_next_game_log_name_uses_next_numbered_game(self):
+    def test_next_game_log_name_uses_timestamp_format(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             log_dir = Path(temp_dir)
 
-            self.assertEqual(next_game_log_name(log_dir), "game1")
+            name = next_game_log_name(log_dir)
+            # Format: yyyyMMdd_HHmmss_N
+            self.assertRegex(name, r"\d{8}_\d{6}_1")
 
-            (log_dir / "game1.txt").write_text("第一局", encoding="utf-8")
-            (log_dir / "game2.jsonl").write_text("{}", encoding="utf-8")
-            (log_dir / "game3").mkdir()
+            # Create a directory with same timestamp prefix to test counter increment
+            ts = name.rsplit("_", 1)[0]
+            (log_dir / f"{ts}_1").mkdir()
+            (log_dir / f"{ts}_2").mkdir()
+            # Non-matching files should be ignored
             (log_dir / "latest.txt").write_text("旧日志", encoding="utf-8")
 
-            self.assertEqual(next_game_log_name(log_dir), "game4")
+            name2 = next_game_log_name(log_dir)
+            self.assertEqual(name2, f"{ts}_3")
 
     def test_engine_logs_night_cycle_and_role_actions(self):
         agents = agents_with()

@@ -4,6 +4,7 @@ import {
   listRoles,
   listRoleVersions,
   getRoleLeaderboard,
+  listRoleEvolutionRuns,
   startRoleEvolution,
   getRoleEvolutionStatus,
   getRoleEvolutionDiff,
@@ -54,8 +55,23 @@ export function RoleEvolutionPage() {
   const [starting, setStarting] = useState(false);
   const [promoting, setPromoting] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [pollExhausted, setPollExhausted] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRetriesRef = useRef(0);
+
+  const restoreActiveRun = useCallback(async (role: string) => {
+    if (!role) return;
+    try {
+      const runs = await listRoleEvolutionRuns();
+      const run = runs
+        .filter((item) => item.role === role && !TERMINAL_STATUSES.has(item.status))
+        .sort((a, b) => b.run_id.localeCompare(a.run_id))[0];
+      setActiveRun(run ?? null);
+    } catch (exc) {
+      console.error("Failed to restore active run:", exc);
+    }
+  }, []);
 
   // Load roles on mount
   useEffect(() => {
@@ -88,7 +104,8 @@ export function RoleEvolutionPage() {
 
   useEffect(() => {
     void loadRoleData(selectedRole);
-  }, [selectedRole, loadRoleData]);
+    void restoreActiveRun(selectedRole);
+  }, [selectedRole, loadRoleData, restoreActiveRun]);
 
   // SSE connection for active run
   useEffect(() => {
@@ -119,18 +136,28 @@ export function RoleEvolutionPage() {
     };
   }, [activeRun?.run_id, activeRun?.status]);
 
+  const MAX_POLL_RETRIES = 20;
+
   function startPolling(runId: string) {
     if (pollRef.current) clearInterval(pollRef.current);
+    pollRetriesRef.current = 0;
+    setPollExhausted(false);
     pollRef.current = setInterval(async () => {
       try {
         const data = await getRoleEvolutionStatus(runId);
         setActiveRun(data);
+        pollRetriesRef.current = 0;
         if (TERMINAL_STATUSES.has(data.status)) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
         }
       } catch {
-        // ignore polling errors
+        pollRetriesRef.current += 1;
+        if (pollRetriesRef.current >= MAX_POLL_RETRIES) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setPollExhausted(true);
+        }
       }
     }, 3000);
   }
@@ -277,12 +304,6 @@ export function RoleEvolutionPage() {
         </CardContent>
       </Card>
 
-      {error ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-
       {/* Start evolution form */}
       <Card>
         <CardHeader>
@@ -299,7 +320,7 @@ export function RoleEvolutionPage() {
                 type="number"
                 min={1}
                 value={trainingGames}
-                onChange={(e) => setTrainingGames(Number(e.target.value))}
+                onChange={(e) => setTrainingGames(Math.max(1, Number(e.target.value)))}
                 className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
@@ -312,7 +333,7 @@ export function RoleEvolutionPage() {
                 type="number"
                 min={1}
                 value={battleGames}
-                onChange={(e) => setBattleGames(Number(e.target.value))}
+                onChange={(e) => setBattleGames(Math.max(1, Number(e.target.value)))}
                 className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
@@ -345,6 +366,9 @@ export function RoleEvolutionPage() {
             </div>
             {activeRun.errors.length > 0 ? (
               <div className="text-xs text-destructive">{activeRun.errors.join("; ")}</div>
+            ) : null}
+            {pollExhausted ? (
+              <div className="text-xs text-muted-foreground">实时更新已断开，请手动刷新页面</div>
             ) : null}
           </CardContent>
         </Card>

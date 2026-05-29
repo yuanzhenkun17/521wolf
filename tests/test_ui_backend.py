@@ -67,7 +67,7 @@ class UiBackendTests(unittest.TestCase):
             }
             events = [init_event, death_event, end_event]
             content = "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n"
-            game_dir = log_dir / "game1"
+            game_dir = log_dir / "20260529_143052_1"
             game_dir.mkdir()
             (game_dir / "events.jsonl").write_text(content, encoding="utf-8")
             (game_dir / "agent_decisions.jsonl").write_text(
@@ -99,13 +99,13 @@ class UiBackendTests(unittest.TestCase):
             games = manager.list_games()
 
             self.assertEqual(len(games), 1)
-            self.assertEqual(games[0]["game_id"], "game1")
+            self.assertEqual(games[0]["game_id"], "20260529_143052_1")
             self.assertEqual(games[0]["winner"], "werewolves")
             self.assertEqual(games[0]["event_count"], 3)
             self.assertEqual(games[0]["players"][0]["team"], "werewolves")
             self.assertFalse(games[0]["players"][1]["alive"])
 
-            snapshot = manager.get_game("game1")
+            snapshot = manager.get_game("20260529_143052_1")
             self.assertIsNotNone(snapshot)
             detailed = manager.snapshot(snapshot)
             self.assertEqual(len(detailed["decisions"]), 1)
@@ -121,18 +121,18 @@ class UiBackendTests(unittest.TestCase):
             )
             manager = GameManager(log_dir=log_dir)
 
-            self.assertIsNone(manager.read_archive("game1"))
+            self.assertIsNone(manager.read_archive("20260529_143052_1"))
 
-            game_dir = log_dir / "game1"
+            game_dir = log_dir / "20260529_143052_1"
             game_dir.mkdir()
             (game_dir / "archive.json").write_text(
-                json.dumps({"game_id": "game1", "decisions": [{"index": 1}]}, ensure_ascii=False),
+                json.dumps({"game_id": "20260529_143052_1", "decisions": [{"index": 1}]}, ensure_ascii=False),
                 encoding="utf-8",
             )
-            archive = manager.read_archive("game1")
+            archive = manager.read_archive("20260529_143052_1")
 
             self.assertIsNotNone(archive)
-            self.assertEqual(archive["game_id"], "game1")
+            self.assertEqual(archive["game_id"], "20260529_143052_1")
 
     def test_start_selfplay_endpoint_passes_agent_version(self):
         class FakeRun:
