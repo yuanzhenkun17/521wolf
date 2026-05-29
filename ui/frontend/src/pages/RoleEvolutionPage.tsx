@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Play, Rocket, Trophy, CheckCircle, XCircle, GitBranch } from "lucide-react";
+import { Loader2, Play, Rocket, Trophy, CheckCircle, XCircle, GitBranch, Layers3 } from "lucide-react";
 import {
   listRoles,
   listRoleVersions,
   getRoleLeaderboard,
   listRoleEvolutionRuns,
+  listRoleBatchEvolutionRuns,
   startRoleEvolution,
+  startRoleBatchEvolution,
   getRoleEvolutionStatus,
+  getRoleBatchEvolutionStatus,
   getRoleEvolutionDiff,
   promoteRoleEvolution,
+  promoteRoleBatchEvolution,
   rejectRoleEvolution,
+  rejectRoleBatchEvolution,
   rollbackRole,
   type RoleVersion,
   type RoleLeaderboardEntry,
   type EvolutionRunStatus,
+  type BatchEvolutionRunStatus,
 } from "../api";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -52,13 +58,25 @@ export function RoleEvolutionPage() {
   const [error, setError] = useState<string | null>(null);
   const [trainingGames, setTrainingGames] = useState(20);
   const [battleGames, setBattleGames] = useState(10);
+  const [gameConcurrency, setGameConcurrency] = useState(1);
+  const [llmConcurrency, setLlmConcurrency] = useState(5);
+  const [llmRpm, setLlmRpm] = useState(60);
+  const [roleConcurrency, setRoleConcurrency] = useState(2);
+  const [selectedBatchRoles, setSelectedBatchRoles] = useState<string[]>([]);
+  const [activeBatch, setActiveBatch] = useState<BatchEvolutionRunStatus | null>(null);
   const [starting, setStarting] = useState(false);
+  const [batchStarting, setBatchStarting] = useState(false);
   const [promoting, setPromoting] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [batchPromoting, setBatchPromoting] = useState(false);
+  const [batchRejecting, setBatchRejecting] = useState(false);
   const [pollExhausted, setPollExhausted] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
+  const batchSseRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const batchPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollRetriesRef = useRef(0);
+  const batchPollRetriesRef = useRef(0);
 
   const restoreActiveRun = useCallback(async (role: string) => {
     if (!role) return;
@@ -73,6 +91,18 @@ export function RoleEvolutionPage() {
     }
   }, []);
 
+  const restoreActiveBatch = useCallback(async () => {
+    try {
+      const batches = await listRoleBatchEvolutionRuns();
+      const batch = batches
+        .filter((item) => !TERMINAL_STATUSES.has(item.status))
+        .sort((a, b) => b.batch_id.localeCompare(a.batch_id))[0];
+      setActiveBatch(batch ?? null);
+    } catch (exc) {
+      console.error("Failed to restore active batch:", exc);
+    }
+  }, []);
+
   // Load roles on mount
   useEffect(() => {
     (async () => {
@@ -80,11 +110,13 @@ export function RoleEvolutionPage() {
         const data = await listRoles();
         setRoles(data);
         if (data.length > 0) setSelectedRole(data[0]);
+        setSelectedBatchRoles(data.slice(0, Math.min(3, data.length)));
+        void restoreActiveBatch();
       } catch (exc) {
         setError(exc instanceof Error ? exc.message : "加载角色列表失败");
       }
     })();
-  }, []);
+  }, [restoreActiveBatch]);
 
   // Load versions + leaderboard when selected role changes
   const loadRoleData = useCallback(async (role: string) => {
@@ -136,6 +168,33 @@ export function RoleEvolutionPage() {
     };
   }, [activeRun?.run_id, activeRun?.status]);
 
+  useEffect(() => {
+    if (!activeBatch || TERMINAL_STATUSES.has(activeBatch.status)) return;
+
+    const es = new EventSource(`/api/role-evolution/batch/${activeBatch.batch_id}/events`);
+    batchSseRef.current = es;
+
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data) as BatchEvolutionRunStatus;
+        setActiveBatch(data);
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      batchSseRef.current = null;
+      startBatchPolling(activeBatch.batch_id);
+    };
+
+    return () => {
+      es.close();
+      batchSseRef.current = null;
+    };
+  }, [activeBatch?.batch_id, activeBatch?.status]);
+
   const MAX_POLL_RETRIES = 20;
 
   function startPolling(runId: string) {
@@ -162,11 +221,35 @@ export function RoleEvolutionPage() {
     }, 3000);
   }
 
+  function startBatchPolling(batchId: string) {
+    if (batchPollRef.current) clearInterval(batchPollRef.current);
+    batchPollRetriesRef.current = 0;
+    batchPollRef.current = setInterval(async () => {
+      try {
+        const data = await getRoleBatchEvolutionStatus(batchId);
+        setActiveBatch(data);
+        batchPollRetriesRef.current = 0;
+        if (TERMINAL_STATUSES.has(data.status)) {
+          if (batchPollRef.current) clearInterval(batchPollRef.current);
+          batchPollRef.current = null;
+        }
+      } catch {
+        batchPollRetriesRef.current += 1;
+        if (batchPollRetriesRef.current >= MAX_POLL_RETRIES) {
+          if (batchPollRef.current) clearInterval(batchPollRef.current);
+          batchPollRef.current = null;
+        }
+      }
+    }, 3000);
+  }
+
   // Clean up on unmount
   useEffect(() => {
     return () => {
       if (sseRef.current) sseRef.current.close();
+      if (batchSseRef.current) batchSseRef.current.close();
       if (pollRef.current) clearInterval(pollRef.current);
+      if (batchPollRef.current) clearInterval(batchPollRef.current);
     };
   }, []);
 
@@ -191,7 +274,14 @@ export function RoleEvolutionPage() {
     setStarting(true);
     setError(null);
     try {
-      const res = await startRoleEvolution(selectedRole, trainingGames, battleGames);
+      const res = await startRoleEvolution(
+        selectedRole,
+        trainingGames,
+        battleGames,
+        gameConcurrency,
+        llmConcurrency,
+        llmRpm,
+      );
       const status = await getRoleEvolutionStatus(res.run_id);
       setActiveRun(status);
     } catch (exc) {
@@ -199,6 +289,63 @@ export function RoleEvolutionPage() {
     } finally {
       setStarting(false);
     }
+  }
+
+  async function handleStartBatch() {
+    if (selectedBatchRoles.length === 0) return;
+    setBatchStarting(true);
+    setError(null);
+    try {
+      const res = await startRoleBatchEvolution({
+        roles: selectedBatchRoles,
+        trainingGames,
+        battleGames,
+        roleConcurrency,
+        gameConcurrency,
+        llmConcurrency,
+        llmRpm,
+      });
+      setActiveBatch(res);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "启动批量演化失败");
+    } finally {
+      setBatchStarting(false);
+    }
+  }
+
+  async function handlePromoteBatch() {
+    if (!activeBatch) return;
+    setBatchPromoting(true);
+    setError(null);
+    try {
+      const next = await promoteRoleBatchEvolution(activeBatch.batch_id);
+      setActiveBatch(next);
+      await loadRoleData(selectedRole);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "批量推广失败");
+    } finally {
+      setBatchPromoting(false);
+    }
+  }
+
+  async function handleRejectBatch() {
+    if (!activeBatch) return;
+    setBatchRejecting(true);
+    setError(null);
+    try {
+      const next = await rejectRoleBatchEvolution(activeBatch.batch_id);
+      setActiveBatch(next);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "批量拒绝失败");
+    } finally {
+      setBatchRejecting(false);
+    }
+  }
+
+  function toggleBatchRole(role: string) {
+    setSelectedBatchRoles((current) =>
+      current.includes(role) ? current.filter((item) => item !== role) : [...current, role],
+    );
   }
 
   async function handlePromote() {
@@ -307,7 +454,10 @@ export function RoleEvolutionPage() {
       {/* Start evolution form */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">启动自进化</CardTitle>
+          <CardTitle className="text-base">
+            <Rocket className="mr-1.5 inline-block h-4 w-4" />
+            单角色演化
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-end gap-4">
@@ -337,9 +487,98 @@ export function RoleEvolutionPage() {
                 className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
+            <NumberField
+              id="re-game-concurrency"
+              label="局并发"
+              min={1}
+              value={gameConcurrency}
+              onChange={setGameConcurrency}
+            />
+            <NumberField
+              id="re-llm-concurrency"
+              label="LLM并发"
+              min={1}
+              value={llmConcurrency}
+              onChange={setLlmConcurrency}
+            />
+            <NumberField
+              id="re-llm-rpm"
+              label="LLM RPM"
+              min={1}
+              value={llmRpm}
+              onChange={setLlmRpm}
+            />
             <Button onClick={() => void handleStart()} disabled={starting || !selectedRole}>
               {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               开始自进化
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            <Layers3 className="mr-1.5 inline-block h-4 w-4" />
+            批量演化
+          </CardTitle>
+          <Badge variant="secondary">{selectedBatchRoles.length} 个角色</Badge>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {roles.map((role) => {
+              const selected = selectedBatchRoles.includes(role);
+              return (
+                <button
+                  key={role}
+                  type="button"
+                  className={
+                    selected
+                      ? "rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
+                      : "rounded-md border border-border bg-background px-3 py-2 text-sm hover:bg-muted"
+                  }
+                  onClick={() => toggleBatchRole(role)}
+                >
+                  {ROLE_LABELS[role] ?? role}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-end gap-4">
+            <NumberField
+              id="re-role-concurrency"
+              label="角色并发"
+              min={1}
+              value={roleConcurrency}
+              onChange={setRoleConcurrency}
+            />
+            <NumberField
+              id="re-batch-game-concurrency"
+              label="局并发"
+              min={1}
+              value={gameConcurrency}
+              onChange={setGameConcurrency}
+            />
+            <NumberField
+              id="re-batch-llm-concurrency"
+              label="LLM并发"
+              min={1}
+              value={llmConcurrency}
+              onChange={setLlmConcurrency}
+            />
+            <NumberField
+              id="re-batch-llm-rpm"
+              label="LLM RPM"
+              min={1}
+              value={llmRpm}
+              onChange={setLlmRpm}
+            />
+            <Button
+              onClick={() => void handleStartBatch()}
+              disabled={batchStarting || selectedBatchRoles.length === 0}
+            >
+              {batchStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              启动批量演化
             </Button>
           </div>
         </CardContent>
@@ -369,6 +608,72 @@ export function RoleEvolutionPage() {
             ) : null}
             {pollExhausted ? (
               <div className="text-xs text-muted-foreground">实时更新已断开，请手动刷新页面</div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {activeBatch ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">批量演化状态</CardTitle>
+            <Badge variant={runStatusVariant(activeBatch.status)}>{runStatusLabel(activeBatch.status)}</Badge>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {activeBatch.roles.map((role) => (
+                <div key={role} className="rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{ROLE_LABELS[role] ?? role}</span>
+                    <Badge variant="secondary">
+                      {runStatusLabel(activeBatch.role_statuses[role] ?? "queued")}
+                    </Badge>
+                  </div>
+                  {activeBatch.role_candidates[role] ? (
+                    <code className="mt-2 block text-xs text-muted-foreground">
+                      {activeBatch.role_candidates[role]?.slice(0, 8)}
+                    </code>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <MetricTile label="单角色通过" value={activeBatch.accepted_roles.length} />
+              <MetricTile label="单角色拒绝" value={activeBatch.rejected_roles.length} />
+              <MetricTile label="组合评估" value={activeBatch.combined_passed ? "通过" : "未通过"} />
+            </div>
+
+            {activeBatch.status === "reviewing" ? (
+              <div className="flex flex-wrap gap-3 border-t border-border pt-3">
+                <Button
+                  onClick={() => void handlePromoteBatch()}
+                  disabled={batchPromoting || !activeBatch.combined_passed}
+                >
+                  {batchPromoting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4" />
+                  )}
+                  批量推广
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => void handleRejectBatch()}
+                  disabled={batchRejecting}
+                >
+                  {batchRejecting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <XCircle className="h-4 w-4" />
+                  )}
+                  拒绝批量结果
+                </Button>
+              </div>
+            ) : null}
+
+            {activeBatch.errors.length > 0 ? (
+              <div className="text-xs text-destructive">{activeBatch.errors.join("; ")}</div>
             ) : null}
           </CardContent>
         </Card>
@@ -538,6 +843,45 @@ function StageProgress({ label, current, total }: { label: string; current: numb
   );
 }
 
+function NumberField({
+  id,
+  label,
+  min,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  min: number;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-sm font-medium" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        type="number"
+        min={min}
+        value={value}
+        onChange={(e) => onChange(Math.max(min, Number(e.target.value)))}
+        className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+      />
+    </div>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-md border border-border bg-background p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
 function recommendationBadge(rec: string) {
   if (rec === "promote") return <Badge className="bg-emerald-500 text-white">建议推广</Badge>;
   if (rec === "caution") return <Badge variant="secondary">谨慎推广</Badge>;
@@ -559,8 +903,11 @@ function runStatusVariant(status: string): "default" | "secondary" | "destructiv
 function runStatusLabel(status: string): string {
   if (status === "pending") return "等待中";
   if (status === "training") return "训练中";
+  if (status === "consolidating") return "整合中";
+  if (status === "applying") return "应用中";
   if (status === "merging") return "合并中";
   if (status === "battling") return "对战中";
+  if (status === "combined_battling") return "组合对战";
   if (status === "reviewing") return "审查中";
   if (status === "promoted") return "已推广";
   if (status === "rejected") return "已拒绝";

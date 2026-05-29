@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent.role_evolution.applier import apply_proposals
-from agent.role_evolution.config import build_baseline_config, build_role_override_config
+from agent.role_evolution.config import build_baseline_config, build_role_override_from_config
 from agent.role_evolution.models import (
     EvolutionRun,
     EvolutionStatus,
@@ -26,7 +26,13 @@ from agent.role_evolution.models import (
     SkillVersionConfig,
 )
 from agent.role_evolution.store import VersionStore, _write_json
-from agent.runtime.model import ModelAdapter
+from agent.runtime.model import (
+    AsyncRateLimiter,
+    ModelAdapter,
+    default_rate_limiter_from_env,
+    limit_model_adapter,
+    rate_limit_model_adapter,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -84,6 +90,7 @@ def _save_state(run: EvolutionRun, store: VersionStore) -> None:
         "failed_stage": run.status if run.status == EvolutionStatus.FAILED else None,
         "training_games": run.training_games,
         "battle_games": run.battle_games,
+        "baseline_config": run.baseline_config.to_dict() if run.baseline_config is not None else None,
     }
     _write_json(path, state)
 
@@ -152,6 +159,10 @@ async def run_evolution(
     training_games: int = 20,
     battle_games: int = 10,
     model_adapter: ModelAdapter | None = None,
+    baseline_config: SkillVersionConfig | None = None,
+    game_concurrency: int = 1,
+    llm_semaphore: asyncio.Semaphore | None = None,
+    llm_rate_limiter: AsyncRateLimiter | None = None,
     on_progress: Callable[[str, dict], None] | None = None,
     selfplay_runner: Callable | None = None,
     consolidator: Callable | None = None,
@@ -175,9 +186,21 @@ async def run_evolution(
     if battle_runner is None:
         battle_runner = _run_battle
 
-    # Resolve parent hash (current baseline)
-    baseline = store.get_baseline(role)
-    parent_hash = baseline.hash
+    # Freeze the baseline config for the whole run.  This avoids a later
+    # baseline change leaking into training or battle for the same candidate.
+    baseline_config = baseline_config or build_baseline_config(store)
+    try:
+        parent_hash = baseline_config.role_versions[role]
+    except KeyError as exc:
+        raise KeyError(f"Role '{role}' not found in baseline config") from exc
+    store.load_version(role, parent_hash)
+    llm_rate_limiter = llm_rate_limiter or default_rate_limiter_from_env()
+    limited_model = (
+        limit_model_adapter(model_adapter, llm_semaphore)
+        if model_adapter is not None else None
+    )
+    if limited_model is not None:
+        limited_model = rate_limit_model_adapter(limited_model, llm_rate_limiter)
 
     run_id = f"evo_{uuid.uuid4().hex[:12]}"
     rd = _run_dir(store, run_id)
@@ -190,29 +213,32 @@ async def run_evolution(
         status=EvolutionStatus.QUEUED,
         training_games=training_games,
         battle_games=battle_games,
+        baseline_config=baseline_config,
     )
     _save_state(run, store)
 
     try:
         # ── Stage 1: Training ──────────────────────────────────────────
         run = await _stage_training(
-            run, store, training_games, model_adapter,
+            run, store, training_games, limited_model, game_concurrency,
+            llm_semaphore, llm_rate_limiter,
             selfplay_runner, on_progress,
         )
 
         # ── Stage 2: Consolidating ─────────────────────────────────────
         run = await _stage_consolidating(
-            run, store, model_adapter, consolidator, on_progress,
+            run, store, limited_model, consolidator, on_progress,
         )
 
         # ── Stage 3: Applying ──────────────────────────────────────────
         run = await _stage_applying(
-            run, store, model_adapter, applier,
+            run, store, limited_model, applier,
         )
 
         # ── Stage 4: Battling ──────────────────────────────────────────
         run = await _stage_battling(
-            run, store, battle_games, model_adapter,
+            run, store, battle_games, limited_model, game_concurrency,
+            llm_semaphore, llm_rate_limiter,
             selfplay_runner, battle_runner, on_progress,
         )
 
@@ -241,6 +267,9 @@ async def _stage_training(
     store: VersionStore,
     training_games: int,
     model_adapter: ModelAdapter | None,
+    game_concurrency: int,
+    llm_semaphore: asyncio.Semaphore | None,
+    llm_rate_limiter: AsyncRateLimiter | None,
     selfplay_runner: Callable,
     on_progress: Callable | None,
 ) -> EvolutionRun:
@@ -253,9 +282,8 @@ async def _stage_training(
 
     run_dir = _run_dir(store, run.run_id)
 
-    # Resolve baseline skill directory for the target role
-    baseline_version = store.get_baseline(run.role)
-    skill_dir = store.get_skill_dir(run.role, baseline_version.hash)
+    baseline_config = run.baseline_config or build_baseline_config(store)
+    skill_dir = _build_composite_skill_dir(store, baseline_config)
 
     config = SelfPlayConfig(
         games=training_games,
@@ -263,20 +291,35 @@ async def _stage_training(
         enable_mid_memory=True,
         enable_long_term_consolidation=False,  # we consolidate manually in stage 2
         skill_dir=skill_dir,
+        game_concurrency=game_concurrency,
     )
 
+    completed = 0
+
     def _on_game(idx: int, result: Any) -> None:
+        nonlocal completed
+        completed += 1
         _notify(on_progress, "training_game", {
             "run_id": run.run_id,
             "game_index": idx,
+            "completed": completed,
+            "total": training_games,
             "game_id": result.game_id if hasattr(result, "game_id") else str(idx),
         })
 
-    await selfplay_runner(
-        config,
-        model=model_adapter,
-        on_game_complete=_on_game,
-    )
+    try:
+        await _call_selfplay_runner(
+            selfplay_runner,
+            config,
+            model=model_adapter,
+            on_game_complete=_on_game,
+            llm_semaphore=llm_semaphore,
+            llm_rate_limiter=llm_rate_limiter,
+        )
+    finally:
+        import shutil
+
+        shutil.rmtree(skill_dir, ignore_errors=True)
     return run
 
 
@@ -298,6 +341,7 @@ async def _stage_consolidating(
         run_dir, run.role, model_adapter,
         run_id=run.run_id,
         parent_hash=run.parent_hash,
+        skill_root=store.get_skill_dir(run.role, run.parent_hash),
     )
     run.proposals = consolidation
     _save_state(run, store)
@@ -354,6 +398,9 @@ async def _stage_battling(
     store: VersionStore,
     battle_games: int,
     model_adapter: ModelAdapter | None,
+    game_concurrency: int,
+    llm_semaphore: asyncio.Semaphore | None,
+    llm_rate_limiter: AsyncRateLimiter | None,
     selfplay_runner: Callable,
     battle_runner: Callable,
     on_progress: Callable | None,
@@ -369,9 +416,14 @@ async def _stage_battling(
         _save_state(run, store)
         return run
 
-    battle_result = await battle_runner(
+    battle_result = await _call_battle_runner(
+        battle_runner,
         store, run.role, run.candidate_hash, battle_games,
         model_adapter, selfplay_runner, on_progress,
+        baseline_config=run.baseline_config,
+        game_concurrency=game_concurrency,
+        llm_semaphore=llm_semaphore,
+        llm_rate_limiter=llm_rate_limiter,
     )
     run.battle_result = battle_result
 
@@ -396,24 +448,63 @@ async def _run_battle(
     model_adapter: ModelAdapter | None,
     selfplay_runner: Callable,
     on_progress: Callable | None,
+    *,
+    baseline_config: SkillVersionConfig | None = None,
+    game_concurrency: int = 1,
+    llm_semaphore: asyncio.Semaphore | None = None,
+    llm_rate_limiter: AsyncRateLimiter | None = None,
 ) -> dict[str, Any]:
     """Run baseline vs candidate battle.
 
     Two configs (baseline vs candidate) are each run with the same seed range.
     Per-role metrics are aggregated and returned as a battle summary.
     """
+    seed_start = 10_000  # high seed to avoid collision with training
+
+    svc_baseline = baseline_config or build_baseline_config(store)
+    svc_candidate = build_role_override_from_config(svc_baseline, role, candidate_hash)
+
+    return await _run_config_battle(
+        store=store,
+        baseline_config=svc_baseline,
+        candidate_config=svc_candidate,
+        battle_games=battle_games,
+        model_adapter=model_adapter,
+        selfplay_runner=selfplay_runner,
+        on_progress=on_progress,
+        seed_start=seed_start,
+        game_concurrency=game_concurrency,
+        llm_semaphore=llm_semaphore,
+        llm_rate_limiter=llm_rate_limiter,
+        role=role,
+        candidate_hash=candidate_hash,
+    )
+
+
+async def _run_config_battle(
+    *,
+    store: VersionStore,
+    baseline_config: SkillVersionConfig,
+    candidate_config: SkillVersionConfig,
+    battle_games: int,
+    model_adapter: ModelAdapter | None,
+    selfplay_runner: Callable,
+    on_progress: Callable | None,
+    seed_start: int = 10_000,
+    game_concurrency: int = 1,
+    llm_semaphore: asyncio.Semaphore | None = None,
+    llm_rate_limiter: AsyncRateLimiter | None = None,
+    role: str | None = None,
+    candidate_hash: str | None = None,
+) -> dict[str, Any]:
+    """Run a fixed-seed battle between two full role-version configs."""
     import shutil
 
     from agent.evaluation.selfplay import SelfPlayConfig
 
-    seed_start = 10_000  # high seed to avoid collision with training
-
-    svc_baseline = build_baseline_config(store)
-    svc_candidate = build_role_override_config(store, role, candidate_hash)
-
     # Build composite skill directories for each side
-    skill_dir_a = _build_composite_skill_dir(store, svc_baseline)
-    skill_dir_b = _build_composite_skill_dir(store, svc_candidate)
+    skill_dir_a = _build_composite_skill_dir(store, baseline_config)
+    skill_dir_b = _build_composite_skill_dir(store, candidate_config)
 
     results_a: list[Any] = []
     results_b: list[Any] = []
@@ -440,6 +531,7 @@ async def _run_battle(
             enable_mid_memory=False,
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_a,
+            game_concurrency=game_concurrency,
         )
         cfg_b = SelfPlayConfig(
             games=battle_games,
@@ -447,10 +539,25 @@ async def _run_battle(
             enable_mid_memory=False,
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_b,
+            game_concurrency=game_concurrency,
         )
         await asyncio.gather(
-            selfplay_runner(cfg_a, model=model_adapter, on_game_complete=_on_game_a),
-            selfplay_runner(cfg_b, model=model_adapter, on_game_complete=_on_game_b),
+            _call_selfplay_runner(
+                selfplay_runner,
+                cfg_a,
+                model=model_adapter,
+                on_game_complete=_on_game_a,
+                llm_semaphore=llm_semaphore,
+                llm_rate_limiter=llm_rate_limiter,
+            ),
+            _call_selfplay_runner(
+                selfplay_runner,
+                cfg_b,
+                model=model_adapter,
+                on_game_complete=_on_game_b,
+                llm_semaphore=llm_semaphore,
+                llm_rate_limiter=llm_rate_limiter,
+            ),
         )
     finally:
         # Clean up temporary directories
@@ -465,9 +572,15 @@ async def _run_battle(
         "role": role,
         "candidate_hash": candidate_hash,
         "battle_games": battle_games,
+        "games_played": battle_games,
+        "seeds": list(range(seed_start, seed_start + battle_games)),
+        "baseline_config": baseline_config.to_dict(),
+        "candidate_config": candidate_config.to_dict(),
         "baseline": _aggregate_metrics(results_a),
         "candidate": _aggregate_metrics(results_b),
     }
+    summary["baseline_metrics"] = _metrics_for_leaderboard(summary["baseline"], role)
+    summary["candidate_metrics"] = _metrics_for_leaderboard(summary["candidate"], role)
     return summary
 
 
@@ -504,9 +617,15 @@ def _aggregate_metrics(results: list[Any]) -> dict[str, Any]:
         vals = [getattr(r, attr, default) for r in valid]
         return sum(vals) / len(vals) if vals else 0.0
 
+    total_decisions = sum(getattr(r, "decision_count", 0) for r in valid)
+    total_fallbacks = sum(getattr(r, "fallback_count", 0) for r in valid)
+    by_role = _aggregate_result_by_role(valid)
+
     return {
         "games": n,
         "errors": n - len(valid),
+        "werewolf_win_rate": _win_rate(valid, "werewolf"),
+        "villager_win_rate": _win_rate(valid, "villager"),
         "avg_review_score": _avg("review_score", 0.0),
         "avg_role_weighted_score": _avg("role_weighted_score", 0.0),
         "avg_speech_score": _avg("avg_speech_score", 0.0),
@@ -515,10 +634,136 @@ def _aggregate_metrics(results: list[Any]) -> dict[str, Any]:
         "avg_information_score": _avg("information_score", 0.0),
         "avg_cooperation_score": _avg("cooperation_score", 0.0),
         "avg_confidence": _avg("avg_confidence", 0.0),
-        "fallback_rate": _avg("fallback_count", 0.0),
+        "fallback_rate": total_fallbacks / total_decisions if total_decisions else 0.0,
         "vote_accuracy": _avg("vote_accuracy", 0.0),
         "skill_accuracy": _avg("skill_accuracy", 0.0),
+        "by_role": by_role,
     }
+
+
+def _metrics_for_leaderboard(
+    metrics: dict[str, Any],
+    role: str | None = None,
+) -> dict[str, dict[str, float]]:
+    """Expose coarse aggregate metrics in the shape expected by role leaderboard."""
+    source = (
+        metrics.get("by_role", {}).get(role, {})
+        if role is not None and isinstance(metrics.get("by_role"), dict)
+        else {}
+    )
+    role_metrics = {
+        "win_rate": 0.0,
+        "role_weighted_score": float(
+            source.get("role_weighted_score", metrics.get("avg_role_weighted_score", 0.0))
+        ),
+        "speech_score": float(source.get("speech_score", metrics.get("avg_speech_score", 0.0))),
+        "vote_score": float(source.get("vote_score", metrics.get("avg_vote_score", 0.0))),
+        "skill_score": float(source.get("skill_score", metrics.get("avg_skill_score", 0.0))),
+        "information_score": float(
+            source.get("information_score", metrics.get("avg_information_score", 0.0))
+        ),
+        "cooperation_score": float(
+            source.get("cooperation_score", metrics.get("avg_cooperation_score", 0.0))
+        ),
+        "fallback_rate": float(source.get("fallback_rate", metrics.get("fallback_rate", 0.0))),
+        "bad_case_rate": float(source.get("bad_case_rate", 0.0)),
+    }
+    result = {
+        "werewolves": {"win_rate": float(metrics.get("werewolf_win_rate", 0.0))},
+        "villagers": {"win_rate": float(metrics.get("villager_win_rate", 0.0))},
+    }
+    if role is not None:
+        result[role] = role_metrics
+    return result
+
+
+def _aggregate_result_by_role(results: list[Any]) -> dict[str, dict[str, float | int]]:
+    accum: dict[str, dict[str, float | int]] = {}
+    for result in results:
+        for role, metrics in getattr(result, "by_role", {}).items():
+            state = accum.setdefault(role, {
+                "players": 0,
+                "wins": 0,
+                "losses": 0,
+                "total_score_sum": 0.0,
+                "role_weighted_score_sum": 0.0,
+                "speech_score_sum": 0.0,
+                "vote_score_sum": 0.0,
+                "skill_score_sum": 0.0,
+                "information_score_sum": 0.0,
+                "cooperation_score_sum": 0.0,
+                "decision_count": 0,
+                "fallback_count": 0,
+                "policy_adjusted_count": 0,
+                "bad_case_count": 0,
+            })
+            players = int(metrics.get("players", 0))
+            state["players"] = int(state["players"]) + players
+            state["wins"] = int(state["wins"]) + int(metrics.get("wins", 0))
+            state["losses"] = int(state["losses"]) + int(metrics.get("losses", 0))
+            state["decision_count"] = int(state["decision_count"]) + int(metrics.get("decision_count", 0))
+            state["fallback_count"] = int(state["fallback_count"]) + int(metrics.get("fallback_count", 0))
+            state["policy_adjusted_count"] = (
+                int(state["policy_adjusted_count"]) + int(metrics.get("policy_adjusted_count", 0))
+            )
+            state["bad_case_count"] = int(state["bad_case_count"]) + int(metrics.get("bad_case_count", 0))
+            for field in (
+                "total_score",
+                "role_weighted_score",
+                "speech_score",
+                "vote_score",
+                "skill_score",
+                "information_score",
+                "cooperation_score",
+            ):
+                state[f"{field}_sum"] = (
+                    float(state[f"{field}_sum"]) + float(metrics.get(field, 0.0)) * players
+                )
+    return {role: _finalize_role_metrics(state) for role, state in sorted(accum.items())}
+
+
+def _finalize_role_metrics(state: dict[str, float | int]) -> dict[str, float | int]:
+    players = int(state.get("players", 0))
+    decisions = int(state.get("decision_count", 0))
+    bad_cases = int(state.get("bad_case_count", 0))
+
+    def _avg(field: str) -> float:
+        return round(float(state.get(f"{field}_sum", 0.0)) / players, 3) if players else 0.0
+
+    return {
+        "players": players,
+        "wins": int(state.get("wins", 0)),
+        "losses": int(state.get("losses", 0)),
+        "win_rate": round(int(state.get("wins", 0)) / players, 3) if players else 0.0,
+        "total_score": _avg("total_score"),
+        "role_weighted_score": _avg("role_weighted_score"),
+        "speech_score": _avg("speech_score"),
+        "vote_score": _avg("vote_score"),
+        "skill_score": _avg("skill_score"),
+        "information_score": _avg("information_score"),
+        "cooperation_score": _avg("cooperation_score"),
+        "decision_count": decisions,
+        "fallback_count": int(state.get("fallback_count", 0)),
+        "policy_adjusted_count": int(state.get("policy_adjusted_count", 0)),
+        "fallback_rate": round(int(state.get("fallback_count", 0)) / decisions, 4) if decisions else 0.0,
+        "policy_adjusted_rate": round(int(state.get("policy_adjusted_count", 0)) / decisions, 4)
+        if decisions else 0.0,
+        "bad_case_count": bad_cases,
+        "bad_case_rate": round(bad_cases / decisions, 4) if decisions else 0.0,
+    }
+
+
+def _win_rate(results: list[Any], team: str) -> float:
+    if not results:
+        return 0.0
+    wins = 0
+    for result in results:
+        winner = str(getattr(result, "winner", "")).lower()
+        if team == "werewolf" and "werewolf" in winner:
+            wins += 1
+        elif team == "villager" and "villager" in winner:
+            wins += 1
+    return wins / len(results)
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +855,47 @@ async def reject(run: EvolutionRun, store: VersionStore) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _call_battle_runner(
+    battle_runner: Callable,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Call injected battle runners without forcing new keyword arguments on tests."""
+    return await _call_with_supported_kwargs(battle_runner, *args, **kwargs)
+
+
+async def _call_selfplay_runner(
+    selfplay_runner: Callable,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Call injected selfplay runners without requiring every optional kwarg."""
+    return await _call_with_supported_kwargs(selfplay_runner, *args, **kwargs)
+
+
+async def _call_with_supported_kwargs(
+    func: Callable,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    import inspect
+
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return await func(*args, **kwargs)
+
+    accepts_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in signature.parameters.values()
+    )
+    if accepts_kwargs:
+        return await func(*args, **kwargs)
+
+    filtered = {k: v for k, v in kwargs.items() if k in signature.parameters}
+    return await func(*args, **filtered)
 
 
 def _notify(callback: Callable | None, stage: str, data: dict) -> None:

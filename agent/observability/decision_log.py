@@ -7,6 +7,7 @@ persist each decision for post-game review and leaderboard evaluation.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -17,6 +18,7 @@ from engine.models import ActionType
 @dataclass(slots=True)
 class DecisionRecord:
     action_type: ActionType
+    decision_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     day: int = 0
     phase: str = ""
     player_id: int | None = None
@@ -40,6 +42,7 @@ class DecisionRecord:
 
     def to_dict(self) -> dict:
         return {
+            "decision_id": self.decision_id,
             "day": self.day,
             "phase": self.phase,
             "player_id": self.player_id,

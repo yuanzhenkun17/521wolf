@@ -13,6 +13,7 @@ from pydantic import Field
 from ui.backend.game_runner import GameManager
 from ui.backend.selfplay_runner import SelfplayManager
 from ui.backend.role_evolution_runner import RoleEvolutionRunner
+from ui.backend.batch_role_evolution_runner import RoleBatchEvolutionRunner
 from agent.role_evolution.pipeline import InvalidRunStateError, BaselineChangedError
 
 
@@ -32,6 +33,9 @@ class SelfplayRequest(BaseModel):
     max_days: int = Field(default=20, ge=1, le=100)
     enable_sheriff: bool = True
     enable_batch_dream: bool = False
+    game_concurrency: int = Field(default=1, ge=1, le=20)
+    llm_concurrency: int = Field(default=5, ge=1, le=100)
+    llm_rpm: int = Field(default=60, ge=1, le=600)
     label: str | None = None
 
 
@@ -39,6 +43,19 @@ class RoleEvolutionStartRequest(BaseModel):
     role: str
     training_games: int = Field(default=20, ge=1, le=100)
     battle_games: int = Field(default=10, ge=1, le=100)
+    game_concurrency: int = Field(default=1, ge=1, le=20)
+    llm_concurrency: int = Field(default=5, ge=1, le=100)
+    llm_rpm: int = Field(default=60, ge=1, le=600)
+
+
+class RoleEvolutionBatchStartRequest(BaseModel):
+    roles: list[str] = Field(min_length=1)
+    training_games: int = Field(default=20, ge=1, le=100)
+    battle_games: int = Field(default=10, ge=1, le=100)
+    role_concurrency: int = Field(default=2, ge=1, le=20)
+    game_concurrency: int = Field(default=1, ge=1, le=20)
+    llm_concurrency: int = Field(default=5, ge=1, le=100)
+    llm_rpm: int = Field(default=60, ge=1, le=600)
 
 
 def _default_version_store():
@@ -48,7 +65,9 @@ def _default_version_store():
 
 manager = GameManager()
 selfplay_manager = SelfplayManager()
-role_evolution_runner = RoleEvolutionRunner(store=_default_version_store())
+version_store = _default_version_store()
+role_evolution_runner = RoleEvolutionRunner(store=version_store)
+role_batch_evolution_runner = RoleBatchEvolutionRunner(store=version_store)
 app = FastAPI(title="521wolf UI Backend")
 
 app.add_middleware(
@@ -206,6 +225,9 @@ async def start_selfplay(request: SelfplayRequest | None = None) -> dict[str, An
         max_days=request.max_days,
         enable_sheriff=request.enable_sheriff,
         enable_batch_dream=request.enable_batch_dream,
+        game_concurrency=request.game_concurrency,
+        llm_concurrency=request.llm_concurrency,
+        llm_rpm=request.llm_rpm,
         label=request.label,
     )
     return run.snapshot()
@@ -226,11 +248,109 @@ def get_selfplay(run_id: str) -> dict[str, Any]:
     return run.snapshot()
 
 
+# ── Selfplay Game Detail ─────────────────────────────────────────────────────
+
+
+def _resolve_selfplay_run_dir(run_id: str) -> Path | None:
+    """Find the output directory for a selfplay run."""
+    run = selfplay_manager.get_run(run_id)
+    if run is not None and run.artifact_run_id:
+        path = Path("runs/selfplay") / run.artifact_run_id
+        if path.exists():
+            return path
+    # Fallback to direct path
+    path = Path("runs/selfplay") / run_id
+    return path if path.exists() else None
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read a JSONL file and return a list of parsed objects."""
+    lines: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            lines.append(json.loads(line))
+    return lines
+
+
+@app.get("/api/selfplay/{run_id}/games")
+def list_selfplay_games(run_id: str) -> dict[str, Any]:
+    """List all games in a selfplay run with basic info."""
+    run_dir = _resolve_selfplay_run_dir(run_id)
+    if run_dir is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    games_dir = run_dir / "games"
+    if not games_dir.exists():
+        return {"run_id": run_id, "games": []}
+    game_dirs = sorted(g for g in games_dir.iterdir() if g.is_dir())
+    games: list[dict[str, Any]] = []
+    for gdir in game_dirs:
+        game_id = gdir.name
+        events_path = gdir / "game_events.jsonl"
+        info: dict[str, Any] = {"game_id": game_id}
+        if events_path.exists():
+            events = _read_jsonl(events_path)
+            info["event_count"] = len(events)
+            # Extract summary from last event
+            if events:
+                last = events[-1]
+                payload = last.get("payload") or {}
+                info["winner"] = payload.get("winner")
+                info["day"] = last.get("day")
+                info["phase"] = last.get("phase")
+        else:
+            info["event_count"] = 0
+        games.append(info)
+    return {"run_id": run_id, "games": games}
+
+
+@app.get("/api/selfplay/{run_id}/games/{game_id}/events")
+def get_selfplay_game_events(run_id: str, game_id: str) -> dict[str, Any]:
+    """Get all events for a specific game in a selfplay run."""
+    run_dir = _resolve_selfplay_run_dir(run_id)
+    if run_dir is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    events_path = run_dir / "games" / game_id / "game_events.jsonl"
+    if not events_path.exists():
+        raise HTTPException(status_code=404, detail="game events not found")
+    events = _read_jsonl(events_path)
+    return {"run_id": run_id, "game_id": game_id, "events": events}
+
+
+@app.get("/api/selfplay/{run_id}/games/{game_id}/decisions")
+def get_selfplay_game_decisions(run_id: str, game_id: str) -> dict[str, Any]:
+    """Get agent decisions for a specific game."""
+    run_dir = _resolve_selfplay_run_dir(run_id)
+    if run_dir is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    decisions_path = run_dir / "games" / game_id / "agent_decisions.jsonl"
+    if not decisions_path.exists():
+        raise HTTPException(status_code=404, detail="game decisions not found")
+    decisions = _read_jsonl(decisions_path)
+    return {"run_id": run_id, "game_id": game_id, "decisions": decisions}
+
+
+@app.get("/api/selfplay/{run_id}/games/{game_id}/archive")
+def get_selfplay_game_archive(run_id: str, game_id: str) -> dict[str, Any]:
+    """Get full archive for a specific game."""
+    run_dir = _resolve_selfplay_run_dir(run_id)
+    if run_dir is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    archive_path = run_dir / "games" / game_id / "archive.json"
+    if not archive_path.exists():
+        raise HTTPException(status_code=404, detail="game archive not found")
+    return json.loads(archive_path.read_text(encoding="utf-8"))
+
+
 
 # ── Role Evolution ──────────────────────────────────────────────────────────
 
 
-def register_role_evolution_routes(app: FastAPI, runner: RoleEvolutionRunner) -> None:
+def register_role_evolution_routes(
+    app: FastAPI,
+    runner: RoleEvolutionRunner,
+    batch_runner: RoleBatchEvolutionRunner,
+) -> None:
     """Register all role-evolution and role-version routes on *app*."""
 
     # -- Role versions -------------------------------------------------------
@@ -343,6 +463,84 @@ def register_role_evolution_routes(app: FastAPI, runner: RoleEvolutionRunner) ->
             "runs": runner.list_runs(),
         }
 
+    @app.get("/api/role-evolution/batches")
+    def list_role_batch_evolution_runs() -> dict[str, Any]:
+        """List all tracked batch role evolution runs."""
+        return {
+            "kind": "role_batch_evolution_runs",
+            "schema_version": 1,
+            "batches": batch_runner.list_batches(),
+        }
+
+    @app.post("/api/role-evolution/batch/start", status_code=201)
+    async def start_role_batch_evolution(request: RoleEvolutionBatchStartRequest) -> dict[str, Any]:
+        """Start a batch role evolution run."""
+        missing: list[str] = []
+        for role in request.roles:
+            try:
+                runner.store.get_baseline(role)
+            except FileNotFoundError:
+                missing.append(role)
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"roles have no baseline version: {', '.join(missing)}",
+            )
+        try:
+            tracked = await batch_runner.start_batch(
+                roles=request.roles,
+                training_games=request.training_games,
+                battle_games=request.battle_games,
+                role_concurrency=request.role_concurrency,
+                game_concurrency=request.game_concurrency,
+                llm_concurrency=request.llm_concurrency,
+                llm_rpm=request.llm_rpm,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return tracked.snapshot()
+
+    @app.get("/api/role-evolution/batch/{batch_id}/status")
+    def get_role_batch_evolution_status(batch_id: str) -> dict[str, Any]:
+        tracked = batch_runner.get_batch(batch_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="batch not found")
+        return tracked.snapshot()
+
+    @app.post("/api/role-evolution/batch/{batch_id}/promote")
+    async def promote_role_batch_evolution(batch_id: str) -> dict[str, Any]:
+        try:
+            tracked = await batch_runner.promote_batch(batch_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="batch not found")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return tracked.snapshot()
+
+    @app.post("/api/role-evolution/batch/{batch_id}/reject")
+    async def reject_role_batch_evolution(batch_id: str) -> dict[str, Any]:
+        try:
+            tracked = await batch_runner.reject_batch(batch_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="batch not found")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return tracked.snapshot()
+
+    @app.get("/api/role-evolution/batch/{batch_id}/events")
+    async def stream_role_batch_evolution_events(batch_id: str) -> StreamingResponse:
+        tracked = batch_runner.get_batch(batch_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="batch not found")
+
+        async def event_stream():
+            async for chunk in batch_runner.sse_events(batch_id):
+                yield chunk
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
     @app.post("/api/role-evolution/start", status_code=201)
     async def start_role_evolution(request: RoleEvolutionStartRequest) -> dict[str, Any]:
         """Start a new role evolution run."""
@@ -359,6 +557,9 @@ def register_role_evolution_routes(app: FastAPI, runner: RoleEvolutionRunner) ->
             role=request.role,
             training_games=request.training_games,
             battle_games=request.battle_games,
+            game_concurrency=request.game_concurrency,
+            llm_concurrency=request.llm_concurrency,
+            llm_rpm=request.llm_rpm,
         )
         return tracked.snapshot()
 
@@ -428,4 +629,4 @@ def register_role_evolution_routes(app: FastAPI, runner: RoleEvolutionRunner) ->
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-register_role_evolution_routes(app, role_evolution_runner)
+register_role_evolution_routes(app, role_evolution_runner, role_batch_evolution_runner)

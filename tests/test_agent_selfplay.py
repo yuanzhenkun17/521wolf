@@ -26,6 +26,7 @@ class SelfPlayConfigTests(unittest.TestCase):
         self.assertTrue(config.enable_mid_memory)
         self.assertEqual(config.temperature, 0.2)
         self.assertEqual(config.output_dir, Path("runs/selfplay"))
+        self.assertEqual(config.game_concurrency, 1)
 
     def test_custom_config(self):
         config = SelfPlayConfig(
@@ -34,12 +35,14 @@ class SelfPlayConfigTests(unittest.TestCase):
             max_days=15,
             temperature=0.5,
             enable_review=False,
+            game_concurrency=3,
         )
         self.assertEqual(config.games, 5)
         self.assertEqual(config.seed_start, 100)
         self.assertEqual(config.max_days, 15)
         self.assertEqual(config.temperature, 0.5)
         self.assertFalse(config.enable_review)
+        self.assertEqual(config.game_concurrency, 3)
 
 
 class SelfPlayGameResultTests(unittest.TestCase):
@@ -172,6 +175,66 @@ class SelfPlayResultTests(unittest.TestCase):
         self.assertEqual(s["policy_adjusted_count"], 10)
         self.assertEqual(s["fallback_rate"], 0.05)
         self.assertEqual(s["policy_adjusted_rate"], 0.1)
+
+    def test_summary_aggregates_by_role_metrics(self):
+        games = [
+            SelfPlayGameResult(
+                game_id="g1", seed=1, winner="villagers", days=3,
+                player_roles={}, decision_count=10, fallback_count=1,
+                policy_adjusted_count=0, avg_confidence=0.5,
+                review_score=7.0, output_dir=Path("."),
+                by_role={
+                    "seer": {
+                        "players": 1,
+                        "wins": 1,
+                        "losses": 0,
+                        "role_weighted_score": 8.0,
+                        "speech_score": 7.0,
+                        "vote_score": 6.0,
+                        "skill_score": 9.0,
+                        "information_score": 8.0,
+                        "cooperation_score": 6.0,
+                        "decision_count": 4,
+                        "fallback_count": 1,
+                        "policy_adjusted_count": 0,
+                        "bad_case_count": 1,
+                    }
+                },
+            ),
+            SelfPlayGameResult(
+                game_id="g2", seed=2, winner="werewolves", days=4,
+                player_roles={}, decision_count=8, fallback_count=0,
+                policy_adjusted_count=0, avg_confidence=0.5,
+                review_score=6.0, output_dir=Path("."),
+                by_role={
+                    "seer": {
+                        "players": 1,
+                        "wins": 0,
+                        "losses": 1,
+                        "role_weighted_score": 6.0,
+                        "speech_score": 5.0,
+                        "vote_score": 6.0,
+                        "skill_score": 7.0,
+                        "information_score": 6.0,
+                        "cooperation_score": 5.0,
+                        "decision_count": 4,
+                        "fallback_count": 0,
+                        "policy_adjusted_count": 1,
+                        "bad_case_count": 0,
+                    }
+                },
+            ),
+        ]
+
+        summary = SelfPlayResult(config=SelfPlayConfig(games=2), games=games).summary
+
+        seer = summary["by_role"]["seer"]
+        self.assertEqual(seer["players"], 2)
+        self.assertEqual(seer["wins"], 1)
+        self.assertEqual(seer["losses"], 1)
+        self.assertEqual(seer["role_weighted_score"], 7.0)
+        self.assertEqual(seer["fallback_rate"], 0.125)
+        self.assertEqual(seer["bad_case_rate"], 0.125)
 
     def test_summary_markdown_output(self):
         g = SelfPlayGameResult(

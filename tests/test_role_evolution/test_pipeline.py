@@ -41,6 +41,7 @@ class _FakeSelfPlayConfig:
     enable_mid_memory: bool = True
     enable_long_term_consolidation: bool = False
     skill_dir: Path | None = None
+    game_concurrency: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -248,11 +249,66 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run.status, EvolutionStatus.REVIEWING)
             self.assertEqual(run.training_games, 5)
             self.assertEqual(run.battle_games, 3)
+            self.assertIsNotNone(run.baseline_config)
             # state.json written at the reviewing stage
             state_path = store._base / "runs" / "evolution" / run.run_id / "state.json"
             self.assertTrue(state_path.exists())
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "reviewing")
+            self.assertIn("baseline_config", state)
+
+    async def test_training_uses_composite_baseline_skill_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            store = VersionStore(tmp_path / "role_versions")
+            seer_hash = await store.save_version(
+                "seer", {"claim.md": "# Seer\n"}, parent_hash=None, source="test_setup",
+            )
+            await store.save_version(
+                "werewolf", {"attack.md": "# Wolf\n"}, parent_hash=None, source="test_setup",
+            )
+
+            async def fake_selfplay(config, **kwargs):
+                self.assertEqual(config.game_concurrency, 3)
+                self.assertTrue((config.skill_dir / "seer").is_dir())
+                self.assertTrue((config.skill_dir / "werewolf").is_dir())
+
+                @dataclass
+                class _FakeResult:
+                    config: object
+                    games: list = field(default_factory=list)
+                    run_id: str = "train_0"
+
+                return _FakeResult(config=config)
+
+            async def no_proposals(run_dir, role_arg, model_adapter, **kwargs):
+                return SkillConsolidation(
+                    role=role_arg,
+                    run_id="evo_test",
+                    parent_hash=seer_hash,
+                    generated_at="2025-01-01T00:00:00Z",
+                    source_window=5,
+                    prompt_version="v1",
+                    proposals=[],
+                )
+
+            _install_fake_selfplay_module()
+            try:
+                run = await run_evolution(
+                    store=store,
+                    role="seer",
+                    training_games=1,
+                    battle_games=1,
+                    game_concurrency=3,
+                    selfplay_runner=fake_selfplay,
+                    consolidator=no_proposals,
+                    applier=_make_fake_applier(),
+                    battle_runner=_make_fake_battle_runner(),
+                )
+            finally:
+                _restore_selfplay_module()
+
+            self.assertEqual(run.parent_hash, seer_hash)
 
     # -- 2. promote updates baseline if CAS matches --------------------------
     async def test_promote_updates_baseline_if_cas_matches(self):

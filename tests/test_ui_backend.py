@@ -171,6 +171,15 @@ class UiBackendTests(unittest.TestCase):
         finally:
             app_module.selfplay_manager = old_manager
 
+    def test_list_role_batch_evolution_runs_endpoint(self):
+        client = TestClient(app)
+
+        response = client.get("/api/role-evolution/batches")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["kind"], "role_batch_evolution_runs")
+        self.assertIn("batches", response.json())
+
 
 if __name__ == "__main__":
     unittest.main()

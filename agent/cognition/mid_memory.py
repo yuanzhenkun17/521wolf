@@ -61,9 +61,11 @@ class DecisionReview:
     verdict: str
     reasoning: str
     improvement: str
+    decision_id: str = ""
 
     def to_dict(self) -> dict:
         return {
+            "decision_id": self.decision_id,
             "player_id": self.player_id,
             "role": self.role,
             "day": self.day,
@@ -290,20 +292,43 @@ def _build_messages(
     winner_team: str,
 ) -> list[dict[str, str]]:
     simplified_decisions: dict[int, list[dict]] = {}
+    decision_ids: list[str] = []
     for pid, decisions in agent_decisions.items():
         simplified = []
-        for d in decisions:
+        for idx, d in enumerate(decisions):
             parsed = d.get("parsed_decision") or {}
+            decision_id = str(d.get("decision_id") or f"p{pid}_d{idx}")
+            decision_ids.append(decision_id)
             simplified.append({
+                "decision_id": decision_id,
+                "player_id": d.get("player_id", pid),
+                "role": d.get("role", roles.get(pid, "unknown")),
                 "day": d.get("day"),
                 "phase": d.get("phase"),
                 "action_type": d.get("action_type"),
                 "selected_skills": d.get("selected_skills", []),
-                "target": d.get("selected_target") or parsed.get("target"),
-                "choice": d.get("selected_choice") or parsed.get("choice"),
+                "candidates": d.get("candidates", []),
+                "target": (
+                    d.get("selected_target")
+                    if d.get("selected_target") is not None
+                    else parsed.get("target")
+                ),
+                "choice": (
+                    d.get("selected_choice")
+                    if d.get("selected_choice") is not None
+                    else parsed.get("choice")
+                ),
+                "public_text": str(d.get("public_text", ""))[:200],
                 "confidence": d.get("confidence"),
+                "alternatives": d.get("alternatives", []),
+                "rejected_reasons": d.get("rejected_reasons", []),
                 "source": d.get("source"),
-                "private_reasoning": parsed.get("private_reasoning", "")[:200],
+                "policy_adjustments": d.get("policy_adjustments", []),
+                "errors": d.get("errors", []),
+                "memory_refs": d.get("memory_refs", []),
+                "private_reasoning": str(
+                    parsed.get("private_reasoning") or d.get("private_reasoning", "")
+                )[:300],
             })
         simplified_decisions[pid] = simplified
 
@@ -324,11 +349,17 @@ def _build_messages(
                 f"规则评测报告:\n{_compact_json(review.to_dict())}\n\n"
                 f"玩家决策记录:\n{_compact_json(simplified_decisions)}\n\n"
                 "请生成结构化分析报告，要求:\n"
-                "1. key_turning_points: 关键转折点，需要分析根因（不只是事件描述）\n"
-                "2. decision_reviews: 对高影响决策的深度复盘，给出 0-10 分质量评分和改进建议\n"
+                "1. turning_points: 关键转折点，需要分析根因（不只是事件描述），并标注 involved_roles\n"
+                "2. decision_reviews: 只复盘高影响决策，必须引用上方真实 decision_id，给出 0-10 分质量评分和改进建议\n"
                 "3. counterfactuals: 反事实推演，分析'如果不是这样会怎样'\n"
-                "4. strategic_insights: 3-5 条可复用的策略洞察，每条需要标注来源\n"
-                "5. error_patterns: 2-3 条反复出现的错误模式，每条需要标注来源\n\n"
+                "4. strategic_insights: 3-5 条可复用的策略洞察，每条必须标注来源角色、玩家、decision_id 和置信度\n"
+                "5. error_patterns: 2-3 条错误模式，每条必须标注来源角色、玩家、decision_id 和置信度\n"
+                "6. source_decision_ids 只能从玩家决策记录中的 decision_id 逐字复制，不允许自造\n"
+                "7. relevance 只能是 direct|contextual：只有直接来自 source_roles 对应角色自身决策/失误的洞察才是 direct；全局局势、其他角色影响、旁观结论都是 contextual\n"
+                "8. direct 洞察必须至少有 1 个 source_player_ids 和 1 个 source_decision_ids；否则设为 contextual\n"
+                "9. confidence 必须是 0.0 到 1.0；证据弱或只是推测时不要高于 0.5\n"
+                "10. 不要提出 skill 文件修改方案；这里只产出单局证据和可复用观察\n\n"
+                f"可引用 decision_id 清单(JSON): {_compact_json(sorted(set(decision_ids)))}\n\n"
                 "输出 JSON schema:\n"
                 "{\n"
                 '  "turning_points": [\n'
@@ -337,11 +368,13 @@ def _build_messages(
                 '      "description": "事件描述",\n'
                 '      "impact": "positive|negative|mixed",\n'
                 '      "affected_team": "werewolves|villagers",\n'
-                '      "root_cause": "根因分析"\n'
+                '      "root_cause": "根因分析",\n'
+                '      "involved_roles": ["seer", "witch"]\n'
                 "    }\n"
                 "  ],\n"
                 '  "decision_reviews": [\n'
                 "    {\n"
+                '      "decision_id": "从玩家决策记录逐字复制",\n'
                 '      "player_id": 1, "role": "seer",\n'
                 '      "day": 1, "phase": "night",\n'
                 '      "action_type": "seer_check",\n'
@@ -405,6 +438,7 @@ def _parse_analysis(
             impact=str(tp.get("impact", "mixed")),
             affected_team=str(tp.get("affected_team", "")),
             root_cause=str(tp.get("root_cause", "")),
+            involved_roles=[str(r) for r in tp.get("involved_roles", [])],
         )
         for tp in data.get("turning_points", [])
         if isinstance(tp, dict)
@@ -421,6 +455,7 @@ def _parse_analysis(
             verdict=str(dr.get("verdict", "")),
             reasoning=str(dr.get("reasoning", "")),
             improvement=str(dr.get("improvement", "")),
+            decision_id=str(dr.get("decision_id", "")),
         )
         for dr in data.get("decision_reviews", [])
         if isinstance(dr, dict)
@@ -525,7 +560,23 @@ def _to_scored_insight(raw: Any, game_id: str) -> ScoredInsight:
             confidence=0.5,
         )
     if isinstance(raw, dict):
-        return ScoredInsight.from_dict({**raw, "game_id": raw.get("game_id", game_id)})
+        confidence = max(0.0, min(1.0, _as_float(raw.get("confidence"), 0.5)))
+        relevance = str(raw.get("relevance", "contextual"))
+        if relevance not in {"direct", "contextual"}:
+            relevance = "contextual"
+        source_player_ids = _as_int_list(raw.get("source_player_ids", []))
+        source_decision_ids = [str(d) for d in raw.get("source_decision_ids", [])]
+        if relevance == "direct" and (not source_player_ids or not source_decision_ids):
+            relevance = "contextual"
+        return ScoredInsight(
+            text=str(raw.get("text", "")),
+            game_id=str(raw.get("game_id", game_id)),
+            relevance=relevance,
+            confidence=confidence,
+            source_roles=[str(r) for r in raw.get("source_roles", [])],
+            source_player_ids=source_player_ids,
+            source_decision_ids=source_decision_ids,
+        )
     return ScoredInsight(
         text=str(raw),
         game_id=game_id,
@@ -607,3 +658,15 @@ def _as_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _as_int_list(value: Any) -> list[int]:
+    result: list[int] = []
+    if not isinstance(value, list):
+        return result
+    for item in value:
+        try:
+            result.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return result

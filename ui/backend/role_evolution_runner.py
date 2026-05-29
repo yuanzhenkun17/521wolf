@@ -24,6 +24,7 @@ from agent.role_evolution.pipeline import (
     run_evolution,
 )
 from agent.role_evolution.store import VersionStore
+from agent.runtime.model import AsyncRateLimiter
 
 _log = logging.getLogger(__name__)
 
@@ -49,6 +50,9 @@ class RoleEvolutionRun:
     battle_completed: int = 0
     training_games: int = 0
     battle_games: int = 0
+    game_concurrency: int = 1
+    llm_concurrency: int = 5
+    llm_rpm: int = 60
 
     def snapshot(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -66,6 +70,9 @@ class RoleEvolutionRun:
             "candidate_hash": None,
             "training_games": self.training_games,
             "battle_games": self.battle_games,
+            "game_concurrency": self.game_concurrency,
+            "llm_concurrency": self.llm_concurrency,
+            "llm_rpm": self.llm_rpm,
             "battle_result": None,
             "diff": None,
             "errors": [],
@@ -111,6 +118,9 @@ class RoleEvolutionRunner:
         role: str,
         training_games: int = 20,
         battle_games: int = 10,
+        game_concurrency: int = 1,
+        llm_concurrency: int = 5,
+        llm_rpm: int = 60,
         model_adapter: Any | None = None,
     ) -> RoleEvolutionRun:
         """Start a new evolution run.  Returns the tracked run."""
@@ -128,11 +138,17 @@ class RoleEvolutionRunner:
             started_at=started_at,
             training_games=training_games,
             battle_games=battle_games,
+            game_concurrency=game_concurrency,
+            llm_concurrency=llm_concurrency,
+            llm_rpm=llm_rpm,
         )
         self._active_runs[run_id] = tracked
 
         tracked.task = asyncio.create_task(
-            self._execute(tracked, training_games, battle_games, model_adapter),
+            self._execute(
+                tracked, training_games, battle_games,
+                game_concurrency, llm_concurrency, llm_rpm, model_adapter,
+            ),
             name=f"role-evolution-{run_id}",
         )
         return tracked
@@ -238,6 +254,9 @@ class RoleEvolutionRunner:
         tracked: RoleEvolutionRun,
         training_games: int,
         battle_games: int,
+        game_concurrency: int,
+        llm_concurrency: int,
+        llm_rpm: int,
         model_adapter: Any | None,
     ) -> None:
         """Background task that drives the evolution pipeline."""
@@ -247,11 +266,17 @@ class RoleEvolutionRunner:
             if stage == "training_game":
                 tracked.status = "training"
                 idx = int(data.get("game_index", -1))
-                tracked.training_completed = max(tracked.training_completed, idx + 1)
+                tracked.training_completed = int(data.get(
+                    "completed",
+                    max(tracked.training_completed, idx + 1),
+                ))
             elif stage == "battle_game":
                 tracked.status = "battling"
                 idx = int(data.get("game_index", -1))
-                tracked.battle_completed = max(tracked.battle_completed, idx + 1)
+                tracked.battle_completed = int(data.get(
+                    "completed",
+                    max(tracked.battle_completed, idx + 1),
+                ))
             else:
                 tracked.status = stage
                 if "completed" in data and stage == "training":
@@ -266,6 +291,9 @@ class RoleEvolutionRunner:
                 role=tracked.role,
                 training_games=training_games,
                 battle_games=battle_games,
+                game_concurrency=game_concurrency,
+                llm_semaphore=asyncio.Semaphore(llm_concurrency),
+                llm_rate_limiter=AsyncRateLimiter(llm_rpm),
                 model_adapter=model_adapter,
                 on_progress=_on_progress,
             )

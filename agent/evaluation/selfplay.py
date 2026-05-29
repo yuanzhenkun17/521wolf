@@ -6,6 +6,7 @@ generates per-game reviews, experiences, and a run summary.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -27,7 +28,12 @@ from agent.evaluation.confidence_calibration import calibrate_decisions, merge_c
 from agent.evaluation.review_enhanced import generate_enhanced_review
 from agent.runtime.agent import LLMPlayerAgent
 from agent.runtime.factory import load_llm_client
-from agent.skill_system.router import configure_skill_root
+from agent.runtime.model import (
+    AsyncRateLimiter,
+    default_rate_limiter_from_env,
+    limit_model_adapter,
+    rate_limit_model_adapter,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -49,9 +55,11 @@ class SelfPlayConfig:
     enable_long_term_consolidation: bool = True
     consolidation_window: int = 5
     auto_apply_skill_proposals: bool = False
+    enable_batch_dream: bool = False
     temperature: float = 0.2
     game_config: GameConfig = STANDARD_12
     skill_dir: Path | None = None
+    game_concurrency: int = 1
     tot_enabled: bool = True
     got_enabled: bool = True
     got_trigger_threshold: float = 0.3
@@ -86,6 +94,7 @@ class SelfPlayGameResult:
     turning_point_count: int = 0
     information_score: float = 0.0
     cooperation_score: float = 0.0
+    by_role: dict = field(default_factory=dict)
     error: str | None = None
 
     def to_dict(self) -> dict:
@@ -115,6 +124,7 @@ class SelfPlayGameResult:
             "turning_point_count": self.turning_point_count,
             "information_score": round(self.information_score, 3),
             "cooperation_score": round(self.cooperation_score, 3),
+            "by_role": self.by_role,
         }
         if self.error:
             d["error"] = self.error
@@ -188,7 +198,7 @@ class SelfPlayResult:
             "got_failure_count": 0,  # TODO: wire up when GoT failure tracking is implemented
             "information_score": round(sum(g.information_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
             "cooperation_score": round(sum(g.cooperation_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
-            "by_role": {},  # TODO: wire up per-role stats aggregation
+            "by_role": _aggregate_by_role(self.games),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
         }
@@ -247,12 +257,14 @@ async def run_selfplay(
     model: ModelAdapter | None = None,
     client_factory: Callable[[], ModelAdapter] | None = None,
     on_game_complete: "Callable[[int, SelfPlayGameResult], None] | None" = None,
+    llm_semaphore: asyncio.Semaphore | None = None,
+    llm_rate_limiter: AsyncRateLimiter | None = None,
 ) -> SelfPlayResult:
     """Run a multi-game selfplay session.
 
     Args:
         config: Selfplay configuration.
-        model: Shared model adapter. If None, uses load_llm_client() per game.
+        model: Shared model adapter. If None, uses load_llm_client() once per run.
         client_factory: Optional callable that returns a ModelAdapter per game.
         on_game_complete: Optional callback ``(game_index, game_result)``
             invoked after each game finishes.  *game_index* is zero-based.
@@ -273,228 +285,86 @@ async def run_selfplay(
         "enable_review": config.enable_review,
         "enable_mid_memory": config.enable_mid_memory,
         "enable_long_term_consolidation": config.enable_long_term_consolidation,
+        "enable_batch_dream": config.enable_batch_dream,
         "auto_apply_skill_proposals": config.auto_apply_skill_proposals,
         "skill_dir": str(config.skill_dir) if config.skill_dir else None,
+        "game_concurrency": config.game_concurrency,
         "tot_enabled": config.tot_enabled,
         "got_enabled": config.got_enabled,
         "got_trigger_threshold": config.got_trigger_threshold,
     })
 
-    results: list[SelfPlayGameResult] = []
+    results: list[SelfPlayGameResult | None] = [None] * config.games
     _frozen_skill_dir = config.skill_dir
-    batch_client: ModelAdapter | None = None
-    configure_skill_root(config.skill_dir)
+    llm_rate_limiter = llm_rate_limiter or default_rate_limiter_from_env()
+    shared_model = model
+    if shared_model is None and client_factory is None:
+        shared_model = load_llm_client(
+            model_name=config.model_name,
+            temperature=config.temperature,
+        )
+    if shared_model is not None:
+        shared_model = limit_model_adapter(shared_model, llm_semaphore)
+        shared_model = rate_limit_model_adapter(shared_model, llm_rate_limiter)
+    completion_lock = asyncio.Lock()
 
-    for i in range(config.games):
+    async def _run_index(i: int) -> None:
         if config.skill_dir != _frozen_skill_dir:
             raise ValueError(f"skill_dir changed mid-run: {_frozen_skill_dir} -> {config.skill_dir}")
-        seed = config.seed_start + i
-        game_id = f"game_{i + 1:03d}"
-        game_dir = run_dir / "games" / game_id
-        game_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create roles using the game config
-        roles = assign_roles(config.game_config, seed=seed)
-        player_roles = {pid: r.value for pid, r in roles.items()}
-
-        # Create per-agent trace recorders
-        trace_recorders: dict[int, AgentTraceRecorder] = {
-            pid: AgentTraceRecorder() for pid in roles
-        }
-
-        # Create agents with trace recorders
-        decision_recorder = AgentDecisionRecorder()
-        client = client_factory() if client_factory else model
+        client = client_factory() if client_factory else shared_model
         if client is None:
             client = load_llm_client(
                 model_name=config.model_name,
                 temperature=config.temperature,
             )
-        batch_client = client
-        agents = _create_agents(
-            roles, client, decision_recorder, trace_recorders,
-            game_id=game_id,
-            skill_dir=config.skill_dir,
-            tot_enabled=config.tot_enabled,
-            got_enabled=config.got_enabled,
-            got_trigger_threshold=config.got_trigger_threshold,
+            client = limit_model_adapter(client, llm_semaphore)
+            client = rate_limit_model_adapter(client, llm_rate_limiter)
+        elif client_factory is not None:
+            client = limit_model_adapter(client, llm_semaphore)
+            client = rate_limit_model_adapter(client, llm_rate_limiter)
+        result = await _run_single_game(
+            config=config,
+            run_dir=run_dir,
+            game_index=i,
+            client=client,
         )
 
-        # Run game
-        engine = GameEngine(roles, agents, config.game_config)
-        game_started_at = _now()
-        game_error: str | None = None
-        try:
-            winner = await engine.run_until_finished(max_days=config.max_days)
-        except Exception as exc:
-            _log.error("game %s failed", game_id, exc_info=True)
-            game_error = str(exc)
-            winner = None
-
-        if winner is not None:
-            winner_str = winner.value if hasattr(winner, "value") else str(winner)
-        else:
-            winner_str = "error"
-
-        # Write game events
-        _write_jsonl(game_dir / "game_events.jsonl", engine.logger.entries)
-        _write_jsonl(game_dir / "agent_decisions.jsonl", decision_recorder.records)
-
-        # Collect trace snapshots — merge all players into one archive
-        all_decisions: list[DecisionArchive] = []
-        for recorder in trace_recorders.values():
-            all_decisions.extend(recorder.snapshot())
-
-        # Write single merged archive and trace file
-        merged_archive = GameArchive(
-            game_id=game_id,
-            seed=seed,
-            config={
-                "agent_version": config.agent_version,
-                "skill_dir": str(config.skill_dir) if config.skill_dir else None,
-            },
-            player_roles=player_roles,
-            winner=winner_str,
-            started_at=game_started_at,
-            finished_at=_now(),
-            public_events=[e.to_dict() for e in engine.state.events],
-            decisions=all_decisions,
-            final_state={"player_roles": player_roles, "winner": winner_str},
-        )
-        merged_archive.write_json(game_dir / "archive.json")
-        _write_jsonl(game_dir / "agent_traces.jsonl", all_decisions)
-
-        # Collect stats
-        fallback_count = 0
-        policy_adjusted_count = 0
-        total_decisions = 0
-        total_confidence = 0.0
-        for rec in decision_recorder.records:
-            total_decisions += 1
-            if getattr(rec, "source", "") == "fallback":
-                fallback_count += 1
-            elif getattr(rec, "source", "") == "policy_adjusted":
-                policy_adjusted_count += 1
-            total_confidence += getattr(rec, "confidence", 0.0) or 0.0
-
-        avg_confidence = total_confidence / total_decisions if total_decisions else 0.0
-        calibration = calibrate_decisions(decision_recorder.records, roles)
-
-        # Review (enhanced) — skip for errored games
-        review_score = None
-        review_report = None
-        avg_speech_score = 0.0
-        avg_vote_score = 0.0
-        avg_skill_score = 0.0
-        vote_accuracy = 0.0
-        skill_accuracy = 0.0
-        mistake_count = 0
-        counterfactual_count = 0
-        turning_point_count = 0
-        information_score = 0.0
-        cooperation_score = 0.0
-        role_weighted_score = 0.0
-        agent_decisions = _collect_decisions(decision_recorder)
-
-        if config.enable_review and not game_error and winner is not None:
-            review_report = generate_enhanced_review(
-                game_log={"entries": [e.to_dict() for e in engine.logger.entries]},
-                agent_decisions=agent_decisions,
-                roles=roles,
-                winner_team=winner.value if hasattr(winner, "value") else winner,
-                game_id=game_id,
-            )
-            player_scores = list(review_report.player_scores.values())
-            denominator = max(len(player_scores), 1)
-            review_score = sum(s.total_score for s in player_scores) / denominator
-            avg_speech_score = sum(s.speech_score for s in player_scores) / denominator
-            avg_vote_score = sum(s.vote_score for s in player_scores) / denominator
-            avg_skill_score = sum(s.skill_score for s in player_scores) / denominator
-            vote_accuracy = avg_vote_score / MAX_REVIEW_SCORE
-            skill_accuracy = avg_skill_score / MAX_REVIEW_SCORE
-            mistake_count = len(review_report.mistakes)
-            counterfactual_count = len(review_report.counterfactuals)
-            turning_point_count = len(review_report.key_turning_points)
-            information_score = sum(s.information_score for s in player_scores) / denominator
-            cooperation_score = sum(s.cooperation_score for s in player_scores) / denominator
-            role_weighted_score = sum(s.role_weighted_score for s in player_scores) / denominator
-            _write_json(game_dir / "review.json", review_report.to_dict())
-            _write_text(game_dir / "review.md", review_report.to_markdown())
-
-        # Mid-term memory — LLM game analysis
-        if config.enable_mid_memory and review_report is not None:
-            try:
-                game_analysis = await analyze_game(
-                    model=client,
-                    game_id=game_id,
-                    review=review_report,
-                    agent_decisions=agent_decisions,
-                    roles=roles,
-                    winner_team=winner_str,
-                )
-                write_game_analysis(
-                    game_analysis,
-                    output_dir=game_dir / "mid_memory",
-                )
-            except Exception as exc:
-                _log.warning("mid_memory_error for %s: %s", game_id, exc)
-
-        # Write meta
-        _write_json(game_dir / "meta.json", {
-            "game_id": game_id,
-            "seed": seed,
-            "agent_version": config.agent_version,
-            "winner": winner_str,
-            "days": getattr(engine.state, "day", 0) or 0,
-            "players": player_roles,
-        })
-
-        result = SelfPlayGameResult(
-            game_id=game_id,
-            seed=seed,
-            winner=winner_str,
-            days=getattr(engine.state, "day", 0) or 0,
-            player_roles=player_roles,
-            decision_count=total_decisions,
-            fallback_count=fallback_count,
-            policy_adjusted_count=policy_adjusted_count,
-            avg_confidence=avg_confidence,
-            confidence_calibration_error=calibration["confidence_calibration_error"],
-            confidence_calibration_count=calibration["confidence_calibration_count"],
-            confidence_buckets=calibration["confidence_buckets"],
-            review_score=review_score,
-            output_dir=game_dir,
-            role_weighted_score=role_weighted_score,
-            avg_speech_score=avg_speech_score,
-            avg_vote_score=avg_vote_score,
-            avg_skill_score=avg_skill_score,
-            vote_accuracy=vote_accuracy,
-            skill_accuracy=skill_accuracy,
-            mistake_count=mistake_count,
-            counterfactual_count=counterfactual_count,
-            turning_point_count=turning_point_count,
-            information_score=information_score,
-            cooperation_score=cooperation_score,
-            error=game_error,
-        )
-        results.append(result)
+        async with completion_lock:
+            results[i] = result
         if on_game_complete is not None:
             try:
                 on_game_complete(i, result)
             except Exception:
-                _log.warning("on_game_complete callback raised for game %s", game_id, exc_info=True)
+                _log.warning("on_game_complete callback raised for game %s", result.game_id, exc_info=True)
+
+    if config.games > 0:
+        game_concurrency = max(1, min(config.game_concurrency, config.games))
+        game_limiter = asyncio.Semaphore(game_concurrency)
+
+        async def _limited_run(i: int) -> None:
+            async with game_limiter:
+                await _run_index(i)
+
+        await asyncio.gather(*(_limited_run(i) for i in range(config.games)))
+
+    completed_results = [r for r in results if r is not None]
 
     # Long-term consolidation — every N games, LLM reads mid-memories and updates skills
     if (
         config.enable_long_term_consolidation
         and config.enable_mid_memory
-        and len(results) >= config.consolidation_window
+        and len(completed_results) >= config.consolidation_window
     ):
+        batch_client = shared_model
         if batch_client is None:
-            batch_client = load_llm_client(
-                model_name=config.model_name,
-                temperature=config.temperature,
+            batch_client = limit_model_adapter(
+                load_llm_client(
+                    model_name=config.model_name,
+                    temperature=config.temperature,
+                ),
+                llm_semaphore,
             )
+            batch_client = rate_limit_model_adapter(batch_client, llm_rate_limiter)
         await _run_long_term_consolidation(
             run_dir=run_dir,
             model=batch_client,
@@ -505,7 +375,7 @@ async def run_selfplay(
 
     selfplay_result = SelfPlayResult(
         config=config,
-        games=results,
+        games=completed_results,
         run_id=run_id,
         started_at=started_at,
         finished_at=_now(),
@@ -514,6 +384,193 @@ async def run_selfplay(
     # Write summary
     selfplay_result.write_summary(run_dir)
     return selfplay_result
+
+
+async def _run_single_game(
+    *,
+    config: SelfPlayConfig,
+    run_dir: Path,
+    game_index: int,
+    client: ModelAdapter,
+) -> SelfPlayGameResult:
+    """Run one selfplay game and write its artifacts."""
+    seed = config.seed_start + game_index
+    game_id = f"game_{game_index + 1:03d}"
+    game_dir = run_dir / "games" / game_id
+    game_dir.mkdir(parents=True, exist_ok=True)
+
+    roles = assign_roles(config.game_config, seed=seed)
+    player_roles = {pid: r.value for pid, r in roles.items()}
+
+    trace_recorders: dict[int, AgentTraceRecorder] = {
+        pid: AgentTraceRecorder() for pid in roles
+    }
+    decision_recorder = AgentDecisionRecorder()
+    agents = _create_agents(
+        roles, client, decision_recorder, trace_recorders,
+        game_id=game_id,
+        skill_dir=config.skill_dir,
+        tot_enabled=config.tot_enabled,
+        got_enabled=config.got_enabled,
+        got_trigger_threshold=config.got_trigger_threshold,
+    )
+
+    engine = GameEngine(roles, agents, config.game_config)
+    game_started_at = _now()
+    game_error: str | None = None
+    try:
+        winner = await engine.run_until_finished(max_days=config.max_days)
+    except Exception as exc:
+        _log.error("game %s failed", game_id, exc_info=True)
+        game_error = str(exc)
+        winner = None
+
+    if winner is not None:
+        winner_str = winner.value if hasattr(winner, "value") else str(winner)
+    else:
+        winner_str = "error"
+
+    _write_jsonl(game_dir / "game_events.jsonl", engine.logger.entries)
+    _write_jsonl(game_dir / "agent_decisions.jsonl", decision_recorder.records)
+
+    all_decisions: list[DecisionArchive] = []
+    for recorder in trace_recorders.values():
+        all_decisions.extend(recorder.snapshot())
+
+    merged_archive = GameArchive(
+        game_id=game_id,
+        seed=seed,
+        config={
+            "agent_version": config.agent_version,
+            "skill_dir": str(config.skill_dir) if config.skill_dir else None,
+        },
+        player_roles=player_roles,
+        winner=winner_str,
+        started_at=game_started_at,
+        finished_at=_now(),
+        public_events=[e.to_dict() for e in engine.state.events],
+        decisions=all_decisions,
+        final_state={"player_roles": player_roles, "winner": winner_str},
+    )
+    merged_archive.write_json(game_dir / "archive.json")
+    _write_jsonl(game_dir / "agent_traces.jsonl", all_decisions)
+
+    fallback_count = 0
+    policy_adjusted_count = 0
+    total_decisions = 0
+    total_confidence = 0.0
+    for rec in decision_recorder.records:
+        total_decisions += 1
+        if getattr(rec, "source", "") == "fallback":
+            fallback_count += 1
+        elif getattr(rec, "source", "") == "policy_adjusted":
+            policy_adjusted_count += 1
+        total_confidence += getattr(rec, "confidence", 0.0) or 0.0
+
+    avg_confidence = total_confidence / total_decisions if total_decisions else 0.0
+    calibration = calibrate_decisions(decision_recorder.records, roles)
+
+    review_score = None
+    review_report = None
+    avg_speech_score = 0.0
+    avg_vote_score = 0.0
+    avg_skill_score = 0.0
+    vote_accuracy = 0.0
+    skill_accuracy = 0.0
+    mistake_count = 0
+    counterfactual_count = 0
+    turning_point_count = 0
+    information_score = 0.0
+    cooperation_score = 0.0
+    role_weighted_score = 0.0
+    by_role: dict[str, dict[str, float | int]] = {}
+    agent_decisions = _collect_decisions(decision_recorder)
+
+    if config.enable_review and not game_error and winner is not None:
+        review_report = generate_enhanced_review(
+            game_log={"entries": [e.to_dict() for e in engine.logger.entries]},
+            agent_decisions=agent_decisions,
+            roles=roles,
+            winner_team=winner.value if hasattr(winner, "value") else winner,
+            game_id=game_id,
+        )
+        player_scores = list(review_report.player_scores.values())
+        denominator = max(len(player_scores), 1)
+        review_score = sum(s.total_score for s in player_scores) / denominator
+        avg_speech_score = sum(s.speech_score for s in player_scores) / denominator
+        avg_vote_score = sum(s.vote_score for s in player_scores) / denominator
+        avg_skill_score = sum(s.skill_score for s in player_scores) / denominator
+        vote_accuracy = avg_vote_score / MAX_REVIEW_SCORE
+        skill_accuracy = avg_skill_score / MAX_REVIEW_SCORE
+        mistake_count = len(review_report.mistakes)
+        counterfactual_count = len(review_report.counterfactuals)
+        turning_point_count = len(review_report.key_turning_points)
+        information_score = sum(s.information_score for s in player_scores) / denominator
+        cooperation_score = sum(s.cooperation_score for s in player_scores) / denominator
+        role_weighted_score = sum(s.role_weighted_score for s in player_scores) / denominator
+        by_role = _compute_by_role_metrics(
+            review_report=review_report,
+            decision_records=decision_recorder.records,
+            roles=roles,
+        )
+        _write_json(game_dir / "review.json", review_report.to_dict())
+        _write_text(game_dir / "review.md", review_report.to_markdown())
+
+    if config.enable_mid_memory and review_report is not None:
+        try:
+            game_analysis = await analyze_game(
+                model=client,
+                game_id=game_id,
+                review=review_report,
+                agent_decisions=agent_decisions,
+                roles=roles,
+                winner_team=winner_str,
+            )
+            write_game_analysis(
+                game_analysis,
+                output_dir=game_dir / "mid_memory",
+            )
+        except Exception as exc:
+            _log.warning("mid_memory_error for %s: %s", game_id, exc)
+
+    _write_json(game_dir / "meta.json", {
+        "game_id": game_id,
+        "seed": seed,
+        "agent_version": config.agent_version,
+        "winner": winner_str,
+        "days": getattr(engine.state, "day", 0) or 0,
+        "players": player_roles,
+    })
+
+    return SelfPlayGameResult(
+        game_id=game_id,
+        seed=seed,
+        winner=winner_str,
+        days=getattr(engine.state, "day", 0) or 0,
+        player_roles=player_roles,
+        decision_count=total_decisions,
+        fallback_count=fallback_count,
+        policy_adjusted_count=policy_adjusted_count,
+        avg_confidence=avg_confidence,
+        confidence_calibration_error=calibration["confidence_calibration_error"],
+        confidence_calibration_count=calibration["confidence_calibration_count"],
+        confidence_buckets=calibration["confidence_buckets"],
+        review_score=review_score,
+        output_dir=game_dir,
+        role_weighted_score=role_weighted_score,
+        avg_speech_score=avg_speech_score,
+        avg_vote_score=avg_vote_score,
+        avg_skill_score=avg_skill_score,
+        vote_accuracy=vote_accuracy,
+        skill_accuracy=skill_accuracy,
+        mistake_count=mistake_count,
+        counterfactual_count=counterfactual_count,
+        turning_point_count=turning_point_count,
+        information_score=information_score,
+        cooperation_score=cooperation_score,
+        by_role=by_role,
+        error=game_error,
+    )
 
 
 async def _run_long_term_consolidation(
@@ -608,6 +665,182 @@ def _collect_decisions(recorder: AgentDecisionRecorder) -> dict[int, list[dict]]
         if pid is not None:
             decisions.setdefault(pid, []).append(rec.to_dict() if hasattr(rec, "to_dict") else {})
     return decisions
+
+
+def _compute_by_role_metrics(
+    *,
+    review_report: Any,
+    decision_records: list[Any],
+    roles: dict[int, Role],
+) -> dict[str, dict[str, float | int]]:
+    """Aggregate reviewed player and decision metrics by role for one game."""
+    result: dict[str, dict[str, float | int]] = {}
+    for pid, role in roles.items():
+        role_name = role.value
+        state = result.setdefault(role_name, {
+            "players": 0,
+            "wins": 0,
+            "losses": 0,
+            "total_score_sum": 0.0,
+            "role_weighted_score_sum": 0.0,
+            "speech_score_sum": 0.0,
+            "vote_score_sum": 0.0,
+            "skill_score_sum": 0.0,
+            "information_score_sum": 0.0,
+            "cooperation_score_sum": 0.0,
+            "decision_count": 0,
+            "fallback_count": 0,
+            "policy_adjusted_count": 0,
+            "bad_case_count": 0,
+        })
+        player_review = review_report.player_scores.get(pid)
+        state["players"] = int(state["players"]) + 1
+        if player_review is not None:
+            if player_review.outcome == "win":
+                state["wins"] = int(state["wins"]) + 1
+            else:
+                state["losses"] = int(state["losses"]) + 1
+            state["total_score_sum"] = float(state["total_score_sum"]) + player_review.total_score
+            state["role_weighted_score_sum"] = (
+                float(state["role_weighted_score_sum"]) + player_review.role_weighted_score
+            )
+            state["speech_score_sum"] = float(state["speech_score_sum"]) + player_review.speech_score
+            state["vote_score_sum"] = float(state["vote_score_sum"]) + player_review.vote_score
+            state["skill_score_sum"] = float(state["skill_score_sum"]) + player_review.skill_score
+            state["information_score_sum"] = (
+                float(state["information_score_sum"]) + player_review.information_score
+            )
+            state["cooperation_score_sum"] = (
+                float(state["cooperation_score_sum"]) + player_review.cooperation_score
+            )
+
+    for rec in decision_records:
+        pid = getattr(rec, "player_id", None)
+        if pid is None or pid not in roles:
+            continue
+        role_name = roles[pid].value
+        state = result.setdefault(role_name, {
+            "players": 0,
+            "wins": 0,
+            "losses": 0,
+            "total_score_sum": 0.0,
+            "role_weighted_score_sum": 0.0,
+            "speech_score_sum": 0.0,
+            "vote_score_sum": 0.0,
+            "skill_score_sum": 0.0,
+            "information_score_sum": 0.0,
+            "cooperation_score_sum": 0.0,
+            "decision_count": 0,
+            "fallback_count": 0,
+            "policy_adjusted_count": 0,
+            "bad_case_count": 0,
+        })
+        state["decision_count"] = int(state["decision_count"]) + 1
+        source = getattr(rec, "source", "")
+        if source == "fallback":
+            state["fallback_count"] = int(state["fallback_count"]) + 1
+        elif source == "policy_adjusted":
+            state["policy_adjusted_count"] = int(state["policy_adjusted_count"]) + 1
+
+    for mistake in getattr(review_report, "mistakes", []):
+        role_name = getattr(mistake, "role", "")
+        if role_name not in result:
+            continue
+        result[role_name]["bad_case_count"] = int(result[role_name]["bad_case_count"]) + 1
+
+    return {
+        role_name: _finalize_role_metrics(state)
+        for role_name, state in sorted(result.items())
+    }
+
+
+def _aggregate_by_role(games: list[SelfPlayGameResult]) -> dict[str, dict[str, float | int]]:
+    """Aggregate per-game role metrics across a selfplay run."""
+    accum: dict[str, dict[str, float | int]] = {}
+    for game in games:
+        for role_name, metrics in (game.by_role or {}).items():
+            state = accum.setdefault(role_name, {
+                "players": 0,
+                "wins": 0,
+                "losses": 0,
+                "total_score_sum": 0.0,
+                "role_weighted_score_sum": 0.0,
+                "speech_score_sum": 0.0,
+                "vote_score_sum": 0.0,
+                "skill_score_sum": 0.0,
+                "information_score_sum": 0.0,
+                "cooperation_score_sum": 0.0,
+                "decision_count": 0,
+                "fallback_count": 0,
+                "policy_adjusted_count": 0,
+                "bad_case_count": 0,
+            })
+            players = int(metrics.get("players", 0))
+            state["players"] = int(state["players"]) + players
+            state["wins"] = int(state["wins"]) + int(metrics.get("wins", 0))
+            state["losses"] = int(state["losses"]) + int(metrics.get("losses", 0))
+            state["decision_count"] = (
+                int(state["decision_count"]) + int(metrics.get("decision_count", 0))
+            )
+            state["fallback_count"] = (
+                int(state["fallback_count"]) + int(metrics.get("fallback_count", 0))
+            )
+            state["policy_adjusted_count"] = (
+                int(state["policy_adjusted_count"]) + int(metrics.get("policy_adjusted_count", 0))
+            )
+            state["bad_case_count"] = (
+                int(state["bad_case_count"]) + int(metrics.get("bad_case_count", 0))
+            )
+            for field in (
+                "total_score",
+                "role_weighted_score",
+                "speech_score",
+                "vote_score",
+                "skill_score",
+                "information_score",
+                "cooperation_score",
+            ):
+                state[f"{field}_sum"] = (
+                    float(state[f"{field}_sum"]) + float(metrics.get(field, 0.0)) * players
+                )
+    return {
+        role_name: _finalize_role_metrics(state)
+        for role_name, state in sorted(accum.items())
+    }
+
+
+def _finalize_role_metrics(state: dict[str, float | int]) -> dict[str, float | int]:
+    players = int(state.get("players", 0))
+    decisions = int(state.get("decision_count", 0))
+    bad_cases = int(state.get("bad_case_count", 0))
+
+    def _avg(field: str) -> float:
+        if players <= 0:
+            return 0.0
+        return round(float(state.get(f"{field}_sum", 0.0)) / players, 3)
+
+    return {
+        "players": players,
+        "wins": int(state.get("wins", 0)),
+        "losses": int(state.get("losses", 0)),
+        "win_rate": round(int(state.get("wins", 0)) / players, 3) if players else 0.0,
+        "total_score": _avg("total_score"),
+        "role_weighted_score": _avg("role_weighted_score"),
+        "speech_score": _avg("speech_score"),
+        "vote_score": _avg("vote_score"),
+        "skill_score": _avg("skill_score"),
+        "information_score": _avg("information_score"),
+        "cooperation_score": _avg("cooperation_score"),
+        "decision_count": decisions,
+        "fallback_count": int(state.get("fallback_count", 0)),
+        "policy_adjusted_count": int(state.get("policy_adjusted_count", 0)),
+        "fallback_rate": round(int(state.get("fallback_count", 0)) / decisions, 4)
+        if decisions else 0.0,
+        "policy_adjusted_rate": round(int(state.get("policy_adjusted_count", 0)) / decisions, 4)
+        if decisions else 0.0,
+        "bad_case_count": bad_cases,
+        "bad_case_rate": round(bad_cases / decisions, 4) if decisions else 0.0,
+    }
 
 
 def _now() -> str:

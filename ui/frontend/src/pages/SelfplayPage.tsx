@@ -12,10 +12,13 @@ import {
   Zap,
 } from "lucide-react";
 import {
+  getSelfplayGameEvents,
   getSelfplayRun,
+  listSelfplayGames,
   listSelfplayRuns,
   startSelfplayRun,
   type SelfplayConfig,
+  type SelfplayGameSummary,
   type SelfplayRun,
 } from "../api";
 import { Badge } from "../components/ui/badge";
@@ -32,6 +35,14 @@ export function SelfplayPage() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Game viewing state
+  const [viewingRunId, setViewingRunId] = useState<string | null>(null);
+  const [gameList, setGameList] = useState<SelfplayGameSummary[]>([]);
+  const [viewingGameId, setViewingGameId] = useState<string | null>(null);
+  const [gameEvents, setGameEvents] = useState<Record<string, unknown>[]>([]);
+  const [gamesLoading, setGamesLoading] = useState(false);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   const loadRuns = useCallback(async () => {
     setLoading(true);
@@ -84,12 +95,55 @@ export function SelfplayPage() {
 
   async function handleSelect(runId: string) {
     setSelectedId(runId);
+    setViewingRunId(null);
+    setViewingGameId(null);
     try {
       const run = await getSelfplayRun(runId);
       setSelectedRun(run);
     } catch {
       setSelectedRun(null);
     }
+  }
+
+  async function handleViewGames(runId: string) {
+    setGamesLoading(true);
+    setViewingRunId(runId);
+    setViewingGameId(null);
+    try {
+      const games = await listSelfplayGames(runId);
+      setGameList(games);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "加载对局列表失败");
+      setViewingRunId(null);
+    } finally {
+      setGamesLoading(false);
+    }
+  }
+
+  async function handleViewGame(runId: string, gameId: string) {
+    setEventsLoading(true);
+    setViewingGameId(gameId);
+    try {
+      const events = await getSelfplayGameEvents(runId, gameId);
+      setGameEvents(events);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "加载对局事件失败");
+      setViewingGameId(null);
+    } finally {
+      setEventsLoading(false);
+    }
+  }
+
+  function handleBackToGames() {
+    setViewingGameId(null);
+    setGameEvents([]);
+  }
+
+  function handleBackToRunDetail() {
+    setViewingRunId(null);
+    setViewingGameId(null);
+    setGameList([]);
+    setGameEvents([]);
   }
 
   async function handleStart(config: SelfplayConfig) {
@@ -145,7 +199,25 @@ export function SelfplayPage() {
           loading={loading}
           onSelect={handleSelect}
         />
-        <RunDetailPanel run={selectedRun} />
+        {viewingGameId ? (
+          <GameDetailPanel
+            runId={viewingRunId!}
+            gameId={viewingGameId}
+            events={gameEvents}
+            loading={eventsLoading}
+            onBack={handleBackToGames}
+          />
+        ) : viewingRunId ? (
+          <GameListPanel
+            runId={viewingRunId}
+            games={gameList}
+            loading={gamesLoading}
+            onViewGame={handleViewGame}
+            onBack={handleBackToRunDetail}
+          />
+        ) : (
+          <RunDetailPanel run={selectedRun} onViewGames={handleViewGames} />
+        )}
       </div>
     </div>
   );
@@ -378,7 +450,13 @@ function RunList({
 // Run detail panel
 // ---------------------------------------------------------------------------
 
-function RunDetailPanel({ run }: { run: SelfplayRun | null }) {
+function RunDetailPanel({
+  run,
+  onViewGames,
+}: {
+  run: SelfplayRun | null;
+  onViewGames: (runId: string) => void;
+}) {
   if (!run) {
     return (
       <Card>
@@ -450,6 +528,159 @@ function RunDetailPanel({ run }: { run: SelfplayRun | null }) {
             </div>
           </div>
         ) : null}
+
+        {/* View games button */}
+        {run.status === "completed" ? (
+          <Button variant="secondary" className="w-full" onClick={() => onViewGames(run.run_id)}>
+            <FolderOpen className="h-4 w-4" />
+            查看对局列表
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Game list panel
+// ---------------------------------------------------------------------------
+
+function GameListPanel({
+  runId,
+  games,
+  loading,
+  onViewGame,
+  onBack,
+}: {
+  runId: string;
+  games: SelfplayGameSummary[];
+  loading: boolean;
+  onViewGame: (runId: string, gameId: string) => void;
+  onBack: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={onBack}>
+            ← 返回
+          </Button>
+          <CardTitle>对局列表</CardTitle>
+          <Badge variant="secondary">{games.length}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex min-h-[200px] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : games.length === 0 ? (
+          <div className="flex min-h-[200px] items-center justify-center text-sm text-muted-foreground">
+            暂无对局数据
+          </div>
+        ) : (
+          <div className="max-h-[500px] space-y-2 overflow-y-auto">
+            {games.map((g) => (
+              <div
+                key={g.game_id}
+                className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm transition-colors hover:bg-muted"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {g.game_id.slice(0, 8)}
+                    </span>
+                    {g.winner ? (
+                      <Badge variant="default" className="text-xs">
+                        {g.winner}
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-xs">
+                        无结果
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    Day {g.day} · {g.phase} · {g.event_count} 事件
+                  </div>
+                </div>
+                <Button variant="ghost" onClick={() => onViewGame(runId, g.game_id)}>
+                  查看
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Game detail panel
+// ---------------------------------------------------------------------------
+
+function GameDetailPanel({
+  runId,
+  gameId,
+  events,
+  loading,
+  onBack,
+}: {
+  runId: string;
+  gameId: string;
+  events: Record<string, unknown>[];
+  loading: boolean;
+  onBack: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={onBack}>
+            ← 返回列表
+          </Button>
+          <CardTitle>对局详情</CardTitle>
+          <span className="font-mono text-xs text-muted-foreground">{gameId.slice(0, 8)}</span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex min-h-[200px] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : events.length === 0 ? (
+          <div className="flex min-h-[200px] items-center justify-center text-sm text-muted-foreground">
+            暂无事件数据
+          </div>
+        ) : (
+          <div className="max-h-[600px] space-y-1 overflow-y-auto">
+            {events.map((ev, idx) => {
+              const day = String(ev.day ?? "");
+              const phase = String(ev.phase ?? "");
+              const eventType = ev.event_type ?? ev.type ?? "";
+              const message = ev.message ?? ev.text ?? JSON.stringify(ev);
+              return (
+                <div
+                  key={idx}
+                  className="rounded-md border border-border px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="w-6 text-right font-mono">{idx}</span>
+                    {day !== "" && <span>Day {day}</span>}
+                    {phase !== "" && <span>· {phase}</span>}
+                    {eventType !== "" && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        {String(eventType)}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 text-sm">{String(message)}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -434,6 +434,7 @@ class EvolutionRun:
     status: str
     training_games: int = 0
     battle_games: int = 0
+    baseline_config: SkillVersionConfig | None = None
     candidate_hash: str | None = None
     battle_result: dict[str, Any] | None = None
     proposals: SkillConsolidation | None = None
@@ -448,6 +449,7 @@ class EvolutionRun:
             "status": self.status,
             "training_games": self.training_games,
             "battle_games": self.battle_games,
+            "baseline_config": self.baseline_config.to_dict() if self.baseline_config is not None else None,
             "candidate_hash": self.candidate_hash,
             "battle_result": self.battle_result,
             "proposals": self.proposals.to_dict() if self.proposals is not None else None,
@@ -459,6 +461,7 @@ class EvolutionRun:
     def from_dict(cls, data: dict[str, Any]) -> EvolutionRun:
         proposals_raw = data.get("proposals")
         diff_raw = data.get("diff")
+        baseline_config_raw = data.get("baseline_config")
         return cls(
             run_id=str(data.get("run_id", "")),
             role=str(data.get("role", "")),
@@ -466,6 +469,8 @@ class EvolutionRun:
             status=str(data.get("status", "")),
             training_games=int(data.get("training_games", 0)),
             battle_games=int(data.get("battle_games", 0)),
+            baseline_config=SkillVersionConfig.from_dict(baseline_config_raw)
+            if baseline_config_raw is not None else None,
             candidate_hash=data.get("candidate_hash"),
             battle_result=data.get("battle_result"),
             proposals=SkillConsolidation.from_dict(proposals_raw) if proposals_raw is not None else None,

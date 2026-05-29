@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
+from agent.runtime.model import AsyncRateLimiter
 from engine.config import STANDARD_12
 
 
@@ -23,6 +24,9 @@ class RunningSelfplay:
     max_days: int = 20
     enable_sheriff: bool = True
     enable_batch_dream: bool = False
+    game_concurrency: int = 1
+    llm_concurrency: int = 5
+    llm_rpm: int = 60
     result: SelfPlayResult | None = None
     artifact_run_id: str | None = None
     error: str | None = None
@@ -45,6 +49,9 @@ class RunningSelfplay:
             "max_days": self.max_days,
             "enable_sheriff": self.enable_sheriff,
             "enable_batch_dream": self.enable_batch_dream,
+            "game_concurrency": self.game_concurrency,
+            "llm_concurrency": self.llm_concurrency,
+            "llm_rpm": self.llm_rpm,
             "created_at": self.started_at,
             "started_at": self.started_at,
             "artifact_run_id": self.artifact_run_id,
@@ -77,6 +84,9 @@ class SelfplayManager:
         max_days: int = 20,
         enable_sheriff: bool = True,
         enable_batch_dream: bool = False,
+        game_concurrency: int = 1,
+        llm_concurrency: int = 5,
+        llm_rpm: int = 60,
         label: str | None = None,
     ) -> RunningSelfplay:
         run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
@@ -92,6 +102,7 @@ class SelfplayManager:
             temperature=temperature,
             game_config=replace(STANDARD_12, enable_sheriff=enable_sheriff),
             skill_dir=Path(skill_dir) if skill_dir else None,
+            game_concurrency=game_concurrency,
             tot_enabled=tot_enabled,
             got_enabled=got_enabled,
             got_trigger_threshold=got_trigger_threshold,
@@ -108,6 +119,9 @@ class SelfplayManager:
             max_days=max_days,
             enable_sheriff=enable_sheriff,
             enable_batch_dream=enable_batch_dream,
+            game_concurrency=game_concurrency,
+            llm_concurrency=llm_concurrency,
+            llm_rpm=llm_rpm,
         )
         self._runs[run_id] = run
         run.task = asyncio.create_task(
@@ -122,13 +136,15 @@ class SelfplayManager:
         return [run.snapshot() for run in self._runs.values()]
 
     def _on_game_complete(self, run: RunningSelfplay, game_index: int, _result: SelfPlayGameResult) -> None:
-        run.completed_games = game_index + 1
+        run.completed_games = min(run.total_games, run.completed_games + 1)
 
     async def _execute(self, run: RunningSelfplay) -> None:
         try:
             result = await run_selfplay(
                 run.config,
                 on_game_complete=lambda idx, res: self._on_game_complete(run, idx, res),
+                llm_semaphore=asyncio.Semaphore(run.llm_concurrency),
+                llm_rate_limiter=AsyncRateLimiter(run.llm_rpm),
             )
             run.result = result
             run.artifact_run_id = result.run_id

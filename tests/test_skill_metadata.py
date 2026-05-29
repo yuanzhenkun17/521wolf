@@ -42,3 +42,26 @@ body text"""
         assert skill is not None
         assert skill.evolution["enabled"] is True
         assert "append_rule" in skill.evolution["allowed_actions"]
+
+
+def test_load_skill_has_relative_path_and_default_evolution():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        skill_dir = root / "seer"
+        skill_dir.mkdir()
+        md = skill_dir / "claim.md"
+        md.write_text(
+            """---
+name: seer_claim
+role: seer
+---
+body text""",
+            encoding="utf-8",
+        )
+
+        skill = _load_skill_file(md, root=root)
+
+        assert skill is not None
+        assert skill.relative_path == "seer/claim.md"
+        assert skill.evolution["enabled"] is False
+        assert skill.evolution["allowed_actions"] == []

@@ -30,6 +30,7 @@ class MarkdownSkill:
     """A skill defined in a Markdown file (YAML front matter + body)."""
 
     name: str
+    relative_path: str = ""
     description: str = ""
     role: Role | None = None
     applicable_actions: set[ActionType] = field(default_factory=set)
@@ -200,13 +201,13 @@ def load_markdown_skills(root: Path) -> list[MarkdownSkill]:
     if not root.is_dir():
         return skills
     for md_path in sorted(root.rglob("*.md")):
-        skill = _load_skill_file(md_path)
+        skill = _load_skill_file(md_path, root=root)
         if skill is not None:
             skills.append(skill)
     return skills
 
 
-def _load_skill_file(path: Path) -> MarkdownSkill | None:
+def _load_skill_file(path: Path, *, root: Path | None = None) -> MarkdownSkill | None:
     """Load a single markdown skill file."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -242,12 +243,11 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
     if not isinstance(requires, dict):
         requires = {}
 
-    evolution = front.get("evolution", {})
-    if not isinstance(evolution, dict):
-        evolution = {"enabled": False, "allowed_actions": []}
+    evolution = _normalize_evolution(front.get("evolution", {}))
 
     return MarkdownSkill(
         name=name,
+        relative_path=_relative_skill_path(path, root),
         description=description,
         role=role,
         applicable_actions=actions,
@@ -255,3 +255,28 @@ def _load_skill_file(path: Path) -> MarkdownSkill | None:
         body=body.strip(),
         evolution=evolution,
     )
+
+
+def _relative_skill_path(path: Path, root: Path | None) -> str:
+    """Return a stable POSIX-style skill path for prompt and proposal use."""
+    try:
+        if root is not None:
+            return path.relative_to(root).as_posix()
+    except ValueError:
+        pass
+    return path.name
+
+
+def _normalize_evolution(value: Any) -> dict[str, Any]:
+    """Normalize optional evolution metadata to the keys validators expect."""
+    evolution = dict(value) if isinstance(value, dict) else {}
+    raw_allowed = evolution.get("allowed_actions", [])
+    if isinstance(raw_allowed, str):
+        allowed_actions = [raw_allowed]
+    elif isinstance(raw_allowed, list):
+        allowed_actions = [str(action) for action in raw_allowed]
+    else:
+        allowed_actions = []
+    evolution["enabled"] = bool(evolution.get("enabled", False))
+    evolution["allowed_actions"] = allowed_actions
+    return evolution

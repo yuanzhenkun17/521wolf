@@ -116,6 +116,32 @@ export type EvolutionRunStatus = {
   schema_version: number;
 };
 
+export type BatchEvolutionRunStatus = {
+  kind: string;
+  schema_version: number;
+  batch_id: string;
+  roles: string[];
+  status: string;
+  stage: string;
+  current_stage: string;
+  started_at: string;
+  training_games: number;
+  battle_games: number;
+  role_concurrency: number;
+  game_concurrency: number;
+  llm_concurrency: number;
+  llm_rpm: number;
+  role_statuses: Record<string, string>;
+  role_run_ids: Record<string, string>;
+  role_candidates: Record<string, string | null>;
+  accepted_roles: string[];
+  rejected_roles: string[];
+  combined_passed: boolean;
+  promoted_roles: string[];
+  errors: string[];
+  combined_battle_result: Record<string, unknown> | null;
+};
+
 export async function listRoles(): Promise<string[]> {
   const response = await fetch("/api/roles");
   if (!response.ok) throw new Error("无法读取角色列表");
@@ -151,15 +177,89 @@ export async function rollbackRole(role: string, hash: string): Promise<void> {
   }
 }
 
-export async function startRoleEvolution(role: string, trainingGames: number, battleGames: number): Promise<{ run_id: string }> {
+export async function startRoleEvolution(
+  role: string,
+  trainingGames: number,
+  battleGames: number,
+  gameConcurrency = 1,
+  llmConcurrency = 5,
+  llmRpm = 60,
+): Promise<{ run_id: string }> {
   const response = await fetch("/api/role-evolution/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role, training_games: trainingGames, battle_games: battleGames }),
+    body: JSON.stringify({
+      role,
+      training_games: trainingGames,
+      battle_games: battleGames,
+      game_concurrency: gameConcurrency,
+      llm_concurrency: llmConcurrency,
+      llm_rpm: llmRpm,
+    }),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.detail ?? "无法启动自进化");
+  }
+  return response.json();
+}
+
+export async function listRoleBatchEvolutionRuns(): Promise<BatchEvolutionRunStatus[]> {
+  const response = await fetch("/api/role-evolution/batches");
+  if (!response.ok) throw new Error("无法读取批量演化任务列表");
+  const data = await response.json();
+  return data.batches ?? [];
+}
+
+export async function startRoleBatchEvolution(config: {
+  roles: string[];
+  trainingGames: number;
+  battleGames: number;
+  roleConcurrency: number;
+  gameConcurrency: number;
+  llmConcurrency: number;
+  llmRpm: number;
+}): Promise<BatchEvolutionRunStatus> {
+  const response = await fetch("/api/role-evolution/batch/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      roles: config.roles,
+      training_games: config.trainingGames,
+      battle_games: config.battleGames,
+      role_concurrency: config.roleConcurrency,
+      game_concurrency: config.gameConcurrency,
+      llm_concurrency: config.llmConcurrency,
+      llm_rpm: config.llmRpm,
+    }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? "无法启动批量演化");
+  }
+  return response.json();
+}
+
+export async function getRoleBatchEvolutionStatus(batchId: string): Promise<BatchEvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/batch/${batchId}/status`);
+  if (!response.ok) throw new Error("无法读取批量演化状态");
+  return response.json();
+}
+
+export async function promoteRoleBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/batch/${batchId}/promote`, { method: "POST" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? "批量推广失败");
+  }
+  return response.json();
+}
+
+export async function rejectRoleBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/batch/${batchId}/reject`, { method: "POST" });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? "批量拒绝失败");
   }
   return response.json();
 }
@@ -256,6 +356,35 @@ export async function startSelfplayRun(config: SelfplayConfig): Promise<Selfplay
     throw new Error(data.detail ?? "无法启动自对弈");
   }
   return response.json();
+}
+
+export type SelfplayGameSummary = {
+  game_id: string;
+  winner: string | null;
+  day: number;
+  phase: string;
+  event_count: number;
+};
+
+export async function listSelfplayGames(runId: string): Promise<SelfplayGameSummary[]> {
+  const response = await fetch(`/api/selfplay/${runId}/games`);
+  if (!response.ok) throw new Error("无法读取对局列表");
+  const data = await response.json();
+  return data.games ?? [];
+}
+
+export async function getSelfplayGameEvents(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`/api/selfplay/${runId}/games/${gameId}/events`);
+  if (!response.ok) throw new Error("无法读取对局事件");
+  const data = await response.json();
+  return data.events ?? [];
+}
+
+export async function getSelfplayGameDecisions(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`/api/selfplay/${runId}/games/${gameId}/decisions`);
+  if (!response.ok) throw new Error("无法读取决策记录");
+  const data = await response.json();
+  return data.decisions ?? [];
 }
 
 

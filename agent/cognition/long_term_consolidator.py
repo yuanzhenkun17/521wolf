@@ -184,9 +184,7 @@ def _build_messages(
         }
         summaries.append(summary)
 
-    skills_text = "\n".join(
-        f"## {s.name}\n{s.body[:800]}\n" for s in skills
-    )
+    skills_text = _format_skill_inventory(skills)
 
     return [
         {
@@ -261,7 +259,48 @@ def _parse_consolidation(
 def _load_role_skills(role: Role, *, skill_root: Path | str | None = None) -> list[MarkdownSkill]:
     root = Path(skill_root) if skill_root else DEFAULT_SKILL_ROOT
     skills = load_markdown_skills(root)
-    return [s for s in skills if s.scope == "common" or s.role == role]
+    return [s for s in skills if s.role is None or s.role == role]
+
+
+def _format_skill_inventory(skills: list[MarkdownSkill]) -> str:
+    """Format skills with file paths and evolution constraints for the LLM."""
+    if not skills:
+        return "(no skills found)"
+
+    parts: list[str] = []
+    for skill in skills:
+        actions = sorted(action.value for action in skill.applicable_actions)
+        evolution = skill.evolution if isinstance(skill.evolution, dict) else {}
+        allowed_actions = [str(a) for a in evolution.get("allowed_actions", [])]
+        parts.extend([
+            f"## Skill file: {skill.relative_path or skill.name}",
+            f"name: {skill.name}",
+            f"role: {skill.role.value if skill.role is not None else 'common'}",
+            f"applicable_actions: {_compact_json(actions)}",
+            f"evolution.enabled: {bool(evolution.get('enabled', False))}",
+            f"evolution.allowed_actions: {_compact_json(allowed_actions)}",
+            "body:",
+            skill.body[:1200],
+            "",
+        ])
+    return "\n".join(parts).strip()
+
+
+def _modifiable_skill_files(skills: list[MarkdownSkill]) -> list[dict[str, Any]]:
+    """Return files the applier can legally modify."""
+    result: list[dict[str, Any]] = []
+    for skill in skills:
+        evolution = skill.evolution if isinstance(skill.evolution, dict) else {}
+        allowed_actions = [str(a) for a in evolution.get("allowed_actions", [])]
+        if not evolution.get("enabled") or not allowed_actions:
+            continue
+        result.append({
+            "target_file": skill.relative_path or skill.name,
+            "name": skill.name,
+            "role": skill.role.value if skill.role is not None else "common",
+            "allowed_actions": allowed_actions,
+        })
+    return result
 
 
 def _compact_json(value: Any) -> str:
@@ -290,7 +329,7 @@ async def consolidate_for_role(
     run_id: str = "",
     parent_hash: str = "",
     window: int = 5,
-    prompt_version: str = "role_consolidation_v1",
+    prompt_version: str = "role_consolidation_v2",
     skill_root: Path | str | None = None,
 ) -> RoleSkillConsolidation:
     """Consolidate mid-memory for a specific role, producing skill modification proposals.
@@ -398,9 +437,14 @@ def _build_role_messages(
         }
         summaries.append(summary)
 
-    skills_text = "\n".join(
-        f"## {s.name}\n{s.body[:800]}\n" for s in skills
-    )
+    skills_text = _format_skill_inventory(skills)
+    modifiable_files = _modifiable_skill_files(skills)
+    source_games = sorted({
+        str(summary.get("game_id", ""))
+        for summary in summaries
+        if summary.get("game_id")
+    })
+    min_evidence_games = 1 if len(source_games) <= 1 else 2
 
     return [
         {
@@ -422,23 +466,33 @@ def _build_role_messages(
                 "请分析跨局趋势并提出 skill 修改建议，要求:\n"
                 "1. trends: 3-5 条跨局趋势\n"
                 "2. proposals: 对 skill 的修改建议\n"
+                "   - target_file 必须从上方 Skill file 列表中逐字复制，不允许自造文件名\n"
+                "   - action_type 是技能修改动作，不是游戏动作；必须从该文件的 evolution.allowed_actions 中选择\n"
+                "   - applicable_actions 只是 skill 适用的游戏动作，不能填进 proposal.action_type\n"
+                "   - 只有 evolution.enabled=true 的文件可以进入 proposals\n"
+                "   - 如果没有可修改文件，或者证据不足，输出 proposals: []\n"
                 "   - 只有 relevance=direct 的洞察可以生成 proposals\n"
                 "   - relevance=contextual 的洞察仅作为背景参考\n"
-                "   - 每个 proposal 必须包含 evidence 引用具体 game_id 和 decision\n"
-                "   - 需要多局一致证据，不要基于单局数据做判断\n\n"
+                "   - 每个 proposal 必须包含 evidence 引用具体 game_id 和 decision/action\n"
+                f"   - 需要多局一致证据；每条 proposal 至少引用 {min_evidence_games} 个不同 source_games\n"
+                "   - risk 只能是 low|medium|high；high risk 建议只写入 trends，不要进入 proposals\n"
+                "   - confidence 必须是 0.0 到 1.0；低于 0.5 的建议不要进入 proposals\n"
+                "   - expected_direction 只能是 improve|maintain|reduce\n"
+                f"当前 source_games(JSON): {_compact_json(source_games)}\n"
+                f"可修改文件清单(JSON): {_compact_json(modifiable_files)}\n\n"
                 "输出 JSON schema:\n"
                 "{\n"
                 '  "trends": ["趋势1", "趋势2"],\n'
                 '  "proposals": [\n'
                 "    {\n"
                 '      "proposal_id": "prop_001",\n'
-                '      "target_file": "skill文件名.md",\n'
+                '      "target_file": "从Skill file清单逐字复制的文件路径.md",\n'
                 '      "action_type": "append_rule|rewrite_section|deprecate_rule",\n'
                 '      "section": "目标章节名(rewrite_section时必填)",\n'
                 '      "content": "具体修改内容",\n'
                 '      "rationale": "修改理由",\n'
                 '      "confidence": 0.0,\n'
-                '      "risk": "风险评估",\n'
+                '      "risk": "low|medium|high",\n'
                 '      "expected_metric": "期望影响的指标",\n'
                 '      "expected_direction": "improve|maintain|reduce",\n'
                 '      "evidence": [\n'
@@ -516,5 +570,5 @@ def _load_role_skills_for_str(
     skills = load_markdown_skills(root)
     return [
         s for s in skills
-        if s.scope == "common" or (s.role is not None and s.role.value == role)
+        if s.role is None or (s.role is not None and s.role.value == role)
     ]

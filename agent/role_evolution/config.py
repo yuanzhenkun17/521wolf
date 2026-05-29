@@ -50,6 +50,26 @@ def build_role_override_config(
     )
 
 
+def build_role_override_from_config(
+    baseline_config: SkillVersionConfig,
+    role: str,
+    role_hash: str,
+    *,
+    name: str | None = None,
+) -> SkillVersionConfig:
+    """Return a config with one role hash replaced, preserving the baseline snapshot."""
+    if role not in baseline_config.role_versions:
+        raise KeyError(f"Role '{role}' not found in config '{baseline_config.name}'")
+    role_versions = dict(baseline_config.role_versions)
+    role_versions[role] = role_hash
+    return SkillVersionConfig(
+        name=name or f"override-{role}-{role_hash[:8]}",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        role_versions=role_versions,
+        notes=[*baseline_config.notes, f"{role} overridden to {role_hash[:8]}"],
+    )
+
+
 def skill_dir_for_role(
     store: VersionStore, config: SkillVersionConfig, role: str
 ) -> Path:
