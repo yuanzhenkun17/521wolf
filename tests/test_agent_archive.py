@@ -15,6 +15,7 @@ from agent.observability.archive import (
     DecisionArchive,
     GameArchive,
 )
+from agent.observability.decision_log import DecisionRecord
 from agent.runtime.context import AgentContext
 
 
@@ -99,6 +100,15 @@ class DecisionArchiveTests(unittest.TestCase):
         ctx = _make_vote_context()
         archive = DecisionArchive.from_context(ctx)
         self.assertEqual(archive.parsed_decision["target"], 7)
+
+    def test_from_context_reuses_decision_record_id(self):
+        ctx = _make_vote_context()
+        ctx.decision_record = DecisionRecord(
+            action_type=ActionType.EXILE_VOTE,
+            decision_id="dec_fixed_001",
+        )
+        archive = DecisionArchive.from_context(ctx)
+        self.assertEqual(archive.decision_id, "dec_fixed_001")
 
     def test_to_dict_serializes_all_fields(self):
         ctx = _make_vote_context()

@@ -4,7 +4,7 @@ import { GoTDetails } from "./GoTDetails";
 import type { GoTData } from "./GoTGraph";
 import { roleName } from "../presentation";
 import { speechLabel, decisionChoiceText, decisionSourceName } from "./shared";
-import type { AgentDecision } from "../types";
+import type { AgentDecision, ArchiveMap } from "../types";
 
 export function DecisionDetails({
   decisions,
@@ -13,7 +13,7 @@ export function DecisionDetails({
 }: {
   decisions: AgentDecision[];
   compact?: boolean;
-  archiveMap?: Map<number, Record<string, unknown>>;
+  archiveMap?: ArchiveMap;
 }) {
   if (decisions.length === 0) return null;
   return (
@@ -25,11 +25,20 @@ export function DecisionDetails({
       </summary>
       <div className={compact ? "mt-2 space-y-2" : "mt-3 space-y-3"}>
         {decisions.map((decision) => (
-          <DecisionBody key={decision.index} decision={decision} archiveEntry={archiveMap?.get(decision.index)} />
+          <DecisionBody key={decision.decision_id ?? decision.index} decision={decision} archiveEntry={archiveEntryForDecision(decision, archiveMap)} />
         ))}
       </div>
     </details>
   );
+}
+
+function archiveEntryForDecision(decision: AgentDecision, archiveMap?: ArchiveMap) {
+  if (!archiveMap) return undefined;
+  if (decision.decision_id) {
+    const byId = archiveMap.get(decision.decision_id);
+    if (byId) return byId;
+  }
+  return archiveMap.get(decision.index);
 }
 
 function DecisionBody({
@@ -47,6 +56,16 @@ function DecisionBody({
   const memoryContext = ac?.memory_context as Record<string, unknown> | undefined;
   const beliefContext = ac?.belief_context as Record<string, unknown> | undefined;
   const gotData = (ac?.got_data as GoTData | undefined) ?? (ac?.got_result as GoTData | undefined);
+  const reasoningPromptMessages =
+    decision.source === "got"
+      ? ((ac?.got_prompt_messages as Array<Record<string, unknown>> | undefined) ?? [])
+      : ((ac?.tot_prompt_messages as Array<Record<string, unknown>> | undefined) ?? []);
+  const reasoningRawOutput =
+    decision.source === "got"
+      ? String(ac?.got_raw_output ?? "")
+      : decision.source === "tot"
+        ? String(ac?.tot_raw_output ?? "")
+        : "";
   return (
     <details className="group rounded-md border border-border bg-card p-3">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 marker:hidden">
@@ -103,6 +122,8 @@ function DecisionBody({
           memoryContext={memoryContext}
           beliefContext={beliefContext}
           gotData={gotData}
+          reasoningPromptMessages={reasoningPromptMessages}
+          reasoningRawOutput={reasoningRawOutput}
         />
       </div>
     </details>
@@ -118,6 +139,8 @@ function DecisionExpandedSections({
   memoryContext,
   beliefContext,
   gotData,
+  reasoningPromptMessages,
+  reasoningRawOutput,
 }: {
   decision: AgentDecision;
   totCandidates: Array<Record<string, unknown>>;
@@ -127,6 +150,8 @@ function DecisionExpandedSections({
   memoryContext?: Record<string, unknown>;
   beliefContext?: Record<string, unknown>;
   gotData?: GoTData;
+  reasoningPromptMessages: Array<Record<string, unknown>>;
+  reasoningRawOutput: string;
 }) {
   const hasBelief = beliefContext && Object.keys(beliefContext).length > 0;
   const hasRaw = decision.raw_output.length > 0;
@@ -135,7 +160,9 @@ function DecisionExpandedSections({
   const hasMemory = memoryContext && Object.keys(memoryContext).length > 0;
   const hasSkill = selectedSkills.length > 0 && !decision.selected_skill;
   const hasGoT = gotData && gotData.hypotheses?.length > 0;
-  const hasAny = hasBelief || hasRaw || hasToT || hasPrompt || hasMemory || hasSkill || hasGoT;
+  const hasReasoningPrompt = reasoningPromptMessages.length > 0;
+  const hasReasoningRaw = reasoningRawOutput.length > 0;
+  const hasAny = hasBelief || hasRaw || hasToT || hasPrompt || hasMemory || hasSkill || hasGoT || hasReasoningPrompt || hasReasoningRaw;
   if (!hasAny) return null;
   return (
     <div className="space-y-2">
@@ -167,6 +194,17 @@ function DecisionExpandedSections({
       ) : null}
 
       {hasGoT && gotData ? <GoTDetails data={gotData} /> : null}
+
+      {hasReasoningPrompt ? (
+        <PromptBlock
+          title={decision.source === "got" ? "GoT Prompt" : "ToT Prompt"}
+          messages={reasoningPromptMessages}
+        />
+      ) : null}
+
+      {hasReasoningRaw ? (
+        <RawBlock title={decision.source === "got" ? "GoT Raw Output" : "ToT Raw Output"} value={reasoningRawOutput} />
+      ) : null}
 
       {hasSkill ? (
         <details className="group rounded-sm border border-border p-2">
@@ -207,37 +245,49 @@ function DecisionExpandedSections({
       ) : null}
 
       {hasPrompt ? (
-        <details className="group rounded-sm border border-border p-2">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground marker:hidden">
-            <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
-            Prompt ({promptMessages.length} 条)
-          </summary>
-          <div className="mt-2 space-y-2">
-            {promptMessages.map((msg, idx) => (
-              <div key={idx} className="rounded-sm border border-border bg-card p-2 text-xs">
-                <Badge variant="outline" className="mb-1">{(msg.role as string) ?? "unknown"}</Badge>
-                <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-muted-foreground">
-                  {typeof msg.content === "string" ? msg.content.slice(0, 500) : JSON.stringify(msg.content, null, 2).slice(0, 500)}
-                  {(typeof msg.content === "string" ? msg.content.length > 500 : false) ? "..." : ""}
-                </pre>
-              </div>
-            ))}
-          </div>
-        </details>
+        <PromptBlock title="Prompt" messages={promptMessages} />
       ) : null}
 
       {hasRaw ? (
-        <details className="group rounded-sm border border-border p-2">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground marker:hidden">
-            <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
-            Raw Output
-          </summary>
-          <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-muted-foreground">
-            {decision.raw_output}
-          </pre>
-        </details>
+        <RawBlock title="Raw Output" value={decision.raw_output} />
       ) : null}
     </div>
+  );
+}
+
+function PromptBlock({ title, messages }: { title: string; messages: Array<Record<string, unknown>> }) {
+  return (
+    <details className="group rounded-sm border border-border p-2">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground marker:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+        {title} ({messages.length} 条)
+      </summary>
+      <div className="mt-2 space-y-2">
+        {messages.map((msg, idx) => (
+          <div key={idx} className="rounded-sm border border-border bg-card p-2 text-xs">
+            <Badge variant="outline" className="mb-1">{(msg.role as string) ?? "unknown"}</Badge>
+            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-muted-foreground">
+              {typeof msg.content === "string" ? msg.content.slice(0, 500) : JSON.stringify(msg.content, null, 2).slice(0, 500)}
+              {(typeof msg.content === "string" ? msg.content.length > 500 : false) ? "...": ""}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function RawBlock({ title, value }: { title: string; value: string }) {
+  return (
+    <details className="group rounded-sm border border-border p-2">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground marker:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+        {title}
+      </summary>
+      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-muted-foreground">
+        {value}
+      </pre>
+    </details>
   );
 }
 

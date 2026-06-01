@@ -386,7 +386,11 @@ function winnerFromEvents(events: GameEvent[]) {
 
 function buildEventDecisionMap(events: GameEvent[], decisions: AgentDecision[]) {
   const buckets = new Map<string, AgentDecision[]>();
+  const decisionsById = new Map<string, AgentDecision>();
   for (const decision of [...decisions].sort((left, right) => left.index - right.index)) {
+    if (decision.decision_id) {
+      decisionsById.set(decision.decision_id, decision);
+    }
     const key = decisionKey(decision.day, decision.phase, decision.action_type, decision.player_id);
     buckets.set(key, [...(buckets.get(key) ?? []), decision]);
   }
@@ -395,6 +399,14 @@ function buildEventDecisionMap(events: GameEvent[], decisions: AgentDecision[]) 
   const mapped = new Map<number, AgentDecision>();
   for (const event of events) {
     if (!isActionDecisionEvent(event)) continue;
+    const decisionId = stringPayload(event, "decision_id");
+    if (decisionId) {
+      const decision = decisionsById.get(decisionId);
+      if (decision) {
+        mapped.set(event.index, decision);
+        continue;
+      }
+    }
     const actionType = stringPayload(event, "action_type");
     const key = decisionKey(event.day, event.phase, actionType, event.actor);
     const offset = used.get(key) ?? 0;

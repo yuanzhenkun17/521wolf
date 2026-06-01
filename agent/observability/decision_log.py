@@ -68,11 +68,19 @@ class DecisionRecord:
 
 
 class AgentDecisionRecorder:
-    def __init__(self) -> None:
+    def __init__(self, stream_path: str | Path | None = None) -> None:
         self.records: list[DecisionRecord] = []
+        self._stream_path: Path | None = Path(stream_path) if stream_path else None
+        if self._stream_path:
+            self._stream_path.parent.mkdir(parents=True, exist_ok=True)
+            self._stream_path.touch()
 
     def record(self, decision: DecisionRecord) -> None:
         self.records.append(decision)
+        if self._stream_path:
+            line = json.dumps(decision.to_dict(), ensure_ascii=False, sort_keys=True)
+            with self._stream_path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
 
     def to_jsonl(self) -> str:
         lines = [json.dumps(record.to_dict(), ensure_ascii=False, sort_keys=True) for record in self.records]

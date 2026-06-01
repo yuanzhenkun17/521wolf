@@ -1,5 +1,7 @@
 import type { GameArchive, GameSnapshot } from "./types";
 
+export type { GameArchive } from "./types";
+
 export interface GameConfig {
   seed?: number;
   max_days?: number;
@@ -94,6 +96,9 @@ export type RoleLeaderboardEntry = {
 
 export type EvolutionRunStatus = {
   run_id: string;
+  artifact_run_id?: string | null;
+  training_run_id?: string | null;
+  training_output_dir?: string | null;
   role: string;
   parent_hash: string;
   status: string;
@@ -103,7 +108,7 @@ export type EvolutionRunStatus = {
   battle_completed: number;
   current_stage: string;
   candidate_hash: string | null;
-  battle_result: { wins: number; losses: number; win_rate: number } | null;
+  battle_result: { wins: number; losses: number; win_rate: number; skipped?: boolean; reason?: string } | null;
   diff: Array<{
     filename: string;
     action: string;
@@ -114,6 +119,8 @@ export type EvolutionRunStatus = {
   errors: string[];
   kind: string;
   schema_version: number;
+  retry_attempt?: number;
+  retry_total?: number;
 };
 
 export type BatchEvolutionRunStatus = {
@@ -264,6 +271,18 @@ export async function rejectRoleBatchEvolution(batchId: string): Promise<BatchEv
   return response.json();
 }
 
+export async function stopBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/batch/${batchId}/stop`, { method: "POST" });
+  if (!response.ok) throw new Error("无法暂停批量演化");
+  return response.json();
+}
+
+export async function terminateBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/batch/${batchId}/terminate`, { method: "POST" });
+  if (!response.ok) throw new Error("无法终止批量演化");
+  return response.json();
+}
+
 export async function listRoleEvolutionRuns(): Promise<EvolutionRunStatus[]> {
   const response = await fetch("/api/role-evolution");
   if (!response.ok) throw new Error("无法读取演化任务列表");
@@ -274,6 +293,30 @@ export async function listRoleEvolutionRuns(): Promise<EvolutionRunStatus[]> {
 export async function getRoleEvolutionStatus(runId: string): Promise<EvolutionRunStatus> {
   const response = await fetch(`/api/role-evolution/${runId}/status`);
   if (!response.ok) throw new Error("无法读取演化状态");
+  return response.json();
+}
+
+export async function stopRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/${runId}/stop`, { method: "POST" });
+  if (!response.ok) throw new Error("无法停止演化任务");
+  return response.json();
+}
+
+export async function resumeRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/${runId}/resume`, { method: "POST" });
+  if (!response.ok) throw new Error("无法恢复演化任务");
+  return response.json();
+}
+
+export async function rerunConsolidation(runId: string): Promise<EvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/${runId}/rerun-consolidation`, { method: "POST" });
+  if (!response.ok) throw new Error("无法重新整合");
+  return response.json();
+}
+
+export async function terminateRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
+  const response = await fetch(`/api/role-evolution/${runId}/terminate`, { method: "POST" });
+  if (!response.ok) throw new Error("无法终止演化任务");
   return response.json();
 }
 
@@ -308,7 +351,7 @@ export async function rejectRoleEvolution(runId: string): Promise<EvolutionRunSt
 export type SelfplayRun = {
   run_id: string;
   label: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "paused" | "rate_limited" | "completed" | "failed";
   num_games: number;
   completed_games: number;
   agent_version?: string;
@@ -320,6 +363,8 @@ export type SelfplayRun = {
   created_at: string;
   results?: Record<string, unknown>;
   error?: string;
+  retry_attempt?: number;
+  retry_total?: number;
 };
 
 export type SelfplayConfig = {
@@ -330,6 +375,9 @@ export type SelfplayConfig = {
   enable_sheriff?: boolean;
   enable_batch_dream?: boolean;
   label?: string;
+  game_concurrency?: number;
+  llm_concurrency?: number;
+  llm_rpm?: number;
 };
 
 export async function listSelfplayRuns(): Promise<SelfplayRun[]> {
@@ -358,12 +406,31 @@ export async function startSelfplayRun(config: SelfplayConfig): Promise<Selfplay
   return response.json();
 }
 
+export async function stopSelfplayRun(runId: string): Promise<SelfplayRun> {
+  const response = await fetch(`/api/selfplay/${runId}/stop`, { method: "POST" });
+  if (!response.ok) throw new Error("无法停止自对弈");
+  return response.json();
+}
+
+export async function resumeSelfplayRun(runId: string): Promise<SelfplayRun> {
+  const response = await fetch(`/api/selfplay/${runId}/resume`, { method: "POST" });
+  if (!response.ok) throw new Error("无法恢复自对弈");
+  return response.json();
+}
+
+export async function terminateSelfplayRun(runId: string): Promise<SelfplayRun> {
+  const response = await fetch(`/api/selfplay/${runId}/terminate`, { method: "POST" });
+  if (!response.ok) throw new Error("无法终止自对弈");
+  return response.json();
+}
+
 export type SelfplayGameSummary = {
   game_id: string;
   winner: string | null;
   day: number;
   phase: string;
   event_count: number;
+  in_progress?: boolean;
 };
 
 export async function listSelfplayGames(runId: string): Promise<SelfplayGameSummary[]> {
@@ -385,6 +452,66 @@ export async function getSelfplayGameDecisions(runId: string, gameId: string): P
   if (!response.ok) throw new Error("无法读取决策记录");
   const data = await response.json();
   return data.decisions ?? [];
+}
+
+export async function getSelfplayGameArchive(runId: string, gameId: string): Promise<GameArchive> {
+  const response = await fetch(`/api/selfplay/${runId}/games/${gameId}/archive`);
+  if (!response.ok) throw new Error("无法读取对局存档");
+  return response.json();
+}
+
+export async function listRoleEvolutionTrainingGames(runId: string): Promise<SelfplayGameSummary[]> {
+  const response = await fetch(`/api/role-evolution/${runId}/games`);
+  if (!response.ok) throw new Error("无法读取训练对局列表");
+  const data = await response.json();
+  return data.games ?? [];
+}
+
+export async function getRoleEvolutionTrainingGameEvents(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`/api/role-evolution/${runId}/games/${gameId}/events`);
+  if (!response.ok) throw new Error("无法读取训练对局事件");
+  const data = await response.json();
+  return data.events ?? [];
+}
+
+export async function getRoleEvolutionTrainingGameDecisions(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`/api/role-evolution/${runId}/games/${gameId}/decisions`);
+  if (!response.ok) throw new Error("无法读取训练决策记录");
+  const data = await response.json();
+  return data.decisions ?? [];
+}
+
+export async function getRoleEvolutionTrainingGameArchive(runId: string, gameId: string): Promise<GameArchive> {
+  const response = await fetch(`/api/role-evolution/${runId}/games/${gameId}/archive`);
+  if (!response.ok) throw new Error("无法读取训练对局存档");
+  return response.json();
+}
+
+export async function listBattleGames(runId: string, side: "baseline" | "candidate"): Promise<SelfplayGameSummary[]> {
+  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games`);
+  if (!response.ok) throw new Error("无法读取对战对局列表");
+  const data = await response.json();
+  return data.games ?? [];
+}
+
+export async function getBattleGameEvents(runId: string, side: string, gameId: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games/${gameId}/events`);
+  if (!response.ok) throw new Error("无法读取对战对局事件");
+  const data = await response.json();
+  return data.events ?? [];
+}
+
+export async function getBattleGameDecisions(runId: string, side: string, gameId: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games/${gameId}/decisions`);
+  if (!response.ok) throw new Error("无法读取对战决策记录");
+  const data = await response.json();
+  return data.decisions ?? [];
+}
+
+export async function getBattleGameArchive(runId: string, side: string, gameId: string): Promise<GameArchive> {
+  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games/${gameId}/archive`);
+  if (!response.ok) throw new Error("无法读取对战对局存档");
+  return response.json();
 }
 
 

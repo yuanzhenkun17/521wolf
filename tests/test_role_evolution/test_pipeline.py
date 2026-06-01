@@ -249,6 +249,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run.status, EvolutionStatus.REVIEWING)
             self.assertEqual(run.training_games, 5)
             self.assertEqual(run.battle_games, 3)
+            self.assertEqual(run.training_run_id, "train_0")
             self.assertIsNotNone(run.baseline_config)
             # state.json written at the reviewing stage
             state_path = store._base / "runs" / "evolution" / run.run_id / "state.json"
@@ -256,6 +257,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "reviewing")
             self.assertIn("baseline_config", state)
+            self.assertEqual(state["training_run_id"], "train_0")
 
     async def test_training_uses_composite_baseline_skill_dir(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -48,11 +48,15 @@ class AgentContext:
 
     # ToT (Tree-of-Thought) multi-candidate reasoning
     tot_enabled: bool = False
+    tot_prompt_messages: list[dict[str, str]] = field(default_factory=list)
+    tot_raw_output: str = ""
     tot_candidates: list[dict[str, Any]] = field(default_factory=list)
     tot_judge_reason: str = ""
 
     # GoT (Graph-of-Thought) evidence/hypothesis reasoning
     got_enabled: bool = False
+    got_prompt_messages: list[dict[str, str]] = field(default_factory=list)
+    got_raw_output: str = ""
     got_evidence_nodes: list[dict[str, Any]] = field(default_factory=list)
     got_hypotheses: list[dict[str, Any]] = field(default_factory=list)
     got_judge_reason: str = ""

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from langfuse import observe
 from agent.observability.decision_log import AgentDecisionRecorder, DecisionRecord
 from agent.runtime.context import AgentContext
+
+_log = logging.getLogger(__name__)
 
 
 @observe(name="log_node")
@@ -36,8 +40,12 @@ def log_node(ctx: AgentContext, recorder: AgentDecisionRecorder | None = None) -
         source=ctx.source,
     )
 
-    if recorder is not None:
-        recorder.record(decision)
-
     ctx.decision_record = decision
+
+    if recorder is not None:
+        try:
+            recorder.record(decision)
+        except Exception:
+            _log.warning("decision recorder failed", exc_info=True)
+
     return ctx

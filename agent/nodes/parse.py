@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from langfuse import observe
 from agent.prompts.parsing import load_json_object
 from agent.runtime.context import AgentContext
@@ -74,7 +76,7 @@ def parse_node(ctx: AgentContext) -> AgentContext:
     return ctx
 
 
-def _as_float(value, default: float) -> float:
+def _as_float(value: Any, default: float) -> float:
     if value is None:
         return default
     try:
@@ -83,10 +85,10 @@ def _as_float(value, default: float) -> float:
         return default
 
 
-def _int_list(value) -> list[int]:
+def _int_list(value: Any) -> list[int]:
     if not isinstance(value, list):
         return []
-    result = []
+    result: list[int] = []
     for item in value:
         try:
             result.append(int(item))

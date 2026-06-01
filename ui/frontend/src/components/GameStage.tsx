@@ -9,7 +9,7 @@ import { SheriffResultStage } from "./SheriffResultStage";
 import { ResultStage } from "./ResultStage";
 import { phaseName, type Presentation } from "../presentation";
 import type { GamePage } from "../gamePages";
-import type { Player } from "../types";
+import type { ArchiveMap, Player } from "../types";
 
 export function GameStage({
   page,
@@ -25,7 +25,7 @@ export function GameStage({
   pages: GamePage[];
   presentation: Presentation;
   players: Player[];
-  archiveMap?: Map<number, Record<string, unknown>>;
+  archiveMap?: ArchiveMap;
   followLatest: boolean;
   onSelectPage: (pageId: string) => void;
   onFollowLatest: () => void;

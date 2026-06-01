@@ -47,7 +47,15 @@ async def ask(
         if inspect.isawaitable(response):
             response = await response
         if response.action_type == action_type and validator(response):
-            engine._record(action_type.value, actor=player_id, target=response.target, payload={"choice": response.choice})
+            engine._record(
+                action_type.value,
+                actor=player_id,
+                target=response.target,
+                payload={
+                    "choice": response.choice,
+                    "decision_id": response.decision_id,
+                },
+            )
             append_public_action(engine, player_id, response)
             engine._log(
                 "action_response",
@@ -58,6 +66,7 @@ async def ask(
                     "action_type": response.action_type.value,
                     "choice": response.choice,
                     "text": response.text,
+                    "decision_id": response.decision_id,
                 },
             )
             return response
@@ -108,7 +117,10 @@ def append_public_action(engine: GameEngine, player_id: int, response: ActionRes
         actor=player_id,
         target=response.target,
         content=response.text,
-        payload={"choice": response.choice},
+        payload={
+            "choice": response.choice,
+            "decision_id": response.decision_id,
+        },
     )
 
 

@@ -435,6 +435,8 @@ class EvolutionRun:
     training_games: int = 0
     battle_games: int = 0
     baseline_config: SkillVersionConfig | None = None
+    training_run_id: str | None = None
+    training_output_dir: str | None = None
     candidate_hash: str | None = None
     battle_result: dict[str, Any] | None = None
     proposals: SkillConsolidation | None = None
@@ -450,6 +452,8 @@ class EvolutionRun:
             "training_games": self.training_games,
             "battle_games": self.battle_games,
             "baseline_config": self.baseline_config.to_dict() if self.baseline_config is not None else None,
+            "training_run_id": self.training_run_id,
+            "training_output_dir": self.training_output_dir,
             "candidate_hash": self.candidate_hash,
             "battle_result": self.battle_result,
             "proposals": self.proposals.to_dict() if self.proposals is not None else None,
@@ -471,6 +475,8 @@ class EvolutionRun:
             battle_games=int(data.get("battle_games", 0)),
             baseline_config=SkillVersionConfig.from_dict(baseline_config_raw)
             if baseline_config_raw is not None else None,
+            training_run_id=data.get("training_run_id"),
+            training_output_dir=data.get("training_output_dir"),
             candidate_hash=data.get("candidate_hash"),
             battle_result=data.get("battle_result"),
             proposals=SkillConsolidation.from_dict(proposals_raw) if proposals_raw is not None else None,

@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -179,6 +180,105 @@ class UiBackendTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["kind"], "role_batch_evolution_runs")
         self.assertIn("batches", response.json())
+
+    def test_role_evolution_training_game_endpoints_read_nested_selfplay_run(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir) / "role_versions"
+            evo_dir = base / "runs" / "evolution" / "evo_test"
+            game_dir = evo_dir / "run_training" / "games" / "game_001"
+            game_dir.mkdir(parents=True)
+            (evo_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "evo_test",
+                        "training_run_id": "run_training",
+                        "training_output_dir": str(evo_dir / "run_training"),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            event = {
+                "index": 1,
+                "day": 1,
+                "phase": "day_speech",
+                "event_type": "action_response",
+                "message": "1 号发言",
+                "level": "info",
+                "visibility": "god",
+                "actor": 1,
+                "target": None,
+                "payload": {
+                    "action_type": "speak",
+                    "text": "我是一张好人牌",
+                    "decision_id": "dec_001",
+                },
+            }
+            decision = {
+                "decision_id": "dec_001",
+                "day": 1,
+                "phase": "day_speech",
+                "player_id": 1,
+                "role": "villager",
+                "action_type": "speak",
+                "candidates": [],
+                "selected_target": None,
+                "selected_choice": None,
+                "public_text": "我是一张好人牌",
+                "private_reasoning": "先表水",
+                "confidence": 0.8,
+                "alternatives": [],
+                "rejected_reasons": [],
+                "selected_skills": [],
+                "memory_refs": [],
+                "belief_snapshot": {},
+                "memory_summary": [],
+                "raw_output": "{}",
+                "errors": [],
+                "policy_adjustments": [],
+                "source": "llm",
+            }
+            (game_dir / "game_events.jsonl").write_text(
+                json.dumps(event, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            (game_dir / "agent_decisions.jsonl").write_text(
+                json.dumps(decision, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            (game_dir / "archive.json").write_text(
+                json.dumps(
+                    {
+                        "game_id": "game_001",
+                        "player_roles": {"1": "villager"},
+                        "winner": "villagers",
+                        "decisions": [{"index": 1, "decision_id": "dec_001"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            old_store = app_module.version_store
+            app_module.version_store = SimpleNamespace(base_dir=base)
+            client = TestClient(app)
+            try:
+                games = client.get("/api/role-evolution/evo_test/games")
+                events = client.get("/api/role-evolution/evo_test/games/game_001/events")
+                decisions = client.get("/api/role-evolution/evo_test/games/game_001/decisions")
+                archive = client.get("/api/role-evolution/evo_test/games/game_001/archive")
+            finally:
+                app_module.version_store = old_store
+
+            self.assertEqual(games.status_code, 200)
+            self.assertEqual(games.json()["games"][0]["game_id"], "game_001")
+            self.assertEqual(events.status_code, 200)
+            self.assertEqual(events.json()["events"][0]["payload"]["decision_id"], "dec_001")
+            self.assertEqual(decisions.status_code, 200)
+            self.assertEqual(decisions.json()["decisions"][0]["index"], 1)
+            self.assertEqual(decisions.json()["decisions"][0]["decision_id"], "dec_001")
+            self.assertEqual(archive.status_code, 200)
+            self.assertEqual(archive.json()["decisions"][0]["decision_id"], "dec_001")
 
 
 if __name__ == "__main__":

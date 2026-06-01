@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Play, Rocket, Trophy, CheckCircle, XCircle, GitBranch, Layers3 } from "lucide-react";
+import { FolderOpen, Loader2, Pause, Play, RotateCcw, Rocket, Trophy, CheckCircle, XCircle, GitBranch, Layers3 } from "lucide-react";
 import {
   listRoles,
   listRoleVersions,
   getRoleLeaderboard,
   listRoleEvolutionRuns,
   listRoleBatchEvolutionRuns,
+  listRoleEvolutionTrainingGames,
+  getRoleEvolutionTrainingGameArchive,
+  getRoleEvolutionTrainingGameDecisions,
+  getRoleEvolutionTrainingGameEvents,
   startRoleEvolution,
   startRoleBatchEvolution,
   getRoleEvolutionStatus,
@@ -16,11 +20,24 @@ import {
   rejectRoleEvolution,
   rejectRoleBatchEvolution,
   rollbackRole,
+  stopRoleEvolution,
+  resumeRoleEvolution,
+  terminateRoleEvolution,
+  rerunConsolidation,
+  stopBatchEvolution,
+  terminateBatchEvolution,
+  listBattleGames,
+  getBattleGameEvents,
+  getBattleGameDecisions,
+  getBattleGameArchive,
   type RoleVersion,
   type RoleLeaderboardEntry,
   type EvolutionRunStatus,
   type BatchEvolutionRunStatus,
+  type GameArchive,
+  type SelfplayGameSummary,
 } from "../api";
+import { ArchivedGameDetail } from "../components/ArchivedGameDetail";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -39,7 +56,7 @@ const ROLE_LABELS: Record<string, string> = {
   white_wolf_king: "白狼王",
 };
 
-const TERMINAL_STATUSES = new Set(["promoted", "rejected", "failed"]);
+const PROMOTED_STATUSES = new Set(["promoted", "rejected"]);
 
 // ---------------------------------------------------------------------------
 // Main page
@@ -71,6 +88,24 @@ export function RoleEvolutionPage() {
   const [batchPromoting, setBatchPromoting] = useState(false);
   const [batchRejecting, setBatchRejecting] = useState(false);
   const [pollExhausted, setPollExhausted] = useState(false);
+  const [trainingGameRunId, setTrainingGameRunId] = useState<string | null>(null);
+  const [trainingGameList, setTrainingGameList] = useState<SelfplayGameSummary[]>([]);
+  const [viewingTrainingGameId, setViewingTrainingGameId] = useState<string | null>(null);
+  const [trainingEvents, setTrainingEvents] = useState<Record<string, unknown>[]>([]);
+  const [trainingDecisions, setTrainingDecisions] = useState<Record<string, unknown>[]>([]);
+  const [trainingArchive, setTrainingArchive] = useState<GameArchive | null>(null);
+  const [trainingGamesLoading, setTrainingGamesLoading] = useState(false);
+  const [trainingDetailLoading, setTrainingDetailLoading] = useState(false);
+  // Battle game viewing state
+  const [battleRunId, setBattleRunId] = useState<string | null>(null);
+  const [battleSide, setBattleSide] = useState<"baseline" | "candidate">("baseline");
+  const [battleGameList, setBattleGameList] = useState<SelfplayGameSummary[]>([]);
+  const [viewingBattleGameId, setViewingBattleGameId] = useState<string | null>(null);
+  const [battleEvents, setBattleEvents] = useState<Record<string, unknown>[]>([]);
+  const [battleDecisions, setBattleDecisions] = useState<Record<string, unknown>[]>([]);
+  const [battleArchive, setBattleArchive] = useState<GameArchive | null>(null);
+  const [battleGamesLoading, setBattleGamesLoading] = useState(false);
+  const [battleDetailLoading, setBattleDetailLoading] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
   const batchSseRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -83,7 +118,7 @@ export function RoleEvolutionPage() {
     try {
       const runs = await listRoleEvolutionRuns();
       const run = runs
-        .filter((item) => item.role === role && !TERMINAL_STATUSES.has(item.status))
+        .filter((item) => item.role === role && !PROMOTED_STATUSES.has(item.status))
         .sort((a, b) => b.run_id.localeCompare(a.run_id))[0];
       setActiveRun(run ?? null);
     } catch (exc) {
@@ -95,7 +130,7 @@ export function RoleEvolutionPage() {
     try {
       const batches = await listRoleBatchEvolutionRuns();
       const batch = batches
-        .filter((item) => !TERMINAL_STATUSES.has(item.status))
+        .filter((item) => !PROMOTED_STATUSES.has(item.status))
         .sort((a, b) => b.batch_id.localeCompare(a.batch_id))[0];
       setActiveBatch(batch ?? null);
     } catch (exc) {
@@ -139,9 +174,52 @@ export function RoleEvolutionPage() {
     void restoreActiveRun(selectedRole);
   }, [selectedRole, loadRoleData, restoreActiveRun]);
 
+  // Request notification permission on mount
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
+  }, []);
+
+  // Notify when evolution completes or fails
+  useEffect(() => {
+    if (!activeRun) return;
+    if (activeRun.status === "reviewing") {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("角色演化完成", {
+          body: `${activeRun.role} 演化完成，等待审查`,
+        });
+      }
+    } else if (activeRun.status === "failed") {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("角色演化失败", {
+          body: `${activeRun.role}: ${activeRun.errors?.[0] || "未知错误"}`,
+        });
+      }
+    }
+  }, [activeRun?.status]);
+
+  // Notify when batch evolution completes or fails
+  useEffect(() => {
+    if (!activeBatch) return;
+    if (activeBatch.status === "reviewing") {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("批量演化完成", {
+          body: `批量演化完成，等待审查`,
+        });
+      }
+    } else if (activeBatch.status === "failed") {
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("批量演化失败", {
+          body: `${activeBatch.errors?.[0] || "未知错误"}`,
+        });
+      }
+    }
+  }, [activeBatch?.status]);
+
   // SSE connection for active run
   useEffect(() => {
-    if (!activeRun || TERMINAL_STATUSES.has(activeRun.status)) return;
+    if (!activeRun || PROMOTED_STATUSES.has(activeRun.status)) return;
 
     const es = new EventSource(`/api/role-evolution/${activeRun.run_id}/events`);
     sseRef.current = es;
@@ -169,7 +247,7 @@ export function RoleEvolutionPage() {
   }, [activeRun?.run_id, activeRun?.status]);
 
   useEffect(() => {
-    if (!activeBatch || TERMINAL_STATUSES.has(activeBatch.status)) return;
+    if (!activeBatch || PROMOTED_STATUSES.has(activeBatch.status)) return;
 
     const es = new EventSource(`/api/role-evolution/batch/${activeBatch.batch_id}/events`);
     batchSseRef.current = es;
@@ -206,7 +284,7 @@ export function RoleEvolutionPage() {
         const data = await getRoleEvolutionStatus(runId);
         setActiveRun(data);
         pollRetriesRef.current = 0;
-        if (TERMINAL_STATUSES.has(data.status)) {
+        if (PROMOTED_STATUSES.has(data.status)) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
         }
@@ -229,7 +307,7 @@ export function RoleEvolutionPage() {
         const data = await getRoleBatchEvolutionStatus(batchId);
         setActiveBatch(data);
         batchPollRetriesRef.current = 0;
-        if (TERMINAL_STATUSES.has(data.status)) {
+        if (PROMOTED_STATUSES.has(data.status)) {
           if (batchPollRef.current) clearInterval(batchPollRef.current);
           batchPollRef.current = null;
         }
@@ -268,6 +346,42 @@ export function RoleEvolutionPage() {
       }
     })();
   }, [activeRun?.run_id, activeRun?.status]);
+
+  // Auto-refresh training game list while training is in progress
+  const trainingGamePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (!trainingGameRunId || !activeRun || activeRun.status !== "training") return;
+
+    trainingGamePollRef.current = setInterval(async () => {
+      try {
+        const games = await listRoleEvolutionTrainingGames(trainingGameRunId);
+        setTrainingGameList(games);
+      } catch {
+        // ignore polling errors
+      }
+    }, 5000);
+    return () => {
+      if (trainingGamePollRef.current) clearInterval(trainingGamePollRef.current);
+    };
+  }, [trainingGameRunId, activeRun?.status]);
+
+  // Auto-refresh battle game list while battling is in progress
+  const battleGamePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (!battleRunId || !activeRun || activeRun.status !== "battling") return;
+
+    battleGamePollRef.current = setInterval(async () => {
+      try {
+        const games = await listBattleGames(battleRunId, battleSide);
+        setBattleGameList(games);
+      } catch {
+        // ignore polling errors
+      }
+    }, 5000);
+    return () => {
+      if (battleGamePollRef.current) clearInterval(battleGamePollRef.current);
+    };
+  }, [battleRunId, battleSide, activeRun?.status]);
 
   async function handleStart() {
     if (!selectedRole) return;
@@ -342,6 +456,29 @@ export function RoleEvolutionPage() {
     }
   }
 
+  async function handleStopBatch() {
+    if (!activeBatch) return;
+    setError(null);
+    try {
+      const next = await stopBatchEvolution(activeBatch.batch_id);
+      setActiveBatch(next);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "批量暂停失败");
+    }
+  }
+
+  async function handleTerminateBatch() {
+    if (!activeBatch) return;
+    if (!confirm("终止会永久删除该批量演化任务的所有数据，确定要终止吗？")) return;
+    setError(null);
+    try {
+      const next = await terminateBatchEvolution(activeBatch.batch_id);
+      setActiveBatch(next);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "批量终止失败");
+    }
+  }
+
   function toggleBatchRole(role: string) {
     setSelectedBatchRoles((current) =>
       current.includes(role) ? current.filter((item) => item !== role) : [...current, role],
@@ -357,6 +494,12 @@ export function RoleEvolutionPage() {
       setActiveRun(null);
       setDiff(null);
       await loadRoleData(selectedRole);
+      // Show success notification
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("推广成功", {
+          body: `${activeRun.role} 的候选版本已推广为 baseline`,
+        });
+      }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "推广失败");
     } finally {
@@ -380,6 +523,51 @@ export function RoleEvolutionPage() {
     }
   }
 
+  async function handleStopEvolution() {
+    if (!activeRun) return;
+    setError(null);
+    try {
+      const updated = await stopRoleEvolution(activeRun.run_id);
+      setActiveRun(updated);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "停止失败");
+    }
+  }
+
+  async function handleResumeEvolution() {
+    if (!activeRun) return;
+    setError(null);
+    try {
+      const updated = await resumeRoleEvolution(activeRun.run_id);
+      setActiveRun(updated);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "恢复失败");
+    }
+  }
+
+  async function handleTerminateEvolution() {
+    if (!activeRun) return;
+    if (!confirm("终止会永久删除该演化任务的所有数据，确定要终止吗？")) return;
+    setError(null);
+    try {
+      const updated = await terminateRoleEvolution(activeRun.run_id);
+      setActiveRun(updated);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "终止失败");
+    }
+  }
+
+  async function handleRerunConsolidation() {
+    if (!activeRun) return;
+    setError(null);
+    try {
+      const updated = await rerunConsolidation(activeRun.run_id);
+      setActiveRun(updated);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "重新整合失败");
+    }
+  }
+
   async function handleRollback(hash: string) {
     if (!selectedRole) return;
     setError(null);
@@ -389,6 +577,117 @@ export function RoleEvolutionPage() {
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "回滚失败");
     }
+  }
+
+  async function handleViewTrainingGames(runId: string) {
+    setTrainingGamesLoading(true);
+    setError(null);
+    setTrainingGameRunId(runId);
+    setViewingTrainingGameId(null);
+    setTrainingEvents([]);
+    setTrainingDecisions([]);
+    setTrainingArchive(null);
+    try {
+      const games = await listRoleEvolutionTrainingGames(runId);
+      setTrainingGameList(games);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "加载训练对局失败");
+      setTrainingGameRunId(null);
+      setTrainingGameList([]);
+    } finally {
+      setTrainingGamesLoading(false);
+    }
+  }
+
+  async function handleViewTrainingGame(runId: string, gameId: string) {
+    setTrainingDetailLoading(true);
+    setViewingTrainingGameId(gameId);
+    setTrainingEvents([]);
+    setTrainingDecisions([]);
+    setTrainingArchive(null);
+    try {
+      const [events, decisions, archive] = await Promise.all([
+        getRoleEvolutionTrainingGameEvents(runId, gameId),
+        getRoleEvolutionTrainingGameDecisions(runId, gameId),
+        getRoleEvolutionTrainingGameArchive(runId, gameId).catch(() => null),
+      ]);
+      setTrainingEvents(events);
+      setTrainingDecisions(decisions);
+      setTrainingArchive(archive);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "加载训练对局详情失败");
+      setViewingTrainingGameId(null);
+    } finally {
+      setTrainingDetailLoading(false);
+    }
+  }
+
+  function handleBackToTrainingGames() {
+    setViewingTrainingGameId(null);
+    setTrainingEvents([]);
+    setTrainingDecisions([]);
+    setTrainingArchive(null);
+  }
+
+  function handleCloseTrainingGames() {
+    setTrainingGameRunId(null);
+    setTrainingGameList([]);
+    handleBackToTrainingGames();
+  }
+
+  async function handleViewBattleGames(runId: string, side: "baseline" | "candidate") {
+    setBattleGamesLoading(true);
+    setBattleRunId(runId);
+    setBattleSide(side);
+    setViewingBattleGameId(null);
+    setBattleEvents([]);
+    setBattleDecisions([]);
+    setBattleArchive(null);
+    try {
+      const games = await listBattleGames(runId, side);
+      setBattleGameList(games);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "加载对战对局失败");
+      setBattleRunId(null);
+    } finally {
+      setBattleGamesLoading(false);
+    }
+  }
+
+  async function handleViewBattleGame(runId: string, side: string, gameId: string) {
+    setBattleDetailLoading(true);
+    setViewingBattleGameId(gameId);
+    setBattleEvents([]);
+    setBattleDecisions([]);
+    setBattleArchive(null);
+    try {
+      const [events, decisions, archive] = await Promise.all([
+        getBattleGameEvents(runId, side, gameId),
+        getBattleGameDecisions(runId, side, gameId),
+        getBattleGameArchive(runId, side, gameId).catch(() => null),
+      ]);
+      setBattleEvents(events);
+      setBattleDecisions(decisions);
+      setBattleArchive(archive);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "加载对战对局详情失败");
+      setViewingBattleGameId(null);
+    } finally {
+      setBattleDetailLoading(false);
+    }
+  }
+
+  function handleBackToBattleGames() {
+    setViewingBattleGameId(null);
+    setBattleEvents([]);
+    setBattleDecisions([]);
+    setBattleArchive(null);
+  }
+
+  function handleCloseBattleGames() {
+    setBattleRunId(null);
+    setBattleGameList([]);
+    handleBackToBattleGames();
   }
 
   // Derive baseline info
@@ -602,13 +901,77 @@ export function RoleEvolutionPage() {
                   | 候选: <code className="rounded bg-muted px-1 text-xs">{activeRun.candidate_hash.slice(0, 8)}</code>
                 </span>
               ) : null}
+              {activeRun.training_run_id ? (
+                <span>
+                  {" "}
+                  | 训练目录: <code className="rounded bg-muted px-1 text-xs">{activeRun.training_run_id}</code>
+                </span>
+              ) : null}
             </div>
             {activeRun.errors.length > 0 ? (
               <div className="text-xs text-destructive">{activeRun.errors.join("; ")}</div>
             ) : null}
+            {activeRun.status === "rate_limited" && (activeRun.retry_total ?? 0) > 0 ? (
+              <div className="flex items-center gap-2 text-xs text-amber-600">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                限流重试中，第 {(activeRun.retry_attempt ?? 0) + 1}/{activeRun.retry_total} 次
+              </div>
+            ) : null}
             {pollExhausted ? (
               <div className="text-xs text-muted-foreground">实时更新已断开，请手动刷新页面</div>
             ) : null}
+            <div className="flex gap-2 border-t border-border pt-3">
+              <Button
+                variant="secondary"
+                onClick={() => void handleViewTrainingGames(activeRun.run_id)}
+              >
+                <FolderOpen className="h-4 w-4" />
+                查看训练过程
+                {activeRun.training_completed > 0 ? ` (${activeRun.training_completed}/${activeRun.training_games} 已完成)` : null}
+              </Button>
+              {activeRun.battle_completed > 0 ? (
+                <>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void handleViewBattleGames(activeRun.run_id, "baseline")}
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    基线对战
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void handleViewBattleGames(activeRun.run_id, "candidate")}
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    候选对战
+                  </Button>
+                </>
+              ) : null}
+              {activeRun.status !== "paused" && activeRun.status !== "failed" && !PROMOTED_STATUSES.has(activeRun.status) ? (
+                <>
+                  <Button variant="secondary" onClick={() => void handleStopEvolution()}>
+                    <Pause className="h-4 w-4" />
+                    暂停
+                  </Button>
+                  <Button variant="destructive" onClick={() => void handleTerminateEvolution()}>
+                    <XCircle className="h-4 w-4" />
+                    终止
+                  </Button>
+                </>
+              ) : null}
+              {activeRun.status === "paused" ? (
+                <Button variant="default" onClick={() => void handleResumeEvolution()}>
+                  <RotateCcw className="h-4 w-4" />
+                  继续
+                </Button>
+              ) : null}
+              {activeRun.status === "reviewing" && !activeRun.battle_result ? (
+                <Button variant="default" onClick={() => void handleRerunConsolidation()}>
+                  <RotateCcw className="h-4 w-4" />
+                  重新整合
+                </Button>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
       ) : null}
@@ -621,21 +984,34 @@ export function RoleEvolutionPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {activeBatch.roles.map((role) => (
-                <div key={role} className="rounded-md border border-border p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium">{ROLE_LABELS[role] ?? role}</span>
-                    <Badge variant="secondary">
-                      {runStatusLabel(activeBatch.role_statuses[role] ?? "queued")}
-                    </Badge>
+              {activeBatch.roles.map((role) => {
+                const roleRunId = activeBatch.role_run_ids[role];
+                return (
+                  <div key={role} className="rounded-md border border-border p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{ROLE_LABELS[role] ?? role}</span>
+                      <Badge variant="secondary">
+                        {runStatusLabel(activeBatch.role_statuses[role] ?? "queued")}
+                      </Badge>
+                    </div>
+                    {activeBatch.role_candidates[role] ? (
+                      <code className="mt-2 block text-xs text-muted-foreground">
+                        {activeBatch.role_candidates[role]?.slice(0, 8)}
+                      </code>
+                    ) : null}
+                    {roleRunId ? (
+                      <Button
+                        variant="ghost"
+                        className="mt-2 h-8 px-2 text-xs"
+                        onClick={() => void handleViewTrainingGames(roleRunId)}
+                      >
+                        <FolderOpen className="h-3.5 w-3.5" />
+                        训练过程
+                      </Button>
+                    ) : null}
                   </div>
-                  {activeBatch.role_candidates[role] ? (
-                    <code className="mt-2 block text-xs text-muted-foreground">
-                      {activeBatch.role_candidates[role]?.slice(0, 8)}
-                    </code>
-                  ) : null}
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
@@ -672,11 +1048,70 @@ export function RoleEvolutionPage() {
               </div>
             ) : null}
 
+            {activeBatch.status !== "reviewing" && activeBatch.status !== "promoted" && activeBatch.status !== "rejected" && activeBatch.status !== "failed" && activeBatch.status !== "paused" ? (
+              <div className="flex flex-wrap gap-3 border-t border-border pt-3">
+                <Button variant="secondary" onClick={() => void handleStopBatch()}>
+                  <Pause className="h-4 w-4" />
+                  暂停
+                </Button>
+                <Button variant="destructive" onClick={() => void handleTerminateBatch()}>
+                  <XCircle className="h-4 w-4" />
+                  终止
+                </Button>
+              </div>
+            ) : null}
+
             {activeBatch.errors.length > 0 ? (
               <div className="text-xs text-destructive">{activeBatch.errors.join("; ")}</div>
             ) : null}
           </CardContent>
         </Card>
+      ) : null}
+
+      {trainingGameRunId ? (
+        viewingTrainingGameId ? (
+          <ArchivedGameDetail
+            title="训练对局详情"
+            gameId={viewingTrainingGameId}
+            events={trainingEvents}
+            decisions={trainingDecisions}
+            archive={trainingArchive}
+            loading={trainingDetailLoading}
+            onBack={handleBackToTrainingGames}
+          />
+        ) : (
+          <TrainingGameListPanel
+            runId={trainingGameRunId}
+            games={trainingGameList}
+            loading={trainingGamesLoading}
+            isRunning={activeRun?.status === "training"}
+            onViewGame={handleViewTrainingGame}
+            onClose={handleCloseTrainingGames}
+          />
+        )
+      ) : null}
+
+      {battleRunId ? (
+        viewingBattleGameId ? (
+          <ArchivedGameDetail
+            title={`${battleSide === "baseline" ? "基线" : "候选"}对战详情`}
+            gameId={viewingBattleGameId}
+            events={battleEvents}
+            decisions={battleDecisions}
+            archive={battleArchive}
+            loading={battleDetailLoading}
+            onBack={handleBackToBattleGames}
+          />
+        ) : (
+          <TrainingGameListPanel
+            runId={battleRunId}
+            games={battleGameList}
+            loading={battleGamesLoading}
+            isRunning={false}
+            onViewGame={(runId, gameId) => handleViewBattleGame(runId, battleSide, gameId)}
+            onClose={handleCloseBattleGames}
+          />
+        )
       ) : null}
 
       {/* Leaderboard */}
@@ -771,11 +1206,23 @@ export function RoleEvolutionPage() {
                 </div>
                 <div className="space-y-2">
                   {diff.map((d, i) => (
-                    <div key={i} className="rounded-md border border-border p-2 text-xs">
-                      <div className="flex items-center gap-2">
+                    <div key={i} className="rounded-md border border-border p-3 text-xs">
+                      <div className="flex items-center gap-2 mb-2">
                         <Badge variant={diffActionVariant(d.action)}>{d.action}</Badge>
                         <code className="text-xs">{d.filename}</code>
                       </div>
+                      {d.before && d.after ? (
+                        <div className="space-y-2">
+                          <div>
+                            <div className="text-[10px] text-muted-foreground mb-1">修改前:</div>
+                            <pre className="p-2 rounded bg-muted text-[10px] overflow-auto max-h-40">{d.before}</pre>
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-muted-foreground mb-1">修改后:</div>
+                            <pre className="p-2 rounded bg-muted text-[10px] overflow-auto max-h-40">{d.after}</pre>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -882,6 +1329,83 @@ function MetricTile({ label, value }: { label: string; value: string | number })
   );
 }
 
+function TrainingGameListPanel({
+  runId,
+  games,
+  loading,
+  isRunning,
+  onViewGame,
+  onClose,
+}: {
+  runId: string;
+  games: SelfplayGameSummary[];
+  loading: boolean;
+  isRunning: boolean;
+  onViewGame: (runId: string, gameId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            关闭
+          </Button>
+          <CardTitle className="text-base">训练对局</CardTitle>
+          <Badge variant="secondary">{games.length}</Badge>
+          {isRunning && (
+            <Badge variant="outline" className="gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              训练中
+            </Badge>
+          )}
+        </div>
+        <code className="text-xs text-muted-foreground">{runId}</code>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex min-h-[180px] items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : games.length === 0 ? (
+          <div className="flex min-h-[180px] items-center justify-center text-sm text-muted-foreground">
+            暂无已完成训练局
+          </div>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {games.map((game) => (
+              <div key={game.game_id} className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs text-muted-foreground">{game.game_id}</code>
+                    {game.in_progress ? (
+                      <Badge variant="outline" className="gap-1 text-xs">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        进行中
+                      </Badge>
+                    ) : game.winner ? (
+                      <Badge>{game.winner}</Badge>
+                    ) : (
+                      <Badge variant="secondary">无结果</Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Day {game.day ?? 0} · {game.phase || "-"} · {game.event_count ?? 0} 事件
+                  </div>
+                </div>
+                <Button variant="ghost" onClick={() => onViewGame(runId, game.game_id)}>
+                  <FolderOpen className="h-4 w-4" />
+                  查看
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function recommendationBadge(rec: string) {
   if (rec === "promote") return <Badge className="bg-emerald-500 text-white">建议推广</Badge>;
   if (rec === "caution") return <Badge variant="secondary">谨慎推广</Badge>;
@@ -912,6 +1436,8 @@ function runStatusLabel(status: string): string {
   if (status === "promoted") return "已推广";
   if (status === "rejected") return "已拒绝";
   if (status === "failed") return "失败";
+  if (status === "paused") return "已暂停";
+  if (status === "rate_limited") return "限流重试中";
   return status;
 }
 

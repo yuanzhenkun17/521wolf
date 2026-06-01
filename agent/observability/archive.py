@@ -41,8 +41,12 @@ class DecisionArchive:
     confidence: float | None
     policy_adjustments: list[str]
     errors: list[str]
+    tot_prompt_messages: list[dict] = field(default_factory=list)
+    tot_raw_output: str = ""
     tot_candidates: list[dict] = field(default_factory=list)
     tot_judge_reason: str = ""
+    got_prompt_messages: list[dict] = field(default_factory=list)
+    got_raw_output: str = ""
     got_evidence_nodes: list[dict] = field(default_factory=list)
     got_hypotheses: list[dict] = field(default_factory=list)
     got_judge_reason: str = ""
@@ -69,8 +73,12 @@ class DecisionArchive:
             "confidence": self.confidence,
             "policy_adjustments": self.policy_adjustments,
             "errors": self.errors,
+            "tot_prompt_messages": self.tot_prompt_messages,
+            "tot_raw_output": self.tot_raw_output,
             "tot_candidates": self.tot_candidates,
             "tot_judge_reason": self.tot_judge_reason,
+            "got_prompt_messages": self.got_prompt_messages,
+            "got_raw_output": self.got_raw_output,
             "got_evidence_nodes": self.got_evidence_nodes,
             "got_hypotheses": self.got_hypotheses,
             "got_judge_reason": self.got_judge_reason,
@@ -80,8 +88,12 @@ class DecisionArchive:
     def from_context(cls, ctx: AgentContext, index: int = 0) -> DecisionArchive:
         """Build a DecisionArchive from the final AgentContext state."""
         pd = ctx.parsed_decision
+        decision_id = (
+            getattr(ctx.decision_record, "decision_id", None)
+            if ctx.decision_record is not None else None
+        ) or uuid.uuid4().hex[:12]
         return cls(
-            decision_id=uuid.uuid4().hex[:12],
+            decision_id=decision_id,
             index=index,
             player_id=ctx.player_id,
             role=ctx.role,
@@ -108,8 +120,12 @@ class DecisionArchive:
             confidence=ctx.confidence,
             policy_adjustments=list(ctx.policy_adjustments),
             errors=list(ctx.errors),
+            tot_prompt_messages=list(ctx.tot_prompt_messages),
+            tot_raw_output=ctx.tot_raw_output,
             tot_candidates=list(ctx.tot_candidates),
             tot_judge_reason=ctx.tot_judge_reason,
+            got_prompt_messages=list(ctx.got_prompt_messages),
+            got_raw_output=ctx.got_raw_output,
             got_evidence_nodes=list(ctx.got_evidence_nodes),
             got_hypotheses=list(ctx.got_hypotheses),
             got_judge_reason=ctx.got_judge_reason,

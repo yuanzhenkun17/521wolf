@@ -154,7 +154,9 @@ class GameManager:
         cursor = 0
         try:
             roles = random_standard_roles(seed=game.seed)
-            game.decision_recorder = AgentDecisionRecorder()
+            game.decision_recorder = AgentDecisionRecorder(
+                stream_path=self._game_dir(game.log_name) / "agent_decisions.jsonl",
+            )
             game.trace_recorder = AgentTraceRecorder()
             client = load_llm_client()
             game_config = GameConfig(
@@ -163,6 +165,7 @@ class GameManager:
                 enable_sheriff=game.enable_sheriff,
                 night_order=STANDARD_12.night_order,
             )
+            game_dir = self._game_dir(game.log_name)
             game.engine = GameEngine(
                 roles,
                 create_agents(
@@ -175,6 +178,7 @@ class GameManager:
                     role_skill_dirs=game.role_skill_dirs,
                 ),
                 config=game_config,
+                log_stream_path=str(game_dir / "game_events.jsonl"),
             )
             task = asyncio.create_task(game.engine.run_until_finished(max_days=game.max_days))
             while not task.done():
@@ -183,9 +187,7 @@ class GameManager:
             winner = await task
             cursor = await self._publish_new_entries(game, cursor)
             game.winner = winner.value
-            game_dir = self._game_dir(game.log_name)
-            game.engine.logger.write_jsonl(game_dir / "events.jsonl")
-            game.decision_recorder.write_jsonl(game_dir / "agent_decisions.jsonl")
+            # game_events.jsonl and agent_decisions.jsonl already written via streaming
             if game.trace_recorder is not None:
                 game.trace_recorder.flush(
                     game_id=game.log_name,
@@ -381,7 +383,7 @@ class GameManager:
         return self.log_dir / game_id
 
     def _events_path(self, game_id: str) -> Path | None:
-        path = self._game_dir(game_id) / "events.jsonl"
+        path = self._game_dir(game_id) / "game_events.jsonl"
         return path if path.exists() else None
 
     def _decisions_path(self, game_id: str) -> Path | None:

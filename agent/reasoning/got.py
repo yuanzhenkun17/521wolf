@@ -97,6 +97,8 @@ class GoTResult:
     final_action: dict[str, Any] | None = None
     public_text: str = ""
     private_reasoning: str = ""
+    prompt_messages: list[dict[str, str]] = field(default_factory=list)
+    raw_output: str = ""
 
     @property
     def selected(self) -> GoTHypothesis | None:
@@ -116,6 +118,7 @@ class GoTResult:
             "final_action": self.final_action,
             "public_text": self.public_text,
             "private_reasoning": self.private_reasoning,
+            "raw_output": self.raw_output,
         }
 
 
@@ -232,6 +235,8 @@ async def run_got_selection(ctx: AgentContext, model: ModelAdapter) -> GoTResult
         final_action=final_action,
         public_text=str(data.get("public_text") or ""),
         private_reasoning=str(data.get("private_reasoning") or ""),
+        prompt_messages=messages,
+        raw_output=raw,
     )
 
 

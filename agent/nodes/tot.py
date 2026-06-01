@@ -30,6 +30,8 @@ async def tot_node(ctx: AgentContext, model: ModelAdapter) -> AgentContext:
         return ctx
 
     ctx.tot_enabled = True
+    ctx.tot_prompt_messages = result.prompt_messages
+    ctx.tot_raw_output = result.raw_output
     ctx.tot_candidates = [c.to_dict() for c in result.candidates]
     ctx.tot_judge_reason = result.judge_reason
 

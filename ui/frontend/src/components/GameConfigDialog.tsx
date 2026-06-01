@@ -100,7 +100,7 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
                   >
                     {(roleVersions[role] ?? []).map((v) => (
                       <option key={v.hash} value={v.hash}>
-                        {v.hash}{v.is_baseline ? " (baseline)" : ""}
+                        {v.hash.slice(0, 8)}{v.is_baseline ? " (baseline)" : ""}
                       </option>
                     ))}
                   </select>

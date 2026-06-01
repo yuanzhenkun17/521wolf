@@ -7,6 +7,7 @@ optionally evaluates and promotes the accepted candidate pack.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ from agent.role_evolution.models import EvolutionRun, SkillVersionConfig
 from agent.role_evolution.pipeline import _run_config_battle, run_evolution
 from agent.role_evolution.store import VersionStore
 from agent.runtime.model import AsyncRateLimiter, ModelAdapter, limit_model_adapter, rate_limit_model_adapter
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -274,4 +277,4 @@ def _notify(callback: Callable[[str, dict], None] | None, stage: str, data: dict
     try:
         callback(stage, data)
     except Exception:
-        pass
+        _log.debug("callback raised during stage %s", stage, exc_info=True)

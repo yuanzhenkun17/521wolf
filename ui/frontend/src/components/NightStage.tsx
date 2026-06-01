@@ -2,8 +2,9 @@ import { Moon } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { DecisionDetails } from "./DecisionDetails";
 import type { Presentation } from "../presentation";
+import type { ArchiveMap } from "../types";
 
-export function NightStage({ presentation, archiveMap }: { presentation: Presentation; archiveMap?: Map<number, Record<string, unknown>> }) {
+export function NightStage({ presentation, archiveMap }: { presentation: Presentation; archiveMap?: ArchiveMap }) {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-slate-200 bg-slate-950 p-6 text-white">

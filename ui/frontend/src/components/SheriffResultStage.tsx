@@ -2,9 +2,9 @@ import { Badge } from "./ui/badge";
 import { VoteStage } from "./VoteStage";
 import { roleName } from "../presentation";
 import type { Presentation } from "../presentation";
-import type { Player } from "../types";
+import type { ArchiveMap, Player } from "../types";
 
-export function SheriffResultStage({ presentation, players, archiveMap }: { presentation: Presentation; players: Player[]; archiveMap?: Map<number, Record<string, unknown>> }) {
+export function SheriffResultStage({ presentation, players, archiveMap }: { presentation: Presentation; players: Player[]; archiveMap?: ArchiveMap }) {
   const withdraws = presentation.keyEvents.filter((event) => {
     const actionType = typeof event.payload.action_type === "string" ? event.payload.action_type : "";
     return event.event_type === "action_response" && actionType === "sheriff_withdraw";

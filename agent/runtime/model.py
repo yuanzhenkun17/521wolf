@@ -69,7 +69,9 @@ class ChatCompletionClient:
         while True:
             try:
                 response = await client.chat.completions.create(**kwargs)
-                return response.choices[0].message.content
+                if not response.choices:
+                    raise ValueError("LLM returned empty choices")
+                return response.choices[0].message.content or ""
             except Exception as exc:
                 attempt += 1
                 if attempt > self.max_retries or not _is_retryable_llm_error(exc):

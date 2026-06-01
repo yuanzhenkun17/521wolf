@@ -15,7 +15,7 @@ import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { buildGamePages, latestPageId } from "./gamePages";
 import { phaseName } from "./presentation";
-import type { GameArchive, GameEvent, GameSnapshot } from "./types";
+import type { ArchiveMap, GameArchive, GameEvent, GameSnapshot } from "./types";
 import { RoleEvolutionPage } from "./pages/RoleEvolutionPage";
 import { SelfplayPage } from "./pages/SelfplayPage";
 
@@ -83,9 +83,11 @@ function GameView() {
   const presentation = selectedPage.presentation;
   const archiveMap = useMemo(() => {
     if (!archiveData?.decisions) return undefined;
-    const map = new Map<number, Record<string, unknown>>();
+    const map: ArchiveMap = new Map();
     for (const entry of archiveData.decisions) {
       const idx = entry.index as number | undefined;
+      const decisionId = entry.decision_id as string | undefined;
+      if (decisionId) map.set(decisionId, entry);
       if (idx !== undefined) map.set(idx, entry);
     }
     return map;

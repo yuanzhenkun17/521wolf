@@ -48,8 +48,12 @@ class GameLogEntry:
 
 
 class GameLogger:
-    def __init__(self) -> None:
+    def __init__(self, stream_path: str | Path | None = None) -> None:
         self.entries: list[GameLogEntry] = []
+        self._stream_path: Path | None = Path(stream_path) if stream_path else None
+        if self._stream_path:
+            self._stream_path.parent.mkdir(parents=True, exist_ok=True)
+            self._stream_path.touch()
 
     def record(
         self,
@@ -77,6 +81,10 @@ class GameLogger:
             payload=payload or {},
         )
         self.entries.append(entry)
+        if self._stream_path:
+            line = json.dumps(entry.to_dict(), ensure_ascii=False, sort_keys=True)
+            with self._stream_path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
         return entry
 
     def to_jsonl(self) -> str:

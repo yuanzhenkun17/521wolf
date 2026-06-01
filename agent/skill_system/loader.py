@@ -18,6 +18,7 @@ Directory structure::
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -195,15 +196,30 @@ def _coerce_value(raw: str) -> Any:
     return raw.strip('"').strip("'")
 
 
+_skill_cache: tuple[float, Path, list[MarkdownSkill]] | None = None
+
+
 def load_markdown_skills(root: Path) -> list[MarkdownSkill]:
-    """Recursively load markdown skills from *root*."""
-    skills: list[MarkdownSkill] = []
+    """Recursively load markdown skills from *root*.
+
+    Results are cached based on the directory's mtime so repeated calls
+    within the same game tick avoid redundant disk I/O.
+    """
+    global _skill_cache
     if not root.is_dir():
-        return skills
+        return []
+    try:
+        mtime = os.path.getmtime(root)
+    except OSError:
+        mtime = 0.0
+    if _skill_cache is not None and _skill_cache[1] == root and _skill_cache[0] == mtime:
+        return _skill_cache[2]
+    skills: list[MarkdownSkill] = []
     for md_path in sorted(root.rglob("*.md")):
         skill = _load_skill_file(md_path, root=root)
         if skill is not None:
             skills.append(skill)
+    _skill_cache = (mtime, root, skills)
     return skills
 
 

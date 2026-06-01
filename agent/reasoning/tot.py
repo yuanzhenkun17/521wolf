@@ -66,6 +66,8 @@ class ToTResult:
     judge_reason: str = ""
     confidence: float = 0.0
     final_action: dict[str, Any] | None = None
+    prompt_messages: list[dict[str, str]] = field(default_factory=list)
+    raw_output: str = ""
 
     @property
     def selected(self) -> ToTCandidate | None:
@@ -80,6 +82,7 @@ class ToTResult:
             "candidates": [c.to_dict() for c in self.candidates],
             "selected_id": self.selected_id,
             "judge_reason": self.judge_reason,
+            "raw_output": self.raw_output,
         }
 
 
@@ -178,6 +181,8 @@ async def run_tot_selection(
         judge_reason=str(data.get("reason", "")),
         confidence=_as_float(data.get("confidence"), 0.7),
         final_action=final_action,
+        prompt_messages=messages,
+        raw_output=raw,
     )
 
 

@@ -78,6 +78,13 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def _on_startup() -> None:
+    selfplay_manager.restore_runs()
+    role_evolution_runner.recover_on_startup()
+    role_evolution_runner.restore_runs()
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -248,6 +255,33 @@ def get_selfplay(run_id: str) -> dict[str, Any]:
     return run.snapshot()
 
 
+@app.post("/api/selfplay/{run_id}/stop")
+def stop_selfplay(run_id: str) -> dict[str, Any]:
+    """Stop a running selfplay task (can be resumed later)."""
+    run = selfplay_manager.stop_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    return run.snapshot()
+
+
+@app.post("/api/selfplay/{run_id}/resume")
+def resume_selfplay(run_id: str) -> dict[str, Any]:
+    """Resume a paused or interrupted selfplay task."""
+    run = selfplay_manager.resume_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    return run.snapshot()
+
+
+@app.post("/api/selfplay/{run_id}/terminate")
+def terminate_selfplay(run_id: str) -> dict[str, Any]:
+    """Permanently stop a selfplay run."""
+    run = selfplay_manager.terminate_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    return run.snapshot()
+
+
 # ── Selfplay Game Detail ─────────────────────────────────────────────────────
 
 
@@ -263,22 +297,20 @@ def _resolve_selfplay_run_dir(run_id: str) -> Path | None:
     return path if path.exists() else None
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def _read_jsonl(path: Path, *, with_index: bool = False) -> list[dict[str, Any]]:
     """Read a JSONL file and return a list of parsed objects."""
     lines: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = line.strip()
         if line:
-            lines.append(json.loads(line))
+            value = json.loads(line)
+            if with_index and isinstance(value, dict):
+                value.setdefault("index", index)
+            lines.append(value)
     return lines
 
 
-@app.get("/api/selfplay/{run_id}/games")
-def list_selfplay_games(run_id: str) -> dict[str, Any]:
-    """List all games in a selfplay run with basic info."""
-    run_dir = _resolve_selfplay_run_dir(run_id)
-    if run_dir is None:
-        raise HTTPException(status_code=404, detail="selfplay run not found")
+def _list_games_in_run(run_id: str, run_dir: Path) -> dict[str, Any]:
     games_dir = run_dir / "games"
     if not games_dir.exists():
         return {"run_id": run_id, "games": []}
@@ -287,11 +319,12 @@ def list_selfplay_games(run_id: str) -> dict[str, Any]:
     for gdir in game_dirs:
         game_id = gdir.name
         events_path = gdir / "game_events.jsonl"
+        meta_path = gdir / "meta.json"
         info: dict[str, Any] = {"game_id": game_id}
+        info["in_progress"] = not meta_path.exists()
         if events_path.exists():
             events = _read_jsonl(events_path)
             info["event_count"] = len(events)
-            # Extract summary from last event
             if events:
                 last = events[-1]
                 payload = last.get("payload") or {}
@@ -302,6 +335,15 @@ def list_selfplay_games(run_id: str) -> dict[str, Any]:
             info["event_count"] = 0
         games.append(info)
     return {"run_id": run_id, "games": games}
+
+
+@app.get("/api/selfplay/{run_id}/games")
+def list_selfplay_games(run_id: str) -> dict[str, Any]:
+    """List all games in a selfplay run with basic info."""
+    run_dir = _resolve_selfplay_run_dir(run_id)
+    if run_dir is None:
+        raise HTTPException(status_code=404, detail="selfplay run not found")
+    return _list_games_in_run(run_id, run_dir)
 
 
 @app.get("/api/selfplay/{run_id}/games/{game_id}/events")
@@ -326,7 +368,7 @@ def get_selfplay_game_decisions(run_id: str, game_id: str) -> dict[str, Any]:
     decisions_path = run_dir / "games" / game_id / "agent_decisions.jsonl"
     if not decisions_path.exists():
         raise HTTPException(status_code=404, detail="game decisions not found")
-    decisions = _read_jsonl(decisions_path)
+    decisions = _read_jsonl(decisions_path, with_index=True)
     return {"run_id": run_id, "game_id": game_id, "decisions": decisions}
 
 
@@ -340,6 +382,68 @@ def get_selfplay_game_archive(run_id: str, game_id: str) -> dict[str, Any]:
     if not archive_path.exists():
         raise HTTPException(status_code=404, detail="game archive not found")
     return json.loads(archive_path.read_text(encoding="utf-8"))
+
+
+def _resolve_role_evolution_training_run_dir(run_id: str) -> Path | None:
+    """Find the nested selfplay run directory for role-evolution training games."""
+    tracked = role_evolution_runner.get_run(run_id)
+    evo_ids: list[str] = []
+    training_ids: list[str] = []
+    training_output_dirs: list[str] = []
+    if tracked is not None:
+        if tracked.artifact_run_id:
+            evo_ids.append(tracked.artifact_run_id)
+        if tracked.training_run_id:
+            training_ids.append(tracked.training_run_id)
+        if tracked.training_output_dir:
+            training_output_dirs.append(tracked.training_output_dir)
+        if tracked.run is not None:
+            evo_ids.append(tracked.run.run_id)
+            if tracked.run.training_run_id:
+                training_ids.append(tracked.run.training_run_id)
+            if tracked.run.training_output_dir:
+                training_output_dirs.append(tracked.run.training_output_dir)
+    evo_ids.append(run_id)
+    if run_id.startswith("run_"):
+        training_ids.append(run_id)
+
+    for raw in dict.fromkeys(training_output_dirs):
+        path = Path(raw)
+        if path.exists() and (path / "games").exists():
+            return path
+
+    evo_root = version_store.base_dir / "runs" / "evolution"
+    for evo_id in dict.fromkeys(evo_ids):
+        evo_dir = evo_root / evo_id
+        if not evo_dir.exists():
+            continue
+        state_path = evo_dir / "state.json"
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                state = {}
+            training_run_id = state.get("training_run_id")
+            if training_run_id:
+                training_ids.append(str(training_run_id))
+            training_output_dir = state.get("training_output_dir")
+            if training_output_dir:
+                path = Path(str(training_output_dir))
+                if path.exists() and (path / "games").exists():
+                    return path
+        for training_id in dict.fromkeys(training_ids):
+            candidate = evo_dir / training_id
+            if candidate.exists() and (candidate / "games").exists():
+                return candidate
+        for candidate in sorted(evo_dir.glob("run_*"), reverse=True):
+            if candidate.is_dir() and (candidate / "games").exists():
+                return candidate
+
+    if evo_root.exists():
+        for candidate in sorted(evo_root.glob(f"*/{run_id}"), reverse=True):
+            if candidate.is_dir() and (candidate / "games").exists():
+                return candidate
+    return None
 
 
 
@@ -399,8 +503,19 @@ def register_role_evolution_routes(
         # Collect battle summaries from completed runs
         battle_summaries: list[dict] = []
         for tracked in runner.get_runs_for_role(role):
+            # Try in-memory first
             if tracked.run is not None and tracked.run.battle_result is not None:
                 battle_summaries.append(tracked.run.battle_result)
+            else:
+                # Fall back to disk
+                evo_dir = runner.store.base_dir / "runs" / "evolution" / tracked.run_id
+                summary_path = evo_dir / "battle_summary.json"
+                if summary_path.exists():
+                    try:
+                        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                        battle_summaries.append(summary)
+                    except Exception:
+                        pass
 
         entries = aggregate_role_leaderboard(
             role=role,
@@ -529,6 +644,20 @@ def register_role_evolution_routes(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return tracked.snapshot()
 
+    @app.post("/api/role-evolution/batch/{batch_id}/stop")
+    def stop_role_batch_evolution(batch_id: str) -> dict[str, Any]:
+        tracked = batch_runner.stop_batch(batch_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="batch not found")
+        return tracked.snapshot()
+
+    @app.post("/api/role-evolution/batch/{batch_id}/terminate")
+    def terminate_role_batch_evolution(batch_id: str) -> dict[str, Any]:
+        tracked = batch_runner.terminate_batch(batch_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="batch not found")
+        return tracked.snapshot()
+
     @app.get("/api/role-evolution/batch/{batch_id}/events")
     async def stream_role_batch_evolution_events(batch_id: str) -> StreamingResponse:
         tracked = batch_runner.get_batch(batch_id)
@@ -571,24 +700,173 @@ def register_role_evolution_routes(
             raise HTTPException(status_code=404, detail="run not found")
         return tracked.snapshot()
 
+    @app.post("/api/role-evolution/{run_id}/stop")
+    def stop_role_evolution(run_id: str) -> dict[str, Any]:
+        """Stop a running evolution task (can be resumed)."""
+        tracked = runner.stop_run(run_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return tracked.snapshot()
+
+    @app.post("/api/role-evolution/{run_id}/terminate")
+    def terminate_role_evolution(run_id: str) -> dict[str, Any]:
+        """Permanently stop an evolution run."""
+        tracked = runner.terminate_run(run_id)
+        if tracked is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return tracked.snapshot()
+
+    @app.post("/api/role-evolution/{run_id}/resume")
+    async def resume_role_evolution(run_id: str) -> dict[str, Any]:
+        """Resume a paused or failed evolution task."""
+        try:
+            tracked = await runner.resume_run(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="run not found")
+        except InvalidRunStateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return tracked.snapshot()
+
+    @app.post("/api/role-evolution/{run_id}/rerun-consolidation")
+    async def rerun_role_evolution_consolidation(run_id: str) -> dict[str, Any]:
+        """Re-run consolidation on existing training data with updated prompt."""
+        try:
+            tracked = await runner.rerun_consolidation(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="run not found")
+        return tracked.snapshot()
+
+    @app.get("/api/role-evolution/{run_id}/games")
+    def list_role_evolution_training_games(run_id: str) -> dict[str, Any]:
+        """List training games produced by a role evolution run."""
+        run_dir = _resolve_role_evolution_training_run_dir(run_id)
+        if run_dir is None:
+            raise HTTPException(status_code=404, detail="training run not found")
+        return _list_games_in_run(run_id, run_dir)
+
+    @app.get("/api/role-evolution/{run_id}/games/{game_id}/events")
+    def get_role_evolution_training_game_events(run_id: str, game_id: str) -> dict[str, Any]:
+        run_dir = _resolve_role_evolution_training_run_dir(run_id)
+        if run_dir is None:
+            raise HTTPException(status_code=404, detail="training run not found")
+        events_path = run_dir / "games" / game_id / "game_events.jsonl"
+        if not events_path.exists():
+            raise HTTPException(status_code=404, detail="game events not found")
+        return {
+            "run_id": run_id,
+            "game_id": game_id,
+            "events": _read_jsonl(events_path),
+        }
+
+    @app.get("/api/role-evolution/{run_id}/games/{game_id}/decisions")
+    def get_role_evolution_training_game_decisions(run_id: str, game_id: str) -> dict[str, Any]:
+        run_dir = _resolve_role_evolution_training_run_dir(run_id)
+        if run_dir is None:
+            raise HTTPException(status_code=404, detail="training run not found")
+        decisions_path = run_dir / "games" / game_id / "agent_decisions.jsonl"
+        if not decisions_path.exists():
+            raise HTTPException(status_code=404, detail="game decisions not found")
+        return {
+            "run_id": run_id,
+            "game_id": game_id,
+            "decisions": _read_jsonl(decisions_path, with_index=True),
+        }
+
+    @app.get("/api/role-evolution/{run_id}/games/{game_id}/archive")
+    def get_role_evolution_training_game_archive(run_id: str, game_id: str) -> dict[str, Any]:
+        run_dir = _resolve_role_evolution_training_run_dir(run_id)
+        if run_dir is None:
+            raise HTTPException(status_code=404, detail="training run not found")
+        archive_path = run_dir / "games" / game_id / "archive.json"
+        if not archive_path.exists():
+            raise HTTPException(status_code=404, detail="game archive not found")
+        return json.loads(archive_path.read_text(encoding="utf-8"))
+
+    # -- Battle games ---------------------------------------------------------
+
+    def _resolve_battle_run_dir(run_id: str, side: str) -> Path | None:
+        """Find the battle directory for baseline or candidate."""
+        evo_dir = runner.store.base_dir / "runs" / "evolution" / run_id / "battle" / side
+        if not evo_dir.exists():
+            return None
+        # Find the run_* directory
+        for child in sorted(evo_dir.iterdir(), reverse=True):
+            if child.is_dir() and child.name.startswith("run_") and (child / "games").exists():
+                return child
+        return None
+
+    @app.get("/api/role-evolution/{run_id}/battle/{side}/games")
+    def list_battle_games(run_id: str, side: str) -> dict[str, Any]:
+        """List battle games for baseline or candidate side."""
+        if side not in ("baseline", "candidate"):
+            raise HTTPException(status_code=400, detail="side must be 'baseline' or 'candidate'")
+        run_dir = _resolve_battle_run_dir(run_id, side)
+        if run_dir is None:
+            return {"run_id": run_id, "side": side, "games": []}
+        result = _list_games_in_run(run_id, run_dir)
+        result["side"] = side
+        return result
+
+    @app.get("/api/role-evolution/{run_id}/battle/{side}/games/{game_id}/events")
+    def get_battle_game_events(run_id: str, side: str, game_id: str) -> dict[str, Any]:
+        if side not in ("baseline", "candidate"):
+            raise HTTPException(status_code=400, detail="side must be 'baseline' or 'candidate'")
+        run_dir = _resolve_battle_run_dir(run_id, side)
+        if run_dir is None:
+            raise HTTPException(status_code=404, detail="battle run not found")
+        events_path = run_dir / "games" / game_id / "game_events.jsonl"
+        if not events_path.exists():
+            raise HTTPException(status_code=404, detail="game events not found")
+        return {"run_id": run_id, "game_id": game_id, "side": side, "events": _read_jsonl(events_path)}
+
+    @app.get("/api/role-evolution/{run_id}/battle/{side}/games/{game_id}/decisions")
+    def get_battle_game_decisions(run_id: str, side: str, game_id: str) -> dict[str, Any]:
+        if side not in ("baseline", "candidate"):
+            raise HTTPException(status_code=400, detail="side must be 'baseline' or 'candidate'")
+        run_dir = _resolve_battle_run_dir(run_id, side)
+        if run_dir is None:
+            raise HTTPException(status_code=404, detail="battle run not found")
+        decisions_path = run_dir / "games" / game_id / "agent_decisions.jsonl"
+        if not decisions_path.exists():
+            raise HTTPException(status_code=404, detail="game decisions not found")
+        return {"run_id": run_id, "game_id": game_id, "side": side, "decisions": _read_jsonl(decisions_path, with_index=True)}
+
+    @app.get("/api/role-evolution/{run_id}/battle/{side}/games/{game_id}/archive")
+    def get_battle_game_archive(run_id: str, side: str, game_id: str) -> dict[str, Any]:
+        if side not in ("baseline", "candidate"):
+            raise HTTPException(status_code=400, detail="side must be 'baseline' or 'candidate'")
+        run_dir = _resolve_battle_run_dir(run_id, side)
+        if run_dir is None:
+            raise HTTPException(status_code=404, detail="battle run not found")
+        archive_path = run_dir / "games" / game_id / "archive.json"
+        if not archive_path.exists():
+            raise HTTPException(status_code=404, detail="game archive not found")
+        return json.loads(archive_path.read_text(encoding="utf-8"))
+
     @app.get("/api/role-evolution/{run_id}/diff")
     def get_role_evolution_diff(run_id: str) -> dict[str, Any]:
         """Get the skill diffs produced by a run."""
         tracked = runner.get_run(run_id)
         if tracked is None:
             raise HTTPException(status_code=404, detail="run not found")
-        if tracked.run is None or tracked.run.diff is None:
+        # Try in-memory first
+        if tracked.run is not None and tracked.run.diff is not None:
             return {
                 "kind": "role_evolution_diff",
                 "schema_version": 1,
                 "run_id": run_id,
-                "diffs": [],
+                "diffs": [d.to_dict() for d in tracked.run.diff],
             }
+        # Fall back to disk
+        evo_dir = runner.store.base_dir / "runs" / "evolution" / run_id
+        diff_path = evo_dir / "diff.json"
+        if diff_path.exists():
+            return json.loads(diff_path.read_text(encoding="utf-8"))
         return {
             "kind": "role_evolution_diff",
             "schema_version": 1,
             "run_id": run_id,
-            "diffs": [d.to_dict() for d in tracked.run.diff],
+            "diffs": [],
         }
 
     @app.post("/api/role-evolution/{run_id}/promote")

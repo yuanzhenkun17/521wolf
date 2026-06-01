@@ -102,7 +102,7 @@ def compute_hash(skills: dict[str, str]) -> str:
     }
     payload = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     full_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return full_hash[:16]
+    return full_hash[:8]
 
 
 # ---------------------------------------------------------------------------

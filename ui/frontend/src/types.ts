@@ -20,6 +20,7 @@ export type GameEvent = {
 };
 
 export type AgentDecision = {
+  decision_id?: string;
   index: number;
   day: number;
   phase: string;
@@ -41,7 +42,7 @@ export type AgentDecision = {
   raw_output: string;
   errors: string[];
   policy_adjustments: string[];
-  source: "llm" | "fallback" | "policy_adjusted" | "tot";
+  source: "llm" | "fallback" | "policy_adjusted" | "tot" | "got";
 };
 
 export type GameSnapshot = {
@@ -64,3 +65,5 @@ export type GameArchive = {
   decisions: Array<Record<string, unknown>>;
   [key: string]: unknown;
 };
+
+export type ArchiveMap = Map<string | number, Record<string, unknown>>;

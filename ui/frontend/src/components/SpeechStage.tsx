@@ -4,9 +4,9 @@ import { DecisionDetails } from "./DecisionDetails";
 import { speechLabel } from "./shared";
 import { roleName } from "../presentation";
 import type { Presentation, SpeechTurn } from "../presentation";
-import type { Player } from "../types";
+import type { ArchiveMap, Player } from "../types";
 
-export function SpeechStage({ presentation, players, archiveMap }: { presentation: Presentation; players: Player[]; archiveMap?: Map<number, Record<string, unknown>> }) {
+export function SpeechStage({ presentation, players, archiveMap }: { presentation: Presentation; players: Player[]; archiveMap?: ArchiveMap }) {
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_220px]">
       <div className="max-h-[680px] overflow-y-auto rounded-lg border border-border bg-muted/30 p-5">
@@ -27,7 +27,7 @@ export function SpeechStage({ presentation, players, archiveMap }: { presentatio
   );
 }
 
-export function SpeechBubble({ speech, role, compact = false, archiveMap }: { speech: SpeechTurn; role?: string; compact?: boolean; archiveMap?: Map<number, Record<string, unknown>> }) {
+export function SpeechBubble({ speech, role, compact = false, archiveMap }: { speech: SpeechTurn; role?: string; compact?: boolean; archiveMap?: ArchiveMap }) {
   return (
     <article className={compact ? "" : "border-l-2 border-emerald-300 pl-3"}>
       <div className="flex flex-wrap items-center gap-2">

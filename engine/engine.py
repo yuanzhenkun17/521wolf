@@ -32,13 +32,14 @@ class GameEngine:
         roles: dict[int, Role],
         agents: dict[int, PlayerAgent],
         config: GameConfig = STANDARD_12,
+        log_stream_path: str | None = None,
     ):
         self.config = config
         self.state = GameState(
             players={player_id: PlayerState(player_id, role) for player_id, role in sorted(roles.items())}
         )
         self.agents = agents
-        self.logger = GameLogger()
+        self.logger = GameLogger(stream_path=log_stream_path)
         self._log(
             "game_init",
             f"游戏初始化：{self.config.name}，已创建 {len(self.state.players)} 名玩家",

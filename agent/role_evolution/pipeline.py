@@ -11,12 +11,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from agent.evaluation.metrics import _new_role_accum, finalize_role_metrics
 from agent.role_evolution.applier import apply_proposals
 from agent.role_evolution.config import build_baseline_config, build_role_override_from_config
 from agent.role_evolution.models import (
@@ -90,6 +90,8 @@ def _save_state(run: EvolutionRun, store: VersionStore) -> None:
         "failed_stage": run.status if run.status == EvolutionStatus.FAILED else None,
         "training_games": run.training_games,
         "battle_games": run.battle_games,
+        "training_run_id": run.training_run_id,
+        "training_output_dir": run.training_output_dir,
         "baseline_config": run.baseline_config.to_dict() if run.baseline_config is not None else None,
     }
     _write_json(path, state)
@@ -129,16 +131,27 @@ def scan_active_runs(store: VersionStore) -> list[dict]:
 
 
 def recover_interrupted_runs(store: VersionStore) -> list[dict]:
-    """On startup, mark any non-terminal runs as failed (reason=interrupted).
+    """On startup, mark runs that were actually interrupted as failed.
 
-    Returns the list of runs that were marked failed.
+    Only marks runs as failed if they were in an active stage
+    (training, consolidating, applying, battling), not if they
+    were in reviewing or other terminal states.
     """
+    _ACTIVE_STATUSES = {
+        EvolutionStatus.QUEUED,
+        EvolutionStatus.TRAINING,
+        EvolutionStatus.CONSOLIDATING,
+        EvolutionStatus.APPLYING,
+        EvolutionStatus.BATTLING,
+    }
     interrupted: list[dict] = []
     for state in scan_active_runs(store):
-        original_status = state.get("status", "unknown")
+        status = state.get("status", "unknown")
+        if status not in _ACTIVE_STATUSES:
+            continue
         state["status"] = EvolutionStatus.FAILED
         state["error"] = "interrupted"
-        state["failed_stage"] = original_status
+        state["failed_stage"] = status
         state["updated_at"] = _now()
         evo_root = store.base_dir / "runs" / "evolution"
         state_file = evo_root / state["run_id"] / "state.json"
@@ -248,18 +261,227 @@ async def run_evolution(
         _notify(on_progress, "reviewing", {"run_id": run.run_id})
 
     except Exception as exc:
-        _log.exception("Evolution run %s failed at stage %s", run.run_id, run.status)
+        failed_stage = run.status
+        _log.exception("Evolution run %s failed at stage %s", run.run_id, failed_stage)
+        run.status = EvolutionStatus.FAILED
+        run.errors.append(str(exc))
+        _save_state(run, store)
+        state_path = _state_path(store, run.run_id)
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["failed_stage"] = failed_stage
+            _write_json(state_path, state)
+        except Exception:
+            _log.debug("failed to patch failed_stage for %s", run.run_id, exc_info=True)
+        raise
+
+    return run
+
+
+async def resume_evolution(
+    store: VersionStore,
+    run_id: str,
+    model_adapter: ModelAdapter | None = None,
+    game_concurrency: int = 1,
+    llm_semaphore: asyncio.Semaphore | None = None,
+    llm_rate_limiter: AsyncRateLimiter | None = None,
+    on_progress: Callable[[str, dict], None] | None = None,
+    selfplay_runner: Callable | None = None,
+    consolidator: Callable | None = None,
+    applier: Callable | None = None,
+    battle_runner: Callable | None = None,
+) -> EvolutionRun:
+    """Resume a failed evolution run from the failed stage.
+
+    Training and battle games that already completed are automatically
+    skipped by the selfplay checkpoint mechanism.
+    """
+    state = _load_state(store, run_id)
+    if state is None:
+        raise KeyError(f"Run {run_id} not found on disk")
+
+    failed_stage = state.get("failed_stage") or state.get("status")
+    if failed_stage in _TERMINAL and failed_stage != EvolutionStatus.FAILED:
+        raise InvalidRunStateError(f"Run {run_id} is in terminal state {failed_stage}")
+
+    role = state["role"]
+    training_games = state.get("training_games", 20)
+    battle_games = state.get("battle_games", 10)
+
+    # Reconstruct EvolutionRun from saved state
+    from agent.role_evolution.models import SkillVersionConfig
+    baseline_data = state.get("baseline_config")
+    baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(store)
+
+    parent_hash = state.get("parent_hash", "")
+    run = EvolutionRun(
+        run_id=run_id,
+        role=role,
+        parent_hash=parent_hash,
+        status=EvolutionStatus.TRAINING,
+        training_games=training_games,
+        battle_games=battle_games,
+        baseline_config=baseline_config,
+    )
+    run.training_run_id = state.get("training_run_id")
+    run.training_output_dir = state.get("training_output_dir")
+    run.candidate_hash = state.get("candidate_hash")
+
+    # Lazy defaults
+    if selfplay_runner is None:
+        from agent.evaluation.selfplay import run_selfplay as _default_selfplay
+        selfplay_runner = _default_selfplay
+    if consolidator is None:
+        from agent.cognition.long_term_consolidator import consolidate_for_role as _default_consolidator
+        consolidator = _default_consolidator
+    if applier is None:
+        applier = apply_proposals
+    if battle_runner is None:
+        battle_runner = _run_battle
+
+    llm_rate_limiter = llm_rate_limiter or default_rate_limiter_from_env()
+    limited_model = (
+        limit_model_adapter(model_adapter, llm_semaphore)
+        if model_adapter is not None else None
+    )
+    if limited_model is not None:
+        limited_model = rate_limit_model_adapter(limited_model, llm_rate_limiter)
+
+    # Determine which stages to skip
+    stage_order = [
+        EvolutionStatus.TRAINING,
+        EvolutionStatus.CONSOLIDATING,
+        EvolutionStatus.APPLYING,
+        EvolutionStatus.BATTLING,
+    ]
+    try:
+        resume_index = stage_order.index(failed_stage)
+    except ValueError:
+        resume_index = 0
+
+    try:
+        if resume_index <= 0:
+            run = await _stage_training(
+                run, store, training_games, limited_model, game_concurrency,
+                llm_semaphore, llm_rate_limiter,
+                selfplay_runner, on_progress,
+            )
+
+        if resume_index <= 1:
+            run = await _stage_consolidating(
+                run, store, limited_model, consolidator, on_progress,
+            )
+
+        if resume_index <= 2:
+            run = await _stage_applying(
+                run, store, limited_model, applier,
+            )
+
+        if resume_index <= 3:
+            run = await _stage_battling(
+                run, store, battle_games, limited_model, game_concurrency,
+                llm_semaphore, llm_rate_limiter,
+                selfplay_runner, battle_runner, on_progress,
+            )
+
+        run.status = EvolutionStatus.REVIEWING
+        _save_state(run, store)
+        _notify(on_progress, "reviewing", {"run_id": run.run_id})
+
+    except Exception as exc:
+        failed_stage_now = run.status
+        _log.exception("Resumed evolution run %s failed at stage %s", run.run_id, failed_stage_now)
+        run.status = EvolutionStatus.FAILED
+        run.errors.append(str(exc))
+        _save_state(run, store)
+        state_path = _state_path(store, run.run_id)
+        try:
+            s = json.loads(state_path.read_text(encoding="utf-8"))
+            s["failed_stage"] = failed_stage_now
+            _write_json(state_path, s)
+        except Exception:
+            pass
+        raise
+
+    return run
+
+
+async def rerun_from_consolidation(
+    store: VersionStore,
+    run_id: str,
+    model_adapter: ModelAdapter | None = None,
+    game_concurrency: int = 1,
+    llm_semaphore: asyncio.Semaphore | None = None,
+    llm_rate_limiter: AsyncRateLimiter | None = None,
+    on_progress: Callable[[str, dict], None] | None = None,
+    battle_runner: Callable | None = None,
+) -> EvolutionRun:
+    """Re-run from consolidation stage using existing training data.
+
+    This reuses the mid-memory from a completed training run and
+    re-runs consolidation -> applying -> battling with the updated prompt.
+    """
+    state = _load_state(store, run_id)
+    if state is None:
+        raise KeyError(f"Run {run_id} not found on disk")
+
+    role = state["role"]
+    training_games = state.get("training_games", 20)
+    battle_games = state.get("battle_games", 10)
+
+    from agent.role_evolution.models import SkillVersionConfig
+    baseline_data = state.get("baseline_config")
+    baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(store)
+
+    parent_hash = state.get("parent_hash", "")
+    run = EvolutionRun(
+        run_id=run_id,
+        role=role,
+        parent_hash=parent_hash,
+        status=EvolutionStatus.CONSOLIDATING,
+        training_games=training_games,
+        battle_games=battle_games,
+        baseline_config=baseline_config,
+    )
+    run.training_run_id = state.get("training_run_id")
+    run.training_output_dir = state.get("training_output_dir")
+
+    from agent.cognition.long_term_consolidator import consolidate_for_role as _default_consolidator
+    if battle_runner is None:
+        battle_runner = _run_battle
+
+    llm_rate_limiter = llm_rate_limiter or default_rate_limiter_from_env()
+    if model_adapter is None:
+        from agent.runtime.factory import load_llm_client
+        model_adapter = load_llm_client()
+    limited_model = limit_model_adapter(model_adapter, llm_semaphore)
+    limited_model = rate_limit_model_adapter(limited_model, llm_rate_limiter)
+
+    from agent.evaluation.selfplay import run_selfplay as _default_selfplay
+
+    try:
+        run = await _stage_consolidating(
+            run, store, limited_model, _default_consolidator, on_progress,
+        )
+        run = await _stage_applying(
+            run, store, limited_model, apply_proposals,
+        )
+        run = await _stage_battling(
+            run, store, battle_games, limited_model, game_concurrency,
+            llm_semaphore, llm_rate_limiter,
+            _default_selfplay, battle_runner, on_progress,
+        )
+        run.status = EvolutionStatus.REVIEWING
+        _save_state(run, store)
+        _notify(on_progress, "reviewing", {"run_id": run.run_id})
+    except Exception as exc:
+        _log.exception("Rerun from consolidation failed for %s", run_id)
         run.status = EvolutionStatus.FAILED
         run.errors.append(str(exc))
         _save_state(run, store)
         raise
 
     return run
-
-
-# ---------------------------------------------------------------------------
-# Stage implementations
-# ---------------------------------------------------------------------------
 
 
 async def _stage_training(
@@ -308,7 +530,7 @@ async def _stage_training(
         })
 
     try:
-        await _call_selfplay_runner(
+        result = await _call_selfplay_runner(
             selfplay_runner,
             config,
             model=model_adapter,
@@ -316,6 +538,16 @@ async def _stage_training(
             llm_semaphore=llm_semaphore,
             llm_rate_limiter=llm_rate_limiter,
         )
+        training_run_id = str(getattr(result, "run_id", "") or "")
+        if training_run_id:
+            run.training_run_id = training_run_id
+            run.training_output_dir = str(run_dir / training_run_id)
+            _save_state(run, store)
+            _notify(on_progress, "training_artifact", {
+                "run_id": run.run_id,
+                "training_run_id": run.training_run_id,
+                "training_output_dir": run.training_output_dir,
+            })
     finally:
         import shutil
 
@@ -335,7 +567,7 @@ async def _stage_consolidating(
     _save_state(run, store)
     _notify(on_progress, "consolidating", {"run_id": run.run_id})
 
-    run_dir = _run_dir(store, run.run_id)
+    run_dir = _training_run_dir(run, store) or _run_dir(store, run.run_id)
 
     consolidation: SkillConsolidation = await consolidator(
         run_dir, run.role, model_adapter,
@@ -424,6 +656,7 @@ async def _stage_battling(
         game_concurrency=game_concurrency,
         llm_semaphore=llm_semaphore,
         llm_rate_limiter=llm_rate_limiter,
+        output_dir=_run_dir(store, run.run_id) / "battle",
     )
     run.battle_result = battle_result
 
@@ -453,6 +686,7 @@ async def _run_battle(
     game_concurrency: int = 1,
     llm_semaphore: asyncio.Semaphore | None = None,
     llm_rate_limiter: AsyncRateLimiter | None = None,
+    output_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run baseline vs candidate battle.
 
@@ -478,6 +712,7 @@ async def _run_battle(
         llm_rate_limiter=llm_rate_limiter,
         role=role,
         candidate_hash=candidate_hash,
+        output_dir=output_dir,
     )
 
 
@@ -496,6 +731,7 @@ async def _run_config_battle(
     llm_rate_limiter: AsyncRateLimiter | None = None,
     role: str | None = None,
     candidate_hash: str | None = None,
+    output_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Run a fixed-seed battle between two full role-version configs."""
     import shutil
@@ -528,6 +764,7 @@ async def _run_config_battle(
         cfg_a = SelfPlayConfig(
             games=battle_games,
             seed_start=seed_start,
+            output_dir=(output_dir / "baseline") if output_dir is not None else Path("runs/selfplay"),
             enable_mid_memory=False,
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_a,
@@ -536,12 +773,13 @@ async def _run_config_battle(
         cfg_b = SelfPlayConfig(
             games=battle_games,
             seed_start=seed_start,
+            output_dir=(output_dir / "candidate") if output_dir is not None else Path("runs/selfplay"),
             enable_mid_memory=False,
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_b,
             game_concurrency=game_concurrency,
         )
-        await asyncio.gather(
+        result_a, result_b = await asyncio.gather(
             _call_selfplay_runner(
                 selfplay_runner,
                 cfg_a,
@@ -562,10 +800,7 @@ async def _run_config_battle(
     finally:
         # Clean up temporary directories
         for d in (skill_dir_a, skill_dir_b):
-            try:
-                shutil.rmtree(d, ignore_errors=True)
-            except Exception:
-                pass
+            shutil.rmtree(d, ignore_errors=True)
 
     # Aggregate per-role metrics
     summary: dict[str, Any] = {
@@ -576,6 +811,8 @@ async def _run_config_battle(
         "seeds": list(range(seed_start, seed_start + battle_games)),
         "baseline_config": baseline_config.to_dict(),
         "candidate_config": candidate_config.to_dict(),
+        "baseline_selfplay": _selfplay_artifact_summary(result_a, cfg_a),
+        "candidate_selfplay": _selfplay_artifact_summary(result_b, cfg_b),
         "baseline": _aggregate_metrics(results_a),
         "candidate": _aggregate_metrics(results_b),
     }
@@ -603,6 +840,34 @@ def _build_composite_skill_dir(store: VersionStore, config: SkillVersionConfig) 
         dst = tmpdir / r
         shutil.copytree(src, dst)
     return tmpdir
+
+
+def _training_run_dir(run: EvolutionRun, store: VersionStore) -> Path | None:
+    """Return the nested selfplay training run directory, if known."""
+    if run.training_output_dir:
+        path = Path(run.training_output_dir)
+        if path.exists():
+            return path
+    if run.training_run_id:
+        path = _run_dir(store, run.run_id) / run.training_run_id
+        if path.exists():
+            return path
+    return None
+
+
+def _selfplay_artifact_summary(result: Any, config: Any) -> dict[str, Any]:
+    """Small serializable pointer to a nested selfplay run."""
+    run_id = str(getattr(result, "run_id", "") or "")
+    output_dir = Path(getattr(config, "output_dir", ""))
+    games = getattr(result, "games", [])
+    return {
+        "run_id": run_id,
+        "output_dir": str(output_dir / run_id) if run_id else str(output_dir),
+        "games": [
+            game.to_dict() if hasattr(game, "to_dict") else game
+            for game in games
+        ],
+    }
 
 
 def _aggregate_metrics(results: list[Any]) -> dict[str, Any]:
@@ -681,22 +946,7 @@ def _aggregate_result_by_role(results: list[Any]) -> dict[str, dict[str, float |
     accum: dict[str, dict[str, float | int]] = {}
     for result in results:
         for role, metrics in getattr(result, "by_role", {}).items():
-            state = accum.setdefault(role, {
-                "players": 0,
-                "wins": 0,
-                "losses": 0,
-                "total_score_sum": 0.0,
-                "role_weighted_score_sum": 0.0,
-                "speech_score_sum": 0.0,
-                "vote_score_sum": 0.0,
-                "skill_score_sum": 0.0,
-                "information_score_sum": 0.0,
-                "cooperation_score_sum": 0.0,
-                "decision_count": 0,
-                "fallback_count": 0,
-                "policy_adjusted_count": 0,
-                "bad_case_count": 0,
-            })
+            state = accum.setdefault(role, _new_role_accum())
             players = int(metrics.get("players", 0))
             state["players"] = int(state["players"]) + players
             state["wins"] = int(state["wins"]) + int(metrics.get("wins", 0))
@@ -719,38 +969,7 @@ def _aggregate_result_by_role(results: list[Any]) -> dict[str, dict[str, float |
                 state[f"{field}_sum"] = (
                     float(state[f"{field}_sum"]) + float(metrics.get(field, 0.0)) * players
                 )
-    return {role: _finalize_role_metrics(state) for role, state in sorted(accum.items())}
-
-
-def _finalize_role_metrics(state: dict[str, float | int]) -> dict[str, float | int]:
-    players = int(state.get("players", 0))
-    decisions = int(state.get("decision_count", 0))
-    bad_cases = int(state.get("bad_case_count", 0))
-
-    def _avg(field: str) -> float:
-        return round(float(state.get(f"{field}_sum", 0.0)) / players, 3) if players else 0.0
-
-    return {
-        "players": players,
-        "wins": int(state.get("wins", 0)),
-        "losses": int(state.get("losses", 0)),
-        "win_rate": round(int(state.get("wins", 0)) / players, 3) if players else 0.0,
-        "total_score": _avg("total_score"),
-        "role_weighted_score": _avg("role_weighted_score"),
-        "speech_score": _avg("speech_score"),
-        "vote_score": _avg("vote_score"),
-        "skill_score": _avg("skill_score"),
-        "information_score": _avg("information_score"),
-        "cooperation_score": _avg("cooperation_score"),
-        "decision_count": decisions,
-        "fallback_count": int(state.get("fallback_count", 0)),
-        "policy_adjusted_count": int(state.get("policy_adjusted_count", 0)),
-        "fallback_rate": round(int(state.get("fallback_count", 0)) / decisions, 4) if decisions else 0.0,
-        "policy_adjusted_rate": round(int(state.get("policy_adjusted_count", 0)) / decisions, 4)
-        if decisions else 0.0,
-        "bad_case_count": bad_cases,
-        "bad_case_rate": round(bad_cases / decisions, 4) if decisions else 0.0,
-    }
+    return {role: finalize_role_metrics(state) for role, state in sorted(accum.items())}
 
 
 def _win_rate(results: list[Any], team: str) -> float:

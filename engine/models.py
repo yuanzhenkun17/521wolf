@@ -145,6 +145,7 @@ class ActionResponse:
     target: int | None = None
     choice: str | None = None
     text: str = ""
+    decision_id: str | None = None
 
 
 @dataclass(slots=True)

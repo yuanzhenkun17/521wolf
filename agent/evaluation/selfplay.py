@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from agent.evaluation.metrics import _new_role_accum, finalize_role_metrics
 from agent.observability.decision_log import AgentDecisionRecorder
 from agent.runtime.model import ModelAdapter
 from engine.config import GameConfig, STANDARD_12
@@ -156,9 +157,10 @@ class SelfPlayResult:
         total_fallbacks = sum(g.fallback_count for g in self.games)
         total_adjusted = sum(g.policy_adjusted_count for g in self.games)
         scores = [g.review_score for g in self.games if g.review_score is not None]
-        role_weighted_scores = [g.role_weighted_score for g in self.games if g.review_score is not None]
+        role_weighted_scores = [g.role_weighted_score for g in self.games if g.review_score is not None and g.role_weighted_score is not None]
         reviewed = [g for g in self.games if g.review_score is not None]
         calibration = merge_calibration_reports([g.to_dict() for g in self.games])
+        mistake_total = sum(g.mistake_count for g in self.games)
 
         return {
             "run_id": self.run_id,
@@ -187,11 +189,11 @@ class SelfPlayResult:
             "confidence_calibration_error": round(calibration["confidence_calibration_error"], 3),
             "confidence_calibration_count": calibration["confidence_calibration_count"],
             "confidence_buckets": calibration["confidence_buckets"],
-            "mistake_count": sum(g.mistake_count for g in self.games),
+            "mistake_count": mistake_total,
             "counterfactual_count": sum(g.counterfactual_count for g in self.games),
             "turning_point_count": sum(g.turning_point_count for g in self.games),
             # Leaderboard fields — aggregated by aggregate_summaries in leaderboard.py
-            "bad_case_count": sum(g.mistake_count for g in self.games),
+            "bad_case_count": mistake_total,
             "turning_point_quality": 0.0,  # TODO: wire up when turning point quality scoring is implemented
             "tot_usage_rate": 0.0,  # TODO: wire up when ToT usage tracking is implemented
             "got_trigger_count": 0,  # TODO: wire up when GoT trigger tracking is implemented
@@ -199,6 +201,7 @@ class SelfPlayResult:
             "information_score": round(sum(g.information_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
             "cooperation_score": round(sum(g.cooperation_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
             "by_role": _aggregate_by_role(self.games),
+            "game_results": [g.to_dict() for g in self.games],
             "started_at": self.started_at,
             "finished_at": self.finished_at,
         }
@@ -259,6 +262,7 @@ async def run_selfplay(
     on_game_complete: "Callable[[int, SelfPlayGameResult], None] | None" = None,
     llm_semaphore: asyncio.Semaphore | None = None,
     llm_rate_limiter: AsyncRateLimiter | None = None,
+    run_dir: Path | None = None,
 ) -> SelfPlayResult:
     """Run a multi-game selfplay session.
 
@@ -268,14 +272,21 @@ async def run_selfplay(
         client_factory: Optional callable that returns a ModelAdapter per game.
         on_game_complete: Optional callback ``(game_index, game_result)``
             invoked after each game finishes.  *game_index* is zero-based.
+        run_dir: Optional existing run directory for resuming. If None, a new
+            ``run_<timestamp>`` directory is created under ``config.output_dir``.
     """
-    run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    if run_dir is not None:
+        run_id = run_dir.name
+        run_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        run_dir = config.output_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+
     started_at = _now()
-    run_dir = config.output_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
 
     # Write config
-    _write_json(run_dir / "config.json", {
+    await _write_json(run_dir / "config.json", {
         "games": config.games,
         "seed_start": config.seed_start,
         "agent_version": config.agent_version,
@@ -311,6 +322,34 @@ async def run_selfplay(
     async def _run_index(i: int) -> None:
         if config.skill_dir != _frozen_skill_dir:
             raise ValueError(f"skill_dir changed mid-run: {_frozen_skill_dir} -> {config.skill_dir}")
+        # Skip already-completed games (resume after restart)
+        game_id = f"game_{i + 1:03d}"
+        existing_meta = run_dir / "games" / game_id / "meta.json"
+        if existing_meta.exists():
+            try:
+                meta = json.loads(existing_meta.read_text(encoding="utf-8"))
+                winner = meta.get("winner", "error")
+                results[i] = SelfPlayGameResult(
+                    game_id=game_id,
+                    seed=config.seed_start + i,
+                    winner=winner,
+                    days=meta.get("days", 0),
+                    player_roles=meta.get("players", {}),
+                    decision_count=0,
+                    fallback_count=0,
+                    policy_adjusted_count=0,
+                    avg_confidence=0.0,
+                    review_score=None,
+                    output_dir=run_dir / "games" / game_id,
+                )
+                if on_game_complete is not None:
+                    try:
+                        on_game_complete(i, results[i])
+                    except Exception:
+                        pass
+                return
+            except Exception:
+                pass  # corrupt meta — re-run
         client = client_factory() if client_factory else shared_model
         if client is None:
             client = load_llm_client(
@@ -405,7 +444,9 @@ async def _run_single_game(
     trace_recorders: dict[int, AgentTraceRecorder] = {
         pid: AgentTraceRecorder() for pid in roles
     }
-    decision_recorder = AgentDecisionRecorder()
+    decision_recorder = AgentDecisionRecorder(
+        stream_path=game_dir / "agent_decisions.jsonl",
+    )
     agents = _create_agents(
         roles, client, decision_recorder, trace_recorders,
         game_id=game_id,
@@ -415,7 +456,10 @@ async def _run_single_game(
         got_trigger_threshold=config.got_trigger_threshold,
     )
 
-    engine = GameEngine(roles, agents, config.game_config)
+    engine = GameEngine(
+        roles, agents, config.game_config,
+        log_stream_path=str(game_dir / "game_events.jsonl"),
+    )
     game_started_at = _now()
     game_error: str | None = None
     try:
@@ -430,12 +474,12 @@ async def _run_single_game(
     else:
         winner_str = "error"
 
-    _write_jsonl(game_dir / "game_events.jsonl", engine.logger.entries)
-    _write_jsonl(game_dir / "agent_decisions.jsonl", decision_recorder.records)
+    # game_events.jsonl and agent_decisions.jsonl already written via streaming
 
     all_decisions: list[DecisionArchive] = []
     for recorder in trace_recorders.values():
         all_decisions.extend(recorder.snapshot())
+    _align_trace_indices(all_decisions, decision_recorder.records)
 
     merged_archive = GameArchive(
         game_id=game_id,
@@ -453,7 +497,6 @@ async def _run_single_game(
         final_state={"player_roles": player_roles, "winner": winner_str},
     )
     merged_archive.write_json(game_dir / "archive.json")
-    _write_jsonl(game_dir / "agent_traces.jsonl", all_decisions)
 
     fallback_count = 0
     policy_adjusted_count = 0
@@ -513,8 +556,7 @@ async def _run_single_game(
             decision_records=decision_recorder.records,
             roles=roles,
         )
-        _write_json(game_dir / "review.json", review_report.to_dict())
-        _write_text(game_dir / "review.md", review_report.to_markdown())
+        await _write_json(game_dir / "review.json", review_report.to_dict())
 
     if config.enable_mid_memory and review_report is not None:
         try:
@@ -533,7 +575,7 @@ async def _run_single_game(
         except Exception as exc:
             _log.warning("mid_memory_error for %s: %s", game_id, exc)
 
-    _write_json(game_dir / "meta.json", {
+    await _write_json(game_dir / "meta.json", {
         "game_id": game_id,
         "seed": seed,
         "agent_version": config.agent_version,
@@ -667,6 +709,26 @@ def _collect_decisions(recorder: AgentDecisionRecorder) -> dict[int, list[dict]]
     return decisions
 
 
+def _align_trace_indices(
+    traces: list[DecisionArchive],
+    records: list[Any],
+) -> None:
+    """Align heavy trace order with the global lightweight decision log."""
+    order_by_id: dict[str, int] = {}
+    for index, record in enumerate(records, start=1):
+        decision_id = getattr(record, "decision_id", "")
+        if decision_id:
+            order_by_id[str(decision_id)] = index
+    next_index = len(order_by_id) + 1
+    for trace in traces:
+        index = order_by_id.get(trace.decision_id)
+        if index is None:
+            index = next_index
+            next_index += 1
+        trace.index = index
+    traces.sort(key=lambda trace: trace.index)
+
+
 def _compute_by_role_metrics(
     *,
     review_report: Any,
@@ -677,22 +739,7 @@ def _compute_by_role_metrics(
     result: dict[str, dict[str, float | int]] = {}
     for pid, role in roles.items():
         role_name = role.value
-        state = result.setdefault(role_name, {
-            "players": 0,
-            "wins": 0,
-            "losses": 0,
-            "total_score_sum": 0.0,
-            "role_weighted_score_sum": 0.0,
-            "speech_score_sum": 0.0,
-            "vote_score_sum": 0.0,
-            "skill_score_sum": 0.0,
-            "information_score_sum": 0.0,
-            "cooperation_score_sum": 0.0,
-            "decision_count": 0,
-            "fallback_count": 0,
-            "policy_adjusted_count": 0,
-            "bad_case_count": 0,
-        })
+        state = result.setdefault(role_name, _new_role_accum())
         player_review = review_report.player_scores.get(pid)
         state["players"] = int(state["players"]) + 1
         if player_review is not None:
@@ -719,22 +766,7 @@ def _compute_by_role_metrics(
         if pid is None or pid not in roles:
             continue
         role_name = roles[pid].value
-        state = result.setdefault(role_name, {
-            "players": 0,
-            "wins": 0,
-            "losses": 0,
-            "total_score_sum": 0.0,
-            "role_weighted_score_sum": 0.0,
-            "speech_score_sum": 0.0,
-            "vote_score_sum": 0.0,
-            "skill_score_sum": 0.0,
-            "information_score_sum": 0.0,
-            "cooperation_score_sum": 0.0,
-            "decision_count": 0,
-            "fallback_count": 0,
-            "policy_adjusted_count": 0,
-            "bad_case_count": 0,
-        })
+        state = result.setdefault(role_name, _new_role_accum())
         state["decision_count"] = int(state["decision_count"]) + 1
         source = getattr(rec, "source", "")
         if source == "fallback":
@@ -749,7 +781,7 @@ def _compute_by_role_metrics(
         result[role_name]["bad_case_count"] = int(result[role_name]["bad_case_count"]) + 1
 
     return {
-        role_name: _finalize_role_metrics(state)
+        role_name: finalize_role_metrics(state)
         for role_name, state in sorted(result.items())
     }
 
@@ -759,22 +791,7 @@ def _aggregate_by_role(games: list[SelfPlayGameResult]) -> dict[str, dict[str, f
     accum: dict[str, dict[str, float | int]] = {}
     for game in games:
         for role_name, metrics in (game.by_role or {}).items():
-            state = accum.setdefault(role_name, {
-                "players": 0,
-                "wins": 0,
-                "losses": 0,
-                "total_score_sum": 0.0,
-                "role_weighted_score_sum": 0.0,
-                "speech_score_sum": 0.0,
-                "vote_score_sum": 0.0,
-                "skill_score_sum": 0.0,
-                "information_score_sum": 0.0,
-                "cooperation_score_sum": 0.0,
-                "decision_count": 0,
-                "fallback_count": 0,
-                "policy_adjusted_count": 0,
-                "bad_case_count": 0,
-            })
+            state = accum.setdefault(role_name, _new_role_accum())
             players = int(metrics.get("players", 0))
             state["players"] = int(state["players"]) + players
             state["wins"] = int(state["wins"]) + int(metrics.get("wins", 0))
@@ -804,42 +821,8 @@ def _aggregate_by_role(games: list[SelfPlayGameResult]) -> dict[str, dict[str, f
                     float(state[f"{field}_sum"]) + float(metrics.get(field, 0.0)) * players
                 )
     return {
-        role_name: _finalize_role_metrics(state)
+        role_name: finalize_role_metrics(state)
         for role_name, state in sorted(accum.items())
-    }
-
-
-def _finalize_role_metrics(state: dict[str, float | int]) -> dict[str, float | int]:
-    players = int(state.get("players", 0))
-    decisions = int(state.get("decision_count", 0))
-    bad_cases = int(state.get("bad_case_count", 0))
-
-    def _avg(field: str) -> float:
-        if players <= 0:
-            return 0.0
-        return round(float(state.get(f"{field}_sum", 0.0)) / players, 3)
-
-    return {
-        "players": players,
-        "wins": int(state.get("wins", 0)),
-        "losses": int(state.get("losses", 0)),
-        "win_rate": round(int(state.get("wins", 0)) / players, 3) if players else 0.0,
-        "total_score": _avg("total_score"),
-        "role_weighted_score": _avg("role_weighted_score"),
-        "speech_score": _avg("speech_score"),
-        "vote_score": _avg("vote_score"),
-        "skill_score": _avg("skill_score"),
-        "information_score": _avg("information_score"),
-        "cooperation_score": _avg("cooperation_score"),
-        "decision_count": decisions,
-        "fallback_count": int(state.get("fallback_count", 0)),
-        "policy_adjusted_count": int(state.get("policy_adjusted_count", 0)),
-        "fallback_rate": round(int(state.get("fallback_count", 0)) / decisions, 4)
-        if decisions else 0.0,
-        "policy_adjusted_rate": round(int(state.get("policy_adjusted_count", 0)) / decisions, 4)
-        if decisions else 0.0,
-        "bad_case_count": bad_cases,
-        "bad_case_rate": round(bad_cases / decisions, 4) if decisions else 0.0,
     }
 
 
@@ -847,13 +830,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _write_json(path: Path, data: Any) -> None:
+def _write_json_sync(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def _write_jsonl(path: Path, entries: list) -> None:
+def _write_jsonl_sync(path: Path, entries: list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         for entry in entries:
@@ -861,10 +844,22 @@ def _write_jsonl(path: Path, entries: list) -> None:
             f.write(json.dumps(data, ensure_ascii=False) + "\n")
 
 
-def _write_text(path: Path, text: str) -> None:
+def _write_text_sync(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
+
+
+async def _write_json(path: Path, data: Any) -> None:
+    await asyncio.to_thread(_write_json_sync, path, data)
+
+
+async def _write_jsonl(path: Path, entries: list) -> None:
+    await asyncio.to_thread(_write_jsonl_sync, path, entries)
+
+
+async def _write_text(path: Path, text: str) -> None:
+    await asyncio.to_thread(_write_text_sync, path, text)
 
 
 def _is_werewolf_winner(winner: str) -> bool:

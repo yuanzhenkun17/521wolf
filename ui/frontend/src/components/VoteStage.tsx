@@ -3,9 +3,9 @@ import { DecisionDetails } from "./DecisionDetails";
 import { SpeechBubble } from "./SpeechStage";
 import { roleName } from "../presentation";
 import type { Presentation } from "../presentation";
-import type { AgentDecision, Player } from "../types";
+import type { AgentDecision, ArchiveMap, Player } from "../types";
 
-export function VoteStage({ presentation, players, archiveMap }: { presentation: Presentation; players: Player[]; archiveMap?: Map<number, Record<string, unknown>> }) {
+export function VoteStage({ presentation, players, archiveMap }: { presentation: Presentation; players: Player[]; archiveMap?: ArchiveMap }) {
   const grouped = presentation.votes.reduce<Record<string, number[]>>((acc, vote) => {
     const key = vote.targetId === null ? "abstain" : String(vote.targetId);
     acc[key] = [...(acc[key] ?? []), vote.voterId];
@@ -57,7 +57,7 @@ function VoteDecisionLine({
   voterId: number;
   isAbstain: boolean;
   decision?: AgentDecision;
-  archiveMap?: Map<number, Record<string, unknown>>;
+  archiveMap?: ArchiveMap;
 }) {
   return (
     <div className="min-w-0 rounded-md bg-muted/40 px-2 py-1.5">

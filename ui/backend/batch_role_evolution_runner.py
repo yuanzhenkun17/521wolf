@@ -174,6 +174,31 @@ class RoleBatchEvolutionRunner:
         self._broadcast(batch_id, "rejected", tracked.snapshot())
         return tracked
 
+    def stop_batch(self, batch_id: str) -> RoleBatchEvolutionRun | None:
+        """Stop a running batch (can be resumed)."""
+        tracked = self._active_batches.get(batch_id)
+        if tracked is None:
+            return None
+        if tracked.task and not tracked.task.done():
+            tracked.task.cancel()
+        tracked.status = "paused"
+        tracked.stage = "paused"
+        self._broadcast(batch_id, "paused", tracked.snapshot())
+        return tracked
+
+    def terminate_batch(self, batch_id: str) -> RoleBatchEvolutionRun | None:
+        """Permanently stop a batch run."""
+        tracked = self._active_batches.get(batch_id)
+        if tracked is None:
+            return None
+        if tracked.task and not tracked.task.done():
+            tracked.task.cancel()
+        tracked.status = "failed"
+        tracked.stage = "failed"
+        tracked.error = "用户终止"
+        self._broadcast(batch_id, "failed", tracked.snapshot())
+        return tracked
+
     def subscribe(self, batch_id: str) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue()
         self._sse_queues.setdefault(batch_id, []).append(queue)

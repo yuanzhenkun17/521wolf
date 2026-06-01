@@ -444,7 +444,6 @@ def _build_role_messages(
         for summary in summaries
         if summary.get("game_id")
     })
-    min_evidence_games = 1 if len(source_games) <= 1 else 2
 
     return [
         {
@@ -470,14 +469,10 @@ def _build_role_messages(
                 "   - action_type 是技能修改动作，不是游戏动作；必须从该文件的 evolution.allowed_actions 中选择\n"
                 "   - applicable_actions 只是 skill 适用的游戏动作，不能填进 proposal.action_type\n"
                 "   - 只有 evolution.enabled=true 的文件可以进入 proposals\n"
-                "   - 如果没有可修改文件，或者证据不足，输出 proposals: []\n"
-                "   - 只有 relevance=direct 的洞察可以生成 proposals\n"
-                "   - relevance=contextual 的洞察仅作为背景参考\n"
                 "   - 每个 proposal 必须包含 evidence 引用具体 game_id 和 decision/action\n"
-                f"   - 需要多局一致证据；每条 proposal 至少引用 {min_evidence_games} 个不同 source_games\n"
                 "   - risk 只能是 low|medium|high；high risk 建议只写入 trends，不要进入 proposals\n"
-                "   - confidence 必须是 0.0 到 1.0；低于 0.5 的建议不要进入 proposals\n"
                 "   - expected_direction 只能是 improve|maintain|reduce\n"
+                "   - 大胆提案，不要过于保守；对战阶段会验证提案质量\n"
                 f"当前 source_games(JSON): {_compact_json(source_games)}\n"
                 f"可修改文件清单(JSON): {_compact_json(modifiable_files)}\n\n"
                 "输出 JSON schema:\n"

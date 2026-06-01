@@ -125,6 +125,8 @@ class AgentRuntime:
                     ctx = parse_node(ctx)
                 ctx = policy_node(ctx)
                 ctx = log_node(ctx, self.recorder)
+                if ctx.response is not None and ctx.decision_record is not None:
+                    ctx.response.decision_id = ctx.decision_record.decision_id
             finally:
                 # -- optional trace recording for archive ------------------------------
                 try:

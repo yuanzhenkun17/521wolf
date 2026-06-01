@@ -215,24 +215,26 @@ def _summarize_vote_patterns(vote_log: list[dict]) -> list[str]:
     for (voter, target), count in pairs.items():
         if count >= 2:
             patterns.append(f"P{voter} 连续投票给 P{target} ({count}次)")
-    # Detect groups voting together
+    # Detect groups voting together — O(n) via pre-grouping
+    by_day_target: dict[tuple, list[int]] = {}
     for entry in vote_log:
-        same_vote = [
-            e["voter"] for e in vote_log
-            if e["target"] == entry["target"] and e["day"] == entry["day"] and e["voter"] != entry["voter"]
-        ]
-        if len(same_vote) >= 2:
-            patterns.append(
-                f"第{entry['day']}天: P{entry['voter']} 与 {[f'P{p}' for p in same_vote]} 同票 P{entry['target']}"
-            )
+        by_day_target.setdefault((entry["day"], entry["target"]), []).append(entry["voter"])
+    for (day, target), voters in by_day_target.items():
+        if len(voters) >= 3:
+            patterns.append(f"第{day}天: {len(voters)}人同票 P{target} (P{', P'.join(str(v) for v in voters)})")
     # Deduplicate
-    seen = set()
-    unique = []
+    seen: set[str] = set()
+    unique: list[str] = []
     for p in patterns:
         if p not in seen:
             seen.add(p)
             unique.append(p)
     return unique[-8:]
+
+
+_MAX_EVENTS = 200
+_MAX_SELF_HISTORY = 50
+_MAX_DECISION_HISTORY = 30
 
 
 class AgentMemory:
@@ -274,8 +276,12 @@ class AgentMemory:
         self.self_history.append(
             f"{request.action_type.value}: choice={response.choice!r} target={response.target!r} text={response.text!r}"
         )
+        if len(self.self_history) > _MAX_SELF_HISTORY:
+            self.self_history = self.self_history[-_MAX_SELF_HISTORY:]
         if decision is not None:
             self.decision_history.append(decision)
+            if len(self.decision_history) > _MAX_DECISION_HISTORY:
+                self.decision_history = self.decision_history[-_MAX_DECISION_HISTORY:]
         # Update field notes from own action
         action_type = request.action_type
         if action_type in {ActionType.EXILE_VOTE, ActionType.PK_VOTE, ActionType.SHERIFF_VOTE}:
@@ -303,6 +309,8 @@ class AgentMemory:
             event = parse_public_entry(str(item), fallback_day=observation.day, fallback_phase=observation.phase.value)
             self.events.append(event)
             self._index_public_event(event)
+        if len(self.events) > _MAX_EVENTS:
+            self.events = self.events[-_MAX_EVENTS:]
 
     def _index_public_event(self, event: MemoryEvent) -> None:
         if event.event_type in {"exile_vote", "pk_vote", "sheriff_vote", "vote"} and event.actor is not None and event.target is not None:

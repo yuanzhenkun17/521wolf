@@ -24,6 +24,8 @@ async def got_node(ctx: AgentContext, model: ModelAdapter, *, threshold: float =
         return ctx
 
     ctx.got_enabled = True
+    ctx.got_prompt_messages = result.prompt_messages
+    ctx.got_raw_output = result.raw_output
     ctx.got_evidence_nodes = [node.to_dict() for node in result.evidence_nodes]
     ctx.got_hypotheses = [hyp.to_dict() for hyp in result.hypotheses]
     ctx.got_judge_reason = result.judge_reason
