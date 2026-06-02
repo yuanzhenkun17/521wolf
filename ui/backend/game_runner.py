@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent.observability.archive import AgentTraceRecorder
-from agent.observability.decision_log import AgentDecisionRecorder
-from agent.runtime.factory import create_agents, load_llm_client
-from agent.evaluation.review_enhanced import generate_enhanced_review
+from agent.infrastructure.archive import AgentTraceRecorder
+from agent.infrastructure.decision_log import AgentDecisionRecorder
+from agent.api.factory import create_agents, load_llm_client
+from agent.learning.review import generate_enhanced_review
 from engine.config import GameConfig, STANDARD_12
 from engine.engine import GameEngine
 from engine.logging import next_game_log_name
@@ -383,8 +383,12 @@ class GameManager:
         return self.log_dir / game_id
 
     def _events_path(self, game_id: str) -> Path | None:
-        path = self._game_dir(game_id) / "game_events.jsonl"
-        return path if path.exists() else None
+        game_dir = self._game_dir(game_id)
+        for name in ("game_events.jsonl", "events.jsonl"):
+            path = game_dir / name
+            if path.exists():
+                return path
+        return None
 
     def _decisions_path(self, game_id: str) -> Path | None:
         path = self._game_dir(game_id) / "agent_decisions.jsonl"

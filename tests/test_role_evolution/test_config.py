@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.role_evolution.config import (
+from agent.learning.evolution.config import (
     build_baseline_config,
     build_role_override_config,
     skill_dir_for_role,

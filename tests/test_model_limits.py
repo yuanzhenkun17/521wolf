@@ -4,7 +4,7 @@ import asyncio
 import time
 import unittest
 
-from agent.runtime.model import AsyncRateLimiter, limit_model_adapter, rate_limit_model_adapter
+from agent.infrastructure.llm import AsyncRateLimiter, limit_model_adapter, rate_limit_model_adapter
 
 
 class _SlowModel:

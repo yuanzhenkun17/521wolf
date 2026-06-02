@@ -1,7 +1,7 @@
 """Role evolution manager — manages run state and SSE events.
 
 Follows the same pattern as ``evolution_runner.py`` but wraps the
-role-level evolution pipeline (``agent.role_evolution.pipeline``).
+role-level evolution pipeline (``agent.learning.evolution.pipeline``).
 """
 
 from __future__ import annotations
@@ -14,13 +14,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from agent.role_evolution.models import (
+from agent.learning.evolution.config import build_baseline_config
+from agent.learning.evolution.models import (
     EvolutionRun,
 )
-from agent.role_evolution.pipeline import (
+from agent.learning.evolution.pipeline import (
     InvalidRunStateError,
-    _load_state,
-    build_baseline_config,
     recover_interrupted_runs,
     reject as pipeline_reject,
     promote as pipeline_promote,
@@ -28,8 +27,9 @@ from agent.role_evolution.pipeline import (
     rerun_from_consolidation,
     run_evolution,
 )
-from agent.role_evolution.store import VersionStore
-from agent.runtime.model import AsyncRateLimiter
+from agent.learning.evolution.state import load_run_state
+from agent.learning.evolution.store import VersionStore
+from agent.infrastructure.llm import AsyncRateLimiter
 
 _log = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class RoleEvolutionRunner:
 
     def restore_runs(self) -> None:
         """Load non-terminal runs from disk into memory."""
-        from agent.role_evolution.pipeline import _TERMINAL, scan_active_runs
+        from agent.learning.evolution.pipeline import scan_active_runs
         for state in scan_active_runs(self.store):
             run_id = state.get("run_id")
             if not run_id or run_id in self._active_runs:
@@ -416,10 +416,10 @@ class RoleEvolutionRunner:
             raise KeyError(f"Run {run_id} not found")
         # Load from disk if not in memory
         if tracked.run is None:
-            state = _load_state(self.store, run_id)
+            state = load_run_state(self.store, run_id)
             if state is None:
                 raise InvalidRunStateError(f"Run {run_id} has no pipeline data")
-            from agent.role_evolution.models import EvolutionRun, SkillVersionConfig
+            from agent.learning.evolution.models import EvolutionRun, SkillVersionConfig
             baseline_data = state.get("baseline_config")
             baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(self.store)
             tracked.run = EvolutionRun(

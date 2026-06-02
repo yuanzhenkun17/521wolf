@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.evaluation.selfplay import SelfPlayConfig
+from agent.learning.selfplay import SelfPlayConfig
 
 
 def test_selfplay_config_skill_dir_default_none():

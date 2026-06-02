@@ -6,9 +6,9 @@ import asyncio
 import json
 import unittest
 
-from agent.nodes.got import got_node
-from agent.observability.archive import AgentTraceRecorder, DecisionArchive
-from agent.reasoning.got import (
+from agent.decision.steps.reason_with_graph import reason_with_graph_step
+from agent.infrastructure.archive import AgentTraceRecorder, DecisionArchive
+from agent.reasoning.graph import (
     GOT_ACTIONS,
     GoTEvidenceNode,
     GoTHypothesis,
@@ -17,8 +17,8 @@ from agent.reasoning.got import (
     need_got,
     run_got_selection,
 )
-from agent.runtime import AgentRuntime
-from agent.runtime.context import AgentContext
+from agent.api import AgentRuntime
+from agent.core.context import AgentContext
 from engine.actions import ActionType
 from engine.models import ActionRequest, Observation, Phase, Role
 
@@ -238,18 +238,18 @@ class RunGotSelectionTests(unittest.TestCase):
             asyncio.run(run_got_selection(ctx, StubModel(json.dumps(data))))
 
 
-class GotNodeTests(unittest.TestCase):
+class GraphReasoningStepTests(unittest.TestCase):
     def test_skips_when_not_needed(self):
         ctx = _make_ctx()
         ctx.belief_context = {"top_suspicions": [{"player_id": 3, "wolf_prob": 0.9}]}
-        result = asyncio.run(got_node(ctx, StubModel(_got_response())))
+        result = asyncio.run(reason_with_graph_step(ctx, StubModel(_got_response())))
         self.assertIs(result, ctx)
         self.assertFalse(result.got_enabled)
         self.assertEqual(result.source, "llm")
 
     def test_sets_got_fields_on_success(self):
         ctx = _make_ctx(metadata={"enable_got": True})
-        result = asyncio.run(got_node(ctx, StubModel(_got_response())))
+        result = asyncio.run(reason_with_graph_step(ctx, StubModel(_got_response())))
         self.assertTrue(result.got_enabled)
         self.assertEqual(result.source, "got")
         self.assertEqual(len(result.got_hypotheses), 2)
@@ -261,7 +261,7 @@ class GotNodeTests(unittest.TestCase):
 
     def test_falls_back_on_invalid_json(self):
         ctx = _make_ctx(metadata={"enable_got": True})
-        result = asyncio.run(got_node(ctx, StubModel("not json")))
+        result = asyncio.run(reason_with_graph_step(ctx, StubModel("not json")))
         self.assertFalse(result.got_enabled)
         self.assertEqual(result.source, "llm")
         self.assertIn("GoT failed", result.errors[0])

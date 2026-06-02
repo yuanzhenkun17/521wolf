@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from agent.cognition.long_term_consolidator import (
+from agent.learning.evolution.consolidation import (
     _build_role_messages,
     _load_role_skills_for_str,
 )

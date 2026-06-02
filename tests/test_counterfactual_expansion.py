@@ -1,5 +1,5 @@
 """Tests for expanded counterfactual coverage."""
-from agent.evaluation.review_enhanced import (
+from agent.learning.review import (
     _generate_counterfactuals, _collect_mistakes,
     DecisionMistake, MISTAKE_WRONG_VOTE, MISTAKE_KILLED_TEAMMATE,
     MISTAKE_POISONED_GOOD, MISTAKE_SHOT_GOOD, MISTAKE_IGNORED_SEER,

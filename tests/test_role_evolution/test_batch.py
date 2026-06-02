@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.evaluation.selfplay import SelfPlayGameResult
-from agent.role_evolution.batch import run_batch_evolution
-from agent.role_evolution.models import SkillConsolidation, SkillDiff, SkillProposal
-from agent.role_evolution.store import VersionStore
+from agent.learning.selfplay import SelfPlayGameResult
+from agent.learning.evolution.batch import run_batch_evolution
+from agent.learning.evolution.models import SkillConsolidation, SkillDiff, SkillProposal
+from agent.learning.evolution.store import VersionStore
 
 
 def _proposal(role: str) -> SkillProposal:

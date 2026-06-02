@@ -22,14 +22,14 @@ from engine.models import Role
 
 from unittest.mock import MagicMock
 
-from agent.observability.archive import (
+from agent.infrastructure.archive import (
     AgentTraceRecorder,
     DecisionArchive,
     GameArchive,
 )
-from agent.runtime.context import AgentContext
-from agent.evaluation.review_enhanced import generate_enhanced_review
-from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
+from agent.core.context import AgentContext
+from agent.learning.review import generate_enhanced_review
+from agent.learning.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

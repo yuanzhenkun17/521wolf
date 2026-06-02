@@ -1,4 +1,4 @@
-"""Tests for agent.review_enhanced — PlayerReview, TurningPoint, etc."""
+"""Tests for enhanced review report structures."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import unittest
 
 from engine.models import Role, Team
 
-from agent.evaluation.review_enhanced import (
+from agent.learning.review import (
     DecisionMistake,
     GameReviewReport,
     MISTAKE_FALLBACK_USED,

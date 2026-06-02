@@ -1,7 +1,7 @@
-from agent.runtime.agent import AgentRuntime
-from agent.runtime.context import AgentContext
-from agent.runtime.agent import LLMPlayerAgent
-from agent.runtime.factory import create_agents, load_llm_client
+from agent.api.runtime import AgentRuntime
+from agent.core.context import AgentContext
+from agent.api.runtime import LLMPlayerAgent
+from agent.api.factory import create_agents, load_llm_client
 
 __all__ = [
     "AgentContext",

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.evaluation.selfplay import (
+from agent.learning.selfplay import (
     SelfPlayConfig,
     SelfPlayGameResult,
     SelfPlayResult,

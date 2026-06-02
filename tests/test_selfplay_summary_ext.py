@@ -1,7 +1,7 @@
 """Tests for enhanced summary fields."""
 from pathlib import Path
 
-from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
+from agent.learning.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
 
 
 def test_game_result_to_dict_includes_counts():

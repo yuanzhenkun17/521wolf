@@ -10,14 +10,14 @@ import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent.role_evolution.models import (
+from agent.learning.evolution.models import (
     EvolutionRun,
     EvolutionStatus,
     SkillConsolidation,
     SkillDiff,
     SkillProposal,
 )
-from agent.role_evolution.pipeline import (
+from agent.learning.evolution.pipeline import (
     BaselineChangedError,
     InvalidRunStateError,
     promote,
@@ -26,7 +26,8 @@ from agent.role_evolution.pipeline import (
     run_evolution,
     scan_active_runs,
 )
-from agent.role_evolution.store import VersionStore
+from agent.learning.evolution.state import save_run_state
+from agent.learning.evolution.store import VersionStore
 
 
 # ---------------------------------------------------------------------------
@@ -45,28 +46,28 @@ class _FakeSelfPlayConfig:
 
 
 # ---------------------------------------------------------------------------
-# Build a fake ``agent.evaluation.selfplay`` module with SelfPlayConfig
-# so that ``from agent.evaluation.selfplay import SelfPlayConfig`` works
+# Build a fake ``agent.learning.selfplay`` module with SelfPlayConfig
+# so that ``from agent.learning.selfplay import SelfPlayConfig`` works
 # inside _stage_training without pulling in the real (heavy) module.
 # ---------------------------------------------------------------------------
 
-_original_selfplay = sys.modules.get("agent.evaluation.selfplay")
+_original_selfplay = sys.modules.get("agent.learning.selfplay")
 
 
 def _install_fake_selfplay_module():
-    """Install a minimal fake ``agent.evaluation.selfplay`` module into sys.modules."""
-    fake_mod = types.ModuleType("agent.evaluation.selfplay")
+    """Install a minimal fake ``agent.learning.selfplay`` module into sys.modules."""
+    fake_mod = types.ModuleType("agent.learning.selfplay")
     fake_mod.SelfPlayConfig = _FakeSelfPlayConfig  # type: ignore[attr-defined]
-    sys.modules["agent.evaluation.selfplay"] = fake_mod
+    sys.modules["agent.learning.selfplay"] = fake_mod
     return fake_mod
 
 
 def _restore_selfplay_module():
-    """Restore the original ``agent.evaluation.selfplay`` entry in sys.modules."""
+    """Restore the original ``agent.learning.selfplay`` entry in sys.modules."""
     if _original_selfplay is None:
-        sys.modules.pop("agent.evaluation.selfplay", None)
+        sys.modules.pop("agent.learning.selfplay", None)
     else:
-        sys.modules["agent.evaluation.selfplay"] = _original_selfplay
+        sys.modules["agent.learning.selfplay"] = _original_selfplay
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,7 @@ async def _run_pipeline(tmp_path: Path, role: str = "seer"):
     fake_applier = _make_fake_applier()
     fake_battle = _make_fake_battle_runner()
 
-    # Install fake module so ``from agent.evaluation.selfplay import SelfPlayConfig``
+    # Install fake module so ``from agent.learning.selfplay import SelfPlayConfig``
     # resolves without pulling in the real heavy evaluation module.
     _install_fake_selfplay_module()
     try:
@@ -219,11 +220,10 @@ async def _make_reviewing_run(
         status=EvolutionStatus.REVIEWING,
         candidate_hash=parent_hash,
     )
-    # Ensure the run directory exists so _save_state can write state.json
+    # Ensure the run directory exists so save_run_state can write state.json
     rd = store._base / "runs" / "evolution" / run_id
     rd.mkdir(parents=True, exist_ok=True)
-    from agent.role_evolution.pipeline import _save_state
-    _save_state(run, store)
+    save_run_state(run, store)
     return run, store, parent_hash
 
 

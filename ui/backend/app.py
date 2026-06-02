@@ -14,7 +14,7 @@ from ui.backend.game_runner import GameManager
 from ui.backend.selfplay_runner import SelfplayManager
 from ui.backend.role_evolution_runner import RoleEvolutionRunner
 from ui.backend.batch_role_evolution_runner import RoleBatchEvolutionRunner
-from agent.role_evolution.pipeline import InvalidRunStateError, BaselineChangedError
+from agent.learning.evolution.pipeline import InvalidRunStateError, BaselineChangedError
 
 
 class StartGameRequest(BaseModel):
@@ -59,7 +59,7 @@ class RoleEvolutionBatchStartRequest(BaseModel):
 
 
 def _default_version_store():
-    from agent.role_evolution.store import VersionStore
+    from agent.learning.evolution.store import VersionStore
     return VersionStore(Path("role_versions"))
 
 
@@ -498,7 +498,7 @@ def register_role_evolution_routes(
     @app.get("/api/roles/{role}/leaderboard")
     def role_leaderboard(role: str) -> dict[str, Any]:
         """Return the role evolution leaderboard for a role."""
-        from agent.role_evolution.leaderboard import aggregate_role_leaderboard
+        from agent.learning.evolution.leaderboard import aggregate_role_leaderboard
 
         # Collect battle summaries from completed runs
         battle_summaries: list[dict] = []

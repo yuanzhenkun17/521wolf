@@ -20,8 +20,8 @@ The core package intentionally does not depend on LangChain. A LangChain player 
 
 ## Project Layout
 
-- `engine/werewolf/`: rules engine. It owns phases, role rules, voting, death chains, victory checks, logs, and the `ActionRequest` / `ActionResponse` contract.
-- `agent/`: main Agent implementation. It owns runtime nodes, memory, belief, Markdown skills, ToT reasoning, LLM calls, parsing, policy repair, archive logs, review, self-play, and leaderboard evaluation.
+- `engine/`: rules engine. It owns phases, role rules, voting, death chains, victory checks, logs, and the `ActionRequest` / `ActionResponse` contract.
+- `agent/`: main Agent implementation. It owns the runtime pipeline, memory, belief, Markdown skills, ToT/GoT reasoning, LLM calls, parsing, policy repair, archive logs, review, self-play, evaluation, and skill evolution.
 - `ui/`: observer UI. It starts or reads games through the backend, consumes logs/snapshots, and renders the game experience.
 - `docs/`: design notes, ideas, review records, and architecture documents.
 
@@ -60,6 +60,8 @@ WEREWOLF_LLM_TIMEOUT=45
 WEREWOLF_LLM_TEMPERATURE=0.4
 ```
 
+Langfuse tracing is optional. It stays disabled unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are both configured.
+
 Shell environment variables override values loaded from `.env`:
 
 ```bash
@@ -68,7 +70,7 @@ export WEREWOLF_LLM_BASE_URL="https://router.shengsuanyun.com/api/v1"
 export WEREWOLF_LLM_MODEL="ali/qwen3.5-flash"
 ```
 
-The UI backend uses `agent.runtime.factory.load_llm_client()` and `agent.runtime.factory.create_v2_agents()` to create one Agent per player. Each player receives a seat/role/persona prompt plus the current `ActionRequest`, then returns an `ActionResponse`.
+The UI backend uses `agent.api.factory.load_llm_client()` and `agent.api.factory.create_agents()` to create one Agent per player. Each player receives a seat/role prompt plus the current `ActionRequest`, then returns an `ActionResponse`.
 Game logs are written to numbered files such as:
 
 ```text

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from agent.cognition.belief import BeliefState
-from agent.cognition.belief import PlayerBelief
-from agent.cognition.memory import AgentMemory
+from agent.core.belief import BeliefState
+from agent.core.belief import PlayerBelief
+from agent.core.memory import AgentMemory
 from engine.models import ActionRequest, ActionType, Observation, Phase, Role
 
 

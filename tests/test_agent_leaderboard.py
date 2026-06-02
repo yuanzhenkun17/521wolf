@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.evaluation.leaderboard import (
+from agent.learning.leaderboard import (
     LeaderboardEntry,
     aggregate_summaries,
     build_leaderboard,

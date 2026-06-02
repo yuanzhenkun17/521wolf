@@ -7,12 +7,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
-from agent.role_evolution.batch import (
+from agent.learning.evolution.batch import (
     BatchEvolutionResult,
     promote_batch_result,
     run_batch_evolution,
 )
-from agent.role_evolution.store import VersionStore
+from agent.learning.evolution.store import VersionStore
 
 _log = logging.getLogger(__name__)
 

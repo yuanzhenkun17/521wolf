@@ -1,8 +1,8 @@
 import json
 
-from agent.cognition.mid_memory import _build_messages, _parse_analysis, filter_mid_memory_for_role
-from agent.evaluation.review_enhanced import GameReviewReport, PlayerReview
-from agent.observability.decision_log import DecisionRecord
+from agent.learning.game_analysis import _build_messages, _parse_analysis, filter_mid_memory_for_role
+from agent.learning.review import GameReviewReport, PlayerReview
+from agent.infrastructure.decision_log import DecisionRecord
 from engine.models import ActionType
 
 

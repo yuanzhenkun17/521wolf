@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.runtime.factory import load_llm_client
+from agent.api.factory import load_llm_client
 
 
 class AgentLlmConfigTests(unittest.TestCase):

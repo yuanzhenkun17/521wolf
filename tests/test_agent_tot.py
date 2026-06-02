@@ -1,6 +1,6 @@
 """Tests for ToT (Tree-of-Thought) multi-candidate reasoning.
 
-Covers need_tot, data structures, candidate generation, judge, node,
+Covers need_tot, data structures, candidate generation, judge, step,
 fallback behavior, and archive integration.
 """
 
@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 import unittest
 
-from agent.observability.archive import AgentTraceRecorder
-from agent.runtime.context import AgentContext
-from agent.nodes.tot import tot_node
-from agent.reasoning.tot import (
+from agent.infrastructure.archive import AgentTraceRecorder
+from agent.core.context import AgentContext
+from agent.decision.steps.reason_with_tree import reason_with_tree_step
+from agent.reasoning.tree import (
     KEY_ACTIONS,
     ToTCandidate,
     ToTResult,
@@ -21,8 +21,8 @@ from agent.reasoning.tot import (
     need_tot,
     run_tot_selection,
 )
-from agent.observability.archive import DecisionArchive
-from agent.runtime import AgentRuntime
+from agent.infrastructure.archive import DecisionArchive
+from agent.api import AgentRuntime
 from engine.actions import ActionType
 from engine.models import ActionRequest, Observation, Phase, Role
 
@@ -359,15 +359,15 @@ class NormalizeIdTests(unittest.TestCase):
         self.assertEqual(_normalize_id("选项 B: 最优"), "b")
 
 
-# ── tot_node tests ─────────────────────────────────────────────────────────────
+# ── reason_with_tree_step tests ─────────────────────────────────────────────────────────────
 
 
-class TotNodeTests(unittest.TestCase):
-    """Test tot_node integration — both success and fallback paths."""
+class TreeReasoningStepTests(unittest.TestCase):
+    """Test reason_with_tree_step integration — both success and fallback paths."""
 
     def test_skips_non_key_action(self):
         ctx = _make_ctx(ActionType.SPEAK)
-        result = asyncio_run(tot_node(ctx, StubModel("")))
+        result = asyncio_run(reason_with_tree_step(ctx, StubModel("")))
         self.assertIs(result, ctx)
         self.assertFalse(ctx.tot_enabled)
         self.assertEqual(ctx.source, "llm")  # unchanged
@@ -404,12 +404,12 @@ class TotNodeTests(unittest.TestCase):
             "reason": "3号最可疑",
         }))
         ctx = _make_ctx(ActionType.EXILE_VOTE)
-        result = asyncio_run(tot_node(ctx, model))
+        result = asyncio_run(reason_with_tree_step(ctx, model))
         self.assertTrue(result.tot_enabled)
         self.assertEqual(result.source, "tot")
         self.assertGreater(len(result.tot_candidates), 0)
         self.assertTrue(result.tot_judge_reason)
-        # tot_node sets raw_output to JSON-parsable string for parse_node
+        # reason_with_tree_step sets raw_output to JSON-parsable string for parse_output_step
         self.assertTrue(result.raw_output)
         loaded = json.loads(result.raw_output)
         self.assertIn("choice", loaded)
@@ -423,7 +423,7 @@ class TotNodeTests(unittest.TestCase):
                 raise RuntimeError("LLM timeout")
 
         ctx = _make_ctx(ActionType.EXILE_VOTE)
-        result = asyncio_run(tot_node(ctx, FailingModel()))
+        result = asyncio_run(reason_with_tree_step(ctx, FailingModel()))
         self.assertFalse(result.tot_enabled)
         self.assertEqual(result.source, "llm")  # unchanged
         self.assertGreater(len(result.errors), 0)
@@ -431,14 +431,14 @@ class TotNodeTests(unittest.TestCase):
 
     def test_falls_back_on_invalid_json(self):
         ctx = _make_ctx(ActionType.EXILE_VOTE)
-        result = asyncio_run(tot_node(ctx, StubModel("not json at all")))
+        result = asyncio_run(reason_with_tree_step(ctx, StubModel("not json at all")))
         self.assertFalse(result.tot_enabled)
         self.assertEqual(result.source, "llm")
         self.assertGreater(len(result.errors), 0)
 
     def test_falls_back_on_empty_candidates(self):
         ctx = _make_ctx(ActionType.EXILE_VOTE)
-        result = asyncio_run(tot_node(ctx, StubModel(json.dumps({"candidates": [], "selected_id": "a"}))))
+        result = asyncio_run(reason_with_tree_step(ctx, StubModel(json.dumps({"candidates": [], "selected_id": "a"}))))
         self.assertFalse(result.tot_enabled)
         self.assertEqual(result.source, "llm")
 

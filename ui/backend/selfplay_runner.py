@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from agent.evaluation.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
-from agent.runtime.model import AsyncRateLimiter
+from agent.learning.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
+from agent.infrastructure.llm import AsyncRateLimiter
 from engine.config import STANDARD_12
 
 _log = logging.getLogger(__name__)

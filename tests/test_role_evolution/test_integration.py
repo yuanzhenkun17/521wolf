@@ -12,12 +12,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.evaluation.selfplay import SelfPlayConfig, run_selfplay
-from agent.role_evolution.config import (
+from agent.learning.selfplay import SelfPlayConfig, run_selfplay
+from agent.learning.evolution.config import (
     build_baseline_config,
     build_role_override_config,
 )
-from agent.role_evolution.store import VersionStore
+from agent.learning.evolution.store import VersionStore
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self):
         """Restore default skill root after each test (selfplay changes it)."""
-        from agent.skill_system.router import configure_skill_root
+        from agent.knowledge.skills.router import configure_skill_root
         configure_skill_root(None)
 
     # -- 1. skill version config propagation -----------------------------------
@@ -118,9 +118,9 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
                     )
 
             # Build composite skill directory from the config
-            from agent.role_evolution.pipeline import _build_composite_skill_dir
+            from agent.learning.evolution.workspace import build_composite_skill_dir
 
-            composite_dir = _build_composite_skill_dir(store, config)
+            composite_dir = build_composite_skill_dir(store, config)
             try:
                 # Verify the composite dir exists and contains role subdirectories
                 self.assertTrue(composite_dir.is_dir())
@@ -197,10 +197,10 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
             )
 
             # Build composite skill directories for each config
-            from agent.role_evolution.pipeline import _build_composite_skill_dir
+            from agent.learning.evolution.workspace import build_composite_skill_dir
 
-            composite_baseline = _build_composite_skill_dir(store, baseline_config)
-            composite_override = _build_composite_skill_dir(store, override_config)
+            composite_baseline = build_composite_skill_dir(store, baseline_config)
+            composite_override = build_composite_skill_dir(store, override_config)
 
             try:
                 fake_model = FakeModelAdapter()

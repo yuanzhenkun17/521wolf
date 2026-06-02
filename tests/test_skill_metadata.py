@@ -1,5 +1,5 @@
 """Tests for skill metadata extension (evolution)."""
-from agent.skill_system.loader import MarkdownSkill, parse_front_matter, _load_skill_file
+from agent.knowledge.skills.loader import MarkdownSkill, parse_front_matter, _load_skill_file
 from pathlib import Path
 import tempfile
 

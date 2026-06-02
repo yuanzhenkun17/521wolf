@@ -3,23 +3,23 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from agent.cognition.belief import BeliefState
-from agent.cognition.memory import AgentMemory
-from agent.observability.decision_log import AgentDecisionRecorder
+from agent.core.belief import BeliefState
+from agent.core.memory import AgentMemory
+from agent.infrastructure.decision_log import AgentDecisionRecorder
 from engine.actions import ActionType
 from engine.models import ActionRequest, Observation, Phase, Role
 
-from agent.runtime.context import AgentContext
-from agent.nodes.memory import memory_node as mem_node
-from agent.nodes.belief import belief_node
-from agent.nodes.skill_router import skill_router_node
-from agent.nodes.prompt import prompt_node
-from agent.nodes.parse import parse_node
-from agent.nodes.policy import policy_node
-from agent.nodes.log import log_node
-from agent.evaluation.review import _did_survive, _get_role_of
-from agent.runtime import AgentRuntime
-from agent.runtime.agent import LLMPlayerAgent
+from agent.core.context import AgentContext
+from agent.decision.steps.remember import remember_step
+from agent.decision.steps.update_belief import update_belief_step
+from agent.decision.steps.select_skills import select_skills_step
+from agent.decision.steps.build_prompt import build_prompt_step
+from agent.decision.steps.parse_output import parse_output_step
+from agent.decision.steps.enforce_policy import enforce_policy_step
+from agent.decision.steps.record_decision import record_decision_step
+from agent.learning.review import did_survive, get_role_of
+from agent.api import AgentRuntime
+from agent.api.runtime import LLMPlayerAgent
 
 
 def _make_witch_poison_request() -> ActionRequest:
@@ -200,7 +200,7 @@ class AgentContextTests(unittest.TestCase):
         self.assertEqual(ctx.skill_context, "")
 
 
-class NodesTests(unittest.TestCase):
+class DecisionStepTests(unittest.TestCase):
     def setUp(self):
         self.request = _make_vote_request()
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
@@ -213,78 +213,78 @@ class NodesTests(unittest.TestCase):
         self.assertEqual(list(ctx.request.observation.alive_players), [1, 2, 3, 5, 6, 8, 9, 10])
         self.assertEqual(list(ctx.request.candidates), [3, 7, 9])
 
-    def test_memory_node_builds_context(self):
+    def test_remember_step_builds_context(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = mem_node(ctx, self.memory)
+        ctx = remember_step(ctx, self.memory)
         self.assertIn("memory_events", ctx.memory_context)
         self.assertIn("private_facts", ctx.memory_context)
 
-    def test_belief_node_builds_context(self):
+    def test_update_belief_step_builds_context(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = mem_node(ctx, self.memory)
-        ctx = belief_node(ctx, self.belief, self.memory)
+        ctx = remember_step(ctx, self.memory)
+        ctx = update_belief_step(ctx, self.belief, self.memory)
         self.assertIn("top_suspicions", ctx.belief_context)
 
-    def test_skill_router_node_selects_skills_for_action(self):
+    def test_select_skills_step_selects_skills_for_action(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = mem_node(ctx, self.memory)
-        ctx = belief_node(ctx, self.belief, self.memory)
-        ctx = skill_router_node(ctx)
+        ctx = remember_step(ctx, self.memory)
+        ctx = update_belief_step(ctx, self.belief, self.memory)
+        ctx = select_skills_step(ctx)
         self.assertGreater(len(ctx.selected_skills), 0)
         self.assertNotEqual(ctx.skill_context, "")
 
     def test_skill_router_excludes_common_skills(self):
         """Common skills like output_schema are NOT injected by router."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = skill_router_node(ctx)
+        ctx = select_skills_step(ctx)
         self.assertNotIn("output_schema", ctx.selected_skills)
 
-    def test_prompt_node_builds_system_and_user_messages(self):
+    def test_build_prompt_step_builds_system_and_user_messages(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = mem_node(ctx, self.memory)
-        ctx = belief_node(ctx, self.belief, self.memory)
-        ctx = skill_router_node(ctx)
-        ctx = prompt_node(ctx)
+        ctx = remember_step(ctx, self.memory)
+        ctx = update_belief_step(ctx, self.belief, self.memory)
+        ctx = select_skills_step(ctx)
+        ctx = build_prompt_step(ctx)
         self.assertGreater(len(ctx.messages), 0)
         self.assertEqual(ctx.messages[0]["role"], "system")
         self.assertEqual(ctx.messages[1]["role"], "user")
 
-    def test_parse_node_extracts_response_from_json(self):
+    def test_parse_output_step_extracts_response_from_json(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx.raw_output = '{"target": 7, "choice": null, "text": "出7号", "reasoning": "7号可疑"}'
-        ctx = parse_node(ctx)
+        ctx = parse_output_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.target, 7)
 
-    def test_parse_node_handles_markdown_code_block(self):
+    def test_parse_output_step_handles_markdown_code_block(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx.raw_output = '```json\n{"target": 3, "choice": null, "text": "出3号", "reasoning": "3号像狼"}\n```'
-        ctx = parse_node(ctx)
+        ctx = parse_output_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.target, 3)
 
-    def test_policy_node_falls_back_on_missing_response(self):
+    def test_enforce_policy_step_falls_back_on_missing_response(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = policy_node(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertIn(ctx.response.target, self.request.candidates)
 
-    def test_policy_node_corrects_illegal_target(self):
+    def test_enforce_policy_step_corrects_illegal_target(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx.raw_output = '{"target": 99, "choice": null, "text": "出99号"}'
-        ctx = parse_node(ctx)
+        ctx = parse_output_step(ctx)
         # target 99 is not in candidates, policy should fix it
         if ctx.response is not None:
-            ctx = policy_node(ctx)
+            ctx = enforce_policy_step(ctx)
             self.assertIn(ctx.response.target, self.request.candidates)
 
-    def test_log_node_records_decision(self):
+    def test_record_decision_step_records_decision(self):
         recorder = AgentDecisionRecorder()
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx.raw_output = '{"target": 7, "reasoning": "7可疑"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
-        ctx = log_node(ctx, recorder)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
+        ctx = record_decision_step(ctx, recorder)
         self.assertEqual(len(recorder.records), 1)
         self.assertEqual(recorder.records[0].selected_target, 7)
 
@@ -355,14 +355,14 @@ class AgentRuntimeTests(unittest.TestCase):
         # Manually step through pipeline to verify AgentContext flow
         ctx = AgentContext(request=request, player_id=runtime.player_id, role=runtime.role.value)
         self.assertEqual(ctx.request.observation.day, 2)
-        ctx = mem_node(ctx, runtime.memory)
+        ctx = remember_step(ctx, runtime.memory)
         self.assertIn("memory_events", ctx.memory_context)
-        ctx = belief_node(ctx, runtime.belief, runtime.memory)
+        ctx = update_belief_step(ctx, runtime.belief, runtime.memory)
         self.assertIn("top_suspicions", ctx.belief_context)
-        ctx = skill_router_node(ctx)
+        ctx = select_skills_step(ctx)
         self.assertGreater(len(ctx.selected_skills), 0)
         self.assertNotEqual(ctx.skill_context, "")
-        ctx = prompt_node(ctx)
+        ctx = build_prompt_step(ctx)
         self.assertGreater(len(ctx.messages), 0)
 
 
@@ -373,8 +373,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_witch_poison_request()
         ctx = AgentContext(request=request, player_id=3, role="witch")
         ctx.raw_output = '{"target": null, "choice": "poison", "text": "毒杀", "reasoning": "下毒"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         # Fallback should revert to "none" (safe default for witch_act)
         self.assertEqual(ctx.response.choice, "none")
@@ -384,8 +384,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_witch_poison_request()
         ctx = AgentContext(request=request, player_id=3, role="witch")
         ctx.raw_output = '{"target": null, "choice": "none", "text": "不用毒", "reasoning": "局势不明"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.choice, "none")
 
@@ -393,8 +393,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_shoot_request()
         ctx = AgentContext(request=request, player_id=6, role="hunter")
         ctx.raw_output = '{"target": 8, "choice": null, "text": "带走8号", "reasoning": "8号像狼"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.target, 8)
 
@@ -403,8 +403,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_witch_poison_request()
         ctx = AgentContext(request=request, player_id=3, role="witch")
         ctx.raw_output = '{"target": 99, "choice": "poison", "text": "毒杀", "reasoning": "99最可疑"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.choice, "poison")
         self.assertIn(ctx.response.target, request.candidates)
@@ -414,8 +414,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_witch_poison_request()
         ctx = AgentContext(request=request, player_id=3, role="witch")
         ctx.raw_output = '{"target": 8, "choice": "poison", "text": "毒杀8号", "reasoning": "8号像狼"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.target, 8)
         self.assertEqual(ctx.response.choice, "poison")
@@ -425,8 +425,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_sheriff_badge_request()
         ctx = AgentContext(request=request, player_id=1, role="sheriff")
         ctx.raw_output = '{"target": 99, "choice": "transfer", "text": "移交给99号", "reasoning": "99最可信"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         # Target should be repaired to a valid candidate
         self.assertEqual(ctx.response.choice, "transfer")
@@ -437,8 +437,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_sheriff_badge_request()
         ctx = AgentContext(request=request, player_id=1, role="sheriff")
         ctx.raw_output = '{"target": 3, "choice": "transfer", "text": "移交给3号", "reasoning": "3号可信"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.target, 3)
         self.assertEqual(ctx.response.choice, "transfer")
@@ -448,8 +448,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_white_wolf_explode_request()
         ctx = AgentContext(request=request, player_id=2, role="white_wolf_king")
         ctx.raw_output = '{"target": 99, "choice": "explode", "text": "自爆", "reasoning": "带走99号"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.choice, "pass")
 
@@ -458,8 +458,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_white_wolf_explode_request()
         ctx = AgentContext(request=request, player_id=2, role="white_wolf_king")
         ctx.raw_output = '{"target": 7, "choice": "explode", "text": "自爆带走7号", "reasoning": "7号是预言家"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.target, 7)
         self.assertEqual(ctx.response.choice, "explode")
@@ -469,8 +469,8 @@ class PolicyConstraintTests(unittest.TestCase):
         request = _make_white_wolf_explode_request()
         ctx = AgentContext(request=request, player_id=2, role="white_wolf_king")
         ctx.raw_output = '{"target": null, "choice": "pass", "text": "先不自爆", "reasoning": "时机未到"}'
-        ctx = parse_node(ctx)
-        ctx = policy_node(ctx)
+        ctx = parse_output_step(ctx)
+        ctx = enforce_policy_step(ctx)
         self.assertIsNotNone(ctx.response)
         self.assertEqual(ctx.response.choice, "pass")
 
@@ -486,12 +486,12 @@ class PromptHintsTests(unittest.TestCase):
     def test_skill_context_appears_in_messages(self):
         """Multi-skill context is injected into the prompt."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = mem_node(ctx, self.memory)
-        ctx = belief_node(ctx, self.belief, self.memory)
-        ctx = skill_router_node(ctx)
-        ctx = prompt_node(ctx)
+        ctx = remember_step(ctx, self.memory)
+        ctx = update_belief_step(ctx, self.belief, self.memory)
+        ctx = select_skills_step(ctx)
+        ctx = build_prompt_step(ctx)
 
-        from agent.prompts import build_messages
+        from agent.knowledge.prompts import build_messages
         strategy_advice = ctx.strategy_advice or {}
         messages = build_messages(
             ctx.request,
@@ -510,9 +510,9 @@ class PromptHintsTests(unittest.TestCase):
     def test_skill_advice_includes_skill_count(self):
         """Check that the skill router returns skill metadata in strategy_advice."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = mem_node(ctx, self.memory)
-        ctx = belief_node(ctx, self.belief, self.memory)
-        ctx = skill_router_node(ctx)
+        ctx = remember_step(ctx, self.memory)
+        ctx = update_belief_step(ctx, self.belief, self.memory)
+        ctx = select_skills_step(ctx)
         advice = ctx.strategy_advice or {}
         self.assertIn("skill_count", advice)
         self.assertGreater(advice["skill_count"], 0)
@@ -529,11 +529,11 @@ class FieldNotesPromptTests(unittest.TestCase):
     def test_field_notes_appear_in_prompt_when_present(self):
         """When memory_context has field_notes, they appear in the prompt."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = mem_node(ctx, self.memory)
-        ctx = belief_node(ctx, self.belief, self.memory)
-        ctx = skill_router_node(ctx)
+        ctx = remember_step(ctx, self.memory)
+        ctx = update_belief_step(ctx, self.belief, self.memory)
+        ctx = select_skills_step(ctx)
 
-        from agent.prompts import build_messages
+        from agent.knowledge.prompts import build_messages
         strategy_advice = ctx.strategy_advice or {}
         messages = build_messages(
             ctx.request,
@@ -580,13 +580,13 @@ class FieldNotesPromptTests(unittest.TestCase):
 
     def test_format_field_notes_empty(self):
         """Empty field_notes should produce empty string."""
-        from agent.prompts import format_field_notes
+        from agent.knowledge.prompts import format_field_notes
         self.assertEqual(format_field_notes({}), "")
         self.assertEqual(format_field_notes({"game_state": {}}), "")
 
     def test_format_field_notes_matches_memory_schema(self):
         """format_field_notes should handle real AgentMemory.PlayerProfile schema."""
-        from agent.prompts import format_field_notes
+        from agent.knowledge.prompts import format_field_notes
 
         notes = {
             "game_state": {"day": 3, "phase": "day_speech", "alive_players": [1, 2, 5], "dead_players": [3, 4]},
@@ -616,7 +616,7 @@ class MemoryDedupTests(unittest.TestCase):
 
     def test_duplicate_public_log_entries_not_reprocessed(self):
         """When public_log has duplicates, memory should not double-count."""
-        from agent.cognition.memory import AgentMemory
+        from agent.core.memory import AgentMemory
 
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
 
@@ -657,10 +657,10 @@ class ReviewStatsTests(unittest.TestCase):
 
     def test_get_role_of_with_roles_dict(self):
         roles = {1: Role.VILLAGER, 2: Role.WEREWOLF, 3: Role.SEER}
-        self.assertEqual(_get_role_of(1, roles), Role.VILLAGER)
-        self.assertEqual(_get_role_of(2, roles), Role.WEREWOLF)
-        self.assertEqual(_get_role_of(3, roles), Role.SEER)
-        self.assertIsNone(_get_role_of(99, roles))
+        self.assertEqual(get_role_of(1, roles), Role.VILLAGER)
+        self.assertEqual(get_role_of(2, roles), Role.WEREWOLF)
+        self.assertEqual(get_role_of(3, roles), Role.SEER)
+        self.assertIsNone(get_role_of(99, roles))
 
     def test_did_survive_with_death_event(self):
         game_log = {
@@ -669,61 +669,61 @@ class ReviewStatsTests(unittest.TestCase):
                 {"event_type": "death", "target": 4},
             ]
         }
-        self.assertFalse(_did_survive(2, game_log))
-        self.assertFalse(_did_survive(4, game_log))
-        self.assertTrue(_did_survive(1, game_log))
-        self.assertTrue(_did_survive(3, game_log))
+        self.assertFalse(did_survive(2, game_log))
+        self.assertFalse(did_survive(4, game_log))
+        self.assertTrue(did_survive(1, game_log))
+        self.assertTrue(did_survive(3, game_log))
 
     def test_did_survive_no_entries(self):
         game_log = {"entries": []}
-        self.assertTrue(_did_survive(1, game_log))
-        self.assertTrue(_did_survive(2, game_log))
+        self.assertTrue(did_survive(1, game_log))
+        self.assertTrue(did_survive(2, game_log))
 
     def test_did_survive_empty_log(self):
         game_log = {}
-        self.assertTrue(_did_survive(1, game_log))
+        self.assertTrue(did_survive(1, game_log))
 
     def test_log_entries_list_input(self):
-        from agent.evaluation.review import _log_entries
+        from agent.learning.review import log_entries
         entries = [{"event_type": "death", "target": 2}]
-        result = _log_entries(entries)
+        result = log_entries(entries)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["target"], 2)
 
     def test_log_entries_events_key(self):
-        from agent.evaluation.review import _log_entries
+        from agent.learning.review import log_entries
         data = {"events": [{"event_type": "death", "target": 3}]}
-        result = _log_entries(data)
+        result = log_entries(data)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["target"], 3)
 
     def test_log_entries_entries_key(self):
-        from agent.evaluation.review import _log_entries
+        from agent.learning.review import log_entries
         data = {"entries": [{"event_type": "death", "target": 4}]}
-        result = _log_entries(data)
+        result = log_entries(data)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["target"], 4)
 
     def test_log_entries_empty_dict(self):
-        from agent.evaluation.review import _log_entries
-        self.assertEqual(_log_entries({}), [])
+        from agent.learning.review import log_entries
+        self.assertEqual(log_entries({}), [])
 
     def test_did_survive_list(self):
         entries = [{"event_type": "death", "target": 2}]
-        self.assertFalse(_did_survive(2, entries))
-        self.assertTrue(_did_survive(1, entries))
+        self.assertFalse(did_survive(2, entries))
+        self.assertTrue(did_survive(1, entries))
 
     def test_did_survive_events_dict(self):
         data = {"events": [{"event_type": "death", "target": 3}]}
-        self.assertFalse(_did_survive(3, data))
-        self.assertTrue(_did_survive(1, data))
+        self.assertFalse(did_survive(3, data))
+        self.assertTrue(did_survive(1, data))
 
 
 class MarkdownSkillLoaderTests(unittest.TestCase):
     """Test markdown skill loading and integration (P2)."""
 
     def test_parse_front_matter_basic(self):
-        from agent.skill_system.loader import parse_front_matter
+        from agent.knowledge.skills.loader import parse_front_matter
 
         text = """\
 ---
@@ -741,7 +741,7 @@ priority: 50
         self.assertIn("Body here", body)
 
     def test_parse_front_matter_list(self):
-        from agent.skill_system.loader import parse_front_matter
+        from agent.knowledge.skills.loader import parse_front_matter
 
         text = """\
 ---
@@ -755,7 +755,7 @@ applicable_actions:
         self.assertEqual(front["applicable_actions"], ["witch_act"])
 
     def test_parse_front_matter_no_front_matter(self):
-        from agent.skill_system.loader import parse_front_matter
+        from agent.knowledge.skills.loader import parse_front_matter
 
         text = "Just a body\nWith no front matter\n"
         front, body = parse_front_matter(text)
@@ -763,7 +763,7 @@ applicable_actions:
         self.assertEqual(body, text)
 
     def test_parse_front_matter_nested_dict(self):
-        from agent.skill_system.loader import parse_front_matter
+        from agent.knowledge.skills.loader import parse_front_matter
 
         text = """\
 ---
@@ -779,7 +779,7 @@ output_constraints:
         self.assertEqual(front["output_constraints"], {"choice": "poison"})
 
     def test_load_markdown_skills_from_file(self):
-        from agent.skill_system.loader import load_markdown_skills
+        from agent.knowledge.skills.loader import load_markdown_skills
         from pathlib import Path
 
         ROOT = Path(__file__).resolve().parent.parent
@@ -794,13 +794,13 @@ output_constraints:
 
     def test_markdown_skill_does_not_require_priority(self):
         """Skills without priority field should load fine."""
-        from agent.skill_system.loader import MarkdownSkill
+        from agent.knowledge.skills.loader import MarkdownSkill
         skill = MarkdownSkill(name="test")
         # No priority attribute
         self.assertFalse(hasattr(skill, "priority"))
 
     def test_output_schema_not_injected_by_router(self):
-        from agent.skill_system.router import select_skills
+        from agent.knowledge.skills.router import select_skills
 
         for role in (Role.WEREWOLF, Role.WITCH, Role.VILLAGER, Role.SEER):
             request = _make_vote_request()
@@ -810,7 +810,7 @@ output_constraints:
             self.assertNotIn("output_schema", names, f"{role.value} should NOT get output_schema from router")
 
     def test_only_current_role_skills_are_injected(self):
-        from agent.skill_system.router import select_skills
+        from agent.knowledge.skills.router import select_skills
 
         # Witch should get witch skills, not werewolf/seer/hunter skills
         witch_request = _make_witch_poison_request()
@@ -829,7 +829,7 @@ output_constraints:
             self.assertNotIn(f, names, f"Should not inject {f} for witch")
 
     def test_multiple_matching_role_skills_are_injected(self):
-        from agent.skill_system.router import select_skills
+        from agent.knowledge.skills.router import select_skills
 
         # Witch WITCH_ACT — only witch_poison matches (requires can_poison=true)
         # witch_save is filtered out because can_save=false in this request
@@ -843,7 +843,7 @@ output_constraints:
 
     def test_witch_requires_filtering_poison(self):
         """witch_poison should NOT be injected when can_poison is false."""
-        from agent.skill_system.router import select_skills
+        from agent.knowledge.skills.router import select_skills
 
         request = _make_witch_poison_request()
         request = ActionRequest(
@@ -863,7 +863,7 @@ output_constraints:
 
     def test_witch_requires_filtering_save(self):
         """witch_save SHOULD be injected when can_save is true."""
-        from agent.skill_system.router import select_skills
+        from agent.knowledge.skills.router import select_skills
 
         request = _make_witch_poison_request()
         request = ActionRequest(
@@ -883,7 +883,7 @@ output_constraints:
         self.assertIn("witch_poison", names, "witch_poison should be injected when can_poison=true")
 
     def test_output_schema_hardcoded_in_prompt(self):
-        from agent.prompts.base import _OUTPUT_FORMAT_INSTRUCTIONS
+        from agent.knowledge.prompts.base import _OUTPUT_FORMAT_INSTRUCTIONS
         self.assertIn("输出格式要求", _OUTPUT_FORMAT_INSTRUCTIONS)
         self.assertIn("public_text", _OUTPUT_FORMAT_INSTRUCTIONS)
         self.assertIn("private_reasoning", _OUTPUT_FORMAT_INSTRUCTIONS)
@@ -891,7 +891,7 @@ output_constraints:
     def test_skill_context_includes_role_skills_only(self):
         request = _make_vote_request()
         ctx = AgentContext(request=request, player_id=5, role="villager")
-        ctx = skill_router_node(ctx)
+        ctx = select_skills_step(ctx)
         skill_context = ctx.skill_context
         # Should include role strategy section only (no common)
         self.assertIn("role strategy", skill_context)
@@ -904,7 +904,7 @@ output_constraints:
         from pathlib import Path
         import tempfile
 
-        from agent.skill_system.router import configure_skill_root
+        from agent.knowledge.skills.router import configure_skill_root
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -929,7 +929,7 @@ output_constraints:
             configure_skill_root(root)
             request = _make_vote_request()
             ctx = AgentContext(request=request, player_id=5, role="villager")
-            ctx = skill_router_node(ctx)
+            ctx = select_skills_step(ctx)
 
         self.assertNotIn("custom_rules", ctx.selected_skills)
         self.assertIn("custom_villager_vote", ctx.selected_skills)

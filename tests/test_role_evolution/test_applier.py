@@ -1,4 +1,4 @@
-"""Tests for agent.role_evolution.applier — proposal application with safety checks."""
+"""Tests for agent.learning.evolution.applier — proposal application with safety checks."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import json
 import unittest
 from typing import Any
 
-from agent.role_evolution.applier import apply_proposals
-from agent.role_evolution.models import (
+from agent.learning.evolution.applier import apply_proposals
+from agent.learning.evolution.models import (
     SkillConsolidation,
     SkillProposal,
 )

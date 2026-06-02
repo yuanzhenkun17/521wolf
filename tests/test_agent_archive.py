@@ -10,13 +10,13 @@ from pathlib import Path
 from engine.actions import ActionType
 from engine.models import ActionRequest, Observation, Phase, Role
 
-from agent.observability.archive import (
+from agent.infrastructure.archive import (
     AgentTraceRecorder,
     DecisionArchive,
     GameArchive,
 )
-from agent.observability.decision_log import DecisionRecord
-from agent.runtime.context import AgentContext
+from agent.infrastructure.decision_log import DecisionRecord
+from agent.core.context import AgentContext
 
 
 def _make_vote_context() -> AgentContext:
