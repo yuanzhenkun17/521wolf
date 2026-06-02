@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from dotenv import load_dotenv
+
 from agent.infrastructure.tracing import tracing_enabled
 
 
@@ -147,7 +149,7 @@ def rate_limit_model_adapter(
 
 def default_rate_limiter_from_env() -> AsyncRateLimiter | None:
     """Build an RPM limiter from WEREWOLF_LLM_RPM when configured."""
-    _load_dotenv(DEFAULT_ENV_PATH)
+    load_dotenv(DEFAULT_ENV_PATH)
     raw = os.environ.get("WEREWOLF_LLM_RPM")
     if not raw:
         return None
@@ -165,7 +167,7 @@ def load_llm_client(
     temperature: float | None = None,
 ) -> ChatCompletionClient:
     if env_path is not None:
-        _load_dotenv(Path(env_path))
+        load_dotenv(Path(env_path))
     api_key = os.environ.get("WEREWOLF_LLM_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -187,24 +189,6 @@ def load_llm_client(
     )
 
 
-def _load_dotenv(path: Path) -> None:
-    """Load KEY=VALUE pairs from .env into os.environ without overriding existing vars."""
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export "):].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not key:
-            continue
-        value = _strip_env_value(value.strip())
-        os.environ.setdefault(key, value)
 
 
 def _async_openai_client() -> Any:
@@ -216,13 +200,6 @@ def _async_openai_client() -> Any:
 
     return AsyncOpenAI
 
-
-def _strip_env_value(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    if " #" in value:
-        return value.split(" #", 1)[0].rstrip()
-    return value
 
 
 def _is_retryable_llm_error(exc: Exception) -> bool:

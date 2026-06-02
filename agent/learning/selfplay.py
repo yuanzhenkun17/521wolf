@@ -11,14 +11,14 @@ import json
 import logging
 import warnings
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from agent.learning.metrics import new_role_accum, finalize_role_metrics
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from agent.infrastructure.llm import ModelAdapter
-from agent.common import utc_now_iso as _now, is_werewolf_win
+from agent.common import beijing_now_iso as _now, beijing_now_str, is_werewolf_win
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 from engine.config import GameConfig, STANDARD_12
 from engine.engine import GameEngine
 from engine.models import Role
@@ -57,7 +57,7 @@ class SelfPlayConfig:
 
     games: int
     seed_start: int = 1
-    output_dir: Path = Path("runs/selfplay")
+    output_dir: Path = DEFAULT_PATHS.selfplay_dir
     agent_version: str = "agent"
     model_name: str | None = None
     max_days: int = 20
@@ -290,7 +290,7 @@ async def run_selfplay(
         run_id = run_dir.name
         run_dir.mkdir(parents=True, exist_ok=True)
     else:
-        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        run_id = f"run_{beijing_now_str('%Y%m%d_%H%M%S_%f')}"
         run_dir = config.output_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 

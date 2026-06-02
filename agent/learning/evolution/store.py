@@ -11,8 +11,10 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+
+from agent.common import beijing_now_iso
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 from agent.learning.evolution.models import RoleHistory, RoleVersion
 
@@ -117,7 +119,7 @@ class VersionStore:
     """Persistent store for role skill versions.
 
     Layout:
-        role_versions/
+        data/versions/
           <role>/
             <hash>/
               skills/*.md
@@ -125,7 +127,7 @@ class VersionStore:
             history.json
     """
 
-    def __init__(self, base_dir: Path) -> None:
+    def __init__(self, base_dir: Path = DEFAULT_PATHS.versions_dir) -> None:
         self._base = base_dir
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -220,7 +222,7 @@ class VersionStore:
                 skill_file.write_text(normalized_content, encoding="utf-8")
 
             # Write meta.json
-            now = datetime.now(timezone.utc).isoformat()
+            now = beijing_now_iso()
             version = RoleVersion(
                 hash=h,
                 role=role,
@@ -377,7 +379,7 @@ class VersionStore:
                 skill_file.write_text(normalized_content, encoding="utf-8")
 
             # Write meta.json
-            now = datetime.now(timezone.utc).isoformat()
+            now = beijing_now_iso()
             version = RoleVersion(
                 hash=h,
                 role=role,

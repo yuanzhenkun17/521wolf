@@ -10,9 +10,9 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Callable
 
+from agent.common import beijing_now_iso, beijing_now_str
 from agent.learning.evolution.battle import run_config_battle
 from agent.learning.evolution.config import build_baseline_config
 from agent.learning.evolution.models import EvolutionRun, SkillVersionConfig
@@ -72,7 +72,7 @@ async def run_batch_evolution(
     battle_runner: Callable | None = None,
 ) -> BatchEvolutionResult:
     """Run multiple role evolutions from one frozen baseline snapshot."""
-    batch_id = f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    batch_id = f"batch_{beijing_now_str('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     baseline_config = build_baseline_config(store)
     selected_roles = roles or sorted(baseline_config.role_versions)
     missing = [role for role in selected_roles if role not in baseline_config.role_versions]
@@ -150,7 +150,7 @@ async def run_batch_evolution(
 
     combined_config = SkillVersionConfig(
         name=f"{batch_id}-combined",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=beijing_now_iso(),
         role_versions=role_versions,
         notes=[
             f"combined accepted candidates from {batch_id}",

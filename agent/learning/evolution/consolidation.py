@@ -24,13 +24,9 @@ from agent.learning.evolution.models import (
 )
 from agent.infrastructure.llm import ModelAdapter
 from agent.knowledge.skills.loader import MarkdownSkill, load_markdown_skills
-from agent.common import as_float as _as_float, compact_json as _compact_json, utc_now_iso as _now
+from agent.common import as_float as _as_float, compact_json as _compact_json, beijing_now_iso as _now
 
 _log = logging.getLogger(__name__)
-
-
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_SKILL_ROOT = _PROJECT_ROOT / "skills"
 
 
 @dataclass(slots=True)
@@ -255,7 +251,9 @@ def _parse_consolidation(
 
 
 def _load_role_skills(role: Role, *, skill_root: Path | str | None = None) -> list[MarkdownSkill]:
-    root = Path(skill_root) if skill_root else DEFAULT_SKILL_ROOT
+    root = skill_root if isinstance(skill_root, Path) else (Path(skill_root) if skill_root else None)
+    if root is None:
+        return []
     skills = load_markdown_skills(root)
     return [s for s in skills if s.role is None or s.role == role]
 
@@ -542,7 +540,9 @@ def _load_role_skills_for_str(
     role: str, *, skill_root: Path | str | None = None,
 ) -> list[MarkdownSkill]:
     """Load skills for a role identified by string (not Role enum)."""
-    root = Path(skill_root) if skill_root else DEFAULT_SKILL_ROOT
+    root = skill_root if isinstance(skill_root, Path) else (Path(skill_root) if skill_root else None)
+    if root is None:
+        return []
     skills = load_markdown_skills(root)
     return [
         s for s in skills

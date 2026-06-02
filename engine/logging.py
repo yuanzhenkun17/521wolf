@@ -117,9 +117,10 @@ class GameLogger:
 
 def next_game_log_name(log_dir: str | Path, prefix: str = "game") -> str:
     """Generate a timestamp-based game log name: yyyyMMdd_HHmmss_N."""
-    from datetime import datetime
+    from datetime import datetime, timezone, timedelta
+    BEIJING = timezone(timedelta(hours=8))
     directory = Path(log_dir)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(BEIJING).strftime("%Y%m%d_%H%M%S")
     # Find the max N for this timestamp
     max_n = 0
     for path in directory.glob(f"{ts}_*"):

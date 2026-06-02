@@ -21,11 +21,8 @@ from agent.learning.review import GameReviewReport
 from agent.knowledge.prompts.parsing import load_json_object
 from agent.learning.evolution.models import ScoredInsight
 from agent.infrastructure.llm import ModelAdapter
-from agent.common import as_float as _as_float, as_int_list, compact_json as _compact_json, utc_now_iso as _now
-
-
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-MID_MEMORY_DIR = _PROJECT_ROOT / "data" / "mid_memory"
+from agent.common import as_float as _as_float, as_int_list, compact_json as _compact_json, beijing_now_iso as _now
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 
 @dataclass(slots=True)
@@ -185,7 +182,7 @@ def write_game_analysis(
     output_dir: Path | str | None = None,
 ) -> Path:
     """Write GameAnalysis to JSON file."""
-    base = Path(output_dir) if output_dir else MID_MEMORY_DIR
+    base = Path(output_dir) if output_dir else DEFAULT_PATHS.data_dir / "mid_memory"
     base.mkdir(parents=True, exist_ok=True)
     json_path = base / f"{analysis.game_id}.json"
     json_path.write_text(
@@ -197,7 +194,7 @@ def write_game_analysis(
 
 def load_game_analysis(game_id: str, *, mid_memory_dir: Path | str | None = None) -> GameAnalysis | None:
     """Load a GameAnalysis from disk."""
-    base = Path(mid_memory_dir) if mid_memory_dir else MID_MEMORY_DIR
+    base = Path(mid_memory_dir) if mid_memory_dir else DEFAULT_PATHS.data_dir / "mid_memory"
     path = base / f"{game_id}.json"
     if not path.exists():
         return None

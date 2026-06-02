@@ -12,6 +12,7 @@ from agent.learning.selfplay import (
     SelfPlayGameResult,
     SelfPlayResult,
 )
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 
 class SelfPlayConfigTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class SelfPlayConfigTests(unittest.TestCase):
         self.assertTrue(config.enable_review)
         self.assertTrue(config.enable_mid_memory)
         self.assertEqual(config.temperature, 0.2)
-        self.assertEqual(config.output_dir, Path("runs/selfplay"))
+        self.assertEqual(config.output_dir, DEFAULT_PATHS.selfplay_dir)
         self.assertEqual(config.game_concurrency, 1)
 
     def test_custom_config(self):

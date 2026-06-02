@@ -4,10 +4,11 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent.common import beijing_now_iso, beijing_now_str
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 from agent.learning.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
 from agent.infrastructure.llm import AsyncRateLimiter
 from engine.config import STANDARD_12
@@ -104,7 +105,7 @@ class RunningSelfplay:
 
 
 class SelfplayManager:
-    def __init__(self, output_dir: Path = Path("runs/selfplay")) -> None:
+    def __init__(self, output_dir: Path = DEFAULT_PATHS.selfplay_dir) -> None:
         self.output_dir = output_dir
         self._runs: dict[str, RunningSelfplay] = {}
         self._lock = asyncio.Lock()
@@ -201,8 +202,8 @@ class SelfplayManager:
         llm_rpm: int = 60,
         label: str | None = None,
     ) -> RunningSelfplay:
-        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-        started_at = datetime.now(timezone.utc).isoformat()
+        run_id = f"run_{beijing_now_str('%Y%m%d_%H%M%S_%f')}"
+        started_at = beijing_now_iso()
 
         config = SelfPlayConfig(
             games=num_games,

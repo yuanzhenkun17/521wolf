@@ -10,10 +10,11 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
+from agent.common import beijing_now_iso, beijing_now_str
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 from agent.learning.evolution.config import build_baseline_config
 from agent.learning.evolution.models import (
     EvolutionRun,
@@ -184,8 +185,8 @@ class RoleEvolutionRunner:
             if existing.role == role and existing.status not in ("promoted", "rejected", "failed"):
                 raise RuntimeError(f"角色 {role} 已有一个活跃的演化任务: {existing.run_id}")
 
-        run_id = f"evo_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-        started_at = datetime.now(timezone.utc).isoformat()
+        run_id = f"evo_{beijing_now_str('%Y%m%d_%H%M%S_%f')}"
+        started_at = beijing_now_iso()
 
         tracked = RoleEvolutionRun(
             run_id=run_id,
@@ -245,7 +246,7 @@ class RoleEvolutionRunner:
         self._broadcast(run_id, "failed", run.snapshot())
         # Delete evolution run directory
         import shutil
-        evo_dir = self.store.base_dir / "runs" / "evolution" / run_id
+        evo_dir = DEFAULT_PATHS.evolution_dir / run_id
         if evo_dir.exists():
             shutil.rmtree(evo_dir, ignore_errors=True)
         return run
@@ -416,7 +417,7 @@ class RoleEvolutionRunner:
             raise KeyError(f"Run {run_id} not found")
         # Load from disk if not in memory
         if tracked.run is None:
-            state = load_run_state(self.store, run_id)
+            state = load_run_state(DEFAULT_PATHS, run_id)
             if state is None:
                 raise InvalidRunStateError(f"Run {run_id} has no pipeline data")
             from agent.learning.evolution.models import EvolutionRun, SkillVersionConfig

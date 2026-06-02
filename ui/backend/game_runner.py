@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
 from agent.infrastructure.archive import AgentTraceRecorder
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from agent.api.factory import create_agents, load_llm_client
@@ -16,9 +17,6 @@ from engine.engine import GameEngine
 from engine.logging import next_game_log_name
 from engine.models import Role
 from engine.roles import random_standard_roles
-
-
-LOG_DIR = Path("logs")
 
 
 @dataclass(slots=True)
@@ -47,8 +45,8 @@ class RunningGame:
 
 
 class GameManager:
-    def __init__(self, log_dir: Path = LOG_DIR) -> None:
-        self.log_dir = log_dir
+    def __init__(self, paths: PathConfig = DEFAULT_PATHS) -> None:
+        self._paths = paths
         self._games: dict[str, RunningGame] = {}
         self._lock = asyncio.Lock()
 
@@ -66,7 +64,7 @@ class GameManager:
             if active is not None:
                 raise RuntimeError(f"{active.game_id} is still running")
 
-            log_name = next_game_log_name(self.log_dir)
+            log_name = next_game_log_name(self._paths.games_dir)
             game = RunningGame(
                 game_id=log_name,
                 log_name=log_name,
@@ -90,7 +88,7 @@ class GameManager:
         for game in self._games.values():
             games.append(self.snapshot(game, include_events=False))
             seen.add(game.log_name)
-        for path in sorted(self.log_dir.iterdir()):
+        for path in sorted(self._paths.games_dir.iterdir()):
             game_id = _game_id_from_log_path(path)
             if game_id is None:
                 continue
@@ -380,7 +378,7 @@ class GameManager:
             return None
 
     def _game_dir(self, game_id: str) -> Path:
-        return self.log_dir / game_id
+        return self._paths.games_dir / game_id
 
     def _events_path(self, game_id: str) -> Path | None:
         game_dir = self._game_dir(game_id)

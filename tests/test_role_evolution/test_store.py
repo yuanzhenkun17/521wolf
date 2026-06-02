@@ -108,7 +108,7 @@ async def test_save_version_collision(store):
     """Same hash different content raises HashCollisionError."""
     from agent.learning.evolution.store import _write_json
     from agent.learning.evolution.models import RoleVersion
-    from datetime import datetime, timezone
+    from agent.common import beijing_now_iso
 
     skills_a = {"seer/claim.md": "# Seer\nContent A\n"}
     h = await store.save_version("seer", skills_a, parent_hash=None, source="test")
@@ -118,7 +118,7 @@ async def test_save_version_collision(store):
         hash=h,
         role="seer",
         skills={"seer/claim.md": "# Seer\nTOTALLY DIFFERENT\n"},
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=beijing_now_iso(),
         source="tamper",
     )
     _write_json(store._meta_path("seer", h), tampered.to_dict())

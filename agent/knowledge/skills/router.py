@@ -22,9 +22,6 @@ from agent.knowledge.skills.loader import MarkdownSkill, load_markdown_skills
 
 _log = logging.getLogger(__name__)
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_SKILL_ROOT: Path = _PROJECT_ROOT / "skills"
-
 
 @dataclass
 class SkillIndex:
@@ -33,12 +30,13 @@ class SkillIndex:
 
 
 _SKILL_CACHE: dict[Path, SkillIndex] = {}
+_CURRENT_SKILL_ROOT: Path | None = None
 
 
 def configure_skill_root(root: Path | str | None = None) -> None:
-    """Configure the default skill root and clear the cache. For testing."""
-    global DEFAULT_SKILL_ROOT
-    DEFAULT_SKILL_ROOT = Path(root) if root is not None else _PROJECT_ROOT / "skills"
+    """Configure the skill root and clear the cache. For testing."""
+    global _CURRENT_SKILL_ROOT
+    _CURRENT_SKILL_ROOT = Path(root) if root is not None else None
     _SKILL_CACHE.clear()
 
 
@@ -53,8 +51,15 @@ def _load_skill_index(root: Path) -> SkillIndex:
 
 
 def _get_skill_index(skill_root: Path | None = None) -> SkillIndex:
-    """Get or load the skill index for the given root."""
-    root = (skill_root or DEFAULT_SKILL_ROOT).resolve()
+    """Get or load the skill index for the given root.
+
+    If *skill_root* is None and no root has been configured, returns
+    an empty index — the system works without a seed skills directory.
+    """
+    root = skill_root or _CURRENT_SKILL_ROOT
+    if root is None:
+        return SkillIndex(by_role={})
+    root = root.resolve()
     if root not in _SKILL_CACHE:
         _SKILL_CACHE[root] = _load_skill_index(root)
     return _SKILL_CACHE[root]

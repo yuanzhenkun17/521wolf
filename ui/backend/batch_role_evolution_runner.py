@@ -4,9 +4,9 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
+from agent.common import beijing_now_iso, beijing_now_str
 from agent.learning.evolution.batch import (
     BatchEvolutionResult,
     promote_batch_result,
@@ -112,11 +112,11 @@ class RoleBatchEvolutionRunner:
         if conflict:
             raise RuntimeError(f"角色已有活跃批量演化任务: {', '.join(conflict)}")
 
-        batch_id = f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        batch_id = f"batch_{beijing_now_str('%Y%m%d_%H%M%S_%f')}"
         tracked = RoleBatchEvolutionRun(
             batch_id=batch_id,
             roles=list(roles),
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=beijing_now_iso(),
             training_games=training_games,
             battle_games=battle_games,
             role_concurrency=role_concurrency,

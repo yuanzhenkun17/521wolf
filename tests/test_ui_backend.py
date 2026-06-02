@@ -183,8 +183,7 @@ class UiBackendTests(unittest.TestCase):
 
     def test_role_evolution_training_game_endpoints_read_nested_selfplay_run(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            base = Path(temp_dir) / "role_versions"
-            evo_dir = base / "runs" / "evolution" / "evo_test"
+            evo_dir = Path(temp_dir) / "runs" / "evolution" / "evo_test"
             game_dir = evo_dir / "run_training" / "games" / "game_001"
             game_dir.mkdir(parents=True)
             (evo_dir / "state.json").write_text(

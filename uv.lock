@@ -12,6 +12,7 @@ dependencies = [
     { name = "langfuse" },
     { name = "openai" },
     { name = "pypdf" },
+    { name = "python-dotenv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -22,6 +23,7 @@ requires-dist = [
     { name = "langfuse", specifier = ">=4.6.1" },
     { name = "openai", specifier = ">=2.38.0" },
     { name = "pypdf", specifier = ">=6.12.2" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]
 

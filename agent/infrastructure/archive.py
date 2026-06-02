@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.context import AgentContext
-from agent.common import utc_now_iso as _now
+from agent.common import beijing_now_iso as _now
 
 
 @dataclass(slots=True)

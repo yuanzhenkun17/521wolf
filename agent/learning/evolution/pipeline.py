@@ -41,7 +41,8 @@ from agent.infrastructure.llm import (
     limit_model_adapter,
     rate_limit_model_adapter,
 )
-from agent.common import notify as _notify, utc_now_iso as _now, write_json as _write_json
+from agent.common import notify as _notify, beijing_now_iso as _now, write_json as _write_json
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 _log = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class BaselineChangedError(Exception):
 def scan_active_runs(store: VersionStore) -> list[dict]:
     """Scan all ``runs/evolution/*/state.json`` and return runs with non-terminal status."""
     active: list[dict] = []
-    evo_root = store.base_dir / "runs" / "evolution"
+    evo_root = DEFAULT_PATHS.evolution_dir
     if not evo_root.exists():
         return active
     for child in sorted(evo_root.iterdir()):
@@ -99,7 +100,7 @@ def recover_interrupted_runs(store: VersionStore) -> list[dict]:
         state["error"] = "interrupted"
         state["failed_stage"] = status
         state["updated_at"] = _now()
-        evo_root = store.base_dir / "runs" / "evolution"
+        evo_root = DEFAULT_PATHS.evolution_dir
         state_file = evo_root / state["run_id"] / "state.json"
         _write_json(state_file, state)
         interrupted.append(state)
@@ -123,6 +124,7 @@ async def run_evolution(
     consolidator: Callable | None = None,
     applier: Callable | None = None,
     battle_runner: Callable | None = None,
+    paths: PathConfig = DEFAULT_PATHS,
 ) -> EvolutionRun:
     """Run the full evolution pipeline for *role*.
 
@@ -158,7 +160,7 @@ async def run_evolution(
         limited_model = rate_limit_model_adapter(limited_model, llm_rate_limiter)
 
     run_id = f"evo_{uuid.uuid4().hex[:12]}"
-    rd = run_dir(store, run_id)
+    rd = run_dir(DEFAULT_PATHS, run_id)
     rd.mkdir(parents=True, exist_ok=True)
 
     run = EvolutionRun(
@@ -170,7 +172,7 @@ async def run_evolution(
         battle_games=battle_games,
         baseline_config=baseline_config,
     )
-    save_run_state(run, store)
+    save_run_state(run)
 
     try:
         # Stage 1: training
@@ -199,7 +201,7 @@ async def run_evolution(
 
         # Stage 5: reviewing
         run.status = EvolutionStatus.REVIEWING
-        save_run_state(run, store)
+        save_run_state(run)
         _notify(on_progress, "reviewing", {"run_id": run.run_id})
 
     except Exception as exc:
@@ -207,8 +209,8 @@ async def run_evolution(
         _log.exception("Evolution run %s failed at stage %s", run.run_id, failed_stage)
         run.status = EvolutionStatus.FAILED
         run.errors.append(str(exc))
-        save_run_state(run, store)
-        path = state_path(store, run.run_id)
+        save_run_state(run)
+        path = state_path(DEFAULT_PATHS, run.run_id)
         try:
             state = json.loads(path.read_text(encoding="utf-8"))
             state["failed_stage"] = failed_stage
@@ -238,7 +240,7 @@ async def resume_evolution(
     Training and battle games that already completed are automatically
     skipped by the selfplay checkpoint mechanism.
     """
-    state = load_run_state(store, run_id)
+    state = load_run_state(DEFAULT_PATHS, run_id)
     if state is None:
         raise KeyError(f"Run {run_id} not found on disk")
 
@@ -327,7 +329,7 @@ async def resume_evolution(
             )
 
         run.status = EvolutionStatus.REVIEWING
-        save_run_state(run, store)
+        save_run_state(run)
         _notify(on_progress, "reviewing", {"run_id": run.run_id})
 
     except Exception as exc:
@@ -335,8 +337,8 @@ async def resume_evolution(
         _log.exception("Resumed evolution run %s failed at stage %s", run.run_id, failed_stage_now)
         run.status = EvolutionStatus.FAILED
         run.errors.append(str(exc))
-        save_run_state(run, store)
-        path = state_path(store, run.run_id)
+        save_run_state(run)
+        path = state_path(DEFAULT_PATHS, run.run_id)
         try:
             s = json.loads(path.read_text(encoding="utf-8"))
             s["failed_stage"] = failed_stage_now
@@ -363,7 +365,7 @@ async def rerun_from_consolidation(
     This reuses the mid-memory from a completed training run and
     re-runs consolidation -> applying -> battling with the updated prompt.
     """
-    state = load_run_state(store, run_id)
+    state = load_run_state(DEFAULT_PATHS, run_id)
     if state is None:
         raise KeyError(f"Run {run_id} not found on disk")
 
@@ -414,13 +416,13 @@ async def rerun_from_consolidation(
             _default_selfplay, battle_runner, on_progress,
         )
         run.status = EvolutionStatus.REVIEWING
-        save_run_state(run, store)
+        save_run_state(run)
         _notify(on_progress, "reviewing", {"run_id": run.run_id})
     except Exception as exc:
         _log.exception("Rerun from consolidation failed for %s", run_id)
         run.status = EvolutionStatus.FAILED
         run.errors.append(str(exc))
-        save_run_state(run, store)
+        save_run_state(run)
         raise
 
     return run
@@ -439,12 +441,12 @@ async def _stage_training(
 ) -> EvolutionRun:
     """Stage 1: Run selfplay training games with mid-memory enabled."""
     run.status = EvolutionStatus.TRAINING
-    save_run_state(run, store)
+    save_run_state(run)
     _notify(on_progress, "training", {"run_id": run.run_id, "games": training_games})
 
     from agent.learning.selfplay import SelfPlayConfig
 
-    output_run_dir = run_dir(store, run.run_id)
+    output_run_dir = run_dir(DEFAULT_PATHS, run.run_id)
 
     baseline_config = run.baseline_config or build_baseline_config(store)
     skill_dir = build_composite_skill_dir(store, baseline_config)
@@ -484,7 +486,7 @@ async def _stage_training(
         if training_run_id:
             run.training_run_id = training_run_id
             run.training_output_dir = str(output_run_dir / training_run_id)
-            save_run_state(run, store)
+            save_run_state(run)
             _notify(on_progress, "training_artifact", {
                 "run_id": run.run_id,
                 "training_run_id": run.training_run_id,
@@ -506,10 +508,10 @@ async def _stage_consolidating(
 ) -> EvolutionRun:
     """Stage 2: Consolidate mid-memory into skill proposals."""
     run.status = EvolutionStatus.CONSOLIDATING
-    save_run_state(run, store)
+    save_run_state(run)
     _notify(on_progress, "consolidating", {"run_id": run.run_id})
 
-    output_run_dir = training_run_dir(run, store) or run_dir(store, run.run_id)
+    output_run_dir = training_run_dir(run) or run_dir(DEFAULT_PATHS, run.run_id)
 
     consolidation: SkillConsolidation = await consolidator(
         output_run_dir, run.role, model_adapter,
@@ -518,7 +520,7 @@ async def _stage_consolidating(
         skill_root=store.get_skill_dir(run.role, run.parent_hash),
     )
     run.proposals = consolidation
-    save_run_state(run, store)
+    save_run_state(run)
     return run
 
 
@@ -530,14 +532,14 @@ async def _stage_applying(
 ) -> EvolutionRun:
     """Stage 3: Apply proposals to produce candidate skill set."""
     run.status = EvolutionStatus.APPLYING
-    save_run_state(run, store)
+    save_run_state(run)
 
     if run.proposals is None or not run.proposals.proposals:
         _log.info("No proposals to apply — skipping apply stage")
         # Use parent hash as candidate (no change)
         run.candidate_hash = run.parent_hash
         run.diff = []
-        save_run_state(run, store)
+        save_run_state(run)
         return run
 
     # Load current skills from the baseline version
@@ -560,10 +562,10 @@ async def _stage_applying(
     run.diff = diffs
 
     # Persist diff.json alongside state
-    diff_path = run_dir(store, run.run_id) / "diff.json"
+    diff_path = run_dir(DEFAULT_PATHS, run.run_id) / "diff.json"
     _write_json(diff_path, {"diffs": [d.to_dict() for d in diffs]})
 
-    save_run_state(run, store)
+    save_run_state(run)
     return run
 
 
@@ -598,7 +600,7 @@ async def promote(run: EvolutionRun, store: VersionStore) -> None:
     # Baseline already equals candidate -> just set promoted
     if current_baseline == run.candidate_hash:
         run.status = EvolutionStatus.PROMOTED
-        save_run_state(run, store)
+        save_run_state(run)
         return
 
     # Baseline changed (not parent, not candidate)
@@ -620,7 +622,7 @@ async def promote(run: EvolutionRun, store: VersionStore) -> None:
         )
 
     run.status = EvolutionStatus.PROMOTED
-    save_run_state(run, store)
+    save_run_state(run)
 
 
 async def reject(run: EvolutionRun, store: VersionStore) -> None:
@@ -646,5 +648,5 @@ async def reject(run: EvolutionRun, store: VersionStore) -> None:
         )
 
     run.status = EvolutionStatus.REJECTED
-    save_run_state(run, store)
+    save_run_state(run)
 

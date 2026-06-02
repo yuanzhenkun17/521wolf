@@ -15,6 +15,7 @@ from ui.backend.selfplay_runner import SelfplayManager
 from ui.backend.role_evolution_runner import RoleEvolutionRunner
 from ui.backend.batch_role_evolution_runner import RoleBatchEvolutionRunner
 from agent.learning.evolution.pipeline import InvalidRunStateError, BaselineChangedError
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 
 class StartGameRequest(BaseModel):
@@ -60,7 +61,7 @@ class RoleEvolutionBatchStartRequest(BaseModel):
 
 def _default_version_store():
     from agent.learning.evolution.store import VersionStore
-    return VersionStore(Path("role_versions"))
+    return VersionStore()
 
 
 manager = GameManager()
@@ -102,7 +103,7 @@ async def start_game(request: StartGameRequest | None = None) -> dict[str, Any]:
         if request is not None and request.role_versions:
             role_skill_dirs = {}
             for role, hash_val in request.role_versions.items():
-                role_skill_dirs[role] = Path("role_versions") / role / hash_val / "skills"
+                role_skill_dirs[role] = version_store.get_skill_dir(role, hash_val)
         game = await manager.start_game(
             seed=request.seed if request is not None else None,
             max_days=request.max_days if request is not None else 20,
@@ -173,10 +174,8 @@ def get_game_review(game_id: str) -> dict[str, Any]:
 
 
 _LEADERBOARD_PATHS = [
-    Path("runs/version_battle/leaderboard.json"),
-    Path("logs/version_battle/leaderboard.json"),
-    Path("data/version_battle/leaderboard.json"),
-    Path("leaderboard.json"),
+    DEFAULT_PATHS.runs_dir / "evolution" / "leaderboard.json",
+    DEFAULT_PATHS.data_dir / "leaderboard.json",
 ]
 
 
@@ -203,7 +202,7 @@ def _resolve_allowed_skill_dir(raw: str | None) -> str | None:
     candidate = path.resolve() if path.is_absolute() else (Path.cwd() / path).resolve()
     allowed_roots = [
         (Path.cwd() / "skills").resolve(),
-        (Path.cwd() / "role_versions").resolve(),
+        (Path.cwd() / "data" / "versions").resolve(),
         (Path.cwd() / "runs").resolve(),
     ]
     for root in allowed_roots:
@@ -412,7 +411,7 @@ def _resolve_role_evolution_training_run_dir(run_id: str) -> Path | None:
         if path.exists() and (path / "games").exists():
             return path
 
-    evo_root = version_store.base_dir / "runs" / "evolution"
+    evo_root = DEFAULT_PATHS.evolution_dir
     for evo_id in dict.fromkeys(evo_ids):
         evo_dir = evo_root / evo_id
         if not evo_dir.exists():

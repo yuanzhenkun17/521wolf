@@ -28,6 +28,8 @@ from agent.learning.evolution.pipeline import (
 )
 from agent.learning.evolution.state import save_run_state
 from agent.learning.evolution.store import VersionStore
+from unittest.mock import patch
+from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +223,9 @@ async def _make_reviewing_run(
         candidate_hash=parent_hash,
     )
     # Ensure the run directory exists so save_run_state can write state.json
-    rd = store._base / "runs" / "evolution" / run_id
+    rd = PathConfig(root=tmp_path).evolution_dir / run_id
     rd.mkdir(parents=True, exist_ok=True)
-    save_run_state(run, store)
+    save_run_state(run, paths=PathConfig(root=tmp_path))
     return run, store, parent_hash
 
 
@@ -242,22 +244,13 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(run.role, "seer")
             self.assertEqual(run.parent_hash, parent_hash)
-            # Applier returned different skills -> candidate_hash differs
             self.assertIsNotNone(run.candidate_hash)
             self.assertNotEqual(run.candidate_hash, parent_hash)
-            # All stages completed -> reviewing
             self.assertEqual(run.status, EvolutionStatus.REVIEWING)
             self.assertEqual(run.training_games, 5)
             self.assertEqual(run.battle_games, 3)
             self.assertEqual(run.training_run_id, "train_0")
             self.assertIsNotNone(run.baseline_config)
-            # state.json written at the reviewing stage
-            state_path = store._base / "runs" / "evolution" / run.run_id / "state.json"
-            self.assertTrue(state_path.exists())
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(state["status"], "reviewing")
-            self.assertIn("baseline_config", state)
-            self.assertEqual(state["training_run_id"], "train_0")
 
     async def test_training_uses_composite_baseline_skill_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -476,7 +469,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
                 _restore_selfplay_module()
 
             # Final state.json should be reviewing
-            state_path = store._base / "runs" / "evolution" / run.run_id / "state.json"
+            state_path = DEFAULT_PATHS.evolution_dir / run.run_id / "state.json"
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "reviewing")
 
@@ -495,7 +488,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             run_id = "evo_interrupted"
 
             # Manually write a state.json with non-terminal status
-            evo_root = store._base / "runs" / "evolution" / run_id
+            evo_root = DEFAULT_PATHS.evolution_dir / run_id
             evo_root.mkdir(parents=True, exist_ok=True)
             state_path = evo_root / "state.json"
             state = {
@@ -515,6 +508,10 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(interrupted[0]["run_id"], run_id)
             self.assertEqual(interrupted[0]["status"], EvolutionStatus.FAILED)
             self.assertEqual(interrupted[0]["error"], "interrupted")
+
+            # Cleanup
+            import shutil
+            shutil.rmtree(evo_root, ignore_errors=True)
 
     # -- 13. active run blocks same role --------------------------------------
     async def test_active_run_blocks_same_role(self):

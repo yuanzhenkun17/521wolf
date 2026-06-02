@@ -7,10 +7,10 @@ and resolves (role, config) pairs to on-disk skill directory paths.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agent.common import beijing_now_iso
 from agent.learning.evolution.models import SkillVersionConfig
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ def build_baseline_config(store: VersionStore) -> SkillVersionConfig:
         role_versions[history.role] = history.baseline
     return SkillVersionConfig(
         name="baseline",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=beijing_now_iso(),
         role_versions=role_versions,
         notes=["all roles at baseline"],
     )
@@ -44,7 +44,7 @@ def build_role_override_config(
             role_versions[history.role] = history.baseline
     return SkillVersionConfig(
         name=f"override-{role}-{role_hash[:8]}",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=beijing_now_iso(),
         role_versions=role_versions,
         notes=[f"{role} overridden to {role_hash[:8]}"],
     )
@@ -64,7 +64,7 @@ def build_role_override_from_config(
     role_versions[role] = role_hash
     return SkillVersionConfig(
         name=name or f"override-{role}-{role_hash[:8]}",
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=beijing_now_iso(),
         role_versions=role_versions,
         notes=[*baseline_config.notes, f"{role} overridden to {role_hash[:8]}"],
     )

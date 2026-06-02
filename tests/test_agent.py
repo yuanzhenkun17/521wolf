@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from pathlib import Path
 
 from agent.core.belief import BeliefState
 from agent.core.memory import AgentMemory
@@ -205,6 +206,9 @@ class DecisionStepTests(unittest.TestCase):
         self.request = _make_vote_request()
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
         self.belief = BeliefState(player_id=5, role=Role.VILLAGER)
+        # Ensure skill router can find the seed skills directory
+        from agent.knowledge.skills.router import configure_skill_root
+        configure_skill_root(Path(__file__).resolve().parent.parent / "skills")
 
     def test_request_observation_has_expected_data(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
@@ -721,6 +725,10 @@ class ReviewStatsTests(unittest.TestCase):
 
 class MarkdownSkillLoaderTests(unittest.TestCase):
     """Test markdown skill loading and integration (P2)."""
+
+    def setUp(self):
+        from agent.knowledge.skills.router import configure_skill_root
+        configure_skill_root(Path(__file__).resolve().parent.parent / "skills")
 
     def test_parse_front_matter_basic(self):
         from agent.knowledge.skills.loader import parse_front_matter

@@ -16,6 +16,7 @@ from agent.learning.evolution.state import run_dir, save_run_state
 from agent.learning.evolution.store import VersionStore
 from agent.infrastructure.llm import AsyncRateLimiter, ModelAdapter
 from agent.common import notify as _notify, write_json as _write_json
+from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 _log = logging.getLogger(__name__)
 
@@ -34,13 +35,13 @@ async def _stage_battling(
 ) -> EvolutionRun:
     """Stage 4: Battle baseline vs candidate."""
     run.status = EvolutionStatus.BATTLING
-    save_run_state(run, store)
+    save_run_state(run)
     _notify(on_progress, "battling", {"run_id": run.run_id, "games": battle_games})
 
     if run.candidate_hash == run.parent_hash:
         _log.info("Candidate equals parent — skipping battle")
         run.battle_result = {"skipped": True, "reason": "no_changes"}
-        save_run_state(run, store)
+        save_run_state(run)
         return run
 
     battle_result = await call_battle_runner(
@@ -51,15 +52,15 @@ async def _stage_battling(
         game_concurrency=game_concurrency,
         llm_semaphore=llm_semaphore,
         llm_rate_limiter=llm_rate_limiter,
-        output_dir=run_dir(store, run.run_id) / "battle",
+        output_dir=run_dir(DEFAULT_PATHS, run.run_id) / "battle",
     )
     run.battle_result = battle_result
 
     # Persist battle summary
-    battle_path = run_dir(store, run.run_id) / "battle_summary.json"
+    battle_path = run_dir(DEFAULT_PATHS, run.run_id) / "battle_summary.json"
     _write_json(battle_path, battle_result)
 
-    save_run_state(run, store)
+    save_run_state(run)
     return run
 
 
@@ -157,7 +158,7 @@ async def run_config_battle(
         cfg_a = SelfPlayConfig(
             games=battle_games,
             seed_start=seed_start,
-            output_dir=(output_dir / "baseline") if output_dir is not None else Path("runs/selfplay"),
+            output_dir=(output_dir / "baseline") if output_dir is not None else DEFAULT_PATHS.selfplay_dir,
             enable_mid_memory=False,
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_a,
@@ -166,7 +167,7 @@ async def run_config_battle(
         cfg_b = SelfPlayConfig(
             games=battle_games,
             seed_start=seed_start,
-            output_dir=(output_dir / "candidate") if output_dir is not None else Path("runs/selfplay"),
+            output_dir=(output_dir / "candidate") if output_dir is not None else DEFAULT_PATHS.selfplay_dir,
             enable_mid_memory=False,
             enable_long_term_consolidation=False,
             skill_dir=skill_dir_b,
