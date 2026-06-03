@@ -14,7 +14,37 @@
 
 **核心原则**：信息隔离在引擎层强制执行，Agent 不可能获取不该看到的信息。
 
-**事件类型**：
+**事件可见性 schema**：
+
+```python
+class Visibility(StrEnum):
+    PUBLIC = "public"       # 所有存活玩家可见
+    WEREWOLF = "werewolf"   # 仅狼人
+    WITCH = "witch"         # 仅女巫
+    SEER = "seer"           # 仅预言家
+    GUARD = "guard"         # 仅守卫
+    SYSTEM = "system"       # 仅引擎内部（不给任何 agent）
+
+@dataclass
+class GameEvent:
+    type: str
+    day: int
+    phase: Phase
+    actor: int | None
+    target: int | None
+    payload: dict
+    visibility: Visibility
+
+def filter_events(events: list[GameEvent], role: Role) -> list[GameEvent]:
+    visible = {Visibility.PUBLIC, Visibility.SYSTEM}
+    if role.is_wolf():  visible.add(Visibility.WEREWOLF)
+    if role == WITCH:   visible.add(Visibility.WITCH)
+    if role == SEER:    visible.add(Visibility.SEER)
+    if role == GUARD:   visible.add(Visibility.GUARD)
+    return [e for e in events if e.visibility in visible]
+```
+
+**Archive/UI**：`events` 存全量（含私有），UI 支持视角切换（上帝视角 / 玩家视角）。
 
 | 类别 | 事件 | 可见范围 |
 |------|------|----------|
@@ -61,24 +91,26 @@ SETUP → SHERIFF_ELECTION → {NIGHT → DAY_SPEECH → EXILE_VOTE} × N → FI
 
 ### 1.4 GameState 设计原则
 
-**反对上帝对象**：GameState 不应包含角色特定的可变状态（如 `witch_antidote_available`）。
+**反对上帝对象**：GameState 不应包含角色特定的可变状态。
 
-**建议方案**：GameState 只包含通用状态（玩家存活状态、阶段、轮次），角色特定状态由各 RoleRule 自己维护（通过一个 per-game 的 state dict）。
+**方案**：GameState 只包含通用状态。角色特定状态存在 `GameEngine.role_state: dict[Role, dict]`，由各 RoleRule 通过 engine 读写。RoleRule 保持无状态 singleton。
 
 ```
-GameState:
-  players: dict[int, PlayerState]  # 存活状态
+GameState (通用状态):
+  players: dict[int, PlayerState]
   day: int
   phase: Phase
-  events: list[GameEvent]          # 全局事件流
+  events: list[GameEvent]          # 全局事件流（含私有事件）
   deaths: list[DeathRecord]
   winner: Winner | None
 
-RoleState (per-role):
-  witch: {antidote_available, poison_available}
-  guard: {last_target}
-  seer: {checks: dict[int, Team]}
+GameEngine.role_state (角色状态，存 engine 上):
+  WITCH: {antidote_available: True, poison_available: True}
+  GUARD: {last_target: None}
+  SEER: {checks: dict[int, Team]}
 ```
+
+RoleRule 通过 `engine.role_state[Role.WITCH]` 读写，不在 Rule 实例上存状态。
 
 ---
 
@@ -101,7 +133,7 @@ Step 3: call_and_parse
   输入: messages
   输出: parsed_decision: {target, choice, public_text, private_reasoning, confidence, ...}
   职责: 调用 LLM，解析 JSON 输出
-  错误处理: LLM 失败时直接抛异常（不生成 fallback 决策）
+  错误处理: LLM 失败时抛异常，由 GameEngine.ask() 捕获并使用规则默认行为
 
 Step 4: enforce_policy
   输入: parsed_decision, action_request
@@ -110,7 +142,7 @@ Step 4: enforce_policy
 ```
 
 **关键设计决策**：
-- **LLM 失败 = agent 断线**：不生成 fallback，GameEngine 标记该 agent 不可用
+- **LLM 失败 = agent 断线（跳过当前动作）**：GameEngine.ask() 捕获异常后使用规则默认行为（如狼人断线→随机杀非狼人，预言家断线→不查验，女巫断线→不用药）。下一阶段恢复正常。连续断线 3 次标记为 unreliable
 - **管线是严格顺序的**：没有并行分支，不需要 DAG 编排
 - **每步有明确的输入/输出契约**：中间状态保存在 DecisionContext 中供 trace
 
@@ -135,24 +167,37 @@ skills/
 ...
 ```
 
-**选择逻辑**：
+**选择逻辑**（基于 Markdown front matter 声明）：
+
+每个 skill 文件通过 front matter 声明自己在什么场景下被加载：
+
+```markdown
+---
+phase: night
+action_type: seer_check
+role: seer
+---
+# 查验优先级
+
+先查验沉默玩家...
+```
+
+**Router 匹配逻辑**：
 
 ```python
-SKILL_ROUTER: dict[(role, phase, action_type), list[str]] = {
-    ("seer", "night", "seer_check"): ["check_priority.md"],
-    ("seer", "day_speech", "speak"): ["claim.md", "counter_claim.md"],
-    ("werewolf", "day_speech", "speak"): ["fake_seer.md"],
-    ("werewolf", "exile_vote", "exile_vote"): ["vote_rush.md"],
-    ("witch", "night", "witch_act"): ["save.md", "poison.md"],
-    ...
-}
-
 def select_skills(role, phase, action_type) -> list[str]:
-    skills = [load(f"skills/{role}/strategy.md")]  # 始终加载基础策略
-    for skill_name in SKILL_ROUTER.get((role, phase, action_type), []):
-        skills.append(load(f"skills/{role}/{skill_name}"))
+    skills = []
+    for skill_file in load_role_skills(role):
+        meta = parse_front_matter(skill_file)
+        if meta.get("phase") == phase and meta.get("action_type") == action_type:
+            skills.append(skill_file.content)
+    # 如果没有匹配的场景 skill，只返回基础策略（strategy.md 无 front matter 限制）
+    if not skills:
+        skills.append(load(f"skills/{role}/strategy.md"))
     return skills
 ```
+
+**Front matter 是必需的 schema**：所有 skill 文件（除 strategy.md 外）必须包含 `phase` 和 `action_type` 字段。evolution 系统修改 skill 时可同时调整 front matter 标签。
 
 ### 2.3 Skill 版本管理
 
@@ -202,7 +247,7 @@ Agent: skill_dir = data/versions/seer/hash_abc/skills/
 2. **更早的阶段**：先保留原始事件，直到总 token 接近预算上限（~6000 tokens）
 3. **触发压缩**：超出预算时，从最老的未压缩阶段开始，逐个做 LLM 摘要
 4. **摘要内容**：2-3 句话，保留关键事件（死亡、投票、声明、查验结果）
-5. **完整保留**：`rolling_summary` 不截断，一局狼人杀最多 ~20 个阶段，总 token 可控
+5. **完整保留为主**：`rolling_summary` 尽量不截断。一局最多 ~40 阶段（20 天 × 2），LLM 摘要每个 ~100 tokens，总共 ~4000 tokens。保留安全阀上限 `_MAX_ROLLING_SUMMARIES = 30`，超出截断最早的
 6. **Fallback**：LLM 摘要失败时用规则压缩（现有 `_summarize_phase` 逻辑）
 
 **Token 预算**：
@@ -310,10 +355,12 @@ AgentRuntime.act(request)
 
 ### 5.2 错误处理
 
-- **LLM 超时/认证失败/格式错误** → 抛异常，GameEngine 标记 agent 断线
-- **不生成 fallback 决策** — 断线 agent 在该轮不行动
-- **source 标记**：成功 = `"llm"`，失败 = `"llm_error"`
-- **重试策略**：不重试（快速失败，让游戏继续）
+- **LLM 超时/认证失败/格式错误** → 抛异常，由 `GameEngine.ask()` 捕获
+- **断线行为**：使用该角色该阶段的规则默认行为（狼人→随机杀非狼人，预言家→不查验，女巫→不用药，其他→跳过）
+- **恢复**：下一阶段 agent 恢复正常，不永久禁用
+- **连续断线**：同一 agent 连续断线 3 次标记为 `unreliable`，统计中突出显示
+- **source 标记**：成功 = `"llm"`，断线 = `"llm_error"`
+- **日志**：记录 "P3 (seer) disconnected at day2/speak, using rule fallback"
 
 ### 5.3 速率控制
 
@@ -345,7 +392,7 @@ class Observation:
     alive_players: tuple[int, ...]
     dead_players: tuple[int, ...]
     sheriff_id: int | None
-    public_log: tuple[str, ...]     # 视角过滤后的公开事件
+    visible_events: tuple[GameEvent, ...]  # 视角过滤后的事件（结构化，非字符串）
     known_roles: dict[int, Role]    # 已知角色（仅特殊角色）
     seer_checks: dict[int, Team]    # 查验结果（仅预言家）
     metadata: dict[str, Any]
@@ -378,12 +425,13 @@ class DecisionContext:
 
 | 设计点 | 现状 | 差距 | 优先级 |
 |--------|------|------|--------|
-| 信息隔离 | Observation 类已有，但 public_log 是字符串列表 | 需要结构化为事件流 | P1 |
-| GameState | 上帝对象，角色状态混在一起 | 需要拆分 | P2 |
+| 信息隔离 | Observation 有 public_log (字符串列表) | 改为 structured visible_events + Visibility enum | P1 |
+| GameState | 上帝对象，角色状态混在 GameState 里 | 拆分到 GameEngine.role_state | P2 |
 | 决策管线 | 6 步，含冗余 step | 精简为 4 步 | P1 |
 | 记忆压缩 | 规则压缩 | 改为 LLM 摘要 + 预算触发 | P1 |
-| Skill 选择 | 已有 SKILL_ROUTER | 与 spec 一致 | 无需改动 |
+| LLM 错误处理 | call_model 吞异常走 fallback | 改为 ask() 捕获 + 规则默认行为 | P1 |
+| Skill 选择 | front matter 驱动（与 spec 一致） | 需要统一 front matter schema | P2 |
 | Prompt 结构 | 已有 2 消息结构 | 与 spec 一致 | 无需改动 |
-| LLM 错误处理 | fallback 而非失败 | 改为直接失败 | P1 |
 | memory_refs | 已删除 | 与 spec 一致 | 无需改动 |
 | AgentMemory.reset() | 已修复 | 与 spec 一致 | 无需改动 |
+| RoleState | 存在 GameState 里 | 改为 GameEngine.role_state | P2 |
