@@ -1,4 +1,4 @@
-"""Tests for agent.selfplay — SelfPlayConfig, run_selfplay, result aggregation."""
+"""Tests for agent.evolution.games — SelfPlayConfig, run_selfplay, result aggregation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.learning.selfplay import (
+from agent.learning.evolution.games import (
     SelfPlayConfig,
     SelfPlayGameResult,
     SelfPlayResult,

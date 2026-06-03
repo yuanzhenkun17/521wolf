@@ -1,6 +1,6 @@
 # 规则层说明
 
-本文说明当前 `engine/werewolf/` 目录的职责。旧 `engine/werewolf/agent_runtime/`、`engine/werewolf/llm_agents.py` 和 `engine/werewolf/demo_llm.py` 已删除，规则层不再保留 Agent 兼容转发代码。
+本文说明当前 `engine/` 目录的职责。旧 `engine/werewolf/agent_runtime/`、`engine/werewolf/llm_agents.py` 和 `engine/werewolf/demo_llm.py` 已删除，规则层不再保留 Agent 兼容转发代码。
 
 ## 边界
 
@@ -18,7 +18,7 @@
 ## 目录结构
 
 ```text
-engine/werewolf/
+engine/
   __init__.py
   actions.py
   config.py
@@ -30,6 +30,15 @@ engine/werewolf/
   roles.py
   phases/
   role_rules/
+    base.py
+    registry.py
+    werewolf.py
+    white_wolf_king.py
+    seer.py
+    witch.py
+    hunter.py
+    guard.py
+    villager.py
   rules/
 ```
 

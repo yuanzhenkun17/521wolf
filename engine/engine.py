@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections import Counter
 from typing import Callable
 
@@ -33,13 +34,15 @@ class GameEngine:
         agents: dict[int, PlayerAgent],
         config: GameConfig = STANDARD_12,
         log_stream_path: str | None = None,
+        conn: sqlite3.Connection | None = None,
+        game_id: str | None = None,
     ):
         self.config = config
         self.state = GameState(
             players={player_id: PlayerState(player_id, role) for player_id, role in sorted(roles.items())}
         )
         self.agents = agents
-        self.logger = GameLogger(stream_path=log_stream_path)
+        self.logger = GameLogger(stream_path=log_stream_path, conn=conn, game_id=game_id)
         self._log(
             "game_init",
             f"游戏初始化：{self.config.name}，已创建 {len(self.state.players)} 名玩家",

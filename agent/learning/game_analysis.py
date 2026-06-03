@@ -32,7 +32,7 @@ class TurningPointAnalysis:
     description: str
     impact: str  # "positive" | "negative" | "mixed"
     affected_team: str
-    root_cause: str
+    root_cause: str = ""
     involved_roles: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -77,11 +77,26 @@ class DecisionReview:
 
 @dataclass(slots=True)
 class CounterfactualAnalysis:
-    scenario: str
-    original_outcome: str
-    counterfactual_outcome: str
-    likelihood: str  # "high" | "medium" | "low"
-    insight: str
+    """What-if analysis for a critical decision.
+
+    Unified from both the LLM-generated analysis model (scenario,
+    original_outcome, counterfactual_outcome, insight) and the
+    template-based review model (decision_index, player_id, role,
+    fact, counterfactual, impact_assessment).
+    """
+
+    scenario: str = ""
+    original_outcome: str = ""
+    counterfactual_outcome: str = ""
+    likelihood: str = "possible"  # "high" | "medium" | "low" | "likely" | "possible" | "unlikely"
+    insight: str = ""
+    # Fields from template-based Counterfactual (review.py)
+    decision_index: int = 0
+    player_id: int = 0
+    role: str = ""
+    fact: str = ""
+    counterfactual: str = ""
+    impact_assessment: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -90,6 +105,12 @@ class CounterfactualAnalysis:
             "counterfactual_outcome": self.counterfactual_outcome,
             "likelihood": self.likelihood,
             "insight": self.insight,
+            "decision_index": self.decision_index,
+            "player_id": self.player_id,
+            "role": self.role,
+            "fact": self.fact,
+            "counterfactual": self.counterfactual,
+            "impact_assessment": self.impact_assessment,
         }
 
 
@@ -155,7 +176,7 @@ async def analyze_game(
 
     raw = ""
     try:
-        raw = await model.complete(messages, name=f"mid_memory/{game_id}")
+        raw = await model.complete(messages)
         return _parse_analysis(
             game_id=game_id,
             raw_output=raw,
@@ -245,7 +266,6 @@ def _build_messages(
                 "source": d.get("source"),
                 "policy_adjustments": d.get("policy_adjustments", []),
                 "errors": d.get("errors", []),
-                "memory_refs": d.get("memory_refs", []),
                 "private_reasoning": str(
                     parsed.get("private_reasoning") or d.get("private_reasoning", "")
                 )[:300],

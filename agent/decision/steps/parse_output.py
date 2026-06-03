@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from agent.infrastructure.tracing import observe
 from agent.knowledge.prompts.parsing import load_json_object
 from agent.core.context import AgentContext
@@ -15,11 +13,12 @@ def parse_output_step(ctx: AgentContext) -> AgentContext:
 
     Accepts both legacy output aliases (``text``, ``reasoning``) and current field
     names (``public_text``, ``private_reasoning``, ``confidence``,
-    ``memory_refs``, ``selected_skills``).
+    ``selected_skills``).
     """
     if not ctx.raw_output:
-        ctx.errors.append("Empty LLM output, will fall back to policy.")
-        ctx.source = "fallback"
+        if ctx.source != "llm_error":
+            ctx.errors.append("Empty LLM output, will fall back to policy.")
+            ctx.source = "fallback"
         return ctx
 
     try:
@@ -49,9 +48,6 @@ def parse_output_step(ctx: AgentContext) -> AgentContext:
     rejected_reasons = [
         str(r) for r in data.get("rejected_reasons", []) if r is not None
     ]
-    memory_refs = [
-        str(r) for r in data.get("memory_refs", []) if r is not None
-    ]
     selected_skills = data.get("selected_skills", [])
 
     ctx.response = ActionResponse(
@@ -69,7 +65,6 @@ def parse_output_step(ctx: AgentContext) -> AgentContext:
         "confidence": confidence,
         "alternatives": alternatives,
         "rejected_reasons": rejected_reasons,
-        "memory_refs": memory_refs,
         "selected_skills": selected_skills if isinstance(selected_skills, list) else [],
     }
     ctx.confidence = confidence

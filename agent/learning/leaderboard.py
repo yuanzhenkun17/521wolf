@@ -7,11 +7,11 @@ comparable metrics in JSON and markdown table formats.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent.learning.calibration import merge_calibration_reports
-from agent.learning.statistics import mean_ci95, wilson_ci95
+from agent.learning.stats import merge_calibration_reports, mean_ci95, wilson_ci95
 
 
 @dataclass(slots=True)
@@ -233,9 +233,12 @@ def write_leaderboard(
 ) -> None:
     """Write leaderboard JSON and markdown files to a directory."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    # JSON — list of entry dicts
-    with open(output_dir / "leaderboard.json", "w", encoding="utf-8") as f:
+    # JSON — list of entry dicts (atomic write)
+    json_path = output_dir / "leaderboard.json"
+    json_tmp = json_path.with_suffix(json_path.suffix + ".tmp")
+    with open(json_tmp, "w", encoding="utf-8") as f:
         json.dump([e.to_dict() for e in entries], f, ensure_ascii=False, indent=2)
+    os.replace(str(json_tmp), str(json_path))
     # Compact markdown
     with open(output_dir / "leaderboard.md", "w", encoding="utf-8") as f:
         f.write(leaderboard_to_markdown(entries))

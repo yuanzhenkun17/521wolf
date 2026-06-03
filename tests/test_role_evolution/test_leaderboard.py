@@ -84,11 +84,6 @@ def _make_entry(**kwargs) -> RoleLeaderboardEntry:
     return RoleLeaderboardEntry(**defaults)
 
 
-class _FakeStore:
-    """Minimal stub for VersionStore (not used by aggregation logic)."""
-    pass
-
-
 # ---------------------------------------------------------------------------
 # 1. test_aggregate_filters_by_target_role
 # ---------------------------------------------------------------------------
@@ -112,7 +107,7 @@ def test_aggregate_filters_by_target_role():
     candidate.update(_side_metrics("werewolf", win_rate=0.6))
 
     summary = _make_battle_summary(role, baseline, candidate, games=15)
-    entries = aggregate_role_leaderboard(role, [summary], _FakeStore())
+    entries = aggregate_role_leaderboard(role, [summary])
 
     assert len(entries) == 2
     # Verify seer metrics were used (not werewolf)
@@ -139,7 +134,7 @@ def test_target_side_win_rate_werewolf():
     candidate.update(_side_metrics("werewolf", win_rate=0.5))
 
     summary = _make_battle_summary(role, baseline, candidate, games=20)
-    entries = aggregate_role_leaderboard(role, [summary], _FakeStore())
+    entries = aggregate_role_leaderboard(role, [summary])
 
     base_entry = next(e for e in entries if e.is_baseline)
     cand_entry = next(e for e in entries if not e.is_baseline)
@@ -165,7 +160,7 @@ def test_target_side_win_rate_seer():
     candidate.update(_side_metrics("seer", win_rate=0.55))
 
     summary = _make_battle_summary(role, baseline, candidate, games=20)
-    entries = aggregate_role_leaderboard(role, [summary], _FakeStore())
+    entries = aggregate_role_leaderboard(role, [summary])
 
     base_entry = next(e for e in entries if e.is_baseline)
     # Seer is a villager role -> side should be "villagers"
@@ -214,7 +209,7 @@ def test_insufficient_data_marked():
     candidate.update(_side_metrics("seer", win_rate=0.7))
 
     summary = _make_battle_summary(role, baseline, candidate, games=5)
-    entries = aggregate_role_leaderboard(role, [summary], _FakeStore())
+    entries = aggregate_role_leaderboard(role, [summary])
 
     cand_entry = next(e for e in entries if not e.is_baseline)
     assert cand_entry.data_sufficient is False

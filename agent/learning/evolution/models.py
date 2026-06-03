@@ -244,18 +244,26 @@ class SkillProposal:
 
 @dataclass(slots=True)
 class SkillConsolidation:
-    """Batch of proposals produced by the LLM consolidator for a role."""
+    """Batch of proposals produced by the LLM consolidator for a role.
+
+    Unified from both the evolution-pipeline model (run_id, parent_hash,
+    source_window, prompt_version) and the long-term-memory consolidator
+    (raw_output, errors, to_markdown).  Optional fields default so either
+    code-path can construct the class without friction.
+    """
 
     role: str
-    run_id: str
-    parent_hash: str
     generated_at: str
-    source_window: int
-    prompt_version: str
-    proposals: list[SkillProposal] = field(default_factory=list)
-    trends: list[str] = field(default_factory=list)
     source_games: list[str] = field(default_factory=list)
+    trends: list[str] = field(default_factory=list)
+    proposals: list[SkillProposal] = field(default_factory=list)
+    run_id: str = ""
+    parent_hash: str = ""
+    source_window: int = 0
+    prompt_version: str = ""
     model_name: str | None = None
+    raw_output: str = ""
+    errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -269,22 +277,56 @@ class SkillConsolidation:
             "trends": list(self.trends),
             "source_games": list(self.source_games),
             "model_name": self.model_name,
+            "errors": list(self.errors),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SkillConsolidation:
         return cls(
             role=str(data.get("role", "")),
+            generated_at=str(data.get("generated_at", "")),
+            source_games=[str(g) for g in data.get("source_games", [])],
+            trends=[str(t) for t in data.get("trends", [])],
+            proposals=[SkillProposal.from_dict(p) for p in data.get("proposals", [])],
             run_id=str(data.get("run_id", "")),
             parent_hash=str(data.get("parent_hash", "")),
-            generated_at=str(data.get("generated_at", "")),
             source_window=int(data.get("source_window", 0)),
             prompt_version=str(data.get("prompt_version", "")),
-            proposals=[SkillProposal.from_dict(p) for p in data.get("proposals", [])],
-            trends=[str(t) for t in data.get("trends", [])],
-            source_games=[str(g) for g in data.get("source_games", [])],
             model_name=data.get("model_name"),
+            errors=[str(e) for e in data.get("errors", [])],
         )
+
+    def to_markdown(self) -> str:
+        """Render consolidation as a human-readable markdown report."""
+        lines = [
+            f"# Long-Term Consolidation: {self.role}",
+            "",
+            f"- Source games: {', '.join(self.source_games)}",
+            f"- Generated: {self.generated_at}",
+            "",
+        ]
+        if self.trends:
+            lines.extend(["## Trends", ""])
+            for t in self.trends:
+                lines.append(f"- {t}")
+            lines.append("")
+        if self.proposals:
+            lines.extend(["## Skill Proposals", ""])
+            for p in self.proposals:
+                lines.extend([
+                    f"### {p.target_file}",
+                    "",
+                    f"- Action: {p.action_type}",
+                    f"- Content: {p.content}",
+                    f"- Risk: {p.risk or '-'}",
+                    f"- Confidence: {p.confidence:.1%}",
+                    "",
+                ])
+        if self.errors:
+            lines.extend(["## Errors", ""])
+            for e in self.errors:
+                lines.append(f"- {e}")
+        return "\n".join(lines).rstrip() + "\n"
 
 
 @dataclass(slots=True)

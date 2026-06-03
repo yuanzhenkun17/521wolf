@@ -23,6 +23,7 @@ const ROLE_LABELS: Record<string, string> = {
 export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: GameConfigDialogProps) {
   const [maxDays, setMaxDays] = useState(20);
   const [seed, setSeed] = useState("");
+  const [humanPlayerId, setHumanPlayerId] = useState<number | "">("");
 
   // Per-role version selection: {role: {versions, selectedHash}}
   const [roles, setRoles] = useState<string[]>([]);
@@ -67,6 +68,7 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
       role_versions: rv,
     };
     if (seed.trim()) config.seed = Number(seed);
+    if (humanPlayerId !== "") config.human_player_id = Number(humanPlayerId);
     onSubmit(config);
   }
 
@@ -107,6 +109,23 @@ export function GameConfigDialog({ open, onClose, onSubmit, starting = false }: 
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Human player */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="human-player">人类玩家位置</label>
+            <p className="text-xs text-muted-foreground">留空为纯AI对战，选择1~12则该位置由你操控</p>
+            <select
+              id="human-player"
+              value={humanPlayerId}
+              onChange={(e) => setHumanPlayerId(e.target.value === "" ? "" : Number(e.target.value))}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">无（纯AI对战）</option>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>{i + 1} 号位</option>
+              ))}
+            </select>
           </div>
 
           {/* Max days */}

@@ -1,8 +1,8 @@
-"""Action instructions and strategy hints for prompt construction."""
+"""Action instructions for prompt construction."""
 
 from __future__ import annotations
 
-from engine.models import ActionRequest, ActionType
+from engine.models import ActionType
 
 
 def action_instruction(action_type: ActionType) -> str:
@@ -26,13 +26,3 @@ def action_instruction(action_type: ActionType) -> str:
         ActionType.HUNTER_SHOOT: "猎人开枪：target 选择 candidates 中你要带走的玩家。",
     }
     return instructions[action_type]
-
-
-def strategy_instruction(request: ActionRequest) -> str:
-    if request.action_type is ActionType.SHERIFF_WITHDRAW:
-        return (
-            "警长退水策略：metadata 中 runners/remaining_runners 是当前仍在警上的候选人。"
-            "如果你是最后一名仍在警上的候选人，必须选择 stay，避免集体退水导致无人竞选。"
-            "如果还有其他更可信候选人，可以有理由地 withdraw；否则默认 stay。"
-        )
-    return ""

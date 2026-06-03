@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import unittest
 
-from engine.models import Role, Team
+from engine.models import Role
 
+from agent.learning.game_analysis import TurningPointAnalysis
 from agent.learning.review import (
     DecisionMistake,
     GameReviewReport,
@@ -18,8 +19,6 @@ from agent.learning.review import (
     MISTAKE_WRONG_VOTE,
     PlayerReview,
     SkillReview,
-    TurningPoint,
-    Counterfactual,
     generate_enhanced_review,
     _classify_mistakes,
     _collect_mistakes,
@@ -63,10 +62,10 @@ class PlayerReviewTests(unittest.TestCase):
 
 
 class TurningPointTests(unittest.TestCase):
-    """Test TurningPoint dataclass."""
+    """Test TurningPointAnalysis dataclass."""
 
     def test_construction(self):
-        tp = TurningPoint(
+        tp = TurningPointAnalysis(
             day=2, phase="night", description="女巫毒杀预言家",
             impact="negative", affected_team="villagers",
         )
@@ -74,7 +73,7 @@ class TurningPointTests(unittest.TestCase):
         self.assertEqual(tp.impact, "negative")
 
     def test_to_dict(self):
-        tp = TurningPoint(
+        tp = TurningPointAnalysis(
             day=1, phase="day", description="狼人自爆",
             impact="positive", affected_team="werewolves",
         )
@@ -150,7 +149,7 @@ class GameReviewReportTests(unittest.TestCase):
                 1: PlayerReview(player_id=1, role="witch", team="villagers", outcome="lose"),
             },
             key_turning_points=[
-                TurningPoint(day=2, phase="night", description="女巫毒错",
+                TurningPointAnalysis(day=2, phase="night", description="女巫毒错",
                              impact="negative", affected_team="villagers"),
             ],
             mistakes=[
@@ -182,27 +181,27 @@ class MistakeClassificationTests(unittest.TestCase):
     """Test _classify_mistakes helper."""
 
     def test_classify_poison(self):
-        types = _classify_mistakes(["毒杀了 P3"], 1, Role.WITCH, {})
+        types = _classify_mistakes(["毒杀了 P3"])
         self.assertIn(MISTAKE_POISONED_GOOD, types)
 
     def test_classify_fallback(self):
-        types = _classify_mistakes(["投票 使用了回退动作"], 1, Role.VILLAGER, {})
+        types = _classify_mistakes(["投票 使用了回退动作"])
         self.assertIn(MISTAKE_FALLBACK_USED, types)
 
     def test_classify_adjusted(self):
-        types = _classify_mistakes(["投票 被策略修正"], 1, Role.VILLAGER, {})
+        types = _classify_mistakes(["投票 被策略修正"])
         self.assertIn(MISTAKE_POLICY_ADJUSTED, types)
 
     def test_classify_shot(self):
-        types = _classify_mistakes(["开枪带走了 P3"], 1, Role.HUNTER, {})
+        types = _classify_mistakes(["开枪带走了 P3"])
         self.assertIn(MISTAKE_SHOT_GOOD, types)
 
     def test_classify_vote(self):
-        types = _classify_mistakes(["投票错误"], 1, Role.VILLAGER, {})
+        types = _classify_mistakes(["投票错误"])
         self.assertIn(MISTAKE_WRONG_VOTE, types)
 
     def test_classify_illegal_default(self):
-        types = _classify_mistakes(["未知错误"], 1, Role.VILLAGER, {})
+        types = _classify_mistakes(["未知错误"])
         self.assertIn(MISTAKE_ILLEGAL_ACTION, types)
 
 
@@ -210,16 +209,16 @@ class PlayerOutcomeTests(unittest.TestCase):
     """Test _player_outcome helper."""
 
     def test_wolf_wins_when_wolves_win(self):
-        self.assertEqual(_player_outcome(1, Role.WEREWOLF, "werewolves"), "win")
+        self.assertEqual(_player_outcome(Role.WEREWOLF, "werewolves"), "win")
 
     def test_villager_loses_when_wolves_win(self):
-        self.assertEqual(_player_outcome(1, Role.VILLAGER, "werewolves"), "lose")
+        self.assertEqual(_player_outcome(Role.VILLAGER, "werewolves"), "lose")
 
     def test_villager_wins_when_villagers_win(self):
-        self.assertEqual(_player_outcome(1, Role.VILLAGER, "villagers"), "win")
+        self.assertEqual(_player_outcome(Role.VILLAGER, "villagers"), "win")
 
     def test_wolf_loses_when_villagers_win(self):
-        self.assertEqual(_player_outcome(1, Role.WEREWOLF, "villagers"), "lose")
+        self.assertEqual(_player_outcome(Role.WEREWOLF, "villagers"), "lose")
 
 
 class EnhancedTurningPointTests(unittest.TestCase):

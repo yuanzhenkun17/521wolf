@@ -10,16 +10,18 @@ if TYPE_CHECKING:
 
 def determine_winner(engine: GameEngine) -> Winner | None:
     alive_wolves = [
-        player for player in engine.state.players.values() if player.alive and player.team is Team.WEREWOLVES
+        player for player in engine.state.players.values() if player.alive and player.role.is_wolf()
     ]
     alive_villagers = [
         player for player in engine.state.players.values() if player.alive and player.team is Team.VILLAGERS
     ]
-    alive_gods = [player for player in engine.state.players.values() if player.alive and player.team is Team.GODS]
-    alive_good_players = alive_villagers + alive_gods
+    alive_gods = [
+        player for player in engine.state.players.values() if player.alive and player.team is Team.GODS
+    ]
+    alive_good = [p for p in engine.state.players.values() if p.alive and p.role.is_good()]
     if not alive_wolves:
         return Winner.VILLAGERS
-    if not alive_villagers or not alive_gods or len(alive_wolves) >= len(alive_good_players):
+    if not alive_villagers or not alive_gods or len(alive_wolves) >= len(alive_good):
         return Winner.WEREWOLVES
     return None
 

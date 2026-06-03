@@ -229,7 +229,6 @@ class UiBackendTests(unittest.TestCase):
                 "alternatives": [],
                 "rejected_reasons": [],
                 "selected_skills": [],
-                "memory_refs": [],
                 "belief_snapshot": {},
                 "memory_summary": [],
                 "raw_output": "{}",

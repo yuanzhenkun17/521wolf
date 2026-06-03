@@ -7,6 +7,7 @@ persist each decision for post-game review and leaderboard evaluation.
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,13 +33,11 @@ class DecisionRecord:
     alternatives: list[int] = field(default_factory=list)
     rejected_reasons: list[str] = field(default_factory=list)
     selected_skills: list[str] = field(default_factory=list)
-    memory_refs: list[str] = field(default_factory=list)
-    belief_snapshot: dict = field(default_factory=dict)
     memory_summary: list[str] = field(default_factory=list)
     raw_output: str = ""
     errors: list[str] = field(default_factory=list)
     policy_adjustments: list[str] = field(default_factory=list)
-    source: Literal["llm", "fallback", "policy_adjusted", "tot", "got"] = "llm"
+    source: Literal["llm", "llm_error", "fallback", "policy_adjusted", "tot", "got"] = "llm"
 
     def to_dict(self) -> dict:
         return {
@@ -57,8 +56,6 @@ class DecisionRecord:
             "alternatives": self.alternatives,
             "rejected_reasons": self.rejected_reasons,
             "selected_skills": self.selected_skills,
-            "memory_refs": self.memory_refs,
-            "belief_snapshot": self.belief_snapshot,
             "memory_summary": self.memory_summary,
             "raw_output": self.raw_output,
             "errors": self.errors,
@@ -68,12 +65,19 @@ class DecisionRecord:
 
 
 class AgentDecisionRecorder:
-    def __init__(self, stream_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        stream_path: str | Path | None = None,
+        conn: sqlite3.Connection | None = None,
+        game_id: str | None = None,
+    ) -> None:
         self.records: list[DecisionRecord] = []
         self._stream_path: Path | None = Path(stream_path) if stream_path else None
         if self._stream_path:
             self._stream_path.parent.mkdir(parents=True, exist_ok=True)
             self._stream_path.touch()
+        self._conn = conn
+        self._game_id = game_id
 
     def record(self, decision: DecisionRecord) -> None:
         self.records.append(decision)
@@ -81,6 +85,36 @@ class AgentDecisionRecorder:
             line = json.dumps(decision.to_dict(), ensure_ascii=False, sort_keys=True)
             with self._stream_path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
+        if self._conn is not None and self._game_id is not None:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO decisions "
+                "(id, game_id, seat, role, day, phase, action_type, "
+                "selected_target, selected_choice, public_text, private_reasoning, "
+                "confidence, alternatives, rejected_reasons, selected_skills, "
+                "raw_output, source, policy_adjustments, errors, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                (
+                    decision.decision_id,
+                    self._game_id,
+                    decision.player_id or 0,
+                    decision.role,
+                    decision.day,
+                    decision.phase,
+                    decision.action_type.value,
+                    decision.selected_target,
+                    decision.selected_choice,
+                    decision.public_text,
+                    decision.private_reasoning,
+                    decision.confidence,
+                    json.dumps(decision.alternatives, ensure_ascii=False),
+                    json.dumps(decision.rejected_reasons, ensure_ascii=False),
+                    json.dumps(decision.selected_skills, ensure_ascii=False),
+                    decision.raw_output,
+                    decision.source,
+                    json.dumps(decision.policy_adjustments, ensure_ascii=False),
+                    json.dumps(decision.errors, ensure_ascii=False),
+                ),
+            )
 
     def to_jsonl(self) -> str:
         lines = [json.dumps(record.to_dict(), ensure_ascii=False, sort_keys=True) for record in self.records]
@@ -91,3 +125,4 @@ class AgentDecisionRecorder:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(self.to_jsonl(), encoding="utf-8")
         return output
+

@@ -8,18 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from agent.common import beijing_now_iso, beijing_now_str
+from agent.common.errors import is_rate_limit_error as _is_rate_limit_error
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
-from agent.learning.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
+from agent.learning.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
 from agent.infrastructure.llm import AsyncRateLimiter
 from engine.config import STANDARD_12
 
 _log = logging.getLogger(__name__)
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    """Check if an exception is a 429 rate limit error."""
-    msg = str(exc).lower()
-    return "429" in msg or "rate limit" in msg or "too many requests" in msg
 
 
 @dataclass(slots=True)

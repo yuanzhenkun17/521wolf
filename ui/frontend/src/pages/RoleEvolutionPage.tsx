@@ -35,7 +35,7 @@ import {
   type EvolutionRunStatus,
   type BatchEvolutionRunStatus,
   type GameArchive,
-  type SelfplayGameSummary,
+  type EvolutionGameSummary,
 } from "../api";
 import { ArchivedGameDetail } from "../components/ArchivedGameDetail";
 import { Badge } from "../components/ui/badge";
@@ -89,7 +89,7 @@ export function RoleEvolutionPage() {
   const [batchRejecting, setBatchRejecting] = useState(false);
   const [pollExhausted, setPollExhausted] = useState(false);
   const [trainingGameRunId, setTrainingGameRunId] = useState<string | null>(null);
-  const [trainingGameList, setTrainingGameList] = useState<SelfplayGameSummary[]>([]);
+  const [trainingGameList, setTrainingGameList] = useState<EvolutionGameSummary[]>([]);
   const [viewingTrainingGameId, setViewingTrainingGameId] = useState<string | null>(null);
   const [trainingEvents, setTrainingEvents] = useState<Record<string, unknown>[]>([]);
   const [trainingDecisions, setTrainingDecisions] = useState<Record<string, unknown>[]>([]);
@@ -99,7 +99,7 @@ export function RoleEvolutionPage() {
   // Battle game viewing state
   const [battleRunId, setBattleRunId] = useState<string | null>(null);
   const [battleSide, setBattleSide] = useState<"baseline" | "candidate">("baseline");
-  const [battleGameList, setBattleGameList] = useState<SelfplayGameSummary[]>([]);
+  const [battleGameList, setBattleGameList] = useState<EvolutionGameSummary[]>([]);
   const [viewingBattleGameId, setViewingBattleGameId] = useState<string | null>(null);
   const [battleEvents, setBattleEvents] = useState<Record<string, unknown>[]>([]);
   const [battleDecisions, setBattleDecisions] = useState<Record<string, unknown>[]>([]);
@@ -221,7 +221,7 @@ export function RoleEvolutionPage() {
   useEffect(() => {
     if (!activeRun || PROMOTED_STATUSES.has(activeRun.status)) return;
 
-    const es = new EventSource(`/api/role-evolution/${activeRun.run_id}/events`);
+    const es = new EventSource(`/api/evolution-runs/${activeRun.run_id}/events`);
     sseRef.current = es;
 
     es.onmessage = (ev) => {
@@ -249,7 +249,7 @@ export function RoleEvolutionPage() {
   useEffect(() => {
     if (!activeBatch || PROMOTED_STATUSES.has(activeBatch.status)) return;
 
-    const es = new EventSource(`/api/role-evolution/batch/${activeBatch.batch_id}/events`);
+    const es = new EventSource(`/api/evolution-runs/${activeBatch.batch_id}/events`);
     batchSseRef.current = es;
 
     es.onmessage = (ev) => {
@@ -1338,7 +1338,7 @@ function TrainingGameListPanel({
   onClose,
 }: {
   runId: string;
-  games: SelfplayGameSummary[];
+  games: EvolutionGameSummary[];
   loading: boolean;
   isRunning: boolean;
   onViewGame: (runId: string, gameId: string) => void;

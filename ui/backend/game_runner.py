@@ -152,9 +152,13 @@ class GameManager:
         cursor = 0
         try:
             roles = random_standard_roles(seed=game.seed)
-            game.decision_recorder = AgentDecisionRecorder(
-                stream_path=self._game_dir(game.log_name) / "agent_decisions.jsonl",
-            )
+            # Open SQLite connection for this game
+            from agent.infrastructure.storage.schema import get_connection
+            from agent.common.paths import DEFAULT as DEFAULT_PATHS
+            db_path = DEFAULT_PATHS.data_dir / "wolf.db"
+            game_conn = get_connection(db_path)
+
+            game.decision_recorder = AgentDecisionRecorder(conn=game_conn, game_id=game.game_id)
             game.trace_recorder = AgentTraceRecorder()
             client = load_llm_client()
             game_config = GameConfig(
@@ -177,6 +181,7 @@ class GameManager:
                 ),
                 config=game_config,
                 log_stream_path=str(game_dir / "game_events.jsonl"),
+                conn=game_conn, game_id=game.game_id,
             )
             task = asyncio.create_task(game.engine.run_until_finished(max_days=game.max_days))
             while not task.done():
@@ -185,7 +190,7 @@ class GameManager:
             winner = await task
             cursor = await self._publish_new_entries(game, cursor)
             game.winner = winner.value
-            # game_events.jsonl and agent_decisions.jsonl already written via streaming
+            # game_events.jsonl already written via streaming; decisions in archive.json
             if game.trace_recorder is not None:
                 game.trace_recorder.flush(
                     game_id=game.log_name,
@@ -196,6 +201,26 @@ class GameManager:
                     winner=game.winner,
                     public_events=game.events,
                 )
+            # Write game + player records to SQLite
+            from agent.infrastructure.storage.game_store import GameStore
+            gs = GameStore(game_conn)
+            player_roles_dict = {pid: r.value for pid, r in roles.items()}
+            deaths = [
+                {"player_id": d.player_id, "cause": d.cause.value if hasattr(d.cause, "value") else str(d.cause), "day": d.day}
+                for d in game.engine.state.deaths
+            ]
+            gs.insert_game(
+                game_id=game.game_id,
+                seed=game.seed or 0,
+                config={},
+                winner=game.winner,
+                started_at="",
+                total_rounds=getattr(game.engine.state, "day", 0) or 0,
+                public_events=[e.to_dict() for e in game.engine.state.events],
+                final_state={"player_roles": player_roles_dict, "winner": game.winner},
+            )
+            gs.insert_players(game.game_id, player_roles_dict, deaths=deaths)
+            game_conn.close()
             game.status = "completed"
             done_snapshot = self.snapshot(game, include_events=False)
             done_snapshot["decisions"] = self._decision_dicts(game)
@@ -269,21 +294,17 @@ class GameManager:
         return self._read_decisions(game.log_name)
 
     def _read_decisions(self, game_id: str) -> list[dict[str, Any]]:
-        path = self._decisions_path(game_id)
-        if path is None:
+        archive_path = self._archive_path(game_id)
+        if archive_path is None:
             return []
-        decisions: list[dict[str, Any]] = []
         try:
-            for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                if not line.strip():
-                    continue
-                value = json.loads(line)
-                if isinstance(value, dict):
-                    value.setdefault("index", index)
-                    decisions.append(value)
+            archive = json.loads(archive_path.read_text(encoding="utf-8"))
+            return [
+                {**d, "index": idx}
+                for idx, d in enumerate(archive.get("decisions", []), start=1)
+            ]
         except (OSError, json.JSONDecodeError):
             return []
-        return decisions
 
     def _winner_from_events(self, events: list[dict[str, Any]]) -> str | None:
         for event in reversed(events):
@@ -337,18 +358,16 @@ class GameManager:
         if not roles:
             return None
 
-        # Read agent decisions, grouped by player_id
-        decisions_path = self._decisions_path(game_id)
+        # Read agent decisions from archive, grouped by player_id
+        archive_path = self._archive_path(game_id)
         agent_decisions: dict[int, list[dict]] = {}
-        if decisions_path is not None:
+        if archive_path is not None:
             try:
-                for line in decisions_path.read_text(encoding="utf-8").splitlines():
-                    if not line.strip():
-                        continue
-                    value = json.loads(line)
-                    pid = value.get("player_id")
+                archive = json.loads(archive_path.read_text(encoding="utf-8"))
+                for d in archive.get("decisions", []):
+                    pid = d.get("player_id")
                     if pid is not None:
-                        agent_decisions.setdefault(int(pid), []).append(value)
+                        agent_decisions.setdefault(int(pid), []).append(d)
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -388,9 +407,6 @@ class GameManager:
                 return path
         return None
 
-    def _decisions_path(self, game_id: str) -> Path | None:
-        path = self._game_dir(game_id) / "agent_decisions.jsonl"
-        return path if path.exists() else None
 
     def _archive_path(self, game_id: str) -> Path | None:
         path = self._game_dir(game_id) / "archive.json"

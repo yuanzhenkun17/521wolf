@@ -68,7 +68,6 @@ evolution:
         ],
         skills=skills,
         role="seer",
-        window=2,
     )
 
     prompt = messages[1]["content"]

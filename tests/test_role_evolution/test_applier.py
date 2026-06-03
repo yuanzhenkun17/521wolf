@@ -67,6 +67,36 @@ def _make_skill_content(
     )
 
 
+def _make_created_skill_content(
+    name: str = "night_kill",
+    role: str = "werewolf",
+    applicable_actions: list[str] | None = None,
+    allowed_actions: list[str] | None = None,
+    body: str = "Use this focused rule only when the evidence matches.",
+) -> str:
+    """Build a valid newly-created skill markdown file."""
+    if applicable_actions is None:
+        applicable_actions = ["werewolf_kill"]
+    if allowed_actions is None:
+        allowed_actions = ["append_rule", "rewrite_section", "deprecate_rule"]
+    action_lines = "\n".join(f"  - {a}" for a in applicable_actions)
+    allowed_lines = "\n".join(f"    - {a}" for a in allowed_actions)
+    return (
+        f"---\n"
+        f"name: {name}\n"
+        f"role: {role}\n"
+        f"applicable_actions:\n"
+        f"{action_lines}\n"
+        f"evolution:\n"
+        f"  enabled: true\n"
+        f"  allowed_actions:\n"
+        f"{allowed_lines}\n"
+        f"---\n"
+        f"\n"
+        f"{body}\n"
+    )
+
+
 def _make_proposal(
     proposal_id: str,
     target_file: str,
@@ -300,6 +330,90 @@ class ApplierValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(new_skills, current)
         self.assertEqual(diffs, [])
 
+    async def test_rejects_new_file_without_create_skill_action(self):
+        """A proposal cannot create a new file unless action_type=create_skill."""
+        current: dict[str, str] = {}
+        new_file = _make_created_skill_content()
+        proposal = _make_proposal(
+            "p1",
+            "night_kill.md",
+            action_type="append_rule",
+        )
+
+        new_skills, diffs = await self._run_with_llm_output(
+            current,
+            {"night_kill.md": new_file},
+            [proposal],
+        )
+
+        self.assertEqual(new_skills, current)
+        self.assertEqual(diffs, [])
+
+    async def test_rejects_create_skill_with_wrong_front_matter_role(self):
+        """create_skill must produce a file whose front matter role matches the consolidation role."""
+        current: dict[str, str] = {}
+        new_file = _make_created_skill_content(role="seer")
+        proposal = _make_proposal(
+            "p1",
+            "night_kill.md",
+            action_type="create_skill",
+        )
+
+        new_skills, diffs = await self._run_with_llm_output(
+            current,
+            {"night_kill.md": new_file},
+            [proposal],
+            role="werewolf",
+        )
+
+        self.assertEqual(new_skills, current)
+        self.assertEqual(diffs, [])
+
+    async def test_rejects_create_skill_with_role_prefixed_target_path(self):
+        """Role versions store role-local skill paths, not role-prefixed paths."""
+        current: dict[str, str] = {}
+        new_file = _make_created_skill_content()
+        proposal = _make_proposal(
+            "p1",
+            "werewolf/night_kill.md",
+            action_type="create_skill",
+        )
+
+        new_skills, diffs = await self._run_with_llm_output(
+            current,
+            {"werewolf/night_kill.md": new_file},
+            [proposal],
+            role="werewolf",
+        )
+
+        self.assertEqual(new_skills, current)
+        self.assertEqual(diffs, [])
+
+    async def test_rejects_create_skill_when_role_skill_cap_exceeded(self):
+        """A role cannot grow beyond the active skill cap in one candidate set."""
+        current = {
+            f"werewolf/skill_{i}.md": _make_skill_content(name=f"skill_{i}")
+            for i in range(6)
+        }
+        new_file = _make_created_skill_content(name="night_kill")
+        proposal = _make_proposal(
+            "p1",
+            "night_kill.md",
+            action_type="create_skill",
+        )
+        llm_files = dict(current)
+        llm_files["night_kill.md"] = new_file
+
+        new_skills, diffs = await self._run_with_llm_output(
+            current,
+            llm_files,
+            [proposal],
+            role="werewolf",
+        )
+
+        self.assertEqual(new_skills, current)
+        self.assertEqual(diffs, [])
+
 
 class ApplierSmokeTest(unittest.IsolatedAsyncioTestCase):
     """Tests the end-to-end smoke test path."""
@@ -329,6 +443,62 @@ class ApplierSmokeTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(diffs), 0)
         self.assertEqual(diffs[0].filename, "werewolf/strategy.md")
         self.assertEqual(diffs[0].action, "modified")
+
+    async def test_allows_unchanged_untargeted_files_in_full_output(self):
+        """LLM may return full file maps as long as untargeted files are unchanged."""
+        current = {
+            "werewolf/strategy.md": _make_skill_content(name="strategy", body="Old body."),
+            "werewolf/backup.md": _make_skill_content(name="backup", body="Backup body."),
+        }
+        updated = _make_skill_content(name="strategy", body="New focused body.")
+        proposal = _make_proposal("p1", "werewolf/strategy.md", confidence=0.9)
+        adapter = _make_fake_model_adapter(
+            _make_llm_response(
+                {
+                    "werewolf/strategy.md": updated,
+                    "werewolf/backup.md": current["werewolf/backup.md"],
+                },
+                [{"filename": "werewolf/strategy.md", "action": "modified", "description": "update"}],
+            )
+        )
+
+        new_skills, diffs = await apply_proposals(
+            current,
+            _make_consolidation("werewolf", [proposal]),
+            adapter,
+        )
+
+        self.assertEqual(new_skills["werewolf/strategy.md"], updated)
+        self.assertEqual(new_skills["werewolf/backup.md"], current["werewolf/backup.md"])
+        self.assertEqual(len(diffs), 1)
+
+    async def test_create_skill_from_empty_baseline(self):
+        """An empty role baseline can grow its first skill through create_skill."""
+        current: dict[str, str] = {}
+        created = _make_created_skill_content(name="night_kill")
+        proposal = _make_proposal(
+            "p1",
+            "night_kill.md",
+            action_type="create_skill",
+            content="Create a focused night-kill selection skill.",
+            confidence=0.9,
+        )
+        adapter = _make_fake_model_adapter(
+            _make_llm_response(
+                {"night_kill.md": created},
+                [{"filename": "night_kill.md", "action": "created", "description": "new skill"}],
+            )
+        )
+
+        new_skills, diffs = await apply_proposals(
+            current,
+            _make_consolidation("werewolf", [proposal]),
+            adapter,
+        )
+
+        self.assertEqual(new_skills, {"night_kill.md": created})
+        self.assertEqual(len(diffs), 1)
+        self.assertEqual(diffs[0].action, "created")
 
 
 if __name__ == "__main__":

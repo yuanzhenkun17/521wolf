@@ -16,15 +16,13 @@ from typing import Any, Callable
 
 from agent.learning.evolution.applier import apply_proposals
 from agent.learning.evolution.battle import _run_battle, _stage_battling
-from agent.learning.evolution.config import build_baseline_config
-from agent.learning.evolution.invocation import call_selfplay_runner
+from agent.learning.evolution.config import build_baseline_config, build_composite_skill_dir
 from agent.learning.evolution.models import (
     EvolutionRun,
     EvolutionStatus,
     SkillConsolidation,
     SkillVersionConfig,
 )
-from agent.learning.evolution.workspace import build_composite_skill_dir
 from agent.learning.evolution.state import (
     TERMINAL_STATUSES,
     load_run_state,
@@ -57,7 +55,7 @@ class BaselineChangedError(Exception):
 
 
 # Scan / recovery
-def scan_active_runs(store: VersionStore) -> list[dict]:
+def scan_active_runs() -> list[dict]:
     """Scan all ``runs/evolution/*/state.json`` and return runs with non-terminal status."""
     active: list[dict] = []
     evo_root = DEFAULT_PATHS.evolution_dir
@@ -92,7 +90,7 @@ def recover_interrupted_runs(store: VersionStore) -> list[dict]:
         EvolutionStatus.BATTLING,
     }
     interrupted: list[dict] = []
-    for state in scan_active_runs(store):
+    for state in scan_active_runs():
         status = state.get("status", "unknown")
         if status not in _ACTIVE_STATUSES:
             continue
@@ -108,10 +106,47 @@ def recover_interrupted_runs(store: VersionStore) -> list[dict]:
     return interrupted
 
 
+# ---------------------------------------------------------------------------
+# Stage helpers (used to resolve start_from labels)
+# ---------------------------------------------------------------------------
+
+_ASYNC_STAGES = [
+    EvolutionStatus.TRAINING,
+    EvolutionStatus.CONSOLIDATING,
+    EvolutionStatus.APPLYING,
+    EvolutionStatus.BATTLING,
+]
+
+
+def _resolve_start_from(
+    start_from: str | None,
+    status: str,
+) -> str:
+    """Map a *start_from* label (or run status) to the stage to begin from."""
+    _LABEL_MAP = {
+        "training": EvolutionStatus.TRAINING,
+        "consolidating": EvolutionStatus.CONSOLIDATING,
+        "applying": EvolutionStatus.APPLYING,
+        "battling": EvolutionStatus.BATTLING,
+    }
+    if start_from and start_from in _LABEL_MAP:
+        return _LABEL_MAP[start_from]
+    if status in _LABEL_MAP:
+        return status
+    return EvolutionStatus.TRAINING
+
+
+# ---------------------------------------------------------------------------
 # Main pipeline
+# ---------------------------------------------------------------------------
+
+
 async def run_evolution(
     store: VersionStore,
-    role: str,
+    role: str | None = None,
+    *,
+    run_id: str | None = None,
+    start_from: str = "training",
     training_games: int = 20,
     battle_games: int = 10,
     model_adapter: ModelAdapter | None = None,
@@ -124,16 +159,26 @@ async def run_evolution(
     consolidator: Callable | None = None,
     applier: Callable | None = None,
     battle_runner: Callable | None = None,
-    paths: PathConfig = DEFAULT_PATHS,
 ) -> EvolutionRun:
-    """Run the full evolution pipeline for *role*.
+    """Run the evolution pipeline for *role*.
+
+    When *run_id* is ``None`` a fresh run is created and all stages are
+    executed from the beginning (or from *start_from*).
+
+    When *run_id* is provided an existing run is loaded from disk.  By
+    default the run resumes from the stage where it last failed.  Pass
+    *start_from* explicitly to override that (e.g. ``"consolidating"`` to
+    re-run consolidation using existing training data).
+
+    Valid *start_from* values: ``"training"``, ``"consolidating"``,
+    ``"applying"``, ``"battling"``.
 
     Returns the :class:`EvolutionRun` in its terminal or reviewing state.
     On failure the run is persisted with ``status=failed`` and re-raised.
     """
     # Lazy defaults — avoid import cycles at module level
     if selfplay_runner is None:
-        from agent.learning.selfplay import run_selfplay as _default_selfplay
+        from agent.learning.evolution.games import run_selfplay as _default_selfplay
         selfplay_runner = _default_selfplay
     if consolidator is None:
         from agent.learning.evolution.consolidation import consolidate_for_role as _default_consolidator
@@ -143,14 +188,6 @@ async def run_evolution(
     if battle_runner is None:
         battle_runner = _run_battle
 
-    # Freeze the baseline config for the whole run.  This avoids a later
-    # baseline change leaking into training or battle for the same candidate.
-    baseline_config = baseline_config or build_baseline_config(store)
-    try:
-        parent_hash = baseline_config.role_versions[role]
-    except KeyError as exc:
-        raise KeyError(f"Role '{role}' not found in baseline config") from exc
-    store.load_version(role, parent_hash)
     llm_rate_limiter = llm_rate_limiter or default_rate_limiter_from_env()
     limited_model = (
         limit_model_adapter(model_adapter, llm_semaphore)
@@ -159,47 +196,100 @@ async def run_evolution(
     if limited_model is not None:
         limited_model = rate_limit_model_adapter(limited_model, llm_rate_limiter)
 
-    run_id = f"evo_{uuid.uuid4().hex[:12]}"
-    rd = run_dir(DEFAULT_PATHS, run_id)
-    rd.mkdir(parents=True, exist_ok=True)
+    # -- Load existing run or create fresh ---------------------------------
+    if run_id is not None:
+        state = load_run_state(DEFAULT_PATHS, run_id)
+        if state is None:
+            raise KeyError(f"Run {run_id} not found on disk")
 
-    run = EvolutionRun(
-        run_id=run_id,
-        role=role,
-        parent_hash=parent_hash,
-        status=EvolutionStatus.QUEUED,
-        training_games=training_games,
-        battle_games=battle_games,
-        baseline_config=baseline_config,
-    )
-    save_run_state(run)
+        failed_stage = state.get("failed_stage") or state.get("status")
+        if failed_stage in TERMINAL_STATUSES and failed_stage != EvolutionStatus.FAILED:
+            raise InvalidRunStateError(f"Run {run_id} is in terminal state {failed_stage}")
 
+        if role is None:
+            role = state["role"]
+        training_games = state.get("training_games", training_games)
+        battle_games = state.get("battle_games", battle_games)
+
+        baseline_data = state.get("baseline_config")
+        baseline_config = (
+            SkillVersionConfig.from_dict(baseline_data)
+            if baseline_data else build_baseline_config(store)
+        )
+        parent_hash = state.get("parent_hash", "")
+        run = EvolutionRun(
+            run_id=run_id,
+            role=role,
+            parent_hash=parent_hash,
+            status=EvolutionStatus.TRAINING,
+            training_games=training_games,
+            battle_games=battle_games,
+            baseline_config=baseline_config,
+        )
+        run.training_run_id = state.get("training_run_id")
+        run.training_output_dir = state.get("training_output_dir")
+        run.candidate_hash = state.get("candidate_hash")
+
+        # Determine starting stage
+        stage = _resolve_start_from(start_from, failed_stage)
+    else:
+        # Fresh run — validate role is provided
+        if role is None:
+            raise ValueError("role is required when run_id is not provided")
+
+        baseline_config = baseline_config or build_baseline_config(store)
+        try:
+            parent_hash = baseline_config.role_versions[role]
+        except KeyError as exc:
+            raise KeyError(f"Role '{role}' not found in baseline config") from exc
+        store.load_version(role, parent_hash)
+
+        run_id = f"evo_{uuid.uuid4().hex[:12]}"
+        rd = run_dir(DEFAULT_PATHS, run_id)
+        rd.mkdir(parents=True, exist_ok=True)
+
+        run = EvolutionRun(
+            run_id=run_id,
+            role=role,
+            parent_hash=parent_hash,
+            status=EvolutionStatus.QUEUED,
+            training_games=training_games,
+            battle_games=battle_games,
+            baseline_config=baseline_config,
+        )
+        save_run_state(run)
+
+        stage = _resolve_start_from(start_from, EvolutionStatus.QUEUED)
+
+    # -- Execute pipeline from *stage* onward ------------------------------
     try:
-        # Stage 1: training
-        run = await _stage_training(
-            run, store, training_games, limited_model, game_concurrency,
-            llm_semaphore, llm_rate_limiter,
-            selfplay_runner, on_progress,
-        )
+        if stage == EvolutionStatus.TRAINING:
+            run = await _stage_training(
+                run, store, training_games, limited_model, game_concurrency,
+                llm_semaphore, llm_rate_limiter,
+                selfplay_runner, on_progress,
+            )
 
-        # Stage 2: consolidating
-        run = await _stage_consolidating(
-            run, store, limited_model, consolidator, on_progress,
-        )
+        if stage in (EvolutionStatus.TRAINING, EvolutionStatus.CONSOLIDATING):
+            run = await _stage_consolidating(
+                run, store, limited_model, consolidator, on_progress,
+            )
 
-        # Stage 3: applying
-        run = await _stage_applying(
-            run, store, limited_model, applier,
-        )
+        if stage in (
+            EvolutionStatus.TRAINING,
+            EvolutionStatus.CONSOLIDATING,
+            EvolutionStatus.APPLYING,
+        ):
+            run = await _stage_applying(
+                run, store, limited_model, applier,
+            )
 
-        # Stage 4: battling
         run = await _stage_battling(
             run, store, battle_games, limited_model, game_concurrency,
             llm_semaphore, llm_rate_limiter,
             selfplay_runner, battle_runner, on_progress,
         )
 
-        # Stage 5: reviewing
         run.status = EvolutionStatus.REVIEWING
         save_run_state(run)
         _notify(on_progress, "reviewing", {"run_id": run.run_id})
@@ -212,14 +302,19 @@ async def run_evolution(
         save_run_state(run)
         path = state_path(DEFAULT_PATHS, run.run_id)
         try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-            state["failed_stage"] = failed_stage
-            _write_json(path, state)
+            s = json.loads(path.read_text(encoding="utf-8"))
+            s["failed_stage"] = failed_stage
+            _write_json(path, s)
         except Exception:
             _log.debug("failed to patch failed_stage for %s", run.run_id, exc_info=True)
         raise
 
     return run
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible thin wrappers
+# ---------------------------------------------------------------------------
 
 
 async def resume_evolution(
@@ -237,117 +332,23 @@ async def resume_evolution(
 ) -> EvolutionRun:
     """Resume a failed evolution run from the failed stage.
 
+    Thin wrapper around :func:`run_evolution` with ``run_id`` set.
     Training and battle games that already completed are automatically
     skipped by the selfplay checkpoint mechanism.
     """
-    state = load_run_state(DEFAULT_PATHS, run_id)
-    if state is None:
-        raise KeyError(f"Run {run_id} not found on disk")
-
-    failed_stage = state.get("failed_stage") or state.get("status")
-    if failed_stage in TERMINAL_STATUSES and failed_stage != EvolutionStatus.FAILED:
-        raise InvalidRunStateError(f"Run {run_id} is in terminal state {failed_stage}")
-
-    role = state["role"]
-    training_games = state.get("training_games", 20)
-    battle_games = state.get("battle_games", 10)
-
-    # Reconstruct EvolutionRun from saved state
-    from agent.learning.evolution.models import SkillVersionConfig
-    baseline_data = state.get("baseline_config")
-    baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(store)
-
-    parent_hash = state.get("parent_hash", "")
-    run = EvolutionRun(
+    return await run_evolution(
+        store,
         run_id=run_id,
-        role=role,
-        parent_hash=parent_hash,
-        status=EvolutionStatus.TRAINING,
-        training_games=training_games,
-        battle_games=battle_games,
-        baseline_config=baseline_config,
+        model_adapter=model_adapter,
+        game_concurrency=game_concurrency,
+        llm_semaphore=llm_semaphore,
+        llm_rate_limiter=llm_rate_limiter,
+        on_progress=on_progress,
+        selfplay_runner=selfplay_runner,
+        consolidator=consolidator,
+        applier=applier,
+        battle_runner=battle_runner,
     )
-    run.training_run_id = state.get("training_run_id")
-    run.training_output_dir = state.get("training_output_dir")
-    run.candidate_hash = state.get("candidate_hash")
-
-    # Lazy defaults
-    if selfplay_runner is None:
-        from agent.learning.selfplay import run_selfplay as _default_selfplay
-        selfplay_runner = _default_selfplay
-    if consolidator is None:
-        from agent.learning.evolution.consolidation import consolidate_for_role as _default_consolidator
-        consolidator = _default_consolidator
-    if applier is None:
-        applier = apply_proposals
-    if battle_runner is None:
-        battle_runner = _run_battle
-
-    llm_rate_limiter = llm_rate_limiter or default_rate_limiter_from_env()
-    limited_model = (
-        limit_model_adapter(model_adapter, llm_semaphore)
-        if model_adapter is not None else None
-    )
-    if limited_model is not None:
-        limited_model = rate_limit_model_adapter(limited_model, llm_rate_limiter)
-
-    # Determine which stages to skip
-    stage_order = [
-        EvolutionStatus.TRAINING,
-        EvolutionStatus.CONSOLIDATING,
-        EvolutionStatus.APPLYING,
-        EvolutionStatus.BATTLING,
-    ]
-    try:
-        resume_index = stage_order.index(failed_stage)
-    except ValueError:
-        resume_index = 0
-
-    try:
-        if resume_index <= 0:
-            run = await _stage_training(
-                run, store, training_games, limited_model, game_concurrency,
-                llm_semaphore, llm_rate_limiter,
-                selfplay_runner, on_progress,
-            )
-
-        if resume_index <= 1:
-            run = await _stage_consolidating(
-                run, store, limited_model, consolidator, on_progress,
-            )
-
-        if resume_index <= 2:
-            run = await _stage_applying(
-                run, store, limited_model, applier,
-            )
-
-        if resume_index <= 3:
-            run = await _stage_battling(
-                run, store, battle_games, limited_model, game_concurrency,
-                llm_semaphore, llm_rate_limiter,
-                selfplay_runner, battle_runner, on_progress,
-            )
-
-        run.status = EvolutionStatus.REVIEWING
-        save_run_state(run)
-        _notify(on_progress, "reviewing", {"run_id": run.run_id})
-
-    except Exception as exc:
-        failed_stage_now = run.status
-        _log.exception("Resumed evolution run %s failed at stage %s", run.run_id, failed_stage_now)
-        run.status = EvolutionStatus.FAILED
-        run.errors.append(str(exc))
-        save_run_state(run)
-        path = state_path(DEFAULT_PATHS, run.run_id)
-        try:
-            s = json.loads(path.read_text(encoding="utf-8"))
-            s["failed_stage"] = failed_stage_now
-            _write_json(path, s)
-        except Exception:
-            pass
-        raise
-
-    return run
 
 
 async def rerun_from_consolidation(
@@ -362,70 +363,24 @@ async def rerun_from_consolidation(
 ) -> EvolutionRun:
     """Re-run from consolidation stage using existing training data.
 
-    This reuses the mid-memory from a completed training run and
-    re-runs consolidation -> applying -> battling with the updated prompt.
+    Thin wrapper around :func:`run_evolution` with
+    ``run_id`` set and ``start_from="consolidating"``.
     """
-    state = load_run_state(DEFAULT_PATHS, run_id)
-    if state is None:
-        raise KeyError(f"Run {run_id} not found on disk")
-
-    role = state["role"]
-    training_games = state.get("training_games", 20)
-    battle_games = state.get("battle_games", 10)
-
-    from agent.learning.evolution.models import SkillVersionConfig
-    baseline_data = state.get("baseline_config")
-    baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(store)
-
-    parent_hash = state.get("parent_hash", "")
-    run = EvolutionRun(
+    return await run_evolution(
+        store,
         run_id=run_id,
-        role=role,
-        parent_hash=parent_hash,
-        status=EvolutionStatus.CONSOLIDATING,
-        training_games=training_games,
-        battle_games=battle_games,
-        baseline_config=baseline_config,
+        start_from="consolidating",
+        game_concurrency=game_concurrency,
+        llm_semaphore=llm_semaphore,
+        llm_rate_limiter=llm_rate_limiter,
+        on_progress=on_progress,
+        battle_runner=battle_runner,
     )
-    run.training_run_id = state.get("training_run_id")
-    run.training_output_dir = state.get("training_output_dir")
 
-    from agent.learning.evolution.consolidation import consolidate_for_role as _default_consolidator
-    if battle_runner is None:
-        battle_runner = _run_battle
 
-    llm_rate_limiter = llm_rate_limiter or default_rate_limiter_from_env()
-    if model_adapter is None:
-        from agent.api.factory import load_llm_client
-        model_adapter = load_llm_client()
-    limited_model = limit_model_adapter(model_adapter, llm_semaphore)
-    limited_model = rate_limit_model_adapter(limited_model, llm_rate_limiter)
-
-    from agent.learning.selfplay import run_selfplay as _default_selfplay
-
-    try:
-        run = await _stage_consolidating(
-            run, store, limited_model, _default_consolidator, on_progress,
-        )
-        run = await _stage_applying(
-            run, store, limited_model, apply_proposals,
-        )
-        run = await _stage_battling(
-            run, store, battle_games, limited_model, game_concurrency,
-            llm_semaphore, llm_rate_limiter,
-            _default_selfplay, battle_runner, on_progress,
-        )
-        run.status = EvolutionStatus.REVIEWING
-        save_run_state(run)
-        _notify(on_progress, "reviewing", {"run_id": run.run_id})
-    except Exception as exc:
-        _log.exception("Rerun from consolidation failed for %s", run_id)
-        run.status = EvolutionStatus.FAILED
-        run.errors.append(str(exc))
-        save_run_state(run)
-        raise
-
-    return run
+# ---------------------------------------------------------------------------
+# Pipeline stages
+# ---------------------------------------------------------------------------
 
 
 async def _stage_training(
@@ -444,7 +399,7 @@ async def _stage_training(
     save_run_state(run)
     _notify(on_progress, "training", {"run_id": run.run_id, "games": training_games})
 
-    from agent.learning.selfplay import SelfPlayConfig
+    from agent.learning.evolution.games import SelfPlayConfig
 
     output_run_dir = run_dir(DEFAULT_PATHS, run.run_id)
 
@@ -474,8 +429,7 @@ async def _stage_training(
         })
 
     try:
-        result = await call_selfplay_runner(
-            selfplay_runner,
+        result = await selfplay_runner(
             config,
             model=model_adapter,
             on_game_complete=_on_game,
@@ -517,6 +471,8 @@ async def _stage_consolidating(
         output_run_dir, run.role, model_adapter,
         run_id=run.run_id,
         parent_hash=run.parent_hash,
+        window=run.training_games,
+        max_proposals=3,
         skill_root=store.get_skill_dir(run.role, run.parent_hash),
         store=store,
     )
@@ -668,4 +624,3 @@ async def reject(run: EvolutionRun, store: VersionStore) -> None:
 
     run.status = EvolutionStatus.REJECTED
     save_run_state(run)
-

@@ -25,7 +25,7 @@ DEFAULT_ENV_PATH = Path(".env")
 
 
 class ModelAdapter(Protocol):
-    async def complete(self, messages: list[dict[str, str]], *, name: str = "") -> str:
+    async def complete(self, messages: list[dict[str, str]]) -> str:
         """Return assistant content for a chat-completion style request."""
 
 
@@ -56,7 +56,7 @@ class ChatCompletionClient:
                     )
         return self._client
 
-    async def complete(self, messages: list[dict[str, str]], *, name: str = "") -> str:
+    async def complete(self, messages: list[dict[str, str]]) -> str:
         client = await self._get_client()
         kwargs: dict = {
             "model": self.model,
@@ -86,9 +86,9 @@ class LimitedModelAdapter:
     inner: ModelAdapter
     semaphore: asyncio.Semaphore
 
-    async def complete(self, messages: list[dict[str, str]], *, name: str = "") -> str:
+    async def complete(self, messages: list[dict[str, str]]) -> str:
         async with self.semaphore:
-            return await self.inner.complete(messages, name=name)
+            return await self.inner.complete(messages)
 
 
 @dataclass
@@ -118,9 +118,9 @@ class RateLimitedModelAdapter:
     inner: ModelAdapter
     limiter: AsyncRateLimiter
 
-    async def complete(self, messages: list[dict[str, str]], *, name: str = "") -> str:
+    async def complete(self, messages: list[dict[str, str]]) -> str:
         await self.limiter.wait()
-        return await self.inner.complete(messages, name=name)
+        return await self.inner.complete(messages)
 
 
 def limit_model_adapter(

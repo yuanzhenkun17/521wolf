@@ -9,6 +9,7 @@ export interface GameConfig {
   skill_dir?: string;
   player_count?: number;
   role_versions?: Record<string, string>;  // {role: hash} per-role version selection
+  human_player_id?: number;  // 1-12, which player slot is human-controlled
 }
 
 export async function listGames(): Promise<GameSnapshot[]> {
@@ -43,16 +44,56 @@ export async function getGameReview(gameId: string): Promise<Record<string, unkn
   return response.json();
 }
 
-export async function getLeaderboard(): Promise<Record<string, unknown>> {
-  const response = await fetch("/api/leaderboards");
-  if (!response.ok) throw new Error("排行榜数据不可用");
-  return response.json();
-}
-
 export async function getGameArchive(gameId: string): Promise<GameArchive> {
   const response = await fetch(`/api/games/${gameId}/archive`);
   if (!response.ok) throw new Error("存档数据不可用");
   return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Human player action APIs
+// ---------------------------------------------------------------------------
+
+export type HumanActionPending = {
+  player_id: number;
+  action_type: string;
+  phase: string | null;
+  day: number;
+  role: string | null;
+  alive_players: number[];
+  candidates: number[];
+  metadata: Record<string, unknown>;
+  observation: {
+    role: string | null;
+    day: number;
+    alive_players: number[];
+  };
+};
+
+export type HumanActionSubmit = {
+  action_type: string;
+  target?: number | null;
+  choice?: string | null;
+  text?: string;
+};
+
+export async function getHumanAction(gameId: string): Promise<HumanActionPending | null> {
+  const response = await fetch(`/api/games/${gameId}/human-action`);
+  if (response.status === 204) return null;
+  if (!response.ok) throw new Error("无法读取人类玩家操作");
+  return response.json();
+}
+
+export async function submitHumanAction(gameId: string, action: HumanActionSubmit): Promise<void> {
+  const response = await fetch(`/api/games/${gameId}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(action),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail ?? "提交操作失败");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -192,11 +233,11 @@ export async function startRoleEvolution(
   llmConcurrency = 5,
   llmRpm = 60,
 ): Promise<{ run_id: string }> {
-  const response = await fetch("/api/role-evolution/start", {
+  const response = await fetch("/api/evolution-runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      role,
+      roles: [role],
       training_games: trainingGames,
       battle_games: battleGames,
       game_concurrency: gameConcurrency,
@@ -212,7 +253,7 @@ export async function startRoleEvolution(
 }
 
 export async function listRoleBatchEvolutionRuns(): Promise<BatchEvolutionRunStatus[]> {
-  const response = await fetch("/api/role-evolution/batches");
+  const response = await fetch("/api/evolution-runs");
   if (!response.ok) throw new Error("无法读取批量演化任务列表");
   const data = await response.json();
   return data.batches ?? [];
@@ -227,7 +268,7 @@ export async function startRoleBatchEvolution(config: {
   llmConcurrency: number;
   llmRpm: number;
 }): Promise<BatchEvolutionRunStatus> {
-  const response = await fetch("/api/role-evolution/batch/start", {
+  const response = await fetch("/api/evolution-runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -248,183 +289,84 @@ export async function startRoleBatchEvolution(config: {
 }
 
 export async function getRoleBatchEvolutionStatus(batchId: string): Promise<BatchEvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/batch/${batchId}/status`);
+  const response = await fetch(`/api/evolution-runs/${batchId}`);
   if (!response.ok) throw new Error("无法读取批量演化状态");
   return response.json();
 }
 
 export async function promoteRoleBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/batch/${batchId}/promote`, { method: "POST" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "批量推广失败");
-  }
-  return response.json();
+  return evolutionRunAction(batchId, "promote", "批量推广失败");
 }
 
 export async function rejectRoleBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/batch/${batchId}/reject`, { method: "POST" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "批量拒绝失败");
-  }
-  return response.json();
+  return evolutionRunAction(batchId, "reject", "批量拒绝失败");
 }
 
 export async function stopBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/batch/${batchId}/stop`, { method: "POST" });
-  if (!response.ok) throw new Error("无法暂停批量演化");
-  return response.json();
+  return evolutionRunAction(batchId, "stop", "无法暂停批量演化");
 }
 
 export async function terminateBatchEvolution(batchId: string): Promise<BatchEvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/batch/${batchId}/terminate`, { method: "POST" });
-  if (!response.ok) throw new Error("无法终止批量演化");
-  return response.json();
+  return evolutionRunAction(batchId, "terminate", "无法终止批量演化");
 }
 
 export async function listRoleEvolutionRuns(): Promise<EvolutionRunStatus[]> {
-  const response = await fetch("/api/role-evolution");
+  const response = await fetch("/api/evolution-runs");
   if (!response.ok) throw new Error("无法读取演化任务列表");
   const data = await response.json();
   return data.runs ?? [];
 }
 
 export async function getRoleEvolutionStatus(runId: string): Promise<EvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/${runId}/status`);
+  const response = await fetch(`/api/evolution-runs/${runId}`);
   if (!response.ok) throw new Error("无法读取演化状态");
   return response.json();
 }
 
 export async function stopRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/${runId}/stop`, { method: "POST" });
-  if (!response.ok) throw new Error("无法停止演化任务");
-  return response.json();
+  return evolutionRunAction(runId, "stop", "无法停止演化任务");
 }
 
 export async function resumeRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/${runId}/resume`, { method: "POST" });
-  if (!response.ok) throw new Error("无法恢复演化任务");
-  return response.json();
+  return evolutionRunAction(runId, "resume", "无法恢复演化任务");
 }
 
 export async function rerunConsolidation(runId: string): Promise<EvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/${runId}/rerun-consolidation`, { method: "POST" });
-  if (!response.ok) throw new Error("无法重新整合");
-  return response.json();
+  return evolutionRunAction(runId, "rerun_consolidation", "无法重新整合");
 }
 
 export async function terminateRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/${runId}/terminate`, { method: "POST" });
-  if (!response.ok) throw new Error("无法终止演化任务");
-  return response.json();
+  return evolutionRunAction(runId, "terminate", "无法终止演化任务");
 }
 
 export async function getRoleEvolutionDiff(runId: string): Promise<{ diffs: Array<{ filename: string; action: string; before: string | null; after: string | null }> }> {
-  const response = await fetch(`/api/role-evolution/${runId}/diff`);
+  const response = await fetch(`/api/evolution-runs/${runId}/diff`);
   if (!response.ok) throw new Error("无法读取变更清单");
   return response.json();
 }
 
 export async function promoteRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/${runId}/promote`, { method: "POST" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "推广失败");
-  }
-  return response.json();
+  return evolutionRunAction(runId, "promote", "推广失败");
 }
 
 export async function rejectRoleEvolution(runId: string): Promise<EvolutionRunStatus> {
-  const response = await fetch(`/api/role-evolution/${runId}/reject`, { method: "POST" });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "拒绝失败");
-  }
-  return response.json();
+  return evolutionRunAction(runId, "reject", "拒绝失败");
 }
 
-// ---------------------------------------------------------------------------
-// Selfplay APIs
-// ---------------------------------------------------------------------------
-
-export type SelfplayRun = {
-  run_id: string;
-  label: string;
-  status: "pending" | "running" | "paused" | "rate_limited" | "completed" | "failed";
-  num_games: number;
-  completed_games: number;
-  agent_version?: string;
-  artifact_run_id?: string;
-  skill_dir?: string;
-  max_days?: number;
-  enable_sheriff?: boolean;
-  enable_batch_dream?: boolean;
-  created_at: string;
-  results?: Record<string, unknown>;
-  error?: string;
-  retry_attempt?: number;
-  retry_total?: number;
-};
-
-export type SelfplayConfig = {
-  num_games: number;
-  agent_version?: string;
-  skill_dir?: string;
-  max_days?: number;
-  enable_sheriff?: boolean;
-  enable_batch_dream?: boolean;
-  label?: string;
-  game_concurrency?: number;
-  llm_concurrency?: number;
-  llm_rpm?: number;
-};
-
-export async function listSelfplayRuns(): Promise<SelfplayRun[]> {
-  const response = await fetch("/api/selfplay");
-  if (!response.ok) throw new Error("无法读取自对弈列表");
-  const data = await response.json();
-  return data.runs ?? data;
-}
-
-export async function getSelfplayRun(runId: string): Promise<SelfplayRun> {
-  const response = await fetch(`/api/selfplay/${runId}`);
-  if (!response.ok) throw new Error("无法读取自对弈状态");
-  return response.json();
-}
-
-export async function startSelfplayRun(config: SelfplayConfig): Promise<SelfplayRun> {
-  const response = await fetch("/api/selfplay", {
+async function evolutionRunAction<T>(runId: string, action: string, fallback: string): Promise<T> {
+  const response = await fetch(`/api/evolution-runs/${runId}/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(config),
+    body: JSON.stringify({ action }),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.detail ?? "无法启动自对弈");
+    throw new Error(data.detail ?? fallback);
   }
   return response.json();
 }
 
-export async function stopSelfplayRun(runId: string): Promise<SelfplayRun> {
-  const response = await fetch(`/api/selfplay/${runId}/stop`, { method: "POST" });
-  if (!response.ok) throw new Error("无法停止自对弈");
-  return response.json();
-}
-
-export async function resumeSelfplayRun(runId: string): Promise<SelfplayRun> {
-  const response = await fetch(`/api/selfplay/${runId}/resume`, { method: "POST" });
-  if (!response.ok) throw new Error("无法恢复自对弈");
-  return response.json();
-}
-
-export async function terminateSelfplayRun(runId: string): Promise<SelfplayRun> {
-  const response = await fetch(`/api/selfplay/${runId}/terminate`, { method: "POST" });
-  if (!response.ok) throw new Error("无法终止自对弈");
-  return response.json();
-}
-
-export type SelfplayGameSummary = {
+export type EvolutionGameSummary = {
   game_id: string;
   winner: string | null;
   day: number;
@@ -433,83 +375,56 @@ export type SelfplayGameSummary = {
   in_progress?: boolean;
 };
 
-export async function listSelfplayGames(runId: string): Promise<SelfplayGameSummary[]> {
-  const response = await fetch(`/api/selfplay/${runId}/games`);
-  if (!response.ok) throw new Error("无法读取对局列表");
-  const data = await response.json();
-  return data.games ?? [];
-}
-
-export async function getSelfplayGameEvents(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`/api/selfplay/${runId}/games/${gameId}/events`);
-  if (!response.ok) throw new Error("无法读取对局事件");
-  const data = await response.json();
-  return data.events ?? [];
-}
-
-export async function getSelfplayGameDecisions(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`/api/selfplay/${runId}/games/${gameId}/decisions`);
-  if (!response.ok) throw new Error("无法读取决策记录");
-  const data = await response.json();
-  return data.decisions ?? [];
-}
-
-export async function getSelfplayGameArchive(runId: string, gameId: string): Promise<GameArchive> {
-  const response = await fetch(`/api/selfplay/${runId}/games/${gameId}/archive`);
-  if (!response.ok) throw new Error("无法读取对局存档");
-  return response.json();
-}
-
-export async function listRoleEvolutionTrainingGames(runId: string): Promise<SelfplayGameSummary[]> {
-  const response = await fetch(`/api/role-evolution/${runId}/games`);
+export async function listRoleEvolutionTrainingGames(runId: string): Promise<EvolutionGameSummary[]> {
+  const response = await fetch(`/api/evolution-runs/${runId}/games?phase=training`);
   if (!response.ok) throw new Error("无法读取训练对局列表");
   const data = await response.json();
   return data.games ?? [];
 }
 
 export async function getRoleEvolutionTrainingGameEvents(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`/api/role-evolution/${runId}/games/${gameId}/events`);
+  const response = await fetch(`/api/evolution-runs/${runId}/games/${gameId}/events?phase=training`);
   if (!response.ok) throw new Error("无法读取训练对局事件");
   const data = await response.json();
   return data.events ?? [];
 }
 
 export async function getRoleEvolutionTrainingGameDecisions(runId: string, gameId: string): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`/api/role-evolution/${runId}/games/${gameId}/decisions`);
+  const response = await fetch(`/api/evolution-runs/${runId}/games/${gameId}/decisions?phase=training`);
   if (!response.ok) throw new Error("无法读取训练决策记录");
   const data = await response.json();
   return data.decisions ?? [];
 }
 
 export async function getRoleEvolutionTrainingGameArchive(runId: string, gameId: string): Promise<GameArchive> {
-  const response = await fetch(`/api/role-evolution/${runId}/games/${gameId}/archive`);
+  const response = await fetch(`/api/evolution-runs/${runId}/games/${gameId}/archive?phase=training`);
   if (!response.ok) throw new Error("无法读取训练对局存档");
   return response.json();
 }
 
-export async function listBattleGames(runId: string, side: "baseline" | "candidate"): Promise<SelfplayGameSummary[]> {
-  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games`);
+export async function listBattleGames(runId: string, side: "baseline" | "candidate"): Promise<EvolutionGameSummary[]> {
+  const response = await fetch(`/api/evolution-runs/${runId}/games?phase=battle&side=${side}`);
   if (!response.ok) throw new Error("无法读取对战对局列表");
   const data = await response.json();
   return data.games ?? [];
 }
 
 export async function getBattleGameEvents(runId: string, side: string, gameId: string): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games/${gameId}/events`);
+  const response = await fetch(`/api/evolution-runs/${runId}/games/${gameId}/events?phase=battle&side=${side}`);
   if (!response.ok) throw new Error("无法读取对战对局事件");
   const data = await response.json();
   return data.events ?? [];
 }
 
 export async function getBattleGameDecisions(runId: string, side: string, gameId: string): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games/${gameId}/decisions`);
+  const response = await fetch(`/api/evolution-runs/${runId}/games/${gameId}/decisions?phase=battle&side=${side}`);
   if (!response.ok) throw new Error("无法读取对战决策记录");
   const data = await response.json();
   return data.decisions ?? [];
 }
 
 export async function getBattleGameArchive(runId: string, side: string, gameId: string): Promise<GameArchive> {
-  const response = await fetch(`/api/role-evolution/${runId}/battle/${side}/games/${gameId}/archive`);
+  const response = await fetch(`/api/evolution-runs/${runId}/games/${gameId}/archive?phase=battle&side=${side}`);
   if (!response.ok) throw new Error("无法读取对战对局存档");
   return response.json();
 }

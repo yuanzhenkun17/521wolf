@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -8,15 +9,12 @@ from typing import Any
 
 
 class LogLevel(StrEnum):
-    DEBUG = "debug"
     INFO = "info"
     WARNING = "warning"
 
 
 class LogVisibility(StrEnum):
     GOD = "god"
-    PUBLIC = "public"
-    PRIVATE = "private"
 
 
 @dataclass(slots=True)
@@ -48,12 +46,19 @@ class GameLogEntry:
 
 
 class GameLogger:
-    def __init__(self, stream_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        stream_path: str | Path | None = None,
+        conn: sqlite3.Connection | None = None,
+        game_id: str | None = None,
+    ) -> None:
         self.entries: list[GameLogEntry] = []
         self._stream_path: Path | None = Path(stream_path) if stream_path else None
         if self._stream_path:
             self._stream_path.parent.mkdir(parents=True, exist_ok=True)
             self._stream_path.touch()
+        self._conn = conn
+        self._game_id = game_id
 
     def record(
         self,
@@ -85,6 +90,26 @@ class GameLogger:
             line = json.dumps(entry.to_dict(), ensure_ascii=False, sort_keys=True)
             with self._stream_path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
+        if self._conn is not None and self._game_id is not None:
+            self._conn.execute(
+                "INSERT INTO game_events "
+                "(game_id, idx, day, phase, event_type, message, level, "
+                "visibility, actor, target, payload) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    self._game_id,
+                    entry.index,
+                    entry.day,
+                    entry.phase,
+                    entry.event_type,
+                    entry.message,
+                    entry.level.value,
+                    entry.visibility.value,
+                    entry.actor,
+                    entry.target,
+                    json.dumps(entry.payload, ensure_ascii=False),
+                ),
+            )
         return entry
 
     def to_jsonl(self) -> str:
@@ -115,7 +140,7 @@ class GameLogger:
         return output
 
 
-def next_game_log_name(log_dir: str | Path, prefix: str = "game") -> str:
+def next_game_log_name(log_dir: str | Path) -> str:
     """Generate a timestamp-based game log name: yyyyMMdd_HHmmss_N."""
     from datetime import datetime, timezone, timedelta
     BEIJING = timezone(timedelta(hours=8))

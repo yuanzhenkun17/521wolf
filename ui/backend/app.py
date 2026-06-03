@@ -296,6 +296,16 @@ def _resolve_selfplay_run_dir(run_id: str) -> Path | None:
     return path if path.exists() else None
 
 
+
+def _archive_decisions(archive: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract decisions from an archive dict, adding index."""
+    decisions = archive.get("decisions", [])
+    return [
+        {**d, "index": idx}
+        for idx, d in enumerate(decisions, start=1)
+    ]
+
+
 def _read_jsonl(path: Path, *, with_index: bool = False) -> list[dict[str, Any]]:
     """Read a JSONL file and return a list of parsed objects."""
     lines: list[dict[str, Any]] = []
@@ -364,7 +374,7 @@ def get_selfplay_game_decisions(run_id: str, game_id: str) -> dict[str, Any]:
     run_dir = _resolve_selfplay_run_dir(run_id)
     if run_dir is None:
         raise HTTPException(status_code=404, detail="selfplay run not found")
-    decisions_path = run_dir / "games" / game_id / "agent_decisions.jsonl"
+    decisions_path = run_dir / "games" / game_id / "archive.json"
     if not decisions_path.exists():
         raise HTTPException(status_code=404, detail="game decisions not found")
     decisions = _read_jsonl(decisions_path, with_index=True)
@@ -762,7 +772,7 @@ def register_role_evolution_routes(
         run_dir = _resolve_role_evolution_training_run_dir(run_id)
         if run_dir is None:
             raise HTTPException(status_code=404, detail="training run not found")
-        decisions_path = run_dir / "games" / game_id / "agent_decisions.jsonl"
+        decisions_path = run_dir / "games" / game_id / "archive.json"
         if not decisions_path.exists():
             raise HTTPException(status_code=404, detail="game decisions not found")
         return {
@@ -825,7 +835,7 @@ def register_role_evolution_routes(
         run_dir = _resolve_battle_run_dir(run_id, side)
         if run_dir is None:
             raise HTTPException(status_code=404, detail="battle run not found")
-        decisions_path = run_dir / "games" / game_id / "agent_decisions.jsonl"
+        decisions_path = run_dir / "games" / game_id / "archive.json"
         if not decisions_path.exists():
             raise HTTPException(status_code=404, detail="game decisions not found")
         return {"run_id": run_id, "game_id": game_id, "side": side, "decisions": _read_jsonl(decisions_path, with_index=True)}

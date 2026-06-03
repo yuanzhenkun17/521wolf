@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.common import beijing_now_iso, beijing_now_str
+from ui.backend.sse_mixin import SSEMixin
+from agent.common.errors import is_rate_limit_error as _is_rate_limit_error
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
 from agent.learning.evolution.config import build_baseline_config
 from agent.learning.evolution.models import (
@@ -24,8 +26,6 @@ from agent.learning.evolution.pipeline import (
     recover_interrupted_runs,
     reject as pipeline_reject,
     promote as pipeline_promote,
-    resume_evolution,
-    rerun_from_consolidation,
     run_evolution,
 )
 from agent.learning.evolution.state import load_run_state
@@ -33,12 +33,6 @@ from agent.learning.evolution.store import VersionStore
 from agent.infrastructure.llm import AsyncRateLimiter
 
 _log = logging.getLogger(__name__)
-
-
-def _is_rate_limit_error(exc: Exception) -> bool:
-    """Check if an exception is a 429 rate limit error."""
-    msg = str(exc).lower()
-    return "429" in msg or "rate limit" in msg or "too many requests" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -126,18 +120,18 @@ class RoleEvolutionRun:
 # ---------------------------------------------------------------------------
 
 
-class RoleEvolutionRunner:
+class RoleEvolutionRunner(SSEMixin):
     """Manages role evolution runs, SSE queues, and recovery."""
 
     def __init__(self, store: VersionStore) -> None:
+        super().__init__()
         self.store = store
         self._active_runs: dict[str, RoleEvolutionRun] = {}
-        self._sse_queues: dict[str, list[asyncio.Queue]] = {}
 
     def restore_runs(self) -> None:
         """Load non-terminal runs from disk into memory."""
         from agent.learning.evolution.pipeline import scan_active_runs
-        for state in scan_active_runs(self.store):
+        for state in scan_active_runs():
             run_id = state.get("run_id")
             if not run_id or run_id in self._active_runs:
                 continue
@@ -317,9 +311,10 @@ class RoleEvolutionRunner:
             self._broadcast(tracked.run_id, stage, tracked.snapshot())
 
         try:
-            result = await rerun_from_consolidation(
-                store=self.store,
+            result = await run_evolution(
+                self.store,
                 run_id=tracked.run_id,
+                start_from="consolidating",
                 model_adapter=model_adapter,
                 game_concurrency=tracked.game_concurrency,
                 llm_semaphore=asyncio.Semaphore(tracked.llm_concurrency),
@@ -373,8 +368,8 @@ class RoleEvolutionRunner:
         max_retries = 5
         for attempt in range(max_retries):
             try:
-                result = await resume_evolution(
-                    store=self.store,
+                result = await run_evolution(
+                    self.store,
                     run_id=tracked.run_id,
                     model_adapter=model_adapter,
                     game_concurrency=tracked.game_concurrency,
@@ -460,19 +455,6 @@ class RoleEvolutionRunner:
     # SSE
     # ------------------------------------------------------------------
 
-    def subscribe(self, run_id: str) -> asyncio.Queue:
-        """Subscribe to SSE events for a run.  Returns a queue."""
-        q: asyncio.Queue = asyncio.Queue()
-        self._sse_queues.setdefault(run_id, []).append(q)
-        return q
-
-    def unsubscribe(self, run_id: str, queue: asyncio.Queue) -> None:
-        """Remove a queue from the subscriber list."""
-        queues = self._sse_queues.get(run_id, [])
-        try:
-            queues.remove(queue)
-        except ValueError:
-            pass
 
     async def sse_events(self, run_id: str) -> AsyncGenerator[str, None]:
         """Yield SSE-formatted events for a run."""
@@ -488,10 +470,6 @@ class RoleEvolutionRunner:
         finally:
             self.unsubscribe(run_id, queue)
 
-    def _broadcast(self, run_id: str, event: str, data: dict) -> None:
-        """Push an event to all SSE queues for a run."""
-        for q in self._sse_queues.get(run_id, []):
-            q.put_nowait({"event": event, "data": data})
 
     # ------------------------------------------------------------------
     # Recovery

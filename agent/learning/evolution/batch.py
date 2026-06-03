@@ -164,7 +164,7 @@ async def run_batch_evolution(
     })
 
     if selfplay_runner is None:
-        from agent.learning.selfplay import run_selfplay as selfplay_runner
+        from agent.learning.evolution.games import run_selfplay as selfplay_runner
 
     result.combined_battle_result = await run_config_battle(
         store=store,

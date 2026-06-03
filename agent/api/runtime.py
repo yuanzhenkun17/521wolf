@@ -1,17 +1,14 @@
 """Agent runtime and rule-layer adapter.
 
 ``AgentRuntime`` receives ``ActionRequest`` from the game engine, runs the
-decision pipeline, and returns ``ActionResponse``. ``LLMPlayerAgent`` wraps the
-runtime behind the rule-layer player protocol.
+decision pipeline, and returns ``ActionResponse``. It implements the
+rule-layer ``PlayerAgent`` protocol directly.
 
 Key responsibilities:
 - Step orchestration: each step reads from / writes to ``AgentContext``.
 - Decision recording: writes ``DecisionRecord`` entries to the shared recorder.
 - Trace recording: if a ``trace_recorder`` is attached, every decision context
   is archived for post-game analysis.
-
-``LLMPlayerAgent`` wraps the runtime as a rule-layer ``PlayerAgent`` so it
-drops into any existing game without rule-layer changes.
 """
 
 from __future__ import annotations
@@ -122,40 +119,6 @@ class AgentRuntime:
         return ctx.response
 
 
-class LLMPlayerAgent:
-    """Werewolf player agent backed by the step-based runtime.
-
-    Implements the rule-layer ``PlayerAgent`` protocol.
-    """
-
-    def __init__(
-        self,
-        *,
-        player_id: int,
-        role: Role,
-        client: ModelAdapter,
-        decision_recorder: AgentDecisionRecorder | None = None,
-        trace_recorder: AgentTraceRecorder | None = None,
-        game_id: str | None = None,
-        skill_dir: Path | str | None = None,
-    ) -> None:
-        self.runtime = AgentRuntime(
-            player_id=player_id,
-            role=role,
-            model=client,
-            recorder=decision_recorder,
-            trace_recorder=trace_recorder,
-            game_id=game_id,
-            skill_dir=skill_dir,
-        )
-
-    @property
-    def memory(self) -> AgentMemory:
-        return self.runtime.memory
-
-    async def act(self, request: ActionRequest) -> ActionResponse:
-        return await self.runtime.act(request)
-
 
 # -- helpers -------------------------------------------------------------------
 
@@ -179,11 +142,10 @@ def _build_decision_record(ctx: AgentContext) -> DecisionRecord:
             str(r) for r in parsed.get("rejected_reasons", []) if r is not None
         ],
         selected_skills=list(ctx.selected_skills),
-        memory_refs=list(parsed.get("memory_refs", [])),
-        belief_snapshot={},
-        memory_summary=ctx.memory_context.get("memory_events", [])[-6:],
+        memory_summary=ctx.memory_context.get("rolling_summary", [])[-6:],
         raw_output=ctx.raw_output,
         errors=list(ctx.errors),
         policy_adjustments=list(ctx.policy_adjustments),
         source=ctx.source,
     )
+

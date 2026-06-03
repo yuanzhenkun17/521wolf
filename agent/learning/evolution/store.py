@@ -10,10 +10,10 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 from pathlib import Path, PurePosixPath
 
 from agent.common import beijing_now_iso
+from agent.common.json import write_json as _write_json
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 from agent.learning.evolution.models import RoleHistory, RoleVersion
@@ -100,15 +100,6 @@ def compute_hash(skills: dict[str, str]) -> str:
 
 
 # JSON helper
-def _write_json(path: Path, data: dict) -> None:
-    """Atomically write JSON data to a file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    content = json.dumps(data, ensure_ascii=False, indent=2)
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(str(tmp), str(path))
-
-
 def _read_json(path: Path) -> dict:
     """Read JSON data from a file."""
     return json.loads(path.read_text(encoding="utf-8"))
@@ -118,8 +109,8 @@ def _extract_battle_delta(battle_result: dict, role: str) -> dict:
     """Extract the role-specific metrics delta from a battle result."""
     base = battle_result.get("baseline_metrics", {})
     cand = battle_result.get("candidate_metrics", {})
-    role_base = base.get("role", {}).get(role, {})
-    role_cand = cand.get("role", {}).get(role, {})
+    role_base = base.get(role, {})
+    role_cand = cand.get(role, {})
     return {
         "role_score_delta": round(
             (role_cand.get("role_weighted_score", 0) or 0)
@@ -352,6 +343,38 @@ class VersionStore:
         return d
 
     # First-run initialization
+
+    def ensure_default_baselines(self) -> None:
+        """Create an explicit empty bootstrap baseline for roles with no history."""
+        from engine.models import Role
+
+        for role in Role:
+            role_name = role.value
+            history_path = self._history_path(role_name)
+            if history_path.exists():
+                continue
+
+            skills: dict[str, str] = {}
+            h = compute_hash(skills)
+            version_dir = self._version_dir(role_name, h)
+            version_dir.mkdir(parents=True, exist_ok=True)
+
+            skills_dir = self._skills_dir(role_name, h)
+            skills_dir.mkdir(parents=True, exist_ok=True)
+
+            now = beijing_now_iso()
+            version = RoleVersion(
+                hash=h,
+                role=role_name,
+                skills=skills,
+                created_at=now,
+                source="bootstrap_empty",
+                notes=["intentional empty baseline"],
+            )
+            _write_json(self._meta_path(role_name, h), version.to_dict())
+            history = RoleHistory(role=role_name, baseline=h, versions=[h])
+            _write_json(history_path, history.to_dict())
+            _log.info("ensure_default_baselines: created empty baseline for %s/%s", role_name, h)
 
     def initialize_from_skills(self, skills_root: Path) -> None:
         """Create baseline versions from existing skills/<role>/ directories.

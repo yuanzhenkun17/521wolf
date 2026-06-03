@@ -17,7 +17,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from engine.config import STANDARD_12
 from engine.models import Role
 
 from unittest.mock import MagicMock
@@ -29,7 +28,7 @@ from agent.infrastructure.archive import (
 )
 from agent.core.context import AgentContext
 from agent.learning.review import generate_enhanced_review
-from agent.learning.selfplay import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
+from agent.learning.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

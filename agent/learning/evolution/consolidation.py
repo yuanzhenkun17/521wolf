@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,7 @@ from agent.learning.game_analysis import GameAnalysis, filter_mid_memory_for_rol
 from agent.knowledge.prompts.parsing import load_json_object
 from agent.learning.evolution.models import (
     EvidenceRef,
-    SkillConsolidation as RoleSkillConsolidation,
+    SkillConsolidation,
     SkillProposal,
 )
 from agent.infrastructure.llm import ModelAdapter
@@ -27,78 +26,6 @@ from agent.knowledge.skills.loader import MarkdownSkill, load_markdown_skills
 from agent.common import as_float as _as_float, compact_json as _compact_json, beijing_now_iso as _now
 
 _log = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class SkillEditProposal:
-    skill: str
-    operation: str  # "append_rule" | "rewrite_section" | "deprecate_rule"
-    proposal: str
-    risk: str = ""
-    evidence_cards: list[str] = field(default_factory=list)
-    confidence: float = 0.0
-
-    def to_dict(self) -> dict:
-        return {
-            "skill": self.skill,
-            "operation": self.operation,
-            "proposal": self.proposal,
-            "risk": self.risk,
-            "evidence_cards": self.evidence_cards,
-            "confidence": round(self.confidence, 3),
-        }
-
-
-@dataclass(slots=True)
-class SkillConsolidation:
-    role: str
-    generated_at: str
-    source_games: list[str]
-    trends: list[str] = field(default_factory=list)
-    skill_proposals: list[SkillEditProposal] = field(default_factory=list)
-    raw_output: str = ""
-    errors: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return {
-            "role": self.role,
-            "generated_at": self.generated_at,
-            "source_games": self.source_games,
-            "trends": self.trends,
-            "skill_proposals": [p.to_dict() for p in self.skill_proposals],
-            "errors": self.errors,
-        }
-
-    def to_markdown(self) -> str:
-        lines = [
-            f"# Long-Term Consolidation: {self.role}",
-            "",
-            f"- Source games: {', '.join(self.source_games)}",
-            f"- Generated: {self.generated_at}",
-            "",
-        ]
-        if self.trends:
-            lines.extend(["## Trends", ""])
-            for t in self.trends:
-                lines.append(f"- {t}")
-            lines.append("")
-        if self.skill_proposals:
-            lines.extend(["## Skill Proposals", ""])
-            for p in self.skill_proposals:
-                lines.extend([
-                    f"### {p.skill}",
-                    "",
-                    f"- Operation: {p.operation}",
-                    f"- Proposal: {p.proposal}",
-                    f"- Risk: {p.risk or '-'}",
-                    f"- Confidence: {p.confidence:.1%}",
-                    "",
-                ])
-        if self.errors:
-            lines.extend(["## Errors", ""])
-            for e in self.errors:
-                lines.append(f"- {e}")
-        return "\n".join(lines).rstrip() + "\n"
 
 
 async def consolidate_from_mid_memories(
@@ -119,7 +46,7 @@ async def consolidate_from_mid_memories(
     source_games = [m.game_id for m in mid_memories]
     raw = ""
     try:
-        raw = await model.complete(messages, name=f"consolidation/{role.value}")
+        raw = await model.complete(messages)
         return _parse_consolidation(
             role=role.value,
             raw_output=raw,
@@ -228,15 +155,19 @@ def _parse_consolidation(
     data = load_json_object(raw_output)
 
     proposals = [
-        SkillEditProposal(
-            skill=str(p.get("skill", "")),
-            operation=str(p.get("operation", "append_rule")),
-            proposal=str(p.get("proposal", "")),
-            risk=str(p.get("risk", "")),
-            evidence_cards=[str(g) for g in p.get("evidence_games", [])],
+        SkillProposal(
+            proposal_id=f"prop_{i:03d}",
+            target_file=str(p.get("skill", "")),
+            action_type=str(p.get("operation", "append_rule")),
+            content=str(p.get("proposal", "")),
+            rationale="",
             confidence=_as_float(p.get("confidence"), 0.0),
+            risk=str(p.get("risk", "")),
+            expected_metric="",
+            expected_direction="",
+            evidence=[EvidenceRef(game_id=g, role="") for g in p.get("evidence_games", [])],
         )
-        for p in data.get("skill_proposals", [])
+        for i, p in enumerate(data.get("skill_proposals", []))
         if isinstance(p, dict)
     ][:8]
 
@@ -245,7 +176,7 @@ def _parse_consolidation(
         generated_at=_now(),
         source_games=source_games,
         trends=[str(t) for t in data.get("trends", [])][:5],
-        skill_proposals=proposals,
+        proposals=proposals,
         raw_output=raw_output,
     )
 
@@ -308,10 +239,11 @@ async def consolidate_for_role(
     run_id: str = "",
     parent_hash: str = "",
     window: int = 5,
+    max_proposals: int = 3,
     prompt_version: str = "role_consolidation_v2",
     skill_root: Path | str | None = None,
     store: "VersionStore | None" = None,
-) -> RoleSkillConsolidation:
+) -> SkillConsolidation:
     """Consolidate mid-memory for a specific role, producing skill modification proposals.
 
     Steps:
@@ -328,7 +260,7 @@ async def consolidate_for_role(
     mid_dir = run_dir / "games"
     if not mid_dir.exists():
         _log.warning("No games directory found at %s", mid_dir)
-        return RoleSkillConsolidation(
+        return SkillConsolidation(
             role=role,
             run_id=run_id,
             parent_hash=parent_hash,
@@ -369,13 +301,13 @@ async def consolidate_for_role(
         filtered_analyses=filtered,
         skills=skills,
         role=role,
-        window=window,
         rejected=rejected,
+        max_proposals=max_proposals,
     )
 
     raw = ""
     try:
-        raw = await model.complete(messages, name=f"consolidation/{role}")
+        raw = await model.complete(messages)
         return _parse_role_consolidation(
             role=role,
             raw_output=raw,
@@ -384,10 +316,11 @@ async def consolidate_for_role(
             source_window=window,
             source_games=source_games,
             prompt_version=prompt_version,
+            max_proposals=max_proposals,
         )
     except Exception as exc:
         _log.error("consolidate_for_role(%s) failed: %s", role, exc)
-        return RoleSkillConsolidation(
+        return SkillConsolidation(
             role=role,
             run_id=run_id,
             parent_hash=parent_hash,
@@ -431,8 +364,8 @@ def _build_role_messages(
     filtered_analyses: list[dict],
     skills: list[MarkdownSkill],
     role: str,
-    window: int,
     rejected: list[dict] | None = None,
+    max_proposals: int = 3,
 ) -> list[dict[str, str]]:
     """Build LLM messages for role-specific consolidation."""
     summaries = []
@@ -478,15 +411,22 @@ def _build_role_messages(
                 f"当前角色 skills:\n{skills_text}\n\n"
                 "请分析跨局趋势并提出 skill 修改建议，要求:\n"
                 "1. trends: 3-5 条跨局趋势\n"
-                "2. proposals: 对 skill 的修改建议\n"
-                "   - target_file 必须从上方 Skill file 列表中逐字复制，不允许自造文件名\n"
-                "   - action_type 是技能修改动作，不是游戏动作；必须从该文件的 evolution.allowed_actions 中选择\n"
+                f"2. proposals: 最多只提 {max_proposals} 个最重要的修改，每条只表达一个可验证的行为变化\n"
+                "   - 对已有 skill 的修改，target_file 必须从上方 Skill file 列表中逐字复制\n"
+                "   - 当当前角色没有合适 skill，或把规则塞进现有文件会让文件职责变宽时，允许 action_type=create_skill\n"
+                f"   - create_skill 的 target_file 必须是角色版本内的 '<lowercase_slug>.md'，例如 'day_claim.md'（不要加 '{role}/' 前缀）\n"
+                "   - action_type 是技能修改动作，不是游戏动作；已有文件必须从该文件的 evolution.allowed_actions 中选择\n"
+                "   - create_skill 只能用于新建一个边界清晰的新 skill，不能用于改已有文件\n"
                 "   - applicable_actions 只是 skill 适用的游戏动作，不能填进 proposal.action_type\n"
-                "   - 只有 evolution.enabled=true 的文件可以进入 proposals\n"
+                "   - 只有 evolution.enabled=true 的已有文件可以进入 proposals\n"
                 "   - 每个 proposal 必须包含 evidence 引用具体 game_id 和 decision/action\n"
+                "   - 每个 proposal 至少引用 2 个不同 source_games\n"
+                "   - 单条 evidence 不足以进入 proposals，可写入 trends 观察区\n"
                 "   - risk 只能是 low|medium|high；high risk 建议只写入 trends，不要进入 proposals\n"
                 "   - expected_direction 只能是 improve|maintain|reduce\n"
-                "   - 大胆提案，不要过于保守；对战阶段会验证提案质量\n"
+                "   - 不要把多个规则打包进同一个 proposal；宁可少提，也不要混合不相干变化\n"
+                "   - 对战阶段会验证 candidate pack，不要假设每条 proposal 都会单独验证\n"
+                "   - 跨轮次保留的长期规律应写入技能文件的 <!-- slow_update --> 区域\n"
                 f"当前 source_games(JSON): {_compact_json(source_games)}\n"
                 f"可修改文件清单(JSON): {_compact_json(modifiable_files)}\n"
                 f"{rejected_text}\n"
@@ -497,7 +437,7 @@ def _build_role_messages(
                 "    {\n"
                 '      "proposal_id": "prop_001",\n'
                 '      "target_file": "从Skill file清单逐字复制的文件路径.md",\n'
-                '      "action_type": "append_rule|rewrite_section|deprecate_rule",\n'
+                '      "action_type": "append_rule|rewrite_section|deprecate_rule|create_skill",\n'
                 '      "section": "目标章节名(rewrite_section时必填)",\n'
                 '      "content": "具体修改内容",\n'
                 '      "rationale": "修改理由",\n'
@@ -533,7 +473,8 @@ def _parse_role_consolidation(
     source_window: int,
     source_games: list[str],
     prompt_version: str,
-) -> RoleSkillConsolidation:
+    max_proposals: int = 3,
+) -> SkillConsolidation:
     """Parse LLM output into a role-evolution SkillConsolidation."""
     data = load_json_object(raw_output)
 
@@ -559,14 +500,14 @@ def _parse_role_consolidation(
             conflicts_with=[str(c) for c in p.get("conflicts_with", [])],
         ))
 
-    return RoleSkillConsolidation(
+    return SkillConsolidation(
         role=role,
         run_id=run_id,
         parent_hash=parent_hash,
         generated_at=_now(),
         source_window=source_window,
         prompt_version=prompt_version,
-        proposals=proposals[:8],
+        proposals=proposals[:max_proposals],
         trends=[str(t) for t in data.get("trends", [])][:5],
         source_games=source_games,
     )

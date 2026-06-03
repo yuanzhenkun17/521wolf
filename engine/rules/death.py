@@ -131,6 +131,8 @@ async def resolve_pending_daybreak_actions(engine: GameEngine) -> None:
         player_id = engine.state.pending_last_words.pop(0)
         await resolve_last_word(engine, player_id)
     while engine.state.pending_hunter_shots:
+        if engine.check_winner() is not None:
+            break
         player_id = engine.state.pending_hunter_shots.pop(0)
         await resolve_hunter_death(engine, player_id)
 

@@ -1,7 +1,6 @@
 """Tests for per-root skill cache and applicable_actions behavior."""
-from pathlib import Path
 import pytest
-from agent.knowledge.skills.router import _get_skill_index, _SKILL_CACHE, SkillIndex
+from agent.knowledge.skills.router import _get_skill_index, _SKILL_CACHE
 from agent.knowledge.skills.loader import MarkdownSkill
 from engine.models import ActionType, Role
 

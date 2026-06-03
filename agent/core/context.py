@@ -39,6 +39,7 @@ class AgentContext:
     decision_record: Any = None
 
     # Tracking
-    source: Literal["llm", "policy_adjusted", "fallback"] = "llm"
+    source: Literal["llm", "llm_error", "policy_adjusted", "fallback"] = "llm"
+    llm_error: str = ""
     policy_adjustments: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)

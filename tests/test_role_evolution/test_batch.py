@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.learning.selfplay import SelfPlayGameResult
+from agent.learning.evolution.games import SelfPlayGameResult
 from agent.learning.evolution.batch import run_batch_evolution
 from agent.learning.evolution.models import SkillConsolidation, SkillDiff, SkillProposal
 from agent.learning.evolution.store import VersionStore

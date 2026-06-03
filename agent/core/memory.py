@@ -16,6 +16,8 @@ from typing import Any
 
 from engine.models import ActionRequest, ActionResponse, ActionType, Role
 
+from agent.common.coercion import as_int
+
 
 @dataclass(slots=True)
 class MemoryEvent:
@@ -32,14 +34,19 @@ class MemoryEvent:
         target = f" -> P{self.target}" if self.target is not None else ""
         return f"第{self.day}天 {self.phase} {self.event_type} {actor}{target}: {self.content}"
 
+    def phase_key(self) -> tuple[int, str]:
+        return (self.day, self.phase)
 
-def as_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    def to_prompt_dict(self) -> dict[str, Any]:
+        return {
+            "day": self.day,
+            "phase": self.phase,
+            "type": self.event_type,
+            "actor": self.actor,
+            "target": self.target,
+            "content": self.content,
+            "text": self.to_prompt_text(),
+        }
 
 
 def extract_suspected_player(content: str) -> int | None:
@@ -70,6 +77,36 @@ def extract_claimed_role(content: str) -> str | None:
     for word, role in role_words.items():
         if word in content:
             return role
+    return None
+
+
+def extract_defended_player(content: str) -> int | None:
+    patterns = [
+        r"(?:保|认好|站边|相信)\s*(?:P)?(\d+)号?",
+        r"(?:P)?(\d+)号?.{0,8}(?:像好人|做好|可信|金水)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, content)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def extract_claimed_check(content: str) -> dict[str, Any] | None:
+    patterns = [
+        r"(?:查验|验了|查了)\s*(?:P)?(\d+)号?.{0,12}(?:是|为)?\s*(狼|狼人|好人|金水|查杀)",
+        r"(?:P)?(\d+)号?.{0,8}(?:查验结果|验人结果).{0,8}(狼|狼人|好人|金水|查杀)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, content)
+        if not match:
+            continue
+        raw_result = match.group(2)
+        if raw_result in {"狼", "狼人", "查杀"}:
+            result = "werewolves"
+        else:
+            result = "villagers"
+        return {"target": int(match.group(1)), "result": result}
     return None
 
 
@@ -167,7 +204,6 @@ class FieldNotes:
     player_models: dict[int, PlayerProfile] = field(default_factory=dict)
     key_events: list[dict] = field(default_factory=list)
     vote_log: list[dict] = field(default_factory=list)
-    relationship_graph: dict = field(default_factory=dict)  # {"attacks": [...], "protects": [...], "follows": [...]}
 
     def ensure_player(self, player_id: int) -> PlayerProfile:
         if player_id not in self.player_models:
@@ -177,6 +213,15 @@ class FieldNotes:
     def record_speech(self, player_id: int, content: str) -> None:
         profile = self.ensure_player(player_id)
         profile.speeches.append(content)
+        claimed_role = extract_claimed_role(content)
+        if claimed_role is not None:
+            profile.claimed_role = claimed_role
+        attacked = extract_suspected_player(content)
+        if attacked is not None and attacked != player_id and attacked not in profile.attacked:
+            profile.attacked.append(attacked)
+        defended = extract_defended_player(content)
+        if defended is not None and defended != player_id and defended not in profile.defended:
+            profile.defended.append(defended)
 
     def record_vote(self, voter: int, target: int, day: int, phase: str) -> None:
         profile = self.ensure_player(voter)
@@ -229,6 +274,13 @@ def _summarize_vote_patterns(vote_log: list[dict]) -> list[str]:
 _MAX_EVENTS = 200
 _MAX_SELF_HISTORY = 50
 _MAX_DECISION_HISTORY = 30
+_MAX_ROLLING_SUMMARIES = 30
+_MAX_PINNED_FACTS = 80
+_MAX_SELF_COMMITMENTS = 24
+_HOT_PHASE_COUNT = 2
+
+_PUBLIC_SPEECH_EVENTS = {"speak", "sheriff_speak", "pk_speak", "last_word", "speech"}
+_VOTE_EVENTS = {"exile_vote", "pk_vote", "sheriff_vote", "vote"}
 
 
 class AgentMemory:
@@ -245,37 +297,39 @@ class AgentMemory:
         self.errors: list[str] = []
         self._seen_public_entries: set[str] = set()
         self.field_notes = FieldNotes()
+        self.phase_events: dict[tuple[int, str], list[MemoryEvent]] = {}
+        self.phase_order: list[tuple[int, str]] = []
+        self.rolling_summary: list[str] = []
+        self._summarized_phase_keys: set[tuple[int, str]] = set()
+        self.pinned_facts: list[dict[str, Any]] = []
+        self._pinned_fact_keys: set[tuple[Any, ...]] = set()
+        self.self_commitments: list[dict[str, Any]] = []
 
     def build_context(self, request: ActionRequest) -> dict:
         self._observe_request(request)
         self._update_field_notes(request)
+        self._pin_observation_facts(request)
+        self._roll_old_phases()
         observation = request.observation
+        field_notes = self.field_notes.to_prompt_dict()
         ctx = {
-            "memory_events": [event.to_prompt_text() for event in self.events[-16:]],
             "private_facts": {
                 "known_roles": {player_id: role.value for player_id, role in observation.known_roles.items()},
                 "seer_checks": {player_id: team.value for player_id, team in observation.seer_checks.items()},
                 "metadata": dict(request.metadata),
             },
-            "self_history": self.self_history[-8:],
-            "decisions": [decision.private_reasoning for decision in self.decision_history[-5:] if hasattr(decision, "private_reasoning") and decision.private_reasoning],
-            "suspicions": dict(self.suspicions),
-            "claims_seen": dict(self.claims_seen),
             "errors": self.errors[-3:],
+            "rolling_summary": list(self.rolling_summary[-_MAX_ROLLING_SUMMARIES:]),
+            "pinned_facts": list(self.pinned_facts[-_MAX_PINNED_FACTS:]),
+            "recent_timeline": self._build_recent_timeline(),
+            "player_models": field_notes.get("player_profiles", {}),
+            "self_commitments": list(self.self_commitments[-_MAX_SELF_COMMITMENTS:]),
         }
-        ctx["field_notes"] = self.field_notes.to_prompt_dict()
+        ctx["field_notes"] = field_notes
         return ctx
 
     def remember_action(self, request: ActionRequest, response: ActionResponse, decision: Any = None) -> None:
-        self.self_history.append(
-            f"{request.action_type.value}: choice={response.choice!r} target={response.target!r} text={response.text!r}"
-        )
-        if len(self.self_history) > _MAX_SELF_HISTORY:
-            self.self_history = self.self_history[-_MAX_SELF_HISTORY:]
-        if decision is not None:
-            self.decision_history.append(decision)
-            if len(self.decision_history) > _MAX_DECISION_HISTORY:
-                self.decision_history = self.decision_history[-_MAX_DECISION_HISTORY:]
+        # self_history and decision_history accumulation removed (unused by prompt layer)
         # Update field notes from own action
         action_type = request.action_type
         if action_type in {ActionType.EXILE_VOTE, ActionType.PK_VOTE, ActionType.SHERIFF_VOTE}:
@@ -287,9 +341,29 @@ class AgentMemory:
         if action_type in {ActionType.SPEAK, ActionType.PK_SPEAK, ActionType.LAST_WORD}:
             if response.text:
                 self.field_notes.record_speech(request.player_id, response.text)
+        if action_type in {
+            ActionType.SPEAK,
+            ActionType.SHERIFF_SPEAK,
+            ActionType.PK_SPEAK,
+            ActionType.LAST_WORD,
+            ActionType.EXILE_VOTE,
+            ActionType.PK_VOTE,
+            ActionType.SHERIFF_VOTE,
+        }:
+            self._remember_self_commitment(request, response)
 
     def reset(self) -> None:
-        self._seen_public_entries.clear()
+        self.events = []
+        self.errors = []
+        self._seen_public_entries = set()
+        self.field_notes = FieldNotes()
+        self.phase_events = {}
+        self.phase_order = []
+        self.rolling_summary = []
+        self._summarized_phase_keys = set()
+        self.pinned_facts = []
+        self._pinned_fact_keys = set()
+        self.self_commitments = []
 
     def remember_error(self, message: str) -> None:
         self.errors.append(message)
@@ -302,19 +376,15 @@ class AgentMemory:
             self._seen_public_entries.add(item)
             event = parse_public_entry(str(item), fallback_day=observation.day, fallback_phase=observation.phase.value)
             self.events.append(event)
+            self._record_phase_event(event)
             self._index_public_event(event)
         if len(self.events) > _MAX_EVENTS:
             self.events = self.events[-_MAX_EVENTS:]
 
     def _index_public_event(self, event: MemoryEvent) -> None:
-        if event.event_type in {"exile_vote", "pk_vote", "sheriff_vote", "vote"} and event.actor is not None and event.target is not None:
-            self.suspicions[event.target] = f"P{event.actor} 投票给 P{event.target}"
-        suspected = extract_suspected_player(event.content)
-        if event.actor is not None and suspected is not None:
-            self.suspicions[suspected] = f"P{event.actor} 发言怀疑 P{suspected}"
         claimed_role = extract_claimed_role(event.content)
-        if event.actor is not None and claimed_role is not None:
-            self.claims_seen[event.actor] = claimed_role
+        claimed_check = extract_claimed_check(event.content)
+        self._pin_event_fact(event, claimed_role=claimed_role, claimed_check=claimed_check)
 
         # Also update field notes from the same event, but skip own actions
         # (already recorded immediately in remember_action to avoid duplicates)
@@ -333,3 +403,236 @@ class AgentMemory:
             "dead_players": list(obs.dead_players),
             "sheriff_id": obs.sheriff_id,
         }
+
+    def _record_phase_event(self, event: MemoryEvent) -> None:
+        key = event.phase_key()
+        if key not in self.phase_events:
+            self.phase_events[key] = []
+            self.phase_order.append(key)
+        self.phase_events[key].append(event)
+
+    def _roll_old_phases(self) -> None:
+        if len(self.phase_order) <= _HOT_PHASE_COUNT:
+            return
+        hot_keys = set(self.phase_order[-_HOT_PHASE_COUNT:])
+        for key in self.phase_order:
+            if key in hot_keys or key in self._summarized_phase_keys:
+                continue
+            summary = _summarize_phase(key, self.phase_events.get(key, []))
+            if summary:
+                self.rolling_summary.append(summary)
+                self.rolling_summary = self.rolling_summary[-_MAX_ROLLING_SUMMARIES:]
+            self._summarized_phase_keys.add(key)
+
+    def _build_recent_timeline(self) -> list[dict[str, Any]]:
+        timeline = []
+        for day, phase in self.phase_order[-_HOT_PHASE_COUNT:]:
+            events = self.phase_events.get((day, phase), [])
+            timeline.append({
+                "phase_key": _phase_label(day, phase),
+                "day": day,
+                "phase": phase,
+                "events": [event.to_prompt_dict() for event in events],
+            })
+        return timeline
+
+    def _pin_observation_facts(self, request: ActionRequest) -> None:
+        obs = request.observation
+        if obs.sheriff_id is not None:
+            self._add_pinned_fact(
+                "sheriff",
+                day=obs.day,
+                phase=request.phase.value,
+                target=obs.sheriff_id,
+                content=f"P{obs.sheriff_id} 是当前警长",
+                stable_key=("sheriff", obs.sheriff_id),
+            )
+        for player_id in obs.dead_players:
+            self._add_pinned_fact(
+                "dead_player",
+                day=obs.day,
+                phase=request.phase.value,
+                target=player_id,
+                content=f"P{player_id} 已死亡",
+                stable_key=("dead_player", player_id),
+            )
+
+    def _pin_event_fact(
+        self,
+        event: MemoryEvent,
+        *,
+        claimed_role: str | None = None,
+        claimed_check: dict[str, Any] | None = None,
+    ) -> None:
+        if event.event_type == "death" and event.target is not None:
+            self._add_pinned_fact(
+                "death",
+                day=event.day,
+                phase=event.phase,
+                actor=event.actor,
+                target=event.target,
+                content=event.content,
+                stable_key=("death", event.target, event.content),
+            )
+        if event.actor is not None and claimed_role is not None:
+            self._add_pinned_fact(
+                "role_claim",
+                day=event.day,
+                phase=event.phase,
+                actor=event.actor,
+                content=f"P{event.actor} 声称 {claimed_role}",
+                details={"claimed_role": claimed_role},
+                stable_key=("role_claim", event.actor, claimed_role),
+            )
+        if event.actor is not None and claimed_check is not None:
+            target = claimed_check.get("target")
+            result = claimed_check.get("result")
+            self._add_pinned_fact(
+                "claimed_check",
+                day=event.day,
+                phase=event.phase,
+                actor=event.actor,
+                target=target,
+                content=f"P{event.actor} 声称查验 P{target} = {result}",
+                details={"result": result},
+                stable_key=("claimed_check", event.actor, target, result),
+            )
+
+    def _add_pinned_fact(
+        self,
+        fact_type: str,
+        *,
+        day: int,
+        phase: str,
+        actor: int | None = None,
+        target: int | None = None,
+        content: str = "",
+        details: dict[str, Any] | None = None,
+        stable_key: tuple[Any, ...] | None = None,
+    ) -> None:
+        key = stable_key or (fact_type, actor, target, content)
+        if key in self._pinned_fact_keys:
+            return
+        self._pinned_fact_keys.add(key)
+        fact = {
+            "type": fact_type,
+            "day": day,
+            "phase": phase,
+            "actor": actor,
+            "target": target,
+            "content": content,
+        }
+        if details:
+            fact["details"] = dict(details)
+        self.pinned_facts.append(fact)
+        if len(self.pinned_facts) > _MAX_PINNED_FACTS:
+            self.pinned_facts = self.pinned_facts[-_MAX_PINNED_FACTS:]
+
+    def _remember_self_commitment(self, request: ActionRequest, response: ActionResponse) -> None:
+        commitment = {
+            "day": request.observation.day,
+            "phase": request.phase.value,
+            "action_type": request.action_type.value,
+            "choice": response.choice,
+            "target": response.target,
+            "text": _clip(response.text, 180),
+        }
+        if response.text:
+            claimed_role = extract_claimed_role(response.text)
+            if claimed_role is not None:
+                commitment["claimed_role"] = claimed_role
+            suspected = extract_suspected_player(response.text)
+            if suspected is not None:
+                commitment["suspected_player"] = suspected
+        self.self_commitments.append(commitment)
+        self.self_commitments = self.self_commitments[-_MAX_SELF_COMMITMENTS:]
+
+
+def _phase_label(day: int, phase: str) -> str:
+    return f"day{day}/{phase}"
+
+
+def _clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def _summarize_phase(key: tuple[int, str], events: list[MemoryEvent]) -> str:
+    day, phase = key
+    if not events:
+        return f"{_phase_label(day, phase)}: 无公开事件"
+
+    deaths: list[str] = []
+    votes: list[str] = []
+    speeches: list[str] = []
+    claims: list[str] = []
+    checks: list[str] = []
+    others: list[str] = []
+
+    for event in events:
+        actor = f"P{event.actor}" if event.actor is not None else "系统"
+        target = f"P{event.target}" if event.target is not None else "无目标"
+        if event.event_type == "death":
+            deaths.append(f"{target}死亡")
+            continue
+        if event.event_type in _VOTE_EVENTS:
+            votes.append(f"{actor}->{target}")
+            continue
+        claimed_role = extract_claimed_role(event.content)
+        if claimed_role is not None and event.actor is not None:
+            claims.append(f"{actor}声称{claimed_role}")
+        claimed_check = extract_claimed_check(event.content)
+        if claimed_check is not None and event.actor is not None:
+            checks.append(
+                f"{actor}报查验P{claimed_check.get('target')}={claimed_check.get('result')}"
+            )
+        if event.event_type in _PUBLIC_SPEECH_EVENTS:
+            suspected = extract_suspected_player(event.content)
+            defended = extract_defended_player(event.content)
+            parts: list[str] = []
+            if suspected is not None:
+                parts.append(f"怀疑P{suspected}")
+            if defended is not None:
+                parts.append(f"认好P{defended}")
+            if claimed_role is not None:
+                parts.append(f"声称{claimed_role}")
+            if parts:
+                speeches.append(f"{actor}: {'，'.join(parts)}")
+            elif event.content:
+                speeches.append(f"{actor}: {_clip(event.content, 60)}")
+            continue
+        if event.content:
+            others.append(f"{event.event_type} {actor}->{target}: {_clip(event.content, 60)}")
+
+    sections: list[str] = []
+    if deaths:
+        sections.append("死亡 " + "，".join(deaths[:6]))
+    if claims:
+        sections.append("身份声明 " + "，".join(_dedupe(claims)[:8]))
+    if checks:
+        sections.append("查验声明 " + "，".join(_dedupe(checks)[:8]))
+    if speeches:
+        shown = speeches[:8]
+        suffix = f"，另有{len(speeches) - len(shown)}条发言" if len(speeches) > len(shown) else ""
+        sections.append("发言要点 " + "；".join(shown) + suffix)
+    if votes:
+        shown = votes[:12]
+        suffix = f"，另有{len(votes) - len(shown)}票" if len(votes) > len(shown) else ""
+        sections.append("票型 " + "，".join(shown) + suffix)
+    if others:
+        sections.append("其他 " + "；".join(others[:6]))
+    if not sections:
+        sections.append(f"{len(events)}条公开事件")
+    return f"{_phase_label(day, phase)}: " + "；".join(sections)
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result

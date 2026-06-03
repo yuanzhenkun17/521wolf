@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from agent.infrastructure.tracing import observe
-from dataclasses import dataclass
 from typing import Any
 
 from engine.models import ActionRequest, ActionResponse, ActionType
@@ -39,45 +38,40 @@ _VALID_CHOICES: dict[ActionType, set[str | None]] = {
 }
 
 
-# per-action validators
-@dataclass(slots=True)
-class ValidationResult:
-    valid: bool
-    repairable: bool = False
-    reason: str = ""
+# per-action validators — return None if valid, or a reason string if invalid
 
 
-def _validate_witch_act(request: ActionRequest, response: ActionResponse) -> ValidationResult:
+def _validate_witch_act(request: ActionRequest, response: ActionResponse) -> str | None:
     if response.choice == "none":
-        return ValidationResult(True)
+        return None
     if response.choice == "save":
         if not request.metadata.get("can_save", False):
-            return ValidationResult(False, reason="save not available this round")
-        return ValidationResult(True)
+            return "save not available this round"
+        return None
     if response.choice == "poison":
         if not request.metadata.get("can_poison", False):
-            return ValidationResult(False, reason="poison not available this round")
+            return "poison not available this round"
         if response.target is None:
-            return ValidationResult(False, reason="poison requires a target")
+            return "poison requires a target"
         if request.candidates and response.target not in request.candidates:
-            return ValidationResult(False, repairable=True, reason="poison target not in candidates")
-        return ValidationResult(True)
-    return ValidationResult(False, reason="invalid witch choice")
+            return "poison target not in candidates"
+        return None
+    return "invalid witch choice"
 
 
-def _validate_sheriff_badge(request: ActionRequest, response: ActionResponse) -> ValidationResult:
+def _validate_sheriff_badge(request: ActionRequest, response: ActionResponse) -> str | None:
     if response.choice == "destroy":
-        return ValidationResult(True)
+        return None
     if response.choice == "transfer":
         if response.target is None:
-            return ValidationResult(False, reason="transfer requires a target")
+            return "transfer requires a target"
         if request.candidates and response.target not in request.candidates:
-            return ValidationResult(False, repairable=True, reason="transfer target not in candidates")
-        return ValidationResult(True)
-    return ValidationResult(False, reason="invalid badge choice")
+            return "transfer target not in candidates"
+        return None
+    return "invalid badge choice"
 
 
-def _validate_white_wolf_explode(request: ActionRequest, response: ActionResponse) -> ValidationResult:
+def _validate_white_wolf_explode(request: ActionRequest, response: ActionResponse) -> str | None:
     """White wolf king explode validation — matches rules engine expectations.
 
     Valid states:
@@ -86,17 +80,17 @@ def _validate_white_wolf_explode(request: ActionRequest, response: ActionRespons
     All other combinations are invalid and trigger fallback to pass.
     """
     if response.target is not None and response.target in request.candidates:
-        return ValidationResult(True)
+        return None
     if response.target is None and response.choice in {"pass", None}:
-        return ValidationResult(True)
-    return ValidationResult(False, reason="invalid explode state")
+        return None
+    return "invalid explode state"
 
 
-def _validate_target_action(request: ActionRequest, response: ActionResponse) -> ValidationResult:
+def _validate_target_action(request: ActionRequest, response: ActionResponse) -> str | None:
     """Generic validator: target must be in candidates if provided."""
     if response.target is not None and request.candidates and response.target not in request.candidates:
-        return ValidationResult(False, repairable=True, reason="target not in candidates")
-    return ValidationResult(True)
+        return "target not in candidates"
+    return None
 
 
 _ACTION_VALIDATORS: dict[ActionType, Any] = {
@@ -131,8 +125,9 @@ def enforce_policy_step(ctx: AgentContext) -> AgentContext:
     request = ctx.request
 
     if ctx.response is None:
-        ctx.response = _fallback_response(request, ctx)
-        ctx.source = "fallback"
+        ctx.response = _fallback_response(request)
+        if ctx.source != "llm_error":
+            ctx.source = "fallback"
         ctx.policy_adjustments.append("No parsed response available; used fallback.")
         return ctx
 
@@ -157,9 +152,9 @@ def enforce_policy_step(ctx: AgentContext) -> AgentContext:
     # -- per-action validation -------------------------------------------------
     validator = _ACTION_VALIDATORS.get(request.action_type)
     if validator is not None:
-        result = validator(request, response)
-        if not result.valid:
-            if result.repairable:
+        reason = validator(request, response)
+        if reason is not None:
+            if "not in candidates" in reason:
                 repaired = request.candidates[0] if request.candidates else None
                 if repaired is not None:
                     old_target = response.target
@@ -170,17 +165,17 @@ def enforce_policy_step(ctx: AgentContext) -> AgentContext:
                         text=response.text,
                     )
                     adjustments.append(
-                        f"{result.reason}; repaired target from {old_target} to {repaired}."
+                        f"{reason}; repaired target from {old_target} to {repaired}."
                     )
                 else:
-                    adjustments.append(f"{result.reason}; no repair available, falling back.")
-                    ctx.response = _fallback_response(request, ctx)
+                    adjustments.append(f"{reason}; no repair available, falling back.")
+                    ctx.response = _fallback_response(request)
                     ctx.source = "fallback"
                     ctx.policy_adjustments.extend(adjustments)
                     return ctx
             else:
-                adjustments.append(f"{result.reason}; falling back.")
-                ctx.response = _fallback_response(request, ctx)
+                adjustments.append(f"{reason}; falling back.")
+                ctx.response = _fallback_response(request)
                 ctx.source = "fallback"
                 ctx.policy_adjustments.extend(adjustments)
                 return ctx
@@ -216,7 +211,7 @@ def _default_choice(action_type: ActionType) -> str | None:
     return defaults.get(action_type)
 
 
-def _fallback_response(request: ActionRequest, ctx: AgentContext) -> ActionResponse:
+def _fallback_response(request: ActionRequest) -> ActionResponse:
     """Generate a guaranteed-legal fallback response for any action type."""
     if request.action_type in _SPEECH_ACTIONS:
         return ActionResponse(

@@ -424,8 +424,9 @@ class EngineTests(unittest.TestCase):
 
         self.assertEqual(result, "finished")
         self.assertEqual(engine.state.winner, Winner.WEREWOLVES)
-        self.assertFalse(engine.state.players[9].alive)
-        self.assertIn("hunter_shot", [event.type for event in engine.state.events])
+        # Game ends before hunter shot fires: all gods dead -> wolves win (variant rule)
+        self.assertTrue(engine.state.players[9].alive)
+        self.assertNotIn("hunter_shot", [event.type for event in engine.state.events])
         self.assertNotIn(ActionType.SPEAK, [request.action_type for request in agents[2].requests])
 
     def test_poisoned_hunter_does_not_shoot(self):

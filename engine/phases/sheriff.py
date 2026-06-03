@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from engine.models import ActionResponse, ActionType, Phase
-from engine.public_log import append_public_event
+from engine.phases.exile import append_vote_public_events
 
 if TYPE_CHECKING:
     from engine.engine import GameEngine
@@ -58,7 +58,7 @@ async def run_sheriff_election(engine: GameEngine) -> int | None:
         )
         if response.target is not None:
             votes[player_id] = response.target
-    append_sheriff_vote_public_events(engine, voters, votes)
+    append_vote_public_events(engine, ActionType.SHERIFF_VOTE, voters, votes, prefix="警长票")
     winner = engine.resolve_exile_votes(votes)
     engine.state.sheriff_id = winner
     engine._log(
@@ -69,8 +69,3 @@ async def run_sheriff_election(engine: GameEngine) -> int | None:
     return winner
 
 
-def append_sheriff_vote_public_events(engine: GameEngine, voters: tuple[int, ...], votes: dict[int, int]) -> None:
-    for voter in voters:
-        target = votes.get(voter)
-        content = f"{voter}号警长票投给{target}号" if target is not None else f"{voter}号警长票弃票"
-        append_public_event(engine, ActionType.SHERIFF_VOTE.value, actor=voter, target=target, content=content)

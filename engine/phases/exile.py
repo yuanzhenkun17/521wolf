@@ -50,10 +50,14 @@ def append_vote_public_events(
     action_type: ActionType,
     voters: tuple[int, ...],
     votes: dict[int, int],
+    prefix: str = "",
 ) -> None:
     for voter in voters:
         target = votes.get(voter)
-        content = f"{voter}号投给{target}号" if target is not None else f"{voter}号弃票"
+        if target is not None:
+            content = f"{voter}号{prefix}投给{target}号"
+        else:
+            content = f"{voter}号{prefix}弃票"
         append_public_event(engine, action_type.value, actor=voter, target=target, content=content)
 
 

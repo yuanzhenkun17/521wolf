@@ -13,6 +13,16 @@ def as_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def as_int(value: Any) -> int | None:
+    """Safely convert value to int, returning None on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def as_int_list(value: Any) -> list[int]:
     """Safely convert a list of values to ``list[int]``."""
     if not isinstance(value, list):

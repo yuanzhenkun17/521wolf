@@ -28,7 +28,6 @@ from agent.learning.evolution.pipeline import (
 )
 from agent.learning.evolution.state import save_run_state
 from agent.learning.evolution.store import VersionStore
-from unittest.mock import patch
 from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
 
 
@@ -48,28 +47,28 @@ class _FakeSelfPlayConfig:
 
 
 # ---------------------------------------------------------------------------
-# Build a fake ``agent.learning.selfplay`` module with SelfPlayConfig
-# so that ``from agent.learning.selfplay import SelfPlayConfig`` works
+# Build a fake ``agent.learning.evolution.games`` module with SelfPlayConfig
+# so that ``from agent.learning.evolution.games import SelfPlayConfig`` works
 # inside _stage_training without pulling in the real (heavy) module.
 # ---------------------------------------------------------------------------
 
-_original_selfplay = sys.modules.get("agent.learning.selfplay")
+_original_games_module = sys.modules.get("agent.learning.evolution.games")
 
 
 def _install_fake_selfplay_module():
-    """Install a minimal fake ``agent.learning.selfplay`` module into sys.modules."""
-    fake_mod = types.ModuleType("agent.learning.selfplay")
+    """Install a minimal fake ``agent.learning.evolution.games`` module into sys.modules."""
+    fake_mod = types.ModuleType("agent.learning.evolution.games")
     fake_mod.SelfPlayConfig = _FakeSelfPlayConfig  # type: ignore[attr-defined]
-    sys.modules["agent.learning.selfplay"] = fake_mod
+    sys.modules["agent.learning.evolution.games"] = fake_mod
     return fake_mod
 
 
 def _restore_selfplay_module():
-    """Restore the original ``agent.learning.selfplay`` entry in sys.modules."""
-    if _original_selfplay is None:
-        sys.modules.pop("agent.learning.selfplay", None)
+    """Restore the original ``agent.learning.evolution.games`` entry in sys.modules."""
+    if _original_games_module is None:
+        sys.modules.pop("agent.learning.evolution.games", None)
     else:
-        sys.modules["agent.learning.selfplay"] = _original_selfplay
+        sys.modules["agent.learning.evolution.games"] = _original_games_module
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +141,7 @@ def _make_fake_battle_runner():
 
     async def _battle_runner(
         store, role, candidate_hash, games, model_adapter, selfplay_runner,
-        on_progress=None,
+        on_progress=None, **kwargs,
     ):
         return summary
 
@@ -179,7 +178,7 @@ async def _run_pipeline(tmp_path: Path, role: str = "seer"):
     fake_applier = _make_fake_applier()
     fake_battle = _make_fake_battle_runner()
 
-    # Install fake module so ``from agent.learning.selfplay import SelfPlayConfig``
+    # Install fake module so ``from agent.learning.evolution.games import SelfPlayConfig``
     # resolves without pulling in the real heavy evaluation module.
     _install_fake_selfplay_module()
     try:
@@ -523,7 +522,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run1.status, EvolutionStatus.REVIEWING)
 
             # Role should appear in active runs
-            active = scan_active_runs(store)
+            active = scan_active_runs()
             active_run_ids = [r["run_id"] for r in active]
             self.assertIn(run1.run_id, active_run_ids)
 
@@ -532,7 +531,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run2.status, EvolutionStatus.REVIEWING)
 
             # Both should be active (non-terminal)
-            active = scan_active_runs(store)
+            active = scan_active_runs()
             active_run_ids = [r["run_id"] for r in active]
             self.assertIn(run1.run_id, active_run_ids)
             self.assertIn(run2.run_id, active_run_ids)
@@ -542,7 +541,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(run1.status, EvolutionStatus.PROMOTED)
 
             # Now only the second run should be active
-            active = scan_active_runs(store)
+            active = scan_active_runs()
             active_run_ids = [r["run_id"] for r in active]
             self.assertNotIn(run1.run_id, active_run_ids)
             self.assertIn(run2.run_id, active_run_ids)

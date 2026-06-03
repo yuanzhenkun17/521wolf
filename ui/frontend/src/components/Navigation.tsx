@@ -1,10 +1,9 @@
 import { NavLink } from "react-router-dom";
-import { Gamepad2, Swords, GitBranch } from "lucide-react";
+import { Gamepad2, GitBranch } from "lucide-react";
 
 const NAV_ITEMS = [
-  { to: "/", label: "游戏", icon: Gamepad2 },
-  { to: "/roles", label: "角色演化", icon: GitBranch },
-  { to: "/selfplay", label: "自我对弈", icon: Swords },
+  { to: "/", label: "普通对战", icon: Gamepad2 },
+  { to: "/roles", label: "自进化", icon: GitBranch },
 ];
 
 export function Navigation() {

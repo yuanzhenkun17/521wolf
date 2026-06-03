@@ -10,15 +10,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
+from engine.models import ActionType, Role
 from agent.learning.evolution.models import (
     SkillConsolidation,
     SkillDiff,
     SkillProposal,
 )
+from agent.learning.evolution.store import normalize_skill_path, normalize_skill_text
 from agent.infrastructure.llm import ModelAdapter
 from agent.knowledge.skills.loader import load_markdown_skills, parse_front_matter
 
@@ -28,6 +31,8 @@ _log = logging.getLogger(__name__)
 CONFIDENCE_THRESHOLD = 0.5
 MAX_SKILL_LENGTH = 5000  # chars per file
 MAX_CHANGED_FILES = 5
+MAX_ACTIVE_SKILLS_PER_ROLE = 6
+CREATE_SKILL_ACTION = "create_skill"
 
 # Global whitelist — code defines what action types exist.
 # Skills declare which subset they allow via evolution.allowed_actions.
@@ -35,7 +40,12 @@ GLOBAL_ALLOWED_PROPOSAL_ACTIONS = {
     "append_rule",
     "rewrite_section",
     "deprecate_rule",
+    CREATE_SKILL_ACTION,
 }
+GLOBAL_ALLOWED_MODIFY_ACTIONS = GLOBAL_ALLOWED_PROPOSAL_ACTIONS - {CREATE_SKILL_ACTION}
+VALID_GAME_ACTIONS = {a.value for a in ActionType}
+VALID_ROLES = {r.value for r in Role}
+CREATE_SKILL_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,48}$")
 
 # Public API
 async def apply_proposals(
@@ -104,7 +114,7 @@ async def apply_proposals(
     changes: list[dict[str, str]] = parsed.get("changes", [])
 
     # Step 5: Validate (13 checks — any failure rejects all)
-    errors = _validate_all(current_skills, proposed_files, active, changes)
+    errors = _validate_all(current_skills, proposed_files, active, proposals.role)
     if errors:
         for err in errors:
             _log.error("Validation failed: %s", err)
@@ -179,17 +189,34 @@ def _build_llm_prompt(
     parts: list[str] = []
     parts.append(
         "You are a skill-file editor for a Werewolf game AI agent. "
-        "Apply the proposals below to the current skill files. "
+        "Apply the atomic rule proposals below to the current skill files. "
+        "Each proposal is a candidate rule card backed by recent games; do not invent unrelated rules. "
         "Return ONLY a JSON object with the exact shape:\n"
         '{"files": {"filename.md": "full file content", ...}, '
         '"changes": [{"filename": "file.md", "action": "modified|created", '
         '"description": "brief summary"}]}\n'
     )
     parts.append(f"\nRole: {role}\n")
+    parts.append(
+        "Rules:\n"
+        f"- Existing files may only be modified when targeted by an eligible proposal.\n"
+        f"- New files may only be created by action_type={CREATE_SKILL_ACTION}.\n"
+        f"- A created skill target must be exactly '<slug>.md' inside the Role={role} version.\n"
+        "- Return every existing file in files, unchanged unless it is targeted.\n"
+        "- Do not change front-matter role/name/applicable_actions/evolution for existing files.\n"
+        "- For created files, front matter must include role, name, applicable_actions, "
+        "and evolution.enabled=true with modification allowed_actions.\n"
+        "- SLOW UPDATE PROTECTION: If a file contains `<!-- slow_update -->...<!-- /slow_update -->` "
+        "regions, you MUST preserve their content exactly. You may APPEND new content inside the region, "
+        "but you must NOT delete or modify existing content within these markers.\n"
+    )
 
     parts.append("## Current skill files\n")
-    for fname, content in current_skills.items():
-        parts.append(f"### {fname}\n```\n{content}\n```\n")
+    if current_skills:
+        for fname, content in current_skills.items():
+            parts.append(f"### {fname}\n```\n{content}\n```\n")
+    else:
+        parts.append("(empty baseline: no current skill files)\n")
 
     parts.append("## Proposals to apply\n")
     for p in eligible:
@@ -217,7 +244,7 @@ async def _call_llm(
     """Call the LLM with the application prompt."""
     prompt = _build_llm_prompt(current_skills, eligible, role)
     messages = [{"role": "user", "content": prompt}]
-    return await model_adapter.complete(messages, name="skill_applier")
+    return await model_adapter.complete(messages)
 
 
 def _parse_llm_output(raw: str) -> dict[str, Any]:
@@ -245,21 +272,54 @@ def _validate_all(
     current_skills: dict[str, str],
     proposed_files: dict[str, str],
     eligible: list[SkillProposal],
-    changes: list[dict[str, str]],
+    role: str,
 ) -> list[str]:
     """Run all 13 validation checks. Returns list of error strings (empty = pass)."""
     errors: list[str] = []
     eligible_targets = {p.target_file for p in eligible}
+    create_targets = {
+        p.target_file for p in eligible
+        if p.action_type == CREATE_SKILL_ACTION
+    }
 
-    # 1. Only modify files targeted by eligible proposals
-    for fname in proposed_files:
-        if fname not in eligible_targets:
-            errors.append(f"File '{fname}' was not targeted by any eligible proposal")
+    # 1. Only modify/create files targeted by eligible proposals.
+    # Unchanged current files may be included in the full output.
+    for fname, new_content in proposed_files.items():
+        err = _validate_path_safe(fname)
+        if err:
+            errors.append(err)
+        old_content = current_skills.get(fname)
+        if fname in eligible_targets:
+            continue
+        if old_content is None:
+            errors.append(f"File '{fname}' was created without an eligible proposal")
+        elif not _same_skill_text(old_content, new_content):
+            errors.append(f"File '{fname}' was modified without an eligible proposal")
 
     # 1b. Check proposal action_type against global whitelist and per-skill allowed_actions
     for p in eligible:
+        err = _validate_path_safe(p.target_file)
+        if err:
+            errors.append(f"[{p.target_file}] {err}")
         if p.action_type not in GLOBAL_ALLOWED_PROPOSAL_ACTIONS:
             errors.append(f"[{p.target_file}] action_type '{p.action_type}' not in global whitelist")
+
+        if p.action_type == CREATE_SKILL_ACTION:
+            if p.target_file in current_skills:
+                errors.append(f"[{p.target_file}] create_skill target already exists")
+            if p.target_file not in proposed_files:
+                errors.append(f"[{p.target_file}] create_skill target missing from LLM output")
+            err = _validate_create_skill_target(p.target_file, role)
+            if err:
+                errors.append(f"[{p.target_file}] {err}")
+            continue
+
+        if p.target_file not in current_skills:
+            errors.append(
+                f"[{p.target_file}] target file does not exist; use {CREATE_SKILL_ACTION}"
+            )
+            continue
+
         # Per-skill check: load old content to get evolution.allowed_actions
         old_content = current_skills.get(p.target_file, "")
         if old_content:
@@ -280,32 +340,40 @@ def _validate_all(
 
     # Per-file checks
     for fname, new_content in proposed_files.items():
-        old_content = current_skills.get(fname, "")
+        old_content = current_skills.get(fname)
+        is_new_file = old_content is None
 
-        # 3. name field unchanged
-        err = _validate_name_unchanged(new_content, old_content)
-        if err:
-            errors.append(f"[{fname}] {err}")
+        if is_new_file:
+            if fname not in create_targets:
+                errors.append(f"[{fname}] new file requires action_type '{CREATE_SKILL_ACTION}'")
+            err = _validate_create_skill_file(fname, new_content, role)
+            if err:
+                errors.append(f"[{fname}] {err}")
+        else:
+            # 3. name field unchanged
+            err = _validate_name_unchanged(new_content, old_content)
+            if err:
+                errors.append(f"[{fname}] {err}")
 
-        # 4. applicable_actions not expanded
-        err = _validate_applicable_actions_not_expanded(new_content, old_content)
-        if err:
-            errors.append(f"[{fname}] {err}")
+            # 4. applicable_actions not expanded
+            err = _validate_applicable_actions_not_expanded(new_content, old_content)
+            if err:
+                errors.append(f"[{fname}] {err}")
 
-        # 5. role unchanged
-        err = _validate_role_unchanged(new_content, old_content)
-        if err:
-            errors.append(f"[{fname}] {err}")
+            # 5. role unchanged
+            err = _validate_role_unchanged(new_content, old_content)
+            if err:
+                errors.append(f"[{fname}] {err}")
 
-        # 6. evolution.enabled not changed from false to true without proposal
-        err = _validate_evolvable_not_flipped(new_content, old_content, eligible, fname)
-        if err:
-            errors.append(f"[{fname}] {err}")
+            # 6. evolution.enabled not changed from false to true without proposal
+            err = _validate_evolvable_not_flipped(new_content, old_content, eligible, fname)
+            if err:
+                errors.append(f"[{fname}] {err}")
 
-        # 7. evolution field must not be modified by applier
-        err = _validate_evolution_unchanged(new_content, old_content)
-        if err:
-            errors.append(f"[{fname}] {err}")
+            # 7. evolution field must not be modified by applier
+            err = _validate_evolution_unchanged(new_content, old_content)
+            if err:
+                errors.append(f"[{fname}] {err}")
 
         # 8. Path safety
         err = _validate_path_safe(fname)
@@ -328,6 +396,20 @@ def _validate_all(
         if err:
             errors.append(f"[{fname}] {err}")
 
+        # 13. Slow update region preservation
+        if not is_new_file:
+            err = _validate_slow_update_preserved(old_content, new_content)
+            if err:
+                errors.append(f"[{fname}] {err}")
+
+    # 11b. Active skill cap for the role being evolved.
+    role_skill_count = _count_role_skill_files(proposed_files, role)
+    if role_skill_count > MAX_ACTIVE_SKILLS_PER_ROLE:
+        errors.append(
+            f"Role '{role}' would have {role_skill_count} active skills; "
+            f"limit is {MAX_ACTIVE_SKILLS_PER_ROLE}"
+        )
+
     # 12. Diff size limit — total changed content bounded by MAX_CHANGED_FILES * MAX_SKILL_LENGTH
     total_new = sum(len(v) for v in proposed_files.values())
     if total_new > MAX_CHANGED_FILES * MAX_SKILL_LENGTH:
@@ -337,6 +419,134 @@ def _validate_all(
         )
 
     return errors
+
+
+import re
+
+_SLOW_UPDATE_PATTERN = re.compile(
+    r"<!--\s*slow_update\s*-->(.*?)<!--\s*/slow_update\s*>",
+    re.DOTALL,
+)
+
+
+def _validate_slow_update_preserved(old_content: str, new_content: str) -> str | None:
+    """Check that slow_update regions in old_content are preserved in new_content.
+
+    The new file may have additional content appended inside the slow_update region,
+    but existing content must not be deleted or modified.
+    """
+    old_regions = _SLOW_UPDATE_PATTERN.findall(old_content)
+    if not old_regions:
+        return None  # No slow_update regions to protect
+
+    new_regions = _SLOW_UPDATE_PATTERN.findall(new_content)
+    if not new_regions:
+        return "slow_update region was deleted"
+
+    # Check that each old region's content is a substring of the corresponding new region
+    # (allowing for appended content)
+    for i, old_region in enumerate(old_regions):
+        old_text = old_region.strip()
+        if i >= len(new_regions):
+            return f"slow_update region {i+1} was deleted"
+        new_text = new_regions[i].strip()
+        if old_text not in new_text:
+            return (
+                f"slow_update region {i+1} content was modified "
+                f"(old: {len(old_text)} chars, new: {len(new_text)} chars)"
+            )
+
+    return None
+
+
+def _same_skill_text(left: str, right: str) -> bool:
+    """Compare skill content using the same normalization as version hashing."""
+    return normalize_skill_text(left) == normalize_skill_text(right)
+
+
+def _as_str_list(value: Any) -> list[str]:
+    """Normalize a front-matter scalar/list field into strings."""
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    if isinstance(value, str):
+        return [value]
+    return []
+
+
+def _validate_create_skill_target(path: str, role: str) -> str | None:
+    """Validate create_skill path shape: exactly '<slug>.md' in the role version."""
+    try:
+        normalized = normalize_skill_path(path)
+    except ValueError as exc:
+        return str(exc)
+    if normalized != path.replace("\\", "/"):
+        return f"target_file must already be normalized, got '{path}'"
+    p = PurePosixPath(normalized)
+    if len(p.parts) != 1:
+        return f"create_skill target_file must be exactly '<slug>.md' inside the '{role}' role version"
+    slug = p.stem
+    if not CREATE_SKILL_SLUG_RE.match(slug):
+        return (
+            "create_skill slug must use lowercase letters, digits, '-' or '_' "
+            "and be 2-49 chars"
+        )
+    return None
+
+
+def _validate_create_skill_file(path: str, content: str, role: str) -> str | None:
+    """Validate the full content of a newly created skill file."""
+    err = _validate_create_skill_target(path, role)
+    if err:
+        return err
+
+    fm = _validate_front_matter(content)
+    if fm is None:
+        return "YAML front matter is not parseable"
+
+    file_role = str(fm.get("role", ""))
+    if file_role != role:
+        return f"role must be '{role}', got '{file_role}'"
+    if file_role not in VALID_ROLES:
+        return f"unknown role '{file_role}'"
+
+    name = str(fm.get("name", "")).strip()
+    if not name:
+        return "name is required"
+
+    game_actions = set(_as_str_list(fm.get("applicable_actions", [])))
+    if not game_actions:
+        return "applicable_actions must contain at least one game action"
+    invalid_game_actions = sorted(game_actions - VALID_GAME_ACTIONS)
+    if invalid_game_actions:
+        return f"unknown applicable_actions: {invalid_game_actions}"
+
+    evo = fm.get("evolution", {})
+    if not isinstance(evo, dict):
+        return "evolution must be a mapping"
+    if not bool(evo.get("enabled", False)):
+        return "created skills must set evolution.enabled=true"
+    allowed_modify_actions = set(_as_str_list(evo.get("allowed_actions", [])))
+    if not allowed_modify_actions:
+        return "created skills must declare evolution.allowed_actions"
+    invalid_modify_actions = sorted(allowed_modify_actions - GLOBAL_ALLOWED_MODIFY_ACTIONS)
+    if invalid_modify_actions:
+        return f"invalid evolution.allowed_actions: {invalid_modify_actions}"
+    return None
+
+
+def _count_role_skill_files(files: dict[str, str], role: str) -> int:
+    """Count markdown skill files whose front matter belongs to *role*."""
+    count = 0
+    for fname, content in files.items():
+        if PurePosixPath(fname.replace("\\", "/")).suffix != ".md":
+            continue
+        try:
+            fm, _ = parse_front_matter(content)
+        except Exception:
+            continue
+        if str(fm.get("role", "")) == role:
+            count += 1
+    return count
 
 
 def _validate_front_matter(content: str) -> dict | None:
@@ -408,14 +618,10 @@ def _validate_evolution_unchanged(new_content: str, old_content: str) -> str | N
 
 def _validate_path_safe(path: str) -> str | None:
     """Return error string if path is unsafe."""
-    from pathlib import PurePosixPath
-    p = PurePosixPath(path)
-    if p.is_absolute():
-        return f"Path '{path}' is absolute"
-    if ".." in p.parts:
-        return f"Path '{path}' contains '..'"
-    if p.suffix and p.suffix != ".md":
-        return f"Path '{path}' is not a .md file"
+    try:
+        normalize_skill_path(path)
+    except ValueError as exc:
+        return f"Path '{path}' is unsafe: {exc}"
     return None
 
 

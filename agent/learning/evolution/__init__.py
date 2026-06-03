@@ -2,6 +2,7 @@
 
 from agent.learning.evolution.applier import apply_proposals
 from agent.learning.evolution.batch import run_batch_evolution
+from agent.learning.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
 from agent.learning.evolution.models import EvolutionRun, SkillConsolidation, SkillProposal
 from agent.learning.evolution.pipeline import promote, reject, run_evolution
 from agent.learning.evolution.store import VersionStore
@@ -13,6 +14,10 @@ __all__ = [
     "reject",
     "run_batch_evolution",
     "run_evolution",
+    "run_selfplay",
+    "SelfPlayConfig",
+    "SelfPlayGameResult",
+    "SelfPlayResult",
     "SkillConsolidation",
     "SkillProposal",
     "VersionStore",

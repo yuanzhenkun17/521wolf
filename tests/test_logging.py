@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import agents_with, run, standard_roles
+from helpers import agents_with, run
+from engine.roles import standard_roles
 from engine.engine import GameEngine
 from engine.logging import GameLogger, LogVisibility, next_game_log_name
 from engine.models import ActionResponse, ActionType, DeathCause

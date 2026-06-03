@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.learning.selfplay import SelfPlayConfig, run_selfplay
+from agent.learning.evolution.games import SelfPlayConfig, run_selfplay
 from agent.learning.evolution.config import (
     build_baseline_config,
     build_role_override_config,
@@ -56,7 +56,6 @@ class FakeModelAdapter:
             "confidence": 0.5,
             "alternatives": [],
             "rejected_reasons": [],
-            "memory_refs": [],
             "selected_skills": [],
         })
 
@@ -80,7 +79,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
         """Verify that SelfPlayConfig.skill_version_config flows through to agents.
 
         Steps:
-        1. Create a VersionStore from the real skills/ directory.
+        1. Create an explicit empty-baseline VersionStore.
         2. Build a baseline SkillVersionConfig with all role hashes.
         3. Build a composite skill_dir and run 1 real selfplay game.
         4. Verify the game completes and skill_dir paths are valid.
@@ -90,9 +89,8 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
             store_dir = tmp_path / "role_versions"
             store = VersionStore(store_dir)
 
-            # Initialize from real skills/ directory
-            skills_root = Path("skills")
-            store.initialize_from_skills(skills_root)
+            # First-run evolution intentionally starts from empty role baselines.
+            store.ensure_default_baselines()
 
             # Build baseline config with all role hashes
             config = build_baseline_config(store)
@@ -103,9 +101,6 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
             for role in config.role_versions:
                 sd = store.get_skill_dir(role, config.role_versions[role])
                 self.assertTrue(sd.is_dir(), f"Skill dir for {role} does not exist: {sd}")
-                # Verify it contains .md files
-                md_files = list(sd.rglob("*.md"))
-                self.assertGreater(len(md_files), 0, f"No .md files in {sd}")
                 skill_dirs[role] = sd
 
             # Verify different roles got different skill directories
@@ -118,7 +113,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
                     )
 
             # Build composite skill directory from the config
-            from agent.learning.evolution.workspace import build_composite_skill_dir
+            from agent.learning.evolution.config import build_composite_skill_dir
 
             composite_dir = build_composite_skill_dir(store, config)
             try:
@@ -171,9 +166,8 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
             store_dir = tmp_path / "role_versions"
             store = VersionStore(store_dir)
 
-            # Initialize from real skills/ directory
-            skills_root = Path("skills")
-            store.initialize_from_skills(skills_root)
+            # First-run evolution intentionally starts from empty role baselines.
+            store.ensure_default_baselines()
 
             # Build baseline config
             baseline_config = build_baseline_config(store)
@@ -195,7 +189,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
             )
 
             # Build composite skill directories for each config
-            from agent.learning.evolution.workspace import build_composite_skill_dir
+            from agent.learning.evolution.config import build_composite_skill_dir
 
             composite_baseline = build_composite_skill_dir(store, baseline_config)
             composite_override = build_composite_skill_dir(store, override_config)

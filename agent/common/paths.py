@@ -50,14 +50,6 @@ class PathConfig:
         """Immutable skill-version snapshots (was ``role_versions/``)."""
         return self.data_dir / "versions"
 
-    # -- Convenience --
-    def ensure(self) -> None:
-        """Create all output directories so writers don't need mkdir boilerplate."""
-        self.games_dir.mkdir(parents=True, exist_ok=True)
-        self.selfplay_dir.mkdir(parents=True, exist_ok=True)
-        self.evolution_dir.mkdir(parents=True, exist_ok=True)
-        self.versions_dir.mkdir(parents=True, exist_ok=True)
-
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT = PathConfig(root=_PROJECT_ROOT)

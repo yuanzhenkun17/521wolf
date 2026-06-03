@@ -210,3 +210,55 @@ def test_initialize_from_skills(tmp_path):
         assert len(history.versions) == 1
         baseline = store.load_version(role, history.baseline)
         assert baseline.source == "initialize_from_skills"
+
+
+def test_ensure_default_baselines_creates_bootstrap_empty_versions(tmp_path):
+    """First-run evolution starts from explicit empty role baselines."""
+    from engine.models import Role
+
+    store = VersionStore(tmp_path / "role_versions")
+    store.ensure_default_baselines()
+
+    assert set(store.list_roles()) == {role.value for role in Role}
+    for role in Role:
+        history = store.get_history(role.value)
+        assert len(history.versions) == 1
+        baseline = store.load_version(role.value, history.baseline)
+        assert baseline.source == "bootstrap_empty"
+        assert baseline.skills == {}
+        assert "intentional empty baseline" in baseline.notes
+        skill_dir = store.get_skill_dir(role.value, history.baseline)
+        assert skill_dir.is_dir()
+        assert list(skill_dir.rglob("*.md")) == []
+
+
+def test_save_rejected_records_role_metric_delta(tmp_path):
+    """Rejected buffer keeps battle feedback so bad directions can be avoided."""
+    store = VersionStore(tmp_path / "role_versions")
+    battle_result = {
+        "baseline_metrics": {
+            "seer": {"role_weighted_score": 0.42, "win_rate": 0.40},
+        },
+        "candidate_metrics": {
+            "seer": {"role_weighted_score": 0.55, "win_rate": 0.50},
+        },
+        "games_played": 10,
+    }
+
+    store.save_rejected(
+        "seer",
+        [{
+            "target_file": "seer/check_priority.md",
+            "action_type": "rewrite_section",
+            "rationale": "test",
+            "confidence": 0.8,
+        }],
+        battle_result,
+    )
+
+    rejected = store.load_rejected("seer")
+    assert rejected[0]["metrics_delta"] == {
+        "role_score_delta": 0.13,
+        "win_rate_delta": 0.1,
+        "games": 10,
+    }

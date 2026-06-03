@@ -7,6 +7,8 @@ and resolves (role, config) pairs to on-disk skill directory paths.
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,10 +77,38 @@ def skill_dir_for_role(
 ) -> Path:
     """Returns the skill directory path for a specific role.
 
-    Used by _create_agents() to pass per-role skill_dir to LLMPlayerAgent.
+    Used by _create_agents() to pass per-role skill_dir to AgentRuntime.
     Maps (role -> hash -> directory path) so selfplay can load versioned skills.
     """
     role_hash = config.role_versions.get(role)
     if role_hash is None:
         raise KeyError(f"Role '{role}' not found in config '{config.name}'")
     return store.get_skill_dir(role, role_hash)
+
+
+def _is_explicit_empty_version(store: VersionStore, role: str, hash_value: str) -> bool:
+    """Return True for intentional empty role versions that have no skill files."""
+    try:
+        version = store.load_version(role, hash_value)
+    except FileNotFoundError:
+        return False
+    return (
+        not version.skills
+        and version.source in {"bootstrap_empty", "default_empty"}
+    )
+
+
+def build_composite_skill_dir(store: VersionStore, config: SkillVersionConfig) -> Path:
+    """Assemble a temporary role skill directory from a version config."""
+    tmpdir = Path(tempfile.mkdtemp(prefix="evo_skills_"))
+    for role, hash_value in config.role_versions.items():
+        dst = tmpdir / role
+        try:
+            src = store.get_skill_dir(role, hash_value)
+        except FileNotFoundError:
+            if _is_explicit_empty_version(store, role, hash_value):
+                dst.mkdir(parents=True, exist_ok=True)
+                continue
+            raise
+        shutil.copytree(src, dst)
+    return tmpdir

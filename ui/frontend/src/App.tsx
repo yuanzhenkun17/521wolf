@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Routes, Route, useParams, useNavigate } from "react-router-dom";
-import { Loader2, Play, ScrollText, Trophy } from "lucide-react";
-import { getGame, getGameArchive, getGameReview, getLeaderboard, listGames, startGame, type GameConfig } from "./api";
+import { Routes, Route, Navigate, useParams, useNavigate } from "react-router-dom";
+import { Loader2, Play, ScrollText } from "lucide-react";
+import { getGame, getGameArchive, getGameReview, listGames, startGame, type GameConfig } from "./api";
 import { GameConfigDialog } from "./components/GameConfigDialog";
+import { HumanActionPanel } from "./components/HumanActionPanel";
 import { Navigation } from "./components/Navigation";
 import { StatusPanel } from "./components/StatusPanel";
 import { PlayersPanel } from "./components/PlayersPanel";
@@ -10,14 +11,12 @@ import { KeyEventsPanel } from "./components/KeyEventsPanel";
 import { GamesPanel } from "./components/GamesPanel";
 import { GameStage } from "./components/GameStage";
 import { ReviewPanel } from "./components/ReviewPanel";
-import { LeaderboardPanel } from "./components/LeaderboardPanel";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { buildGamePages, latestPageId } from "./gamePages";
 import { phaseName } from "./presentation";
 import type { ArchiveMap, GameArchive, GameEvent, GameSnapshot } from "./types";
 import { RoleEvolutionPage } from "./pages/RoleEvolutionPage";
-import { SelfplayPage } from "./pages/SelfplayPage";
 
 
 // ---------------------------------------------------------------------------
@@ -37,8 +36,6 @@ function GameView() {
   const [followLatest, setFollowLatest] = useState(true);
   const [reviewData, setReviewData] = useState<Record<string, unknown> | null>(null);
   const [showReview, setShowReview] = useState(false);
-  const [leaderboardData, setLeaderboardData] = useState<Record<string, unknown> | null>(null);
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [archiveData, setArchiveData] = useState<GameArchive | null>(null);
   const [showConfigDialog, setShowConfigDialog] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -103,7 +100,6 @@ function GameView() {
     setFollowLatest(true);
     setArchiveData(null);
     setShowReview(false);
-    setShowLeaderboard(false);
     if (loaded.status === "completed" || loaded.winner) {
       void getGameArchive(gameId).then(setArchiveData).catch(() => setArchiveData(null));
     }
@@ -186,22 +182,6 @@ function GameView() {
                 {showReview ? "返回对局" : "复盘"}
               </Button>
             ) : null}
-            <Button
-              variant={showLeaderboard ? "default" : "secondary"}
-              onClick={() => {
-                if (showLeaderboard) {
-                  setShowLeaderboard(false);
-                } else {
-                  setShowReview(false);
-                  setShowLeaderboard(true);
-                  setLeaderboardData(null);
-                  void getLeaderboard().then(setLeaderboardData).catch(() => setLeaderboardData(null));
-                }
-              }}
-            >
-              <Trophy className="h-4 w-4" />
-              {showLeaderboard ? "返回对局" : "排行榜"}
-            </Button>
             <Button onClick={() => setShowConfigDialog(true)} disabled={starting || snapshot?.status === "running"}>
               {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
               开始新局
@@ -217,9 +197,7 @@ function GameView() {
           <PlayersPanel players={snapshot?.players ?? []} />
         </section>
 
-        {showLeaderboard ? (
-          <LeaderboardPanel data={leaderboardData} onClose={() => setShowLeaderboard(false)} />
-        ) : showReview ? (
+        {showReview ? (
           <ReviewPanel reviewData={reviewData} players={snapshot?.players ?? []} onClose={() => setShowReview(false)} />
         ) : (
           <GameStage
@@ -245,6 +223,9 @@ function GameView() {
       </div>
 
       <GameConfigDialog open={showConfigDialog} onClose={() => setShowConfigDialog(false)} onSubmit={handleStart} starting={starting} />
+      {snapshot && (
+        <HumanActionPanel gameId={snapshot.game_id} gameStatus={snapshot.status} />
+      )}
     </>
   );
 }
@@ -261,8 +242,7 @@ export function App() {
         <Route path="/" element={<GameView />} />
         <Route path="/games/:gameId" element={<GameView />} />
         <Route path="/roles" element={<RoleEvolutionPage />} />
-        <Route path="/selfplay" element={<SelfplayPage />} />
-
+        <Route path="/selfplay" element={<Navigate to="/roles" replace />} />
       </Routes>
     </main>
   );

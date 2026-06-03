@@ -33,6 +33,12 @@ class Role(StrEnum):
             return Team.VILLAGERS
         return Team.GODS
 
+    def is_good(self) -> bool:
+        return self.team is not Team.WEREWOLVES
+
+    def is_wolf(self) -> bool:
+        return self.team is Team.WEREWOLVES
+
 
 class Phase(StrEnum):
     SETUP = "setup"

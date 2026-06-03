@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from pathlib import Path
 
 from agent.core.memory import AgentMemory
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from engine.actions import ActionType
-from engine.models import ActionRequest, Observation, Phase, Role
+from engine.models import ActionRequest, ActionResponse, Observation, Phase, Role
 
 from agent.core.context import AgentContext
 from agent.decision.steps.remember import remember_step
@@ -16,8 +17,7 @@ from agent.decision.steps.build_prompt import build_prompt_step
 from agent.decision.steps.parse_output import parse_output_step
 from agent.decision.steps.enforce_policy import enforce_policy_step
 from agent.learning.review import did_survive, get_role_of
-from agent.api import AgentRuntime
-from agent.api.runtime import LLMPlayerAgent
+from agent.api.runtime import AgentRuntime
 
 
 def _make_witch_poison_request() -> ActionRequest:
@@ -202,9 +202,9 @@ class DecisionStepTests(unittest.TestCase):
     def setUp(self):
         self.request = _make_vote_request()
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
-        # Ensure skill router can find the seed skills directory
+        # Ensure skill router can find the test fixture skills directory
         from agent.knowledge.skills.router import configure_skill_root
-        configure_skill_root(Path(__file__).resolve().parent.parent / "skills")
+        configure_skill_root(Path(__file__).resolve().parent / "fixtures" / "skills")
 
     def test_request_observation_has_expected_data(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
@@ -216,7 +216,7 @@ class DecisionStepTests(unittest.TestCase):
     def test_remember_step_builds_context(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = remember_step(ctx, self.memory)
-        self.assertIn("memory_events", ctx.memory_context)
+        self.assertIn("rolling_summary", ctx.memory_context)
         self.assertIn("private_facts", ctx.memory_context)
 
     def test_select_skills_step_selects_skills_for_action(self):
@@ -307,9 +307,9 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(response)
 
     def test_runtime_llm_player_agent_protocol(self):
-        """LLMPlayerAgent satisfies the PlayerAgent protocol."""
+        """AgentRuntime satisfies the PlayerAgent protocol."""
         stub = StubModel('{"target": 7, "choice": null, "text": "出7号", "reasoning": "7可疑"}')
-        agent = LLMPlayerAgent(player_id=5, role=Role.VILLAGER, client=stub)
+        agent = AgentRuntime(player_id=5, role=Role.VILLAGER, model=stub)
         request = _make_vote_request()
         response = asyncio.run(agent.act(request))
         self.assertEqual(response.action_type, request.action_type)
@@ -318,8 +318,8 @@ class AgentRuntimeTests(unittest.TestCase):
     def test_runtime_decision_recorder_integration(self):
         recorder = AgentDecisionRecorder()
         stub = StubModel('{"target": 7, "choice": null, "text": "出7号", "reasoning": "7可疑"}')
-        agent = LLMPlayerAgent(
-            player_id=5, role=Role.VILLAGER, client=stub, decision_recorder=recorder
+        agent = AgentRuntime(
+            player_id=5, role=Role.VILLAGER, model=stub, recorder=recorder
         )
         request = _make_vote_request()
         asyncio.run(agent.act(request))
@@ -348,7 +348,7 @@ class AgentRuntimeTests(unittest.TestCase):
         ctx = AgentContext(request=request, player_id=runtime.player_id, role=runtime.role.value)
         self.assertEqual(ctx.request.observation.day, 2)
         ctx = remember_step(ctx, runtime.memory)
-        self.assertIn("memory_events", ctx.memory_context)
+        self.assertIn("rolling_summary", ctx.memory_context)
         ctx = select_skills_step(ctx)
         self.assertGreater(len(ctx.selected_skills), 0)
         self.assertNotEqual(ctx.skill_context, "")
@@ -526,7 +526,6 @@ class FieldNotesPromptTests(unittest.TestCase):
             memory_context={
                 "private_facts": {"known_roles": {}, "seer_checks": {}, "metadata": {}},
                 "public_summary": "",
-                "memory_events": [],
                 "self_history": "",
                 "suspicions": [],
                 "claims_seen": {},
@@ -635,6 +634,194 @@ class MemoryDedupTests(unittest.TestCase):
         self.assertEqual(seen_after_first, seen_after_second)
 
 
+class PhaseWindowMemoryTests(unittest.TestCase):
+    """Tests for phase-aware short-term memory."""
+
+    def _entry(
+        self,
+        *,
+        day: int,
+        phase: str,
+        event_type: str,
+        actor: int | None = None,
+        target: int | None = None,
+        content: str = "",
+    ) -> str:
+        return json.dumps(
+            {
+                "day": day,
+                "phase": phase,
+                "type": event_type,
+                "actor": actor,
+                "target": target,
+                "content": content,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    def _request(
+        self,
+        public_log: list[str],
+        *,
+        day: int = 1,
+        phase: Phase = Phase.EXILE_VOTE,
+        action_type: ActionType = ActionType.EXILE_VOTE,
+        candidates: tuple[int, ...] = (2, 3, 4),
+        dead_players: tuple[int, ...] = (),
+        sheriff_id: int | None = None,
+    ) -> ActionRequest:
+        return ActionRequest(
+            player_id=5,
+            action_type=action_type,
+            phase=phase,
+            observation=Observation(
+                player_id=5,
+                self_role=Role.VILLAGER,
+                phase=phase,
+                day=day,
+                alive_players=(1, 2, 3, 4, 5),
+                dead_players=dead_players,
+                sheriff_id=sheriff_id,
+                public_log=public_log,
+                known_roles={},
+                seer_checks={},
+                metadata={},
+            ),
+            candidates=candidates,
+            retry_count=0,
+            metadata={},
+        )
+
+    def test_recent_timeline_keeps_only_last_two_phase_keys(self):
+        mem = AgentMemory(player_id=5, role=Role.VILLAGER)
+        public_log = [
+            self._entry(
+                day=1,
+                phase="sheriff_election",
+                event_type="sheriff_speak",
+                actor=1,
+                content="1号警上发言，我是预言家",
+            ),
+            self._entry(
+                day=1,
+                phase="day_speech",
+                event_type="speak",
+                actor=2,
+                content="2号发言怀疑P3",
+            ),
+            self._entry(
+                day=1,
+                phase="exile_vote",
+                event_type="exile_vote",
+                actor=2,
+                target=3,
+                content="2号投给3号",
+            ),
+        ]
+
+        memory_context = mem.build_context(self._request(public_log))
+
+        self.assertEqual(
+            [block["phase_key"] for block in memory_context["recent_timeline"]],
+            ["day1/day_speech", "day1/exile_vote"],
+        )
+        timeline_text = json.dumps(memory_context["recent_timeline"], ensure_ascii=False)
+        self.assertNotIn("警上发言", timeline_text)
+        self.assertIn("2号发言怀疑P3", timeline_text)
+        self.assertIn("2号投给3号", timeline_text)
+
+    def test_old_phase_rolls_into_summary_and_pins_role_claim(self):
+        mem = AgentMemory(player_id=5, role=Role.VILLAGER)
+        public_log = [
+            self._entry(
+                day=1,
+                phase="sheriff_election",
+                event_type="sheriff_speak",
+                actor=1,
+                content="1号警上发言，我是预言家，查验P2是好人",
+            ),
+            self._entry(
+                day=1,
+                phase="day_speech",
+                event_type="speak",
+                actor=2,
+                content="2号发言认好P1",
+            ),
+            self._entry(
+                day=1,
+                phase="exile_vote",
+                event_type="exile_vote",
+                actor=3,
+                target=4,
+                content="3号投给4号",
+            ),
+        ]
+
+        memory_context = mem.build_context(self._request(public_log))
+
+        summary_text = "\n".join(memory_context["rolling_summary"])
+        self.assertIn("day1/sheriff_election", summary_text)
+        self.assertIn("P1声称seer", summary_text)
+        facts = memory_context["pinned_facts"]
+        self.assertTrue(any(f["type"] == "role_claim" and f["actor"] == 1 for f in facts))
+        self.assertTrue(any(f["type"] == "claimed_check" and f["actor"] == 1 for f in facts))
+
+    def test_observation_facts_are_pinned_outside_hot_window(self):
+        mem = AgentMemory(player_id=5, role=Role.VILLAGER)
+        public_log = [
+            self._entry(day=1, phase="day_speech", event_type="speak", actor=1, content="1号发言"),
+            self._entry(day=1, phase="exile_vote", event_type="exile_vote", actor=2, target=3, content="2号投给3号"),
+            self._entry(day=2, phase="day_speech", event_type="speak", actor=4, content="4号发言"),
+        ]
+
+        memory_context = mem.build_context(
+            self._request(public_log, day=2, phase=Phase.DAY_SPEECH, action_type=ActionType.SPEAK, dead_players=(3,), sheriff_id=1)
+        )
+
+        facts = memory_context["pinned_facts"]
+        self.assertTrue(any(f["type"] == "dead_player" and f["target"] == 3 for f in facts))
+        self.assertTrue(any(f["type"] == "sheriff" and f["target"] == 1 for f in facts))
+
+    def test_self_commitments_capture_public_stance(self):
+        mem = AgentMemory(player_id=5, role=Role.VILLAGER)
+        request = self._request([], phase=Phase.DAY_SPEECH, action_type=ActionType.SPEAK, candidates=())
+        mem.remember_action(
+            request,
+            ActionResponse(ActionType.SPEAK, text="我站边P2，怀疑P3"),
+        )
+
+        memory_context = mem.build_context(request)
+
+        self.assertEqual(memory_context["self_commitments"][0]["suspected_player"], 3)
+        self.assertIn("我站边P2", memory_context["self_commitments"][0]["text"])
+
+    def test_prompt_uses_phase_memory_sections_instead_of_legacy_event_line(self):
+        mem = AgentMemory(player_id=5, role=Role.VILLAGER)
+        public_log = [
+            self._entry(day=1, phase="sheriff_election", event_type="sheriff_speak", actor=1, content="1号警上发言，我是预言家"),
+            self._entry(day=1, phase="day_speech", event_type="speak", actor=2, content="2号发言怀疑P3"),
+            self._entry(day=1, phase="exile_vote", event_type="exile_vote", actor=2, target=3, content="2号投给3号"),
+        ]
+        request = self._request(public_log)
+        memory_context = mem.build_context(request)
+
+        from agent.knowledge.prompts import build_messages
+        messages = build_messages(
+            request,
+            player_id=5,
+            role=Role.VILLAGER,
+            memory_context=memory_context,
+        )
+        prompt = messages[1]["content"]
+
+        self.assertIn("前史摘要", prompt)
+        self.assertIn("不可丢关键事实", prompt)
+        self.assertIn("玩家画像", prompt)
+        self.assertIn("最近两个阶段完整时间流", prompt)
+        self.assertNotIn("结构化事实记忆", prompt)
+
+
 class ReviewStatsTests(unittest.TestCase):
     """Test review.py helper functions (Fix 6)."""
 
@@ -707,7 +894,7 @@ class MarkdownSkillLoaderTests(unittest.TestCase):
 
     def setUp(self):
         from agent.knowledge.skills.router import configure_skill_root
-        configure_skill_root(Path(__file__).resolve().parent.parent / "skills")
+        configure_skill_root(Path(__file__).resolve().parent / "fixtures" / "skills")
 
     def test_parse_front_matter_basic(self):
         from agent.knowledge.skills.loader import parse_front_matter
@@ -769,8 +956,8 @@ output_constraints:
         from agent.knowledge.skills.loader import load_markdown_skills
         from pathlib import Path
 
-        ROOT = Path(__file__).resolve().parent.parent
-        skills = load_markdown_skills(ROOT / "skills")
+        ROOT = Path(__file__).resolve().parent
+        skills = load_markdown_skills(ROOT / "fixtures" / "skills")
         names = {s.name for s in skills}
         self.assertIn("witch_poison", names)
         self.assertIn("villager_vote_analysis", names)

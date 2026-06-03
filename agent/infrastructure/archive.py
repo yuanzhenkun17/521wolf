@@ -8,8 +8,9 @@ per-game for review, experience extraction, and leaderboard aggregation.
 from __future__ import annotations
 
 import json
+import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -132,10 +133,12 @@ class GameArchive:
         }
 
     def write_json(self, path: Path) -> None:
-        """Serialize archive to JSON file."""
+        """Serialize archive to JSON file (atomic write)."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
+        os.replace(str(tmp), str(path))
 
 
 class AgentTraceRecorder:

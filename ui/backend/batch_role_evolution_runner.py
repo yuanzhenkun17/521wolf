@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 from agent.common import beijing_now_iso, beijing_now_str
+from ui.backend.sse_mixin import SSEMixin
 from agent.learning.evolution.batch import (
     BatchEvolutionResult,
     promote_batch_result,
@@ -82,11 +83,11 @@ class RoleBatchEvolutionRun:
         return data
 
 
-class RoleBatchEvolutionRunner:
+class RoleBatchEvolutionRunner(SSEMixin):
     def __init__(self, store: VersionStore) -> None:
+        super().__init__()
         self.store = store
         self._active_batches: dict[str, RoleBatchEvolutionRun] = {}
-        self._sse_queues: dict[str, list[asyncio.Queue]] = {}
 
     async def start_batch(
         self,
@@ -199,17 +200,6 @@ class RoleBatchEvolutionRunner:
         self._broadcast(batch_id, "failed", tracked.snapshot())
         return tracked
 
-    def subscribe(self, batch_id: str) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue()
-        self._sse_queues.setdefault(batch_id, []).append(queue)
-        return queue
-
-    def unsubscribe(self, batch_id: str, queue: asyncio.Queue) -> None:
-        queues = self._sse_queues.get(batch_id, [])
-        try:
-            queues.remove(queue)
-        except ValueError:
-            pass
 
     async def sse_events(self, batch_id: str) -> AsyncGenerator[str, None]:
         queue = self.subscribe(batch_id)
@@ -223,9 +213,6 @@ class RoleBatchEvolutionRunner:
         finally:
             self.unsubscribe(batch_id, queue)
 
-    def _broadcast(self, batch_id: str, event: str, data: dict[str, Any]) -> None:
-        for queue in self._sse_queues.get(batch_id, []):
-            queue.put_nowait({"event": event, "data": data})
 
     async def _execute(
         self,

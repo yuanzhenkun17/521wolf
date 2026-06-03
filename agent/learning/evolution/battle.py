@@ -7,11 +7,13 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from agent.learning.metrics import new_role_accum, finalize_role_metrics
-from agent.learning.evolution.config import build_baseline_config, build_role_override_from_config
-from agent.learning.evolution.invocation import call_battle_runner, call_selfplay_runner
+from agent.learning.stats import new_role_accum, finalize_role_metrics
+from agent.learning.evolution.config import (
+    build_baseline_config,
+    build_composite_skill_dir,
+    build_role_override_from_config,
+)
 from agent.learning.evolution.models import EvolutionRun, EvolutionStatus, SkillVersionConfig
-from agent.learning.evolution.workspace import build_composite_skill_dir
 from agent.learning.evolution.state import run_dir, save_run_state
 from agent.learning.evolution.store import VersionStore
 from agent.infrastructure.llm import AsyncRateLimiter, ModelAdapter
@@ -44,8 +46,7 @@ async def _stage_battling(
         save_run_state(run)
         return run
 
-    battle_result = await call_battle_runner(
-        battle_runner,
+    battle_result = await battle_runner(
         store, run.role, run.candidate_hash, battle_games,
         model_adapter, selfplay_runner, on_progress,
         baseline_config=run.baseline_config,
@@ -130,7 +131,7 @@ async def run_config_battle(
     """Run a fixed-seed battle between two full role-version configs."""
     import shutil
 
-    from agent.learning.selfplay import SelfPlayConfig
+    from agent.learning.evolution.games import SelfPlayConfig
 
     # Build composite skill directories for each side
     skill_dir_a = build_composite_skill_dir(store, baseline_config)
@@ -174,16 +175,14 @@ async def run_config_battle(
             game_concurrency=game_concurrency,
         )
         result_a, result_b = await asyncio.gather(
-            call_selfplay_runner(
-                selfplay_runner,
+            selfplay_runner(
                 cfg_a,
                 model=model_adapter,
                 on_game_complete=_on_game_a,
                 llm_semaphore=llm_semaphore,
                 llm_rate_limiter=llm_rate_limiter,
             ),
-            call_selfplay_runner(
-                selfplay_runner,
+            selfplay_runner(
                 cfg_b,
                 model=model_adapter,
                 on_game_complete=_on_game_b,
@@ -212,7 +211,48 @@ async def run_config_battle(
     }
     summary["baseline_metrics"] = _metrics_for_leaderboard(summary["baseline"], role)
     summary["candidate_metrics"] = _metrics_for_leaderboard(summary["candidate"], role)
+
+    # Significance check: candidate must be meaningfully better
+    summary["significant"] = _is_significant_improvement(summary, role, battle_games)
+
     return summary
+
+
+def _is_significant_improvement(
+    summary: dict[str, Any],
+    role: str | None,
+    battle_games: int,
+) -> bool:
+    """Check if candidate improvement over baseline is significant.
+
+    Criteria (inspired by SkillOpt's strict validation gate):
+    1. Candidate role_weighted_score must be >= baseline + 0.05 (5% absolute)
+    2. Candidate target-side win rate must be >= baseline + 0.10 (10% absolute)
+    """
+    baseline_metrics = summary.get("baseline_metrics", {})
+    candidate_metrics = summary.get("candidate_metrics", {})
+
+    # Check role_weighted_score improvement
+    baseline_score = 0.0
+    candidate_score = 0.0
+    if role and role in baseline_metrics:
+        baseline_score = baseline_metrics[role].get("role_weighted_score", 0.0)
+        candidate_score = candidate_metrics.get(role, {}).get("role_weighted_score", 0.0)
+
+    score_improved = candidate_score >= baseline_score + 0.05
+
+    # Check win rate improvement for the target role's side
+    if role in ("werewolf", "white_wolf_king"):
+        baseline_wr = summary.get("baseline", {}).get("werewolf_win_rate", 0.0)
+        candidate_wr = summary.get("candidate", {}).get("werewolf_win_rate", 0.0)
+    else:
+        baseline_wr = summary.get("baseline", {}).get("villager_win_rate", 0.0)
+        candidate_wr = summary.get("candidate", {}).get("villager_win_rate", 0.0)
+
+    wr_improved = candidate_wr >= baseline_wr + 0.10
+
+    # Both criteria must be met for significance
+    return score_improved and wr_improved
 
 
 def _selfplay_artifact_summary(result: Any, config: Any) -> dict[str, Any]:
@@ -244,6 +284,7 @@ def _aggregate_metrics(results: list[Any]) -> dict[str, Any]:
 
     total_decisions = sum(getattr(r, "decision_count", 0) for r in valid)
     total_fallbacks = sum(getattr(r, "fallback_count", 0) for r in valid)
+    total_llm_errors = sum(getattr(r, "llm_error_count", 0) for r in valid)
     by_role = _aggregate_result_by_role(valid)
 
     return {
@@ -260,6 +301,7 @@ def _aggregate_metrics(results: list[Any]) -> dict[str, Any]:
         "avg_cooperation_score": _avg("cooperation_score", 0.0),
         "avg_confidence": _avg("avg_confidence", 0.0),
         "fallback_rate": total_fallbacks / total_decisions if total_decisions else 0.0,
+        "llm_error_rate": total_llm_errors / total_decisions if total_decisions else 0.0,
         "vote_accuracy": _avg("vote_accuracy", 0.0),
         "skill_accuracy": _avg("skill_accuracy", 0.0),
         "by_role": by_role,
@@ -313,6 +355,7 @@ def _aggregate_result_by_role(results: list[Any]) -> dict[str, dict[str, float |
             state["losses"] = int(state["losses"]) + int(metrics.get("losses", 0))
             state["decision_count"] = int(state["decision_count"]) + int(metrics.get("decision_count", 0))
             state["fallback_count"] = int(state["fallback_count"]) + int(metrics.get("fallback_count", 0))
+            state["llm_error_count"] = int(state["llm_error_count"]) + int(metrics.get("llm_error_count", 0))
             state["policy_adjusted_count"] = (
                 int(state["policy_adjusted_count"]) + int(metrics.get("policy_adjusted_count", 0))
             )

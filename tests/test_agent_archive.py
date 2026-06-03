@@ -42,7 +42,7 @@ def _make_vote_context() -> AgentContext:
         metadata={},
     )
     ctx = AgentContext(request=request, player_id=5, role="villager")
-    ctx.memory_context = {"memory_events": ["P8发言"], "private_facts": {}}
+    ctx.memory_context = {"rolling_summary": ["day1/exile_vote: 票型 P8->P3"], "private_facts": {}}
     ctx.selected_skills = ["output_schema", "villager_vote_analysis"]
     ctx.messages = [{"role": "system", "content": "你是一个村民"}, {"role": "user", "content": "请投票"}]
     ctx.raw_output = '{"target": 7, "choice": null, "text": "出7号", "reasoning": "7号可疑"}'
@@ -93,7 +93,7 @@ class DecisionArchiveTests(unittest.TestCase):
     def test_from_context_includes_memory_context(self):
         ctx = _make_vote_context()
         archive = DecisionArchive.from_context(ctx)
-        self.assertIn("memory_events", archive.memory_context)
+        self.assertIn("rolling_summary", archive.memory_context)
 
     def test_from_context_includes_parsed_decision(self):
         ctx = _make_vote_context()

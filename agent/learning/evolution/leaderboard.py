@@ -8,13 +8,8 @@ recommendations (promote / caution / reject).
 from __future__ import annotations
 
 import logging
-import math
-from typing import TYPE_CHECKING
-
 from agent.learning.evolution.models import RoleLeaderboardEntry
-
-if TYPE_CHECKING:
-    from agent.learning.evolution.store import VersionStore
+from agent.learning.stats import wilson_ci95 as wilson_ci
 
 _log = logging.getLogger(__name__)
 
@@ -26,23 +21,6 @@ _WEREWOLF_ROLES = {"werewolf", "white_wolf_king"}
 def target_side_for_role(role: str) -> str:
     """Return the faction side for a role: 'werewolves' or 'villagers'."""
     return "werewolves" if role in _WEREWOLF_ROLES else "villagers"
-
-
-# Wilson score interval
-def wilson_ci(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
-    """Wilson score interval for a binomial proportion.
-
-    Returns (lower, upper) bounds at the given z-score confidence level.
-    """
-    if total == 0:
-        return (0.0, 0.0)
-    p = successes / total
-    denominator = 1 + z * z / total
-    centre = p + z * z / (2 * total)
-    spread = z * math.sqrt((p * (1 - p) + z * z / (4 * total)) / total)
-    lower = (centre - spread) / denominator
-    upper = (centre + spread) / denominator
-    return (max(0.0, lower), min(1.0, upper))
 
 
 # Metric keys
@@ -60,11 +38,6 @@ _ROLE_METRIC_KEYS = [
 _ROLE_METRIC_FIELDS = [f"target_role_{k}" for k in _ROLE_METRIC_KEYS]
 
 _SIDE_WIN_RATE_FIELD = "target_side_win_rate"
-
-
-# Helpers
-def _mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else 0.0
 
 
 def _safe_metric(metrics: dict, role: str, key: str) -> float:
@@ -131,7 +104,6 @@ def _build_entry(
 def aggregate_role_leaderboard(
     role: str,
     battle_summaries: list[dict],
-    store: VersionStore,
 ) -> list[RoleLeaderboardEntry]:
     """Aggregate battle summaries into RoleLeaderboardEntry list.
 

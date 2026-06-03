@@ -3,7 +3,7 @@ import { cn } from "../../lib/utils";
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "default" | "secondary" | "ghost" | "destructive";
-  size?: "default" | "icon";
+  size?: "default" | "sm" | "icon";
 };
 
 const variants = {
@@ -15,6 +15,7 @@ const variants = {
 
 const sizes = {
   default: "h-10 px-4 py-2",
+  sm: "h-8 px-3 text-xs",
   icon: "h-10 w-10",
 };
 

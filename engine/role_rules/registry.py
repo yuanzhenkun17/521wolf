@@ -10,7 +10,9 @@ from engine.role_rules.werewolf import WerewolfRule
 from engine.role_rules.white_wolf_king import WhiteWolfKingRule
 from engine.role_rules.witch import WitchRule
 
-
+# These singletons are safe to share across concurrent GameEngine instances
+# because all role rule classes are stateless: they carry no mutable instance
+# attributes, and all game state is read/written through the `engine` parameter.
 ROLE_RULES: dict[Role, RoleRule] = {
     Role.WEREWOLF: WerewolfRule(),
     Role.WHITE_WOLF_KING: WhiteWolfKingRule(),
