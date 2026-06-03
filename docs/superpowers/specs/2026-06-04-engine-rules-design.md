@@ -1,37 +1,122 @@
 # Spec #1: 游戏引擎（规则系统）
 
-> 范围：对局引擎、角色规则、阶段流转、信息隔离、胜负判定
+> 范围：对局引擎、角色规则、阶段流转、信息隔离、胜负判定、双模式支持
 > 不含：Agent 决策、记忆、Prompt（另见 Agent spec）
 
 ---
 
-## 1. 现状分析
+## 1. 双模式支持
 
-### 1.1 引擎架构
+引擎必须支持两种对局模式：
 
-**GameEngine** (`engine/engine.py`) 是对局的核心控制器：
+| | AI vs AI | 人机混战 |
+|---|---------|---------|
+| 玩家组成 | 全部 LLM Agent | 部分人类 + 部分 LLM |
+| 执行方式 | 全自动异步并发 | AI 自动执行，人类回合暂停等待 |
+| 信息展示 | 无需 UI（可选上帝视角回放） | 人类需要实时看到游戏状态 + 自己的视角 |
+| 速度 | 快（取决于 LLM 延迟） | 取决于人类操作速度 |
+| 断线处理 | LLM 失败用规则 fallback | 人类超时 → 等待 / 踢出 |
+
+### 1.1 PlayerAgent 扩展
+
+**现状** (`engine/players.py`)：
+
+```python
+class PlayerAgent(Protocol):
+    async def act(self, request: ActionRequest) -> ActionResponse: ...
+
+class HumanPlayer:  # 已有，通过 Future 等待 UI 输入
+    async def act(self, request):
+        self._future = asyncio.get_event_loop().create_future()
+        return await self._future
+    def submit(self, response):
+        self._future.set_result(response)
+```
+
+**目标**：`HumanPlayer` 已经实现了"暂停等待"模式，但缺少：
+- 超时处理（人类长时间不操作）
+- 视角信息推送（人类需要看到游戏状态）
+- 游戏状态订阅（UI 需要实时更新）
+
+### 1.2 引擎-UI 通信
+
+**方式**：WebSocket/SSE（引擎推送，UI 订阅）
+
+**事件流**：
 
 ```
-GameEngine
-  ├── state: GameState          # 当前对局状态
-  ├── agents: dict[int, PlayerAgent]  # 玩家 agent
-  ├── config: GameConfig        # 游戏配置（角色数量、阶段顺序等）
-  ├── logger: GameLogger        # 事件日志
-  └── methods:
-      ├── run_until_finished()  # 主循环
-      ├── run_night()           # 夜间阶段
-      ├── run_day_speeches()    # 白天发言
-      ├── run_exile_vote()      # 放逐投票
-      ├── ask()                 # 向 agent 请求行动
-      └── check_winner()        # 胜负判定
+引擎 → UI:
+  game_start       {game_id, players: [{id, role}], config}
+  phase_change     {day, phase}
+  game_event       {type, day, phase, actor, target, payload, visibility}
+  decision_needed  {player_id, action_type, candidates, observation}  ← 人类回合
+  decision_made    {player_id, action_type, target, choice}
+  night_result     {deaths: [...]}
+  game_end         {winner, final_state}
+
+UI → 引擎:
+  submit_decision  {player_id, action_type, target, choice, text}  ← 人类提交
 ```
 
-**主循环** (`engine.py:209-238`)：
+### 1.3 人类视角过滤
+
+**关键**：人类玩家只能看到自己角色允许的信息，和 AI Agent 一样。
+
+```python
+# 引擎构造 Observation 时，根据角色过滤事件
+observation = Observation(
+    visible_events=tuple(filter_events(engine.state.events, player_role)),
+    # 人类玩家和 AI Agent 拿到同样过滤后的 Observation
+    ...
+)
+```
+
+**UI 展示**：
+- 上帝视角（管理员/观战者）：全量事件
+- 人类玩家视角：过滤后的事件 + 自己的手牌信息
+- AI Agent：无需 UI（后台自动运行）
+
+### 1.4 对局会话管理
+
+```python
+class GameSession:
+    """管理一局游戏的生命周期，支持 AI-only 和混合模式。"""
+    game_id: str
+    mode: Literal["ai_only", "mixed"]
+    engine: GameEngine
+    human_players: dict[int, HumanPlayer]  # seat → HumanPlayer
+    ai_players: dict[int, AgentRuntime]    # seat → AgentRuntime
+    event_queue: asyncio.Queue             # → UI 推送
+    decision_futures: dict[int, asyncio.Future]  # 人类回合等待
+```
+
+**流程**：
+```
+1. 创建 GameSession，配置 AI/Human 玩家
+2. 引擎主循环 run_until_finished()
+3. 每个回合:
+   - AI 玩家: 直接调用 agent.act()，结果自动返回
+   - Human 玩家:
+     a. 引擎暂停
+     b. 推送 decision_needed 事件到 UI
+     c. 等待 UI 返回 submit_decision
+     d. 引擎继续
+4. 所有事件通过 event_queue 推送到 UI
+5. 游戏结束，推送 game_end
+```
+
+---
+
+## 2. 引擎架构（现状分析）
+
+### 2.1 GameEngine 主循环
+
+**现状** (`engine/engine.py:209-238`)：
 
 ```
 for day in range(max_days):
     if day == 0:
-        night_without_death_reveal  # 第0天特殊：先警长竞选再揭示死亡
+        night_without_death_reveal  # 第0天特殊
         sheriff_election (可选)
     else:
         run_night → reveal_night_deaths
@@ -47,126 +132,45 @@ for day in range(max_days):
         check_winner (投票后)
 ```
 
-### 1.2 角色系统
+**问题**：主循环是同步阻塞的，无法暂停等待人类输入。
 
-**7 个角色** (`engine/models.py:19-37`)：
-
-| 角色 | 阵营 | 夜间行动 | 特殊能力 |
-|------|------|----------|----------|
-| werewolf | 狼人 | 选择杀人目标 | 狼人互认 |
-| white_wolf_king | 狼人 | 选择杀人目标 | 自爆带走一人 |
-| seer | 好人 | 查验一人身份 | 知道查验结果 |
-| witch | 好人 | 用药（解药/毒药） | 知道被杀者身份 |
-| guard | 好人 | 选择守护目标 | 同一人不能连续守护 |
-| hunter | 好人 | — | 死亡时可开枪 |
-| villager | 好人 | — | 无特殊能力 |
-
-**RoleRule 协议** (`engine/role_rules/base.py:11-24`)：
-
-```python
-class RoleRule(Protocol):
-    role: Role
-    def visible_roles(self, engine, player_id) -> dict[int, Role]: ...
-    def seer_checks(self, engine, player_id) -> dict[int, Team]: ...
-    async def night_action(self, engine): ...
-    def day_interrupt(self, engine, player_id) -> str | None: ...
-```
-
-**Registry** (`engine/role_rules/registry.py`)：模块级单例 dict，`rule_for(role)` 查找。规则实例无状态，所有状态通过 `engine` 参数读写。
-
-### 1.3 GameState
+### 2.2 GameState
 
 ```python
 @dataclass
 class GameState:
-    players: dict[int, PlayerState]    # {seat: PlayerState}
+    players: dict[int, PlayerState]
     day: int = 0
     phase: Phase = Phase.SETUP
-    events: list[GameEvent]            # 全局事件流
-    public_log: list[str]              # 公开事件文本
+    events: list[GameEvent]
+    public_log: list[str]
     deaths: list[DeathRecord]
     sheriff_id: int | None
     badge_destroyed: bool = False
-    # 角色特定状态（混在通用 state 里）
-    witch_antidote_available: bool = True
-    witch_poison_available: bool = True
-    guard_last_target: int | None
-    seer_checks: dict[int, dict[int, Team]]
+    witch_antidote_available: bool = True    # 角色特定
+    witch_poison_available: bool = True      # 角色特定
+    guard_last_target: int | None            # 角色特定
+    seer_checks: dict[int, dict[int, Team]]  # 角色特定
     pending_last_words: list[int]
     pending_hunter_shots: list[int]
     winner: Winner | None
 ```
 
-### 1.4 信息隔离
+### 2.3 信息隔离
 
-**现状**：`GameEvent` 有 `public: bool` 字段。`Observation.public_log` 是字符串列表。
+**现状**：`GameEvent.public: bool` + `Observation.public_log: tuple[str, ...]`
 
-**Observation** (`engine/models.py:122-134`)：
+**问题**：粒度不够，字符串列表非结构化。
 
-```python
-@dataclass
-class Observation:
-    player_id: int
-    self_role: Role
-    phase: Phase
-    day: int
-    alive_players: tuple[int, ...]
-    dead_players: tuple[int, ...]
-    sheriff_id: int | None
-    public_log: tuple[str, ...]      # 过滤后的公开事件（字符串）
-    known_roles: dict[int, Role]     # 已知角色（仅特殊角色）
-    seer_checks: dict[int, Team]     # 查验结果（仅预言家）
-    metadata: dict[str, Any]
-```
+### 2.4 ask() 机制
 
-**夜间行动分发** (`engine/phases/night.py:62-71`)：
-
-```python
-for role in engine.config.night_order:
-    if role is Role.GUARD:
-        protected_target = await rule_for(Role.GUARD).night_action(engine)
-    elif role is Role.WEREWOLF:
-        killed_target = await rule_for(Role.WEREWOLF).night_action(engine)
-    elif role is Role.SEER:
-        await rule_for(Role.SEER).night_action(engine)
-    elif role is Role.WITCH:
-        saved, poisoned_target = await rule_for(Role.WITCH).night_action(engine, killed_target)
-    else:
-        await rule_for(role).night_action(engine)
-```
-
-### 1.5 胜负判定
-
-**胜利条件** (`engine/rules/victory.py`)：
-- 狼人阵营存活人数 ≥ 好人阵营存活人数 → 狼人胜
-- 所有狼人死亡 → 好人胜
-- 白狼王自爆 → 狼人阵营额外加分
-
-### 1.6 ask() 机制
-
-**现状** (`engine/actions.py:14-100`)：
-
-```python
-async def ask(engine, player_id, action_type, candidates, metadata, validator, default):
-    for retry in range(2):  # 最多重试 2 次
-        request = ActionRequest(player_id, action_type, engine.state.phase, observation, candidates, retry)
-        response = await engine.agents[player_id].act(request)  # ← 无 try/except
-        if response matches action_type and validator passes:
-            return response
-    return default  # 2 次失败后用默认值
-```
-
-**问题**：`engine.agents[player_id].act(request)` 没有 try/except，agent 异常会直接中断对局。
+**现状** (`engine/actions.py:14-100`)：重试 2 次，无 try/except，agent 异常中断对局。
 
 ---
 
-## 2. 改动方案
+## 3. 改动方案
 
-### 2.1 P1: GameEvent 加 visibility enum
-
-**现状**：`GameEvent.public: bool` 只区分公开/私有。
-
-**目标**：细粒度可见性控制。
+### 3.1 P1: GameEvent 加 visibility enum
 
 ```python
 class Visibility(StrEnum):
@@ -185,19 +189,10 @@ class GameEvent:
     actor: int | None
     target: int | None
     payload: dict[str, Any]
-    visibility: Visibility  # 替代原来的 public: bool
+    visibility: Visibility
 ```
 
-**影响范围**：
-- `engine/phases/*.py`：所有 `engine._log()` 调用需要指定 visibility
-- `engine/rules/*.py`：死亡触发等事件需要指定 visibility
-- `engine/role_rules/*.py`：夜间行动事件需要指定 visibility
-
-### 2.2 P1: Observation 用结构化事件替代字符串
-
-**现状**：`Observation.public_log: tuple[str, ...]` 是过滤后的字符串列表。
-
-**目标**：`Observation.visible_events: tuple[GameEvent, ...]` 是过滤后的结构化事件。
+### 3.2 P1: Observation 用结构化事件
 
 ```python
 @dataclass
@@ -215,16 +210,7 @@ def filter_events(events: list[GameEvent], role: Role) -> list[GameEvent]:
     return [e for e in events if e.visibility in visible]
 ```
 
-**影响范围**：
-- `engine/engine.py`：构造 Observation 时调用 `filter_events`
-- `engine/role_rules/*.py`：`visible_roles()` 和 `seer_checks()` 方法
-- Agent 层：所有读取 `observation.public_log` 的代码改为读取 `observation.visible_events`
-
-### 2.3 P1: ask() 捕获 agent 异常
-
-**现状**：agent 异常直接中断对局。
-
-**目标**：捕获异常，使用规则默认行为。
+### 3.3 P1: ask() 捕获异常 + 支持 HumanPlayer
 
 ```python
 async def ask(engine, player_id, action_type, candidates, metadata, validator, default):
@@ -232,74 +218,130 @@ async def ask(engine, player_id, action_type, candidates, metadata, validator, d
         try:
             response = await engine.agents[player_id].act(request)
         except Exception as exc:
-            engine._log("agent_disconnect",
-                f"P{player_id} ({engine.state.players[player_id].role.value}) 断线: {exc}",
-                actor=player_id)
-            return default  # 用规则默认行为
-
+            engine._log("agent_disconnect", f"P{player_id} 断线: {exc}")
+            return default
         if response matches action_type and validator passes:
             return response
     return default
 ```
 
-**断线规则**：
+**HumanPlayer 超时处理**：
 
-| 角色 | 断线默认行为 |
-|------|-------------|
-| werewolf | 随机选择一个非狼人目标 |
-| seer | 不查验（跳过） |
-| witch | 不用药（跳过） |
-| guard | 不守护（跳过） |
-| hunter | 不开枪（跳过） |
-| villager | 不行动（跳过） |
-| white_wolf_king | 不自爆（跳过） |
+```python
+class HumanPlayer:
+    async def act(self, request, timeout=300):  # 5 分钟超时
+        self._future = asyncio.get_event_loop().create_future()
+        try:
+            return await asyncio.wait_for(self._future, timeout=timeout)
+        except asyncio.TimeoutError:
+            return default_action(request)  # 超时用默认行为
+```
 
-**统计**：`GameState` 新增 `llm_error_count: int` 字段，每次断线 +1。
+### 3.4 P1: GameSession 会话管理
 
-### 2.4 P2: GameState 拆分角色状态
+```python
+class GameSession:
+    """管理一局游戏，支持 AI-only 和混合模式。"""
+    
+    async def start(self):
+        """启动游戏，推送 game_start 事件。"""
+        await self._emit("game_start", {...})
+        await self.engine.run_until_finished()
+    
+    async def on_human_decision_needed(self, player_id, request):
+        """人类回合：暂停引擎，推送 decision_needed，等待 UI 响应。"""
+        await self._emit("decision_needed", {
+            "player_id": player_id,
+            "action_type": request.action_type.value,
+            "candidates": list(request.candidates),
+            "observation": self._filter_for_human(request),
+        })
+        # 等待 UI 提交（通过 WebSocket）
+        response = await self.decision_futures[player_id]
+        return response
+    
+    async def submit_human_decision(self, player_id, response):
+        """UI 提交人类决策。"""
+        if player_id in self.decision_futures:
+            self.decision_futures[player_id].set_result(response)
+```
 
-**现状**：`witch_antidote_available`、`guard_last_target` 等混在 GameState 里。
-
-**目标**：角色状态移到 `GameEngine.role_state`。
+### 3.5 P2: GameState 拆分角色状态
 
 ```python
 class GameEngine:
-    role_state: dict[Role, dict] = field(default_factory=dict)
-    # 初始化时:
+    role_state: dict[Role, dict]  # 角色特定状态
     # {WITCH: {antidote: True, poison: True}, GUARD: {last_target: None}, ...}
 ```
 
-**角色规则读写**：
+### 3.6 不改的部分
 
-```python
-# 现在
-engine.state.witch_antidote_available = False
-
-# 改后
-engine.role_state[Role.WITCH]["antidote"] = False
-```
-
-**影响范围**：所有角色规则（witch.py, guard.py, seer.py）+ engine.py 中读写这些字段的代码。
-
-### 2.5 不改的部分
-
-| 设计点 | 现状 | 理由 |
-|--------|------|------|
-| 夜间 if/elif 链 | 硬编码 7 角色 | 角色数量固定，不需要多态分发 |
-| RoleRule 单例 | 无状态 singleton | 确认安全 |
-| 主循环结构 | for day in range(max_days) | 结构清晰 |
-| 胜负判定 | 狼人≥好人 or 全狼死 | 规则正确 |
-| PlayerAgent 协议 | 单方法 `act()` | 简洁够用 |
-| GameConfig | 角色数量 + 阶段顺序 | 够用 |
-| DeathCause enum | 6 种死因 | 覆盖完整 |
+| 设计点 | 理由 |
+|--------|------|
+| 夜间 if/elif 链 | 角色数量固定 |
+| RoleRule 单例 | 确认安全 |
+| 主循环结构 | 改为 async 支持暂停即可 |
+| 胜负判定 | 规则正确 |
+| PlayerAgent 协议 | `act()` 接口足够 |
+| GameConfig | 够用 |
 
 ---
 
-## 3. 改动优先级
+## 4. 改动优先级
 
-| 优先级 | 改动 | 工作量 | 理由 |
-|--------|------|--------|------|
-| **P1** | GameEvent visibility enum | 中 | 评审要求"信息隔离严格经测试无泄露" |
-| **P1** | Observation visible_events | 中 | 配合 visibility，结构化事件比字符串更可测试 |
-| **P1** | ask() 捕获异常 | 小 | 防止 agent 错误中断对局 |
-| **P2** | GameState 拆分角色状态 | 大 | 架构改进，非必须 |
+| 优先级 | 改动 | 工作量 |
+|--------|------|--------|
+| **P1** | GameEvent visibility enum | 中 |
+| **P1** | Observation visible_events | 中 |
+| **P1** | ask() 捕获异常 | 小 |
+| **P1** | HumanPlayer 超时处理 | 小 |
+| **P1** | GameSession 会话管理 | 大 |
+| **P2** | GameState 拆分角色状态 | 大 |
+
+---
+
+## 5. 前端交互设计（概要）
+
+### 5.1 游戏状态页面
+
+```
+┌─────────────────────────────────────────────┐
+│  狼人杀对局 #game_003                        │
+│  第 3 天 | 夜间 | 当前行动: 预言家查验        │
+├─────────────────────────────────────────────┤
+│  [你的身份: 女巫]                             │
+│  解药: ✅  毒药: ✅                           │
+│                                              │
+│  公共事件:                                    │
+│  - 第1天: 3号死亡（狼人击杀）                  │
+│  - 第1天: 1号竞选警长成功                      │
+│  - 第2天: 5号被放逐                           │
+│                                              │
+│  你的信息:                                    │
+│  - 第1夜: 你救了3号                           │
+│                                              │
+│  当前行动: [等待预言家查验...]                  │
+├─────────────────────────────────────────────┤
+│  玩家状态:                                    │
+│  P1(警长) ✅  P2 ✅  P3 💀  P4 ✅  P5 💀    │
+│  P6 ✅  P7 ✅  P8 ✅  P9 ✅  P10 ✅         │
+│  P11 ✅  P12 ✅                               │
+└─────────────────────────────────────────────┘
+```
+
+### 5.2 人类决策界面
+
+```
+┌─────────────────────────────────────────────┐
+│  轮到你行动！                                 │
+│  第 2 天 | 白天发言                           │
+├─────────────────────────────────────────────┤
+│  你的发言:                                    │
+│  ┌─────────────────────────────────────────┐ │
+│  │ 我是预言家，第一晚查验了7号是狼人。       │ │
+│  │ 建议今天放逐7号。                         │ │
+│  └─────────────────────────────────────────┘ │
+│                                              │
+│  [提交发言]  [跳过]                           │
+└─────────────────────────────────────────────┘
+```
