@@ -518,6 +518,7 @@ async def _stage_consolidating(
         run_id=run.run_id,
         parent_hash=run.parent_hash,
         skill_root=store.get_skill_dir(run.role, run.parent_hash),
+        store=store,
     )
     run.proposals = consolidation
     save_run_state(run)
@@ -630,6 +631,9 @@ async def reject(run: EvolutionRun, store: VersionStore) -> None:
 
     Idempotent: already rejected -> return.
     Raises InvalidRunStateError on terminal conflict or wrong state.
+
+    Saves the failed proposals to the rejected buffer so future
+    consolidations can learn from the failure.
     """
     # Idempotent
     if run.status == EvolutionStatus.REJECTED:
@@ -646,6 +650,21 @@ async def reject(run: EvolutionRun, store: VersionStore) -> None:
         raise InvalidRunStateError(
             f"Cannot reject run {run.run_id}: status is {run.status}, expected reviewing"
         )
+
+    # Save proposals to rejected buffer before changing status
+    if run.proposals is not None and run.proposals.proposals:
+        try:
+            store.save_rejected(
+                run.role,
+                [p.to_dict() for p in run.proposals.proposals
+                 if getattr(p, "status", "proposed") != "skipped"],
+                run.battle_result,
+            )
+        except Exception:
+            _log.warning(
+                "Failed to save rejected proposals for %s/%s",
+                run.role, run.run_id, exc_info=True,
+            )
 
     run.status = EvolutionStatus.REJECTED
     save_run_state(run)

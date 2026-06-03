@@ -1,0 +1,730 @@
+{
+  "game_id": "game_002",
+  "winner": "werewolves",
+  "summary": "本局werewolves获胜。共识别8个关键转折点。好人团队平均评分6.2，狼人团队平均评分7.7。",
+  "team_scores": {
+    "villagers": 6.17,
+    "werewolves": 7.66
+  },
+  "player_scores": {
+    "1": {
+      "player_id": 1,
+      "role": "witch",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.4,
+      "scores": {
+        "speech": 7.6,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 6.84
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "2": {
+      "player_id": 2,
+      "role": "white_wolf_king",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 7.6,
+      "scores": {
+        "speech": 8.4,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 7.0,
+        "role_weighted": 7.67
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [
+        "white_wolf_explode 被策略修正"
+      ],
+      "mistake_types": [
+        "policy_adjusted"
+      ],
+      "suggestions": []
+    },
+    "3": {
+      "player_id": 3,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.43,
+      "scores": {
+        "speech": 7.73,
+        "vote": 10.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 7.51
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "4": {
+      "player_id": 4,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 8.75,
+      "scores": {
+        "speech": 8.0,
+        "vote": 10.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 7.0,
+        "role_weighted": 8.8
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "5": {
+      "player_id": 5,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.33,
+      "scores": {
+        "speech": 7.3,
+        "vote": 10.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 7.35
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "6": {
+      "player_id": 6,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 7.53,
+      "scores": {
+        "speech": 8.13,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 7.0,
+        "role_weighted": 7.59
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "7": {
+      "player_id": 7,
+      "role": "guard",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.72,
+      "scores": {
+        "speech": 7.2,
+        "vote": 10.0,
+        "skill": 6.67,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 7.32
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "8": {
+      "player_id": 8,
+      "role": "seer",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.8,
+      "scores": {
+        "speech": 9.2,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 6,
+        "cooperation": 3.0,
+        "role_weighted": 7.68
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "9": {
+      "player_id": 9,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.3,
+      "scores": {
+        "speech": 7.2,
+        "vote": 10.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 7.32
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "10": {
+      "player_id": 10,
+      "role": "hunter",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 5.25,
+      "scores": {
+        "speech": 8.0,
+        "vote": 10.0,
+        "skill": 0.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 5.1
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [
+        "开枪带走了 P5 (villager)——带错好人"
+      ],
+      "mistake_types": [
+        "shot_good"
+      ],
+      "suggestions": [
+        "P10(hunter) 技能使用需优化，建议在 Prompt 中加强技能使用指导。"
+      ]
+    },
+    "11": {
+      "player_id": 11,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 6.78,
+      "scores": {
+        "speech": 8.1,
+        "vote": 0.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 9.0,
+        "role_weighted": 6.73
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "12": {
+      "player_id": 12,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 5.17,
+      "scores": {
+        "speech": 7.7,
+        "vote": 5.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 5.74
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    }
+  },
+  "key_turning_points": [
+    {
+      "day": 1,
+      "phase": "day_speech",
+      "description": "P2(white_wolf_king) 死亡",
+      "impact": "positive",
+      "affected_team": "werewolves"
+    },
+    {
+      "day": 1,
+      "phase": "day_speech",
+      "description": "P1(witch) 死亡",
+      "impact": "negative",
+      "affected_team": "villagers"
+    },
+    {
+      "day": 2,
+      "phase": "night",
+      "description": "P8(seer) 死亡",
+      "impact": "negative",
+      "affected_team": "villagers"
+    },
+    {
+      "day": 2,
+      "phase": "exile_vote",
+      "description": "P4(werewolf) 死亡",
+      "impact": "positive",
+      "affected_team": "werewolves"
+    },
+    {
+      "day": 3,
+      "phase": "night",
+      "description": "P7(guard) 死亡",
+      "impact": "negative",
+      "affected_team": "villagers"
+    },
+    {
+      "day": 3,
+      "phase": "exile_vote",
+      "description": "P6(werewolf) 死亡",
+      "impact": "positive",
+      "affected_team": "werewolves"
+    },
+    {
+      "day": 4,
+      "phase": "night",
+      "description": "P10(hunter) 死亡",
+      "impact": "negative",
+      "affected_team": "villagers"
+    },
+    {
+      "day": 4,
+      "phase": "day_speech",
+      "description": "P5(villager) 死亡",
+      "impact": "negative",
+      "affected_team": "villagers"
+    }
+  ],
+  "mistakes": [
+    {
+      "player_id": 2,
+      "role": "white_wolf_king",
+      "day": 1,
+      "phase": "day_speech",
+      "action_type": "white_wolf_explode",
+      "mistake_type": "policy_adjusted",
+      "description": "Invalid choice 'white_wolf_explode' for white_wolf_explode; repaired to 'pass'.",
+      "severity": "low",
+      "attribution": "policy_adjustment"
+    },
+    {
+      "player_id": 10,
+      "role": "hunter",
+      "day": 4,
+      "phase": "day_speech",
+      "action_type": "hunter_shoot",
+      "mistake_type": "shot_good",
+      "description": "带走 P5(villager)——带错好人",
+      "severity": "high",
+      "attribution": "belief_error"
+    }
+  ],
+  "skill_summary": {
+    "guard_protect": {
+      "skill_name": "guard_protect",
+      "use_count": 3,
+      "avg_confidence": 0.72,
+      "success_count": 3,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "white_wolf_king_hide": {
+      "skill_name": "white_wolf_king_hide",
+      "use_count": 1,
+      "avg_confidence": 0.8,
+      "success_count": 1,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "white_wolf_king_explode": {
+      "skill_name": "white_wolf_king_explode",
+      "use_count": 1,
+      "avg_confidence": 0.8,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "werewolf_find_god": {
+      "skill_name": "werewolf_find_god",
+      "use_count": 9,
+      "avg_confidence": 0.76,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "werewolf_fake_seer": {
+      "skill_name": "werewolf_fake_seer",
+      "use_count": 12,
+      "avg_confidence": 0.76,
+      "success_count": 12,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "werewolf_deep_wolf": {
+      "skill_name": "werewolf_deep_wolf",
+      "use_count": 12,
+      "avg_confidence": 0.78,
+      "success_count": 7,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "werewolf_vote_rush": {
+      "skill_name": "werewolf_vote_rush",
+      "use_count": 5,
+      "avg_confidence": 0.79,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "seer_check_priority": {
+      "skill_name": "seer_check_priority",
+      "use_count": 2,
+      "avg_confidence": 0.82,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "seer_claim": {
+      "skill_name": "seer_claim",
+      "use_count": 3,
+      "avg_confidence": 0.9,
+      "success_count": 3,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "seer_badge_flow": {
+      "skill_name": "seer_badge_flow",
+      "use_count": 2,
+      "avg_confidence": 0.9,
+      "success_count": 2,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "seer_counter_claim": {
+      "skill_name": "seer_counter_claim",
+      "use_count": 2,
+      "avg_confidence": 0.9,
+      "success_count": 2,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "witch_poison": {
+      "skill_name": "witch_poison",
+      "use_count": 1,
+      "avg_confidence": 0.9,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "witch_save": {
+      "skill_name": "witch_save",
+      "use_count": 1,
+      "avg_confidence": 0.9,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "witch_hide_identity": {
+      "skill_name": "witch_hide_identity",
+      "use_count": 2,
+      "avg_confidence": 0.7,
+      "success_count": 2,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "villager_seer_side": {
+      "skill_name": "villager_seer_side",
+      "use_count": 23,
+      "avg_confidence": 0.72,
+      "success_count": 15,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "villager_speech_analysis": {
+      "skill_name": "villager_speech_analysis",
+      "use_count": 15,
+      "avg_confidence": 0.68,
+      "success_count": 15,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "villager_wolf_pit": {
+      "skill_name": "villager_wolf_pit",
+      "use_count": 15,
+      "avg_confidence": 0.68,
+      "success_count": 15,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "villager_vote_analysis": {
+      "skill_name": "villager_vote_analysis",
+      "use_count": 8,
+      "avg_confidence": 0.8,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "hunter_hide_identity": {
+      "skill_name": "hunter_hide_identity",
+      "use_count": 6,
+      "avg_confidence": 0.79,
+      "success_count": 4,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "hunter_threat": {
+      "skill_name": "hunter_threat",
+      "use_count": 4,
+      "avg_confidence": 0.75,
+      "success_count": 4,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    },
+    "hunter_shoot": {
+      "skill_name": "hunter_shoot",
+      "use_count": 1,
+      "avg_confidence": 0.8,
+      "success_count": 0,
+      "fail_count": 0,
+      "associated_mistakes": [],
+      "suggestion": ""
+    }
+  },
+  "counterfactuals": [
+    {
+      "decision_index": 0,
+      "player_id": 10,
+      "role": "hunter",
+      "fact": "猎人P10开枪带走 P5(villager)",
+      "counterfactual": "如果猎人没有开枪带走该目标，好人阵营可以保留战斗力。该决策大概率降低了好人胜率。",
+      "impact_assessment": "该决策使好人阵营失去关键战力。",
+      "likelihood": "likely"
+    }
+  ],
+  "key_decision_reviews": [
+    {
+      "player_id": 10,
+      "role": "hunter",
+      "day": 4,
+      "phase": "day_speech",
+      "action_type": "hunter_shoot",
+      "target": 5,
+      "quality_score": 2.0,
+      "verdict": "带走 P5(villager)——带错好人",
+      "mistake_type": "shot_good",
+      "attribution": "belief_error",
+      "counterfactual": "若避免该决策，可能减少 belief_error 类风险。",
+      "suggestion": "加强 belief 证据权重和反向证据校验。"
+    },
+    {
+      "player_id": 2,
+      "role": "white_wolf_king",
+      "day": 1,
+      "phase": "day_speech",
+      "action_type": "white_wolf_explode",
+      "target": 1,
+      "quality_score": 4.0,
+      "verdict": "Invalid choice 'white_wolf_explode' for white_wolf_explode; repaired to 'pass'.",
+      "mistake_type": "policy_adjusted",
+      "attribution": "policy_adjustment",
+      "counterfactual": "若避免该决策，可能减少 policy_adjustment 类风险。",
+      "suggestion": "补充狼人团队协同和伪装策略 skill。"
+    },
+    {
+      "player_id": 12,
+      "role": "villager",
+      "day": 3,
+      "phase": "exile_vote",
+      "action_type": "exile_vote",
+      "target": 3,
+      "quality_score": 4.6,
+      "verdict": "关键决策质量偏低，需要复盘证据链。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 11,
+      "role": "werewolf",
+      "day": 2,
+      "phase": "exile_vote",
+      "action_type": "exile_vote",
+      "target": 4,
+      "quality_score": 4.9,
+      "verdict": "关键决策质量偏低，需要复盘证据链。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 11,
+      "role": "werewolf",
+      "day": 3,
+      "phase": "exile_vote",
+      "action_type": "exile_vote",
+      "target": 6,
+      "quality_score": 4.9,
+      "verdict": "关键决策质量偏低，需要复盘证据链。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 6,
+      "role": "werewolf",
+      "day": 2,
+      "phase": "exile_vote",
+      "action_type": "exile_vote",
+      "target": 4,
+      "quality_score": 5.05,
+      "verdict": "关键决策基本可接受，但证据强度一般。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 9,
+      "role": "villager",
+      "day": 1,
+      "phase": "sheriff_election",
+      "action_type": "sheriff_speak",
+      "target": null,
+      "quality_score": 5.9,
+      "verdict": "关键决策基本可接受，但证据强度一般。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 7,
+      "role": "guard",
+      "day": 1,
+      "phase": "sheriff_election",
+      "action_type": "sheriff_speak",
+      "target": null,
+      "quality_score": 6.5,
+      "verdict": "关键决策基本可接受，但证据强度一般。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 3,
+      "role": "villager",
+      "day": 1,
+      "phase": "sheriff_election",
+      "action_type": "sheriff_speak",
+      "target": null,
+      "quality_score": 6.8,
+      "verdict": "关键决策基本可接受，但证据强度一般。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 5,
+      "role": "villager",
+      "day": 1,
+      "phase": "sheriff_election",
+      "action_type": "sheriff_speak",
+      "target": null,
+      "quality_score": 6.8,
+      "verdict": "关键决策基本可接受，但证据强度一般。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 5,
+      "role": "villager",
+      "day": 1,
+      "phase": "day_speech",
+      "action_type": "speak",
+      "target": null,
+      "quality_score": 6.8,
+      "verdict": "关键决策基本可接受，但证据强度一般。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    },
+    {
+      "player_id": 7,
+      "role": "guard",
+      "day": 1,
+      "phase": "day_speech",
+      "action_type": "speak",
+      "target": null,
+      "quality_score": 6.8,
+      "verdict": "关键决策基本可接受，但证据强度一般。",
+      "mistake_type": "",
+      "attribution": "",
+      "counterfactual": "",
+      "suggestion": ""
+    }
+  ],
+  "suggestions": [
+    "P10(hunter) 技能使用需优化，建议在 Prompt 中加强技能使用指导。"
+  ]
+}

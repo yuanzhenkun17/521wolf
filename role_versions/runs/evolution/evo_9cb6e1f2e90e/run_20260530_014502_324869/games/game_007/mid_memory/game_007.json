@@ -1,0 +1,588 @@
+{
+  "game_id": "game_007",
+  "generated_at": "2026-05-29T18:47:18.870247+00:00",
+  "winner": "werewolves",
+  "roles": {
+    "1": "villager",
+    "2": "guard",
+    "3": "white_wolf_king",
+    "4": "hunter",
+    "5": "seer",
+    "6": "villager",
+    "7": "witch",
+    "8": "werewolf",
+    "9": "werewolf",
+    "10": "villager",
+    "11": "werewolf",
+    "12": "villager"
+  },
+  "player_scores": {
+    "1": {
+      "player_id": 1,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 3.83,
+      "scores": {
+        "speech": 7.33,
+        "vote": 0.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 3.87
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": [
+        "P1(villager) 投票准确率低，建议增强票型分析和站边判断。"
+      ]
+    },
+    "2": {
+      "player_id": 2,
+      "role": "guard",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 5.15,
+      "scores": {
+        "speech": 7.6,
+        "vote": 0.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 3.96
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": [
+        "P2(guard) 投票准确率低，建议增强票型分析和站边判断。"
+      ]
+    },
+    "3": {
+      "player_id": 3,
+      "role": "white_wolf_king",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 7.4,
+      "scores": {
+        "speech": 7.6,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 7.0,
+        "role_weighted": 7.43
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [
+        "white_wolf_explode 被策略修正"
+      ],
+      "mistake_types": [
+        "policy_adjusted"
+      ],
+      "suggestions": []
+    },
+    "4": {
+      "player_id": 4,
+      "role": "hunter",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 2.7,
+      "scores": {
+        "speech": 7.8,
+        "vote": 0.0,
+        "skill": 0.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 2.55
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [
+        "开枪带走了 P10 (villager)——带错好人"
+      ],
+      "mistake_types": [
+        "shot_good"
+      ],
+      "suggestions": [
+        "P4(hunter) 投票准确率低，建议增强票型分析和站边判断。",
+        "P4(hunter) 技能使用需优化，建议在 Prompt 中加强技能使用指导。"
+      ]
+    },
+    "5": {
+      "player_id": 5,
+      "role": "seer",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.9,
+      "scores": {
+        "speech": 9.6,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 3,
+        "cooperation": 3.0,
+        "role_weighted": 6.84
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "6": {
+      "player_id": 6,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 3.87,
+      "scores": {
+        "speech": 7.47,
+        "vote": 0.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 3.91
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": [
+        "P6(villager) 投票准确率低，建议增强票型分析和站边判断。"
+      ]
+    },
+    "7": {
+      "player_id": 7,
+      "role": "witch",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 5.12,
+      "scores": {
+        "speech": 7.47,
+        "vote": 0.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 6.07
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": [
+        "P7(witch) 投票准确率低，建议增强票型分析和站边判断。"
+      ]
+    },
+    "8": {
+      "player_id": 8,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 8.7,
+      "scores": {
+        "speech": 7.8,
+        "vote": 10.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 7.0,
+        "role_weighted": 8.74
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "9": {
+      "player_id": 9,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 9.32,
+      "scores": {
+        "speech": 8.27,
+        "vote": 10.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 9.0,
+        "role_weighted": 9.28
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "10": {
+      "player_id": 10,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 3.83,
+      "scores": {
+        "speech": 7.33,
+        "vote": 0.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 3.87
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": [
+        "P10(villager) 投票准确率低，建议增强票型分析和站边判断。"
+      ]
+    },
+    "11": {
+      "player_id": 11,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 9.15,
+      "scores": {
+        "speech": 7.6,
+        "vote": 10.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 9.0,
+        "role_weighted": 9.08
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "12": {
+      "player_id": 12,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 3.8,
+      "scores": {
+        "speech": 7.2,
+        "vote": 0.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 3.82
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": [
+        "P12(villager) 投票准确率低，建议增强票型分析和站边判断。"
+      ]
+    }
+  },
+  "team_scores": {
+    "villagers": 4.4,
+    "werewolves": 8.64
+  },
+  "turning_points": [
+    {
+      "day": 1,
+      "phase": "day_speech",
+      "description": "白狼王P3自爆带走真预言家P5",
+      "impact": "negative",
+      "affected_team": "villagers",
+      "root_cause": "好人阵营在警上竞选环节未能有效识别悍跳狼团队，导致大量玩家（包括狼人和跟风好人）跳预言家，制造了极端混乱的信息环境。真预言家P5虽跳预言家并给出具体查验（1号金水），但信息淹没在混乱中。白狼王P3利用此混乱果断自爆，精准带走了场上唯一给出具体查验信息的预言家P5，断掉了好人阵营的核心信息链。",
+      "involved_roles": [
+        "white_wolf_king",
+        "seer",
+        "villager"
+      ]
+    },
+    {
+      "day": 2,
+      "phase": "exile_vote",
+      "description": "好人阵营集体投票出局守卫P2",
+      "impact": "negative",
+      "affected_team": "villagers",
+      "root_cause": "好人阵营对P2的身份判断出现集体性偏差。P2（守卫）在警上参与竞选并跳预言家，警下发言迅速站边P5预言家，这本身是合理的好人行为（分析白狼王自爆逻辑）。然而，P2的发言被其他好人（如P6）解读为“冲锋狼”，并形成了广泛的怀疑。狼人（P8, P9, P11）利用此机会，集体跟风投票给P2，最终导致好人阵营将真神职P2票出局。核心原因在于好人阵营在失去预言家后，对“警上跳预言家但无具体信息”的玩家产生了过度且错误的怀疑，未能分辨出合理的站边行为。",
+      "involved_roles": [
+        "guard",
+        "werewolf",
+        "villager"
+      ]
+    },
+    {
+      "day": 4,
+      "phase": "day_speech",
+      "description": "猎人P4死亡后开枪带走村民P10",
+      "impact": "negative",
+      "affected_team": "villagers",
+      "root_cause": "猎人P4在夜间被狼人击杀，白天发动技能时，基于错误的逻辑链（认为P10是带头抗推好人的狼人）带走了村民P10。P4的错误判断源于对场上信息的错误解读，特别是对P10在第三天投票中带头攻击P6行为的误读（P6实际是好人，被狼人P9和P11抗推出局）。P4未能有效复盘票型和遗言（P6遗言点出10号可疑，但P4可能未采信或分析有误），导致关键技能使用失误，进一步削弱了好人阵营的有生力量。",
+      "involved_roles": [
+        "hunter",
+        "villager",
+        "werewolf"
+      ]
+    }
+  ],
+  "decision_reviews": [
+    {
+      "decision_id": "d397b58e5cb4",
+      "player_id": 3,
+      "role": "white_wolf_king",
+      "day": 1,
+      "phase": "day_speech",
+      "action_type": "white_wolf_explode",
+      "quality_score": 9.0,
+      "verdict": "good",
+      "reasoning": "白狼王P3在第一天精准识别并带走了真预言家P5。决策逻辑清晰：P5是唯一给出具体查验信息（1号金水）的预言家，带走他能最大化断掉好人信息链，为狼队打开局面。即使P5是悍跳，带走他也能制造混乱。自爆时机选择在混乱的白天发言阶段，有效打乱了好人节奏。",
+      "improvement": "该决策本身质量很高，无需改进。在后续类似局中，白狼王可继续坚持此策略：优先带走给出具体查验信息或形成明确查验链的预言家。"
+    },
+    {
+      "decision_id": "cc9aaade4b50",
+      "player_id": 4,
+      "role": "hunter",
+      "day": 4,
+      "phase": "day_speech",
+      "action_type": "hunter_shoot",
+      "quality_score": 2.0,
+      "verdict": "poor",
+      "reasoning": "猎人P4开枪带走村民P10，这是一个严重的判断失误。P4的逻辑链（认为P10是带头抗推好人的狼人）存在漏洞：P10攻击P6，而P6是被狼人P9和P11抗推的好人，但这并不意味着P10就是狼。P4未能有效区分“好人攻击好人”与“狼人攻击好人”的行为模式。遗言信息（P6点出10号可疑）可能误导了P4，但P4作为猎人，在开枪前应更谨慎地复盘全场票型和遗言逻辑，而非基于单一视角做出决断。",
+      "improvement": "猎人开枪前应系统复盘：1）回顾被抗推者（如P6）的遗言和票型，分析谁是抗推的受益者；2）评估开枪目标的完整行为链，而非孤立事件；3）优先考虑带走明确有狼面（如深水狼）的玩家，或在信息明确时带走场上焦点狼。"
+    },
+    {
+      "decision_id": "532c2e341d24",
+      "player_id": 5,
+      "role": "seer",
+      "day": 1,
+      "phase": "sheriff_election",
+      "action_type": "sheriff_run",
+      "quality_score": 8.0,
+      "verdict": "good",
+      "reasoning": "真预言家P5第一天跳出来竞选警长是正确的策略，有利于尽早建立权威，引导好人阵营。查验1号（边角位）并给出金水，提供了具体的信息点。在警上混乱对跳的环境下，坚持悍跳身份并给出具体查验是合理的。",
+      "improvement": "在极端混乱的对跳环境中（如本局），真预言家可考虑在发言中更坚定地攻击那些跳预言家但无查验、无合理警徽流的玩家，并呼吁好人集中票型。退水策略（11f93995b5b6）虽有观察目的，但可能导致警徽流落空，增加好人决策难度。"
+    },
+    {
+      "decision_id": "b64f9506f22f",
+      "player_id": 2,
+      "role": "guard",
+      "day": 2,
+      "phase": "exile_vote",
+      "action_type": "exile_vote",
+      "quality_score": 4.0,
+      "verdict": "mediocre",
+      "reasoning": "守卫P2投票给6号，理由是6号行为像冲锋狼。此决策部分合理（6号确实在警上跳预言家），但P2作为守卫，未充分意识到自己的守卫身份已因警上行为暴露风险，且其投票目标（6号）并非场上最集中的怀疑对象（2号自身才是焦点）。这导致P2的投票未能有效引导好人，反而加深了自己被抗推的风险。",
+      "improvement": "守卫在警上参与竞选后，应更注重隐藏身份，发言和投票应尽量贴合闭眼好人视角，避免成为焦点。在投票时，应优先考虑投给场上最集中、最像狼的玩家，而非基于个人怀疑分散票型。"
+    },
+    {
+      "decision_id": "ed2078be5844",
+      "player_id": 9,
+      "role": "werewolf",
+      "day": 2,
+      "phase": "exile_vote",
+      "action_type": "exile_vote",
+      "quality_score": 9.0,
+      "verdict": "good",
+      "reasoning": "狼人P9投票给2号（守卫），成功推动好人神职出局。决策逻辑清晰：2号被多人怀疑，狼队集体跟风投票能最大化抗推好人收益。P9的发言（public_text）很好地伪装成闭眼好人，分析了2号行为的可疑点，增强了投票的合理性。",
+      "improvement": "无需改进。狼队在抗推神职时，应继续采用此策略：识别场上焦点玩家（无论好人坏人），集体跟风投票，并保持发言的“好人面”。"
+    },
+    {
+      "decision_id": "452fe29be947",
+      "player_id": 10,
+      "role": "villager",
+      "day": 3,
+      "phase": "exile_vote",
+      "action_type": "exile_vote",
+      "quality_score": 6.0,
+      "verdict": "mediocre",
+      "reasoning": "村民P10投票给6号，推动了一个好人出局。P10的怀疑（6号警上悍跳，行为可疑）有一定道理，但6号在第二天发言中已退水并明确村民身份，且攻击2号的行为更多是基于逻辑判断。P10未能充分评估6号作为好人的可能性，也未注意到狼人（P9，P11）正在利用对6号的怀疑带节奏。",
+      "improvement": "村民在投票时，应更全面地分析被投票玩家的完整行为链和遗言，而非孤立地看待其警上行为。同时，应警惕多人集中攻击同一目标的“抱团”现象，这可能是狼人在带节奏。"
+    }
+  ],
+  "counterfactuals": [
+    {
+      "scenario": "如果白狼王P3第一天没有自爆带走P5",
+      "original_outcome": "真预言家P5死亡，好人信息链断裂，狼队获得巨大优势。",
+      "counterfactual_outcome": "P5存活，第二天可以继续查验并给出更多信息（如查验2号、6号等跳预言家的玩家）。好人阵营将拥有更清晰的视野，可能更快找出狼人，特别是能验证2号等玩家的身份，避免后续抗推守卫P2的错误。",
+      "likelihood": "high",
+      "insight": "白狼王自爆带走真预言家是狼队获得早期优势的关键转折点。如果预言家存活，好人阵营的逻辑链将得以延续，游戏走向可能完全不同。"
+    },
+    {
+      "scenario": "如果猎人P4没有开枪带走P10，而是选择带走一名明确狼人（如P9或P11）",
+      "original_outcome": "P10（村民）死亡，好人阵营失去一名逻辑能力较强的村民，狼队P9、P11存活至游戏结束。",
+      "counterfactual_outcome": "P9或P11（狼人）死亡，好人阵营将只剩1狼，且猎人技能换取了狼人，好人阵营将获得巨大优势，可能获胜。",
+      "likelihood": "medium",
+      "insight": "猎人技能是好人阵营的后期翻盘关键。在信息混乱时，猎人应优先考虑带走那些行为有明显狼面、且非焦点好人的玩家，以最大化技能收益。"
+    },
+    {
+      "scenario": "如果好人阵营在第二天没有投票出局守卫P2，而是选择出另一名跳预言家的玩家（如P6或P7）",
+      "original_outcome": "P2（守卫）死亡，好人失去神职保护，狼人夜间刀口更自由，P1（金水）随后被刀。",
+      "counterfactual_outcome": "如果P2存活，他第二天晚上可以继续守护P1（金水），P1可能不会被狼人刀死。好人阵营将保留一名明确的好人领袖和一名神职，局势将更有利于好人。",
+      "likelihood": "medium",
+      "insight": "好人阵营在抗推目标时，应更谨慎地评估被抗推者的身份可能性。对于行为可疑但未被证实为狼的玩家（如P2），可以保留观察，优先出那些有明确狼面或跟风行为的玩家。"
+    }
+  ],
+  "strategic_insights": [
+    {
+      "text": "在警上多人跳预言家的极端混乱环境中，白狼王应优先自爆带走给出具体查验信息或形成明确查验链的预言家，以最大化断掉好人信息链。",
+      "game_id": "game_007",
+      "relevance": "direct",
+      "confidence": 0.9,
+      "source_roles": [
+        "white_wolf_king",
+        "seer"
+      ],
+      "source_player_ids": [
+        3,
+        5
+      ],
+      "source_decision_ids": [
+        "d397b58e5cb4"
+      ]
+    },
+    {
+      "text": "狼人团队在抗推好人时，应识别场上已被多人怀疑的焦点玩家（无论好人坏人），并集体跟风投票，同时保持发言的“闭眼好人”视角，以最大化抗推收益并隐藏团队。",
+      "game_id": "game_007",
+      "relevance": "direct",
+      "confidence": 0.85,
+      "source_roles": [
+        "werewolf"
+      ],
+      "source_player_ids": [
+        8,
+        9,
+        11
+      ],
+      "source_decision_ids": [
+        "ce2e4818a9a7",
+        "ed2078be5844",
+        "15cf157b7477"
+      ]
+    },
+    {
+      "text": "真预言家在混乱对跳环境中，应更坚定地攻击无查验、无合理警徽流的跳预言家玩家，并呼吁好人集中票型，以减少信息噪音。过早退水可能削弱预言家权威，增加好人决策难度。",
+      "game_id": "game_007",
+      "relevance": "direct",
+      "confidence": 0.75,
+      "source_roles": [
+        "seer"
+      ],
+      "source_player_ids": [
+        5
+      ],
+      "source_decision_ids": [
+        "532c2e341d24",
+        "11f93995b5b6"
+      ]
+    },
+    {
+      "text": "猎人开枪前应系统复盘被抗推者的遗言、全场票型和逻辑链，优先带走那些行为有明确狼面、且非焦点好人的玩家，以最大化技能收益，避免带走逻辑能力较强的好人。",
+      "game_id": "game_007",
+      "relevance": "direct",
+      "confidence": 0.8,
+      "source_roles": [
+        "hunter"
+      ],
+      "source_player_ids": [
+        4
+      ],
+      "source_decision_ids": [
+        "cc9aaade4b50"
+      ]
+    },
+    {
+      "text": "好人阵营在失去预言家后，应对“警上跳预言家但无具体信息”的玩家保持合理怀疑，但应避免过度怀疑和集体抗推，需结合遗言、票型等综合判断，防止被狼人利用怀疑链抗推神职。",
+      "game_id": "game_007",
+      "relevance": "contextual",
+      "confidence": 0.7,
+      "source_roles": [
+        "villager",
+        "guard"
+      ],
+      "source_player_ids": [
+        1,
+        2,
+        6,
+        10,
+        12
+      ],
+      "source_decision_ids": [
+        "b64f9506f22f",
+        "7c1169b89656",
+        "452fe29be947"
+      ]
+    }
+  ],
+  "error_patterns": [
+    {
+      "text": "好人阵营在信息混乱时，容易对“行为异常”（如警上跳预言家、警下迅速站边）产生集体性过度怀疑，并形成抱团抗推趋势，导致神职被误出。",
+      "game_id": "game_007",
+      "relevance": "contextual",
+      "confidence": 0.75,
+      "source_roles": [
+        "villager",
+        "guard"
+      ],
+      "source_player_ids": [
+        1,
+        6,
+        10,
+        12
+      ],
+      "source_decision_ids": [
+        "b64f9506f22f",
+        "7c1169b89656",
+        "452fe29be947",
+        "eaeee46ce428"
+      ]
+    },
+    {
+      "text": "猎人开枪时容易受被抗推者遗言的误导，基于单一逻辑链或片面信息做出判断，未能系统复盘票型和遗言，导致技能使用失误。",
+      "game_id": "game_007",
+      "relevance": "direct",
+      "confidence": 0.7,
+      "source_roles": [
+        "hunter"
+      ],
+      "source_player_ids": [
+        4
+      ],
+      "source_decision_ids": [
+        "cc9aaade4b50"
+      ]
+    },
+    {
+      "text": "狼人团队在警上大量悍跳，制造信息混乱，能有效淹没真预言家信息，并为后续抗推好人（尤其是神职）创造机会。",
+      "game_id": "game_007",
+      "relevance": "direct",
+      "confidence": 0.8,
+      "source_roles": [
+        "werewolf"
+      ],
+      "source_player_ids": [
+        8,
+        9,
+        11
+      ],
+      "source_decision_ids": [
+        "968c8674a52d",
+        "7a199316998a",
+        "6c791a74ef0e"
+      ]
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,14 @@
+{
+  "hash": "db7714d6",
+  "role": "hunter",
+  "skills": {
+    "hide_identity.md": "---\nname: hunter_hide_identity\ndescription: 猎人隐藏身份：避免被狼人针对的发言策略\nrole: hunter\napplicable_actions:\n  - speak\n  - sheriff_speak\n  - exile_vote\n  - pk_vote\n  - pk_speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 猎人隐藏身份\n\n## 目标\n\n隐藏猎人身份，避免提前被刀杀。\n\n## 策略原则\n\n- 不要主动跳明猎人身份。\n- 发言不要太强硬，以免被狼人优先刀杀。\n- 被怀疑时可以用逻辑反驳，不需要跳身份自证。\n- 只有在关键时刻（如带队归票）才考虑跳明。\n\n",
+    "shoot.md": "---\nname: hunter_shoot\ndescription: 猎人开枪：死后选择带走谁的策略\nrole: hunter\napplicable_actions:\n  - hunter_shoot\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 猎人开枪\n\n## 目标\n\n在死亡时选择正确的开枪目标。\n\n## 策略原则\n\n- 确认击杀目标是狼人。\n- 优先击杀悍跳狼或明确狼人。\n- 如果无法确定，考虑不发动技能（带人）。\n- 避免带错好人。\n- 考虑被带玩家的身份和局势影响。\n\n",
+    "threat.md": "---\nname: hunter_threat\ndescription: 猎人威慑：通过发言威慑狼人、保护自己\nrole: hunter\napplicable_actions:\n  - speak\n  - sheriff_speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 猎人威慑\n\n## 目标\n\n利用猎人的带人能力在发言中形成威慑。\n\n## 策略原则\n\n- 暗示你可能是猎人，但不要直接跳明。\n- 用\"我如果出局会带走一个人\"的语气施压。\n- 不要明确威胁特定玩家——会显得像狼人。\n- 真猎人被抗推时果断表明身份。\n\n"
+  },
+  "created_at": "2026-05-28T17:52:55.581978+00:00",
+  "source": "initialize_from_skills",
+  "parent_hash": null,
+  "source_run_id": null,
+  "notes": []
+}

@@ -1,0 +1,18 @@
+{
+  "games": 20,
+  "seed_start": 1,
+  "agent_version": "agent",
+  "model_name": null,
+  "max_days": 20,
+  "temperature": 0.2,
+  "enable_review": true,
+  "enable_mid_memory": true,
+  "enable_long_term_consolidation": false,
+  "enable_batch_dream": false,
+  "auto_apply_skill_proposals": false,
+  "skill_dir": "C:\\Users\\10939\\AppData\\Local\\Temp\\evo_skills_13geccse",
+  "game_concurrency": 2,
+  "tot_enabled": true,
+  "got_enabled": true,
+  "got_trigger_threshold": 0.3
+}

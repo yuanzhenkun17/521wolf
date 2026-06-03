@@ -1,0 +1,15 @@
+{
+  "hash": "8307c638",
+  "role": "villager",
+  "skills": {
+    "seer_side.md": "---\nname: villager_seer_side\ndescription: 站边预言家：判断和支援真预言家的策略\nrole: villager\napplicable_actions:\n  - speak\n  - sheriff_speak\n  - exile_vote\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 站边预言家\n\n## 目标\n\n在真假预言家中做出正确站边选择。\n\n## 策略原则\n\n- 比较两个预言家的查验链合理性。\n- 比较警徽流是否清晰合理。\n- 观察站边分布——狼人通常抱团站边。\n- 注意预言家的发言语气和逻辑连贯性。\n- 站边后给出合理解释，不要无脑跟风。\n- 可以适度怀疑两个预言家，但不骑墙。\n\n",
+    "speech_analysis.md": "---\nname: villager_speech_analysis\ndescription: 发言分析：通过发言内容判断身份的方法\nrole: villager\napplicable_actions:\n  - speak\n  - sheriff_speak\n  - pk_speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 发言分析\n\n## 目标\n\n通过分析其他玩家的发言内容推断其身份。\n\n## 策略原则\n\n- 关注逻辑连贯性：前后发言是否一致。\n- 关注跟风行为：总是重复前面观点可能是狼人。\n- 关注站边逻辑：站边理由是否合理。\n- 关注信息量：知道太多或太少都可疑。\n- 投票理由是否充分、合理。\n\n",
+    "vote_analysis.md": "---\nname: villager_vote_analysis\ndescription: 投票分析：通过投票行为判断狼人的方法\nrole: villager\napplicable_actions:\n  - exile_vote\n  - pk_vote\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 投票分析\n\n## 目标\n\n通过观察投票行为推断身份。\n\n## 策略原则\n\n- 注意投票集中度：狼人可能会抱团投票。\n- 关注改票行为：突然改票的人可能有团队意图。\n- 关注分票：狼人可能会分散投票制造混乱。\n- 关注弃票：狼人可能弃票规避风险。\n- 投票和发言逻辑是否一致。\n\n",
+    "wolf_pit.md": "---\nname: villager_wolf_pit\ndescription: 找狼坑：通过逻辑推理定位狼人位置\nrole: villager\napplicable_actions:\n  - speak\n  - sheriff_speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 找狼坑\n\n## 目标\n\n通过发言和投票信息推断狼人团队。\n\n## 策略原则\n\n- 狼坑通常有结构：悍跳狼、冲锋狼、倒钩狼、深水狼。\n- 从站边出发：站错边的好人 vs 冲锋狼。\n- 关注投票：冲票行为是狼人的常见特征。\n- 关注互保：狼人间可能会有意或无意地互保。\n- 发言软、划水的玩家可能是深水狼。\n- 狼坑需要合理解释每个人的狼面。\n\n"
+  },
+  "created_at": "2026-05-28T17:52:55.605608+00:00",
+  "source": "initialize_from_skills",
+  "parent_hash": null,
+  "source_run_id": null,
+  "notes": []
+}

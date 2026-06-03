@@ -1,7 +1,5 @@
 import { ChevronRight } from "lucide-react";
 import { Badge } from "./ui/badge";
-import { GoTDetails } from "./GoTDetails";
-import type { GoTData } from "./GoTGraph";
 import { roleName } from "../presentation";
 import { speechLabel, decisionChoiceText, decisionSourceName } from "./shared";
 import type { AgentDecision, ArchiveMap } from "../types";
@@ -49,23 +47,10 @@ function DecisionBody({
   archiveEntry?: Record<string, unknown>;
 }) {
   const ac = archiveEntry;
-  const totCandidates = (ac?.tot_candidates as Array<Record<string, unknown>> | undefined) ?? [];
-  const totJudgeReason = (ac?.tot_judge_reason as string | undefined) ?? "";
   const promptMessages = (ac?.prompt_messages as Array<Record<string, unknown>> | undefined) ?? [];
   const selectedSkills = (ac?.selected_skills as string[] | undefined) ?? [];
   const memoryContext = ac?.memory_context as Record<string, unknown> | undefined;
   const beliefContext = ac?.belief_context as Record<string, unknown> | undefined;
-  const gotData = (ac?.got_data as GoTData | undefined) ?? (ac?.got_result as GoTData | undefined);
-  const reasoningPromptMessages =
-    decision.source === "got"
-      ? ((ac?.got_prompt_messages as Array<Record<string, unknown>> | undefined) ?? [])
-      : ((ac?.tot_prompt_messages as Array<Record<string, unknown>> | undefined) ?? []);
-  const reasoningRawOutput =
-    decision.source === "got"
-      ? String(ac?.got_raw_output ?? "")
-      : decision.source === "tot"
-        ? String(ac?.tot_raw_output ?? "")
-        : "";
   return (
     <details className="group rounded-md border border-border bg-card p-3">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 marker:hidden">
@@ -115,15 +100,10 @@ function DecisionBody({
         ) : null}
         <DecisionExpandedSections
           decision={decision}
-          totCandidates={totCandidates}
-          totJudgeReason={totJudgeReason}
           promptMessages={promptMessages}
           selectedSkills={selectedSkills}
           memoryContext={memoryContext}
           beliefContext={beliefContext}
-          gotData={gotData}
-          reasoningPromptMessages={reasoningPromptMessages}
-          reasoningRawOutput={reasoningRawOutput}
         />
       </div>
     </details>
@@ -132,80 +112,26 @@ function DecisionBody({
 
 function DecisionExpandedSections({
   decision,
-  totCandidates,
-  totJudgeReason,
   promptMessages,
   selectedSkills,
   memoryContext,
   beliefContext,
-  gotData,
-  reasoningPromptMessages,
-  reasoningRawOutput,
 }: {
   decision: AgentDecision;
-  totCandidates: Array<Record<string, unknown>>;
-  totJudgeReason: string;
   promptMessages: Array<Record<string, unknown>>;
   selectedSkills: string[];
   memoryContext?: Record<string, unknown>;
   beliefContext?: Record<string, unknown>;
-  gotData?: GoTData;
-  reasoningPromptMessages: Array<Record<string, unknown>>;
-  reasoningRawOutput: string;
 }) {
   const hasBelief = beliefContext && Object.keys(beliefContext).length > 0;
   const hasRaw = decision.raw_output.length > 0;
-  const hasToT = totCandidates.length > 0;
   const hasPrompt = promptMessages.length > 0;
   const hasMemory = memoryContext && Object.keys(memoryContext).length > 0;
   const hasSkill = selectedSkills.length > 0 && !decision.selected_skill;
-  const hasGoT = gotData && gotData.hypotheses?.length > 0;
-  const hasReasoningPrompt = reasoningPromptMessages.length > 0;
-  const hasReasoningRaw = reasoningRawOutput.length > 0;
-  const hasAny = hasBelief || hasRaw || hasToT || hasPrompt || hasMemory || hasSkill || hasGoT || hasReasoningPrompt || hasReasoningRaw;
+  const hasAny = hasBelief || hasRaw || hasPrompt || hasMemory || hasSkill;
   if (!hasAny) return null;
   return (
     <div className="space-y-2">
-      {hasToT ? (
-        <details className="group rounded-sm border border-purple-200 bg-purple-50 p-2">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-purple-800 marker:hidden">
-            <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
-            ToT 候选方案 ({totCandidates.length})
-          </summary>
-          <div className="mt-2 space-y-2">
-            {totCandidates.map((cand, idx) => (
-              <div key={idx} className="rounded-sm border border-purple-100 bg-white p-2 text-xs">
-                <div className="font-medium text-purple-900">方案 {idx + 1}</div>
-                {cand.action ? <div className="mt-1">行动: {String(cand.action)}</div> : null}
-                {cand.public_text ? <div className="mt-1">发言: {String(cand.public_text)}</div> : null}
-                {cand.private_reasoning ? <div className="mt-1">推理: {String(cand.private_reasoning)}</div> : null}
-                {cand.expected_gain ? <div className="mt-1">预期收益: {String(cand.expected_gain)}</div> : null}
-                {cand.risk ? <div className="mt-1">风险: {String(cand.risk)}</div> : null}
-                {cand.judge_reason ? <div className="mt-1 text-amber-700">裁决: {String(cand.judge_reason)}</div> : null}
-              </div>
-            ))}
-            {totJudgeReason ? (
-              <div className="rounded-sm border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-                <span className="font-medium">Judge 裁决：</span>{totJudgeReason}
-              </div>
-            ) : null}
-          </div>
-        </details>
-      ) : null}
-
-      {hasGoT && gotData ? <GoTDetails data={gotData} /> : null}
-
-      {hasReasoningPrompt ? (
-        <PromptBlock
-          title={decision.source === "got" ? "GoT Prompt" : "ToT Prompt"}
-          messages={reasoningPromptMessages}
-        />
-      ) : null}
-
-      {hasReasoningRaw ? (
-        <RawBlock title={decision.source === "got" ? "GoT Raw Output" : "ToT Raw Output"} value={reasoningRawOutput} />
-      ) : null}
-
       {hasSkill ? (
         <details className="group rounded-sm border border-border p-2">
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground marker:hidden">

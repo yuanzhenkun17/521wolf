@@ -1,0 +1,21 @@
+{
+  "game_id": "game_004",
+  "seed": 10003,
+  "agent_version": "agent",
+  "winner": "werewolves",
+  "days": 4,
+  "players": {
+    "1": "villager",
+    "2": "hunter",
+    "3": "werewolf",
+    "4": "villager",
+    "5": "villager",
+    "6": "seer",
+    "7": "guard",
+    "8": "witch",
+    "9": "werewolf",
+    "10": "villager",
+    "11": "werewolf",
+    "12": "white_wolf_king"
+  }
+}

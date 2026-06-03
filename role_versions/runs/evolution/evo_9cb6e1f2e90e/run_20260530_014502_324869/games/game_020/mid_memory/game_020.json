@@ -1,0 +1,524 @@
+{
+  "game_id": "game_020",
+  "generated_at": "2026-05-29T20:22:08.363157+00:00",
+  "winner": "werewolves",
+  "roles": {
+    "1": "villager",
+    "2": "white_wolf_king",
+    "3": "werewolf",
+    "4": "villager",
+    "5": "seer",
+    "6": "witch",
+    "7": "villager",
+    "8": "werewolf",
+    "9": "villager",
+    "10": "werewolf",
+    "11": "hunter",
+    "12": "guard"
+  },
+  "player_scores": {
+    "1": {
+      "player_id": 1,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.33,
+      "scores": {
+        "speech": 7.3,
+        "vote": 10.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 7.35
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "2": {
+      "player_id": 2,
+      "role": "white_wolf_king",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 7.6,
+      "scores": {
+        "speech": 8.4,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 7.0,
+        "role_weighted": 7.67
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [
+        "white_wolf_explode 被策略修正"
+      ],
+      "mistake_types": [
+        "policy_adjusted"
+      ],
+      "suggestions": []
+    },
+    "3": {
+      "player_id": 3,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 7.93,
+      "scores": {
+        "speech": 7.73,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 9.0,
+        "role_weighted": 7.87
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "4": {
+      "player_id": 4,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 5.12,
+      "scores": {
+        "speech": 7.47,
+        "vote": 5.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 5.66
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "5": {
+      "player_id": 5,
+      "role": "seer",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 8.15,
+      "scores": {
+        "speech": 9.6,
+        "vote": 10.0,
+        "skill": 10.0,
+        "information": 9,
+        "cooperation": 3.0,
+        "role_weighted": 9.64
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "6": {
+      "player_id": 6,
+      "role": "witch",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 7.09,
+      "scores": {
+        "speech": 7.87,
+        "vote": 10.0,
+        "skill": 7.5,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 6.75
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [
+        "毒杀了 P9 (villager)——毒错好人"
+      ],
+      "mistake_types": [
+        "poisoned_good"
+      ],
+      "suggestions": []
+    },
+    "7": {
+      "player_id": 7,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 5.15,
+      "scores": {
+        "speech": 7.6,
+        "vote": 5.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 5.71
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "8": {
+      "player_id": 8,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 8.75,
+      "scores": {
+        "speech": 8.0,
+        "vote": 10.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 7.0,
+        "role_weighted": 8.8
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "9": {
+      "player_id": 9,
+      "role": "villager",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 4.5,
+      "scores": {
+        "speech": 5.0,
+        "vote": 5.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 4.8
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "10": {
+      "player_id": 10,
+      "role": "werewolf",
+      "team": "werewolves",
+      "outcome": "win",
+      "total_score": 7.9,
+      "scores": {
+        "speech": 7.6,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 9.0,
+        "role_weighted": 7.83
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "11": {
+      "player_id": 11,
+      "role": "hunter",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 5.15,
+      "scores": {
+        "speech": 7.6,
+        "vote": 5.0,
+        "skill": 5.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 5.25
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    },
+    "12": {
+      "player_id": 12,
+      "role": "guard",
+      "team": "villagers",
+      "outcome": "lose",
+      "total_score": 6.2,
+      "scores": {
+        "speech": 6.8,
+        "vote": 5.0,
+        "skill": 10.0,
+        "information": 5.0,
+        "cooperation": 3.0,
+        "role_weighted": 5.43
+      },
+      "highlights": [
+        "完成了本局游戏"
+      ],
+      "mistakes": [],
+      "mistake_types": [],
+      "suggestions": []
+    }
+  },
+  "team_scores": {
+    "villagers": 5.96,
+    "werewolves": 8.05
+  },
+  "turning_points": [
+    {
+      "day": 1,
+      "phase": "day_speech",
+      "description": "白狼王P2自爆并带走警长P11",
+      "impact": "positive",
+      "affected_team": "werewolves",
+      "root_cause": "狼人团队利用白狼王技能精准打击了好人阵营的组织核心。P2根据P9给警长P11投票的行为，结合P12刀口未死的线索，判断P11可能是真预言家或神职，果断自爆带走，成功打乱好人节奏并消灭潜在威胁。",
+      "involved_roles": [
+        "white_wolf_king",
+        "hunter"
+      ]
+    },
+    {
+      "day": 2,
+      "phase": "night",
+      "description": "女巫P6毒杀村民P9",
+      "impact": "negative",
+      "affected_team": "villagers",
+      "root_cause": "女巫P6基于“P9投票给白狼王带走的P11是狼人行为”这一信念进行毒杀，但P9实为好人。该决策源于错误的身份判断（belief_error），导致好人阵营损失关键轮次并暴露女巫信息。",
+      "involved_roles": [
+        "witch",
+        "villager"
+      ]
+    },
+    {
+      "day": 2,
+      "phase": "exile_vote",
+      "description": "狼人P8被成功放逐",
+      "impact": "positive",
+      "affected_team": "villagers",
+      "root_cause": "预言家P5的查杀信息在P2自爆带走P11后得到了好人阵营的广泛信任。P8作为查杀对象，其反击和遗言未能动摇好人共识，导致狼队损失一员，好人暂时取得人数优势。",
+      "involved_roles": [
+        "seer",
+        "werewolf"
+      ]
+    },
+    {
+      "day": 3,
+      "phase": "night",
+      "description": "狼人刀杀预言家P5",
+      "impact": "negative",
+      "affected_team": "villagers",
+      "root_cause": "狼人团队（P3和P10）在P8出局后，将威胁最大的真预言家P5作为首要清除目标。这是狼队在信息劣势下最直接有效的止损策略，成功断掉了好人的信息链。",
+      "involved_roles": [
+        "werewolf",
+        "seer"
+      ]
+    }
+  ],
+  "decision_reviews": [
+    {
+      "decision_id": "996edd0d5203",
+      "player_id": 6,
+      "role": "witch",
+      "day": 2,
+      "phase": "night",
+      "action_type": "witch_act",
+      "quality_score": 2.0,
+      "verdict": "poor",
+      "reasoning": "女巫P6在第二夜毒杀P9是一个严重的信念错误。其决策依据“P9投票给白狼王带走的P11是狼人行为”虽然逻辑链条存在，但在信息不足时对投票行为的过度解读导致毒杀好人，严重损害好人轮次。",
+      "improvement": "女巫在使用毒药前应更谨慎地评估证据强度，尤其是对投票行为的解读。应结合多方信息（如预言家查验、狼队刀法）综合判断，避免在单一、间接证据上下定论。"
+    },
+    {
+      "decision_id": "687fb8b83146",
+      "player_id": 2,
+      "role": "white_wolf_king",
+      "day": 1,
+      "phase": "day_speech",
+      "action_type": "white_wolf_explode",
+      "quality_score": 8.0,
+      "verdict": "good",
+      "reasoning": "白狼王P2的自爆决策质量很高。他准确利用了“P9投票给P11”和“刀P12未死”两个信息点，判断P11（警长）极有可能是神职或真预言家，果断自爆带走，成功消灭了好人阵营的领导核心，为狼队奠定了巨大优势。",
+      "improvement": "此决策为高水平操作，但时机选择依赖于对投票和刀口信息的精准解读。未来可考虑在信息更明确（如预言家明确起跳）时使用，以确保带走最高价值目标。"
+    },
+    {
+      "decision_id": "c3562beefc5e",
+      "player_id": 5,
+      "role": "seer",
+      "day": 1,
+      "phase": "sheriff_election",
+      "action_type": "sheriff_run",
+      "quality_score": 9.0,
+      "verdict": "good",
+      "reasoning": "预言家P5的竞选和起跳非常果断且逻辑清晰。第一夜查验8号狼人后，直接在警上跳预言家报出查杀和警徽流，为好人阵营提供了明确的攻击目标和信息框架，成功引导了前期局势。",
+      "improvement": "起跳时机和发言堪称典范。后续可考虑在警徽流规划上更具迷惑性（如混入未知身份），以应对狼人可能的干扰。"
+    },
+    {
+      "decision_id": "d21de936aa53",
+      "player_id": 5,
+      "role": "seer",
+      "day": 1,
+      "phase": "sheriff_election",
+      "action_type": "sheriff_withdraw",
+      "quality_score": 6.5,
+      "verdict": "mediocre",
+      "reasoning": "预言家P5在警上对跳混乱时选择退水，意图是简化局面，让好人更清晰地对比预言家。这是一个可商榷的策略。虽然退水后仍坚持查验结果，但主动放弃警徽竞争可能让好人失去一个强有力的归票和信息传递工具。",
+      "improvement": "作为真预言家，在警上拥有查验和警徽流优势时，应更坚定地争夺警徽。退水虽显低调，但也可能被解读为心虚，且放弃了对警长投票的直接影响。"
+    }
+  ],
+  "counterfactuals": [
+    {
+      "scenario": "女巫P6在第二夜没有毒杀P9，而是选择空过",
+      "original_outcome": "女巫毒杀好人P9，好人轮次落后，女巫身份过早暴露。",
+      "counterfactual_outcome": "P9存活，好人多一个投票轮次。女巫隐藏更深，可能在后续夜晚毒杀真正的狼人（如P3或P10）。游戏进入更复杂的拉锯战，好人胜率提升。",
+      "likelihood": "high",
+      "insight": "女巫的毒药是极高价值的轮次技能，其使用决策应基于更高置信度的证据。过早或错误使用会直接导致好人劣势。"
+    },
+    {
+      "scenario": "狼队在第三夜没有刀杀预言家P5，而是选择刀杀女巫P6",
+      "original_outcome": "预言家P5被刀死，好人失去信息源。",
+      "counterfactual_outcome": "女巫P6被刀死，但预言家P5存活。P5可以继续查验，在白天提供更多信息，可能找出最后一狼P3或P10。好人有更高概率获胜。",
+      "likelihood": "medium",
+      "insight": "狼队在后期应优先考虑击杀能持续产生信息的角色（如预言家），而非已暴露但无后续能力的神职（如女巫无药后）。"
+    },
+    {
+      "scenario": "白狼王P2在第一天没有自爆，而是选择隐藏身份",
+      "original_outcome": "P2自爆带走警长P11，狼队获得巨大优势。",
+      "counterfactual_outcome": "P2隐藏，狼队在第一天轮次上与好人持平。但警长P11可能存活更久，好人阵营更有组织，预言家P5的查验信息可能得到更好贯彻。游戏走向更均衡的中后期对抗。",
+      "likelihood": "medium",
+      "insight": "白狼王的自爆技能是打破平衡的关键，其使用时机决定了狼队的优势大小。过早使用可能浪费，过晚则可能错过最佳窗口。"
+    }
+  ],
+  "strategic_insights": [
+    {
+      "text": "白狼王自爆的窗口判断：白狼王自爆的最佳时机通常发生在能够高置信度识别并带走一名关键神职（尤其是预言家或警长）时。判断依据应综合“投票关系”、“刀口信息”和“预言家对跳情况”。本局中，P2根据P9投票给P11、且刀P12未死这两点，果断判断P11为高价值目标，是成功自爆的典范。",
+      "game_id": "game_020",
+      "relevance": "direct",
+      "confidence": 0.85,
+      "source_roles": [
+        "white_wolf_king"
+      ],
+      "source_player_ids": [
+        2
+      ],
+      "source_decision_ids": [
+        "687fb8b83146"
+      ]
+    },
+    {
+      "text": "深水狼的团队切割与跟票策略：在狼队友（如P8）被预言家查杀且好人共识形成时，狼人（如P3和P10）的最佳策略是果断跟票放逐队友，以换取好人阵营的信任，隐藏更深。本局中，P3和P10均投票出P8，成功打入好人内部，为后续抗推好人（P1）创造了条件。",
+      "game_id": "game_020",
+      "relevance": "direct",
+      "confidence": 0.9,
+      "source_roles": [
+        "werewolf"
+      ],
+      "source_player_ids": [
+        3,
+        10
+      ],
+      "source_decision_ids": [
+        "55d380269492",
+        "ea9f4dd775e2"
+      ]
+    },
+    {
+      "text": "女巫毒药的使用应基于多重印证而非单一行为：女巫使用毒药时，对目标的判断应避免仅依赖于投票、发言等单一、易被操纵的行为。本局P6毒杀P9的失败，源于将“投票给被白狼王带走的人”直接等同于“狼人行为”，未考虑好人站错边的可能性。更稳健的做法是等待预言家查验或狼队刀法等更硬的证据。",
+      "game_id": "game_020",
+      "relevance": "direct",
+      "confidence": 0.8,
+      "source_roles": [
+        "witch"
+      ],
+      "source_player_ids": [
+        6
+      ],
+      "source_decision_ids": [
+        "996edd0d5203"
+      ]
+    },
+    {
+      "text": "预言家退水策略的风险：真预言家在警上主动退水，虽可能意在简化局面，但也放弃了警徽争夺的主动权，可能给好人阵营传递不确定信号，并让狼人有可乘之机。本局P5的退水，虽未直接导致失败，但使得好人前期失去了一个明确的归票核心。",
+      "game_id": "game_020",
+      "relevance": "direct",
+      "confidence": 0.7,
+      "source_roles": [
+        "seer"
+      ],
+      "source_player_ids": [
+        5
+      ],
+      "source_decision_ids": [
+        "d21de936aa53"
+      ]
+    }
+  ],
+  "error_patterns": [
+    {
+      "text": "女巫毒药误伤：基于对投票行为的过度解读和单一线索链（“投票给X，X被白狼王带走，故X是狼，投票者也是狼”）进行毒杀，缺乏对好人可能站错边等复杂情况的考量，导致关键轮次损失。",
+      "game_id": "game_020",
+      "relevance": "direct",
+      "confidence": 0.8,
+      "source_roles": [
+        "witch"
+      ],
+      "source_player_ids": [
+        6
+      ],
+      "source_decision_ids": [
+        "996edd0d5203"
+      ]
+    },
+    {
+      "text": "村民互打做身份：在缺乏信息的情况下，好人村民（如P1、P3、P4）之间基于第一天模糊的预言家对跳经历进行互相怀疑和攻击，这容易被狼人利用来制造混乱、消耗好人精力，并可能为狼人提供抗推目标。这种模式在本局中后期（第3天）尤为明显。",
+      "game_id": "game_020",
+      "relevance": "contextual",
+      "confidence": 0.75,
+      "source_roles": [
+        "villager"
+      ],
+      "source_player_ids": [
+        1,
+        3,
+        4
+      ],
+      "source_decision_ids": [
+        "39c34d47f2ef",
+        "9b09f8f2f15f",
+        "1974504ef2de"
+      ]
+    },
+    {
+      "text": "警长被带走后的警徽处理失当：猎人P11作为警长被白狼王带走时，选择撕毁警徽而非传递给可能的好人（如预言家P5或女巫P6）。这虽然避免了警徽落入狼人之手，但也让好人阵营在后续失去了一个重要的信息传递和归票工具，加剧了混乱。",
+      "game_id": "game_020",
+      "relevance": "direct",
+      "confidence": 0.7,
+      "source_roles": [
+        "hunter"
+      ],
+      "source_player_ids": [
+        11
+      ],
+      "source_decision_ids": [
+        "98cf8c4941a4"
+      ]
+    }
+  ],
+  "errors": []
+}

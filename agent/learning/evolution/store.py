@@ -114,6 +114,25 @@ def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _extract_battle_delta(battle_result: dict, role: str) -> dict:
+    """Extract the role-specific metrics delta from a battle result."""
+    base = battle_result.get("baseline_metrics", {})
+    cand = battle_result.get("candidate_metrics", {})
+    role_base = base.get("role", {}).get(role, {})
+    role_cand = cand.get("role", {}).get(role, {})
+    return {
+        "role_score_delta": round(
+            (role_cand.get("role_weighted_score", 0) or 0)
+            - (role_base.get("role_weighted_score", 0) or 0), 3,
+        ),
+        "win_rate_delta": round(
+            (role_cand.get("win_rate", 0) or 0)
+            - (role_base.get("win_rate", 0) or 0), 3,
+        ),
+        "games": battle_result.get("games_played", 0),
+    }
+
+
 # Version store
 class VersionStore:
     """Persistent store for role skill versions.
@@ -394,6 +413,43 @@ class VersionStore:
             _write_json(history_path, history.to_dict())
 
             _log.info("initialize_from_skills: created baseline %s/%s", role, h)
+
+    # Rejected-proposal buffer
+    _MAX_REJECTED = 10
+
+    def save_rejected(
+        self, role: str,
+        proposals: list[dict],
+        battle_result: dict | None,
+    ) -> None:
+        """Append rejected proposals to the role's rejected buffer.
+
+        Keeps at most ``_MAX_REJECTED`` entries by dropping the oldest.
+        Each entry records the proposal, battle metrics delta, and timestamp.
+        """
+        rejected_path = self._role_dir(role) / "rejected.json"
+        existing = _read_json(rejected_path) if rejected_path.exists() else []
+        metrics = _extract_battle_delta(battle_result, role) if battle_result else {}
+        for p in proposals:
+            existing.append({
+                "target_file": p.get("target_file", ""),
+                "action_type": p.get("action_type", ""),
+                "content": p.get("content", ""),
+                "rationale": p.get("rationale", ""),
+                "confidence": p.get("confidence", 0.0),
+                "metrics_delta": metrics,
+                "rejected_at": beijing_now_iso(),
+            })
+        if len(existing) > self._MAX_REJECTED:
+            existing = existing[-self._MAX_REJECTED:]
+        _write_json(rejected_path, existing)
+
+    def load_rejected(self, role: str) -> list[dict]:
+        """Load the rejected-proposal buffer for *role*, newest last."""
+        rejected_path = self._role_dir(role) / "rejected.json"
+        if not rejected_path.exists():
+            return []
+        return _read_json(rejected_path)
 
     # Internal helpers
 

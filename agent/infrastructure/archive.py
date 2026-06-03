@@ -31,7 +31,6 @@ class DecisionArchive:
     candidates: list[int]
     observation_summary: dict
     memory_context: dict
-    belief_context: dict
     selected_skills: list[str]
     prompt_messages: list[dict]
     raw_output: str
@@ -41,15 +40,6 @@ class DecisionArchive:
     confidence: float | None
     policy_adjustments: list[str]
     errors: list[str]
-    tot_prompt_messages: list[dict] = field(default_factory=list)
-    tot_raw_output: str = ""
-    tot_candidates: list[dict] = field(default_factory=list)
-    tot_judge_reason: str = ""
-    got_prompt_messages: list[dict] = field(default_factory=list)
-    got_raw_output: str = ""
-    got_evidence_nodes: list[dict] = field(default_factory=list)
-    got_hypotheses: list[dict] = field(default_factory=list)
-    got_judge_reason: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -63,7 +53,6 @@ class DecisionArchive:
             "candidates": self.candidates,
             "observation_summary": self.observation_summary,
             "memory_context": _sanitize(self.memory_context),
-            "belief_context": _sanitize(self.belief_context),
             "selected_skills": self.selected_skills,
             "prompt_messages": self.prompt_messages,
             "raw_output": self.raw_output,
@@ -73,15 +62,6 @@ class DecisionArchive:
             "confidence": self.confidence,
             "policy_adjustments": self.policy_adjustments,
             "errors": self.errors,
-            "tot_prompt_messages": self.tot_prompt_messages,
-            "tot_raw_output": self.tot_raw_output,
-            "tot_candidates": self.tot_candidates,
-            "tot_judge_reason": self.tot_judge_reason,
-            "got_prompt_messages": self.got_prompt_messages,
-            "got_raw_output": self.got_raw_output,
-            "got_evidence_nodes": self.got_evidence_nodes,
-            "got_hypotheses": self.got_hypotheses,
-            "got_judge_reason": self.got_judge_reason,
         }
 
     @classmethod
@@ -110,7 +90,6 @@ class DecisionArchive:
                 "candidates": list(ctx.request.candidates),
             },
             memory_context=ctx.memory_context,
-            belief_context=ctx.belief_context,
             selected_skills=list(ctx.selected_skills),
             prompt_messages=list(ctx.messages),
             raw_output=ctx.raw_output,
@@ -120,15 +99,6 @@ class DecisionArchive:
             confidence=ctx.confidence,
             policy_adjustments=list(ctx.policy_adjustments),
             errors=list(ctx.errors),
-            tot_prompt_messages=list(ctx.tot_prompt_messages),
-            tot_raw_output=ctx.tot_raw_output,
-            tot_candidates=list(ctx.tot_candidates),
-            tot_judge_reason=ctx.tot_judge_reason,
-            got_prompt_messages=list(ctx.got_prompt_messages),
-            got_raw_output=ctx.got_raw_output,
-            got_evidence_nodes=list(ctx.got_evidence_nodes),
-            got_hypotheses=list(ctx.got_hypotheses),
-            got_judge_reason=ctx.got_judge_reason,
         )
 
 

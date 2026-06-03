@@ -1,0 +1,13 @@
+{
+  "hash": "a99cb40a",
+  "role": "white_wolf_king",
+  "skills": {
+    "explode.md": "---\nname: white_wolf_king_explode\ndescription: 白狼王自爆：选择自爆带走关键好人的时机\nrole: white_wolf_king\napplicable_actions:\n  - white_wolf_explode\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 白狼王爆炸\n\n## 目标\n\n在适当时机自爆带走一个神职，为狼队打开局面。\n\n## 策略原则\n\n- 优先带走预言家——断掉好人的信息链。\n- 其次考虑女巫（尤其还有毒药时）。\n- 确认目标概率是神职再爆。\n- 轮次落后时果断自爆。\n- 不要在第一轮就爆——先获取信息。\n- 自爆前确认你和队友已经沟通好。\n\n",
+    "hide.md": "---\nname: white_wolf_king_hide\ndescription: 白狼王隐藏：伪装成好人混入阵营的策略\nrole: white_wolf_king\napplicable_actions:\n  - speak\n  - sheriff_speak\n  - exile_vote\n  - pk_vote\n  - pk_speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 白狼王隐藏\n\n## 目标\n\n在不适合自爆时隐藏白狼王身份，以狼人身份正常游戏。\n\n## 策略原则\n\n- 不要表现出随时想自爆的倾向。\n- 作为狼人正常发言、投票、踩人。\n- 保留自爆作为底牌，关键时刻使用。\n- 被怀疑时用村民逻辑反驳。\n- 如果局势有利（狼队优势），不需要自爆。\n\n"
+  },
+  "created_at": "2026-05-28T17:52:55.624608+00:00",
+  "source": "initialize_from_skills",
+  "parent_hash": null,
+  "source_run_id": null,
+  "notes": []
+}

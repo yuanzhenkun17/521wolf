@@ -61,7 +61,6 @@ def build_messages(
             "content": build_request_prompt(
                 request,
                 memory_context,
-                belief_context=belief_context or {},
                 strategy_advice=strategy_advice or {},
                 selected_skills=selected_skills or [],
                 skill_context=skill_context,
@@ -85,7 +84,6 @@ def build_request_prompt(
     request: ActionRequest,
     memory_context: dict,
     *,
-    belief_context: dict,
     strategy_advice: dict[str, Any] | None = None,
     selected_skills: list[str] | None = None,
     skill_context: str = "",
@@ -126,7 +124,6 @@ def build_request_prompt(
         f"行动补充信息: {private_facts.get('metadata', {})}\n"
         f"你的历史动作摘要: {memory_context.get('self_history', [])}\n"
         f"你的近期私有决策理由: {memory_context.get('decisions', [])}\n"
-        f"当前主观判断 Belief: {belief_context}\n"
         f"{field_notes_block}"
         f"{skill_context_block}"
         f"{hints_block}"

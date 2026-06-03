@@ -28,7 +28,6 @@ def build_prompt_step(ctx: AgentContext) -> AgentContext:
         player_id=ctx.player_id,
         role=role,
         memory_context=ctx.memory_context,
-        belief_context=ctx.belief_context,
         strategy_advice=ctx.strategy_advice,
         selected_skills=ctx.selected_skills,
         skill_context=ctx.skill_context,
@@ -45,7 +44,6 @@ def _build_minimal_messages(ctx: AgentContext) -> list[dict[str, str]]:
     user = build_request_prompt(
         ctx.request,
         ctx.memory_context,
-        belief_context=ctx.belief_context or {},
         strategy_advice=ctx.strategy_advice or {},
         selected_skills=[],
         skill_context="",

@@ -33,9 +33,6 @@ def _make_summary(**overrides):
         "policy_adjusted_rate": 0.02,
         "bad_case_count": 2.0,
         "turning_point_quality": 0.65,
-        "tot_usage_rate": 0.3,
-        "got_trigger_count": 4,
-        "got_failure_count": 1,
         "information_score": 5.5,
         "cooperation_score": 6.0,
         "by_role": {
@@ -56,20 +53,6 @@ def test_aggregate_turning_point_quality():
     s = _make_summary()
     entry = aggregate_summaries([s])
     assert abs(entry.turning_point_quality - 0.65) < 0.001
-
-
-def test_aggregate_tot_usage_rate():
-    s = _make_summary()
-    entry = aggregate_summaries([s])
-    assert abs(entry.tot_usage_rate - 0.3) < 0.001
-
-
-def test_aggregate_got_counts_are_sums():
-    s1 = _make_summary(got_trigger_count=3, got_failure_count=1)
-    s2 = _make_summary(got_trigger_count=5, got_failure_count=2)
-    entry = aggregate_summaries([s1, s2])
-    assert entry.got_trigger_count == 8
-    assert entry.got_failure_count == 3
 
 
 def test_aggregate_information_cooperation_weighted():
@@ -97,9 +80,6 @@ def test_to_dict_includes_new_fields():
     d = entry.to_dict()
     assert "bad_case_count" in d
     assert "turning_point_quality" in d
-    assert "tot_usage_rate" in d
-    assert "got_trigger_count" in d
-    assert "got_failure_count" in d
     assert "information_score" in d
     assert "cooperation_score" in d
     assert "by_role" in d

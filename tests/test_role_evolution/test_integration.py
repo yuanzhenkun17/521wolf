@@ -142,8 +142,6 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
                     game_config=MINIMAL_6,
                     skill_dir=composite_dir,
                     max_days=2,
-                    tot_enabled=False,
-                    got_enabled=False,
                 )
 
                 fake_model = FakeModelAdapter()
@@ -216,8 +214,6 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
                     game_config=MINIMAL_6,
                     skill_dir=composite_baseline,
                     max_days=2,
-                    tot_enabled=False,
-                    got_enabled=False,
                 )
                 result_1 = await run_selfplay(sp_config_1, model=fake_model)
 
@@ -232,8 +228,6 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
                     game_config=MINIMAL_6,
                     skill_dir=composite_override,
                     max_days=2,
-                    tot_enabled=False,
-                    got_enabled=False,
                 )
                 result_2 = await run_selfplay(sp_config_2, model=fake_model)
 

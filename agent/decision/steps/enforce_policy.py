@@ -160,7 +160,7 @@ def enforce_policy_step(ctx: AgentContext) -> AgentContext:
         result = validator(request, response)
         if not result.valid:
             if result.repairable:
-                repaired = _pick_best_target(request, ctx)
+                repaired = request.candidates[0] if request.candidates else None
                 if repaired is not None:
                     old_target = response.target
                     response = ActionResponse(
@@ -199,8 +199,6 @@ def enforce_policy_step(ctx: AgentContext) -> AgentContext:
     if adjustments:
         ctx.source = "policy_adjusted"
         ctx.policy_adjustments.extend(adjustments)
-    elif ctx.source == "llm":
-        ctx.source = "tot" if ctx.tot_enabled else "llm"
 
     return ctx
 
@@ -216,20 +214,6 @@ def _default_choice(action_type: ActionType) -> str | None:
         ActionType.WHITE_WOLF_EXPLODE: "pass",
     }
     return defaults.get(action_type)
-
-
-def _pick_best_target(request: ActionRequest, ctx: AgentContext) -> int | None:
-    """Use belief context to pick the best candidate, falling back to first."""
-    candidates = list(request.candidates)
-    if not candidates:
-        return None
-    belief = ctx.belief_context
-    top_suspicions = belief.get("top_suspicions", [])
-    for entry in top_suspicions:
-        pid = entry.get("player_id")
-        if pid in candidates:
-            return pid
-    return candidates[0]
 
 
 def _fallback_response(request: ActionRequest, ctx: AgentContext) -> ActionResponse:
@@ -258,6 +242,6 @@ def _fallback_response(request: ActionRequest, ctx: AgentContext) -> ActionRespo
     if request.action_type == ActionType.WHITE_WOLF_EXPLODE:
         return ActionResponse(request.action_type, choice="pass")
     if request.action_type in _TARGET_ACTIONS:
-        target = _pick_best_target(request, ctx)
+        target = request.candidates[0] if request.candidates else None
         return ActionResponse(request.action_type, target=target)
     return ActionResponse(request.action_type)

@@ -1,0 +1,15 @@
+{
+  "hash": "dcd4d815",
+  "role": "werewolf",
+  "skills": {
+    "deep_wolf.md": "---\nname: werewolf_deep_wolf\ndescription: 深水狼：隐藏身份混入好人阵营、中后期发力\nrole: werewolf\napplicable_actions:\n  - speak\n  - exile_vote\n  - pk_vote\n  - pk_speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 深水倒钩狼\n\n## 目标\n\n隐藏狼人身份，表现得像一个普通村民。\n\n## 策略原则\n\n- 发言像普通村民：分析局势、怀疑某些人。\n- 可以适度跟风投票，但要有自己的\"独立\"判断。\n- 避免保护或明显偏向队友——需要时可以适度切割。\n- 不要暴露狼人视角。\n- 被踩时用村民逻辑反驳，不要跳身份。\n\n## Few-shot\n\n```json\n{\n  \"public_text\": \"我怀疑P9，他发言总是跟风前面的人，没有自己的观点。\",\n  \"private_reasoning\": \"P9是队友，我需要踩他一下做身份。P3发言偏正义可能是神职，记下来晚上刀。\",\n  \"confidence\": 0.70,\n  \"selected_skill\": \"werewolf_deep_wolf\"\n}\n```\n",
+    "fake_seer.md": "---\nname: werewolf_fake_seer\ndescription: 悍跳预言家：伪造查验结果扰乱好人视野、扛推真预言家\nrole: werewolf\napplicable_actions:\n  - sheriff_run\n  - sheriff_speak\n  - speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 悍跳预言家\n\n## 目标\n\n悍跳预言家，通过伪造查验结果扰乱好人视野，扛推真预言家或好人。\n\n## 策略原则\n\n- 声称自己有查验结果，编造逻辑合理的查验链。\n- 如果真预言家在场，准备反驳他的查验结果。\n- 注意发言位置——位置不好时优先隐狼而非悍跳。\n- 避免查验已死玩家。\n- 不要和队友同时跳预言家。\n\n## Few-shot\n\n```json\n{\n  \"public_text\": \"我是预言家，昨晚查了P3，查杀。P3应该是狼。\",\n  \"private_reasoning\": \"我编造P3查杀。真预言家很可能还没跳，如果对跳我再编下一轮查验。P3发言偏弱，抗推他有可行性。\",\n  \"confidence\": 0.65,\n  \"selected_skill\": \"werewolf_fake_seer\"\n}\n```\n",
+    "find_god.md": "---\nname: werewolf_find_god\ndescription: 找神：夜晚刀人时识别神职目标的策略\nrole: werewolf\napplicable_actions:\n  - werewolf_kill\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 找神\n\n## 目标\n\n通过发言和投票行为推断神职身份，优先刀杀预言家和女巫。\n\n## 策略原则\n\n- 关注哪些玩家行为像神职：积极带队、夜间信息丰富、隐藏身份。\n- 优先刀杀预言家，断掉好人信息链。\n- 其次考虑女巫和守卫。\n- 不要在发言中暴露你在找神。\n\n## Few-shot\n\n```json\n{\n  \"private_reasoning\": \"P3疑似的预言家，他白天带节奏最狠。P8像女巫，昨天救人了。今晚优先刀P3。\",\n  \"confidence\": 0.75,\n  \"selected_skills\": [\"werewolf_find_god\"]\n}\n```\n",
+    "vote_rush.md": "---\nname: werewolf_vote_rush\ndescription: 冲票：狼人集中投票推动好人出局的策略\nrole: werewolf\napplicable_actions:\n  - exile_vote\n  - pk_vote\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 狼队冲票\n\n## 目标\n\n联合狼队友集中投票，尽可能放逐一个好人。\n\n## 策略原则\n\n- 优先选择发言弱、容易被怀疑的好人作为冲票目标。\n- 不要所有狼人投同一个人——留1-2个狼人分散投票。\n- 发言中给出可公开解释的投票理由。\n- 投票目标要和发言逻辑一致，防止被看出冲票。\n"
+  },
+  "created_at": "2026-05-28T17:52:55.616608+00:00",
+  "source": "initialize_from_skills",
+  "parent_hash": null,
+  "source_run_id": null,
+  "notes": []
+}

@@ -71,9 +71,6 @@ class SelfPlayConfig:
     game_config: GameConfig = STANDARD_12
     skill_dir: Path | None = None
     game_concurrency: int = 1
-    tot_enabled: bool = True
-    got_enabled: bool = True
-    got_trigger_threshold: float = 0.3
 
 
 @dataclass(slots=True)
@@ -204,10 +201,7 @@ class SelfPlayResult:
             "turning_point_count": sum(g.turning_point_count for g in self.games),
             # Leaderboard fields — aggregated by aggregate_summaries in leaderboard.py
             "bad_case_count": mistake_total,
-            "turning_point_quality": 0.0,  # TODO: wire up when turning point quality scoring is implemented
-            "tot_usage_rate": 0.0,  # TODO: wire up when ToT usage tracking is implemented
-            "got_trigger_count": 0,  # TODO: wire up when GoT trigger tracking is implemented
-            "got_failure_count": 0,  # TODO: wire up when GoT failure tracking is implemented
+            "turning_point_quality": 0.0,
             "information_score": round(sum(g.information_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
             "cooperation_score": round(sum(g.cooperation_score for g in reviewed) / len(reviewed), 3) if reviewed else 0.0,
             "by_role": _aggregate_by_role(self.games),
@@ -311,9 +305,6 @@ async def run_selfplay(
         "auto_apply_skill_proposals": config.auto_apply_skill_proposals,
         "skill_dir": str(config.skill_dir) if config.skill_dir else None,
         "game_concurrency": config.game_concurrency,
-        "tot_enabled": config.tot_enabled,
-        "got_enabled": config.got_enabled,
-        "got_trigger_threshold": config.got_trigger_threshold,
     })
 
     results: list[SelfPlayGameResult | None] = [None] * config.games
@@ -462,9 +453,6 @@ async def _run_single_game(
         roles, client, decision_recorder, trace_recorders,
         game_id=game_id,
         skill_dir=config.skill_dir,
-        tot_enabled=config.tot_enabled,
-        got_enabled=config.got_enabled,
-        got_trigger_threshold=config.got_trigger_threshold,
     )
 
     engine = GameEngine(
@@ -686,9 +674,6 @@ def _create_agents(
     trace_recorders: dict[int, AgentTraceRecorder],
     game_id: str | None = None,
     skill_dir: Path | None = None,
-    tot_enabled: bool = True,
-    got_enabled: bool = True,
-    got_trigger_threshold: float = 0.3,
 ) -> dict[int, LLMPlayerAgent]:
     """Create a full set of LLMPlayerAgent with trace recorders."""
     agents: dict[int, LLMPlayerAgent] = {}
@@ -701,9 +686,6 @@ def _create_agents(
             trace_recorder=trace_recorders[player_id],
             game_id=game_id,
             skill_dir=skill_dir,
-            tot_enabled=tot_enabled,
-            got_enabled=got_enabled,
-            got_trigger_threshold=got_trigger_threshold,
         )
         agents[player_id] = agent
     return agents

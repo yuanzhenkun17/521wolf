@@ -149,7 +149,7 @@ async def stream_game_events(game_id: str) -> StreamingResponse:
 
 @app.get("/api/games/{game_id}/archive")
 def get_game_archive(game_id: str) -> dict[str, Any]:
-    """Read the full trace archive for a game (ToT candidates, prompts, etc.)."""
+    """Read the full trace archive for a game (prompts, decisions, etc.)."""
     game = manager.get_game(game_id)
     if game is None:
         raise HTTPException(status_code=404, detail="game not found")

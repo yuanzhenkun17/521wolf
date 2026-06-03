@@ -310,6 +310,7 @@ async def consolidate_for_role(
     window: int = 5,
     prompt_version: str = "role_consolidation_v2",
     skill_root: Path | str | None = None,
+    store: "VersionStore | None" = None,
 ) -> RoleSkillConsolidation:
     """Consolidate mid-memory for a specific role, producing skill modification proposals.
 
@@ -359,8 +360,9 @@ async def consolidate_for_role(
     # 3. Filter each analysis for the target role
     filtered = [filter_mid_memory_for_role(m, role) for m in recent]
 
-    # 4. Load current skills for the role
+    # 4. Load current skills + rejected proposals for the role
     skills = _load_role_skills_for_str(role, skill_root=skill_root)
+    rejected = store.load_rejected(role) if store is not None else []
 
     # 5–7. Build prompt, call LLM, parse
     messages = _build_role_messages(
@@ -368,6 +370,7 @@ async def consolidate_for_role(
         skills=skills,
         role=role,
         window=window,
+        rejected=rejected,
     )
 
     raw = ""
@@ -395,12 +398,41 @@ async def consolidate_for_role(
         )
 
 
+def _format_rejected_buffer(rejected: list[dict]) -> str:
+    """Format previously rejected proposals so the LLM avoids repeating them."""
+    if not rejected:
+        return ""
+    lines = [
+        "## 近期被拒绝的提案（避免重复尝试）",
+        "",
+        "以下提案在上次 battle 中被拒绝，请避免生成类似方向：",
+        "",
+    ]
+    for i, r in enumerate(rejected, 1):
+        delta = r.get("metrics_delta", {})
+        lines.append(
+            f"{i}. **{r.get('target_file', '?')}** ({r.get('action_type', '?')}) "
+            f"— {r.get('rationale', '无理由')[:120]}"
+        )
+        if delta:
+            sd = delta.get("role_score_delta", 0)
+            wd = delta.get("win_rate_delta", 0)
+            lines.append(f"   效果: score {sd:+.3f}, win_rate {wd:+.1%}")
+        lines.append("")
+    lines.append(
+        "如果本轮的训练数据分析也支持类似结论，请优先考虑**不同的方向**，"
+        "不要重复已经被拒绝的方案。"
+    )
+    return "\n".join(lines)
+
+
 def _build_role_messages(
     *,
     filtered_analyses: list[dict],
     skills: list[MarkdownSkill],
     role: str,
     window: int,
+    rejected: list[dict] | None = None,
 ) -> list[dict[str, str]]:
     """Build LLM messages for role-specific consolidation."""
     summaries = []
@@ -423,6 +455,9 @@ def _build_role_messages(
         for summary in summaries
         if summary.get("game_id")
     })
+
+    # Build rejected-proposal context
+    rejected_text = _format_rejected_buffer(rejected or [])
 
     return [
         {
@@ -453,7 +488,8 @@ def _build_role_messages(
                 "   - expected_direction 只能是 improve|maintain|reduce\n"
                 "   - 大胆提案，不要过于保守；对战阶段会验证提案质量\n"
                 f"当前 source_games(JSON): {_compact_json(source_games)}\n"
-                f"可修改文件清单(JSON): {_compact_json(modifiable_files)}\n\n"
+                f"可修改文件清单(JSON): {_compact_json(modifiable_files)}\n"
+                f"{rejected_text}\n"
                 "输出 JSON schema:\n"
                 "{\n"
                 '  "trends": ["趋势1", "趋势2"],\n'

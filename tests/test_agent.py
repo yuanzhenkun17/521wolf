@@ -4,7 +4,6 @@ import asyncio
 import unittest
 from pathlib import Path
 
-from agent.core.belief import BeliefState
 from agent.core.memory import AgentMemory
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from engine.actions import ActionType
@@ -12,12 +11,10 @@ from engine.models import ActionRequest, Observation, Phase, Role
 
 from agent.core.context import AgentContext
 from agent.decision.steps.remember import remember_step
-from agent.decision.steps.update_belief import update_belief_step
 from agent.decision.steps.select_skills import select_skills_step
 from agent.decision.steps.build_prompt import build_prompt_step
 from agent.decision.steps.parse_output import parse_output_step
 from agent.decision.steps.enforce_policy import enforce_policy_step
-from agent.decision.steps.record_decision import record_decision_step
 from agent.learning.review import did_survive, get_role_of
 from agent.api import AgentRuntime
 from agent.api.runtime import LLMPlayerAgent
@@ -205,7 +202,6 @@ class DecisionStepTests(unittest.TestCase):
     def setUp(self):
         self.request = _make_vote_request()
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
-        self.belief = BeliefState(player_id=5, role=Role.VILLAGER)
         # Ensure skill router can find the seed skills directory
         from agent.knowledge.skills.router import configure_skill_root
         configure_skill_root(Path(__file__).resolve().parent.parent / "skills")
@@ -223,16 +219,9 @@ class DecisionStepTests(unittest.TestCase):
         self.assertIn("memory_events", ctx.memory_context)
         self.assertIn("private_facts", ctx.memory_context)
 
-    def test_update_belief_step_builds_context(self):
-        ctx = AgentContext(request=self.request, player_id=5, role="villager")
-        ctx = remember_step(ctx, self.memory)
-        ctx = update_belief_step(ctx, self.belief, self.memory)
-        self.assertIn("top_suspicions", ctx.belief_context)
-
     def test_select_skills_step_selects_skills_for_action(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = remember_step(ctx, self.memory)
-        ctx = update_belief_step(ctx, self.belief, self.memory)
         ctx = select_skills_step(ctx)
         self.assertGreater(len(ctx.selected_skills), 0)
         self.assertNotEqual(ctx.skill_context, "")
@@ -246,7 +235,6 @@ class DecisionStepTests(unittest.TestCase):
     def test_build_prompt_step_builds_system_and_user_messages(self):
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = remember_step(ctx, self.memory)
-        ctx = update_belief_step(ctx, self.belief, self.memory)
         ctx = select_skills_step(ctx)
         ctx = build_prompt_step(ctx)
         self.assertGreater(len(ctx.messages), 0)
@@ -282,15 +270,15 @@ class DecisionStepTests(unittest.TestCase):
             ctx = enforce_policy_step(ctx)
             self.assertIn(ctx.response.target, self.request.candidates)
 
-    def test_record_decision_step_records_decision(self):
-        recorder = AgentDecisionRecorder()
+    def test_build_decision_record_from_context(self):
+        from agent.api.runtime import _build_decision_record
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx.raw_output = '{"target": 7, "reasoning": "7可疑"}'
         ctx = parse_output_step(ctx)
         ctx = enforce_policy_step(ctx)
-        ctx = record_decision_step(ctx, recorder)
-        self.assertEqual(len(recorder.records), 1)
-        self.assertEqual(recorder.records[0].selected_target, 7)
+        record = _build_decision_record(ctx)
+        self.assertEqual(record.selected_target, 7)
+        self.assertEqual(record.player_id, 5)
 
 
 class AgentRuntimeTests(unittest.TestCase):
@@ -361,8 +349,6 @@ class AgentRuntimeTests(unittest.TestCase):
         self.assertEqual(ctx.request.observation.day, 2)
         ctx = remember_step(ctx, runtime.memory)
         self.assertIn("memory_events", ctx.memory_context)
-        ctx = update_belief_step(ctx, runtime.belief, runtime.memory)
-        self.assertIn("top_suspicions", ctx.belief_context)
         ctx = select_skills_step(ctx)
         self.assertGreater(len(ctx.selected_skills), 0)
         self.assertNotEqual(ctx.skill_context, "")
@@ -485,13 +471,11 @@ class PromptHintsTests(unittest.TestCase):
     def setUp(self):
         self.request = _make_vote_request()
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
-        self.belief = BeliefState(player_id=5, role=Role.VILLAGER)
 
     def test_skill_context_appears_in_messages(self):
         """Multi-skill context is injected into the prompt."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = remember_step(ctx, self.memory)
-        ctx = update_belief_step(ctx, self.belief, self.memory)
         ctx = select_skills_step(ctx)
         ctx = build_prompt_step(ctx)
 
@@ -502,7 +486,6 @@ class PromptHintsTests(unittest.TestCase):
             player_id=5,
             role=Role.VILLAGER,
             memory_context=ctx.memory_context,
-            belief_context=ctx.belief_context,
             strategy_advice=strategy_advice,
             selected_skills=ctx.selected_skills,
             skill_context=ctx.skill_context,
@@ -515,7 +498,6 @@ class PromptHintsTests(unittest.TestCase):
         """Check that the skill router returns skill metadata in strategy_advice."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = remember_step(ctx, self.memory)
-        ctx = update_belief_step(ctx, self.belief, self.memory)
         ctx = select_skills_step(ctx)
         advice = ctx.strategy_advice or {}
         self.assertIn("skill_count", advice)
@@ -528,13 +510,11 @@ class FieldNotesPromptTests(unittest.TestCase):
     def setUp(self):
         self.request = _make_vote_request()
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
-        self.belief = BeliefState(player_id=5, role=Role.VILLAGER)
 
     def test_field_notes_appear_in_prompt_when_present(self):
         """When memory_context has field_notes, they appear in the prompt."""
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = remember_step(ctx, self.memory)
-        ctx = update_belief_step(ctx, self.belief, self.memory)
         ctx = select_skills_step(ctx)
 
         from agent.knowledge.prompts import build_messages
@@ -570,7 +550,6 @@ class FieldNotesPromptTests(unittest.TestCase):
                     "key_events": ["P7 自称预言家"],
                 },
             },
-            belief_context=ctx.belief_context,
             strategy_advice=strategy_advice,
             selected_skills=ctx.selected_skills,
             skill_context=ctx.skill_context,

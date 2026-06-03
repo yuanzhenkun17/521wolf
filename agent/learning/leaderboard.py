@@ -47,9 +47,6 @@ class LeaderboardEntry:
     werewolf_win_rate_ci95: tuple[float, float] = (0.0, 0.0)
     villager_win_rate_ci95: tuple[float, float] = (0.0, 0.0)
     turning_point_quality: float = 0.0
-    tot_usage_rate: float = 0.0
-    got_trigger_count: int = 0
-    got_failure_count: int = 0
     information_score: float = 0.0
     cooperation_score: float = 0.0
     by_role: dict = field(default_factory=dict)
@@ -93,9 +90,6 @@ class LeaderboardEntry:
                 round(self.villager_win_rate_ci95[1], 3),
             ],
             "turning_point_quality": round(self.turning_point_quality, 3),
-            "tot_usage_rate": round(self.tot_usage_rate, 3),
-            "got_trigger_count": self.got_trigger_count,
-            "got_failure_count": self.got_failure_count,
             "information_score": round(self.information_score, 3),
             "cooperation_score": round(self.cooperation_score, 3),
             "by_role": self.by_role,
@@ -136,9 +130,6 @@ def aggregate_summaries(
     policy_adj = sum(s.get("policy_adjusted_rate", 0) * s.get("games", 0) for s in summaries)
     bad_case = sum(s.get("bad_case_count", 0) * s.get("games", 0) for s in summaries)
     tp_quality = sum(s.get("turning_point_quality", 0) * s.get("games", 0) for s in summaries)
-    tot_usage = sum(s.get("tot_usage_rate", 0) * s.get("games", 0) for s in summaries)
-    got_trigger = sum(s.get("got_trigger_count", 0) for s in summaries)
-    got_failure = sum(s.get("got_failure_count", 0) for s in summaries)
     info_score = sum(s.get("information_score", 0) * s.get("games", 0) for s in summaries)
     coop_score = sum(s.get("cooperation_score", 0) * s.get("games", 0) for s in summaries)
     # Merge by_role dicts: sum counts per role
@@ -179,9 +170,6 @@ def aggregate_summaries(
         policy_adjusted_rate=policy_adj / total_games if total_games else 0.0,
         bad_case_count=bad_case / total_games if total_games else 0.0,
         turning_point_quality=tp_quality / total_games if total_games else 0.0,
-        tot_usage_rate=tot_usage / total_games if total_games else 0.0,
-        got_trigger_count=got_trigger,
-        got_failure_count=got_failure,
         information_score=info_score / total_games if total_games else 0.0,
         cooperation_score=coop_score / total_games if total_games else 0.0,
         by_role=by_role,

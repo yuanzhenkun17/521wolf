@@ -191,9 +191,6 @@ class SelfplayManager:
         skill_dir: str | None = None,
         model_name: str | None = None,
         temperature: float = 0.2,
-        tot_enabled: bool = True,
-        got_enabled: bool = True,
-        got_trigger_threshold: float = 0.3,
         max_days: int = 20,
         enable_sheriff: bool = True,
         enable_batch_dream: bool = False,
@@ -216,9 +213,6 @@ class SelfplayManager:
             game_config=replace(STANDARD_12, enable_sheriff=enable_sheriff),
             skill_dir=Path(skill_dir) if skill_dir else None,
             game_concurrency=game_concurrency,
-            tot_enabled=tot_enabled,
-            got_enabled=got_enabled,
-            got_trigger_threshold=got_trigger_threshold,
         )
 
         run = RunningSelfplay(

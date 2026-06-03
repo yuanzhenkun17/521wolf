@@ -21,9 +21,6 @@ class AgentContext:
     # Memory
     memory_context: dict[str, Any] = field(default_factory=dict)
 
-    # Belief
-    belief_context: dict[str, Any] = field(default_factory=dict)
-
     # Skill selection
     selected_skills: list[str] = field(default_factory=list)
     skill_context: str = ""
@@ -38,25 +35,10 @@ class AgentContext:
     confidence: float = 0.0
     response: ActionResponse | None = None
 
-    # Decision record (set by record_decision_step, written back to memory by runtime)
+    # Decision record (built by runtime after pipeline steps)
     decision_record: Any = None
 
     # Tracking
-    source: Literal["llm", "policy_adjusted", "fallback", "tot", "got"] = "llm"
+    source: Literal["llm", "policy_adjusted", "fallback"] = "llm"
     policy_adjustments: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-
-    # ToT (Tree-of-Thought) multi-candidate reasoning
-    tot_enabled: bool = False
-    tot_prompt_messages: list[dict[str, str]] = field(default_factory=list)
-    tot_raw_output: str = ""
-    tot_candidates: list[dict[str, Any]] = field(default_factory=list)
-    tot_judge_reason: str = ""
-
-    # GoT (Graph-of-Thought) evidence/hypothesis reasoning
-    got_enabled: bool = False
-    got_prompt_messages: list[dict[str, str]] = field(default_factory=list)
-    got_raw_output: str = ""
-    got_evidence_nodes: list[dict[str, Any]] = field(default_factory=list)
-    got_hypotheses: list[dict[str, Any]] = field(default_factory=list)
-    got_judge_reason: str = ""

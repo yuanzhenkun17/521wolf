@@ -1,0 +1,15 @@
+{
+  "hash": "5394b232",
+  "role": "seer",
+  "skills": {
+    "badge_flow.md": "---\nname: seer_badge_flow\ndescription: 警徽流：死后通过警徽传递查验信息的策略\nrole: seer\napplicable_actions:\n  - sheriff_speak\n  - speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 警徽流\n\n## 目标\n\n通过警徽传递策略，在死后继续传递信息。\n\n## 策略原则\n\n- 安排2-3个警徽流向，说明每种情况的验人结果。\n- 如果拿到警徽，死后可以通过警徽去向传递信息。\n- 警徽流要清晰可执行，避免歧义。\n- 第一天必须给出警徽流，否则容易被怀疑。\n\n",
+    "check_priority.md": "---\nname: seer_check_priority\ndescription: 查验优先级：选择查验目标的策略\nrole: seer\napplicable_actions:\n  - seer_check\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 查验优先级\n\n## 目标\n\n选择最优查验目标，最大化信息收益。\n\n## 策略原则\n\n- 优先查验跳预言家的对跳玩家。\n- 其次查验身份不明且发言可疑的玩家。\n- 不要查验已明确站边你的玩家。\n- 注意查验逻辑的连贯性，形成查验链。\n- 存活玩家优先于可能被刀杀的玩家。\n\n",
+    "claim.md": "---\nname: seer_claim\ndescription: 预言家起跳：跳预言家时机、查验报告、警徽流\nrole: seer\napplicable_actions:\n  - sheriff_run\n  - sheriff_speak\n  - speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 预言家起跳\n\n## 目标\n\n在适当时机跳预言家，公布查验结果，引导好人阵营。\n\n## 策略原则\n\n- 第一天尽早跳预言家，越晚跳可信度越低。\n- 明确报告查验结果：查验了谁，是金水还是查杀。\n- 给出警徽流，安排死后验人顺序。\n- 归票日带头组织投票。\n\n",
+    "counter_claim.md": "---\nname: seer_counter_claim\ndescription: 对跳预言家：与悍跳狼对抗、证明自己是真预言家\nrole: seer\napplicable_actions:\n  - speak\n  - sheriff_speak\nrequires: {}\nevolution:\n  enabled: true\n  allowed_actions:\n    - append_rule\n    - rewrite_section\n---\n\n# 对跳预言家\n\n## 目标\n\n与悍跳狼对抗，证明自己是真预言家。\n\n## 策略原则\n\n- 指出对跳者逻辑矛盾：查验时间、警徽流不合理之处。\n- 强调你的查验链完整性和验人逻辑。\n- 争取中立好人的票。\n- 不情绪化发言，用逻辑说话。\n- 如果被抗推，安排好死后信息传递。\n\n"
+  },
+  "created_at": "2026-05-28T17:52:55.592978+00:00",
+  "source": "initialize_from_skills",
+  "parent_hash": null,
+  "source_run_id": null,
+  "notes": []
+}

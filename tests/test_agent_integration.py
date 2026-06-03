@@ -55,7 +55,6 @@ def _make_archive_decision(
         candidates=[],
         observation_summary={"day": day, "phase": phase, "alive_players": [], "dead_players": [], "sheriff_id": None, "candidates": []},
         memory_context={},
-        belief_context={},
         selected_skills=[],
         prompt_messages=[],
         raw_output='{"choice": "pass"}',

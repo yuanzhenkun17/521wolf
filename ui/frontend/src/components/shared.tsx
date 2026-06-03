@@ -28,8 +28,6 @@ export function decisionChoiceText(decision: AgentDecision) {
 }
 
 export function decisionSourceName(source: AgentDecision["source"]) {
-  if (source === "tot") return "ToT 决策";
-  if (source === "got") return "GoT 决策";
   if (source === "fallback") return "回退决策";
   if (source === "policy_adjusted") return "策略修正";
   return "LLM 决策";
