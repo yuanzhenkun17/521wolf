@@ -7,16 +7,16 @@ and baseline tracking on disk.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from agent.common import beijing_now_iso
 from agent.common.json import write_json as _write_json
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 from agent.learning_v2.evolution.models import RoleHistory, RoleVersion
+from storage.interfaces import compute_hash, normalize_skill_path, normalize_skill_text
 
 _log = logging.getLogger(__name__)
 
@@ -24,79 +24,6 @@ _log = logging.getLogger(__name__)
 # Errors
 class HashCollisionError(Exception):
     """Raised when two different skill sets produce the same hash."""
-
-
-# Hash helpers
-def normalize_skill_text(text: str) -> str:
-    """Normalize skill file content: CRLF to LF, strip trailing whitespace per line, ensure final newline."""
-    text = text.replace("\r\n", "\n")
-    lines = text.split("\n")
-    lines = [line.rstrip() for line in lines]
-    result = "\n".join(lines)
-    if not result.endswith("\n"):
-        result += "\n"
-    return result
-
-
-def normalize_skill_path(path: str) -> str:
-    """Normalize a skill file path using PurePosixPath rules.
-
-    Returns the normalized path string.
-    Raises ValueError for invalid paths: empty, absolute, containing '..',
-    drive paths, or non-.md extension.
-    """
-    # Normalize backslashes to forward slashes before PurePosixPath
-    path = path.replace("\\", "/")
-    p = PurePosixPath(path)
-
-    # Reject empty
-    if not path or not str(p):
-        raise ValueError("Empty path")
-
-    # Reject absolute paths
-    if p.is_absolute():
-        raise ValueError(f"Absolute path not allowed: {path}")
-
-    # Reject drive paths (e.g. C:/...)
-    if p.drive:
-        raise ValueError(f"Drive path not allowed: {path}")
-
-    # Reject '..' components
-    parts = list(p.parts)
-    if ".." in parts:
-        raise ValueError(f"Path traversal ('..') not allowed: {path}")
-
-    # Reject non-.md extension
-    if p.suffix != ".md":
-        raise ValueError(f"Only .md files allowed, got: {path}")
-
-    # Normalize: collapse redundant separators via PurePosixPath
-    normalized = str(p)
-    return normalized
-
-
-def compute_hash(skills: dict[str, str]) -> str:
-    """Compute a content hash for a set of skills.
-
-    Normalizes paths and content, detects duplicate normalized paths,
-    then produces a sha256 hash of the manifest.
-    Returns first 8 hex characters prefixed with schema version.
-    """
-    normalized: dict[str, str] = {}
-    for raw_path, content in skills.items():
-        np = normalize_skill_path(raw_path)
-        if np in normalized:
-            raise ValueError(f"Duplicate normalized path: {np} (from {raw_path})")
-        normalized[np] = normalize_skill_text(content)
-
-    # Build deterministic manifest
-    manifest = {
-        "hash_schema": 1,
-        "skills": {k: normalized[k] for k in sorted(normalized)},
-    }
-    payload = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    full_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return full_hash[:8]
 
 
 # JSON helper

@@ -2,8 +2,6 @@
 
 Runs N games with configurable seeds, collects full archives,
 generates per-game reviews, experiences, and a run summary.
-This module was extracted from agent.learning.selfplay and is the
-canonical entry point for all game-running operations.
 """
 
 from __future__ import annotations

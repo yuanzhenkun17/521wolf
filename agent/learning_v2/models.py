@@ -24,7 +24,7 @@ class PlayerView(DictMixin):
     player_id: int | None
     role: str
     candidates: list[Any] = field(default_factory=list)
-    observation_summary: Any = None
+    observation_summary: dict[str, Any] | None = None
     memory_context: dict[str, Any] = field(default_factory=dict)
     belief_context: dict[str, Any] = field(default_factory=dict)
     prompt_messages: list[dict[str, Any]] = field(default_factory=list)
@@ -43,10 +43,10 @@ class AgentReasoning(DictMixin):
 
 @dataclass(slots=True)
 class DecisionResult(DictMixin):
-    selected_target: Any = None
-    selected_choice: Any = None
+    selected_target: int | None = None
+    selected_choice: str | None = None
     public_text: str = ""
-    final_response: Any = None
+    final_response: dict[str, Any] | None = None
     source: str = ""
     errors: list[Any] = field(default_factory=list)
     policy_adjustments: list[Any] = field(default_factory=list)

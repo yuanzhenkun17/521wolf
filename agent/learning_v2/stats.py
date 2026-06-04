@@ -20,7 +20,7 @@ from agent.common.action_types import (
 )
 
 # ---------------------------------------------------------------------------
-# Metric aggregation  (formerly agent.learning.metrics)
+# Metric aggregation
 # ---------------------------------------------------------------------------
 
 
@@ -84,7 +84,7 @@ def finalize_role_metrics(state: dict[str, float | int]) -> dict[str, float | in
 
 
 # ---------------------------------------------------------------------------
-# Statistical helpers  (formerly agent.learning.statistics)
+# Statistical helpers
 # ---------------------------------------------------------------------------
 
 
@@ -121,7 +121,7 @@ def wilson_ci95(successes: int, total: int, z: float = 1.96) -> tuple[float, flo
 
 
 # ---------------------------------------------------------------------------
-# Confidence calibration  (formerly agent.learning.calibration)
+# Confidence calibration
 # ---------------------------------------------------------------------------
 
 CALIBRATION_BUCKETS: tuple[tuple[float, float], ...] = (

@@ -1,7 +1,7 @@
 """Role evolution manager — manages run state and SSE events.
 
 Follows the same pattern as ``evolution_runner.py`` but wraps the
-role-level evolution pipeline (``agent.learning.evolution.pipeline``).
+role-level evolution pipeline (``agent.learning_v2.evolution.pipeline``).
 """
 
 from __future__ import annotations

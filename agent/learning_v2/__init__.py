@@ -1,40 +1,25 @@
 """Evidence-first learning pipeline v2 — the active learning subsystem.
 
-This package replaces the original ``agent.learning`` (v1) pipeline.  The key
-difference is that v2 follows an *evidence-first* approach:
-
-- **v1 pipeline** (``agent.learning``): produces heuristic review scores and
-  LLM-generated mid-term memory analysis, then feeds those into a skill
-  evolution cycle via self-play battles.
+This package follows an *evidence-first* approach:
 
 - **v2 pipeline** (``agent.learning_v2``): first extracts structured
   *decision evidence* from each game (normalizing agent decisions, selecting
   key decisions, then judging them with a rubric-driven LLM), producing
   ``EvidenceRunResult`` objects that contain decision evidence, game evidence,
   and experience candidates.  This evidence layer is more granular and
-  auditable than v1's aggregate scores.
+  auditable than heuristic aggregate scores.
 
-Relationship to v1:
+Package structure:
 
-- ``agent.learning_v2`` is the recommended module for all new learning
-  features.
-- ``agent.learning.evolution.games`` already imports
-  ``learning_v2.pipeline.run_evidence_pipeline``, showing that partial
-  migration is underway — the self-play runner uses the v2 evidence pipeline
-  internally.
-- ``agent.learning_v2.stats`` (metric aggregation, confidence intervals,
-  calibration) has been migrated from v1; it is now the canonical location
-  for these helpers.
-- ``agent.learning_v2.review`` (post-game heuristic review, enhanced
-  review reports, mistake/attribution constants) has been migrated from
-  ``agent.learning.review``.
-- ``agent.learning_v2.game_analysis`` (mid-term memory LLM analysis)
-  has been migrated from ``agent.learning.game_analysis``.
-
-Do not add new features to ``agent.learning``; extend this package instead.
-See ``agent/learning/MIGRATION.md`` for the full migration plan.
+- ``learning_v2.pipeline``: run_evidence_pipeline — the main entry point.
+- ``learning_v2.leaderboard``: aggregate leaderboard summaries and rankings.
+- ``learning_v2.stats``: metric aggregation, confidence intervals, calibration.
+- ``learning_v2.game_analysis``: mid-term memory LLM analysis per game.
+- ``learning_v2.review``: post-game heuristic review, enhanced review reports.
+- ``learning_v2.evolution``: skill evolution through self-play and versioned battles.
 """
 
+from agent.learning_v2.models import EvidenceRunResult
 from agent.learning_v2.leaderboard import (
     LeaderboardEntry,
     aggregate_summaries,
@@ -70,8 +55,13 @@ from agent.learning_v2.game_analysis import (
 )
 from agent.learning_v2.evolution import (
     apply_proposals,
+    BatchEvolutionResult,
+    BaselineChangedError,
     EvolutionRun,
+    EvolutionStatus,
+    InvalidRunStateError,
     promote,
+    promote_batch_result,
     reject,
     run_batch_evolution,
     run_evolution,
@@ -80,8 +70,11 @@ from agent.learning_v2.evolution import (
     SelfPlayGameResult,
     SelfPlayResult,
     SkillConsolidation,
+    SkillDiff,
     SkillProposal,
+    SkillVersionConfig,
     VersionStore,
+    aggregate_role_leaderboard,
 )
 from agent.learning_v2.review import (
     # scoring
@@ -181,8 +174,13 @@ __all__ = [
     "role_weighted_score",
     # Evolution — skill evolution through self-play and versioned battles
     "apply_proposals",
+    "BaselineChangedError",
+    "BatchEvolutionResult",
     "EvolutionRun",
+    "EvolutionStatus",
+    "InvalidRunStateError",
     "promote",
+    "promote_batch_result",
     "reject",
     "run_batch_evolution",
     "run_evolution",
@@ -191,6 +189,11 @@ __all__ = [
     "SelfPlayGameResult",
     "SelfPlayResult",
     "SkillConsolidation",
+    "SkillDiff",
     "SkillProposal",
+    "SkillVersionConfig",
     "VersionStore",
+    "aggregate_role_leaderboard",
+    # Models — evidence layer data classes
+    "EvidenceRunResult",
 ]

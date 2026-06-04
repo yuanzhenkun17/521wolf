@@ -297,7 +297,7 @@ class RoleHistoryData:
 
 
 # ---------------------------------------------------------------------------
-# Pure functions copied from agent/learning/evolution/store.py
+# Pure functions shared with agent/learning_v2/evolution/store.py
 # These have no agent dependencies — only stdlib (hashlib, pathlib, json).
 # ---------------------------------------------------------------------------
 

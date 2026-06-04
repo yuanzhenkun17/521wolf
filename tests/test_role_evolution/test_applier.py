@@ -1,4 +1,4 @@
-"""Tests for agent.learning.evolution.applier — proposal application with safety checks."""
+"""Tests for agent.learning_v2.evolution.applier — proposal application with safety checks."""
 
 from __future__ import annotations
 
