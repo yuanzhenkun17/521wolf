@@ -476,29 +476,54 @@ const utils = useMatchUtils({
 //    但由于 useGameState 已经在 Step 1 执行完毕，这里的 computed 需要在 Step 1 就能访问 utils
 ```
 
-**实际可行方案：把 `visualSeatPlayers` 等 computed 的构建延迟到 App.vue 中，不放在 useGameState 里。**
+**实际可行方案：`visualSeatPlayers` 留在 useGameState 中，用 callback 打破循环。**
 
 具体做法：
-- `useGameState` 中**不定义** `visualSeatPlayers`、`playerIdentityList`、`roleStats` 等依赖 `playerLabel`/`roleIconImage` 的 computed
-- 这些 computed 放在 App.vue 中定义（它们依赖 utils 和 state 两者）
-- `useGameState` 返回的 state 不含这些 computed
-- App.vue 中补充这些 computed 后再传给页面组件
+- `useGameState` 定义 `visualSeatPlayers`（不依赖 `playerLabel`，只依赖 `game`、`isWatch`、`backendMode`、`visualSeatSalt`）
+- `useGameState` 接受一个 `labelForPlayer` 回调参数（初始为 `null`），用于 `playerIdentityList` 和 `roleStats` computed
+- App.vue 创建 useGameState 后创建 useMatchUtils，再将 `utils.playerLabel` 回填给 state
 
-这样 `useGameState` 不依赖 utils，`useMatchUtils` 依赖 state 的 refs（但不依赖 computed），无循环。
+```js
+// useGameState.js
+export function useGameState(labelForPlayer = null) {
+  const game = ref(null)
+  const isWatch = computed(() => game.value?.mode === 'watch')
+  // ... 所有 base refs ...
+
+  // visualSeatPlayers 不依赖 playerLabel，可以安全定义
+  const visualSeatPlayers = computed(() => { /* 原 main.js 第 369-418 行 */ })
+
+  // playerIdentityList 和 roleStats 需要 labelForPlayer，延迟调用
+  const playerIdentityList = computed(() => {
+    const players = visualSeatPlayers.value
+    return players.map((player, idx) => ({
+      ...player,
+      displaySeat: idx + 1,
+      roleIcon: isWatch.value ? roleIconImage(player) : (player.is_human ? roleIconImage(player) : '/role-icons/未知.png'),
+      isSheriff: player.is_sheriff || player.id === inferredSheriffId.value,
+      speaking: player.id === game.value?.current_speaker_id,
+      // labelForPlayer 在初始时为 null，Vue 会在此 computed 首次求值时追踪它
+      label: labelForPlayer?.value ? labelForPlayer.value(player) : `${player.seat}号`
+    }))
+  })
+
+  return { game, isWatch, visualSeatPlayers, playerIdentityList, /* ... */ }
+}
+```
 
 ```js
 // App.vue
-const state = useGameState()  // 不含 visualSeatPlayers 等
+const state = useGameState()
 const utils = useMatchUtils({
   game: state.game, isWatch: state.isWatch, backendMode: state.backendMode,
-  visualSeatSalt: state.visualSeatSalt,
-  visualSeatPlayers: computed(() => { /* 原 main.js 第 369-418 行的逻辑 */ })
+  visualSeatSalt: state.visualSeatSalt, visualSeatPlayers: state.visualSeatPlayers
 })
-// 此后 utils.playerLabel 等可用
-const playerIdentityList = computed(() => { /* 需要 state + utils */ })
-const roleStats = computed(() => { /* 需要 state + utils */ })
-// ... 传给页面组件
+// 回填 playerLabel 到 state（用 ref 包装使其成为响应式）
+const playerLabelRef = computed(() => utils.playerLabel)
+state.labelForPlayer = playerLabelRef  // 或在 useGameState 中提供 setLabelForPlayer 方法
 ```
+
+> **说明：** `visualSeatPlayers` 的计算（第 369-418 行）不依赖 `playerLabel`，只依赖 `game.players` 和 hash 函数，因此可以安全放在 useGameState 中。`playerIdentityList` 在首次求值时 `labelForPlayer` 可能为 null，但由于 Vue 的 computed 惰性求值和依赖追踪，当 `labelForPlayer` 后续被赋值时会自动触发重新计算。
 
 - [ ] **Step 3: 删除 App.vue 中已搬到 useGameState 的代码**
 
@@ -880,7 +905,67 @@ git commit -m "refactor: extract TopNav and LobbyPage components"
 
 逐个从 App.vue template 中提取 match 视图的子区块：
 
-**CouncilScene.vue：** 简单封装 `<div class="council-scene" ref="gameSceneRef">`，接收 `gameSceneRef` 作为 prop 或通过 template ref。
+**CouncilScene.vue：** 把 `useCouncilScene` composable 移入此组件内部，用组件自身的 template ref 管理 Three.js 场景。
+
+> **说明：** 原方案通过 prop 传递 `gameSceneRef`，但父级的 ref 不会自动绑定到子组件的 DOM 元素。正确做法是让 CouncilScene.vue 自己持有 template ref，在 `onMounted` 时创建场景，在 `onBeforeUnmount` 时销毁。
+
+```vue
+<!-- CouncilScene.vue -->
+<script setup>
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { useCouncilScene } from '../composables/useCouncilScene'
+
+const props = defineProps({
+  // 传入 useCouncilScene 需要的响应式状态
+  game: Object,
+  isNight: Boolean,
+  isWatch: Boolean,
+  judgeBoardStarted: Boolean,
+  roleAssignmentComplete: Boolean,
+  players: Array,
+  currentSpeakerId: [String, Number],
+  selectableIds: Array,
+  isNight: Boolean,
+  // ...
+})
+const emit = defineEmits(['player-select'])
+
+const sceneContainer = ref(null)  // template ref 绑定到 <div>
+const { syncScene, disposeScene, waitForModels } = useCouncilScene(sceneContainer, props)
+
+onMounted(() => { waitForModels() })
+onBeforeUnmount(() => { disposeScene() })
+
+// 当 props 变化时同步场景
+watch(() => [props.players, props.currentSpeakerId, ...], () => syncScene(), { deep: true })
+
+defineExpose({ waitForModels, syncScene })
+</script>
+
+<template>
+  <div class="council-scene" ref="sceneContainer" aria-hidden="true"></div>
+</template>
+```
+
+useCouncilScene 修改为接受 template ref（`sceneContainer`）而非外部传入的 ref：
+
+```js
+// useCouncilScene.js
+export function useCouncilScene(containerRef, props) {
+  let councilScene = null
+
+  function mountScene() {
+    if (!containerRef.value || councilScene) return
+    councilScene = createCouncilHallScene(containerRef.value)
+  }
+
+  function syncScene() { /* ... */ }
+  function disposeScene() { councilScene?.dispose?.(); councilScene = null }
+  async function waitForModels() { mountScene(); await councilScene?.preloadModels?.() }
+
+  return { syncScene, disposeScene, waitForModels }
+}
+```
 
 **PlayerCarousel.vue：** 提取 `speakerCarousel` 轮播卡片模板（原 template 中 `.speaker-carousel` 部分）。Props: `carousel`, `cardImage`。包含发言者消息展示。
 
@@ -890,7 +975,63 @@ git commit -m "refactor: extract TopNav and LobbyPage components"
 
 **RoleStats.vue：** 提取角色统计条（`.role-stats` 部分）。Props: `stats`。
 
-**ActionPanel.vue：** 提取投票/行动面板（`.action-panel` 和 `.speech-bar` 部分）。Props: `pendingActionType`, `witchChoice`, `actionInstruction`, `speech`, `speechCountdownText`, `voteTarget`, `canVotePlayers`, `isWatch`, `isReplayMode`, `roleName` 等。Emit: `submit-speech`, `submit-vote`, `arm-burst`。
+**ActionPanel.vue：** 提取投票/行动面板（`.action-panel` 和 `.speech-bar` 部分）。
+
+由于 `speech`、`voteTarget`、`witchChoice` 是用户在输入框/select 中直接编辑的值，提取为子组件后必须保持双向绑定：
+
+```vue
+<!-- ActionPanel.vue -->
+<script setup>
+const props = defineProps({
+  pendingActionType: String,
+  actionInstruction: String,
+  speechCountdownText: String,
+  canVotePlayers: Array,
+  isWatch: Boolean,
+  isReplayMode: Boolean,
+  roleName: String,
+  needsTarget: Boolean,
+  // 双向绑定的值：
+  speech: String,
+  voteTarget: [String, Number],
+  witchChoice: String,
+})
+const emit = defineEmits([
+  'update:speech', 'update:vote-target', 'update:witch-choice',
+  'submit-speech', 'submit-vote', 'arm-burst'
+])
+</script>
+
+<template>
+  <!-- 发言输入框 -->
+  <textarea :value="speech" @input="emit('update:speech', $event.target.value)" />
+  <!-- 投票目标 select -->
+  <select :value="voteTarget" @change="emit('update:vote-target', Number($event.target.value))">
+    <option v-for="p in canVotePlayers" :key="p.id" :value="p.id">...</option>
+  </select>
+  <!-- 女巫选择 -->
+  <select :value="witchChoice" @change="emit('update:witch-choice', $event.target.value)">...</select>
+  <!-- 提交按钮 -->
+  <button @click="emit('submit-speech')">发言</button>
+  <button @click="emit('submit-vote')">投票</button>
+</template>
+```
+
+MatchPage 使用 `v-model` 双向绑定：
+
+```vue
+<ActionPanel
+  v-model:speech="speech"
+  v-model:vote-target="voteTarget"
+  v-model:witch-choice="witchChoice"
+  :pending-action-type="pendingActionType"
+  ...
+  @submit-speech="actions.submitSpeech()"
+  @submit-vote="actions.submitVote()"
+/>
+```
+
+> **说明：** `submitSpeech()` 和 `submitVote()` 读取的是 useGameState 中的 `speech.value` 和 `voteTarget.value`，v-model 保证子组件编辑后父级 state 同步更新，提交函数能读到最新值。
 
 - [ ] **Step 2: 创建 MatchPage.vue 组装子组件**
 
@@ -940,11 +1081,8 @@ npm run dev
 
 - [ ] **Step 5: Commit**
 
-```bash
-git add ui/frontend/src/pages/MatchPage.vue ui/frontend/src/components/CouncilScene.vue \
-       ui/frontend/src/components/PlayerCarousel.vue ui/frontend/src/components/JudgeStrip.vue \
-       ui/frontend/src/components/ChatLog.vue ui/frontend/src/components/RoleStats.vue \
-       ui/frontend/src/components/ActionPanel.vue ui/frontend/src/App.vue
+```powershell
+git add ui/frontend/src/pages/MatchPage.vue ui/frontend/src/components/CouncilScene.vue ui/frontend/src/components/PlayerCarousel.vue ui/frontend/src/components/JudgeStrip.vue ui/frontend/src/components/ChatLog.vue ui/frontend/src/components/RoleStats.vue ui/frontend/src/components/ActionPanel.vue ui/frontend/src/App.vue
 git commit -m "refactor: extract MatchPage and sub-components"
 ```
 
@@ -1059,9 +1197,10 @@ import VoteSection from '../components/VoteSection.vue'
 import ReplayControls from '../components/ReplayControls.vue'
 
 // 局部 UI 状态（不从 props 传）
-const assessDimension = ref('speech')
 const selectedDecision = ref(null)
 const detailTab = ref('summary')
+// 注意：assessDimension 和 activeAssessScores 来自 useGameState（通过 props），
+// 不在此处重新声明，否则会导致 MultiAssess 的 tab 切换和评分计算使用不同维度。
 
 const props = defineProps({
   returnToMatchAvailable: Boolean,
@@ -1079,7 +1218,9 @@ const props = defineProps({
   nightResult: String,
   sheriffResult: Object,
   isReplayMode: Boolean,
-  // ... 其他需要的 props
+  // assessDimension 和 activeAssessScores 从 useGameState 传入
+  assessDimension: String,
+  activeAssessScores: Array,
   roleIconImage: Function,
   historyPageTitle: Function,
   historyPhaseName: Function,
@@ -1130,13 +1271,8 @@ npm run dev
 
 - [ ] **Step 14: Commit**
 
-```bash
-git add ui/frontend/src/pages/LogsPage.vue ui/frontend/src/components/HistoryGameList.vue \
-       ui/frontend/src/components/MultiAssess.vue ui/frontend/src/components/SeatLedger.vue \
-       ui/frontend/src/components/PhaseTabs.vue ui/frontend/src/components/NightSection.vue \
-       ui/frontend/src/components/SpeechSection.vue ui/frontend/src/components/VoteSection.vue \
-       ui/frontend/src/components/NightActionCard.vue ui/frontend/src/components/DecisionDetail.vue \
-       ui/frontend/src/components/ReplayControls.vue ui/frontend/src/App.vue
+```powershell
+git add ui/frontend/src/pages/LogsPage.vue ui/frontend/src/components/HistoryGameList.vue ui/frontend/src/components/MultiAssess.vue ui/frontend/src/components/SeatLedger.vue ui/frontend/src/components/PhaseTabs.vue ui/frontend/src/components/NightSection.vue ui/frontend/src/components/SpeechSection.vue ui/frontend/src/components/VoteSection.vue ui/frontend/src/components/NightActionCard.vue ui/frontend/src/components/DecisionDetail.vue ui/frontend/src/components/ReplayControls.vue ui/frontend/src/App.vue
 git commit -m "refactor: extract LogsPage and all sub-components"
 ```
 
@@ -1292,11 +1428,8 @@ createApp(App).mount('#app')
 
 - [ ] **Step 2: 检查各文件行数**
 
-```bash
-wc -l ui/frontend/src/App.vue \
-      ui/frontend/src/composables/*.js \
-      ui/frontend/src/pages/*.vue \
-      ui/frontend/src/components/*.vue
+```powershell
+Get-ChildItem ui/frontend/src/App.vue, ui/frontend/src/composables/*.js, ui/frontend/src/pages/*.vue, ui/frontend/src/components/*.vue | ForEach-Object { "$($_.Name): $((Get-Content $_.FullName).Count) lines" }
 ```
 
 确认每个文件 < 300 行。如果超过，进一步拆分。
