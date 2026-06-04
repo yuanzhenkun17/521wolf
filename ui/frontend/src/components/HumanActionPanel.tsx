@@ -6,6 +6,7 @@ import { speechLabel } from "./shared";
 interface HumanActionPanelProps {
   gameId: string;
   gameStatus: string;
+  refreshSignal?: number;
 }
 
 const TEXT_ACTIONS = new Set([
@@ -29,7 +30,7 @@ type SubmitPayload = {
   text?: string;
 };
 
-export function HumanActionPanel({ gameId, gameStatus }: HumanActionPanelProps) {
+export function HumanActionPanel({ gameId, gameStatus, refreshSignal = 0 }: HumanActionPanelProps) {
   const [pending, setPending] = useState<HumanActionPending | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +61,10 @@ export function HumanActionPanel({ gameId, gameStatus }: HumanActionPanelProps) 
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, [isRunning, poll]);
+
+  useEffect(() => {
+    if (isRunning) void poll();
+  }, [isRunning, poll, refreshSignal]);
 
   useEffect(() => {
     setText("");

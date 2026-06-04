@@ -46,6 +46,19 @@ function DecisionBody({
   decision: AgentDecision;
   archiveEntry?: Record<string, unknown>;
 }) {
+  // Defensive defaults for fields that may be missing from API response
+  const d = {
+    ...decision,
+    candidates: decision.candidates ?? [],
+    alternatives: decision.alternatives ?? [],
+    rejected_reasons: decision.rejected_reasons ?? [],
+    memory_refs: decision.memory_refs ?? [],
+    memory_summary: decision.memory_summary ?? [],
+    errors: decision.errors ?? [],
+    policy_adjustments: decision.policy_adjustments ?? [],
+    raw_output: decision.raw_output ?? "",
+    selected_skill: decision.selected_skill ?? (Array.isArray((decision as unknown as Record<string, unknown>)["selected_skills"]) ? ((decision as unknown as Record<string, unknown>)["selected_skills"] as string[])[0] : ""),
+  };
   const ac = archiveEntry;
   const promptMessages = (ac?.prompt_messages as Array<Record<string, unknown>> | undefined) ?? [];
   const selectedSkills = (ac?.selected_skills as string[] | undefined) ?? [];
@@ -55,51 +68,51 @@ function DecisionBody({
     <details className="group rounded-md border border-border bg-card p-3">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 marker:hidden">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{decision.player_id ?? "-"} 号</Badge>
-          <Badge variant="secondary">{roleName(decision.role)}</Badge>
-          <span className="text-xs text-muted-foreground">{speechLabel(decision.action_type)}</span>
-          <span className="text-xs text-muted-foreground">{decisionSourceName(decision.source)}</span>
-          {decision.confidence > 0 ? (
-            <span className="text-xs text-muted-foreground">置信度: {(decision.confidence * 100).toFixed(0)}%</span>
+          <Badge variant="outline">{d.player_id ?? "-"} 号</Badge>
+          <Badge variant="secondary">{roleName(d.role)}</Badge>
+          <span className="text-xs text-muted-foreground">{speechLabel(d.action_type)}</span>
+          <span className="text-xs text-muted-foreground">{decisionSourceName(d.source)}</span>
+          {d.confidence > 0 ? (
+            <span className="text-xs text-muted-foreground">置信度: {(d.confidence * 100).toFixed(0)}%</span>
           ) : null}
-          {decision.selected_skill ? (
-            <Badge variant="secondary" className="text-xs">{decision.selected_skill}</Badge>
+          {d.selected_skill ? (
+            <Badge variant="secondary" className="text-xs">{d.selected_skill}</Badge>
           ) : null}
         </div>
         <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
       </summary>
       <div className="mt-3 space-y-3">
-        <p className="whitespace-pre-wrap text-sm leading-6">{decision.private_reasoning}</p>
+        <p className="whitespace-pre-wrap text-sm leading-6">{d.private_reasoning}</p>
         <div className="grid gap-2 text-xs sm:grid-cols-2">
-          <DecisionMeta label="选择" value={decisionChoiceText(decision)} />
-          <DecisionMeta label="候选" value={decision.candidates.length > 0 ? decision.candidates.join("、") : "-"} />
-          <DecisionMeta label="备选" value={decision.alternatives.length > 0 ? decision.alternatives.join("、") : "-"} />
-          <DecisionMeta label="置信度" value={decision.confidence > 0 ? `${(decision.confidence * 100).toFixed(0)}%` : "-"} />
-          <DecisionMeta label="记忆事件" value={decision.memory_summary.length > 0 ? decision.memory_summary.slice(-2).join("；") : "-"} />
-          <DecisionMeta label="记忆引用" value={decision.memory_refs.length > 0 ? decision.memory_refs.join("、") : "-"} />
+          <DecisionMeta label="选择" value={decisionChoiceText(d)} />
+          <DecisionMeta label="候选" value={d.candidates.length > 0 ? d.candidates.join("、") : "-"} />
+          <DecisionMeta label="备选" value={d.alternatives.length > 0 ? d.alternatives.join("、") : "-"} />
+          <DecisionMeta label="置信度" value={d.confidence > 0 ? `${(d.confidence * 100).toFixed(0)}%` : "-"} />
+          <DecisionMeta label="记忆事件" value={d.memory_summary.length > 0 ? d.memory_summary.slice(-2).join("；") : "-"} />
+          <DecisionMeta label="记忆引用" value={d.memory_refs.length > 0 ? d.memory_refs.join("、") : "-"} />
         </div>
-        {decision.confidence > 0 ? (
+        {d.confidence > 0 ? (
           <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-            <div className={`h-full rounded-full ${decision.confidence > 0.7 ? "bg-emerald-500" : decision.confidence > 0.4 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${decision.confidence * 100}%` }}></div>
+            <div className={`h-full rounded-full ${d.confidence > 0.7 ? "bg-emerald-500" : d.confidence > 0.4 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${d.confidence * 100}%` }}></div>
           </div>
         ) : null}
-        {decision.rejected_reasons.length > 0 ? (
-          <div className="text-xs text-muted-foreground">排除理由：{decision.rejected_reasons.join("；")}</div>
+        {d.rejected_reasons.length > 0 ? (
+          <div className="text-xs text-muted-foreground">排除理由：{d.rejected_reasons.join("；")}</div>
         ) : null}
-        {decision.policy_adjustments.length > 0 ? (
+        {d.policy_adjustments.length > 0 ? (
           <div className="rounded-sm border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
             <span className="font-medium">策略修正：</span>
-            {decision.policy_adjustments.join("；")}
+            {d.policy_adjustments.join("；")}
           </div>
         ) : null}
-        {decision.errors.length > 0 ? (
+        {d.errors.length > 0 ? (
           <div className="rounded-sm border border-red-200 bg-red-50 p-2 text-xs text-red-800">
             <span className="font-medium">错误：</span>
-            {decision.errors.join("；")}
+            {d.errors.join("；")}
           </div>
         ) : null}
         <DecisionExpandedSections
-          decision={decision}
+          decision={d}
           promptMessages={promptMessages}
           selectedSkills={selectedSkills}
           memoryContext={memoryContext}

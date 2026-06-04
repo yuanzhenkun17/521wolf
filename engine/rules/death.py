@@ -88,6 +88,9 @@ async def resolve_hunter_death(engine: GameEngine, hunter_id: int) -> int | None
     if response.target is None:
         engine._log("hunter_no_shot", f"猎人 {hunter_id} 号选择不开枪", actor=hunter_id)
         return None
+    hunter_ps = engine.state.players[hunter_id]
+    hunter_ps.role_state["has_shot"] = True
+    hunter_ps.role_state["shot_target"] = response.target
     kill_player(engine, response.target, DeathCause.HUNTER_SHOT)
     engine._record("hunter_shot", actor=hunter_id, target=response.target)
     engine._log(

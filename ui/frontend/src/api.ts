@@ -54,20 +54,32 @@ export async function getGameArchive(gameId: string): Promise<GameArchive> {
 // Human player action APIs
 // ---------------------------------------------------------------------------
 
+export type HumanObservation = {
+  player_id: number;
+  role: string;
+  self_role: string;
+  phase: string;
+  day: number;
+  alive_players: number[];
+  dead_players: number[];
+  sheriff_id: number | null;
+  public_log: string[];
+  known_roles: Record<string, string>;
+  seer_checks: Record<string, Record<string, string>>;
+  metadata: Record<string, unknown>;
+};
+
 export type HumanActionPending = {
   player_id: number;
   action_type: string;
-  phase: string | null;
+  phase: string;
   day: number;
-  role: string | null;
+  role: string;
   alive_players: number[];
   candidates: number[];
   metadata: Record<string, unknown>;
-  observation: {
-    role: string | null;
-    day: number;
-    alive_players: number[];
-  };
+  retry_count: number;
+  observation: HumanObservation;
 };
 
 export type HumanActionSubmit = {

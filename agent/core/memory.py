@@ -16,6 +16,12 @@ from typing import Any
 
 from engine.models import ActionRequest, ActionResponse, ActionType, Role
 
+from agent.common.action_types import (
+    PUBLIC_SPEECH_EVENT_TYPES,
+    VOTE_EVENT_TYPES,
+    SPEECH_ACTION_TYPES,
+    VOTE_ACTION_TYPES,
+)
 from agent.common.coercion import as_int
 
 
@@ -279,8 +285,8 @@ _MAX_PINNED_FACTS = 80
 _MAX_SELF_COMMITMENTS = 24
 _HOT_PHASE_COUNT = 2
 
-_PUBLIC_SPEECH_EVENTS = {"speak", "sheriff_speak", "pk_speak", "last_word", "speech"}
-_VOTE_EVENTS = {"exile_vote", "pk_vote", "sheriff_vote", "vote"}
+_PUBLIC_SPEECH_EVENTS = PUBLIC_SPEECH_EVENT_TYPES
+_VOTE_EVENTS = VOTE_EVENT_TYPES
 
 
 class AgentMemory:
@@ -389,9 +395,9 @@ class AgentMemory:
         # Also update field notes from the same event, but skip own actions
         # (already recorded immediately in remember_action to avoid duplicates)
         if event.actor != self.player_id:
-            if event.event_type in {"exile_vote", "pk_vote", "sheriff_vote", "vote"} and event.actor is not None and event.target is not None:
+            if event.event_type in VOTE_EVENT_TYPES and event.actor is not None and event.target is not None:
                 self.field_notes.record_vote(event.actor, event.target, event.day, event.phase)
-            if event.event_type in {"speak", "sheriff_speak", "pk_speak", "last_word", "speech"} and event.actor is not None:
+            if event.event_type in PUBLIC_SPEECH_EVENT_TYPES and event.actor is not None:
                 self.field_notes.record_speech(event.actor, event.content)
 
     def _update_field_notes(self, request: ActionRequest) -> None:

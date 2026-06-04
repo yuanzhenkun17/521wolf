@@ -121,6 +121,38 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(winner, Winner.WEREWOLVES)
         self.assertNotIn(ActionType.SHERIFF_RUN, [request.action_type for request in agents[1].requests])
 
+    def test_agent_exception_falls_back_to_default_action(self):
+        class FailingAgent:
+            async def act(self, request):
+                raise RuntimeError("agent offline")
+
+        config = GameConfig(
+            name="seer_pair",
+            role_counts={Role.SEER: 1, Role.VILLAGER: 1},
+            enable_sheriff=False,
+            night_order=(Role.SEER,),
+        )
+        engine = GameEngine(
+            {1: Role.SEER, 2: Role.VILLAGER},
+            {1: FailingAgent(), 2: agents_with()[2]},
+            config=config,
+        )
+
+        response = run(
+            engine._ask(
+                1,
+                ActionType.SEER_CHECK,
+                candidates=(2,),
+                validator=lambda item: item.target == 2,
+                default=ActionResponse(ActionType.SEER_CHECK, target=2),
+            )
+        )
+
+        events = [entry.event_type for entry in engine.logger.entries]
+        self.assertEqual(response, ActionResponse(ActionType.SEER_CHECK, target=2))
+        self.assertEqual(events.count("agent_error"), 2)
+        self.assertIn("default_action", events)
+
     def test_night_order_skips_roles_absent_from_config(self):
         config = GameConfig(
             name="no_guard_night",

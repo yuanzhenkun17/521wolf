@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from typing import Any
+
 from engine.models import ActionResponse, ActionType, DeathCause, Phase, Role, Team
 from engine.role_rules.werewolf import WerewolfRule
 
 
 class WhiteWolfKingRule(WerewolfRule):
     role = Role.WHITE_WOLF_KING
+
+    def init_role_state(self) -> dict[str, Any]:
+        return {"has_exploded": False}
+
+    def get_role_state(self, engine, player_id: int) -> dict[str, Any]:
+        ps = engine.state.players[player_id]
+        return dict(ps.role_state)
 
     async def day_interrupt(self, engine, player_id: int) -> str | None:
         candidates = tuple(
@@ -23,6 +32,8 @@ class WhiteWolfKingRule(WerewolfRule):
         )
         if response.target not in candidates:
             return None
+        ww_ps = engine.state.players[player_id]
+        ww_ps.role_state["has_exploded"] = True
         engine.kill_player(player_id, DeathCause.SELF_EXPLODE)
         engine.kill_player(response.target, DeathCause.WHITE_WOLF)
         await engine.resolve_death_triggers([player_id, response.target])

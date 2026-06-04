@@ -1,11 +1,61 @@
+"""Game event logging, persistence, and replay infrastructure.
+
+This module provides the persistence-oriented event model (GameLogEntry) and
+the logger (GameLogger) that records, streams, and serializes game events.
+
+Relationship between GameEvent and GameLogEntry
+================================================
+
+The 521wolf engine uses two parallel event models that intentionally share
+core fields but serve different purposes:
+
+**GameEvent** (engine/models.py) -- internal engine state event:
+  - Created by ``engine._record()`` during game rule execution.
+  - Stored in ``GameState.events`` (in-memory list, not persisted directly).
+  - Used for game-logic decisions: visibility filtering, state transitions,
+    resolving death triggers, computing observations.
+  - Fields: type, day, phase, actor, target, payload, public (bool).
+  - Lightweight: no message text, no sequential index, no severity level.
+
+**GameLogEntry** (this module) -- persisted event for logging, replay, and UI:
+  - Created by ``GameLogger.record()`` via ``engine._log()``.
+  - Stored in ``GameLogger.entries`` and persisted to JSONL files and SQLite.
+  - Used for human-readable replay, real-time UI updates, and archival queries.
+  - Fields: index, day, phase, event_type, message, level, visibility,
+    actor, target, payload.
+  - Enriched: sequential index, human-readable message, severity level,
+    role-based visibility enum.
+
+When to use each:
+  - Game logic / rule enforcement: GameEvent (read from GameState.events).
+  - Persistence / JSONL / SQLite: GameLogEntry (via GameLogger and EventSink).
+  - UI display / replay: GameLogEntry (streamed via SSE or queried from store).
+  - Post-game analysis / review: GameLogEntry (from GameLogger.entries or DB).
+
+Why two separate models instead of a shared base:
+  - GameLogEntry needs fields GameEvent does not have (message, index, level,
+    visibility), and GameEvent has ``public: bool`` while GameLogEntry uses
+    ``visibility: LogVisibility`` -- different semantics.
+  - Their lifecycles are independent: GameEvent is ephemeral (in GameState),
+    GameLogEntry is persisted (JSONL, SQLite). Coupling them would force the
+    persistence model to inherit engine-internal semantics.
+  - The shared core fields (day, phase, actor, target, payload) are duplicated
+    by design to keep both models self-contained and focused on their role.
+
+Dict format consistency:
+  Both ``GameEvent.to_dict()`` and ``GameLogEntry.to_dict()`` use the key
+  ``"event_type"`` for the event type string. GameLogEntry.to_dict() includes
+  additional keys (index, message, level, visibility) that GameEvent.to_dict()
+  does not. The frontend normalizeEvent() function handles both formats with
+  a fallback: ``stringValue(raw.event_type) || stringValue(raw.type)``.
+"""
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 
 class LogLevel(StrEnum):
@@ -19,6 +69,25 @@ class LogVisibility(StrEnum):
 
 @dataclass(slots=True)
 class GameLogEntry:
+    """Persisted event for logging, replay, and UI display.
+
+    GameLogEntry represents a human-readable, persistable record of a game event.
+    It is created by GameLogger.record() (called via engine._log()) and stored
+    in GameLogger.entries. It is persisted to JSONL files and SQLite (via an
+    EventSink), and streamed to the frontend for real-time UI updates and replay.
+
+    GameLogEntry enriches the core event data (day, phase, event_type, actor,
+    target, payload) with fields needed for persistence and display:
+      - ``index``: sequential position in the game log (1-based).
+      - ``message``: human-readable description of the event.
+      - ``level``: severity level (info / warning) for filtering and display.
+      - ``visibility``: access control (god-only by default) for role-based visibility.
+
+    Contrast with GameEvent (engine/models.py), which is the lightweight in-memory
+    event used for game-rule semantics and stored in GameState.events. The two
+    models intentionally share core fields but serve different roles and do NOT
+    share a common base class. See the module docstring for a detailed comparison.
+    """
     index: int
     day: int
     phase: str
@@ -45,20 +114,23 @@ class GameLogEntry:
         }
 
 
+class EventSink(Protocol):
+    def record_event(self, entry: GameLogEntry) -> None:
+        ...
+
+
 class GameLogger:
     def __init__(
         self,
         stream_path: str | Path | None = None,
-        conn: sqlite3.Connection | None = None,
-        game_id: str | None = None,
+        sink: EventSink | None = None,
     ) -> None:
         self.entries: list[GameLogEntry] = []
         self._stream_path: Path | None = Path(stream_path) if stream_path else None
         if self._stream_path:
             self._stream_path.parent.mkdir(parents=True, exist_ok=True)
             self._stream_path.touch()
-        self._conn = conn
-        self._game_id = game_id
+        self._sink = sink
 
     def record(
         self,
@@ -90,26 +162,8 @@ class GameLogger:
             line = json.dumps(entry.to_dict(), ensure_ascii=False, sort_keys=True)
             with self._stream_path.open("a", encoding="utf-8") as f:
                 f.write(line + "\n")
-        if self._conn is not None and self._game_id is not None:
-            self._conn.execute(
-                "INSERT INTO game_events "
-                "(game_id, idx, day, phase, event_type, message, level, "
-                "visibility, actor, target, payload) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    self._game_id,
-                    entry.index,
-                    entry.day,
-                    entry.phase,
-                    entry.event_type,
-                    entry.message,
-                    entry.level.value,
-                    entry.visibility.value,
-                    entry.actor,
-                    entry.target,
-                    json.dumps(entry.payload, ensure_ascii=False),
-                ),
-            )
+        if self._sink is not None:
+            self._sink.record_event(entry)
         return entry
 
     def to_jsonl(self) -> str:

@@ -1,4 +1,4 @@
-from agent.learning.stats import (
+from agent.learning_v2.stats import (
     calibrate_decisions,
     calibrate_decisions_by_group,
     decision_correctness,

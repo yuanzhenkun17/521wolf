@@ -10,14 +10,14 @@ import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent.learning.evolution.models import (
+from agent.learning_v2.evolution.models import (
     EvolutionRun,
     EvolutionStatus,
     SkillConsolidation,
     SkillDiff,
     SkillProposal,
 )
-from agent.learning.evolution.pipeline import (
+from agent.learning_v2.evolution.pipeline import (
     BaselineChangedError,
     InvalidRunStateError,
     promote,
@@ -26,8 +26,8 @@ from agent.learning.evolution.pipeline import (
     run_evolution,
     scan_active_runs,
 )
-from agent.learning.evolution.state import save_run_state
-from agent.learning.evolution.store import VersionStore
+from agent.learning_v2.evolution.state import save_run_state
+from agent.learning_v2.evolution.store import VersionStore
 from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
 
 
@@ -44,31 +44,32 @@ class _FakeSelfPlayConfig:
     enable_long_term_consolidation: bool = False
     skill_dir: Path | None = None
     game_concurrency: int = 1
+    db_path: Path | None = None
 
 
 # ---------------------------------------------------------------------------
-# Build a fake ``agent.learning.evolution.games`` module with SelfPlayConfig
-# so that ``from agent.learning.evolution.games import SelfPlayConfig`` works
+# Build a fake ``agent.learning_v2.evolution.games`` module with SelfPlayConfig
+# so that ``from agent.learning_v2.evolution.games import SelfPlayConfig`` works
 # inside _stage_training without pulling in the real (heavy) module.
 # ---------------------------------------------------------------------------
 
-_original_games_module = sys.modules.get("agent.learning.evolution.games")
+_original_games_module = sys.modules.get("agent.learning_v2.evolution.games")
 
 
 def _install_fake_selfplay_module():
-    """Install a minimal fake ``agent.learning.evolution.games`` module into sys.modules."""
-    fake_mod = types.ModuleType("agent.learning.evolution.games")
+    """Install a minimal fake ``agent.learning_v2.evolution.games`` module into sys.modules."""
+    fake_mod = types.ModuleType("agent.learning_v2.evolution.games")
     fake_mod.SelfPlayConfig = _FakeSelfPlayConfig  # type: ignore[attr-defined]
-    sys.modules["agent.learning.evolution.games"] = fake_mod
+    sys.modules["agent.learning_v2.evolution.games"] = fake_mod
     return fake_mod
 
 
 def _restore_selfplay_module():
-    """Restore the original ``agent.learning.evolution.games`` entry in sys.modules."""
+    """Restore the original ``agent.learning_v2.evolution.games`` entry in sys.modules."""
     if _original_games_module is None:
-        sys.modules.pop("agent.learning.evolution.games", None)
+        sys.modules.pop("agent.learning_v2.evolution.games", None)
     else:
-        sys.modules["agent.learning.evolution.games"] = _original_games_module
+        sys.modules["agent.learning_v2.evolution.games"] = _original_games_module
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +179,7 @@ async def _run_pipeline(tmp_path: Path, role: str = "seer"):
     fake_applier = _make_fake_applier()
     fake_battle = _make_fake_battle_runner()
 
-    # Install fake module so ``from agent.learning.evolution.games import SelfPlayConfig``
+    # Install fake module so ``from agent.learning_v2.evolution.games import SelfPlayConfig``
     # resolves without pulling in the real heavy evaluation module.
     _install_fake_selfplay_module()
     try:

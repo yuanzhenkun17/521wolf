@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from agent.common import beijing_now_iso, beijing_now_str
-from agent.common.errors import is_rate_limit_error as _is_rate_limit_error
+from ui.backend.runner_utils import RunnerStatus, is_rate_limit_error
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
-from agent.learning.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
+from agent.learning_v2.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
 from agent.infrastructure.llm import AsyncRateLimiter
 from engine.config import STANDARD_12
 
@@ -21,7 +21,7 @@ _log = logging.getLogger(__name__)
 class RunningSelfplay:
     run_id: str
     config: SelfPlayConfig
-    status: str = "running"
+    status: str = RunnerStatus.RUNNING
     total_games: int = 0
     completed_games: int = 0
     label: str = ""
@@ -66,7 +66,7 @@ class RunningSelfplay:
             "started_at": self.started_at,
             "artifact_run_id": self.artifact_run_id,
         }
-        if self.status == "completed" and self.result is not None:
+        if self.status == RunnerStatus.COMPLETED and self.result is not None:
             data["summary"] = self.result.summary
             data["results"] = self.result.summary
         if self.error:
@@ -100,8 +100,13 @@ class RunningSelfplay:
 
 
 class SelfplayManager:
-    def __init__(self, output_dir: Path = DEFAULT_PATHS.selfplay_dir) -> None:
+    def __init__(
+        self,
+        output_dir: Path = DEFAULT_PATHS.selfplay_dir,
+        db_path: Path | None = DEFAULT_PATHS.data_dir / "wolf.db",
+    ) -> None:
         self.output_dir = output_dir
+        self.db_path = db_path
         self._runs: dict[str, RunningSelfplay] = {}
         self._lock = asyncio.Lock()
 
@@ -119,7 +124,7 @@ class SelfplayManager:
                 state = json.loads(state_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
-            if state.get("status") in ("completed", "failed"):
+            if state.get("status") in RunnerStatus.terminal_statuses():
                 continue
 
             run_id = state["run_id"]
@@ -150,9 +155,10 @@ class SelfplayManager:
                 agent_version=state.get("agent_version", "agent"),
                 max_days=state.get("max_days", 20),
                 enable_batch_dream=state.get("enable_batch_dream", False),
-                game_config=replace(STANDARD_12, enable_sheriff=state.get("enable_sheriff", True)),
+                game_config=replace(STANDARD_12, enable_sheriff=state.get("enable_sheriff", True), max_days=state.get("max_days", 20)),
                 skill_dir=Path(skill_dir_raw) if skill_dir_raw else None,
                 game_concurrency=state.get("game_concurrency", 1),
+                db_path=self.db_path,
             )
 
             run = RunningSelfplay(
@@ -205,9 +211,10 @@ class SelfplayManager:
             max_days=max_days,
             enable_batch_dream=enable_batch_dream,
             temperature=temperature,
-            game_config=replace(STANDARD_12, enable_sheriff=enable_sheriff),
+            game_config=replace(STANDARD_12, enable_sheriff=enable_sheriff, max_days=max_days),
             skill_dir=Path(skill_dir) if skill_dir else None,
             game_concurrency=game_concurrency,
+            db_path=self.db_path,
         )
 
         run = RunningSelfplay(
@@ -244,12 +251,12 @@ class SelfplayManager:
             return None
         if run.task and not run.task.done():
             run.task.cancel()
-        run.status = "paused"
+        run.status = RunnerStatus.PAUSED
         run_dir = self.output_dir / (run.artifact_run_id or run.run_id)
         try:
             run.persist_state(run_dir)
         except Exception:
-            _log.warning("Failed to persist run state for %s", run.run_id, exc_info=True)
+            _log.error("Failed to persist run state for %s", run.run_id, exc_info=True)
         return run
 
     def terminate_run(self, run_id: str) -> RunningSelfplay | None:
@@ -259,13 +266,13 @@ class SelfplayManager:
             return None
         if run.task and not run.task.done():
             run.task.cancel()
-        run.status = "failed"
+        run.status = RunnerStatus.FAILED
         run.error = "用户终止"
         run_dir = self.output_dir / (run.artifact_run_id or run.run_id)
         try:
             run.persist_state(run_dir)
         except Exception:
-            pass
+            _log.warning("Failed to persist terminated state for %s", run.run_id, exc_info=True)
         return run
 
     def resume_run(self, run_id: str) -> RunningSelfplay | None:
@@ -280,7 +287,7 @@ class SelfplayManager:
         if run.status not in ("paused", "failed"):
             return run  # already running or completed
         run_dir = self.output_dir / (run.artifact_run_id or run.run_id)
-        run.status = "running"
+        run.status = RunnerStatus.RUNNING
         run.error = None
         run.task = asyncio.create_task(
             self._execute(run, resume_dir=run_dir),
@@ -295,12 +302,12 @@ class SelfplayManager:
         try:
             run.persist_state(run_dir)
         except Exception:
-            _log.warning("Failed to persist run state for %s", run.run_id, exc_info=True)
+            _log.error("Failed to persist run state for %s", run.run_id, exc_info=True)
 
     async def _execute(
         self, run: RunningSelfplay, resume_dir: Path | None = None,
     ) -> None:
-        max_retries = 5
+        max_retries = run.config.game_config.runner_max_retries
         run.retry_total = max_retries
         for attempt in range(max_retries):
             run.retry_attempt = attempt
@@ -314,24 +321,24 @@ class SelfplayManager:
                 )
                 run.result = result
                 run.artifact_run_id = result.run_id
-                run.status = "completed"
+                run.status = RunnerStatus.COMPLETED
                 run_dir = self.output_dir / result.run_id
                 run.persist_state(run_dir)
                 return
             except Exception as exc:
-                if _is_rate_limit_error(exc) and attempt < max_retries - 1:
+                if is_rate_limit_error(exc) and attempt < max_retries - 1:
                     wait = 30 * (attempt + 1)
                     _log.warning("Rate limited on run %s, retrying in %ds (attempt %d/%d)", run.run_id, wait, attempt + 1, max_retries)
-                    run.status = "rate_limited"
+                    run.status = RunnerStatus.RATE_LIMITED
                     run_dir = self.output_dir / (run.artifact_run_id or run.run_id)
                     run.persist_state(run_dir)
                     await asyncio.sleep(wait)
-                    run.status = "running"
+                    run.status = RunnerStatus.RUNNING
                     continue
-                run.status = "failed"
+                run.status = RunnerStatus.FAILED
                 run.error = str(exc)
                 run_dir = self.output_dir / (run.artifact_run_id or run.run_id)
             try:
                 run.persist_state(run_dir)
             except Exception:
-                pass
+                _log.warning("Failed to persist failed state for %s", run.run_id, exc_info=True)

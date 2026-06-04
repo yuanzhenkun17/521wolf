@@ -2,13 +2,13 @@
 
 import pytest
 
-from agent.learning.evolution.leaderboard import (
+from agent.learning_v2.evolution.leaderboard import (
     aggregate_role_leaderboard,
     compute_recommendation,
     wilson_ci,
     target_side_for_role,
 )
-from agent.learning.evolution.models import RoleLeaderboardEntry
+from agent.learning_v2.evolution.models import RoleLeaderboardEntry
 
 
 # ---------------------------------------------------------------------------

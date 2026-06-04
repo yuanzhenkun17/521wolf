@@ -5,19 +5,25 @@ from typing import Any
 
 from engine.models import ActionRequest, ActionResponse, ActionType
 
+from agent.common.action_types import (
+    CHOICE_ACTION_TYPES,
+    SPEECH_ACTION_TYPES,
+    TARGET_ACTION_TYPES,
+)
 from agent.core.context import AgentContext
 
 
-# action classification
-_SPEECH_ACTIONS = {
-    ActionType.SHERIFF_SPEAK,
-    ActionType.LAST_WORD,
+# action classification — derived from centralized definitions
+# (enum sets for per-request validation; string sets for dict-based
+#  lookups are in agent.common.action_types)
+_SPEECH_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.SPEAK,
+    ActionType.SHERIFF_SPEAK,
     ActionType.PK_SPEAK,
-}
+    ActionType.LAST_WORD,
+})
 
-# Used only by _fallback_response — validation is done via _ACTION_VALIDATORS
-_TARGET_ACTIONS = {
+_TARGET_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.SHERIFF_VOTE,
     ActionType.GUARD_PROTECT,
     ActionType.WEREWOLF_KILL,
@@ -25,7 +31,7 @@ _TARGET_ACTIONS = {
     ActionType.EXILE_VOTE,
     ActionType.PK_VOTE,
     ActionType.HUNTER_SHOOT,
-}
+})
 
 # Per-ActionType valid choice values
 _VALID_CHOICES: dict[ActionType, set[str | None]] = {

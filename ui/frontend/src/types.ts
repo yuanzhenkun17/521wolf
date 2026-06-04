@@ -1,9 +1,29 @@
+export type RoleState = {
+  // Witch
+  antidote_available?: boolean;
+  poison_available?: boolean;
+  antidote_history?: Array<{ day: number; target: number }>;
+  poison_history?: Array<{ day: number; target: number }>;
+  // Guard
+  last_target?: number | null;
+  protect_history?: Array<{ day: number; target: number | null }>;
+  // Seer
+  checks?: Record<string, { day: number; target: number; result: string }>;
+  // Hunter
+  has_shot?: boolean;
+  shot_target?: number | null;
+  // White wolf king
+  has_exploded?: boolean;
+};
+
 export type Player = {
   id: number;
   role: string;
   team: string;
   alive: boolean;
   is_sheriff: boolean;
+  is_human?: boolean;
+  role_state?: RoleState;
 };
 
 export type GameEvent = {
@@ -51,6 +71,7 @@ export type GameSnapshot = {
   status: "starting" | "running" | "completed" | "failed";
   winner: string | null;
   seed: number | null;
+  human_player_id?: number | null;
   day: number;
   phase: string;
   sheriff_id: number | null;

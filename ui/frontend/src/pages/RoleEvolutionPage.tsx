@@ -224,14 +224,29 @@ export function RoleEvolutionPage() {
     const es = new EventSource(`/api/evolution-runs/${activeRun.run_id}/events`);
     sseRef.current = es;
 
-    es.onmessage = (ev) => {
+    es.addEventListener("progress", (ev) => {
       try {
         const data = JSON.parse(ev.data) as EvolutionRunStatus;
         setActiveRun(data);
       } catch {
         // ignore malformed events
       }
+    });
+
+    // Terminal events — close the stream after receiving one.
+    const terminalHandler = (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as EvolutionRunStatus;
+        setActiveRun(data);
+      } catch {
+        // ignore malformed events
+      }
+      es.close();
+      sseRef.current = null;
     };
+    es.addEventListener("promoted", terminalHandler);
+    es.addEventListener("rejected", terminalHandler);
+    es.addEventListener("failed", terminalHandler);
 
     es.onerror = () => {
       // Fall back to polling on SSE error
@@ -252,14 +267,29 @@ export function RoleEvolutionPage() {
     const es = new EventSource(`/api/evolution-runs/${activeBatch.batch_id}/events`);
     batchSseRef.current = es;
 
-    es.onmessage = (ev) => {
+    es.addEventListener("progress", (ev) => {
       try {
         const data = JSON.parse(ev.data) as BatchEvolutionRunStatus;
         setActiveBatch(data);
       } catch {
         // ignore malformed events
       }
+    });
+
+    const batchTerminalHandler = (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data) as BatchEvolutionRunStatus;
+        setActiveBatch(data);
+      } catch {
+        // ignore malformed events
+      }
+      es.close();
+      batchSseRef.current = null;
     };
+    es.addEventListener("reviewing", batchTerminalHandler);
+    es.addEventListener("promoted", batchTerminalHandler);
+    es.addEventListener("rejected", batchTerminalHandler);
+    es.addEventListener("failed", batchTerminalHandler);
 
     es.onerror = () => {
       es.close();

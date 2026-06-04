@@ -7,10 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.infrastructure.storage.schema import get_connection
-from agent.infrastructure.storage.importer import ArchiveImporter
-from agent.infrastructure.storage.game_store import GameStore
-from agent.infrastructure.storage.decision_store import DecisionStore
+from storage.schema import get_connection
+from storage.importer import ArchiveImporter
+from storage.game_store import GameStore
+from storage.decision_store import DecisionStore
 
 
 class TestArchiveImporter(unittest.TestCase):

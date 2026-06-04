@@ -7,6 +7,7 @@ import { HumanActionPanel } from "./components/HumanActionPanel";
 import { Navigation } from "./components/Navigation";
 import { StatusPanel } from "./components/StatusPanel";
 import { PlayersPanel } from "./components/PlayersPanel";
+import { EngineStatePanel } from "./components/EngineStatePanel";
 import { KeyEventsPanel } from "./components/KeyEventsPanel";
 import { GamesPanel } from "./components/GamesPanel";
 import { GameStage } from "./components/GameStage";
@@ -38,6 +39,7 @@ function GameView() {
   const [showReview, setShowReview] = useState(false);
   const [archiveData, setArchiveData] = useState<GameArchive | null>(null);
   const [showConfigDialog, setShowConfigDialog] = useState(false);
+  const [humanActionSignal, setHumanActionSignal] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
   const loadedRef = useRef(false);
 
@@ -139,6 +141,11 @@ function GameView() {
       void getGame(gameId).then(setSnapshot).catch(() => undefined);
     });
 
+    source.addEventListener("decision_needed", () => {
+      setHumanActionSignal((value) => value + 1);
+      void getGame(gameId).then(setSnapshot).catch(() => undefined);
+    });
+
     source.addEventListener("done", (message) => {
       const doneSnapshot = JSON.parse(message.data) as GameSnapshot;
       setSnapshot(doneSnapshot);
@@ -195,6 +202,7 @@ function GameView() {
         <section className="space-y-5">
           <StatusPanel snapshot={snapshot} aliveCount={aliveCount} deadCount={deadCount} />
           <PlayersPanel players={snapshot?.players ?? []} />
+          <EngineStatePanel players={snapshot?.players ?? []} />
         </section>
 
         {showReview ? (
@@ -224,7 +232,11 @@ function GameView() {
 
       <GameConfigDialog open={showConfigDialog} onClose={() => setShowConfigDialog(false)} onSubmit={handleStart} starting={starting} />
       {snapshot && (
-        <HumanActionPanel gameId={snapshot.game_id} gameStatus={snapshot.status} />
+        <HumanActionPanel
+          gameId={snapshot.game_id}
+          gameStatus={snapshot.status}
+          refreshSignal={humanActionSignal}
+        />
       )}
     </>
   );

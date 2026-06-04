@@ -6,10 +6,10 @@ import shutil
 
 import pytest
 
-from agent.learning.evolution.config import build_baseline_config
-from agent.learning.evolution.models import SkillVersionConfig
-from agent.learning.evolution.store import VersionStore
-from agent.learning.evolution.config import build_composite_skill_dir
+from agent.learning_v2.evolution.config import build_baseline_config
+from agent.learning_v2.evolution.models import SkillVersionConfig
+from agent.learning_v2.evolution.store import VersionStore
+from agent.learning_v2.evolution.config import build_composite_skill_dir
 
 
 def test_build_composite_skill_dir_allows_bootstrap_empty_versions(tmp_path):

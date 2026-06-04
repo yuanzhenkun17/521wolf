@@ -6,8 +6,8 @@ import json
 import unittest
 from typing import Any
 
-from agent.learning.evolution.applier import apply_proposals
-from agent.learning.evolution.models import (
+from agent.learning_v2.evolution.applier import apply_proposals
+from agent.learning_v2.evolution.models import (
     SkillConsolidation,
     SkillProposal,
 )

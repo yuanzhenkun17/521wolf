@@ -43,9 +43,24 @@ async def ask(
                 "retry_count": retry,
             },
         )
-        response = engine.agents[player_id].act(request)
-        if inspect.isawaitable(response):
-            response = await response
+        try:
+            response = engine.agents[player_id].act(request)
+            if inspect.isawaitable(response):
+                response = await response
+        except Exception as exc:
+            engine._log(
+                "agent_error",
+                f"{player_id} 号执行 {action_type.value} 失败，准备重试",
+                level=LogLevel.WARNING,
+                actor=player_id,
+                payload={
+                    "action_type": action_type.value,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "retry_count": retry,
+                },
+            )
+            continue
         if response.action_type == action_type and validator(response):
             engine._record(
                 action_type.value,

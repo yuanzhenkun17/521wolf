@@ -1,5 +1,5 @@
 """Tests for leaderboard metric extensions."""
-from agent.learning.leaderboard import aggregate_summaries
+from agent.learning_v2.leaderboard import aggregate_summaries
 
 
 def _make_summary(**overrides):

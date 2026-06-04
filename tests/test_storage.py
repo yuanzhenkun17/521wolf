@@ -6,13 +6,16 @@ import json
 import unittest
 from pathlib import Path
 
-from agent.infrastructure.storage.schema import get_connection
-from agent.infrastructure.storage.game_store import GameStore
-from agent.infrastructure.storage.decision_store import DecisionStore
-from agent.infrastructure.storage.version_store import VersionStoreDB
-from agent.infrastructure.storage.evolution_store import EvolutionStore
+from storage.schema import get_connection
+from storage.game_store import GameStore
+from storage.decision_store import DecisionStore
+from storage.version_store import VersionStoreDB
+from storage.evolution_store import EvolutionStore
+from storage.experience_store import ExperienceCandidateStore
+from storage.leaderboard_store import LeaderboardStore
 from agent.infrastructure.archive import DecisionArchive
-from agent.learning.evolution.models import (
+from agent.learning_v2.models import ExperienceCandidate
+from agent.learning_v2.evolution.models import (
     EvolutionRun,
     RoleVersion,
     SkillProposal,
@@ -161,6 +164,55 @@ class TestDecisionStore(unittest.TestCase):
         self.assertEqual(counts["with_target"], 1)
 
 
+class TestExperienceCandidateStore(unittest.TestCase):
+    def setUp(self):
+        self.conn = get_connection(Path(":memory:"))
+        GameStore(self.conn).insert_game("g1", seed=1, started_at="2026-01-01")
+        self.store = ExperienceCandidateStore(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_save_and_list_candidates(self):
+        candidate = ExperienceCandidate(
+            candidate_id="cand_001",
+            role="seer",
+            faction="villagers",
+            candidate_type="positive_pattern",
+            topic="night_check",
+            sample_source="single_game",
+            evidence_decision_ids=["d1"],
+            scenario="首夜查验高影响发言位",
+            conditions=["警上强势带队"],
+            recommendation="优先查验能改变归票的信息位",
+            confidence="medium",
+            validation_need={"needs_multi_game_validation": True},
+        )
+
+        saved = self.store.save_candidates("g1", [candidate], created_at="2026-01-01T00:00:00")
+        self.assertEqual(saved, ["cand_001"])
+
+        rows = self.store.list_candidates(role="seer")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["candidate_id"], "cand_001")
+        self.assertEqual(rows[0]["conditions"], ["警上强势带队"])
+        self.assertEqual(rows[0]["raw_json"]["recommendation"], "优先查验能改变归票的信息位")
+
+    def test_count_by_role(self):
+        self.store.save_candidates(
+            "g1",
+            [
+                {"candidate_id": "a", "role": "seer"},
+                {"candidate_id": "b", "role": "witch"},
+                {"candidate_id": "c", "role": "seer"},
+            ],
+        )
+
+        counts = self.store.count_by_role()
+        self.assertEqual(counts["seer"], 2)
+        self.assertEqual(counts["witch"], 1)
+
+
 class TestVersionStoreDB(unittest.TestCase):
     def setUp(self):
         self.conn = get_connection(Path(":memory:"))
@@ -249,6 +301,39 @@ class TestEvolutionStore(unittest.TestCase):
         runs = self.store.list_runs(status="promoted")
         self.assertEqual(len(runs), 1)
 
+    def test_list_battle_summaries_filters_by_role(self):
+        guard_summary = {
+            "role": "guard",
+            "baseline_config": {"role_versions": {"guard": "base"}},
+            "candidate_config": {"role_versions": {"guard": "candidate"}},
+            "games_played": 12,
+        }
+        self.store.save_run(
+            EvolutionRun(
+                run_id="r_guard",
+                role="guard",
+                parent_hash="base",
+                status="reviewing",
+                battle_result=guard_summary,
+            )
+        )
+        self.store.save_run(
+            EvolutionRun(
+                run_id="r_seer",
+                role="seer",
+                parent_hash="base",
+                status="reviewing",
+                battle_result={"role": "seer"},
+            )
+        )
+        self.store.save_run(
+            EvolutionRun(run_id="r_empty", role="guard", parent_hash="base", status="training")
+        )
+
+        summaries = self.store.list_battle_summaries(role="guard")
+
+        self.assertEqual(summaries, [guard_summary])
+
     def test_save_proposals(self):
         proposal = SkillProposal(
             proposal_id="p1",
@@ -269,10 +354,56 @@ class TestEvolutionStore(unittest.TestCase):
         self.assertEqual(results[0]["target_file"], "protect.md")
 
 
+class TestLeaderboardStore(unittest.TestCase):
+    def setUp(self):
+        self.conn = get_connection(Path(":memory:"))
+        self.store = LeaderboardStore(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_list_entries_maps_leaderboard_rows(self):
+        self.conn.execute(
+            "INSERT INTO leaderboard "
+            "(version_id, role, games_played, wins, losses, win_rate, "
+            "avg_survival_rounds, target_side_win_rate, win_rate_ci_low, "
+            "win_rate_ci_high, scores, is_baseline, data_sufficient, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "v1",
+                "seer",
+                12,
+                8,
+                4,
+                0.667,
+                3.5,
+                0.7,
+                0.4,
+                0.9,
+                json.dumps({"role_weighted_score": 0.82}, ensure_ascii=False),
+                1,
+                1,
+                "2026-06-04T00:00:00",
+            ),
+        )
+        self.conn.commit()
+
+        entries = self.store.list_entries()
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["version"], "v1")
+        self.assertEqual(entries[0]["role"], "seer")
+        self.assertEqual(entries[0]["games"], 12)
+        self.assertEqual(entries[0]["target_side_win_rate_ci"], [0.4, 0.9])
+        self.assertEqual(entries[0]["scores"]["role_weighted_score"], 0.82)
+        self.assertTrue(entries[0]["is_baseline"])
+        self.assertTrue(entries[0]["data_sufficient"])
+
+
 class TestGameEventStore(unittest.TestCase):
     def setUp(self):
         self.conn = get_connection(Path(":memory:"))
-        from agent.infrastructure.storage.game_event_store import GameEventStore
+        from storage.game_event_store import GameEventStore
         self.store = GameEventStore(self.conn)
 
     def tearDown(self):
@@ -316,29 +447,29 @@ class TestGameEventStore(unittest.TestCase):
         self.assertEqual(results[0]["event_type"], "kill")
 
 
-class TestGameLoggerSQLite(unittest.TestCase):
-    """Test that GameLogger writes to SQLite when conn is provided."""
+class TestGameLoggerSink(unittest.TestCase):
+    """Test that GameLogger can stream to files and a generic sink."""
 
-    def test_record_writes_to_sqlite(self):
+    def test_record_writes_to_sink(self):
         from engine.logging import GameLogger
-        from agent.infrastructure.storage.schema import get_connection
 
-        conn = get_connection(Path(":memory:"))
-        logger = GameLogger(conn=conn, game_id="test_game")
+        class Sink:
+            def __init__(self):
+                self.entries = []
+
+            def record_event(self, entry):
+                self.entries.append(entry)
+
+        sink = Sink()
+        logger = GameLogger(sink=sink)
 
         logger.record(day=1, phase="night", event_type="kill", message="狼人杀了1号")
         logger.record(day=1, phase="night", event_type="death", message="1号死亡",
                        payload={"cause": "werewolf"})
 
-        rows = conn.execute(
-            "SELECT * FROM game_events WHERE game_id = 'test_game' ORDER BY idx"
-        ).fetchall()
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["event_type"], "kill")
-        self.assertEqual(rows[1]["event_type"], "death")
-        payload = json.loads(rows[1]["payload"])
-        self.assertEqual(payload["cause"], "werewolf")
-        conn.close()
+        self.assertEqual(len(sink.entries), 2)
+        self.assertEqual(sink.entries[0].event_type, "kill")
+        self.assertEqual(sink.entries[1].payload["cause"], "werewolf")
 
     def test_record_without_conn_still_works(self):
         from engine.logging import GameLogger
@@ -348,15 +479,21 @@ class TestGameLoggerSQLite(unittest.TestCase):
         self.assertEqual(entry.index, 1)
         self.assertEqual(len(logger.entries), 1)
 
-    def test_record_with_both_stream_and_conn(self):
+    def test_record_with_both_stream_and_sink(self):
         import tempfile
         from engine.logging import GameLogger
-        from agent.infrastructure.storage.schema import get_connection
 
-        conn = get_connection(Path(":memory:"))
+        class Sink:
+            def __init__(self):
+                self.entries = []
+
+            def record_event(self, entry):
+                self.entries.append(entry)
+
+        sink = Sink()
         with tempfile.TemporaryDirectory() as tmpdir:
             stream = Path(tmpdir) / "events.jsonl"
-            logger = GameLogger(stream_path=str(stream), conn=conn, game_id="g1")
+            logger = GameLogger(stream_path=str(stream), sink=sink)
             logger.record(day=1, phase="night", event_type="kill", message="test")
 
             # JSONL file should exist
@@ -364,22 +501,26 @@ class TestGameLoggerSQLite(unittest.TestCase):
             lines = stream.read_text().strip().split("\n")
             self.assertEqual(len(lines), 1)
 
-            # SQLite should also have it
-            rows = conn.execute("SELECT * FROM game_events").fetchall()
-            self.assertEqual(len(rows), 1)
-        conn.close()
+            # Sink should also receive it
+            self.assertEqual(len(sink.entries), 1)
 
 
-class TestDecisionRecorderSQLite(unittest.TestCase):
-    """Test that AgentDecisionRecorder writes to SQLite when conn is provided."""
+class TestDecisionRecorderSink(unittest.TestCase):
+    """Test that AgentDecisionRecorder can write to a generic sink."""
 
-    def test_record_writes_to_sqlite(self):
+    def test_record_writes_to_sink(self):
         from agent.infrastructure.decision_log import AgentDecisionRecorder, DecisionRecord
         from engine.models import ActionType
-        from agent.infrastructure.storage.schema import get_connection
 
-        conn = get_connection(Path(":memory:"))
-        recorder = AgentDecisionRecorder(conn=conn, game_id="g1")
+        class Sink:
+            def __init__(self):
+                self.records = []
+
+            def record_decision(self, decision):
+                self.records.append(decision)
+
+        sink = Sink()
+        recorder = AgentDecisionRecorder(sink=sink)
 
         record = DecisionRecord(
             action_type=ActionType.SEER_CHECK,
@@ -393,12 +534,10 @@ class TestDecisionRecorderSQLite(unittest.TestCase):
         )
         recorder.record(record)
 
-        rows = conn.execute("SELECT * FROM decisions WHERE game_id = 'g1'").fetchall()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["role"], "seer")
-        self.assertEqual(rows[0]["action_type"], "seer_check")
-        self.assertAlmostEqual(rows[0]["confidence"], 0.9)
-        conn.close()
+        self.assertEqual(len(sink.records), 1)
+        self.assertEqual(sink.records[0].role, "seer")
+        self.assertEqual(sink.records[0].action_type.value, "seer_check")
+        self.assertAlmostEqual(sink.records[0].confidence, 0.9)
 
     def test_record_without_conn_still_works(self):
         from agent.infrastructure.decision_log import AgentDecisionRecorder, DecisionRecord

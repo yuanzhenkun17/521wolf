@@ -8,6 +8,7 @@ def resolve_votes(
     sheriff_id: int | None,
     candidates: tuple[int, ...] | None = None,
     return_ties: bool = False,
+    sheriff_vote_weight: float = 1.5,
 ) -> int | tuple[int, ...] | None:
     if not votes:
         return () if return_ties else None
@@ -15,7 +16,7 @@ def resolve_votes(
     for voter, target in votes.items():
         if candidates is not None and target not in candidates:
             continue
-        weight = 1.5 if voter == sheriff_id else 1.0
+        weight = sheriff_vote_weight if voter == sheriff_id else 1.0
         totals[target] = totals.get(target, 0.0) + weight
     if not totals:
         return () if return_ties else None

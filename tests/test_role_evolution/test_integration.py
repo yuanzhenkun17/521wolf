@@ -12,12 +12,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.learning.evolution.games import SelfPlayConfig, run_selfplay
-from agent.learning.evolution.config import (
+from agent.learning_v2.evolution.games import SelfPlayConfig, run_selfplay
+from agent.learning_v2.evolution.config import (
     build_baseline_config,
     build_role_override_config,
 )
-from agent.learning.evolution.store import VersionStore
+from agent.learning_v2.evolution.store import VersionStore
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
                     )
 
             # Build composite skill directory from the config
-            from agent.learning.evolution.config import build_composite_skill_dir
+            from agent.learning_v2.evolution.config import build_composite_skill_dir
 
             composite_dir = build_composite_skill_dir(store, config)
             try:
@@ -189,7 +189,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
             )
 
             # Build composite skill directories for each config
-            from agent.learning.evolution.config import build_composite_skill_dir
+            from agent.learning_v2.evolution.config import build_composite_skill_dir
 
             composite_baseline = build_composite_skill_dir(store, baseline_config)
             composite_override = build_composite_skill_dir(store, override_config)

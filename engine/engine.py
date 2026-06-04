@@ -1,8 +1,6 @@
 from __future__ import annotations
-
-import sqlite3
 from collections import Counter
-from typing import Callable
+from typing import Any, Callable
 
 from engine.actions import ask as ask_action
 from engine.config import GameConfig, STANDARD_12
@@ -34,21 +32,23 @@ class GameEngine:
         agents: dict[int, PlayerAgent],
         config: GameConfig = STANDARD_12,
         log_stream_path: str | None = None,
-        conn: sqlite3.Connection | None = None,
-        game_id: str | None = None,
+        logger: GameLogger | None = None,
     ):
         self.config = config
         self.state = GameState(
             players={player_id: PlayerState(player_id, role) for player_id, role in sorted(roles.items())}
         )
         self.agents = agents
-        self.logger = GameLogger(stream_path=log_stream_path, conn=conn, game_id=game_id)
+        self.logger = logger or GameLogger(stream_path=log_stream_path)
         self._log(
             "game_init",
             f"游戏初始化：{self.config.name}，已创建 {len(self.state.players)} 名玩家",
             payload={"roles": {player_id: role.value for player_id, role in sorted(roles.items())}},
         )
         self._validate_setup()
+        # Initialize per-player role_state from each role's rule
+        for player_id, ps in self.state.players.items():
+            ps.role_state = rule_for(ps.role).init_role_state()
 
     def _validate_setup(self) -> None:
         if len(self.state.players) != self.config.player_count:
@@ -99,8 +99,38 @@ class GameEngine:
             public_log=tuple(self.state.public_log),
             known_roles=role_rule.visible_roles(self, player_id),
             seer_checks=role_rule.seer_checks(self, player_id),
+            role_state=role_rule.get_role_state(self, player_id),
             metadata=metadata or {},
         )
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a complete, JSON-serializable snapshot of engine state."""
+        return {
+            "day": self.state.day,
+            "phase": self.state.phase.value if hasattr(self.state.phase, "value") else str(self.state.phase),
+            "sheriff_id": self.state.sheriff_id,
+            "badge_destroyed": self.state.badge_destroyed,
+            "winner": self.state.winner.value if self.state.winner else None,
+            "players": {
+                pid: {
+                    "id": ps.id,
+                    "role": ps.role.value if hasattr(ps.role, "value") else str(ps.role),
+                    "alive": ps.alive,
+                    "role_state": rule_for(ps.role).get_role_state(self, pid),
+                }
+                for pid, ps in self.state.players.items()
+            },
+            "deaths": [
+                {
+                    "player_id": d.player_id,
+                    "cause": d.cause.value if hasattr(d.cause, "value") else str(d.cause),
+                    "day": d.day,
+                    "phase": d.phase.value if hasattr(d.phase, "value") else str(d.phase),
+                }
+                for d in self.state.deaths
+            ],
+            "events_count": len(self.state.events),
+        }
 
     async def _ask(
         self,
@@ -201,13 +231,14 @@ class GameEngine:
         candidates: tuple[int, ...] | None = None,
         return_ties: bool = False,
     ) -> int | tuple[int, ...] | None:
-        return voting.resolve_votes(votes, self.state.sheriff_id, candidates, return_ties)
+        return voting.resolve_votes(votes, self.state.sheriff_id, candidates, return_ties, sheriff_vote_weight=self.config.sheriff_vote_weight)
 
     def check_winner(self) -> Winner | None:
         return victory.check_winner(self)
 
-    async def run_until_finished(self, max_days: int = 20) -> Winner:
-        for day_index in range(max_days):
+    async def run_until_finished(self, max_days: int | None = None) -> Winner:
+        effective_max_days = max_days if max_days is not None else self.config.max_days
+        for day_index in range(effective_max_days):
             if day_index == 0:
                 first_night = await night.run_night_without_death_reveal(self)
                 if self.config.enable_sheriff:

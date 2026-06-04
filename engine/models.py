@@ -83,6 +83,13 @@ class PlayerState:
     id: int
     role: Role
     alive: bool = True
+    role_state: dict[str, Any] = field(default_factory=dict)
+    # role_state is a role-specific TypedDict at runtime.  The shape depends
+    # on ``self.role``; see ``engine.role_state_types`` for per-role definitions
+    # (WitchRoleState, GuardRoleState, SeerRoleState, etc.).  The field is
+    # declared as dict[str, Any] because dataclasses cannot cleanly express
+    # union-typed defaults.  Use ROLE_STATE_TYPE_MAP to look up the correct
+    # TypedDict for a given role value.
 
     @property
     def team(self) -> Team:
@@ -99,17 +106,41 @@ class DeathRecord:
 
 @dataclass(slots=True)
 class GameEvent:
+    """Internal engine state event for game logic.
+
+    GameEvent represents a state transition that occurred during game execution.
+    It is stored in GameState.events and used by the engine to drive game logic
+    (e.g., determining which events a player can see, resolving death triggers).
+
+    GameEvent is NOT persisted directly to JSONL or SQLite. For persistence,
+    replay, and UI display, use GameLogEntry (engine/logging.py) instead.
+
+    The engine creates GameEvents via ``engine._record()`` alongside GameLogEntries
+    via ``engine._log()``. The two models intentionally share core fields (day, phase,
+    actor, target, payload) but serve different roles:
+      - GameEvent: lightweight, in-memory, focused on game-rule semantics + visibility.
+      - GameLogEntry: enriched with index, message, level, visibility; persisted and
+        streamed to the frontend.
+
+    They do NOT share a common base class because GameLogEntry needs fields that
+    GameEvent does not (message, index, level, visibility), and their lifecycles
+    are independent.
+    """
     type: str
     day: int
     phase: Phase
     actor: int | None = None
     target: int | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+    # payload schemas vary by event type (e.g. "werewolf_result" carries
+    # {"votes": list[int]}, "seer_result" carries {"result": str}).
+    # See engine/role_state_types for action-metadata TypedDicts that
+    # document the most common payload shapes.
     public: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "type": self.type,
+            "event_type": self.type,
             "day": self.day,
             "phase": self.phase.value if hasattr(self.phase, "value") else self.phase,
             "actor": self.actor,
@@ -131,6 +162,9 @@ class Observation:
     public_log: tuple[str, ...]
     known_roles: dict[int, Role] = field(default_factory=dict)
     seer_checks: dict[int, Team] = field(default_factory=dict)
+    role_state: dict[str, Any] = field(default_factory=dict)
+    # Same role-specific shape as PlayerState.role_state; see
+    # engine.role_state_types for per-role TypedDict definitions.
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -143,6 +177,9 @@ class ActionRequest:
     candidates: tuple[int, ...] = ()
     retry_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    # metadata carries per-action-type information.  Common shapes are
+    # documented in engine.role_state_types (WitchActionMetadata,
+    # SheriffWithdrawMetadata, SpeechOrderMetadata).
 
 
 @dataclass(slots=True)
@@ -164,10 +201,6 @@ class GameState:
     deaths: list[DeathRecord] = field(default_factory=list)
     sheriff_id: int | None = None
     badge_destroyed: bool = False
-    witch_antidote_available: bool = True
-    witch_poison_available: bool = True
-    guard_last_target: int | None = None
-    seer_checks: dict[int, dict[int, Team]] = field(default_factory=dict)
     pending_last_words: list[int] = field(default_factory=list)
     pending_hunter_shots: list[int] = field(default_factory=list)
     winner: Winner | None = None

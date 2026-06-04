@@ -9,9 +9,19 @@ from engine.models import Role
 
 @dataclass(frozen=True, slots=True)
 class GameConfig:
+    """Game rules and runtime configuration.
+
+    Centralises all tuneable parameters so they aren't scattered as
+    hardcoded literals across engine, voting, and runner code.
+    """
+
     name: str
     role_counts: Mapping[Role, int]
     enable_sheriff: bool = True
+    sheriff_vote_weight: float = 1.5
+    max_days: int = 20
+    runner_max_retries: int = 5
+    runner_retry_delay: float = 1.0
     night_order: tuple[Role, ...] = (
         Role.GUARD,
         Role.WEREWOLF,

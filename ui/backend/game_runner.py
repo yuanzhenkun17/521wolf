@@ -2,21 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent.common.json import to_jsonable
+from ui.backend.runner_utils import RunnerStatus
 from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
 from agent.infrastructure.archive import AgentTraceRecorder
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from agent.api.factory import create_agents, load_llm_client
-from agent.learning.review import generate_enhanced_review
+from agent.learning_v2.review import generate_enhanced_review
+from storage.replay import read_decisions_for_artifact, read_events_for_artifact
+from storage.runtime import GamePersistence
 from engine.config import GameConfig, STANDARD_12
 from engine.engine import GameEngine
 from engine.logging import next_game_log_name
-from engine.models import Role
+from engine.models import ActionResponse, ActionType, Observation, Role
+from engine.players import HumanPlayer
 from engine.roles import random_standard_roles
+
+_log = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _GameManagerPaths:
+    games_dir: Path
+    data_dir: Path
+    runs_dir: Path
 
 
 @dataclass(slots=True)
@@ -28,6 +43,7 @@ class RunningGame:
     enable_sheriff: bool = True
     skill_dir: str | None = None
     role_skill_dirs: dict[str, Path] | None = None
+    human_player_id: int | None = None
     player_count: int = 12
     status: str = "starting"
     winner: str | None = None
@@ -41,12 +57,32 @@ class RunningGame:
 
     @property
     def is_active(self) -> bool:
-        return self.status in {"starting", "running"}
+        return self.status in {"starting", RunnerStatus.RUNNING}
 
 
 class GameManager:
-    def __init__(self, paths: PathConfig = DEFAULT_PATHS) -> None:
-        self._paths = paths
+    def __init__(
+        self,
+        paths: PathConfig = DEFAULT_PATHS,
+        *,
+        log_dir: str | Path | None = None,
+        db_path: str | Path | None = None,
+    ) -> None:
+        self._paths = (
+            _GameManagerPaths(
+                games_dir=Path(log_dir),
+                data_dir=paths.data_dir,
+                runs_dir=Path(log_dir).parent,
+            )
+            if log_dir is not None
+            else paths
+        )
+        self._db_path = (
+            Path(db_path)
+            if db_path is not None
+            else (paths.data_dir / "wolf.db" if log_dir is None else None)
+        )
+        self._paths.games_dir.mkdir(parents=True, exist_ok=True)
         self._games: dict[str, RunningGame] = {}
         self._lock = asyncio.Lock()
 
@@ -58,11 +94,14 @@ class GameManager:
         skill_dir: str | None = None,
         player_count: int = 12,
         role_skill_dirs: dict[str, Path] | None = None,
+        human_player_id: int | None = None,
     ) -> RunningGame:
         async with self._lock:
             active = next((game for game in self._games.values() if game.is_active), None)
             if active is not None:
                 raise RuntimeError(f"{active.game_id} is still running")
+            if human_player_id is not None and not 1 <= human_player_id <= player_count:
+                raise ValueError("human_player_id must be between 1 and player_count")
 
             log_name = next_game_log_name(self._paths.games_dir)
             game = RunningGame(
@@ -73,6 +112,7 @@ class GameManager:
                 enable_sheriff=enable_sheriff,
                 skill_dir=skill_dir,
                 role_skill_dirs=role_skill_dirs,
+                human_player_id=human_player_id,
                 player_count=player_count,
             )
             self._games[game.game_id] = game
@@ -94,10 +134,9 @@ class GameManager:
                 continue
             if game_id in seen:
                 continue
-            events_path = self._events_path(game_id)
-            if events_path is None:
+            events = self._read_game_events(game_id)
+            if events is None:
                 continue
-            events = self._read_events(events_path)
             games.append(self._snapshot_from_events(game_id, events, include_events=False))
         return sorted(games, key=lambda game: _game_sort_key(str(game["game_id"])), reverse=True)
 
@@ -115,6 +154,8 @@ class GameManager:
                     "team": player.team.value,
                     "alive": player.alive,
                     "is_sheriff": state.sheriff_id == player.id,
+                    "is_human": game.human_player_id == player.id,
+                    "role_state": dict(player.role_state) if player.role_state else {},
                 }
                 for player in state.players.values()
             ]
@@ -124,6 +165,7 @@ class GameManager:
             "status": game.status,
             "winner": game.winner,
             "seed": game.seed,
+            "human_player_id": game.human_player_id,
             "day": state.day if state is not None else 0,
             "phase": state.phase.value if state is not None else "setup",
             "sheriff_id": state.sheriff_id if state is not None else None,
@@ -138,7 +180,10 @@ class GameManager:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         for event in game.events:
             queue.put_nowait({"kind": "log", "payload": event})
-        if game.status in {"completed", "failed"}:
+        pending_human_action = self._pending_human_action_for(game)
+        if pending_human_action is not None:
+            queue.put_nowait({"kind": "decision_needed", "payload": pending_human_action})
+        if game.status in RunnerStatus.terminal_statuses():
             queue.put_nowait({"kind": "done", "payload": self.snapshot(game, include_events=False)})
             return queue
         game.subscribers.add(queue)
@@ -148,23 +193,27 @@ class GameManager:
         game.subscribers.discard(queue)
 
     async def _run_game(self, game: RunningGame) -> None:
-        game.status = "running"
+        game.status = RunnerStatus.RUNNING
         cursor = 0
+        persistence: GamePersistence | None = None
         try:
             roles = random_standard_roles(seed=game.seed)
-            # Open SQLite connection for this game
-            from agent.infrastructure.storage.schema import get_connection
-            from agent.common.paths import DEFAULT as DEFAULT_PATHS
-            db_path = DEFAULT_PATHS.data_dir / "wolf.db"
-            game_conn = get_connection(db_path)
+            game_dir = self._game_dir(game.log_name)
+            persistence = GamePersistence(
+                game_id=game.game_id,
+                game_dir=game_dir,
+                db_path=self._db_path,
+            )
 
-            game.decision_recorder = AgentDecisionRecorder(conn=game_conn, game_id=game.game_id)
+            game.decision_recorder = persistence.create_decision_recorder()
             game.trace_recorder = AgentTraceRecorder()
             client = load_llm_client()
             game_config = GameConfig(
                 name=STANDARD_12.name,
                 role_counts=STANDARD_12.role_counts,
                 enable_sheriff=game.enable_sheriff,
+                max_days=game.max_days,
+                sheriff_vote_weight=STANDARD_12.sheriff_vote_weight,
                 night_order=STANDARD_12.night_order,
             )
             game_dir = self._game_dir(game.log_name)
@@ -178,12 +227,12 @@ class GameManager:
                     game_id=game.game_id,
                     skill_dir=game.skill_dir,
                     role_skill_dirs=game.role_skill_dirs,
+                    human_player_id=game.human_player_id,
                 ),
                 config=game_config,
-                log_stream_path=str(game_dir / "game_events.jsonl"),
-                conn=game_conn, game_id=game.game_id,
+                logger=persistence.create_event_logger(game_dir / "game_events.jsonl"),
             )
-            task = asyncio.create_task(game.engine.run_until_finished(max_days=game.max_days))
+            task = asyncio.create_task(game.engine.run_until_finished())
             while not task.done():
                 cursor = await self._publish_new_entries(game, cursor)
                 await asyncio.sleep(0.1)
@@ -202,33 +251,34 @@ class GameManager:
                     public_events=game.events,
                 )
             # Write game + player records to SQLite
-            from agent.infrastructure.storage.game_store import GameStore
-            gs = GameStore(game_conn)
             player_roles_dict = {pid: r.value for pid, r in roles.items()}
             deaths = [
                 {"player_id": d.player_id, "cause": d.cause.value if hasattr(d.cause, "value") else str(d.cause), "day": d.day}
                 for d in game.engine.state.deaths
             ]
-            gs.insert_game(
-                game_id=game.game_id,
+            persistence.save_game_result(
                 seed=game.seed or 0,
+                player_roles=player_roles_dict,
                 config={},
                 winner=game.winner,
                 started_at="",
                 total_rounds=getattr(game.engine.state, "day", 0) or 0,
                 public_events=[e.to_dict() for e in game.engine.state.events],
                 final_state={"player_roles": player_roles_dict, "winner": game.winner},
+                deaths=deaths,
             )
-            gs.insert_players(game.game_id, player_roles_dict, deaths=deaths)
-            game_conn.close()
-            game.status = "completed"
+            self._cache_completed_review(game.game_id)
+            game.status = RunnerStatus.COMPLETED
             done_snapshot = self.snapshot(game, include_events=False)
             done_snapshot["decisions"] = self._decision_dicts(game)
             await self._broadcast(game, {"kind": "done", "payload": done_snapshot})
         except Exception as exc:
             game.error = str(exc)
-            game.status = "failed"
+            game.status = RunnerStatus.FAILED
             await self._broadcast(game, {"kind": "error", "payload": {"message": str(exc)}})
+        finally:
+            if persistence is not None:
+                persistence.close()
 
     async def _publish_new_entries(self, game: RunningGame, cursor: int) -> int:
         if game.engine is None:
@@ -238,6 +288,9 @@ class GameManager:
             payload = entry.to_dict()
             game.events.append(payload)
             await self._broadcast(game, {"kind": "log", "payload": payload})
+            decision_needed = self._decision_needed_payload(game, payload)
+            if decision_needed is not None:
+                await self._broadcast(game, {"kind": "decision_needed", "payload": decision_needed})
         return len(entries)
 
     async def _broadcast(self, game: RunningGame, item: dict[str, Any]) -> None:
@@ -245,11 +298,10 @@ class GameManager:
             queue.put_nowait(item)
 
     def _load_completed_game(self, game_id: str) -> RunningGame | None:
-        path = self._events_path(game_id)
-        if path is None:
+        events = self._read_game_events(game_id)
+        if events is None:
             return None
-        events = self._read_events(path)
-        game = RunningGame(game_id=game_id, log_name=game_id, seed=None, status="completed")
+        game = RunningGame(game_id=game_id, log_name=game_id, seed=None, status=RunnerStatus.COMPLETED)
         game.events = events
         game.winner = self._winner_from_events(events)
         self._games[game_id] = game
@@ -260,6 +312,19 @@ class GameManager:
             return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         except OSError:
             return []
+
+    def _read_game_events(self, game_id: str) -> list[dict[str, Any]] | None:
+        game_dir = self._game_dir(game_id)
+        if self._db_path is not None:
+            events = read_events_for_artifact(
+                self._db_path,
+                game_dir,
+                root=self._paths.runs_dir,
+            )
+            if events is not None:
+                return events
+        events_path = self._events_path(game_id)
+        return self._read_events(events_path) if events_path is not None else None
 
     def _snapshot_from_events(
         self,
@@ -272,9 +337,10 @@ class GameManager:
         return {
             "game_id": game_id,
             "log_name": game_id,
-            "status": "completed",
+            "status": RunnerStatus.COMPLETED,
             "winner": self._winner_from_events(events),
             "seed": None,
+            "human_player_id": None,
             "day": last_event.get("day", 0),
             "phase": last_event.get("phase", "finished"),
             "sheriff_id": sheriff_id,
@@ -294,17 +360,136 @@ class GameManager:
         return self._read_decisions(game.log_name)
 
     def _read_decisions(self, game_id: str) -> list[dict[str, Any]]:
+        if self._db_path is not None:
+            decisions = read_decisions_for_artifact(
+                self._db_path,
+                self._game_dir(game_id),
+                root=self._paths.runs_dir,
+            )
+            if decisions is not None:
+                return decisions
         archive_path = self._archive_path(game_id)
-        if archive_path is None:
-            return []
+        if archive_path is not None:
+            try:
+                archive = json.loads(archive_path.read_text(encoding="utf-8"))
+                return [
+                    {**d, "index": idx}
+                    for idx, d in enumerate(archive.get("decisions", []), start=1)
+                ]
+            except (OSError, json.JSONDecodeError):
+                pass
+        decisions_path = self._game_dir(game_id) / "agent_decisions.jsonl"
         try:
-            archive = json.loads(archive_path.read_text(encoding="utf-8"))
             return [
-                {**d, "index": idx}
-                for idx, d in enumerate(archive.get("decisions", []), start=1)
+                {**json.loads(line), "index": idx}
+                for idx, line in enumerate(decisions_path.read_text(encoding="utf-8").splitlines(), start=1)
+                if line.strip()
             ]
         except (OSError, json.JSONDecodeError):
             return []
+
+    def pending_human_action(self, game_id: str) -> dict[str, Any] | None:
+        game = self.get_game(game_id)
+        if game is None:
+            return None
+        return self._pending_human_action_for(game)
+
+    def _pending_human_action_for(self, game: RunningGame) -> dict[str, Any] | None:
+        human = self._human_agent_for(game)
+        if human is None or not human.is_waiting:
+            return None
+        request = human.current_request
+        if request is None:
+            return None
+        observation = request.observation
+        return {
+            "player_id": request.player_id,
+            "action_type": request.action_type.value,
+            "phase": request.phase.value,
+            "day": observation.day,
+            "role": observation.self_role.value,
+            "alive_players": list(observation.alive_players),
+            "candidates": list(request.candidates),
+            "metadata": to_jsonable(request.metadata),
+            "retry_count": request.retry_count,
+            "observation": self._human_observation_payload(observation),
+        }
+
+    def _decision_needed_payload(
+        self,
+        game: RunningGame,
+        event: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if game.human_player_id is None or event.get("event_type") != "action_request":
+            return None
+        try:
+            actor = int(event.get("actor"))
+        except (TypeError, ValueError):
+            return None
+        if actor != game.human_player_id:
+            return None
+        return self._pending_human_action_for(game)
+
+    def submit_human_action(
+        self,
+        game_id: str,
+        *,
+        action_type: str,
+        target: int | None = None,
+        choice: str | None = None,
+        text: str = "",
+    ) -> bool:
+        game = self.get_game(game_id)
+        if game is None:
+            return False
+        human = self._human_agent_for(game)
+        if human is None or not human.is_waiting or human.current_request is None:
+            return False
+        try:
+            parsed_action_type = ActionType(action_type)
+        except ValueError as exc:
+            raise ValueError(f"unsupported action_type: {action_type}") from exc
+        if parsed_action_type is not human.current_request.action_type:
+            raise ValueError("action_type does not match pending request")
+        return human.submit(
+            ActionResponse(
+                parsed_action_type,
+                target=target,
+                choice=choice,
+                text=text or "",
+            )
+        )
+
+    def _human_agent_for(self, game: RunningGame) -> HumanPlayer | None:
+        if game.human_player_id is None or game.engine is None:
+            return None
+        agent = game.engine.agents.get(game.human_player_id)
+        return agent if isinstance(agent, HumanPlayer) else None
+
+    def _human_observation_payload(self, observation: Observation) -> dict[str, Any]:
+        return {
+            "player_id": observation.player_id,
+            "role": observation.self_role.value,
+            "self_role": observation.self_role.value,
+            "phase": observation.phase.value,
+            "day": observation.day,
+            "alive_players": list(observation.alive_players),
+            "dead_players": list(observation.dead_players),
+            "sheriff_id": observation.sheriff_id,
+            "public_log": list(observation.public_log),
+            "known_roles": {
+                str(player_id): role.value
+                for player_id, role in observation.known_roles.items()
+            },
+            "seer_checks": {
+                str(player_id): {
+                    str(target_id): team.value
+                    for target_id, team in checks.items()
+                }
+                for player_id, checks in observation.seer_checks.items()
+            },
+            "metadata": to_jsonable(observation.metadata),
+        }
 
     def _winner_from_events(self, events: list[dict[str, Any]]) -> str | None:
         for event in reversed(events):
@@ -330,16 +515,19 @@ class GameManager:
                 "team": _team_for_role(role),
                 "alive": player_id not in dead,
                 "is_sheriff": sheriff_id == player_id,
+                "is_human": False,
+                "role_state": {},
             }
             for player_id, role in sorted(roles.items())
         ]
 
     def build_review(self, game_id: str) -> dict[str, Any] | None:
         """Build enhanced review report for a completed game."""
-        events_path = self._events_path(game_id)
-        if events_path is None:
-            return None
-        events = self._read_events(events_path)
+        cached = self._read_review_cache(game_id)
+        if cached is not None:
+            return cached
+
+        events = self._read_game_events(game_id)
         if not events:
             return None
 
@@ -358,18 +546,12 @@ class GameManager:
         if not roles:
             return None
 
-        # Read agent decisions from archive, grouped by player_id
-        archive_path = self._archive_path(game_id)
+        # Read agent decisions from SQLite first, then archive/jsonl fallback.
         agent_decisions: dict[int, list[dict]] = {}
-        if archive_path is not None:
-            try:
-                archive = json.loads(archive_path.read_text(encoding="utf-8"))
-                for d in archive.get("decisions", []):
-                    pid = d.get("player_id")
-                    if pid is not None:
-                        agent_decisions.setdefault(int(pid), []).append(d)
-            except (OSError, json.JSONDecodeError):
-                pass
+        for decision in self._read_decisions(game_id):
+            pid = decision.get("player_id")
+            if pid is not None:
+                agent_decisions.setdefault(int(pid), []).append(decision)
 
         winner = self._winner_from_events(events)
 
@@ -381,9 +563,40 @@ class GameManager:
                 winner_team=winner,
                 game_id=game_id,
             )
-            return report.to_dict()
+            data = report.to_dict()
+            self._write_review_cache(game_id, data)
+            return data
         except Exception:
+            _log.warning("Review generation failed for %s", game_id, exc_info=True)
             return None
+
+    def _cache_completed_review(self, game_id: str) -> None:
+        try:
+            self.build_review(game_id)
+        except Exception:
+            _log.warning("Failed to cache review for %s", game_id, exc_info=True)
+
+    def _read_review_cache(self, game_id: str) -> dict[str, Any] | None:
+        path = self._review_path(game_id)
+        if path is None:
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _write_review_cache(self, game_id: str, data: dict[str, Any]) -> None:
+        path = self._game_dir(game_id) / "review.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _review_path(self, game_id: str) -> Path | None:
+        path = self._game_dir(game_id) / "review.json"
+        return path if path.exists() else None
 
     def read_archive(self, game_id: str) -> dict[str, Any] | None:
         """Read archive.json for a completed game, if it exists."""

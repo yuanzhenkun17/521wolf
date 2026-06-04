@@ -27,8 +27,8 @@ from agent.infrastructure.archive import (
     GameArchive,
 )
 from agent.core.context import AgentContext
-from agent.learning.review import generate_enhanced_review
-from agent.learning.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
+from agent.learning_v2.review import generate_enhanced_review
+from agent.learning_v2.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 from agent.common import beijing_now_iso, beijing_now_str
 from ui.backend.sse_mixin import SSEMixin
-from agent.learning.evolution.batch import (
+from ui.backend.runner_utils import RunnerStatus, sse_events_stream
+from agent.learning_v2.evolution.batch import (
     BatchEvolutionResult,
     promote_batch_result,
     run_batch_evolution,
 )
-from agent.learning.evolution.store import VersionStore
+from agent.learning_v2.evolution.store import VersionStore
 
 _log = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ _log = logging.getLogger(__name__)
 class RoleBatchEvolutionRun:
     batch_id: str
     roles: list[str]
-    status: str = "queued"
-    stage: str = "queued"
+    status: str = RunnerStatus.QUEUED
+    stage: str = RunnerStatus.QUEUED
     started_at: str = ""
     training_games: int = 0
     battle_games: int = 0
@@ -124,7 +124,7 @@ class RoleBatchEvolutionRunner(SSEMixin):
             game_concurrency=game_concurrency,
             llm_concurrency=llm_concurrency,
             llm_rpm=llm_rpm,
-            role_statuses={role: "queued" for role in roles},
+            role_statuses={role: RunnerStatus.QUEUED for role in roles},
         )
         self._active_batches[batch_id] = tracked
         tracked.task = asyncio.create_task(
@@ -182,9 +182,9 @@ class RoleBatchEvolutionRunner(SSEMixin):
             return None
         if tracked.task and not tracked.task.done():
             tracked.task.cancel()
-        tracked.status = "paused"
-        tracked.stage = "paused"
-        self._broadcast(batch_id, "paused", tracked.snapshot())
+        tracked.status = RunnerStatus.PAUSED
+        tracked.stage = RunnerStatus.PAUSED
+        self._broadcast(batch_id, RunnerStatus.PAUSED, tracked.snapshot())
         return tracked
 
     def terminate_batch(self, batch_id: str) -> RoleBatchEvolutionRun | None:
@@ -194,24 +194,18 @@ class RoleBatchEvolutionRunner(SSEMixin):
             return None
         if tracked.task and not tracked.task.done():
             tracked.task.cancel()
-        tracked.status = "failed"
-        tracked.stage = "failed"
+        tracked.status = RunnerStatus.FAILED
+        tracked.stage = RunnerStatus.FAILED
         tracked.error = "用户终止"
-        self._broadcast(batch_id, "failed", tracked.snapshot())
+        self._broadcast(batch_id, RunnerStatus.FAILED, tracked.snapshot())
         return tracked
 
 
     async def sse_events(self, batch_id: str) -> AsyncGenerator[str, None]:
-        queue = self.subscribe(batch_id)
-        try:
-            while True:
-                item = await queue.get()
-                data = json.dumps(item.get("data", {}), ensure_ascii=False)
-                yield f"data: {data}\n\n"
-                if item.get("event") in ("reviewing", "promoted", "rejected", "failed"):
-                    break
-        finally:
-            self.unsubscribe(batch_id, queue)
+        return sse_events_stream(
+            self.subscribe, self.unsubscribe, batch_id,
+            terminal_kinds={"reviewing", "promoted", "rejected", "failed"},
+        )
 
 
     async def _execute(
@@ -266,10 +260,10 @@ class RoleBatchEvolutionRunner(SSEMixin):
             self._broadcast(tracked.batch_id, "reviewing", tracked.snapshot())
         except Exception as exc:
             _log.exception("Batch evolution %s failed", tracked.batch_id)
-            tracked.status = "failed"
-            tracked.stage = "failed"
+            tracked.status = RunnerStatus.FAILED
+            tracked.stage = RunnerStatus.FAILED
             tracked.error = str(exc)
-            self._broadcast(tracked.batch_id, "failed", tracked.snapshot())
+            self._broadcast(tracked.batch_id, RunnerStatus.FAILED, tracked.snapshot())
 
 
 def _status_from_stage(stage: str) -> str:

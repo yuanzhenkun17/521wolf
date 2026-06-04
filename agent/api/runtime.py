@@ -112,7 +112,7 @@ class AgentRuntime:
                     if ctx.response is not None:
                         self.memory.remember_action(request, ctx.response, ctx.decision_record)
                 except Exception:
-                    _log.warning("remember_action failed in finally", exc_info=True)
+                    _log.error("remember_action failed in finally", exc_info=True)
 
         if ctx.response is None:
             raise RuntimeError("Pipeline produced no response")

@@ -26,7 +26,12 @@ class SSEMixin:
         except ValueError:
             pass
 
-    def _broadcast(self, entity_id: str, event: str, data: dict[str, Any]) -> None:
-        """Push an event to all SSE queues for an entity."""
+    def _broadcast(self, entity_id: str, kind: str, payload: dict[str, Any]) -> None:
+        """Push an event to all SSE queues for an entity.
+
+        Uses the same ``{"kind": ..., "payload": ...}`` format as
+        ``GameManager._broadcast`` so that all SSE consumers share a
+        single queue-item schema.
+        """
         for queue in self._sse_queues.get(entity_id, []):
-            queue.put_nowait({"event": event, "data": data})
+            queue.put_nowait({"kind": kind, "payload": payload})

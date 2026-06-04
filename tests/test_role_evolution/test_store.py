@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.learning.evolution.store import (
+from agent.learning_v2.evolution.store import (
     VersionStore,
     compute_hash,
     normalize_skill_path,
@@ -106,8 +106,8 @@ async def test_save_version_idempotent(store, sample_skills):
 @pytest.mark.asyncio
 async def test_save_version_collision(store):
     """Same hash different content raises HashCollisionError."""
-    from agent.learning.evolution.store import _write_json
-    from agent.learning.evolution.models import RoleVersion
+    from agent.learning_v2.evolution.store import _write_json
+    from agent.learning_v2.evolution.models import RoleVersion
     from agent.common import beijing_now_iso
 
     skills_a = {"seer/claim.md": "# Seer\nContent A\n"}

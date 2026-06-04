@@ -7,7 +7,6 @@ role-level evolution pipeline (``agent.learning.evolution.pipeline``).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,21 +14,21 @@ from typing import Any, AsyncGenerator
 
 from agent.common import beijing_now_iso, beijing_now_str
 from ui.backend.sse_mixin import SSEMixin
-from agent.common.errors import is_rate_limit_error as _is_rate_limit_error
+from ui.backend.runner_utils import RunnerStatus, sse_events_stream, is_rate_limit_error
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
-from agent.learning.evolution.config import build_baseline_config
-from agent.learning.evolution.models import (
+from agent.learning_v2.evolution.config import build_baseline_config
+from agent.learning_v2.evolution.models import (
     EvolutionRun,
 )
-from agent.learning.evolution.pipeline import (
+from agent.learning_v2.evolution.pipeline import (
     InvalidRunStateError,
     recover_interrupted_runs,
     reject as pipeline_reject,
     promote as pipeline_promote,
     run_evolution,
 )
-from agent.learning.evolution.state import load_run_state
-from agent.learning.evolution.store import VersionStore
+from agent.learning_v2.evolution.state import load_run_state
+from agent.learning_v2.evolution.store import VersionStore
 from agent.infrastructure.llm import AsyncRateLimiter
 
 _log = logging.getLogger(__name__)
@@ -46,8 +45,8 @@ class RoleEvolutionRun:
 
     run_id: str
     role: str
-    status: str = "queued"
-    stage: str = "queued"
+    status: str = RunnerStatus.QUEUED
+    stage: str = RunnerStatus.QUEUED
     run: EvolutionRun | None = None
     error: str | None = None
     started_at: str = ""
@@ -130,7 +129,7 @@ class RoleEvolutionRunner(SSEMixin):
 
     def restore_runs(self) -> None:
         """Load non-terminal runs from disk into memory."""
-        from agent.learning.evolution.pipeline import scan_active_runs
+        from agent.learning_v2.evolution.pipeline import scan_active_runs
         for state in scan_active_runs():
             run_id = state.get("run_id")
             if not run_id or run_id in self._active_runs:
@@ -222,9 +221,9 @@ class RoleEvolutionRunner(SSEMixin):
             return None
         if run.task and not run.task.done():
             run.task.cancel()
-        run.status = "paused"
-        run.stage = "paused"
-        self._broadcast(run_id, "paused", run.snapshot())
+        run.status = RunnerStatus.PAUSED
+        run.stage = RunnerStatus.PAUSED
+        self._broadcast(run_id, RunnerStatus.PAUSED, run.snapshot())
         return run
 
     def terminate_run(self, run_id: str) -> RoleEvolutionRun | None:
@@ -234,10 +233,10 @@ class RoleEvolutionRunner(SSEMixin):
             return None
         if run.task and not run.task.done():
             run.task.cancel()
-        run.status = "failed"
-        run.stage = "failed"
+        run.status = RunnerStatus.FAILED
+        run.stage = RunnerStatus.FAILED
         run.error = "用户终止"
-        self._broadcast(run_id, "failed", run.snapshot())
+        self._broadcast(run_id, RunnerStatus.FAILED, run.snapshot())
         # Delete evolution run directory
         import shutil
         evo_dir = DEFAULT_PATHS.evolution_dir / run_id
@@ -258,8 +257,8 @@ class RoleEvolutionRunner(SSEMixin):
         if tracked.status not in ("paused", "failed"):
             raise InvalidRunStateError(f"Run {run_id} is not paused or failed (status={tracked.status})")
 
-        tracked.status = "running"
-        tracked.stage = "running"
+        tracked.status = RunnerStatus.RUNNING
+        tracked.stage = RunnerStatus.RUNNING
         tracked.error = None
         self._broadcast(run_id, "resuming", tracked.snapshot())
 
@@ -327,10 +326,10 @@ class RoleEvolutionRunner(SSEMixin):
             self._broadcast(tracked.run_id, result.status, tracked.snapshot())
         except Exception as exc:
             _log.exception("Rerun consolidation failed for %s", tracked.run_id)
-            tracked.status = "failed"
-            tracked.stage = "failed"
+            tracked.status = RunnerStatus.FAILED
+            tracked.stage = RunnerStatus.FAILED
             tracked.error = str(exc)
-            self._broadcast(tracked.run_id, "failed", tracked.snapshot())
+            self._broadcast(tracked.run_id, RunnerStatus.FAILED, tracked.snapshot())
 
     async def _resume_execute(
         self,
@@ -386,19 +385,19 @@ class RoleEvolutionRunner(SSEMixin):
                 self._broadcast(tracked.run_id, result.status, tracked.snapshot())
                 return
             except Exception as exc:
-                if _is_rate_limit_error(exc) and attempt < max_retries - 1:
+                if is_rate_limit_error(exc) and attempt < max_retries - 1:
                     wait = 30 * (attempt + 1)
                     _log.warning("Rate limited on resumed run %s, retrying in %ds (attempt %d/%d)", tracked.run_id, wait, attempt + 1, max_retries)
-                    tracked.status = "rate_limited"
-                    tracked.stage = "rate_limited"
-                    self._broadcast(tracked.run_id, "rate_limited", tracked.snapshot())
+                    tracked.status = RunnerStatus.RATE_LIMITED
+                    tracked.stage = RunnerStatus.RATE_LIMITED
+                    self._broadcast(tracked.run_id, RunnerStatus.RATE_LIMITED, tracked.snapshot())
                     await asyncio.sleep(wait)
                     continue
                 _log.exception("Resumed evolution run %s failed", tracked.run_id)
-                tracked.status = "failed"
-                tracked.stage = "failed"
+                tracked.status = RunnerStatus.FAILED
+                tracked.stage = RunnerStatus.FAILED
                 tracked.error = str(exc)
-                self._broadcast(tracked.run_id, "failed", tracked.snapshot())
+                self._broadcast(tracked.run_id, RunnerStatus.FAILED, tracked.snapshot())
                 return
 
     # ------------------------------------------------------------------
@@ -415,7 +414,7 @@ class RoleEvolutionRunner(SSEMixin):
             state = load_run_state(DEFAULT_PATHS, run_id)
             if state is None:
                 raise InvalidRunStateError(f"Run {run_id} has no pipeline data")
-            from agent.learning.evolution.models import EvolutionRun, SkillVersionConfig
+            from agent.learning_v2.evolution.models import EvolutionRun, SkillVersionConfig
             baseline_data = state.get("baseline_config")
             baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(self.store)
             tracked.run = EvolutionRun(
@@ -457,18 +456,18 @@ class RoleEvolutionRunner(SSEMixin):
 
 
     async def sse_events(self, run_id: str) -> AsyncGenerator[str, None]:
-        """Yield SSE-formatted events for a run."""
-        queue = self.subscribe(run_id)
-        try:
-            while True:
-                item = await queue.get()
-                event_name = item.get("event", "message")
-                data = json.dumps(item.get("data", {}), ensure_ascii=False)
-                yield f"data: {data}\n\n"
-                if event_name in ("promoted", "rejected", "failed", "done"):
-                    break
-        finally:
-            self.unsubscribe(run_id, queue)
+        """Yield SSE-formatted events for a run.
+
+        Uses ``event: {kind}\\ndata: {payload}\\n\\n`` so that
+        frontend listeners can use ``addEventListener(kind, ...)``
+        instead of ``onmessage``.  Intermediate updates use
+        ``event: progress``; terminal events use their concrete
+        kind name so the frontend can detect stream end.
+        """
+        return sse_events_stream(
+            self.subscribe, self.unsubscribe, run_id,
+            terminal_kinds={"promoted", "rejected", "failed"},
+        )
 
 
     # ------------------------------------------------------------------
@@ -553,17 +552,17 @@ class RoleEvolutionRunner(SSEMixin):
                 self._broadcast(tracked.run_id, result.status, tracked.snapshot())
                 return
             except Exception as exc:
-                if _is_rate_limit_error(exc) and attempt < max_retries - 1:
+                if is_rate_limit_error(exc) and attempt < max_retries - 1:
                     wait = 30 * (attempt + 1)
                     _log.warning("Rate limited on run %s, retrying in %ds (attempt %d/%d)", tracked.run_id, wait, attempt + 1, max_retries)
-                    tracked.status = "rate_limited"
-                    tracked.stage = "rate_limited"
-                    self._broadcast(tracked.run_id, "rate_limited", tracked.snapshot())
+                    tracked.status = RunnerStatus.RATE_LIMITED
+                    tracked.stage = RunnerStatus.RATE_LIMITED
+                    self._broadcast(tracked.run_id, RunnerStatus.RATE_LIMITED, tracked.snapshot())
                     await asyncio.sleep(wait)
                     continue
                 _log.exception("Role evolution run %s failed", tracked.run_id)
-                tracked.status = "failed"
-                tracked.stage = "failed"
+                tracked.status = RunnerStatus.FAILED
+                tracked.stage = RunnerStatus.FAILED
                 tracked.error = str(exc)
-                self._broadcast(tracked.run_id, "failed", tracked.snapshot())
+                self._broadcast(tracked.run_id, RunnerStatus.FAILED, tracked.snapshot())
                 return
