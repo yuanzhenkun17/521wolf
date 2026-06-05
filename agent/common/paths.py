@@ -47,8 +47,23 @@ class PathConfig:
 
     @property
     def versions_dir(self) -> Path:
-        """Immutable skill-version snapshots (was ``role_versions/``)."""
+        """Filesystem version store for role skill snapshots."""
         return self.data_dir / "versions"
+
+    @property
+    def battle_db_path(self) -> Path:
+        """SQLite database for battle results."""
+        return self.data_dir / "battle.db"
+
+    @property
+    def evolution_db_path(self) -> Path:
+        """SQLite database for evolution pipeline state."""
+        return self.data_dir / "evolution.db"
+
+    @property
+    def registry_dir(self) -> Path:
+        """Version registry for role snapshots."""
+        return self.data_dir / "registry"
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

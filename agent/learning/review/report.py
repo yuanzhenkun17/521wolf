@@ -18,7 +18,7 @@ from agent.common.action_types import (
     SPEECH_ACTION_TYPES,
     VOTE_ACTION_TYPES,
 )
-from agent.learning_v2.review.scoring import (
+from agent.learning.review.scoring import (
     AgentScores,
     GameReview,
     analyze_game,

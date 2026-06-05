@@ -7,15 +7,15 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from agent.learning_v2.stats import new_role_accum, finalize_role_metrics
-from agent.learning_v2.evolution.config import (
+from agent.learning.stats import new_role_accum, finalize_role_metrics
+from agent.learning.evolution.config import (
     build_baseline_config,
     build_composite_skill_dir,
     build_role_override_from_config,
 )
-from agent.learning_v2.evolution.models import EvolutionRun, EvolutionStatus, SkillVersionConfig
-from agent.learning_v2.evolution.state import run_dir, save_run_state
-from agent.learning_v2.evolution.store import VersionStore
+from agent.learning.evolution.models import EvolutionRun, EvolutionStatus, SkillVersionConfig
+from agent.learning.evolution.state import run_dir, save_run_state
+from agent.learning.evolution.registry import VersionRegistry
 from agent.infrastructure.llm import AsyncRateLimiter, ModelAdapter
 from agent.common import notify as _notify, write_json as _write_json
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
@@ -25,7 +25,7 @@ _log = logging.getLogger(__name__)
 
 async def _stage_battling(
     run: EvolutionRun,
-    store: VersionStore,
+    store: VersionRegistry,
     battle_games: int,
     model_adapter: ModelAdapter | None,
     game_concurrency: int,
@@ -69,7 +69,7 @@ async def _stage_battling(
 
 
 async def _run_battle(
-    store: VersionStore,
+    store: VersionRegistry,
     role: str,
     candidate_hash: str,
     battle_games: int,
@@ -113,7 +113,7 @@ async def _run_battle(
 
 async def run_config_battle(
     *,
-    store: VersionStore,
+    store: VersionRegistry,
     baseline_config: SkillVersionConfig,
     candidate_config: SkillVersionConfig,
     battle_games: int,
@@ -131,7 +131,7 @@ async def run_config_battle(
     """Run a fixed-seed battle between two full role-version configs."""
     import shutil
 
-    from agent.learning_v2.evolution.games import SelfPlayConfig
+    from agent.learning.evolution.games import SelfPlayConfig
 
     # Build composite skill directories for each side
     skill_dir_a = build_composite_skill_dir(store, baseline_config)
@@ -228,9 +228,24 @@ def _is_significant_improvement(
     """Check if candidate improvement over baseline is significant.
 
     Criteria (inspired by SkillOpt's strict validation gate):
-    1. Candidate role_weighted_score must be >= baseline + 0.05 (5% absolute)
-    2. Candidate target-side win rate must be >= baseline + 0.10 (10% absolute)
+    1. Both sides must have >= 70% valid (non-errored) games
+    2. Candidate role_weighted_score must be >= baseline + 0.05 (5% absolute)
+    3. Candidate target-side win rate must be >= baseline + 0.10 (10% absolute)
     """
+    baseline_agg = summary.get("baseline", {})
+    candidate_agg = summary.get("candidate", {})
+
+    # Reject if too many games errored on either side
+    for side_name, side_agg in [("baseline", baseline_agg), ("candidate", candidate_agg)]:
+        total = side_agg.get("games", 0)
+        errors = side_agg.get("errors", 0)
+        if total > 0 and errors / total > 0.3:
+            _log.warning(
+                "Significance check failed: %s has %d/%d errored games (>30%%)",
+                side_name, errors, total,
+            )
+            return False
+
     baseline_metrics = summary.get("baseline_metrics", {})
     candidate_metrics = summary.get("candidate_metrics", {})
 

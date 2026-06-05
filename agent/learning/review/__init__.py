@@ -6,10 +6,10 @@ The module exposes two review levels:
   turning points, key decision reviews, skill analysis, and counterfactuals.
 
 This package re-exports every public name so that
-``from agent.learning_v2.review import ...`` works unchanged.
+``from agent.learning.review import ...`` works unchanged.
 """
 
-from agent.learning_v2.review.scoring import (  # noqa: F401
+from agent.learning.review.scoring import (  # noqa: F401
     AgentScores,
     GameReview,
     analyze_game,
@@ -17,7 +17,7 @@ from agent.learning_v2.review.scoring import (  # noqa: F401
     did_survive,
     get_role_of,
 )
-from agent.learning_v2.review.report import (  # noqa: F401
+from agent.learning.review.report import (  # noqa: F401
     # Constants
     MISTAKE_ILLEGAL_ACTION,
     MISTAKE_POLICY_ADJUSTED,

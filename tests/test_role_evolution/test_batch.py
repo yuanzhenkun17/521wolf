@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent.learning_v2.evolution.games import SelfPlayGameResult
-from agent.learning_v2.evolution.batch import run_batch_evolution
-from agent.learning_v2.evolution.models import SkillConsolidation, SkillDiff, SkillProposal
-from agent.learning_v2.evolution.store import VersionStore
+from agent.learning.evolution.games import SelfPlayGameResult
+from agent.learning.evolution.batch import run_batch_evolution
+from agent.learning.evolution.models import SkillConsolidation, SkillDiff, SkillProposal
+from agent.learning.evolution.registry import VersionRegistry
 
 
 def _proposal(role: str) -> SkillProposal:
@@ -104,19 +104,19 @@ async def _fake_selfplay(config, **kwargs):
 class TestBatchEvolution(unittest.IsolatedAsyncioTestCase):
     async def test_batch_evolution_uses_one_snapshot_and_promotes_pack(self):
         with tempfile.TemporaryDirectory() as tmp:
-            store = VersionStore(Path(tmp) / "role_versions")
-            seer_base = await store.save_version(
+            store = VersionRegistry(Path(tmp) / "role_versions")
+            seer_base = await store.publish_skills(
                 "seer",
                 {"skill.md": "# seer base\n"},
-                parent_hash=None,
                 source="test",
             )
-            wolf_base = await store.save_version(
+            await store.set_baseline("seer", seer_base, expected_current=None)
+            wolf_base = await store.publish_skills(
                 "werewolf",
                 {"skill.md": "# werewolf base\n"},
-                parent_hash=None,
                 source="test",
             )
+            await store.set_baseline("werewolf", wolf_base, expected_current=None)
 
             result = await run_batch_evolution(
                 store=store,
@@ -140,8 +140,8 @@ class TestBatchEvolution(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(set(result.accepted_roles), {"seer", "werewolf"})
             self.assertTrue(result.combined_passed)
             self.assertEqual(set(result.promoted_roles), {"seer", "werewolf"})
-            self.assertNotEqual(store.get_history("seer").baseline, seer_base)
-            self.assertNotEqual(store.get_history("werewolf").baseline, wolf_base)
+            self.assertNotEqual(store.get_baseline("seer"), seer_base)
+            self.assertNotEqual(store.get_baseline("werewolf"), wolf_base)
             json.dumps(result.to_dict())
 
 

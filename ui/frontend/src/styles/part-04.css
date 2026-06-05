@@ -1,0 +1,237 @@
+
+.role-card-art.villager:hover {
+  transform: translate(-4%, -16%) rotate(0deg) scale(1.1);
+}
+
+.role-card-art.witch {
+  z-index: 10;
+  transform: translate(66%, 12%) rotate(24deg);
+}
+
+.role-card-art.witch:hover {
+  transform: translate(66%, -8%) rotate(0deg) scale(1.1);
+}
+
+.card-fan .role-card-art {
+  position: absolute;
+  left: 50%;
+  top: auto;
+  bottom: clamp(148px, 18vh, 220px);
+  display: block;
+  width: clamp(170px, 16.5vw, 238px);
+  aspect-ratio: 1;
+  margin: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  transform-origin: 50% 110%;
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), filter 0.28s ease;
+}
+
+.card-fan .role-card-art::before {
+  content: "";
+  position: absolute;
+  inset: 8.2% 8.2%;
+  z-index: 1;
+  border-radius: 4px;
+  background: #c49a58;
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.28);
+}
+
+.lobby-card-image,
+.lobby-card-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  pointer-events: none;
+}
+
+.lobby-card-image {
+  z-index: 2;
+  inset: 5.4%;
+  width: 89.2%;
+  height: 89.2%;
+  padding: 0;
+  border-radius: 4px;
+  object-fit: cover;
+  filter: saturate(0.96) contrast(1.04);
+}
+
+.lobby-card-frame {
+  z-index: 3;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 20px rgba(0, 0, 0, 0.64));
+}
+
+.card-fan .role-card-art:hover {
+  z-index: 60;
+  filter: brightness(1.08) drop-shadow(0 26px 28px rgba(0, 0, 0, 0.62));
+}
+
+.card-fan .role-card-art.werewolf {
+  z-index: 10;
+  transform: translate(-188%, 12%) rotate(-23deg);
+}
+
+.card-fan .role-card-art.werewolf:hover {
+  transform: translate(-188%, -8%) rotate(-8deg) scale(1.08);
+}
+
+.card-fan .role-card-art.villager {
+  z-index: 18;
+  transform: translate(-112%, 3%) rotate(-10deg);
+}
+
+.card-fan .role-card-art.villager:hover {
+  transform: translate(-112%, -15%) rotate(-4deg) scale(1.08);
+}
+
+.card-fan .role-card-art.judge {
+  z-index: 35;
+  width: clamp(188px, 18vw, 270px);
+  transform: translate(-50%, -15%) rotate(0deg);
+}
+
+.card-fan .role-card-art.judge:hover {
+  transform: translate(-50%, -21%) rotate(0deg) scale(1.04);
+}
+
+.card-fan .role-card-art.hunter {
+  z-index: 18;
+  transform: translate(12%, 3%) rotate(10deg);
+}
+
+.card-fan .role-card-art.hunter:hover {
+  transform: translate(12%, -15%) rotate(4deg) scale(1.08);
+}
+
+.card-fan .role-card-art.witch {
+  z-index: 10;
+  transform: translate(88%, 12%) rotate(23deg);
+}
+
+.card-fan .role-card-art.witch:hover {
+  transform: translate(88%, -8%) rotate(8deg) scale(1.08);
+}
+
+.lobby-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px;
+  width: min(760px, 100%);
+  justify-self: center;
+  justify-items: stretch;
+}
+
+
+.count-picker,
+.mode-card {
+  min-height: 64px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border: 2px solid #402d10;
+  border-radius: 4px 8px 3px 6px;
+  color: #e5e2e1;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.035), transparent 48%),
+    #20201f;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+
+.count-picker::before,
+.mode-card::before {
+  display: none;
+}
+
+.count-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.panel-icon,
+.mode-card i {
+  display: grid;
+  place-items: center;
+  color: var(--lobby-accent-dim);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 22px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.count-picker label {
+  margin: 0;
+  color: var(--lobby-accent);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.count-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  padding: 6px;
+  border: 1px solid rgba(90, 64, 60, 0.86);
+  border-radius: 3px;
+  background: #0e0e0e;
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.72);
+}
+
+.count-options button {
+  height: 32px;
+  border: 2px solid rgba(90, 64, 60, 0.86);
+  border-radius: 4px;
+  color: #e5e2e1;
+  background: #20201f;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.count-options button:hover {
+  color: var(--lobby-accent);
+  background: #353535;
+  transform: none;
+}
+
+.count-options button.selected {
+  color: #410000;
+  border-color: rgba(255, 180, 168, 0.92);
+  background: linear-gradient(180deg, #ffdad4, #ffb4a8);
+  box-shadow: 0 0 18px rgba(255, 180, 168, 0.2);
+}
+
+.count-picker small {
+  color: rgba(227, 190, 184, 0.74);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  text-align: left;
+}

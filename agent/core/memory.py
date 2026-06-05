@@ -68,6 +68,9 @@ def extract_suspected_player(content: str) -> int | None:
     return None
 
 
+_NEGATION_PATTERNS = re.compile(r"(?:不|没|并非|没说|没有|不跳|没跳)\s{0,2}$")
+
+
 def extract_claimed_role(content: str) -> str | None:
     role_words = {
         "预言家": "seer",
@@ -81,8 +84,13 @@ def extract_claimed_role(content: str) -> str | None:
     if not re.search(r"(我是|自称|跳|身份)", content):
         return None
     for word, role in role_words.items():
-        if word in content:
-            return role
+        idx = content.find(word)
+        if idx < 0:
+            continue
+        prefix = content[max(0, idx - 4) : idx]
+        if _NEGATION_PATTERNS.search(prefix):
+            continue
+        return role
     return None
 
 
@@ -285,6 +293,14 @@ _MAX_PINNED_FACTS = 80
 _MAX_SELF_COMMITMENTS = 24
 _HOT_PHASE_COUNT = 2
 
+_PINNED_FACT_PRIORITY: dict[str, int] = {
+    "sheriff": 5,
+    "death": 4,
+    "dead_player": 4,
+    "role_claim": 3,
+    "claimed_check": 3,
+}
+
 _PUBLIC_SPEECH_EVENTS = PUBLIC_SPEECH_EVENT_TYPES
 _VOTE_EVENTS = VOTE_EVENT_TYPES
 
@@ -326,7 +342,10 @@ class AgentMemory:
             },
             "errors": self.errors[-3:],
             "rolling_summary": list(self.rolling_summary[-_MAX_ROLLING_SUMMARIES:]),
-            "pinned_facts": list(self.pinned_facts[-_MAX_PINNED_FACTS:]),
+            "pinned_facts": [
+                {k: v for k, v in f.items() if k != "_stable_key"}
+                for f in self.pinned_facts
+            ],
             "recent_timeline": self._build_recent_timeline(),
             "player_models": field_notes.get("player_profiles", {}),
             "self_commitments": list(self.self_commitments[-_MAX_SELF_COMMITMENTS:]),
@@ -520,19 +539,37 @@ class AgentMemory:
         if key in self._pinned_fact_keys:
             return
         self._pinned_fact_keys.add(key)
-        fact = {
+        fact: dict[str, Any] = {
             "type": fact_type,
             "day": day,
             "phase": phase,
             "actor": actor,
             "target": target,
             "content": content,
+            "_stable_key": key,
         }
         if details:
             fact["details"] = dict(details)
         self.pinned_facts.append(fact)
         if len(self.pinned_facts) > _MAX_PINNED_FACTS:
-            self.pinned_facts = self.pinned_facts[-_MAX_PINNED_FACTS:]
+            self._evict_lowest_priority_fact()
+
+    def _evict_lowest_priority_fact(self) -> None:
+        """Remove the lowest-priority pinned fact. Ties broken by oldest first."""
+        worst_idx = 0
+        worst_priority = _PINNED_FACT_PRIORITY.get(self.pinned_facts[0]["type"], 0)
+        worst_day = self.pinned_facts[0]["day"]
+        for i, fact in enumerate(self.pinned_facts[1:], start=1):
+            p = _PINNED_FACT_PRIORITY.get(fact["type"], 0)
+            d = fact["day"]
+            if p < worst_priority or (p == worst_priority and d < worst_day):
+                worst_idx = i
+                worst_priority = p
+                worst_day = d
+        evicted = self.pinned_facts.pop(worst_idx)
+        evicted_key = evicted.get("_stable_key")
+        if evicted_key is not None:
+            self._pinned_fact_keys.discard(evicted_key)
 
     def _remember_self_commitment(self, request: ActionRequest, response: ActionResponse) -> None:
         commitment = {

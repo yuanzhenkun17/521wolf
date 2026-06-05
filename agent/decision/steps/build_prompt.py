@@ -31,6 +31,7 @@ def build_prompt_step(ctx: AgentContext) -> AgentContext:
         strategy_advice=ctx.strategy_advice,
         selected_skills=ctx.selected_skills,
         skill_context=ctx.skill_context,
+        memory_injection=ctx.memory_injection,
     )
     return ctx
 
@@ -47,6 +48,7 @@ def _build_minimal_messages(ctx: AgentContext) -> list[dict[str, str]]:
         strategy_advice=ctx.strategy_advice or {},
         selected_skills=[],
         skill_context="",
+        memory_injection=ctx.memory_injection,
     )
     return [
         {"role": "system", "content": system},

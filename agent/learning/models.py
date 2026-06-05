@@ -1,4 +1,4 @@
-"""Structured models for the learning_v2 evidence layer."""
+"""Structured models for the learning evidence layer."""
 
 from __future__ import annotations
 

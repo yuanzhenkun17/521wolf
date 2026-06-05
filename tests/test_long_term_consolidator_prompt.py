@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from agent.learning_v2.evolution.consolidation import (
+from agent.learning.evolution.consolidation import (
     _build_role_messages,
     _load_role_skills_for_str,
     consolidate_for_role,

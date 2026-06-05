@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.learning_v2.models import (
+from agent.learning.models import (
     AgentReasoning,
     DecisionEvidenceInput,
     DecisionResult,

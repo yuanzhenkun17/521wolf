@@ -20,10 +20,29 @@ The core package intentionally does not depend on LangChain. A LangChain player 
 
 ## Project Layout
 
-- `engine/`: rules engine. It owns phases, role rules, voting, death chains, victory checks, logs, and the `ActionRequest` / `ActionResponse` contract.
-- `agent/`: main Agent implementation. It owns the runtime pipeline, memory, belief, Markdown skills, ToT/GoT reasoning, LLM calls, parsing, policy repair, archive logs, review, self-play, evaluation, and skill evolution.
-- `ui/`: observer UI. It starts or reads games through the backend, consumes logs/snapshots, and renders the game experience.
-- `docs/`: design notes, ideas, review records, and architecture documents.
+- `engine/`: rules engine. It owns phases, role rules, role state, voting, death chains, victory checks, logs, snapshots, and the `ActionRequest` / `ActionResponse` contract.
+- `agent/`: main Agent implementation. It owns the runtime pipeline, short-term memory, Markdown skill routing, LLM calls, parsing, policy repair, archive logs, review, self-play, evaluation, and role skill evolution.
+- `storage/`: SQLite persistence and replay helpers for games, events, decisions, experience candidates, evolution runs, patterns, and leaderboards.
+- `ui/`: FastAPI backend plus Vite/React frontend. It starts games, streams SSE events, handles human actions, reads persisted artifacts, and manages role evolution.
+- `scripts/`: maintenance scripts, including `seed_skills.py` for rebuilding the local skill registry under `data/registry/`.
+- `docs/`: design notes, current feature inventory, implementation plan, and architecture documents.
+
+Current top-level structure:
+
+```text
+521wolf/
+├── agent/              # Agent runtime, memory, prompts, skills, LLM infra, learning_v2
+├── engine/             # Rule engine, phases, role rules, role_state, logging
+├── storage/            # SQLite schema, stores, replay, importer, rebuild helpers
+├── ui/
+│   ├── backend/        # FastAPI app and runners
+│   └── frontend/       # Vite + React UI
+├── tests/              # Unit, integration, backend, storage, and structure tests
+├── docs/               # Current docs and design specs
+├── scripts/            # Utility scripts
+├── data/               # Local runtime data, gitignored except examples
+└── runs/               # Local selfplay/evolution/game artifacts, gitignored
+```
 
 ## Agent Boundary
 
@@ -40,6 +59,14 @@ LLM prompting, model calls, structured memory, belief, skill routing, output par
 
 ```bash
 uv run python -m unittest discover -s tests -v
+```
+
+## Seed Local Skills
+
+Versioned Markdown skills live under local gitignored `data/registry/`. On a fresh checkout, rebuild the seed baselines before running UI games or role evolution:
+
+```bash
+uv run python scripts/seed_skills.py
 ```
 
 ## Run With LLM Agents
@@ -71,10 +98,10 @@ export WEREWOLF_LLM_MODEL="ali/qwen3.5-flash"
 ```
 
 The UI backend uses `agent.api.factory.load_llm_client()` and `agent.api.factory.create_agents()` to create one Agent per player. Each player receives a seat/role prompt plus the current `ActionRequest`, then returns an `ActionResponse`.
-Game logs are written to numbered files such as:
+Game logs are written under the configured runtime paths, typically:
 
 ```text
-logs/game1/events.jsonl
-logs/game1/agent_decisions.jsonl
-logs/game1/archive.json
+runs/games/game1/game_events.jsonl
+runs/games/game1/archive.json
+data/wolf.db
 ```

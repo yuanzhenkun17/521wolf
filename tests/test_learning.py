@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.learning_v2.pipeline import run_evidence_pipeline
+from agent.learning.pipeline import run_evidence_pipeline
 
 
 class TestLearningV2Pipeline(unittest.TestCase):
@@ -55,8 +55,8 @@ class TestLearningV2Pipeline(unittest.TestCase):
             self.assertEqual(result.game_id, "game_001")
             self.assertEqual(len(result.evidence_inputs), 1)
             self.assertEqual(result.key_decisions[0].decision_id, "d1")
-            self.assertTrue((game_dir / "learning_v2" / "evidence_inputs.jsonl").exists())
-            self.assertTrue((game_dir / "learning_v2" / "evidence_report.md").exists())
+            self.assertTrue((game_dir / "learning" / "evidence_inputs.jsonl").exists())
+            self.assertTrue((game_dir / "learning" / "evidence_report.md").exists())
 
 
 if __name__ == "__main__":

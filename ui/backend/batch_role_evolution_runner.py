@@ -8,12 +8,11 @@ from typing import Any, AsyncGenerator
 from agent.common import beijing_now_iso, beijing_now_str
 from ui.backend.sse_mixin import SSEMixin
 from ui.backend.runner_utils import RunnerStatus, sse_events_stream
-from agent.learning_v2.evolution.batch import (
+from agent.learning.evolution.batch import (
     BatchEvolutionResult,
     promote_batch_result,
     run_batch_evolution,
 )
-from agent.learning_v2.evolution.store import VersionStore
 
 _log = logging.getLogger(__name__)
 
@@ -84,9 +83,9 @@ class RoleBatchEvolutionRun:
 
 
 class RoleBatchEvolutionRunner(SSEMixin):
-    def __init__(self, store: VersionStore) -> None:
+    def __init__(self, registry: Any) -> None:
         super().__init__()
-        self.store = store
+        self.registry = registry
         self._active_batches: dict[str, RoleBatchEvolutionRun] = {}
 
     async def start_batch(
@@ -158,7 +157,11 @@ class RoleBatchEvolutionRunner(SSEMixin):
             return tracked
         if tracked.status not in ("reviewing", "promoted"):
             raise RuntimeError(f"cannot promote batch in status {tracked.status}")
-        tracked.result = await promote_batch_result(store=self.store, result=tracked.result)
+        tracked.result = await promote_batch_result(
+            store=self.registry,
+            result=tracked.result,
+            registry=self.registry,
+        )
         tracked.status = "promoted" if tracked.result.promoted_roles else "reviewing"
         tracked.stage = tracked.status
         self._broadcast(batch_id, tracked.status, tracked.snapshot())
@@ -243,7 +246,7 @@ class RoleBatchEvolutionRunner(SSEMixin):
 
         try:
             tracked.result = await run_batch_evolution(
-                store=self.store,
+                store=self.registry,
                 roles=tracked.roles,
                 training_games=training_games,
                 battle_games=battle_games,
@@ -254,6 +257,7 @@ class RoleBatchEvolutionRunner(SSEMixin):
                 model_adapter=model_adapter,
                 auto_promote=False,
                 on_progress=_on_progress,
+                registry=self.registry,
             )
             tracked.status = "reviewing"
             tracked.stage = "reviewing"

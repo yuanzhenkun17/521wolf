@@ -14,15 +14,16 @@ from typing import Any
 
 from engine.models import Role
 
-from agent.learning_v2.game_analysis import GameAnalysis, filter_mid_memory_for_role, load_game_analysis
+from agent.learning.game_analysis import GameAnalysis, filter_mid_memory_for_role, load_game_analysis
 from agent.knowledge.prompts.parsing import load_json_object
-from agent.learning_v2.evolution.models import (
+from agent.learning.evolution.models import (
     EvidenceRef,
     SkillConsolidation,
     SkillProposal,
 )
 from agent.infrastructure.llm import ModelAdapter
 from agent.knowledge.skills.loader import MarkdownSkill, load_markdown_skills
+from agent.learning.dedup import deduplicate_proposals
 from agent.common import as_float as _as_float, compact_json as _compact_json, beijing_now_iso as _now
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
 from storage.experience_store import ExperienceCandidateStore
@@ -39,6 +40,7 @@ async def consolidate_from_mid_memories(
     skill_root: Path | str | None = None,
 ) -> SkillConsolidation:
     """Analyze recent mid-term memories and propose skill updates."""
+    _log.warning("consolidate_from_mid_memories is deprecated, use consolidate_for_role")
     skills = _load_role_skills(role, skill_root=skill_root)
     messages = _build_messages(
         mid_memories=mid_memories,
@@ -311,7 +313,7 @@ async def consolidate_for_role(
 
     # 4. Load current skills + rejected proposals for the role
     skills = _load_role_skills_for_str(role, skill_root=skill_root)
-    rejected = store.load_rejected(role) if store is not None else []
+    rejected = await store.load_rejected(role) if store is not None else []
 
     # 5–7. Build prompt, call LLM, parse
     messages = _build_role_messages(
@@ -326,7 +328,7 @@ async def consolidate_for_role(
     raw = ""
     try:
         raw = await model.complete(messages)
-        return _parse_role_consolidation(
+        consolidation = _parse_role_consolidation(
             role=role,
             raw_output=raw,
             run_id=run_id,
@@ -336,6 +338,18 @@ async def consolidate_for_role(
             prompt_version=prompt_version,
             max_proposals=max_proposals,
         )
+
+        # Programmatic dedup against rejected buffer
+        if rejected and consolidation.proposals:
+            raw_proposals = [p.to_dict() for p in consolidation.proposals]
+            filtered_dicts = deduplicate_proposals(raw_proposals, rejected)
+            surviving_ids = {d["proposal_id"] for d in filtered_dicts}
+            consolidation.proposals = [
+                p for p in consolidation.proposals
+                if p.proposal_id in surviving_ids
+            ]
+
+        return consolidation
     except Exception as exc:
         _log.error("consolidate_for_role(%s) failed: %s", role, exc)
         return SkillConsolidation(
@@ -432,7 +446,7 @@ def _build_role_messages(
                 f"分析角色: {role}\n\n"
                 f"最近 {len(filtered_analyses)} 局中期记忆（已按角色过滤）:\n"
                 f"{_compact_json(summaries)}\n\n"
-                f"SQLite learning_v2 experience_candidates（可作为候选证据，不可直接当作已验证长期经验）:\n"
+                f"SQLite learning experience_candidates（可作为候选证据，不可直接当作已验证长期经验）:\n"
                 f"{_compact_json(candidate_context)}\n\n"
                 f"当前角色 skills:\n{skills_text}\n\n"
                 "请分析跨局趋势并提出 skill 修改建议，要求:\n"
@@ -592,25 +606,39 @@ def _load_experience_candidates_for_role(
         return []
 
     import sqlite3
+    import time
 
     game_dirs = [item for item in sorted(games_dir.glob("game*")) if item.is_dir()][-window:]
     if not game_dirs:
         return []
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+
+    def _query_candidates() -> list[dict]:
+        conn = sqlite3.connect(str(path), timeout=30)
+        conn.row_factory = sqlite3.Row
+        try:
+            store = ExperienceCandidateStore(conn)
+            rows: list[dict] = []
+            for game_dir in game_dirs:
+                game_id = resolve_game_id_for_artifact(
+                    path,
+                    game_dir,
+                    root=storage_root,
+                    table="experience_candidates",
+                )
+                if game_id is None:
+                    continue
+                rows.extend(store.list_candidates(game_id=game_id, role=role, limit=100))
+            return rows
+        finally:
+            conn.close()
+
+    # Retry once on database lock
     try:
-        store = ExperienceCandidateStore(conn)
-        rows: list[dict] = []
-        for game_dir in game_dirs:
-            game_id = resolve_game_id_for_artifact(
-                path,
-                game_dir,
-                root=storage_root,
-                table="experience_candidates",
-            )
-            if game_id is None:
-                continue
-            rows.extend(store.list_candidates(game_id=game_id, role=role, limit=100))
-        return rows
-    finally:
-        conn.close()
+        return _query_candidates()
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).lower():
+            _log.warning("SQLite database locked, retrying once after 1s: %s", path)
+            time.sleep(1.0)
+            return _query_candidates()
+        _log.warning("SQLite operational error loading experience candidates: %s", exc)
+        return []

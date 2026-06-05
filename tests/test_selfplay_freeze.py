@@ -1,7 +1,7 @@
 """Tests for skill_dir freeze enforcement."""
 from pathlib import Path
 
-from agent.learning_v2.evolution.games import SelfPlayConfig
+from agent.learning.evolution.games import SelfPlayConfig
 
 
 def test_selfplay_config_skill_dir_default_none():

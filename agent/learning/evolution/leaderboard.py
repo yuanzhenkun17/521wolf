@@ -8,8 +8,8 @@ recommendations (promote / caution / reject).
 from __future__ import annotations
 
 import logging
-from agent.learning_v2.evolution.models import RoleLeaderboardEntry
-from agent.learning_v2.stats import wilson_ci95 as wilson_ci
+from agent.learning.evolution.models import RoleLeaderboardEntry
+from agent.learning.stats import wilson_ci95 as wilson_ci
 
 _log = logging.getLogger(__name__)
 

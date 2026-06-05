@@ -16,7 +16,7 @@ from agent.decision.steps.select_skills import select_skills_step
 from agent.decision.steps.build_prompt import build_prompt_step
 from agent.decision.steps.parse_output import parse_output_step
 from agent.decision.steps.enforce_policy import enforce_policy_step
-from agent.learning_v2.review import did_survive, get_role_of
+from agent.learning.review import did_survive, get_role_of
 from agent.api.runtime import AgentRuntime
 
 
@@ -854,28 +854,28 @@ class ReviewStatsTests(unittest.TestCase):
         self.assertTrue(did_survive(1, game_log))
 
     def test_log_entries_list_input(self):
-        from agent.learning_v2.review import log_entries
+        from agent.learning.review import log_entries
         entries = [{"event_type": "death", "target": 2}]
         result = log_entries(entries)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["target"], 2)
 
     def test_log_entries_events_key(self):
-        from agent.learning_v2.review import log_entries
+        from agent.learning.review import log_entries
         data = {"events": [{"event_type": "death", "target": 3}]}
         result = log_entries(data)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["target"], 3)
 
     def test_log_entries_entries_key(self):
-        from agent.learning_v2.review import log_entries
+        from agent.learning.review import log_entries
         data = {"entries": [{"event_type": "death", "target": 4}]}
         result = log_entries(data)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["target"], 4)
 
     def test_log_entries_empty_dict(self):
-        from agent.learning_v2.review import log_entries
+        from agent.learning.review import log_entries
         self.assertEqual(log_entries({}), [])
 
     def test_did_survive_list(self):

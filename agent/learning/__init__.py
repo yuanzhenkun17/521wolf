@@ -2,7 +2,7 @@
 
 This package follows an *evidence-first* approach:
 
-- **v2 pipeline** (``agent.learning_v2``): first extracts structured
+- **v2 pipeline** (``agent.learning``): first extracts structured
   *decision evidence* from each game (normalizing agent decisions, selecting
   key decisions, then judging them with a rubric-driven LLM), producing
   ``EvidenceRunResult`` objects that contain decision evidence, game evidence,
@@ -11,16 +11,16 @@ This package follows an *evidence-first* approach:
 
 Package structure:
 
-- ``learning_v2.pipeline``: run_evidence_pipeline — the main entry point.
-- ``learning_v2.leaderboard``: aggregate leaderboard summaries and rankings.
-- ``learning_v2.stats``: metric aggregation, confidence intervals, calibration.
-- ``learning_v2.game_analysis``: mid-term memory LLM analysis per game.
-- ``learning_v2.review``: post-game heuristic review, enhanced review reports.
-- ``learning_v2.evolution``: skill evolution through self-play and versioned battles.
+- ``learning.pipeline``: run_evidence_pipeline — the main entry point.
+- ``learning.leaderboard``: aggregate leaderboard summaries and rankings.
+- ``learning.stats``: metric aggregation, confidence intervals, calibration.
+- ``learning.game_analysis``: mid-term memory LLM analysis per game.
+- ``learning.review``: post-game heuristic review, enhanced review reports.
+- ``learning.evolution``: skill evolution through self-play and versioned battles.
 """
 
-from agent.learning_v2.models import EvidenceRunResult
-from agent.learning_v2.leaderboard import (
+from agent.learning.models import EvidenceRunResult
+from agent.learning.leaderboard import (
     LeaderboardEntry,
     aggregate_summaries,
     build_leaderboard,
@@ -29,8 +29,8 @@ from agent.learning_v2.leaderboard import (
     write_leaderboard,
     load_summaries_from_runs,
 )
-from agent.learning_v2.pipeline import run_evidence_pipeline
-from agent.learning_v2.stats import (
+from agent.learning.pipeline import run_evidence_pipeline
+from agent.learning.stats import (
     new_role_accum,
     finalize_role_metrics,
     mean_ci95,
@@ -43,7 +43,7 @@ from agent.learning_v2.stats import (
     CALIBRATION_BUCKETS,
     CHECKABLE_ACTIONS,
 )
-from agent.learning_v2.game_analysis import (
+from agent.learning.game_analysis import (
     GameAnalysis,
     TurningPointAnalysis,
     DecisionReview,
@@ -53,7 +53,7 @@ from agent.learning_v2.game_analysis import (
     load_game_analysis,
     filter_mid_memory_for_role,
 )
-from agent.learning_v2.evolution import (
+from agent.learning.evolution import (
     apply_proposals,
     BatchEvolutionResult,
     BaselineChangedError,
@@ -73,10 +73,9 @@ from agent.learning_v2.evolution import (
     SkillDiff,
     SkillProposal,
     SkillVersionConfig,
-    VersionStore,
     aggregate_role_leaderboard,
 )
-from agent.learning_v2.review import (
+from agent.learning.review import (
     # scoring
     AgentScores,
     GameReview,
@@ -192,7 +191,6 @@ __all__ = [
     "SkillDiff",
     "SkillProposal",
     "SkillVersionConfig",
-    "VersionStore",
     "aggregate_role_leaderboard",
     # Models — evidence layer data classes
     "EvidenceRunResult",

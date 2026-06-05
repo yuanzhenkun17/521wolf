@@ -219,7 +219,7 @@ queued
 
 已实现能力：
 
-- `VersionStore`：文件系统版 skill 版本管理。
+- `VersionRegistry`：KnowledgePackage 版本注册中心，管理 skill baseline、history 和版本目录。
 - `SkillVersionConfig`：每局固定的角色版本配置。
 - Training：selfplay 训练局。
 - Review：生成增强复盘。
@@ -344,7 +344,6 @@ SQLite schema 已存在并包含：
 | `game_events` | 已定义，运行期通过 `GamePersistence` 注入 sink 写入 |
 | `decisions` | 已定义，运行期通过 `GamePersistence` 注入 sink 写入 |
 | `experience_candidates` | 已定义，`learning_v2` Evidence Pipeline 可写 |
-| `role_versions` | 已定义，但角色进化主版本库当前主要走文件系统 `VersionStore` |
 | `skill_proposals` | 已定义 |
 | `evolution_runs` | 已定义，`StorageRebuilder` 可从 role-evolution `state.json` + `battle_summary.json` 导入 battle_result |
 | `leaderboard` | 已定义，`/api/leaderboards` 已优先读取 SQLite |
@@ -360,7 +359,7 @@ runs/selfplay/.../archive.json
 runs/evolution/.../state.json
 runs/evolution/.../battle_summary.json
 data/mid_memory/...
-data/versions/<role>/<hash>/skills/*.md
+data/registry/<role>/versions/<version_id>/skills/*.md
 ```
 
 ### 6.2 当前缺口
@@ -368,7 +367,7 @@ data/versions/<role>/<hash>/skills/*.md
 | 缺口 | 说明 | 优先级 |
 |------|------|--------|
 | SQLite 主查询路径 | 普通对局、selfplay、role-evolution 的列表/详情/事件/决策已优先读 SQLite；普通 review 输入、consolidation candidate context、role leaderboard、通用 leaderboard 已 DB 优先；archive endpoint 保留 JSON 导出语义 | P1 |
-| 版本库统一 | SQLite `role_versions` 和文件系统 `VersionStore` 并存 | P2 |
+| 版本库统一 | 已收敛为 `VersionRegistry`，SQLite 不再维护版本元数据 | 完成 |
 | archive 导入/迁移策略 | 已有 importer 和 `StorageRebuilder`，但还不是所有查询的默认维护路径 | P2 |
 
 ### 6.3 目标态
@@ -381,7 +380,7 @@ data/versions/<role>/<hash>/skills/*.md
   DecisionRecorder -> decisions
   GameStore -> games / players
   Evidence Pipeline -> experience_candidates
-  Evolution -> evolution_runs / role_versions / skill_proposals / leaderboard
+  Evolution -> evolution_runs / skill_proposals / leaderboard
 
 读取:
   UI 列表/详情/复盘/排行榜优先读 SQLite
@@ -570,7 +569,7 @@ Training games
 | 多 Agent 协作 | Engine + Observation + public log | 信息隔离测试、公开发言和投票互动 | 结构化 visibility、私有事件视角测试 |
 | 工程完整度 | Engine + UI + Storage | 完整 AI 对局、SSE 观战、archive、部分 SQLite、接口兼容、人机混战接线 | SQLite 主查询收敛、真实长局稳定性 |
 | 评测 + 复盘 | Review + game_analysis | 增强复盘、关键错误、角色指标、mid memory | Evidence Pipeline v2、ExperienceCandidate 落库 |
-| 自进化 Agent | Evolution Pipeline + VersionStore + Battle | training/consolidation/apply/battle/promote/reject | 进化曲线、样本证据、版本效果统计稳定性 |
+| 自进化 Agent | Evolution Pipeline + VersionRegistry + Battle | training/consolidation/apply/battle/promote/reject | 进化曲线、样本证据、版本效果统计稳定性 |
 
 ---
 

@@ -13,11 +13,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from agent.common import beijing_now_iso, beijing_now_str
-from agent.learning_v2.evolution.battle import run_config_battle
-from agent.learning_v2.evolution.config import build_baseline_config
-from agent.learning_v2.evolution.models import EvolutionRun, SkillVersionConfig
-from agent.learning_v2.evolution.pipeline import run_evolution
-from agent.learning_v2.evolution.store import VersionStore
+from agent.learning.evolution.battle import run_config_battle
+from agent.learning.evolution.config import build_baseline_config
+from agent.learning.evolution.models import EvolutionRun, SkillVersionConfig
+from agent.learning.evolution.pipeline import run_evolution
+from agent.learning.evolution.registry import VersionRegistry
 from agent.infrastructure.llm import AsyncRateLimiter, ModelAdapter, limit_model_adapter, rate_limit_model_adapter
 from agent.common import notify as _notify
 
@@ -55,7 +55,7 @@ class BatchEvolutionResult:
 
 async def run_batch_evolution(
     *,
-    store: VersionStore,
+    store: VersionRegistry,
     roles: list[str] | None = None,
     training_games: int = 20,
     battle_games: int = 10,
@@ -164,7 +164,7 @@ async def run_batch_evolution(
     })
 
     if selfplay_runner is None:
-        from agent.learning_v2.evolution.games import run_selfplay as selfplay_runner
+        from agent.learning.evolution.games import run_selfplay as selfplay_runner
 
     result.combined_battle_result = await run_config_battle(
         store=store,
@@ -194,7 +194,7 @@ async def run_batch_evolution(
 
 async def promote_batch_result(
     *,
-    store: VersionStore,
+    store: VersionRegistry,
     result: BatchEvolutionResult,
 ) -> BatchEvolutionResult:
     """Promote accepted roles from an already reviewed batch result."""
@@ -239,7 +239,7 @@ def _select_metrics(summary_side: dict[str, Any], role: str | None) -> dict[str,
 
 
 async def _promote_accepted_roles(
-    store: VersionStore,
+    store: VersionRegistry,
     baseline_config: SkillVersionConfig,
     result: BatchEvolutionResult,
 ) -> None:
@@ -253,7 +253,7 @@ async def _promote_accepted_roles(
     for role, expected_hash in baseline_config.role_versions.items():
         if role not in candidate_by_role:
             continue
-        current = store.get_history(role).baseline
+        current = store.get_baseline(role)
         if current != expected_hash:
             drifted.append((role, expected_hash, current))
     if drifted:
@@ -264,7 +264,7 @@ async def _promote_accepted_roles(
         expected_hash = baseline_config.role_versions[role]
         success = await store.set_baseline(
             role=role,
-            target_hash=candidate_hash,
+            version_id=candidate_hash,
             expected_current=expected_hash,
         )
         if success:

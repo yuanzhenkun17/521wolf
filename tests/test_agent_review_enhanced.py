@@ -7,8 +7,8 @@ import unittest
 
 from engine.models import Role
 
-from agent.learning_v2.game_analysis import TurningPointAnalysis
-from agent.learning_v2.review import (
+from agent.learning.game_analysis import TurningPointAnalysis
+from agent.learning.review import (
     DecisionMistake,
     GameReviewReport,
     MISTAKE_FALLBACK_USED,

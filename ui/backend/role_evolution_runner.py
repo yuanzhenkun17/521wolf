@@ -1,7 +1,7 @@
 """Role evolution manager — manages run state and SSE events.
 
 Follows the same pattern as ``evolution_runner.py`` but wraps the
-role-level evolution pipeline (``agent.learning_v2.evolution.pipeline``).
+role-level evolution pipeline (``agent.learning.evolution.pipeline``).
 """
 
 from __future__ import annotations
@@ -16,19 +16,18 @@ from agent.common import beijing_now_iso, beijing_now_str
 from ui.backend.sse_mixin import SSEMixin
 from ui.backend.runner_utils import RunnerStatus, sse_events_stream, is_rate_limit_error
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
-from agent.learning_v2.evolution.config import build_baseline_config
-from agent.learning_v2.evolution.models import (
+from agent.learning.evolution.config import build_baseline_config
+from agent.learning.evolution.models import (
     EvolutionRun,
 )
-from agent.learning_v2.evolution.pipeline import (
+from agent.learning.evolution.pipeline import (
     InvalidRunStateError,
     recover_interrupted_runs,
     reject as pipeline_reject,
     promote as pipeline_promote,
     run_evolution,
 )
-from agent.learning_v2.evolution.state import load_run_state
-from agent.learning_v2.evolution.store import VersionStore
+from agent.learning.evolution.state import load_run_state
 from agent.infrastructure.llm import AsyncRateLimiter
 
 _log = logging.getLogger(__name__)
@@ -122,14 +121,14 @@ class RoleEvolutionRun:
 class RoleEvolutionRunner(SSEMixin):
     """Manages role evolution runs, SSE queues, and recovery."""
 
-    def __init__(self, store: VersionStore) -> None:
+    def __init__(self, registry: Any) -> None:
         super().__init__()
-        self.store = store
+        self.registry = registry
         self._active_runs: dict[str, RoleEvolutionRun] = {}
 
     def restore_runs(self) -> None:
         """Load non-terminal runs from disk into memory."""
-        from agent.learning_v2.evolution.pipeline import scan_active_runs
+        from agent.learning.evolution.pipeline import scan_active_runs
         for state in scan_active_runs():
             run_id = state.get("run_id")
             if not run_id or run_id in self._active_runs:
@@ -311,7 +310,7 @@ class RoleEvolutionRunner(SSEMixin):
 
         try:
             result = await run_evolution(
-                self.store,
+                self.registry,
                 run_id=tracked.run_id,
                 start_from="consolidating",
                 model_adapter=model_adapter,
@@ -319,6 +318,7 @@ class RoleEvolutionRunner(SSEMixin):
                 llm_semaphore=asyncio.Semaphore(tracked.llm_concurrency),
                 llm_rate_limiter=AsyncRateLimiter(tracked.llm_rpm),
                 on_progress=_on_progress,
+                registry=self.registry,
             )
             tracked.run = result
             tracked.status = result.status
@@ -368,13 +368,14 @@ class RoleEvolutionRunner(SSEMixin):
         for attempt in range(max_retries):
             try:
                 result = await run_evolution(
-                    self.store,
+                    self.registry,
                     run_id=tracked.run_id,
                     model_adapter=model_adapter,
                     game_concurrency=tracked.game_concurrency,
                     llm_semaphore=asyncio.Semaphore(tracked.llm_concurrency),
                     llm_rate_limiter=AsyncRateLimiter(tracked.llm_rpm),
                     on_progress=_on_progress,
+                    registry=self.registry,
                 )
                 tracked.run = result
                 tracked.artifact_run_id = result.run_id
@@ -414,9 +415,9 @@ class RoleEvolutionRunner(SSEMixin):
             state = load_run_state(DEFAULT_PATHS, run_id)
             if state is None:
                 raise InvalidRunStateError(f"Run {run_id} has no pipeline data")
-            from agent.learning_v2.evolution.models import EvolutionRun, SkillVersionConfig
+            from agent.learning.evolution.models import EvolutionRun, SkillVersionConfig
             baseline_data = state.get("baseline_config")
-            baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(self.store)
+            baseline_config = SkillVersionConfig.from_dict(baseline_data) if baseline_data else build_baseline_config(self.registry)
             tracked.run = EvolutionRun(
                 run_id=run_id,
                 role=state.get("role", ""),
@@ -430,7 +431,7 @@ class RoleEvolutionRunner(SSEMixin):
             tracked.run.training_run_id = state.get("training_run_id")
             tracked.run.training_output_dir = state.get("training_output_dir")
 
-        await pipeline_promote(tracked.run, self.store)
+        await pipeline_promote(tracked.run, self.registry, registry=self.registry)
         tracked.status = tracked.run.status
         tracked.stage = tracked.run.status
         self._broadcast(run_id, "promoted", tracked.snapshot())
@@ -444,7 +445,7 @@ class RoleEvolutionRunner(SSEMixin):
         if tracked.run is None:
             raise InvalidRunStateError(f"Run {run_id} has no pipeline data")
 
-        await pipeline_reject(tracked.run, self.store)
+        await pipeline_reject(tracked.run, self.registry, registry=self.registry)
         tracked.status = tracked.run.status
         tracked.stage = tracked.run.status
         self._broadcast(run_id, "rejected", tracked.snapshot())
@@ -479,7 +480,7 @@ class RoleEvolutionRunner(SSEMixin):
 
         Returns the list of recovered (now-failed) run states.
         """
-        return recover_interrupted_runs(self.store)
+        return recover_interrupted_runs(self.registry)
 
     # ------------------------------------------------------------------
     # Pipeline execution
@@ -533,7 +534,7 @@ class RoleEvolutionRunner(SSEMixin):
             tracked.retry_attempt = attempt
             try:
                 result = await run_evolution(
-                    store=self.store,
+                    store=self.registry,
                     role=tracked.role,
                     training_games=training_games,
                     battle_games=battle_games,
@@ -542,6 +543,7 @@ class RoleEvolutionRunner(SSEMixin):
                     llm_rate_limiter=AsyncRateLimiter(llm_rpm),
                     model_adapter=model_adapter,
                     on_progress=_on_progress,
+                    registry=self.registry,
                 )
                 tracked.run = result
                 tracked.artifact_run_id = result.run_id

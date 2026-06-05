@@ -14,16 +14,16 @@ import logging
 import uuid
 from typing import Any, Callable
 
-from agent.learning_v2.evolution.applier import apply_proposals
-from agent.learning_v2.evolution.battle import _run_battle, _stage_battling
-from agent.learning_v2.evolution.config import build_baseline_config, build_composite_skill_dir
-from agent.learning_v2.evolution.models import (
+from agent.learning.evolution.applier import apply_proposals
+from agent.learning.evolution.battle import _run_battle, _stage_battling
+from agent.learning.evolution.config import build_baseline_config, build_composite_skill_dir
+from agent.learning.evolution.models import (
     EvolutionRun,
     EvolutionStatus,
     SkillConsolidation,
     SkillVersionConfig,
 )
-from agent.learning_v2.evolution.state import (
+from agent.learning.evolution.state import (
     TERMINAL_STATUSES,
     load_run_state,
     run_dir,
@@ -31,7 +31,7 @@ from agent.learning_v2.evolution.state import (
     state_path,
     training_run_dir,
 )
-from agent.learning_v2.evolution.store import VersionStore
+from agent.learning.evolution.registry import VersionRegistry
 from agent.infrastructure.llm import (
     AsyncRateLimiter,
     ModelAdapter,
@@ -76,7 +76,7 @@ def scan_active_runs() -> list[dict]:
     return active
 
 
-def recover_interrupted_runs(store: VersionStore) -> list[dict]:
+def recover_interrupted_runs(store: VersionRegistry) -> list[dict]:
     """On startup, mark runs that were actually interrupted as failed.
 
     Only marks runs as failed if they were in an active stage
@@ -143,7 +143,7 @@ def _resolve_start_from(
 
 
 async def run_evolution(
-    store: VersionStore,
+    store: VersionRegistry,
     role: str | None = None,
     *,
     run_id: str | None = None,
@@ -160,6 +160,7 @@ async def run_evolution(
     consolidator: Callable | None = None,
     applier: Callable | None = None,
     battle_runner: Callable | None = None,
+    pattern_engine: "PatternEngine | None" = None,
 ) -> EvolutionRun:
     """Run the evolution pipeline for *role*.
 
@@ -179,10 +180,10 @@ async def run_evolution(
     """
     # Lazy defaults — avoid import cycles at module level
     if selfplay_runner is None:
-        from agent.learning_v2.evolution.games import run_selfplay as _default_selfplay
+        from agent.learning.evolution.games import run_selfplay as _default_selfplay
         selfplay_runner = _default_selfplay
     if consolidator is None:
-        from agent.learning_v2.evolution.consolidation import consolidate_for_role as _default_consolidator
+        from agent.learning.evolution.consolidation import consolidate_for_role as _default_consolidator
         consolidator = _default_consolidator
     if applier is None:
         applier = apply_proposals
@@ -243,7 +244,7 @@ async def run_evolution(
             parent_hash = baseline_config.role_versions[role]
         except KeyError as exc:
             raise KeyError(f"Role '{role}' not found in baseline config") from exc
-        store.load_version(role, parent_hash)
+        store.get_package(role, parent_hash)
 
         run_id = f"evo_{uuid.uuid4().hex[:12]}"
         rd = run_dir(DEFAULT_PATHS, run_id)
@@ -270,6 +271,14 @@ async def run_evolution(
                 llm_semaphore, llm_rate_limiter,
                 selfplay_runner, on_progress,
             )
+
+        # Pattern lifecycle management — prune stale/low-confidence patterns
+        if pattern_engine is not None:
+            gc_result = pattern_engine.run_lifecycle_gc()
+            if gc_result.get("archived") or gc_result.get("deprecated"):
+                _log.info("Pattern GC: archived=%d, deprecated=%d",
+                          len(gc_result.get("archived", [])),
+                          len(gc_result.get("deprecated", [])))
 
         if stage in (EvolutionStatus.TRAINING, EvolutionStatus.CONSOLIDATING):
             run = await _stage_consolidating(
@@ -319,7 +328,7 @@ async def run_evolution(
 
 
 async def resume_evolution(
-    store: VersionStore,
+    store: VersionRegistry,
     run_id: str,
     model_adapter: ModelAdapter | None = None,
     game_concurrency: int = 1,
@@ -330,6 +339,7 @@ async def resume_evolution(
     consolidator: Callable | None = None,
     applier: Callable | None = None,
     battle_runner: Callable | None = None,
+    pattern_engine: "PatternEngine | None" = None,
 ) -> EvolutionRun:
     """Resume a failed evolution run from the failed stage.
 
@@ -349,11 +359,12 @@ async def resume_evolution(
         consolidator=consolidator,
         applier=applier,
         battle_runner=battle_runner,
+        pattern_engine=pattern_engine,
     )
 
 
 async def rerun_from_consolidation(
-    store: VersionStore,
+    store: VersionRegistry,
     run_id: str,
     model_adapter: ModelAdapter | None = None,
     game_concurrency: int = 1,
@@ -361,6 +372,7 @@ async def rerun_from_consolidation(
     llm_rate_limiter: AsyncRateLimiter | None = None,
     on_progress: Callable[[str, dict], None] | None = None,
     battle_runner: Callable | None = None,
+    pattern_engine: "PatternEngine | None" = None,
 ) -> EvolutionRun:
     """Re-run from consolidation stage using existing training data.
 
@@ -376,6 +388,7 @@ async def rerun_from_consolidation(
         llm_rate_limiter=llm_rate_limiter,
         on_progress=on_progress,
         battle_runner=battle_runner,
+        pattern_engine=pattern_engine,
     )
 
 
@@ -386,7 +399,7 @@ async def rerun_from_consolidation(
 
 async def _stage_training(
     run: EvolutionRun,
-    store: VersionStore,
+    store: VersionRegistry,
     training_games: int,
     model_adapter: ModelAdapter | None,
     game_concurrency: int,
@@ -400,7 +413,7 @@ async def _stage_training(
     save_run_state(run)
     _notify(on_progress, "training", {"run_id": run.run_id, "games": training_games})
 
-    from agent.learning_v2.evolution.games import SelfPlayConfig
+    from agent.learning.evolution.games import SelfPlayConfig
 
     output_run_dir = run_dir(DEFAULT_PATHS, run.run_id)
 
@@ -457,7 +470,7 @@ async def _stage_training(
 
 async def _stage_consolidating(
     run: EvolutionRun,
-    store: VersionStore,
+    store: VersionRegistry,
     model_adapter: ModelAdapter | None,
     consolidator: Callable,
     on_progress: Callable | None = None,
@@ -485,7 +498,7 @@ async def _stage_consolidating(
 
 async def _stage_applying(
     run: EvolutionRun,
-    store: VersionStore,
+    store: VersionRegistry,
     model_adapter: ModelAdapter | None,
     applier: Callable,
 ) -> EvolutionRun:
@@ -502,19 +515,17 @@ async def _stage_applying(
         return run
 
     # Load current skills from the baseline version
-    baseline_version = store.load_version(run.role, run.parent_hash)
-    current_skills = baseline_version.skills
+    current_skills = store.read_skill_contents(run.role, run.parent_hash)
 
     new_skills, diffs = await applier(current_skills, run.proposals, model_adapter)
 
     # Save candidate version to store
-    candidate_hash = await store.save_version(
+    candidate_hash = await store.publish_skills(
         role=run.role,
-        skills=new_skills,
-        parent_hash=run.parent_hash,
+        skill_contents=new_skills,
+        parent_id=run.parent_hash,
         source="evolution",
-        source_run_id=run.run_id,
-        notes=[f"evolution run {run.run_id}"],
+        run_id=run.run_id,
     )
 
     run.candidate_hash = candidate_hash
@@ -529,7 +540,7 @@ async def _stage_applying(
 
 
 # Promote / reject
-async def promote(run: EvolutionRun, store: VersionStore) -> None:
+async def promote(run: EvolutionRun, store: VersionRegistry) -> None:
     """Promote a reviewing run's candidate to baseline.
 
     Idempotent: already promoted -> return.
@@ -553,8 +564,7 @@ async def promote(run: EvolutionRun, store: VersionStore) -> None:
         )
 
     # Verify baseline hasn't changed
-    history = store.get_history(run.role)
-    current_baseline = history.baseline
+    current_baseline = store.get_baseline(run.role)
 
     # Baseline already equals candidate -> just set promoted
     if current_baseline == run.candidate_hash:
@@ -572,7 +582,7 @@ async def promote(run: EvolutionRun, store: VersionStore) -> None:
     # CAS set_baseline
     success = await store.set_baseline(
         role=run.role,
-        target_hash=run.candidate_hash,
+        version_id=run.candidate_hash,
         expected_current=run.parent_hash,
     )
     if not success:
@@ -584,7 +594,7 @@ async def promote(run: EvolutionRun, store: VersionStore) -> None:
     save_run_state(run)
 
 
-async def reject(run: EvolutionRun, store: VersionStore) -> None:
+async def reject(run: EvolutionRun, store: VersionRegistry) -> None:
     """Reject a reviewing run.
 
     Idempotent: already rejected -> return.
@@ -612,7 +622,7 @@ async def reject(run: EvolutionRun, store: VersionStore) -> None:
     # Save proposals to rejected buffer before changing status
     if run.proposals is not None and run.proposals.proposals:
         try:
-            store.save_rejected(
+            await store.save_rejected(
                 run.role,
                 [p.to_dict() for p in run.proposals.proposals
                  if getattr(p, "status", "proposed") != "skipped"],

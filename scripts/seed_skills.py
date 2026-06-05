@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""Seed skill files into the version store for all 7 roles.
+"""Seed skill files into the version registry for all 7 roles.
 
 Usage (from project root):
     uv run python scripts/seed_skills.py
 
 This script:
-  1. Writes 13 skill .md files to a temporary directory.
-  2. For each role, reads its skill files, calls VersionStore.save_version().
-  3. Calls VersionStore.set_baseline() to switch the baseline pointer.
-  4. Prints the new baseline hash for every role.
+  1. Loads the embedded seed skill markdown for each role.
+  2. Ensures every role has an explicit empty Registry baseline.
+  3. Publishes seeded skills as KnowledgePackage versions.
+  4. Calls VersionRegistry.set_baseline() to switch the baseline pointer.
+  5. Prints the new baseline version for every role.
 """
 
 from __future__ import annotations
 
 import asyncio
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -28,7 +27,8 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent                     # <root>
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from agent.learning_v2.evolution.store import VersionStore  # noqa: E402
+from agent.common.paths import DEFAULT as DEFAULT_PATHS  # noqa: E402
+from agent.learning.evolution.registry import VersionRegistry  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Skill content by role.
@@ -571,41 +571,29 @@ evolution:
 # Bootstrap logic
 # ---------------------------------------------------------------------------
 
-# The current empty-skills baseline hash shared by all roles.
-EMPTY_BASELINE_HASH = "bb9b945a"
-
-
-async def seed_all_roles(store: VersionStore) -> None:
+async def seed_all_roles(registry: VersionRegistry) -> None:
     """Seed skills for every role and update baselines."""
     results: dict[str, str] = {}
 
     for role, skills in sorted(SKILLS.items()):
-        # 1. Read current baseline as parent for lineage.
-        try:
-            history = store.get_history(role)
-            current_baseline = history.baseline
-        except FileNotFoundError:
-            current_baseline = EMPTY_BASELINE_HASH
+        current_baseline = registry.get_baseline(role)
 
-        # 2. Save the new version.
-        new_hash = await store.save_version(
-            role=role,
-            skills=skills,
-            parent_hash=current_baseline,
+        new_version = await registry.publish_skills(
+            role,
+            skills,
+            parent_id=current_baseline,
             source="seed",
-            notes=["initial seed skills for all roles"],
         )
 
-        # 3. Set baseline using CAS.
-        ok = await store.set_baseline(
+        ok = await registry.set_baseline(
             role=role,
-            target_hash=new_hash,
+            version_id=new_version,
             expected_current=current_baseline,
         )
 
         status = "OK" if ok else "CAS-MISMATCH"
-        print(f"  [{status}] {role:20s}  old={current_baseline}  new={new_hash}")
-        results[role] = new_hash
+        print(f"  [{status}] {role:20s}  old={current_baseline}  new={new_version}")
+        results[role] = new_version
 
     # 4. Summary
     print()
@@ -613,20 +601,22 @@ async def seed_all_roles(store: VersionStore) -> None:
     print("Final baselines:")
     print("=" * 60)
     for role in sorted(results):
-        h = store.get_history(role)
-        print(f"  {role:20s}  baseline={h.baseline}  versions={h.versions}")
+        baseline = registry.get_baseline(role)
+        versions = [v.version_id for v in registry.list_versions(role)]
+        print(f"  {role:20s}  baseline={baseline}  versions={versions}")
+
+
+async def async_main() -> None:
+    registry = VersionRegistry(DEFAULT_PATHS.registry_dir)
+
+    await registry.ensure_default_baselines()
+    print("Seeding skills into version registry ...\n")
+    await seed_all_roles(registry)
+    print("\nDone.")
 
 
 def main() -> None:
-    # Initialise the version store (uses project default data/versions).
-    store = VersionStore()
-
-    # Ensure every role has at least an empty baseline history.
-    store.ensure_default_baselines()
-
-    print("Seeding skills into version store ...\n")
-    asyncio.run(seed_all_roles(store))
-    print("\nDone.")
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":

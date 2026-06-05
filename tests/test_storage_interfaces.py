@@ -144,10 +144,10 @@ class DecisionRecordDataTests(unittest.TestCase):
 class ComputeHashTests(unittest.TestCase):
     """Tests for the compute_hash pure function."""
 
-    def test_compute_hash_returns_8_char_hex(self):
+    def test_compute_hash_returns_12_char_hex(self):
         skills = {"check.md": "# Seer\nCheck a player."}
         h = compute_hash(skills)
-        self.assertEqual(len(h), 8)
+        self.assertEqual(len(h), 12)
         self.assertTrue(all(c in "0123456789abcdef" for c in h))
 
     def test_compute_hash_is_deterministic(self):
@@ -179,7 +179,7 @@ class ComputeHashTests(unittest.TestCase):
         skills_dup = {"protect.md": "content"}
         # This should work fine since there's only one entry
         h = compute_hash(skills_dup)
-        self.assertEqual(len(h), 8)
+        self.assertEqual(len(h), 12)
 
     def test_compute_hash_multiple_skills(self):
         """Hash with multiple skill files should include all."""
@@ -188,7 +188,7 @@ class ComputeHashTests(unittest.TestCase):
             "protect.md": "# Guard\nProtect.",
         }
         h = compute_hash(skills)
-        self.assertEqual(len(h), 8)
+        self.assertEqual(len(h), 12)
 
     def test_compute_hash_sorts_keys_for_determinism(self):
         """Hash should be the same regardless of insertion order."""
@@ -231,16 +231,14 @@ class NormalizeSkillPathTests(unittest.TestCase):
         self.assertEqual(result, "skills/check.md")
 
     def test_drive_path_is_not_recognized_by_pureposixpath(self):
-        """PurePosixPath doesn't detect Windows drive letters, but C: is
-        still a directory-like component that results in an unusual path.
-        The drive check in normalize_skill_path uses p.drive, which is
-        empty for PurePosixPath on all platforms."""
-        # C:/skills/check.md is NOT rejected by p.drive since
-        # PurePosixPath doesn't have a concept of Windows drives.
-        # It normalizes to "C:/skills/check.md" as a relative path.
-        result = normalize_skill_path("C:/skills/check.md")
-        # On PurePosixPath, "C:" is treated as a regular directory component
-        self.assertIn("C:", result)
+        """PurePosixPath doesn't detect Windows drive letters, so
+        normalize_skill_path includes an explicit raw-string check for
+        Windows drive paths (e.g. C:/...) before falling through to p.drive.
+        """
+        # C:/skills/check.md IS now rejected by the explicit drive-letter
+        # check that was synced from storage/shared/interfaces.py.
+        with self.assertRaises(ValueError):
+            normalize_skill_path("C:/skills/check.md")
 
 
 class NormalizeSkillTextTests(unittest.TestCase):

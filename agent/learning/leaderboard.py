@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent.learning_v2.stats import merge_calibration_reports, mean_ci95, wilson_ci95
+from agent.learning.stats import merge_calibration_reports, mean_ci95, wilson_ci95
 
 
 @dataclass(slots=True)

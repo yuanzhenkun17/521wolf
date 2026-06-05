@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from agent.infrastructure.decision_log import DecisionRecord
-from agent.learning_v2.models import ExperienceCandidate
+from agent.learning.models import ExperienceCandidate
 from engine.models import ActionType
 from storage.runtime import GamePersistence
 from storage.schema import get_connection

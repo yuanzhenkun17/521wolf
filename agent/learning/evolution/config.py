@@ -13,19 +13,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent.common import beijing_now_iso
-from agent.learning_v2.evolution.models import SkillVersionConfig
+from agent.learning.evolution.models import SkillVersionConfig
 
 if TYPE_CHECKING:
-    from agent.learning_v2.evolution.store import VersionStore
+    from agent.learning.evolution.registry import VersionRegistry
 
 _log = logging.getLogger(__name__)
 
 
-def build_baseline_config(store: VersionStore) -> SkillVersionConfig:
+def build_baseline_config(store: VersionRegistry) -> SkillVersionConfig:
     """All roles use their baseline hash. Returns a SkillVersionConfig."""
     role_versions: dict[str, str] = {}
-    for history in store.list_histories():
-        role_versions[history.role] = history.baseline
+    for role in store.list_roles():
+        baseline = store.get_baseline(role)
+        if baseline is not None:
+            role_versions[role] = baseline
     return SkillVersionConfig(
         name="baseline",
         created_at=beijing_now_iso(),
@@ -35,15 +37,17 @@ def build_baseline_config(store: VersionStore) -> SkillVersionConfig:
 
 
 def build_role_override_config(
-    store: VersionStore, role: str, role_hash: str
+    store: VersionRegistry, role: str, role_hash: str
 ) -> SkillVersionConfig:
     """Target role uses specified hash, all others use baseline."""
     role_versions: dict[str, str] = {}
-    for history in store.list_histories():
-        if history.role == role:
-            role_versions[history.role] = role_hash
+    for r in store.list_roles():
+        if r == role:
+            role_versions[r] = role_hash
         else:
-            role_versions[history.role] = history.baseline
+            baseline = store.get_baseline(r)
+            if baseline is not None:
+                role_versions[r] = baseline
     return SkillVersionConfig(
         name=f"override-{role}-{role_hash[:8]}",
         created_at=beijing_now_iso(),
@@ -73,7 +77,7 @@ def build_role_override_from_config(
 
 
 def skill_dir_for_role(
-    store: VersionStore, config: SkillVersionConfig, role: str
+    store: VersionRegistry, config: SkillVersionConfig, role: str
 ) -> Path:
     """Returns the skill directory path for a specific role.
 
@@ -86,19 +90,19 @@ def skill_dir_for_role(
     return store.get_skill_dir(role, role_hash)
 
 
-def _is_explicit_empty_version(store: VersionStore, role: str, hash_value: str) -> bool:
+def _is_explicit_empty_version(store: VersionRegistry, role: str, hash_value: str) -> bool:
     """Return True for intentional empty role versions that have no skill files."""
     try:
-        version = store.load_version(role, hash_value)
+        version = store.get_package(role, hash_value)
     except FileNotFoundError:
         return False
     return (
         not version.skills
-        and version.source in {"bootstrap_empty", "default_empty"}
+        and version.provenance.source in {"bootstrap_empty", "default_empty"}
     )
 
 
-def build_composite_skill_dir(store: VersionStore, config: SkillVersionConfig) -> Path:
+def build_composite_skill_dir(store: VersionRegistry, config: SkillVersionConfig) -> Path:
     """Assemble a temporary role skill directory from a version config."""
     tmpdir = Path(tempfile.mkdtemp(prefix="evo_skills_"))
     for role, hash_value in config.role_versions.items():

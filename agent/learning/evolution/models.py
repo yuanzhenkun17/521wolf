@@ -10,7 +10,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from agent.common import beijing_now_iso
 from agent.common.json import DictMixin
+from agent.learning.pattern_engine import Pattern
 
 
 # Enums
@@ -445,3 +447,163 @@ class EvolutionRun:
             diff=[SkillDiff.from_dict(d) for d in diff_raw] if diff_raw is not None else None,
             errors=[str(e) for e in data.get("errors", [])],
         )
+
+
+# ---------------------------------------------------------------------------
+# Knowledge versioning models (merged from agent.evolution.models)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SkillFileRef:
+    """Reference to a skill file on disk (path + content hash)."""
+    path: str
+    content_hash: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"path": self.path, "content_hash": self.content_hash}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> SkillFileRef:
+        return cls(path=d["path"], content_hash=d["content_hash"])
+
+
+@dataclass
+class ProvenanceRecord:
+    """Tracks where a version came from."""
+    source: str  # seed, evolution, manual, rollback
+    run_id: str | None = None
+    proposal_ids: list[str] = field(default_factory=list)
+    evidence_game_ids: list[str] = field(default_factory=list)
+    rejected_pattern_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "run_id": self.run_id,
+            "proposal_ids": self.proposal_ids,
+            "evidence_game_ids": self.evidence_game_ids,
+            "rejected_pattern_ids": self.rejected_pattern_ids,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ProvenanceRecord:
+        return cls(
+            source=d.get("source", "unknown"),
+            run_id=d.get("run_id"),
+            proposal_ids=d.get("proposal_ids", []),
+            evidence_game_ids=d.get("evidence_game_ids", []),
+            rejected_pattern_ids=d.get("rejected_pattern_ids", []),
+        )
+
+
+@dataclass
+class BattleMetrics:
+    """Performance metrics from A/B battle."""
+    win_rate: float = 0.0
+    score: float = 0.0
+    speech_score: float = 0.0
+    vote_score: float = 0.0
+    skill_score: float = 0.0
+    games_played: int = 0
+    confidence_interval: tuple[float, float] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "win_rate": self.win_rate,
+            "score": self.score,
+            "speech_score": self.speech_score,
+            "vote_score": self.vote_score,
+            "skill_score": self.skill_score,
+            "games_played": self.games_played,
+            "confidence_interval": list(self.confidence_interval) if self.confidence_interval else None,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> BattleMetrics:
+        ci = d.get("confidence_interval")
+        return cls(
+            win_rate=d.get("win_rate", 0.0),
+            score=d.get("score", 0.0),
+            speech_score=d.get("speech_score", 0.0),
+            vote_score=d.get("vote_score", 0.0),
+            skill_score=d.get("skill_score", 0.0),
+            games_played=d.get("games_played", 0),
+            confidence_interval=tuple(ci) if ci else None,
+        )
+
+
+@dataclass
+class KnowledgePackage:
+    """A versioned knowledge bundle for one role."""
+    version_id: str
+    role: str
+    parent_id: str | None
+    skills: list[SkillFileRef]
+    patterns: list[dict[str, Any]]  # serialized Pattern dicts
+    provenance: ProvenanceRecord
+    metrics: BattleMetrics | None
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version_id": self.version_id,
+            "role": self.role,
+            "parent_id": self.parent_id,
+            "skills": [s.to_dict() for s in self.skills],
+            "patterns": self.patterns,
+            "provenance": self.provenance.to_dict(),
+            "metrics": self.metrics.to_dict() if self.metrics else None,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> KnowledgePackage:
+        return cls(
+            version_id=d["version_id"],
+            role=d["role"],
+            parent_id=d.get("parent_id"),
+            skills=[SkillFileRef.from_dict(s) for s in d.get("skills", [])],
+            patterns=d.get("patterns", []),
+            provenance=ProvenanceRecord.from_dict(d.get("provenance", {})),
+            metrics=BattleMetrics.from_dict(d["metrics"]) if d.get("metrics") else None,
+            created_at=d.get("created_at", ""),
+        )
+
+
+@dataclass
+class VersionSummary:
+    """Lightweight version info for listing."""
+    version_id: str
+    role: str
+    source: str
+    created_at: str
+    is_baseline: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version_id": self.version_id,
+            "role": self.role,
+            "source": self.source,
+            "created_at": self.created_at,
+            "is_baseline": self.is_baseline,
+        }
+
+
+@dataclass
+class KnowledgeDiff:
+    """Diff between two KnowledgePackages."""
+    skill_changes: list[dict[str, Any]]  # {file, action, before_lines, after_lines}
+    patterns_added: list[dict[str, Any]]
+    patterns_removed: list[dict[str, Any]]
+    patterns_updated: list[dict[str, Any]]
+    metrics_delta: dict[str, float] | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "skill_changes": self.skill_changes,
+            "patterns_added": self.patterns_added,
+            "patterns_removed": self.patterns_removed,
+            "patterns_updated": self.patterns_updated,
+            "metrics_delta": self.metrics_delta,
+        }

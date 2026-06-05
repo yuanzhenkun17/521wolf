@@ -42,6 +42,37 @@ def read_decisions_for_artifact(
     )
 
 
+def read_config_for_artifact(
+    db_path: Path | str,
+    game_dir: Path | str,
+    *,
+    root: Path | str | None = None,
+) -> dict[str, Any] | None:
+    """Return the games.config payload for a raw game artifact directory, if indexed."""
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        game_id = _find_game_id(conn, Path(game_dir), Path(root) if root is not None else None, table="game_events")
+        if game_id is None:
+            return None
+        row = conn.execute("SELECT seed, config FROM games WHERE id = ?", (game_id,)).fetchone()
+        if row is None:
+            return None
+        config = _load_json(row["config"], {})
+        if not isinstance(config, dict):
+            config = {}
+        if config.get("seed") is None and row["seed"] is not None:
+            config["seed"] = row["seed"]
+        return config
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
 def resolve_game_id_for_artifact(
     db_path: Path | str,
     game_dir: Path | str,

@@ -1,4 +1,4 @@
-"""Batch LLM judge for learning_v2 evidence."""
+"""Batch LLM judge for learning evidence."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 from agent.infrastructure.llm import ModelAdapter
 from agent.knowledge.prompts.parsing import load_json_object
-from agent.learning_v2.models import (
+from agent.learning.models import (
     DecisionEvidence,
     DecisionEvidenceInput,
     EvidenceRunResult,
@@ -16,7 +16,7 @@ from agent.learning_v2.models import (
     GameEvidenceBundle,
     KeyDecision,
 )
-from agent.learning_v2.rubrics import get_action_focus, get_role_rubric
+from agent.learning.rubrics import get_action_focus, get_role_rubric
 
 SYSTEM_PROMPT = """你是狼人杀 selfplay 的证据层评估器。
 
@@ -48,7 +48,7 @@ async def judge_game_evidence(
     )
     raw = ""
     try:
-        raw = await model.complete(messages, name=f"learning_v2/{bundle.game_id}")
+        raw = await model.complete(messages, name=f"learning/{bundle.game_id}")
         data = load_json_object(raw)
         return EvidenceRunResult(
             game_id=bundle.game_id,

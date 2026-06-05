@@ -14,13 +14,16 @@ from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
 from agent.infrastructure.archive import AgentTraceRecorder
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from agent.api.factory import create_agents, load_llm_client
-from agent.learning_v2.review import generate_enhanced_review
-from storage.replay import read_decisions_for_artifact, read_events_for_artifact
+from agent.learning.review.evaluator import GameEvaluator
+from agent.learning.review.reviewer import GameReviewer
+from agent.learning.review.report_gen import ReportGenerator
+from agent.core.episodic_memory import EpisodicMemoryWriter
+from storage.replay import read_config_for_artifact, read_decisions_for_artifact, read_events_for_artifact
 from storage.runtime import GamePersistence
 from engine.config import GameConfig, STANDARD_12
 from engine.engine import GameEngine
 from engine.logging import next_game_log_name
-from engine.models import ActionResponse, ActionType, Observation, Role
+from engine.models import ActionResponse, ActionType, Observation
 from engine.players import HumanPlayer
 from engine.roles import random_standard_roles
 
@@ -145,6 +148,7 @@ class GameManager:
         state = engine.state if engine is not None else None
         if state is None and game.events:
             return self._snapshot_from_events(game.game_id, game.events, include_events)
+        config = self._game_config_payload(game)
         players = []
         if state is not None:
             players = [
@@ -165,7 +169,13 @@ class GameManager:
             "status": game.status,
             "winner": game.winner,
             "seed": game.seed,
+            "config": config,
+            "max_days": game.max_days,
+            "enable_sheriff": game.enable_sheriff,
+            "skill_dir": game.skill_dir,
+            "role_skill_dirs": config["role_skill_dirs"],
             "human_player_id": game.human_player_id,
+            "player_count": game.player_count,
             "day": state.day if state is not None else 0,
             "phase": state.phase.value if state is not None else "setup",
             "sheriff_id": state.sheriff_id if state is not None else None,
@@ -228,6 +238,7 @@ class GameManager:
                     skill_dir=game.skill_dir,
                     role_skill_dirs=game.role_skill_dirs,
                     human_player_id=game.human_player_id,
+                    paths=self._paths,
                 ),
                 config=game_config,
                 logger=persistence.create_event_logger(game_dir / "game_events.jsonl"),
@@ -239,19 +250,21 @@ class GameManager:
             winner = await task
             cursor = await self._publish_new_entries(game, cursor)
             game.winner = winner.value
+            config = self._game_config_payload(game)
+            player_roles_dict = {pid: r.value for pid, r in roles.items()}
             # game_events.jsonl already written via streaming; decisions in archive.json
             if game.trace_recorder is not None:
                 game.trace_recorder.flush(
                     game_id=game.log_name,
                     output_dir=game_dir,
                     seed=game.seed or 0,
-                    config={},
-                    player_roles={pid: r.value for pid, r in roles.items()},
+                    config=config,
+                    player_roles=player_roles_dict,
                     winner=game.winner,
                     public_events=game.events,
+                    final_state={"player_roles": player_roles_dict, "winner": game.winner, "config": config},
                 )
             # Write game + player records to SQLite
-            player_roles_dict = {pid: r.value for pid, r in roles.items()}
             deaths = [
                 {"player_id": d.player_id, "cause": d.cause.value if hasattr(d.cause, "value") else str(d.cause), "day": d.day}
                 for d in game.engine.state.deaths
@@ -259,14 +272,44 @@ class GameManager:
             persistence.save_game_result(
                 seed=game.seed or 0,
                 player_roles=player_roles_dict,
-                config={},
+                config=config,
                 winner=game.winner,
                 started_at="",
                 total_rounds=getattr(game.engine.state, "day", 0) or 0,
                 public_events=[e.to_dict() for e in game.engine.state.events],
-                final_state={"player_roles": player_roles_dict, "winner": game.winner},
+                final_state={"player_roles": player_roles_dict, "winner": game.winner, "config": config},
                 deaths=deaths,
             )
+            # Persist episodic memory for cross-game learning
+            try:
+                agent_memories = getattr(game, "agent_memories", None)
+                if agent_memories:
+                    mem_writer = EpisodicMemoryWriter()
+                    situational_records, decision_outcomes = mem_writer.persist_game(
+                        game.game_id,
+                        player_memories=agent_memories,
+                        player_roles=player_roles_dict,
+                        winner=game.winner,
+                        decisions=self._decision_dicts(game),
+                        game_events=game.events,
+                    )
+                    # Write to evolution.db if available
+                    try:
+                        from storage.evolution.situational_repo import SituationalRecordStore
+                        from storage.evolution.outcome_repo import DecisionOutcomeStore
+                        from storage.shared.connection import get_evolution_connection
+                        evo_conn = get_evolution_connection()
+                        try:
+                            sit_store = SituationalRecordStore(evo_conn)
+                            sit_store.save_batch(situational_records)
+                            out_store = DecisionOutcomeStore(evo_conn)
+                            out_store.save_batch(decision_outcomes)
+                        finally:
+                            evo_conn.close()
+                    except Exception:
+                        _log.debug("Could not persist episodic memory to evolution.db", exc_info=True)
+            except Exception:
+                _log.debug("Episodic memory extraction failed", exc_info=True)
             self._cache_completed_review(game.game_id)
             game.status = RunnerStatus.COMPLETED
             done_snapshot = self.snapshot(game, include_events=False)
@@ -334,22 +377,74 @@ class GameManager:
     ) -> dict[str, Any]:
         last_event = events[-1] if events else {}
         sheriff_id = self._sheriff_from_events(events)
+        config = self._read_archive_config(game_id)
+        players = self._players_from_events(events, sheriff_id)
         return {
             "game_id": game_id,
             "log_name": game_id,
             "status": RunnerStatus.COMPLETED,
             "winner": self._winner_from_events(events),
-            "seed": None,
+            "seed": config.get("seed"),
+            "config": config,
+            "max_days": config.get("max_days"),
+            "enable_sheriff": config.get("enable_sheriff"),
+            "skill_dir": config.get("skill_dir"),
+            "role_skill_dirs": config.get("role_skill_dirs") or {},
             "human_player_id": None,
+            "player_count": config.get("player_count") or len(players) or None,
             "day": last_event.get("day", 0),
             "phase": last_event.get("phase", "finished"),
             "sheriff_id": sheriff_id,
-            "players": self._players_from_events(events, sheriff_id),
+            "players": players,
             "event_count": len(events),
             "events": events if include_events else [],
             "decisions": self._read_decisions(game_id) if include_events else [],
             "error": None,
         }
+
+    def _game_config_payload(self, game: RunningGame) -> dict[str, Any]:
+        role_skill_dirs = {
+            role: str(path)
+            for role, path in (game.role_skill_dirs or {}).items()
+        }
+        return {
+            "seed": game.seed,
+            "max_days": game.max_days,
+            "enable_sheriff": game.enable_sheriff,
+            "skill_dir": game.skill_dir,
+            "role_skill_dirs": role_skill_dirs,
+            "player_count": game.player_count,
+            "human_player_id": game.human_player_id,
+        }
+
+    def _read_archive_config(self, game_id: str) -> dict[str, Any]:
+        merged = self._read_db_config(game_id)
+        path = self._archive_path(game_id)
+        if path is None:
+            return merged
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return merged
+        if not isinstance(data, dict):
+            return merged
+        config = data.get("config")
+        if not isinstance(config, dict):
+            config = {}
+        merged = {**merged, **config}
+        if merged.get("seed") is None and "seed" in data:
+            merged["seed"] = data.get("seed")
+        return merged
+
+    def _read_db_config(self, game_id: str) -> dict[str, Any]:
+        if self._db_path is None:
+            return {}
+        config = read_config_for_artifact(
+            self._db_path,
+            self._game_dir(game_id),
+            root=self._paths.runs_dir,
+        )
+        return config if isinstance(config, dict) else {}
 
     def _decision_dicts(self, game: RunningGame) -> list[dict[str, Any]]:
         if game.decision_recorder is not None:
@@ -522,7 +617,7 @@ class GameManager:
         ]
 
     def build_review(self, game_id: str) -> dict[str, Any] | None:
-        """Build enhanced review report for a completed game."""
+        """Build structured review report using the new evaluation pipeline."""
         cached = self._read_review_cache(game_id)
         if cached is not None:
             return cached
@@ -532,43 +627,68 @@ class GameManager:
             return None
 
         # Extract roles from game_init
-        roles: dict[int, Role] = {}
+        roles: dict[int, str] = {}
         for event in events:
             if event.get("event_type") == "game_init":
                 raw_roles = event.get("payload", {}).get("roles", {})
                 if isinstance(raw_roles, dict):
                     for pid_str, role_str in raw_roles.items():
                         try:
-                            roles[int(pid_str)] = Role(str(role_str))
+                            roles[int(pid_str)] = str(role_str)
                         except (ValueError, TypeError):
                             pass
                 break
         if not roles:
             return None
 
-        # Read agent decisions from SQLite first, then archive/jsonl fallback.
-        agent_decisions: dict[int, list[dict]] = {}
-        for decision in self._read_decisions(game_id):
-            pid = decision.get("player_id")
-            if pid is not None:
-                agent_decisions.setdefault(int(pid), []).append(decision)
-
+        # Read decisions
+        decisions: list[dict] = list(self._read_decisions(game_id))
         winner = self._winner_from_events(events)
+        total_days = max((e.get("day", 0) for e in events), default=0)
 
         try:
-            report = generate_enhanced_review(
-                game_log=events,
-                agent_decisions=agent_decisions,
-                roles=roles,
-                winner_team=winner,
-                game_id=game_id,
+            # Step 1: Evaluate
+            evaluator = GameEvaluator()
+            evaluation = evaluator.evaluate_game(
+                game_id,
+                events=events,
+                decisions=decisions,
+                player_roles=roles,
+                winner=winner or "unknown",
             )
-            data = report.to_dict()
+
+            # Step 2: Review
+            reviewer = GameReviewer()
+            reviews, counterfactuals = reviewer.review_game(
+                game_id,
+                events=events,
+                decisions=decisions,
+                evaluation=evaluation,
+                player_roles=roles,
+                winner=winner or "unknown",
+            )
+
+            # Step 3: Generate report
+            generator = ReportGenerator()
+            report = generator.generate(
+                game_id,
+                evaluation=evaluation,
+                reviews=reviews,
+                counterfactuals=counterfactuals,
+                events=events,
+                player_roles=roles,
+                winner=winner or "unknown",
+                total_days=total_days,
+            )
+
+            data = report.summary
+            data["game_id"] = game_id
             self._write_review_cache(game_id, data)
             return data
         except Exception:
             _log.warning("Review generation failed for %s", game_id, exc_info=True)
             return None
+
 
     def _cache_completed_review(self, game_id: str) -> None:
         try:
@@ -599,15 +719,33 @@ class GameManager:
         return path if path.exists() else None
 
     def read_archive(self, game_id: str) -> dict[str, Any] | None:
-        """Read archive.json for a completed game, if it exists."""
+        """Read archive.json, falling back to persisted events and decisions."""
         path = self._archive_path(game_id)
-        if path is None:
+        if path is not None:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except (OSError, json.JSONDecodeError):
+                pass
+        events = self._read_game_events(game_id)
+        if events is None:
             return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else None
-        except (OSError, json.JSONDecodeError):
-            return None
+        decisions = self._read_decisions(game_id)
+        config = self._read_archive_config(game_id)
+        return {
+            "kind": "game_trace_archive",
+            "schema_version": 1,
+            "source": "events_fallback",
+            "game_id": game_id,
+            "seed": config.get("seed"),
+            "config": config,
+            "winner": self._winner_from_events(events),
+            "event_count": len(events),
+            "decision_count": len(decisions),
+            "events": events,
+            "decisions": decisions,
+        }
 
     def _game_dir(self, game_id: str) -> Path:
         return self._paths.games_dir / game_id

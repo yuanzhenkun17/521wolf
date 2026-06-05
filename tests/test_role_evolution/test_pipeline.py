@@ -10,14 +10,14 @@ import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agent.learning_v2.evolution.models import (
+from agent.learning.evolution.models import (
     EvolutionRun,
     EvolutionStatus,
     SkillConsolidation,
     SkillDiff,
     SkillProposal,
 )
-from agent.learning_v2.evolution.pipeline import (
+from agent.learning.evolution.pipeline import (
     BaselineChangedError,
     InvalidRunStateError,
     promote,
@@ -26,8 +26,8 @@ from agent.learning_v2.evolution.pipeline import (
     run_evolution,
     scan_active_runs,
 )
-from agent.learning_v2.evolution.state import save_run_state
-from agent.learning_v2.evolution.store import VersionStore
+from agent.learning.evolution.state import save_run_state
+from agent.learning.evolution.registry import VersionRegistry
 from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
 
 
@@ -48,28 +48,28 @@ class _FakeSelfPlayConfig:
 
 
 # ---------------------------------------------------------------------------
-# Build a fake ``agent.learning_v2.evolution.games`` module with SelfPlayConfig
-# so that ``from agent.learning_v2.evolution.games import SelfPlayConfig`` works
+# Build a fake ``agent.learning.evolution.games`` module with SelfPlayConfig
+# so that ``from agent.learning.evolution.games import SelfPlayConfig`` works
 # inside _stage_training without pulling in the real (heavy) module.
 # ---------------------------------------------------------------------------
 
-_original_games_module = sys.modules.get("agent.learning_v2.evolution.games")
+_original_games_module = sys.modules.get("agent.learning.evolution.games")
 
 
 def _install_fake_selfplay_module():
-    """Install a minimal fake ``agent.learning_v2.evolution.games`` module into sys.modules."""
-    fake_mod = types.ModuleType("agent.learning_v2.evolution.games")
+    """Install a minimal fake ``agent.learning.evolution.games`` module into sys.modules."""
+    fake_mod = types.ModuleType("agent.learning.evolution.games")
     fake_mod.SelfPlayConfig = _FakeSelfPlayConfig  # type: ignore[attr-defined]
-    sys.modules["agent.learning_v2.evolution.games"] = fake_mod
+    sys.modules["agent.learning.evolution.games"] = fake_mod
     return fake_mod
 
 
 def _restore_selfplay_module():
-    """Restore the original ``agent.learning_v2.evolution.games`` entry in sys.modules."""
+    """Restore the original ``agent.learning.evolution.games`` entry in sys.modules."""
     if _original_games_module is None:
-        sys.modules.pop("agent.learning_v2.evolution.games", None)
+        sys.modules.pop("agent.learning.evolution.games", None)
     else:
-        sys.modules["agent.learning_v2.evolution.games"] = _original_games_module
+        sys.modules["agent.learning.evolution.games"] = _original_games_module
 
 
 # ---------------------------------------------------------------------------
@@ -154,16 +154,17 @@ def _make_fake_battle_runner():
 # ---------------------------------------------------------------------------
 
 
-async def _setup_store(tmp_path: Path, role: str = "seer") -> tuple[VersionStore, str]:
-    """Create a VersionStore with a baseline version for *role*.
+async def _setup_store(tmp_path: Path, role: str = "seer") -> tuple[VersionRegistry, str]:
+    """Create a VersionRegistry with a baseline version for *role*.
 
     Returns ``(store, parent_hash)``.
     """
-    store = VersionStore(tmp_path / "role_versions")
+    store = VersionRegistry(tmp_path / "role_versions")
     baseline_skills = {"claim.md": "# Seer claim v1\n"}
-    parent_hash = await store.save_version(
-        role, baseline_skills, parent_hash=None, source="test_setup",
+    parent_hash = await store.publish_skills(
+        role, baseline_skills, source="test_setup",
     )
+    await store.set_baseline(role, parent_hash, expected_current=None)
     return store, parent_hash
 
 
@@ -179,7 +180,7 @@ async def _run_pipeline(tmp_path: Path, role: str = "seer"):
     fake_applier = _make_fake_applier()
     fake_battle = _make_fake_battle_runner()
 
-    # Install fake module so ``from agent.learning_v2.evolution.games import SelfPlayConfig``
+    # Install fake module so ``from agent.learning.evolution.games import SelfPlayConfig``
     # resolves without pulling in the real heavy evaluation module.
     _install_fake_selfplay_module()
     try:
@@ -255,13 +256,15 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_training_uses_composite_baseline_skill_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            store = VersionStore(tmp_path / "role_versions")
-            seer_hash = await store.save_version(
-                "seer", {"claim.md": "# Seer\n"}, parent_hash=None, source="test_setup",
+            store = VersionRegistry(tmp_path / "role_versions")
+            seer_hash = await store.publish_skills(
+                "seer", {"claim.md": "# Seer\n"}, source="test_setup",
             )
-            await store.save_version(
-                "werewolf", {"attack.md": "# Wolf\n"}, parent_hash=None, source="test_setup",
+            await store.set_baseline("seer", seer_hash, expected_current=None)
+            wolf_hash = await store.publish_skills(
+                "werewolf", {"attack.md": "# Wolf\n"}, source="test_setup",
             )
+            await store.set_baseline("werewolf", wolf_hash, expected_current=None)
 
             async def fake_selfplay(config, **kwargs):
                 self.assertEqual(config.game_concurrency, 3)
@@ -314,8 +317,8 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             await promote(run, store)
 
             self.assertEqual(run.status, EvolutionStatus.PROMOTED)
-            history = store.get_history("seer")
-            self.assertEqual(history.baseline, run.candidate_hash)
+            baseline = store.get_baseline("seer")
+            self.assertEqual(baseline, run.candidate_hash)
 
     # -- 3. promote fails if CAS mismatch ------------------------------------
     async def test_promote_fails_if_cas_mismatch(self):
@@ -325,10 +328,10 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
 
             # Externally change the baseline before promote
             new_skills = {"claim.md": "# Externally changed\n"}
-            external_hash = await store.save_version(
-                "seer", new_skills, parent_hash=parent_hash, source="external",
+            external_hash = await store.publish_skills(
+                "seer", new_skills, parent_id=parent_hash, source="external",
             )
-            await store.set_baseline("seer", external_hash, expected_current=parent_hash)
+            await store.set_baseline("seer", version_id=external_hash, expected_current=parent_hash)
 
             with self.assertRaises(BaselineChangedError):
                 await promote(run, store)
@@ -342,8 +345,8 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
             await reject(run, store)
 
             self.assertEqual(run.status, EvolutionStatus.REJECTED)
-            history = store.get_history("seer")
-            self.assertEqual(history.baseline, parent_hash)
+            baseline = store.get_baseline("seer")
+            self.assertEqual(baseline, parent_hash)
 
     # -- 5. promote is idempotent --------------------------------------------
     async def test_promote_idempotent(self):
@@ -484,7 +487,7 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
     async def test_state_json_recoverable(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            store = VersionStore(tmp_path / "role_versions")
+            store = VersionRegistry(tmp_path / "role_versions")
             run_id = "evo_interrupted"
 
             # Manually write a state.json with non-terminal status

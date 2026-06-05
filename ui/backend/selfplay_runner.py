@@ -10,7 +10,7 @@ from typing import Any
 from agent.common import beijing_now_iso, beijing_now_str
 from ui.backend.runner_utils import RunnerStatus, is_rate_limit_error
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
-from agent.learning_v2.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
+from agent.learning.evolution.games import SelfPlayConfig, SelfPlayGameResult, SelfPlayResult, run_selfplay
 from agent.infrastructure.llm import AsyncRateLimiter
 from engine.config import STANDARD_12
 
@@ -296,6 +296,20 @@ class SelfplayManager:
         return run
 
     def _on_game_complete(self, run: RunningSelfplay, game_index: int, _result: SelfPlayGameResult) -> None:
+        """Called synchronously when a single selfplay game finishes.
+
+        TOCTOU note: when ``game_concurrency > 1`` this callback may be
+        invoked concurrently from different coroutine contexts.  The
+        ``completed_games += 1`` increment and the subsequent
+        ``persist_state`` call are therefore not atomic as a pair, and the
+        value written to ``run_state.json`` can occasionally be off by one.
+
+        This race is **benign**: ``restore_runs`` does *not* trust the
+        ``completed_games`` field in ``run_state.json``.  Instead it counts
+        completed games from ``meta.json`` sentinel files on disk (see the
+        ``games_dir`` scan in ``restore_runs``), so crash recovery is always
+        accurate regardless of what ``persist_state`` wrote last.
+        """
         run.completed_games = min(run.total_games, run.completed_games + 1)
         # Persist state after each game so we can resume if interrupted
         run_dir = self.output_dir / (run.artifact_run_id or run.run_id)

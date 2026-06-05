@@ -48,6 +48,7 @@ def build_messages(
     strategy_advice: dict[str, Any] | None = None,
     selected_skills: list[str] | None = None,
     skill_context: str = "",
+    memory_injection: str | None = None,
 ) -> list[dict[str, str]]:
     return [
         {
@@ -64,6 +65,7 @@ def build_messages(
                 strategy_advice=strategy_advice or {},
                 selected_skills=selected_skills or [],
                 skill_context=skill_context,
+                memory_injection=memory_injection,
             ),
         },
     ]
@@ -212,6 +214,7 @@ def build_request_prompt(
     strategy_advice: dict[str, Any] | None = None,
     selected_skills: list[str] | None = None,
     skill_context: str = "",
+    memory_injection: str | None = None,
 ) -> str:
     observation = request.observation
     private_facts = memory_context.get("private_facts", {})
@@ -245,6 +248,11 @@ def build_request_prompt(
     if skill_context:
         skill_context_block = f"已注入策略 Skill:\n{skill_context}\n\n"
 
+    # Cross-game memory injection (patterns + episodic records)
+    memory_injection_block = ""
+    if memory_injection:
+        memory_injection_block = f"已注入经验记忆:\n{memory_injection}\n\n"
+
     memory_block = _format_short_term_memory(memory_context)
 
     return (
@@ -261,6 +269,7 @@ def build_request_prompt(
         f"{memory_block}"
         f"{field_notes_block}"
         f"{skill_context_block}"
+        f"{memory_injection_block}"
         f"{hints_block}"
         f"{action_instruction(request.action_type)}\n"
         f"{_OUTPUT_FORMAT_INSTRUCTIONS}\n"

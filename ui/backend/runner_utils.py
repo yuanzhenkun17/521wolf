@@ -80,6 +80,13 @@ async def sse_events_stream(
     ``RoleEvolutionRunner.sse_events`` and
     ``RoleBatchEvolutionRunner.sse_events``.
 
+    A 30-second keepalive timeout prevents the generator from blocking
+    forever when the queue is idle (e.g., a stalled run or a silently
+    disconnected client).  On timeout, an SSE comment line
+    (``:keepalive``) is yielded; SSE comments are ignored by clients but
+    keep the TCP connection alive and allow detection of half-open
+    sockets.
+
     Parameters
     ----------
     subscribe_fn:
@@ -101,7 +108,13 @@ async def sse_events_stream(
     queue = subscribe_fn(entity_id)
     try:
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Send an SSE comment to keep the connection alive and allow
+                # detection of dead TCP connections (half-open sockets).
+                yield ":keepalive\n\n"
+                continue
             kind = item["kind"]
             payload = json.dumps(item["payload"], ensure_ascii=False)
             # Terminal events keep their concrete name so the frontend

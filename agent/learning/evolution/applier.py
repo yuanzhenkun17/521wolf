@@ -17,14 +17,14 @@ from typing import Any
 
 from engine.models import ActionType, Role
 from agent.common.action_types import AGENT_ACTION_TYPES
-from agent.learning_v2.evolution.models import (
+from agent.learning.evolution.models import (
     SkillConsolidation,
     SkillDiff,
     SkillProposal,
 )
-from agent.learning_v2.evolution.store import normalize_skill_path, normalize_skill_text
 from agent.infrastructure.llm import ModelAdapter
 from agent.knowledge.skills.loader import load_markdown_skills, parse_front_matter
+from storage.interfaces import normalize_skill_path, normalize_skill_text
 
 _log = logging.getLogger(__name__)
 

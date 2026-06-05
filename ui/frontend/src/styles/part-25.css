@@ -1,0 +1,242 @@
+
+.topbar nav {
+  right: 8px;
+  width: 258px;
+  gap: 0;
+}
+
+.topbar nav button:hover {
+  border-color: transparent;
+  background: rgba(242, 202, 80, 0.08);
+}
+
+.lycan-app.lobbying .topbar nav button {
+  color: var(--lobby-accent);
+  text-shadow: 0 0 12px rgba(255, 180, 168, 0.14);
+  border: 0;
+  background: transparent;
+}
+
+.lycan-app.day:not(.lobbying) .topbar nav button {
+  color: #f2ca50;
+  text-shadow: 0 0 14px rgba(242, 202, 80, 0.18);
+  border: 0;
+  background: transparent;
+}
+
+.lycan-app.night:not(.lobbying) .topbar nav button {
+  color: #9db8ff;
+  text-shadow: 0 0 14px rgba(157, 184, 255, 0.18);
+  border: 0;
+  background: transparent;
+}
+
+.lycan-app.lobbying .topbar nav button:hover {
+  background: rgba(255, 180, 168, 0.08);
+}
+
+.lycan-app.day:not(.lobbying) .topbar nav button:hover {
+  background: rgba(242, 202, 80, 0.08);
+}
+
+.lycan-app.night:not(.lobbying) .topbar nav button:hover {
+  background: rgba(157, 184, 255, 0.08);
+}
+
+.evolution-page {
+  position: fixed;
+  z-index: 11;
+  top: 72px;
+  right: clamp(18px, 4vw, 72px);
+  bottom: 0;
+  left: clamp(18px, 4vw, 72px);
+  margin: 0;
+  padding: 0;
+  color: #2d1809;
+  overflow: hidden;
+  height: auto;
+}
+
+.evolution-page::after {
+  opacity: 0.46;
+}
+
+.evolution-shell {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 0;
+  align-content: start;
+  padding: 26px;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.evolution-shell::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---- 左栏：baseline 角色列表 ---- */
+.evolution-baseline {
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  color: #2d1809;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.evolution-baseline header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 0 20px;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.25);
+}
+
+.evolution-baseline header span {
+  color: #2d1809;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.evolution-baseline header strong {
+  color: #5a3319;
+  font-size: 18px;
+}
+
+.evolution-baseline-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.evolution-baseline-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 20px;
+  border: 0;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.12);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+  background: transparent;
+}
+
+.evolution-baseline-row:hover {
+  background: rgba(91, 47, 18, 0.06);
+}
+
+.evolution-baseline-row.selected {
+  background: rgba(91, 47, 18, 0.1);
+}
+
+/* 复选框 */
+.evolution-checkbox {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(91, 47, 18, 0.35);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  background: rgba(255, 252, 246, 0.5);
+}
+
+.evolution-checkbox.checked {
+  background: #5a3319;
+  border-color: #5a3319;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.evolution-checkbox svg {
+  width: 16px;
+  height: 16px;
+  fill: #fff;
+}
+
+.evolution-baseline-row .role-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.evolution-baseline-row .role-info img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid rgba(91, 47, 18, 0.25);
+  object-fit: cover;
+}
+
+.evolution-baseline-row .role-info span {
+  font-size: 17px;
+  font-weight: 700;
+  color: #2d1809;
+}
+
+.evolution-baseline-row .version-badge {
+  box-sizing: border-box;
+  width: 72px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  background: rgba(91, 47, 18, 0.12);
+  color: #5a3319;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-align: center;
+}
+
+/* ---- 右栏：三个功能区 ---- */
+.evolution-panels {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 0;
+  min-width: 0;
+}
+
+.evolution-card {
+  overflow: hidden;
+  border: none;
+  border-radius: 0;
+  color: #2d1809;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.evolution-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 0 24px;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.25);
+}
+
+.evolution-card h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: #2d1809;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0;
+}

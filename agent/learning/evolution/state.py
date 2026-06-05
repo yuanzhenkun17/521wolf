@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
-from agent.learning_v2.evolution.models import EvolutionRun, EvolutionStatus
+from agent.learning.evolution.models import EvolutionRun, EvolutionStatus
 from agent.common import beijing_now_iso, write_json
 
 TERMINAL_STATUSES: set[str] = {

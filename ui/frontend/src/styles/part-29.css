@@ -1,0 +1,553 @@
+/* ─── MultiAssess: View toggle ─── */
+.ma-view-toggle {
+  display: flex;
+  gap: 0;
+  margin-left: auto;
+  border: 1px solid rgba(91, 47, 18, 0.22);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.ma-view-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-right: 1px solid rgba(91, 47, 18, 0.15);
+  background: transparent;
+  color: #6b3518;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ma-view-btn:last-child {
+  border-right: none;
+}
+
+.ma-view-btn:hover {
+  background: rgba(91, 47, 18, 0.08);
+}
+
+.ma-view-btn.active {
+  background: rgba(255, 226, 157, 0.4);
+  color: #321807;
+}
+
+/* ─── MultiAssess: New bar dimensions ─── */
+.ma-bar-fill.ma-dim-information {
+  background: linear-gradient(180deg, #5a8fa8, #2e5a6e);
+  box-shadow: inset 0 1px 0 rgba(160, 210, 230, 0.35);
+}
+
+.ma-bar-fill.ma-dim-cooperation {
+  background: linear-gradient(180deg, #9a6dbf, #5e3a82);
+  box-shadow: inset 0 1px 0 rgba(200, 170, 240, 0.3);
+}
+
+/* ─── MultiAssess: Radar chart ─── */
+.ma-tabs-players {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(91, 47, 18, 0.2) transparent;
+}
+
+.ma-tabs-players::-webkit-scrollbar {
+  width: 4px;
+}
+
+.ma-tabs-players::-webkit-scrollbar-thumb {
+  background: rgba(91, 47, 18, 0.25);
+  border-radius: 2px;
+}
+
+.ma-radar-area {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  padding: 12px 8px 8px;
+}
+
+.ma-radar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ma-radar-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid rgba(91, 47, 18, 0.25);
+}
+
+.ma-radar-name {
+  color: #2d1809;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.ma-radar-role {
+  color: #6b3518;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ma-radar-svg {
+  width: min(280px, 100%);
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.ma-radar-label {
+  font-size: 12px;
+  font-weight: 800;
+  fill: #5a3319;
+  font-family: inherit;
+}
+
+.ma-radar-score {
+  font-size: 10px;
+  font-weight: 900;
+  fill: #d4af37;
+  font-family: inherit;
+}
+
+.ma-radar-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  justify-content: center;
+}
+
+.ma-radar-score-item {
+  display: grid;
+  gap: 2px;
+  min-width: 48px;
+  padding: 5px 8px;
+  border: 1px solid rgba(91, 47, 18, 0.14);
+  border-radius: 4px;
+  background: rgba(255, 252, 248, 0.4);
+  text-align: center;
+}
+
+.ma-radar-score-item small {
+  color: #7a5d3b;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.ma-radar-score-item b {
+  color: #2d1809;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+/* ─── Review: Structured display ─── */
+.archive-review-panel h4 {
+  margin: 14px 0 8px;
+  color: #3d1f0a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.archive-review-panel h4:first-child {
+  margin-top: 0;
+}
+
+/* Game summary strip */
+.review-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.12);
+}
+
+.review-summary-item {
+  display: grid;
+  gap: 3px;
+  min-width: 72px;
+  padding: 7px 10px;
+  border: 1px solid rgba(91, 47, 18, 0.16);
+  border-radius: 5px;
+  background: rgba(255, 252, 248, 0.5);
+}
+
+.review-summary-item.review-winner {
+  border-color: rgba(212, 175, 55, 0.4);
+  background: rgba(255, 226, 157, 0.3);
+}
+
+.review-summary-item small {
+  color: #7a5d3b;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.review-summary-item b {
+  color: #2d1809;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Player scores table */
+.review-player-scores {
+  margin-bottom: 8px;
+}
+
+.review-score-table {
+  display: grid;
+  gap: 4px;
+}
+
+.review-score-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.08);
+  flex-wrap: wrap;
+}
+
+.review-seat {
+  min-width: 32px;
+  color: #2d1809;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.review-role {
+  min-width: 48px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(91, 47, 18, 0.08);
+  color: #5a3319;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.review-dim {
+  display: grid;
+  gap: 1px;
+  min-width: 40px;
+  text-align: center;
+}
+
+.review-dim small {
+  color: #8a7e6a;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.review-dim b {
+  color: #3d1f0a;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+/* Turning points */
+.review-turning-points {
+  margin-bottom: 8px;
+}
+
+.review-tp-card {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-left: 3px solid rgba(212, 175, 55, 0.5);
+  background: rgba(255, 252, 248, 0.3);
+}
+
+.review-tp-badges {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.review-day-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(91, 47, 18, 0.1);
+  color: #5a3319;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.review-phase-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(91, 47, 18, 0.06);
+  color: #6b3518;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.review-impact-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.review-impact-badge.impact-high {
+  background: rgba(192, 57, 43, 0.12);
+  color: #c0392b;
+}
+
+.review-impact-badge.impact-medium {
+  background: rgba(243, 156, 18, 0.12);
+  color: #d4880f;
+}
+
+.review-impact-badge.impact-low {
+  background: rgba(39, 174, 96, 0.12);
+  color: #27ae60;
+}
+
+.review-tp-desc {
+  margin: 0;
+  color: #2d1809;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Counterfactuals */
+.review-counterfactuals {
+  margin-bottom: 8px;
+}
+
+.review-cf-card {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(91, 47, 18, 0.1);
+  border-radius: 5px;
+  background: rgba(255, 252, 248, 0.35);
+}
+
+.review-cf-whatif,
+.review-cf-outcome {
+  margin: 0 0 4px;
+  color: #3d1f0a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.review-cf-whatif strong,
+.review-cf-outcome strong {
+  color: #6b3518;
+  font-weight: 800;
+}
+
+.review-cf-confidence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.review-cf-confidence > span {
+  color: #7a5d3b;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.review-confidence-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(91, 47, 18, 0.08);
+  overflow: hidden;
+}
+
+.review-confidence-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #d4af37, #f2ca50);
+  transition: width 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.review-cf-confidence b {
+  min-width: 32px;
+  color: #5a3319;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: right;
+}
+
+/* Timeline */
+.review-timeline {
+  margin-bottom: 8px;
+}
+
+.review-tl-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.06);
+}
+
+.review-tl-badge {
+  flex-shrink: 0;
+  min-width: 80px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(91, 47, 18, 0.06);
+  color: #6b3518;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.review-tl-event {
+  color: #2d1809;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* ─── Archive: Structured display ─── */
+.archive-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.archive-kpi-card {
+  display: grid;
+  gap: 4px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid rgba(91, 47, 18, 0.16);
+  border-radius: 5px;
+  background: rgba(255, 252, 248, 0.5);
+}
+
+.archive-kpi-card small {
+  color: #7a5d3b;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.archive-kpi-card b {
+  color: #2d1809;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.archive-kpi-card b.archive-kpi-error {
+  color: #c0392b;
+}
+
+/* Decision source breakdown */
+.archive-source-breakdown {
+  margin-bottom: 10px;
+}
+
+.archive-source-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.archive-source-label {
+  color: #5a3319;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-source-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(91, 47, 18, 0.06);
+  overflow: hidden;
+}
+
+.archive-source-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
+  min-width: 0;
+}
+
+.archive-source-fill.archive-source-llm {
+  background: linear-gradient(90deg, #d4af37, #f2ca50);
+}
+
+.archive-source-fill.archive-source-fallback {
+  background: linear-gradient(90deg, #8a7e6a, #b0a48e);
+}
+
+.archive-source-count {
+  color: #3d1f0a;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: right;
+}
+
+/* Archive extra fields */
+.archive-extra-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(91, 47, 18, 0.1);
+}
+
+.archive-extra-item {
+  display: grid;
+  gap: 3px;
+  padding: 6px 8px;
+  border: 1px solid rgba(91, 47, 18, 0.1);
+  border-radius: 4px;
+  background: rgba(255, 252, 248, 0.3);
+}
+
+.archive-extra-item small {
+  color: #7a5d3b;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.archive-extra-item b {
+  color: #2d1809;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

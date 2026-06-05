@@ -1,4 +1,4 @@
-"""Top-level learning_v2 evidence pipeline."""
+"""Top-level learning evidence pipeline."""
 
 from __future__ import annotations
 
@@ -7,16 +7,16 @@ from pathlib import Path
 
 from agent.common import read_json, read_jsonl, write_json, write_jsonl, write_text
 from agent.infrastructure.llm import ModelAdapter
-from agent.learning_v2.judge import judge_game_evidence
-from agent.learning_v2.models import (
+from agent.learning.judge import judge_game_evidence
+from agent.learning.models import (
     DecisionEvidenceInput,
     EvidenceRunResult,
     GameEvidence,
     GameEvidenceBundle,
     KeyDecision,
 )
-from agent.learning_v2.normalizer import normalize_decisions
-from agent.learning_v2.selector import select_key_decisions
+from agent.learning.normalizer import normalize_decisions
+from agent.learning.selector import select_key_decisions
 
 
 async def run_evidence_pipeline(
@@ -39,7 +39,7 @@ async def run_evidence_pipeline(
     else:
         result = _base_result(bundle.game_id, bundle.archive.get("winner"), evidence_inputs, key_decisions)
 
-    out = Path(output_dir) if output_dir else Path(game_dir) / "learning_v2"
+    out = Path(output_dir) if output_dir else Path(game_dir) / "learning"
     result.output_dir = out
     report = render_evidence_report(result)
     write_evidence_outputs(result, report, out)

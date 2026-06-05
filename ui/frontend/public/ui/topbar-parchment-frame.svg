@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 455" preserveAspectRatio="none" width="1200" height="455" role="img" aria-label="Classical wooden framed parchment panel refined for night theme">
+  <defs>
+    <linearGradient id="woodFrame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7b4d2d"/>
+      <stop offset="10%" stop-color="#4a2818"/>
+      <stop offset="48%" stop-color="#9a6338"/>
+      <stop offset="86%" stop-color="#341b11"/>
+      <stop offset="100%" stop-color="#784a2b"/>
+    </linearGradient>
+    <linearGradient id="woodBevel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d7a76d" stop-opacity=".75"/>
+      <stop offset="45%" stop-color="#6b4023" stop-opacity=".05"/>
+      <stop offset="100%" stop-color="#efc58c" stop-opacity=".62"/>
+    </linearGradient>
+    <linearGradient id="woodInset" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1d0e08"/>
+      <stop offset="18%" stop-color="#6b3f22"/>
+      <stop offset="50%" stop-color="#28130b"/>
+      <stop offset="82%" stop-color="#774828"/>
+      <stop offset="100%" stop-color="#170b06"/>
+    </linearGradient>
+    <linearGradient id="paperFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#edd4a2"/>
+      <stop offset="50%" stop-color="#e5c388"/>
+      <stop offset="100%" stop-color="#d9ab68"/>
+    </linearGradient>
+    <radialGradient id="paperCenterLight" cx="50%" cy="42%" r="80%">
+      <stop offset="0%" stop-color="#f7e2b5" stop-opacity=".45"/>
+      <stop offset="58%" stop-color="#f0d6a2" stop-opacity=".12"/>
+      <stop offset="100%" stop-color="#f0d6a2" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="nightTint" cx="50%" cy="35%" r="95%">
+      <stop offset="0%" stop-color="#5f6fa8" stop-opacity=".08"/>
+      <stop offset="55%" stop-color="#2c3560" stop-opacity=".10"/>
+      <stop offset="100%" stop-color="#13182d" stop-opacity=".18"/>
+    </radialGradient>
+    <radialGradient id="edgeVignette" cx="50%" cy="50%" r="78%">
+      <stop offset="58%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#121522" stop-opacity=".18"/>
+    </radialGradient>
+    <linearGradient id="moonSheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#d7e1ff" stop-opacity=".12"/>
+      <stop offset="35%" stop-color="#b7c5ef" stop-opacity=".05"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="7" stdDeviation="6.5" flood-color="#000000" flood-opacity=".18"/>
+    </filter>
+    <filter id="grain" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency=".72" numOctaves="2" seed="5" result="n"/>
+      <feColorMatrix in="n" type="saturate" values="0" result="m"/>
+      <feComponentTransfer in="m" result="soft"><feFuncA type="table" tableValues="0 .02"/></feComponentTransfer>
+      <feBlend in="SourceGraphic" in2="soft" mode="multiply"/>
+    </filter>
+    <filter id="paperSoftTexture" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency=".018 .06" numOctaves="3" seed="12" result="tex"/>
+      <feColorMatrix in="tex" type="saturate" values="0" result="mono"/>
+      <feComponentTransfer in="mono" result="softTex"><feFuncA type="table" tableValues="0 .045"/></feComponentTransfer>
+      <feBlend in="SourceGraphic" in2="softTex" mode="multiply"/>
+    </filter>
+    <g id="cornerOrn" fill="none" stroke="#8e5c2d" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M0,22 C0,9 9,0 22,0"/>
+      <path d="M5,22 C5,12 12,5 22,5" opacity=".7"/>
+      <path d="M9,15 C14,15 15,14 15,9" opacity=".95"/>
+      <path d="M22,0 L30,0"/>
+      <path d="M0,22 L0,30"/>
+    </g>
+  </defs>
+  <rect x="14" y="14" width="1172" height="427" rx="2" fill="url(#woodFrame)" filter="url(#shadow)"/>
+  <rect x="16.5" y="16.5" width="1167" height="422" rx="2" fill="none" stroke="url(#woodBevel)" stroke-width="2.8"/>
+  <rect x="31" y="31" width="1138" height="393" rx="1.5" fill="none" stroke="#251109" stroke-width="4.2"/>
+  <rect x="38" y="38" width="1124" height="379" rx="1.5" fill="none" stroke="url(#woodInset)" stroke-width="2.8"/>
+  <rect x="50" y="50" width="1100" height="355" rx="2" fill="url(#paperFill)" filter="url(#grain)"/>
+  <rect x="50" y="50" width="1100" height="355" rx="2" fill="url(#paperCenterLight)"/>
+  <rect x="50" y="50" width="1100" height="355" rx="2" fill="url(#nightTint)"/>
+  <rect x="50" y="50" width="1100" height="355" rx="2" fill="url(#edgeVignette)"/>
+  <rect x="50" y="50" width="1100" height="48" rx="2" fill="url(#moonSheen)"/>
+  <rect x="63" y="63" width="1074" height="329" rx="1" fill="none" stroke="#9d6c33" stroke-width="1.6" opacity=".84"/>
+  <rect x="66.5" y="66.5" width="1067" height="322" rx="1" fill="none" stroke="#6a4120" stroke-width=".7" opacity=".24"/>
+  <rect x="50" y="50" width="1100" height="355" rx="2" fill="transparent" filter="url(#paperSoftTexture)"/>
+  <g transform="translate(70 70)"><use href="#cornerOrn"/></g>
+  <g transform="translate(1130 70) scale(-1 1)"><use href="#cornerOrn"/></g>
+  <g transform="translate(70 385) scale(1 -1)"><use href="#cornerOrn"/></g>
+  <g transform="translate(1130 385) scale(-1 -1)"><use href="#cornerOrn"/></g>
+</svg>

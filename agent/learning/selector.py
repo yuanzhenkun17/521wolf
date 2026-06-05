@@ -1,4 +1,4 @@
-"""Key decision selection for the learning_v2 evidence layer."""
+"""Key decision selection for the learning evidence layer."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from agent.common.action_types import (
     SPEECH_ACTION_TYPES,
     VOTE_ACTION_TYPES,
 )
-from agent.learning_v2.models import DecisionEvidenceInput, GameEvidenceBundle, KeyDecision
+from agent.learning.models import DecisionEvidenceInput, GameEvidenceBundle, KeyDecision
 
 # ---------------------------------------------------------------------------
 # Action-type sets for key-decision selection

@@ -12,12 +12,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent.learning_v2.evolution.games import SelfPlayConfig, run_selfplay
-from agent.learning_v2.evolution.config import (
+from agent.learning.evolution.games import SelfPlayConfig, run_selfplay
+from agent.learning.evolution.config import (
     build_baseline_config,
     build_role_override_config,
 )
-from agent.learning_v2.evolution.store import VersionStore
+from agent.learning.evolution.registry import VersionRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
         """Verify that SelfPlayConfig.skill_version_config flows through to agents.
 
         Steps:
-        1. Create an explicit empty-baseline VersionStore.
+        1. Create an explicit empty-baseline VersionRegistry.
         2. Build a baseline SkillVersionConfig with all role hashes.
         3. Build a composite skill_dir and run 1 real selfplay game.
         4. Verify the game completes and skill_dir paths are valid.
@@ -87,10 +87,10 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             store_dir = tmp_path / "role_versions"
-            store = VersionStore(store_dir)
+            store = VersionRegistry(store_dir)
 
             # First-run evolution intentionally starts from empty role baselines.
-            store.ensure_default_baselines()
+            await store.ensure_default_baselines()
 
             # Build baseline config with all role hashes
             config = build_baseline_config(store)
@@ -113,7 +113,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
                     )
 
             # Build composite skill directory from the config
-            from agent.learning_v2.evolution.config import build_composite_skill_dir
+            from agent.learning.evolution.config import build_composite_skill_dir
 
             composite_dir = build_composite_skill_dir(store, config)
             try:
@@ -164,10 +164,10 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             store_dir = tmp_path / "role_versions"
-            store = VersionStore(store_dir)
+            store = VersionRegistry(store_dir)
 
             # First-run evolution intentionally starts from empty role baselines.
-            store.ensure_default_baselines()
+            await store.ensure_default_baselines()
 
             # Build baseline config
             baseline_config = build_baseline_config(store)
@@ -189,7 +189,7 @@ class TestSkillVersionIntegration(unittest.IsolatedAsyncioTestCase):
             )
 
             # Build composite skill directories for each config
-            from agent.learning_v2.evolution.config import build_composite_skill_dir
+            from agent.learning.evolution.config import build_composite_skill_dir
 
             composite_baseline = build_composite_skill_dir(store, baseline_config)
             composite_override = build_composite_skill_dir(store, override_config)

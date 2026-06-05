@@ -18,6 +18,7 @@ def create_agents(
     skill_dir: Path | str | None = None,
     role_skill_dirs: dict[str, Path] | None = None,
     human_player_id: int | None = None,
+    paths=None,
 ) -> dict[int, AgentRuntime | HumanPlayer]:
     """Create agents for each player.
 
@@ -45,5 +46,6 @@ def create_agents(
             trace_recorder=trace_recorder,
             game_id=game_id,
             skill_dir=agent_skill_dir,
+            paths=paths,
         )
     return result

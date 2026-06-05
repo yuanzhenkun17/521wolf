@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from agent.learning_v2.stats import new_role_accum, finalize_role_metrics
+from agent.learning.stats import new_role_accum, finalize_role_metrics
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from agent.infrastructure.llm import ModelAdapter
 from agent.common import beijing_now_iso as _now, beijing_now_str, is_werewolf_win
@@ -26,9 +26,9 @@ from engine.models import Role
 from engine.roles import assign_roles
 
 from agent.infrastructure.archive import AgentTraceRecorder, DecisionArchive, GameArchive
-from agent.learning_v2.pipeline import run_evidence_pipeline
-from agent.learning_v2.stats import calibrate_decisions, merge_calibration_reports
-from agent.learning_v2.review import generate_enhanced_review
+from agent.learning.pipeline import run_evidence_pipeline
+from agent.learning.stats import calibrate_decisions, merge_calibration_reports
+from agent.learning.review import generate_enhanced_review
 from agent.api.runtime import AgentRuntime
 from agent.api.factory import load_llm_client
 from storage.ids import artifact_game_id
@@ -303,11 +303,6 @@ async def run_selfplay(
 
     started_at = _now()
 
-    # Open SQLite connection for the run (if db_path configured)
-    run_conn = None
-    if config.db_path is not None:
-        run_conn = open_storage_connection(config.db_path)
-
     # Write config
     await _write_json(run_dir / "config.json", {
         "games": config.games,
@@ -382,13 +377,20 @@ async def run_selfplay(
         elif client_factory is not None:
             client = limit_model_adapter(client, llm_semaphore)
             client = rate_limit_model_adapter(client, llm_rate_limiter)
-        result = await _run_single_game(
-            config=config,
-            run_dir=run_dir,
-            game_index=i,
-            client=client,
-            conn=run_conn,
-        )
+        game_conn = None
+        if config.db_path is not None:
+            game_conn = open_storage_connection(config.db_path)
+        try:
+            result = await _run_single_game(
+                config=config,
+                run_dir=run_dir,
+                game_index=i,
+                client=client,
+                conn=game_conn,
+            )
+        finally:
+            if game_conn is not None:
+                game_conn.close()
 
         async with completion_lock:
             results[i] = result
@@ -444,8 +446,6 @@ async def run_selfplay(
 
     # Write summary
     selfplay_result.write_summary(run_dir)
-    if run_conn is not None:
-        run_conn.close()
     return selfplay_result
 
 
@@ -623,15 +623,15 @@ async def _run_single_game(
             evidence_result = await run_evidence_pipeline(
                 game_dir,
                 model=client,
-                output_dir=game_dir / "learning_v2",
+                output_dir=game_dir / "learning",
             )
             persistence.save_experience_candidates(evidence_result.experience_candidates)
         except Exception as exc:
-            _log.error("learning_v2_error for %s: %s", game_id, exc, exc_info=True)
+            _log.error("learning_error for %s: %s", game_id, exc, exc_info=True)
 
     if config.enable_mid_memory and review_report is not None:
         try:
-            from agent.learning_v2.game_analysis import analyze_game, write_game_analysis
+            from agent.learning.game_analysis import analyze_game, write_game_analysis
 
             game_analysis = await analyze_game(
                 model=client,
@@ -699,8 +699,9 @@ async def _run_long_term_consolidation(
     auto_apply: bool,
 ) -> None:
     """Run long-term consolidation for all roles using recent mid-term memories."""
-    from agent.learning_v2.game_analysis import GameAnalysis, load_game_analysis
-    from agent.learning_v2.evolution.consolidation import (
+    # TODO: Migrate to consolidate_for_role (unified path)
+    from agent.learning.game_analysis import GameAnalysis, load_game_analysis
+    from agent.learning.evolution.consolidation import (
         consolidate_from_mid_memories,
         write_consolidation,
     )

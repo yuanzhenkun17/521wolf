@@ -25,7 +25,12 @@ class UiBackendTests(unittest.TestCase):
         response = client.get("/api/health")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+        data = response.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["mode"], "api")
+        self.assertEqual(data["external"]["provider"], "local-backend")
+        self.assertTrue(data["external"]["supports_human"])
+        self.assertTrue(data["external"]["supports_sse"])
 
     def test_missing_game_returns_404(self):
         client = TestClient(app)
@@ -203,6 +208,95 @@ class UiBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             asyncio.run(run_scenario(Path(temp_dir)))
 
+    def test_running_game_snapshot_includes_start_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = GameManager(log_dir=Path(temp_dir))
+            role_dir = Path("versions") / "seer-a"
+            game = RunningGame(
+                game_id="configured_game",
+                log_name="configured_game",
+                seed=42,
+                max_days=9,
+                enable_sheriff=False,
+                skill_dir="skills/candidate-pack",
+                role_skill_dirs={"seer": role_dir},
+                human_player_id=3,
+                player_count=12,
+                status="running",
+            )
+            manager._games[game.game_id] = game
+
+            snapshot = manager.snapshot(game, include_events=False)
+
+            self.assertEqual(snapshot["seed"], 42)
+            self.assertEqual(snapshot["config"]["max_days"], 9)
+            self.assertFalse(snapshot["config"]["enable_sheriff"])
+            self.assertEqual(snapshot["skill_dir"], "skills/candidate-pack")
+            self.assertEqual(snapshot["human_player_id"], 3)
+            self.assertEqual(snapshot["player_count"], 12)
+            self.assertEqual(snapshot["role_skill_dirs"]["seer"], str(role_dir))
+
+    def test_completed_game_snapshot_reads_archive_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_dir = Path(temp_dir)
+            game_id = "20260604_120000_2"
+            game_dir = log_dir / game_id
+            game_dir.mkdir()
+            events = [
+                {
+                    "index": 1,
+                    "day": 0,
+                    "phase": "setup",
+                    "event_type": "game_init",
+                    "message": "游戏初始化",
+                    "payload": {"roles": {"1": "seer", "2": "werewolf"}},
+                },
+                {
+                    "index": 2,
+                    "day": 2,
+                    "phase": "finished",
+                    "event_type": "game_end",
+                    "message": "游戏结束",
+                    "payload": {"winner": "villagers"},
+                },
+            ]
+            (game_dir / "game_events.jsonl").write_text(
+                "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
+                encoding="utf-8",
+            )
+            (game_dir / "archive.json").write_text(
+                json.dumps(
+                    {
+                        "game_id": game_id,
+                        "seed": 17,
+                        "config": {
+                            "max_days": 6,
+                            "enable_sheriff": False,
+                            "skill_dir": "skills/archive-pack",
+                            "role_skill_dirs": {"seer": "versions/seer-a"},
+                            "player_count": 12,
+                        },
+                        "decisions": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            manager = GameManager(log_dir=log_dir)
+
+            listed = manager.list_games()[0]
+            loaded = manager.get_game(game_id)
+            self.assertIsNotNone(loaded)
+            detailed = manager.snapshot(loaded, include_events=False)
+
+            for snapshot in (listed, detailed):
+                self.assertEqual(snapshot["seed"], 17)
+                self.assertEqual(snapshot["max_days"], 6)
+                self.assertFalse(snapshot["enable_sheriff"])
+                self.assertEqual(snapshot["skill_dir"], "skills/archive-pack")
+                self.assertEqual(snapshot["role_skill_dirs"]["seer"], "versions/seer-a")
+                self.assertEqual(snapshot["player_count"], 12)
+
     def test_list_games_reads_completed_game_directories(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             log_dir = Path(temp_dir)
@@ -325,7 +419,17 @@ class UiBackendTests(unittest.TestCase):
                 (
                     game_id,
                     11,
-                    json.dumps({"_storage": {"source_path": str(game_dir)}}, ensure_ascii=False),
+                    json.dumps(
+                        {
+                            "_storage": {"source_path": str(game_dir)},
+                            "max_days": 8,
+                            "enable_sheriff": False,
+                            "skill_dir": "skills/db-pack",
+                            "role_skill_dirs": {"seer": "versions/db-seer"},
+                            "player_count": 12,
+                        },
+                        ensure_ascii=False,
+                    ),
                     "villagers",
                     "2026-06-04T12:00:00",
                 ),
@@ -391,7 +495,13 @@ class UiBackendTests(unittest.TestCase):
             self.assertEqual(games[0]["game_id"], game_id)
             self.assertEqual(games[0]["event_count"], 2)
             self.assertEqual(games[0]["winner"], "villagers")
+            self.assertEqual(games[0]["seed"], 11)
+            self.assertEqual(games[0]["max_days"], 8)
+            self.assertFalse(games[0]["enable_sheriff"])
+            self.assertEqual(games[0]["skill_dir"], "skills/db-pack")
+            self.assertEqual(games[0]["role_skill_dirs"]["seer"], "versions/db-seer")
             self.assertEqual(snapshot["events"][0]["event_type"], "game_init")
+            self.assertEqual(snapshot["config"]["max_days"], 8)
             self.assertEqual(snapshot["decisions"][0]["decision_id"], "db_dec")
             self.assertEqual(snapshot["decisions"][0]["selected_target"], 2)
             self.assertIsNotNone(review)
@@ -419,6 +529,66 @@ class UiBackendTests(unittest.TestCase):
 
             self.assertIsNotNone(archive)
             self.assertEqual(archive["game_id"], "20260529_143052_1")
+
+    def test_game_archive_and_review_routes_fallback_to_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_dir = Path(temp_dir)
+            game_dir = log_dir / "fallback_game"
+            game_dir.mkdir()
+            events = [
+                {
+                    "index": 1,
+                    "day": 0,
+                    "phase": "setup",
+                    "event_type": "game_init",
+                    "message": "游戏初始化",
+                    "payload": {},
+                },
+                {
+                    "index": 2,
+                    "day": 1,
+                    "phase": "finished",
+                    "event_type": "game_end",
+                    "message": "游戏结束",
+                    "payload": {"winner": "villagers"},
+                },
+            ]
+            (game_dir / "events.jsonl").write_text(
+                "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
+                encoding="utf-8",
+            )
+            (game_dir / "agent_decisions.jsonl").write_text(
+                json.dumps(
+                    {
+                        "day": 1,
+                        "phase": "day_speech",
+                        "player_id": 1,
+                        "role": "villager",
+                        "action_type": "speak",
+                        "public_text": "我先听发言。",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            client = TestClient(app)
+            old_manager = app_module.manager
+            app_module.manager = GameManager(log_dir=log_dir)
+            try:
+                archive_response = client.get("/api/games/fallback_game/archive")
+                review_response = client.get("/api/games/fallback_game/review")
+            finally:
+                app_module.manager = old_manager
+
+            self.assertEqual(archive_response.status_code, 200)
+            archive = archive_response.json()
+            self.assertEqual(archive["source"], "events_fallback")
+            self.assertEqual(archive["event_count"], 2)
+            self.assertEqual(archive["decision_count"], 1)
+
+            self.assertEqual(review_response.status_code, 404)
 
     def test_start_selfplay_endpoint_passes_agent_version(self):
         class FakeRun:
@@ -456,6 +626,26 @@ class UiBackendTests(unittest.TestCase):
             self.assertEqual(fake_manager.kwargs["max_days"], 5)
         finally:
             app_module.selfplay_manager = old_manager
+
+    def test_selfplay_games_known_run_without_artifacts_returns_empty(self):
+        class FakeSelfplayManager:
+            def get_run(self, run_id):
+                if run_id == "selfplay_pending":
+                    return SimpleNamespace(run_id=run_id, artifact_run_id=None)
+                return None
+
+        client = TestClient(app)
+        old_manager = app_module.selfplay_manager
+        try:
+            app_module.selfplay_manager = FakeSelfplayManager()
+            response = client.get("/api/selfplay/selfplay_pending/games")
+            missing = client.get("/api/selfplay/not-found/games")
+        finally:
+            app_module.selfplay_manager = old_manager
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"run_id": "selfplay_pending", "games": []})
+        self.assertEqual(missing.status_code, 404)
 
     def test_list_leaderboards_prefers_sqlite_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -514,15 +704,17 @@ class UiBackendTests(unittest.TestCase):
     def test_list_role_batch_evolution_runs_endpoint(self):
         client = TestClient(app)
 
-        response = client.get("/api/role-evolution/batches")
+        response = client.get("/api/evolution-runs")
+        legacy_response = client.get("/api/role-evolution/batches")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["kind"], "role_batch_evolution_runs")
+        self.assertEqual(response.json()["kind"], "evolution_runs")
         self.assertIn("batches", response.json())
+        self.assertEqual(legacy_response.status_code, 404)
 
-    def test_evolution_runs_alias_lists_status_and_actions(self):
-        run = RoleEvolutionRun(run_id="evo_alias", role="seer", status="running", stage="training")
-        batch = RoleBatchEvolutionRun(batch_id="batch_alias", roles=["seer"], status="running", stage="training")
+    def test_evolution_runs_canonical_lists_status_and_actions(self):
+        run = RoleEvolutionRun(run_id="evo_canonical", role="seer", status="running", stage="training")
+        batch = RoleBatchEvolutionRun(batch_id="batch_canonical", roles=["seer"], status="running", stage="training")
         role_runs = app_module.role_evolution_runner._active_runs
         batch_runs = app_module.role_batch_evolution_runner._active_batches
         old_role_run = role_runs.get(run.run_id)
@@ -532,10 +724,13 @@ class UiBackendTests(unittest.TestCase):
         client = TestClient(app)
         try:
             listing = client.get("/api/evolution-runs")
-            role_status = client.get("/api/evolution-runs/evo_alias")
-            batch_status = client.get("/api/evolution-runs/batch_alias")
-            role_action = client.post("/api/evolution-runs/evo_alias/actions", json={"action": "stop"})
-            batch_action = client.post("/api/evolution-runs/batch_alias/actions", json={"action": "stop"})
+            role_status = client.get("/api/evolution-runs/evo_canonical")
+            batch_status = client.get("/api/evolution-runs/batch_canonical")
+            role_games = client.get("/api/evolution-runs/evo_canonical/games?phase=training")
+            role_action = client.post("/api/evolution-runs/evo_canonical/actions", json={"action": "stop"})
+            batch_action = client.post("/api/evolution-runs/batch_canonical/actions", json={"action": "stop"})
+            role_terminate = client.post("/api/evolution-runs/evo_canonical/actions", json={"action": "terminate"})
+            batch_terminate = client.post("/api/evolution-runs/batch_canonical/actions", json={"action": "terminate"})
         finally:
             if old_role_run is None:
                 role_runs.pop(run.run_id, None)
@@ -550,13 +745,19 @@ class UiBackendTests(unittest.TestCase):
         self.assertIn("runs", listing.json())
         self.assertIn("batches", listing.json())
         self.assertEqual(role_status.status_code, 200)
-        self.assertEqual(role_status.json()["run_id"], "evo_alias")
+        self.assertEqual(role_status.json()["run_id"], "evo_canonical")
         self.assertEqual(batch_status.status_code, 200)
-        self.assertEqual(batch_status.json()["batch_id"], "batch_alias")
+        self.assertEqual(batch_status.json()["batch_id"], "batch_canonical")
+        self.assertEqual(role_games.status_code, 200)
+        self.assertEqual(role_games.json()["games"], [])
         self.assertEqual(role_action.status_code, 200)
         self.assertEqual(role_action.json()["status"], "paused")
         self.assertEqual(batch_action.status_code, 200)
         self.assertEqual(batch_action.json()["status"], "paused")
+        self.assertEqual(role_terminate.status_code, 200)
+        self.assertEqual(role_terminate.json()["status"], "failed")
+        self.assertEqual(batch_terminate.status_code, 200)
+        self.assertEqual(batch_terminate.json()["status"], "failed")
 
     def test_role_evolution_training_game_endpoints_read_nested_selfplay_run(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -634,23 +835,23 @@ class UiBackendTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            old_store = app_module.version_store
-            app_module.version_store = SimpleNamespace(base_dir=Path(temp_dir))
+            old_paths = app_module.DEFAULT_PATHS
+            app_module.DEFAULT_PATHS = PathConfig(root=Path(temp_dir))
             client = TestClient(app)
             try:
-                games = client.get("/api/role-evolution/evo_test/games")
-                events = client.get("/api/role-evolution/evo_test/games/game_001/events")
-                decisions = client.get("/api/role-evolution/evo_test/games/game_001/decisions")
-                archive = client.get("/api/role-evolution/evo_test/games/game_001/archive")
-                alias_games = client.get("/api/evolution-runs/evo_test/games?phase=training")
-                alias_events = client.get(
+                games = client.get("/api/evolution-runs/evo_test/games?phase=training")
+                events = client.get(
                     "/api/evolution-runs/evo_test/games/game_001/events?phase=training"
                 )
-                alias_decisions = client.get(
+                decisions = client.get(
                     "/api/evolution-runs/evo_test/games/game_001/decisions?phase=training"
                 )
+                archive = client.get(
+                    "/api/evolution-runs/evo_test/games/game_001/archive?phase=training"
+                )
+                legacy_games = client.get("/api/role-evolution/evo_test/games")
             finally:
-                app_module.version_store = old_store
+                app_module.DEFAULT_PATHS = old_paths
 
             self.assertEqual(games.status_code, 200)
             self.assertEqual(games.json()["games"][0]["game_id"], "game_001")
@@ -661,12 +862,7 @@ class UiBackendTests(unittest.TestCase):
             self.assertEqual(decisions.json()["decisions"][0]["decision_id"], "dec_001")
             self.assertEqual(archive.status_code, 200)
             self.assertEqual(archive.json()["decisions"][0]["decision_id"], "dec_001")
-            self.assertEqual(alias_games.status_code, 200)
-            self.assertEqual(alias_games.json()["games"][0]["game_id"], "game_001")
-            self.assertEqual(alias_events.status_code, 200)
-            self.assertEqual(alias_events.json()["events"][0]["payload"]["decision_id"], "dec_001")
-            self.assertEqual(alias_decisions.status_code, 200)
-            self.assertEqual(alias_decisions.json()["decisions"][0]["decision_id"], "dec_001")
+            self.assertEqual(legacy_games.status_code, 404)
 
     def test_role_evolution_game_detail_prefers_sqlite_replay_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -740,17 +936,19 @@ class UiBackendTests(unittest.TestCase):
             conn.close()
 
             old_paths = app_module.DEFAULT_PATHS
-            old_store = app_module.version_store
             app_module.DEFAULT_PATHS = PathConfig(root=root)
-            app_module.version_store = SimpleNamespace(base_dir=root)
             client = TestClient(app)
             try:
-                games = client.get("/api/role-evolution/evo_test/games")
-                events = client.get("/api/role-evolution/evo_test/games/game_001/events")
-                decisions = client.get("/api/role-evolution/evo_test/games/game_001/decisions")
+                games = client.get("/api/evolution-runs/evo_test/games?phase=training")
+                events = client.get(
+                    "/api/evolution-runs/evo_test/games/game_001/events?phase=training"
+                )
+                decisions = client.get(
+                    "/api/evolution-runs/evo_test/games/game_001/decisions?phase=training"
+                )
+                legacy_games = client.get("/api/role-evolution/evo_test/games")
             finally:
                 app_module.DEFAULT_PATHS = old_paths
-                app_module.version_store = old_store
 
             self.assertEqual(games.status_code, 200)
             self.assertEqual(games.json()["games"][0]["event_count"], 1)
@@ -758,6 +956,7 @@ class UiBackendTests(unittest.TestCase):
             self.assertEqual(events.json()["events"][0]["event_type"], "db_event")
             self.assertEqual(decisions.status_code, 200)
             self.assertEqual(decisions.json()["decisions"][0]["decision_id"], "db_dec")
+            self.assertEqual(legacy_games.status_code, 404)
 
     def test_role_leaderboard_prefers_sqlite_battle_summaries(self):
         with tempfile.TemporaryDirectory() as temp_dir:

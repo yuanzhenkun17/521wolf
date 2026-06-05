@@ -297,7 +297,7 @@ class RoleHistoryData:
 
 
 # ---------------------------------------------------------------------------
-# Pure functions shared with agent/learning_v2/evolution/store.py
+# Pure functions shared with agent/learning/evolution/store.py
 # These have no agent dependencies — only stdlib (hashlib, pathlib, json).
 # ---------------------------------------------------------------------------
 
@@ -333,6 +333,12 @@ def normalize_skill_path(path: str) -> str:
     if p.is_absolute():
         raise ValueError(f"Absolute path not allowed: {path}")
 
+    # Reject Windows drive letters (e.g., C:\..., D:/...)
+    # PurePosixPath.drive is always empty for Windows-style paths, so we
+    # must check the raw string explicitly after backslash normalisation.
+    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
+        raise ValueError(f"Windows drive path: {path}")
+
     # Reject drive paths (e.g. C:/...)
     if p.drive:
         raise ValueError(f"Drive path not allowed: {path}")
@@ -356,7 +362,7 @@ def compute_hash(skills: dict[str, str]) -> str:
 
     Normalizes paths and content, detects duplicate normalized paths,
     then produces a sha256 hash of the manifest.
-    Returns first 8 hex characters.
+    Returns first 12 hex characters.
     """
     normalized: dict[str, str] = {}
     for raw_path, content in skills.items():
@@ -372,4 +378,4 @@ def compute_hash(skills: dict[str, str]) -> str:
     }
     payload = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     full_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return full_hash[:8]
+    return full_hash[:12]

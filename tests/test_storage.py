@@ -14,8 +14,8 @@ from storage.evolution_store import EvolutionStore
 from storage.experience_store import ExperienceCandidateStore
 from storage.leaderboard_store import LeaderboardStore
 from agent.infrastructure.archive import DecisionArchive
-from agent.learning_v2.models import ExperienceCandidate
-from agent.learning_v2.evolution.models import (
+from agent.learning.models import ExperienceCandidate
+from agent.learning.evolution.models import (
     EvolutionRun,
     RoleVersion,
     SkillProposal,
@@ -229,7 +229,7 @@ class TestVersionStoreDB(unittest.TestCase):
             parent_hash=None,
             source="bootstrap",
         )
-        self.assertEqual(len(h), 8)  # 8-char hash
+        self.assertEqual(len(h), 12)  # 12-char hash
 
         loaded = self.store.load_version(h)
         self.assertIsNotNone(loaded)

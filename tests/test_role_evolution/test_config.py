@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.learning_v2.evolution.config import (
+from agent.learning.evolution.config import (
     build_baseline_config,
     build_role_override_config,
     skill_dir_for_role,
@@ -32,14 +32,18 @@ class _MockHistory:
 
 
 class MockVersionStore:
-    """Minimal stand-in for VersionStore that config.py needs."""
+    """Minimal stand-in for VersionRegistry that config.py needs."""
 
     def __init__(self, base_dir: Path, histories: list[_MockHistory]) -> None:
         self._base = base_dir
         self._histories = {h.role: h for h in histories}
 
-    def list_histories(self) -> list[_MockHistory]:
-        return list(self._histories.values())
+    def list_roles(self) -> list[str]:
+        return list(self._histories.keys())
+
+    def get_baseline(self, role: str) -> str | None:
+        h = self._histories.get(role)
+        return h.baseline if h else None
 
     def get_skill_dir(self, role: str, hash: str) -> Path:
         """Map (role, hash) to role_versions/<role>/<hash>/skills."""

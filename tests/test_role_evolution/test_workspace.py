@@ -6,16 +6,17 @@ import shutil
 
 import pytest
 
-from agent.learning_v2.evolution.config import build_baseline_config
-from agent.learning_v2.evolution.models import SkillVersionConfig
-from agent.learning_v2.evolution.store import VersionStore
-from agent.learning_v2.evolution.config import build_composite_skill_dir
+from agent.learning.evolution.config import build_baseline_config
+from agent.learning.evolution.models import SkillVersionConfig
+from agent.learning.evolution.registry import VersionRegistry
+from agent.learning.evolution.config import build_composite_skill_dir
 
 
-def test_build_composite_skill_dir_allows_bootstrap_empty_versions(tmp_path):
+@pytest.mark.asyncio
+async def test_build_composite_skill_dir_allows_bootstrap_empty_versions(tmp_path):
     """Explicit empty baseline versions become empty role directories."""
-    store = VersionStore(tmp_path / "role_versions")
-    store.ensure_default_baselines()
+    store = VersionRegistry(tmp_path / "role_versions")
+    await store.ensure_default_baselines()
     config = build_baseline_config(store)
 
     composite_dir = build_composite_skill_dir(store, config)
@@ -30,11 +31,10 @@ def test_build_composite_skill_dir_allows_bootstrap_empty_versions(tmp_path):
 @pytest.mark.asyncio
 async def test_build_composite_skill_dir_raises_for_missing_non_empty_skill_dir(tmp_path):
     """Missing skill files for a non-empty version indicate corrupted storage."""
-    store = VersionStore(tmp_path / "role_versions")
-    role_hash = await store.save_version(
+    store = VersionRegistry(tmp_path / "role_versions")
+    role_hash = await store.publish_skills(
         "seer",
         {"claim.md": "# Claim\n"},
-        parent_hash=None,
         source="test",
     )
     skill_dir = store.get_skill_dir("seer", role_hash)

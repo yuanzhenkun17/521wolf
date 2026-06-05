@@ -17,9 +17,9 @@ from typing import Any
 
 from engine.models import Role
 
-from agent.learning_v2.review import GameReviewReport
+from agent.learning.review import GameReviewReport
 from agent.knowledge.prompts.parsing import load_json_object
-from agent.learning_v2.evolution.models import ScoredInsight
+from agent.learning.evolution.models import ScoredInsight
 from agent.infrastructure.llm import ModelAdapter
 from agent.common import as_float as _as_float, as_int_list, compact_json as _compact_json, beijing_now_iso as _now
 from agent.common.json import DictMixin

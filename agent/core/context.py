@@ -26,6 +26,9 @@ class AgentContext:
     skill_context: str = ""
     strategy_advice: dict[str, Any] = field(default_factory=dict)
 
+    # Cross-game memory injection (patterns + episodic records)
+    memory_injection: str | None = None
+
     # LLM interaction
     messages: list[dict[str, str]] = field(default_factory=list)
     raw_output: str = ""
