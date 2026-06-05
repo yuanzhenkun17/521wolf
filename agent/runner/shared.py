@@ -80,14 +80,3 @@ def create_agents_for_game(
         human_player_id=human_player_id,
         paths=paths,
     )
-
-
-def count_roles(roles: dict[int, Any]) -> dict:
-    """Count role occurrences for GameConfig construction."""
-    from engine.models import Role
-
-    counts: dict[Role, int] = {}
-    for role in roles.values():
-        r = role if isinstance(role, Role) else Role(role)
-        counts[r] = counts.get(r, 0) + 1
-    return counts

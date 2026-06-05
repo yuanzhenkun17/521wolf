@@ -124,24 +124,6 @@ def extract_claimed_check(content: str) -> dict[str, Any] | None:
     return None
 
 
-def parse_public_entry(item: str, *, fallback_day: int, fallback_phase: str) -> MemoryEvent:
-    try:
-        data = json.loads(item)
-    except json.JSONDecodeError:
-        return _parse_text_public_entry(item, fallback_day=fallback_day, fallback_phase=fallback_phase)
-    if not isinstance(data, dict):
-        return _parse_text_public_entry(item, fallback_day=fallback_day, fallback_phase=fallback_phase)
-    return MemoryEvent(
-        day=int(data.get("day", fallback_day)),
-        phase=str(data.get("phase", fallback_phase)),
-        event_type=str(data.get("type") or "public_log"),
-        actor=as_int(data.get("actor")),
-        target=as_int(data.get("target")),
-        content=str(data.get("content") or ""),
-        visibility=str(data.get("visibility") or "public"),
-    )
-
-
 def _game_event_to_memory(event: GameEvent, *, fallback_phase: str) -> MemoryEvent:
     """Convert a GameEvent to a MemoryEvent using structured fields."""
     phase_str = event.phase.value if hasattr(event.phase, "value") else str(event.phase)
@@ -155,47 +137,6 @@ def _game_event_to_memory(event: GameEvent, *, fallback_phase: str) -> MemoryEve
         visibility="public" if event.public else "private",
     )
 
-
-def _parse_text_public_entry(item: str, *, fallback_day: int, fallback_phase: str) -> MemoryEvent:
-    death = re.search(r"Player\s+(\d+)\s+died\s+by\s+([\w_]+)", item)
-    if death:
-        return MemoryEvent(
-            day=fallback_day,
-            phase=fallback_phase,
-            event_type="death",
-            actor=None,
-            target=int(death.group(1)),
-            content=f"{death.group(1)}号死亡，原因：{death.group(2)}",
-        )
-    chinese_death = re.search(r"(\d+)号死亡", item)
-    if chinese_death:
-        return MemoryEvent(
-            day=fallback_day,
-            phase=fallback_phase,
-            event_type="death",
-            actor=None,
-            target=int(chinese_death.group(1)),
-            content=item,
-        )
-    vote = re.search(r"(\d+)号.*投(?:票)?(?:给|了)(\d+)号", item)
-    if vote:
-        return MemoryEvent(
-            day=fallback_day,
-            phase=fallback_phase,
-            event_type="vote",
-            actor=int(vote.group(1)),
-            target=int(vote.group(2)),
-            content=item,
-        )
-    speech = re.search(r"(\d+)号.*(?:发言|说)", item)
-    return MemoryEvent(
-        day=fallback_day,
-        phase=fallback_phase,
-        event_type="speech" if speech else "public_log",
-        actor=int(speech.group(1)) if speech else None,
-        target=extract_suspected_player(item),
-        content=item,
-    )
 
 
 @dataclass(slots=True)

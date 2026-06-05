@@ -235,7 +235,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(speech_order_requests), 1)
         self.assertEqual(speak_order, [4, 3, 2, 1, 12, 11, 10, 9, 8, 7, 6, 5])
 
-    def test_public_log_includes_public_speeches_for_agent_memory(self):
+    def test_public_events_include_public_speeches(self):
         class SpeakingAgent:
             def __init__(self, player_id):
                 self.player_id = player_id
