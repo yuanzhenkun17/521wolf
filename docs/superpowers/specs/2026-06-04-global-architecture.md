@@ -60,7 +60,7 @@ AI-only 对局
 ```text
 ┌────────────────────────────────────────────────────────────┐
 │ UI Layer                                                   │
-│ React + TypeScript + HTTP REST + SSE                       │
+│ Vue 3 + HTTP REST + SSE                                    │
 │ 对局观战 / 复盘 / 自博弈 / 角色进化 / Leaderboard          │
 ├────────────────────────────────────────────────────────────┤
 │ Agent Layer                                                │
@@ -79,7 +79,7 @@ AI-only 对局
 - Engine 只负责规则、阶段、信息隔离、胜负和日志，不理解 Prompt、LLM、skill 和复盘。
 - Agent 只通过 `ActionRequest -> ActionResponse` 参与游戏，不直接读写 `GameState`。
 - UI 通过 HTTP 获取快照和归档，通过 SSE 接收实时事件。
-- Storage 当前是混合形态：SQLite 已有 schema、运行期写入、历史 artifact 重建工具和 UI 回放查询；selfplay/role-evolution 新 run 会写入 `data/wolf.db`，并使用 artifact-relative namespace 避免 `game_001` 冲突；JSON/JSONL 仍承担 archive 和部分 fallback。
+- Storage 当前是混合形态：SQLite 已有 schema、运行期写入和 UI 回放查询；两库架构：`wolf.db`（对局+评测）和 `evolution.db`（进化学习）；JSON/JSONL 仍承担 archive 和部分 fallback。
 
 ---
 
@@ -103,7 +103,7 @@ AI-only 对局
 
 ```text
 GameEngine.observation_for(player_id)
-  -> public_log: tuple[str, ...]
+  -> visible_events: tuple[GameEvent, ...]   # 按 public + actor 过滤
   -> known_roles: dict[int, Role]
   -> seer_checks: dict[int, Team]
   -> metadata: dict
@@ -116,7 +116,7 @@ GameEngine.observation_for(player_id)
 | 缺口 | 说明 | 优先级 |
 |------|------|--------|
 | `role_state` | `GameState` 仍有 `witch_antidote_available`、`guard_last_target`、`seer_checks` 等角色状态 | P2 |
-| 结构化可见事件 | 当前 `Observation` 仍使用 `public_log` 字符串列表；`GameEvent.public` 只是 bool，不足以表达角色/玩家可见性 | P1 |
+| 结构化可见事件 | ~~已修复~~：`Observation.visible_events` 替代 `public_log`，`GameEvent` 统一事件模型，按 `public` 字段过滤 | ~~P1~~ ✅ |
 | disconnected agent 语义 | 当前 `ask()` 已用重试 + default 保持对局继续；若要展示断线玩家，需要 Engine/统计/UI 增加新状态 | P2 |
 | 独立 `GameSession` | 当前会话管理在 `ui.backend.game_runner.GameManager/RunningGame`，Engine 层没有独立 `GameSession` 类 | P2 |
 
@@ -345,7 +345,7 @@ SQLite schema 已存在并包含：
 | `decisions` | 已定义，运行期通过 `GamePersistence` 注入 sink 写入 |
 | `experience_candidates` | 已定义，`learning_v2` Evidence Pipeline 可写 |
 | `skill_proposals` | 已定义 |
-| `evolution_runs` | 已定义，`StorageRebuilder` 可从 role-evolution `state.json` + `battle_summary.json` 导入 battle_result |
+| `evolution_runs` | 已定义，运行期通过 `EvolutionStore` 写入 |
 | `leaderboard` | 已定义，`/api/leaderboards` 已优先读取 SQLite |
 
 JSON/JSONL 当前仍承担重要职责：
@@ -368,7 +368,7 @@ data/registry/<role>/versions/<version_id>/skills/*.md
 |------|------|--------|
 | SQLite 主查询路径 | 普通对局、selfplay、role-evolution 的列表/详情/事件/决策已优先读 SQLite；普通 review 输入、consolidation candidate context、role leaderboard、通用 leaderboard 已 DB 优先；archive endpoint 保留 JSON 导出语义 | P1 |
 | 版本库统一 | 已收敛为 `VersionRegistry`，SQLite 不再维护版本元数据 | 完成 |
-| archive 导入/迁移策略 | 已有 importer 和 `StorageRebuilder`，但还不是所有查询的默认维护路径 | P2 |
+| archive 导入/迁移策略 | ~~已修复~~：`StorageRebuilder` 和 `ArchiveImporter` 已删除，所有读取走 SQLite，文件纯备份 | ~~P2~~ ✅ |
 
 ### 6.3 目标态
 
@@ -514,7 +514,7 @@ Training games
 
 | 任务 | 目标 |
 |------|------|
-| `visible_events` | 用结构化事件替代 prompt 侧字符串 public_log |
+| `visible_events` | ~~已完成~~：`Observation.visible_events` 替代 `public_log`，结构化 `GameEvent` + `public` 可见性过滤 |
 | `Visibility` | 支持 public / role-private / player-private / system |
 | `role_state` | 迁移女巫、守卫、预言家等角色状态 |
 | agent 异常语义 | 已选择继续 fallback；后续如需断线态再扩展 Engine/统计/UI |
@@ -536,7 +536,7 @@ Training games
 | `experience_candidates` 主查询化 | consolidation 已读取评测样本主表作为附加证据；继续推动替代旧 mid-memory |
 | UI 读库 | 已覆盖普通对局/selfplay/role-evolution 列表、事件、决策、普通 review 输入、role leaderboard 和通用 leaderboard；archive endpoint 保留调试导出 |
 | JSON 导出定位 | archive 只作为导出和调试 |
-| 迁移工具 | `StorageRebuilder` 覆盖历史 archive/events/candidates，并可导入 role-evolution battle summaries |
+| ~~迁移工具~~ | ~~已完成~~：`StorageRebuilder` 和 `ArchiveImporter` 已删除，所有读取走 SQLite |
 
 ### Phase 5: 自进化可视化增强
 

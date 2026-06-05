@@ -19,7 +19,7 @@
    │  训练 → 归纳 → 应用   │     │  对战 → 评测 → 复盘  │
    │  → A/B 对战 → 晋升   │     │  → 报告 → 排行榜     │
    │                     │     │                     │
-   │  数据: evolution.db  │     │  数据: battle.db     │
+   │  数据: evolution.db  │     │  数据: wolf.db       │
    └─────────────────────┘     └─────────────────────┘
               │                           │
    ┌──────────┴───────────────────────────┴──────────┐
@@ -31,7 +31,7 @@
 
 **核心原则：**
 
-1. **数据隔离**：`battle.db` 和 `evolution.db` 是两个独立的 SQLite 文件，互不交叉访问。Registry（文件系统）是两个系统的唯一交汇点。
+1. **数据隔离**：`wolf.db`（对局+评测）和 `evolution.db`（进化学习）是两个独立的 SQLite 文件。Registry（文件系统）是两个系统的唯一交汇点。
 2. **职责分离**：进化只管产出更好的版本，对战只管拿版本来打并评测。两者在每层内部通过子目录分离，而不是打散层结构。
 3. **四层不变**：Engine（规则）、Agent（决策）、Storage（持久化）、UI（接口/界面）四层架构保持不变，在每层内部用子模块实现关注点分离。
 4. **向后兼容**：`storage/__init__.py` 通过 facade re-export 保持旧导入路径可用；UI 路由路径不变；旧文件不删除。
@@ -117,7 +117,7 @@ storage/
   __init__.py              # facade re-export（向后兼容）
 
   shared/                  # ★ 新增：共享基础设施
-    connection.py          # get_battle_connection(), get_evolution_connection()
+    connection.py          # get_evolution_connection()
     interfaces.py          # compute_hash (12 hex), normalize, 数据类
     models.py              # 共享数据类
 
@@ -149,7 +149,7 @@ storage/
 
 **数据库隔离：**
 
-| | battle.db | evolution.db |
+| | wolf.db | evolution.db |
 |---|---|---|
 | 对局记录 | games, players, game_events, decisions | — |
 | 评测数据 | evaluations, decision_reviews, counterfactuals, reports | — |
@@ -405,7 +405,7 @@ data/registry/
 
 ### 5.4 排行榜 (Leaderboard)
 
-新增 `battle.db` 的 `leaderboard` 表，支持：
+新增 `wolf.db` 的 `leaderboard` 表，支持：
 - 按身份排名
 - 按版本排名（对比不同进化版本的表现）
 - 多维评分趋势
@@ -464,7 +464,7 @@ class BattleRunner:
 | 种子 | 随机 | 固定（可复现） |
 | 实时事件推送 | 有（UI SSE） | 无 |
 | mid-memory 分析 | 不跑 | 每局跑 |
-| 持久化目标 | battle.db | evolution.db |
+| 持久化目标 | wolf.db | evolution.db |
 | 技能来源 | Registry 基线（只读） | 候选版本 |
 | 赛后处理 | 评测 + 复盘 + 报告 + 情景记忆 | mid-memory + Pattern 更新 |
 
@@ -505,7 +505,7 @@ AgentMemory 初始化
   │
   ├──► 评测管线 (Battle 系统)
   │    evaluate_game() → review_game() → generate_report()
-  │    → 写入 battle.db (evaluations, decision_reviews, counterfactuals, reports)
+  │    → 写入 wolf.db (evaluations, decision_reviews, counterfactuals, reports)
   │    → 更新 leaderboard
   │
   ├──► 情景记忆 (Evolution 系统)
@@ -546,7 +546,7 @@ python scripts/migrate_storage.py
 python scripts/migrate_storage.py --dry-run  # 确认行数匹配
 ```
 
-将 `data/wolf.db` 拆分为 `data/battle.db` 和 `data/evolution.db`。原始 `wolf.db` 保留不删除。
+两库架构：`wolf.db`（对局+评测）和 `evolution.db`（进化学习）。
 
 ### 9.2 版本存储迁移
 
@@ -569,7 +569,7 @@ ls data/registry/*/versions/
 
 | 属性 | 路径 | 说明 |
 |------|------|------|
-| `battle_db_path` | `data/battle.db` | 对战数据库 |
+| `battle_db_path` | `data/wolf.db` | 对战数据库（与主库合并） |
 | `evolution_db_path` | `data/evolution.db` | 进化数据库 |
 | `registry_dir` | `data/registry` | 版本注册中心 |
 

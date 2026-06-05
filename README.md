@@ -22,8 +22,8 @@ The core package intentionally does not depend on LangChain. A LangChain player 
 
 - `engine/`: rules engine. It owns phases, role rules, role state, voting, death chains, victory checks, logs, snapshots, and the `ActionRequest` / `ActionResponse` contract.
 - `agent/`: main Agent implementation. It owns the runtime pipeline, short-term memory, Markdown skill routing, LLM calls, parsing, policy repair, archive logs, review, self-play, evaluation, and role skill evolution.
-- `storage/`: SQLite persistence and replay helpers for games, events, decisions, experience candidates, evolution runs, patterns, and leaderboards.
-- `ui/`: FastAPI backend plus Vite/React frontend. It starts games, streams SSE events, handles human actions, reads persisted artifacts, and manages role evolution.
+- `storage/`: SQLite persistence and replay helpers for games, events, decisions, experience candidates, evolution runs, patterns, and leaderboards. Two databases: `wolf.db` (games + battle evaluation) and `evolution.db` (learning pipeline).
+- `ui/`: FastAPI backend plus Vue 3 frontend. It starts games, streams SSE events, handles human actions, reads persisted artifacts, and manages role evolution.
 - `scripts/`: maintenance scripts, including `seed_skills.py` for rebuilding the local skill registry under `data/registry/`.
 - `docs/`: design notes, current feature inventory, implementation plan, and architecture documents.
 
@@ -33,10 +33,10 @@ Current top-level structure:
 521wolf/
 ├── agent/              # Agent runtime, memory, prompts, skills, LLM infra, learning_v2
 ├── engine/             # Rule engine, phases, role rules, role_state, logging
-├── storage/            # SQLite schema, stores, replay, importer, rebuild helpers
+├── storage/            # SQLite schema, stores, replay
 ├── ui/
 │   ├── backend/        # FastAPI app and runners
-│   └── frontend/       # Vite + React UI
+│   └── frontend/       # Vue 3 UI
 ├── tests/              # Unit, integration, backend, storage, and structure tests
 ├── docs/               # Current docs and design specs
 ├── scripts/            # Utility scripts
