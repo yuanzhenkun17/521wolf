@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from engine.models import ActionRequest, ActionResponse, ActionType, Role
+from engine.models import ActionRequest, ActionResponse, ActionType, GameEvent, Role
 
 from agent.common.action_types import (
     PUBLIC_SPEECH_EVENT_TYPES,
@@ -139,6 +139,20 @@ def parse_public_entry(item: str, *, fallback_day: int, fallback_phase: str) -> 
         target=as_int(data.get("target")),
         content=str(data.get("content") or ""),
         visibility=str(data.get("visibility") or "public"),
+    )
+
+
+def _game_event_to_memory(event: GameEvent, *, fallback_phase: str) -> MemoryEvent:
+    """Convert a GameEvent to a MemoryEvent using structured fields."""
+    phase_str = event.phase.value if hasattr(event.phase, "value") else str(event.phase)
+    return MemoryEvent(
+        day=event.day,
+        phase=phase_str or fallback_phase,
+        event_type=event.type,
+        actor=event.actor,
+        target=event.target,
+        content=event.message,
+        visibility="public" if event.public else "private",
     )
 
 
@@ -317,7 +331,7 @@ class AgentMemory:
         self.suspicions: dict[int, str] = {}
         self.claims_seen: dict[int, str] = {}
         self.errors: list[str] = []
-        self._seen_public_entries: set[str] = set()
+        self._seen_public_entries: set[int | tuple] = set()
         self.field_notes = FieldNotes()
         self.phase_events: dict[tuple[int, str], list[MemoryEvent]] = {}
         self.phase_order: list[tuple[int, str]] = []
@@ -395,14 +409,18 @@ class AgentMemory:
 
     def _observe_request(self, request: ActionRequest) -> None:
         observation = request.observation
-        for item in observation.public_log:
-            if item in self._seen_public_entries:
+        fallback_phase = observation.phase.value
+        for event in observation.visible_events:
+            dedup_key = event.index if event.index > 0 else (
+                event.day, str(event.phase), event.type, event.actor, event.target, event.message,
+            )
+            if dedup_key in self._seen_public_entries:
                 continue
-            self._seen_public_entries.add(item)
-            event = parse_public_entry(str(item), fallback_day=observation.day, fallback_phase=observation.phase.value)
-            self.events.append(event)
-            self._record_phase_event(event)
-            self._index_public_event(event)
+            self._seen_public_entries.add(dedup_key)
+            mem_event = _game_event_to_memory(event, fallback_phase=fallback_phase)
+            self.events.append(mem_event)
+            self._record_phase_event(mem_event)
+            self._index_public_event(mem_event)
         if len(self.events) > _MAX_EVENTS:
             self.events = self.events[-_MAX_EVENTS:]
 

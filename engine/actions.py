@@ -4,7 +4,6 @@ import inspect
 from typing import TYPE_CHECKING, Callable
 
 from engine.models import ActionRequest, ActionResponse, ActionType
-from engine.public_log import append_public_event
 
 if TYPE_CHECKING:
     from engine.engine import GameEngine
@@ -64,6 +63,7 @@ async def ask(
         if response.action_type == action_type and validator(response):
             engine._record(
                 action_type.value,
+                message=response.text,
                 actor=player_id,
                 target=response.target,
                 payload={
@@ -71,7 +71,6 @@ async def ask(
                     "decision_id": response.decision_id,
                 },
             )
-            append_public_action(engine, player_id, response)
             engine._record(
                 "action_response",
                 message=response_message(player_id, response),
@@ -114,30 +113,6 @@ async def ask(
         payload={"action_type": action_type.value, "choice": default_response.choice},
     )
     return default_response
-
-
-PUBLIC_SPEECH_ACTIONS = {
-    ActionType.SPEAK,
-    ActionType.SHERIFF_SPEAK,
-    ActionType.PK_SPEAK,
-    ActionType.LAST_WORD,
-}
-
-
-def append_public_action(engine: GameEngine, player_id: int, response: ActionResponse) -> None:
-    if response.action_type not in PUBLIC_SPEECH_ACTIONS:
-        return
-    append_public_event(
-        engine,
-        response.action_type.value,
-        actor=player_id,
-        target=response.target,
-        content=response.text,
-        payload={
-            "choice": response.choice,
-            "decision_id": response.decision_id,
-        },
-    )
 
 
 def response_message(player_id: int, response: ActionResponse) -> str:

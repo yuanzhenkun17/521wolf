@@ -88,6 +88,10 @@ class GameEngine:
     def observation_for(self, player_id: int, metadata: dict | None = None) -> Observation:
         player = self.state.players[player_id]
         role_rule = rule_for(player.role)
+        visible = tuple(
+            e for e in self.logger.entries
+            if e.public or e.actor == player_id
+        )
         return Observation(
             player_id=player_id,
             self_role=player.role,
@@ -96,7 +100,7 @@ class GameEngine:
             alive_players=self.alive_ids(),
             dead_players=self.dead_ids(),
             sheriff_id=self.state.sheriff_id,
-            public_log=tuple(self.state.public_log),
+            visible_events=visible,
             known_roles=role_rule.visible_roles(self, player_id),
             seer_checks=role_rule.seer_checks(self, player_id),
             role_state=role_rule.get_role_state(self, player_id),

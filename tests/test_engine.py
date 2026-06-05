@@ -250,10 +250,10 @@ class EngineTests(unittest.TestCase):
 
         run(engine.run_day_speeches())
 
-        public_events = [json.loads(item) for item in engine.state.public_log]
-        speech_events = [event for event in public_events if event["type"] == ActionType.SPEAK.value]
-        self.assertEqual(speech_events[0]["actor"], 1)
-        self.assertEqual(speech_events[0]["content"], "1号公开发言")
+        public_events = [e for e in engine.logger.entries if e.public]
+        speech_events = [event for event in public_events if event.type == ActionType.SPEAK.value]
+        self.assertEqual(speech_events[0].actor, 1)
+        self.assertEqual(speech_events[0].message, "1号公开发言")
 
     def test_sheriff_withdraw_requests_include_runner_context(self):
         agents = agents_with()

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from engine.models import ActionResponse, ActionType, DeathCause, DeathRecord, Phase, Role
-from engine.public_log import append_public_event
 
 if TYPE_CHECKING:
     from engine.engine import GameEngine
@@ -17,13 +16,6 @@ def kill_player(engine: GameEngine, player_id: int, cause: DeathCause) -> None:
     engine.state.deaths.append(DeathRecord(player_id, cause, engine.state.day, engine.state.phase))
     if has_last_word(cause):
         engine.state.pending_last_words.append(player_id)
-    append_public_event(
-        engine,
-        "death",
-        target=player_id,
-        content=f"{player_id}号死亡，原因：{cause.value}",
-        payload={"cause": cause.value},
-    )
     engine._record("death", target=player_id, payload={"cause": cause.value})
     engine._record(
         "death",

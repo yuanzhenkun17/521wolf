@@ -571,7 +571,7 @@ class GameManager:
             "alive_players": list(observation.alive_players),
             "dead_players": list(observation.dead_players),
             "sheriff_id": observation.sheriff_id,
-            "public_log": list(observation.public_log),
+            "visible_events": [e.to_dict() for e in observation.visible_events],
             "known_roles": {
                 str(player_id): role.value
                 for player_id, role in observation.known_roles.items()

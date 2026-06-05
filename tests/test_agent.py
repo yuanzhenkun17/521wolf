@@ -8,7 +8,7 @@ from pathlib import Path
 from agent.core.memory import AgentMemory
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from engine.actions import ActionType
-from engine.models import ActionRequest, ActionResponse, Observation, Phase, Role
+from engine.models import ActionRequest, ActionResponse, GameEvent, Observation, Phase, Role
 
 from agent.core.context import AgentContext
 from agent.decision.steps.remember import remember_step
@@ -33,7 +33,7 @@ def _make_witch_poison_request() -> ActionRequest:
             alive_players=(1, 2, 3, 5, 6, 8, 9, 10),
             dead_players=(4, 7),
             sheriff_id=5,
-            public_log=[],
+            visible_events=(),
             known_roles={},
             seer_checks={},
             metadata={"can_poison": True, "can_save": False},
@@ -57,7 +57,7 @@ def _make_shoot_request() -> ActionRequest:
             alive_players=(1, 2, 3, 5, 6, 8, 9, 10),
             dead_players=(4, 7),
             sheriff_id=5,
-            public_log=[],
+            visible_events=(),
             known_roles={},
             seer_checks={},
             metadata={},
@@ -81,7 +81,7 @@ def _make_sheriff_badge_request() -> ActionRequest:
             alive_players=(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
             dead_players=(),
             sheriff_id=1,
-            public_log=[],
+            visible_events=(),
             known_roles={},
             seer_checks={},
             metadata={},
@@ -105,7 +105,7 @@ def _make_white_wolf_explode_request() -> ActionRequest:
             alive_players=(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
             dead_players=(),
             sheriff_id=1,
-            public_log=[],
+            visible_events=(),
             known_roles={},
             seer_checks={},
             metadata={},
@@ -129,7 +129,7 @@ def _make_speak_request(player_id: int = 2) -> ActionRequest:
             alive_players=(1, 2, 3, 5, 6, 8, 9, 10),
             dead_players=(4, 7),
             sheriff_id=5,
-            public_log=["P8 发言怀疑 P3"],
+            visible_events=(GameEvent(type="speak", day=2, phase=Phase.DAY_SPEECH, actor=8, message="P8 发言怀疑 P3"),),
             known_roles={},
             seer_checks={},
             metadata={},
@@ -153,7 +153,7 @@ def _make_vote_request(candidates: tuple[int, ...] = (3, 7, 9)) -> ActionRequest
             alive_players=(1, 2, 3, 5, 6, 8, 9, 10),
             dead_players=(4, 7),
             sheriff_id=5,
-            public_log=["P8 发言怀疑 P3"],
+            visible_events=(GameEvent(type="speak", day=2, phase=Phase.DAY_SPEECH, actor=8, message="P8 发言怀疑 P3"),),
             known_roles={},
             seer_checks={},
             metadata={},
@@ -594,10 +594,10 @@ class FieldNotesPromptTests(unittest.TestCase):
 
 
 class MemoryDedupTests(unittest.TestCase):
-    """Test memory deduplication of public_log entries (Fix 3)."""
+    """Test memory deduplication of visible_events entries (Fix 3)."""
 
-    def test_duplicate_public_log_entries_not_reprocessed(self):
-        """When public_log has duplicates, memory should not double-count."""
+    def test_duplicate_visible_events_not_reprocessed(self):
+        """When visible_events has duplicates, memory should not double-count."""
         from agent.core.memory import AgentMemory
 
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
@@ -610,7 +610,7 @@ class MemoryDedupTests(unittest.TestCase):
             alive_players=(1, 2, 3, 5, 6, 8, 9, 10),
             dead_players=(4, 7),
             sheriff_id=5,
-            public_log=["P8 发言怀疑 P3"],
+            visible_events=(GameEvent(type="speak", day=2, phase=Phase.DAY_SPEECH, actor=8, message="P8 发言怀疑 P3"),),
             known_roles={},
             seer_checks={},
             metadata={},
@@ -637,6 +637,8 @@ class MemoryDedupTests(unittest.TestCase):
 class PhaseWindowMemoryTests(unittest.TestCase):
     """Tests for phase-aware short-term memory."""
 
+    _PHASE_MAP = {p.value: p for p in Phase}
+
     def _entry(
         self,
         *,
@@ -646,23 +648,19 @@ class PhaseWindowMemoryTests(unittest.TestCase):
         actor: int | None = None,
         target: int | None = None,
         content: str = "",
-    ) -> str:
-        return json.dumps(
-            {
-                "day": day,
-                "phase": phase,
-                "type": event_type,
-                "actor": actor,
-                "target": target,
-                "content": content,
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+    ) -> GameEvent:
+        return GameEvent(
+            type=event_type,
+            day=day,
+            phase=self._PHASE_MAP.get(phase, Phase.DAY_SPEECH),
+            actor=actor,
+            target=target,
+            message=content,
         )
 
     def _request(
         self,
-        public_log: list[str],
+        visible_events: tuple[GameEvent, ...],
         *,
         day: int = 1,
         phase: Phase = Phase.EXILE_VOTE,
@@ -683,7 +681,7 @@ class PhaseWindowMemoryTests(unittest.TestCase):
                 alive_players=(1, 2, 3, 4, 5),
                 dead_players=dead_players,
                 sheriff_id=sheriff_id,
-                public_log=public_log,
+                visible_events=visible_events,
                 known_roles={},
                 seer_checks={},
                 metadata={},
@@ -695,7 +693,7 @@ class PhaseWindowMemoryTests(unittest.TestCase):
 
     def test_recent_timeline_keeps_only_last_two_phase_keys(self):
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
-        public_log = [
+        visible_events = (
             self._entry(
                 day=1,
                 phase="sheriff_election",
@@ -718,9 +716,9 @@ class PhaseWindowMemoryTests(unittest.TestCase):
                 target=3,
                 content="2号投给3号",
             ),
-        ]
+        )
 
-        memory_context = mem.build_context(self._request(public_log))
+        memory_context = mem.build_context(self._request(visible_events))
 
         self.assertEqual(
             [block["phase_key"] for block in memory_context["recent_timeline"]],
@@ -733,7 +731,7 @@ class PhaseWindowMemoryTests(unittest.TestCase):
 
     def test_old_phase_rolls_into_summary_and_pins_role_claim(self):
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
-        public_log = [
+        visible_events = (
             self._entry(
                 day=1,
                 phase="sheriff_election",
@@ -756,9 +754,9 @@ class PhaseWindowMemoryTests(unittest.TestCase):
                 target=4,
                 content="3号投给4号",
             ),
-        ]
+        )
 
-        memory_context = mem.build_context(self._request(public_log))
+        memory_context = mem.build_context(self._request(visible_events))
 
         summary_text = "\n".join(memory_context["rolling_summary"])
         self.assertIn("day1/sheriff_election", summary_text)
@@ -769,14 +767,14 @@ class PhaseWindowMemoryTests(unittest.TestCase):
 
     def test_observation_facts_are_pinned_outside_hot_window(self):
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
-        public_log = [
+        visible_events = (
             self._entry(day=1, phase="day_speech", event_type="speak", actor=1, content="1号发言"),
             self._entry(day=1, phase="exile_vote", event_type="exile_vote", actor=2, target=3, content="2号投给3号"),
             self._entry(day=2, phase="day_speech", event_type="speak", actor=4, content="4号发言"),
-        ]
+        )
 
         memory_context = mem.build_context(
-            self._request(public_log, day=2, phase=Phase.DAY_SPEECH, action_type=ActionType.SPEAK, dead_players=(3,), sheriff_id=1)
+            self._request(visible_events, day=2, phase=Phase.DAY_SPEECH, action_type=ActionType.SPEAK, dead_players=(3,), sheriff_id=1)
         )
 
         facts = memory_context["pinned_facts"]
@@ -798,12 +796,12 @@ class PhaseWindowMemoryTests(unittest.TestCase):
 
     def test_prompt_uses_phase_memory_sections_instead_of_legacy_event_line(self):
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
-        public_log = [
+        visible_events = (
             self._entry(day=1, phase="sheriff_election", event_type="sheriff_speak", actor=1, content="1号警上发言，我是预言家"),
             self._entry(day=1, phase="day_speech", event_type="speak", actor=2, content="2号发言怀疑P3"),
             self._entry(day=1, phase="exile_vote", event_type="exile_vote", actor=2, target=3, content="2号投给3号"),
-        ]
-        request = self._request(public_log)
+        )
+        request = self._request(visible_events)
         memory_context = mem.build_context(request)
 
         from agent.knowledge.prompts import build_messages

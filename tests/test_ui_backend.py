@@ -14,7 +14,7 @@ from ui.backend.app import app
 from ui.backend.game_runner import GameManager, RunningGame
 from ui.backend.batch_role_evolution_runner import RoleBatchEvolutionRun
 from ui.backend.role_evolution_runner import RoleEvolutionRun
-from engine.models import ActionRequest, ActionResponse, ActionType, Observation, Phase, Role
+from engine.models import ActionRequest, ActionResponse, ActionType, GameEvent, Observation, Phase, Role
 from engine.players import HumanPlayer
 
 
@@ -150,7 +150,7 @@ class UiBackendTests(unittest.TestCase):
                 alive_players=(1, 2, 3),
                 dead_players=(),
                 sheriff_id=None,
-                public_log=("昨夜平安夜",),
+                visible_events=(GameEvent(type="night_result", day=1, phase=Phase.NIGHT, message="昨夜平安夜"),),
             )
             request = ActionRequest(
                 player_id=3,

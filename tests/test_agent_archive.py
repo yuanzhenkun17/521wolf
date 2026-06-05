@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from engine.actions import ActionType
-from engine.models import ActionRequest, Observation, Phase, Role
+from engine.models import ActionRequest, GameEvent, Observation, Phase, Role
 
 from agent.infrastructure.archive import (
     AgentTraceRecorder,
@@ -32,7 +32,7 @@ def _make_vote_context() -> AgentContext:
             alive_players=(1, 2, 3, 5, 6, 8, 9, 10),
             dead_players=(4, 7),
             sheriff_id=5,
-            public_log=["P8 发言怀疑 P3"],
+            visible_events=(GameEvent(type="speak", day=2, phase=Phase.DAY_SPEECH, actor=8, message="P8 发言怀疑 P3"),),
             known_roles={},
             seer_checks={},
             metadata={},

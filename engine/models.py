@@ -145,7 +145,7 @@ class Observation:
     alive_players: tuple[int, ...]
     dead_players: tuple[int, ...]
     sheriff_id: int | None
-    public_log: tuple[str, ...]
+    visible_events: tuple[GameEvent, ...]
     known_roles: dict[int, Role] = field(default_factory=dict)
     seer_checks: dict[int, Team] = field(default_factory=dict)
     role_state: dict[str, Any] = field(default_factory=dict)
@@ -182,7 +182,6 @@ class GameState:
     players: dict[int, PlayerState]
     day: int = 0
     phase: Phase = Phase.SETUP
-    public_log: list[str] = field(default_factory=list)
     deaths: list[DeathRecord] = field(default_factory=list)
     sheriff_id: int | None = None
     badge_destroyed: bool = False
