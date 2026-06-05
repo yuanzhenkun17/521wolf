@@ -205,10 +205,11 @@ class RoleBatchEvolutionRunner(SSEMixin):
 
 
     async def sse_events(self, batch_id: str) -> AsyncGenerator[str, None]:
-        return sse_events_stream(
+        async for chunk in sse_events_stream(
             self.subscribe, self.unsubscribe, batch_id,
             terminal_kinds={"reviewing", "promoted", "rejected", "failed"},
-        )
+        ):
+            yield chunk
 
 
     async def _execute(

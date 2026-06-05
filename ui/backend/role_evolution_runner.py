@@ -465,10 +465,11 @@ class RoleEvolutionRunner(SSEMixin):
         ``event: progress``; terminal events use their concrete
         kind name so the frontend can detect stream end.
         """
-        return sse_events_stream(
+        async for chunk in sse_events_stream(
             self.subscribe, self.unsubscribe, run_id,
             terminal_kinds={"promoted", "rejected", "failed"},
-        )
+        ):
+            yield chunk
 
 
     # ------------------------------------------------------------------
