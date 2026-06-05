@@ -52,8 +52,8 @@ class PathConfig:
 
     @property
     def battle_db_path(self) -> Path:
-        """SQLite database for battle results."""
-        return self.data_dir / "battle.db"
+        """SQLite database for battle results (now shares main wolf.db)."""
+        return self.data_dir / "wolf.db"
 
     @property
     def evolution_db_path(self) -> Path:

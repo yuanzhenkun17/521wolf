@@ -171,7 +171,58 @@ CREATE TABLE IF NOT EXISTS leaderboard (
     scores TEXT,
     is_baseline INTEGER DEFAULT 0,
     data_sufficient INTEGER DEFAULT 0,
+    avg_speech_score REAL DEFAULT 0.0,
+    avg_vote_score REAL DEFAULT 0.0,
+    avg_skill_score REAL DEFAULT 0.0,
+    avg_information_score REAL DEFAULT 0.0,
+    avg_cooperation_score REAL DEFAULT 0.0,
     updated_at TEXT NOT NULL
+);
+
+-- Battle evaluation tables (merged from battle.db)
+CREATE TABLE IF NOT EXISTS evaluations (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL REFERENCES games(id),
+    player_seat INTEGER,
+    role TEXT,
+    speech_score REAL,
+    vote_score REAL,
+    skill_score REAL,
+    information_score REAL,
+    cooperation_score REAL,
+    overall_score REAL,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS decision_reviews (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL REFERENCES games(id),
+    decision_id TEXT,
+    player_seat INTEGER,
+    day INTEGER,
+    phase TEXT,
+    action_type TEXT,
+    quality TEXT,
+    reason TEXT,
+    alternative_action TEXT,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS counterfactuals (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL REFERENCES games(id),
+    decision_id TEXT,
+    what_if TEXT,
+    likely_outcome TEXT,
+    confidence REAL,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL UNIQUE REFERENCES games(id),
+    summary TEXT,
+    created_at TEXT
 );
 
 -- Indexes
@@ -194,6 +245,14 @@ CREATE INDEX IF NOT EXISTS idx_exp_game ON experience_candidates(game_id);
 CREATE INDEX IF NOT EXISTS idx_exp_role ON experience_candidates(role);
 CREATE INDEX IF NOT EXISTS idx_exp_type ON experience_candidates(candidate_type);
 CREATE INDEX IF NOT EXISTS idx_exp_created ON experience_candidates(created_at);
+
+-- Battle evaluation indexes (merged from battle.db)
+CREATE INDEX IF NOT EXISTS idx_eval_game ON evaluations(game_id);
+CREATE INDEX IF NOT EXISTS idx_eval_role ON evaluations(role);
+CREATE INDEX IF NOT EXISTS idx_dr_game ON decision_reviews(game_id);
+CREATE INDEX IF NOT EXISTS idx_dr_decision ON decision_reviews(decision_id);
+CREATE INDEX IF NOT EXISTS idx_cf_game ON counterfactuals(game_id);
+CREATE INDEX IF NOT EXISTS idx_cf_decision ON counterfactuals(decision_id);
 """
 
 

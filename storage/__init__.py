@@ -21,7 +21,6 @@ from storage.runtime import GamePersistence, open_storage_connection
 # New shared re-exports
 # ---------------------------------------------------------------------------
 from storage.shared.connection import (
-    get_battle_connection,
     get_evolution_connection,
 )
 from storage.shared.interfaces import (
@@ -66,7 +65,6 @@ __all__ = [
     "GamePersistence",
     "open_storage_connection",
     # Shared
-    "get_battle_connection",
     "get_evolution_connection",
     "compute_hash",
     "normalize_skill_text",
