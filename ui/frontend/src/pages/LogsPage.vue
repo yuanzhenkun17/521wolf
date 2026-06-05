@@ -127,9 +127,13 @@ const reviewData = computed(() => {
   return raw.data || raw
 })
 const reviewGameSummary = computed(() => reviewData.value?.game_summary || null)
-const reviewPlayerScores = computed(() => reviewData.value?.player_scores || [])
+const reviewPlayerScores = computed(() =>
+  reviewData.value?.player_evaluations || reviewData.value?.player_scores || []
+)
 const reviewTurningPoints = computed(() => reviewData.value?.turning_points || [])
-const reviewCounterfactuals = computed(() => reviewData.value?.counterfactuals || [])
+const reviewCounterfactuals = computed(() =>
+  reviewData.value?.counterfactuals || []
+)
 const reviewTimeline = computed(() => reviewData.value?.timeline || [])
 
 // Structured archive data extraction
@@ -452,8 +456,8 @@ function loadSelectedArchive() {
               <div v-if="reviewPlayerScores.length" class="review-player-scores">
                 <h4>玩家评分</h4>
                 <div class="review-score-table">
-                  <div v-for="ps in reviewPlayerScores" :key="'ps-' + ps.seat" class="review-score-row">
-                    <span class="review-seat">{{ ps.seat }}号</span>
+                  <div v-for="ps in reviewPlayerScores" :key="'ps-' + (ps.player_seat || ps.seat)" class="review-score-row">
+                    <span class="review-seat">{{ ps.player_seat || ps.seat }}号</span>
                     <span v-if="ps.role" class="review-role">{{ ps.role }}</span>
                     <span v-if="ps.speech_score != null" class="review-dim" title="发言">
                       <small>发言</small><b>{{ Math.round(ps.speech_score * 100) }}</b>
@@ -464,11 +468,14 @@ function loadSelectedArchive() {
                     <span v-if="ps.skill_score != null" class="review-dim" title="技能">
                       <small>技能</small><b>{{ Math.round(ps.skill_score * 100) }}</b>
                     </span>
-                    <span v-if="ps.information_score != null" class="review-dim" title="信息">
-                      <small>信息</small><b>{{ Math.round(ps.information_score * 100) }}</b>
+                    <span v-if="ps.logic_score != null" class="review-dim" title="逻辑">
+                      <small>逻辑</small><b>{{ Math.round(ps.logic_score * 100) }}</b>
                     </span>
-                    <span v-if="ps.cooperation_score != null" class="review-dim" title="协作">
-                      <small>协作</small><b>{{ Math.round(ps.cooperation_score * 100) }}</b>
+                    <span v-if="ps.team_score != null" class="review-dim" title="团队">
+                      <small>团队</small><b>{{ Math.round(ps.team_score * 100) }}</b>
+                    </span>
+                    <span v-if="ps.role_score != null" class="review-dim review-role-score" title="综合分">
+                      <small>综合</small><b>{{ Math.round(ps.role_score * 100) }}</b>
                     </span>
                   </div>
                 </div>

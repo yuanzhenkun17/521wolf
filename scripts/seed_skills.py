@@ -620,4 +620,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if "--force" not in sys.argv:
+        print(
+            "WARNING: scripts/seed_skills.py is deprecated and no longer the "
+            "bootstrap path.\n"
+            "Use scripts/bootstrap_registry.py instead.\n"
+            "Pass --force to run this script anyway.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    sys.argv = [a for a in sys.argv if a != "--force"]
     main()

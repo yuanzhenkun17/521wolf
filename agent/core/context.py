@@ -26,8 +26,12 @@ class AgentContext:
     skill_context: str = ""
     strategy_advice: dict[str, Any] = field(default_factory=dict)
 
-    # Cross-game memory injection (patterns + episodic records)
+    # Cross-game memory injection (patterns + episodic records) — deprecated
     memory_injection: str | None = None
+
+    # Compression tracking (Phase 3)
+    compression_errors: list[str] = field(default_factory=list)
+    compressed_segments_added: list[str] = field(default_factory=list)
 
     # LLM interaction
     messages: list[dict[str, str]] = field(default_factory=list)

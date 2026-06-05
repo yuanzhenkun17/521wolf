@@ -48,7 +48,7 @@ def build_messages(
     strategy_advice: dict[str, Any] | None = None,
     selected_skills: list[str] | None = None,
     skill_context: str = "",
-    memory_injection: str | None = None,
+    memory_injection: str | None = None,  # deprecated, ignored
 ) -> list[dict[str, str]]:
     return [
         {
@@ -65,7 +65,6 @@ def build_messages(
                 strategy_advice=strategy_advice or {},
                 selected_skills=selected_skills or [],
                 skill_context=skill_context,
-                memory_injection=memory_injection,
             ),
         },
     ]
@@ -106,57 +105,6 @@ def _format_pinned_fact(fact: Any) -> str:
     return prefix + content
 
 
-def _format_player_models(player_models: Any) -> str:
-    if not player_models:
-        return ""
-    profile_lines = []
-    for pid_str, info in sorted(player_models.items()):
-        parts_list = []
-        sc = info.get("speech_count", 0)
-        if sc:
-            parts_list.append(f"发言{sc}次")
-        for vote in info.get("votes_cast", []):
-            parts_list.append(f"投票给P{vote.get('target')}")
-        received = info.get("votes_received", [])
-        if received:
-            parts_list.append(f"被{'、'.join(f'P{r}' for r in received)}投票")
-        for a in info.get("attacked", []):
-            parts_list.append(f"攻击过P{a}")
-        for d in info.get("defended", []):
-            parts_list.append(f"辩护过P{d}")
-        for f in info.get("followed", []):
-            parts_list.append(f"跟票P{f}")
-        if parts_list:
-            profile_lines.append(f"  - P{pid_str}: {'，'.join(parts_list)}")
-    return "\n".join(profile_lines)
-
-
-def _format_self_commitments(commitments: Any) -> str:
-    lines = []
-    for item in commitments or []:
-        if not isinstance(item, dict):
-            lines.append(f"- {item}")
-            continue
-        parts = [
-            f"第{item.get('day')}天",
-            str(item.get("phase") or ""),
-            str(item.get("action_type") or ""),
-        ]
-        action = " ".join(part for part in parts if part)
-        target = item.get("target")
-        choice = item.get("choice")
-        text = item.get("text") or ""
-        details = []
-        if choice is not None:
-            details.append(f"choice={choice}")
-        if target is not None:
-            details.append(f"target=P{target}")
-        if text:
-            details.append(f"text={text}")
-        lines.append(f"- {action}: {'; '.join(details) if details else _compact(item)}")
-    return "\n".join(lines)
-
-
 def _format_recent_timeline(timeline: Any) -> str:
     if not timeline:
         return ""
@@ -181,28 +129,60 @@ def _format_recent_timeline(timeline: Any) -> str:
 
 
 def _format_short_term_memory(memory_context: dict) -> str:
+    """Format segment-based memory for the prompt.
+
+    Spec order:
+    1. Compressed segment summaries (older segments)
+    2. Recent closed segments (full events)
+    3. Open segment (current phase events)
+    """
     parts = []
 
-    rolling_lines = _line_list(memory_context.get("rolling_summary"))
-    if rolling_lines:
-        parts.append("前史摘要:\n" + "\n".join(f"- {line}" for line in rolling_lines))
+    # 1. Compressed summaries (older segments)
+    compressed = memory_context.get("compressed_segment_summaries") or []
+    if compressed:
+        lines = []
+        for cs in compressed:
+            seg_key = cs.get("segment_key", "?")
+            summary = cs.get("summary", "")
+            lines.append(f"[{seg_key}] {summary}")
+            for evt in cs.get("key_events", []):
+                lines.append(f"  - {evt}")
+            for player, note in cs.get("player_notes", {}).items():
+                lines.append(f"  - P{player}: {note}")
+            for unk in cs.get("unknowns", []):
+                lines.append(f"  - 未知: {unk}")
+        parts.append("更早阶段摘要:\n" + "\n".join(f"- {line}" for line in lines))
 
-    pinned_facts = memory_context.get("pinned_facts") or []
-    if pinned_facts:
-        facts = "\n".join(f"- {_format_pinned_fact(fact)}" for fact in pinned_facts)
-        parts.append("不可丢关键事实:\n" + facts)
+    # 2. Recent closed segments (full events)
+    recent_closed = memory_context.get("recent_closed_segments") or []
+    for seg in recent_closed:
+        seg_key = seg.get("segment_key", "?")
+        events = seg.get("events") or []
+        if events:
+            event_lines = [f"- {e.get('text', e.get('content', str(e)))}" for e in events]
+            parts.append(f"{seg_key} 完整事件:\n" + "\n".join(event_lines))
 
-    player_models = _format_player_models(memory_context.get("player_models"))
-    if player_models:
-        parts.append("玩家画像:\n" + player_models)
+    # 3. Open segment (current phase)
+    open_events = memory_context.get("open_segment") or []
+    open_key = memory_context.get("open_segment_key")
+    if open_events:
+        event_lines = [f"- {e.get('text', e.get('content', str(e)))}" for e in open_events]
+        label = f"{open_key} 当前阶段" if open_key else "当前阶段"
+        parts.append(f"{label}:\n" + "\n".join(event_lines))
 
-    commitments = _format_self_commitments(memory_context.get("self_commitments"))
-    if commitments:
-        parts.append("我的公开口径:\n" + commitments)
-
-    timeline = _format_recent_timeline(memory_context.get("recent_timeline"))
-    if timeline:
-        parts.append("最近两个阶段完整时间流:\n" + timeline)
+    # Legacy fallback: if no segment data, use old format
+    if not parts:
+        rolling_lines = _line_list(memory_context.get("rolling_summary"))
+        if rolling_lines:
+            parts.append("前史摘要:\n" + "\n".join(f"- {line}" for line in rolling_lines))
+        pinned_facts = memory_context.get("pinned_facts") or []
+        if pinned_facts:
+            facts = "\n".join(f"- {_format_pinned_fact(fact)}" for fact in pinned_facts)
+            parts.append("不可丢关键事实:\n" + facts)
+        timeline = _format_recent_timeline(memory_context.get("recent_timeline"))
+        if timeline:
+            parts.append("最近两个阶段完整时间流:\n" + timeline)
 
     return "\n\n".join(parts) + ("\n\n" if parts else "")
 
@@ -214,7 +194,7 @@ def build_request_prompt(
     strategy_advice: dict[str, Any] | None = None,
     selected_skills: list[str] | None = None,
     skill_context: str = "",
-    memory_injection: str | None = None,
+    memory_injection: str | None = None,  # deprecated, ignored
 ) -> str:
     observation = request.observation
     private_facts = memory_context.get("private_facts", {})
@@ -225,33 +205,14 @@ def build_request_prompt(
     if hints:
         hints_block = "技能提示:\n" + "\n".join(f"- {h}" for h in hints) + "\n\n"
 
-    # Structured field notes from memory
-    field_notes = memory_context.get("field_notes", {})
+    # Structured field notes — replaced by segment-based memory.
+    # field_notes are no longer rendered into the prompt (spec: segment window only).
     field_notes_block = ""
-    has_phase_memory = any(
-        memory_context.get(key)
-        for key in (
-            "rolling_summary",
-            "pinned_facts",
-            "recent_timeline",
-            "player_models",
-            "self_commitments",
-        )
-    )
-    if field_notes and not has_phase_memory:
-        formatted = format_field_notes(field_notes)
-        if formatted:
-            field_notes_block = f"结构化现场笔记:\n{formatted}\n\n"
 
     # Multi-skill context block
     skill_context_block = ""
     if skill_context:
         skill_context_block = f"已注入策略 Skill:\n{skill_context}\n\n"
-
-    # Cross-game memory injection (patterns + episodic records)
-    memory_injection_block = ""
-    if memory_injection:
-        memory_injection_block = f"已注入经验记忆:\n{memory_injection}\n\n"
 
     memory_block = _format_short_term_memory(memory_context)
 
@@ -269,7 +230,6 @@ def build_request_prompt(
         f"{memory_block}"
         f"{field_notes_block}"
         f"{skill_context_block}"
-        f"{memory_injection_block}"
         f"{hints_block}"
         f"{action_instruction(request.action_type)}\n"
         f"{_OUTPUT_FORMAT_INSTRUCTIONS}\n"

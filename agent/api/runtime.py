@@ -27,8 +27,8 @@ from agent.infrastructure.tracing import observe, propagate_attributes
 from agent.core.context import AgentContext
 from agent.infrastructure.llm import ModelAdapter
 from agent.decision.steps.remember import remember_step
+from agent.decision.steps.compress_memory import compress_memory_step
 from agent.decision.steps.select_skills import select_skills_step
-from agent.decision.steps.inject_memory import inject_memory_step
 from agent.decision.steps.build_prompt import build_prompt_step
 from agent.decision.steps.call_model import call_model_step
 from agent.decision.steps.parse_output import parse_output_step
@@ -44,8 +44,8 @@ class AgentRuntime:
 
         ActionRequest
         -> remember_step
+        -> compress_memory_step
         -> select_skills_step
-        -> inject_memory_step
         -> build_prompt_step
         -> call_model_step
         -> parse_output_step
@@ -75,12 +75,6 @@ class AgentRuntime:
         self.trace_recorder = trace_recorder
         self.skill_dir = Path(skill_dir) if skill_dir else None
         self.paths = paths
-        # Lazily initialized on first act() via create_providers().
-        # _providers_ready tracks whether initialization was attempted,
-        # since the providers themselves can legitimately be None.
-        self._providers_ready = False
-        self._pattern_provider = None
-        self._episodic_provider = None
 
     @observe(name="act")
     async def act(self, request: ActionRequest) -> ActionResponse:
@@ -95,23 +89,11 @@ class AgentRuntime:
                 # -- synchronous steps -------------------------------------------------
                 ctx = remember_step(ctx, self.memory)
 
+                # -- compress old segments if needed ----------------------------------
+                ctx = await compress_memory_step(ctx, self.memory, self.model)
+
                 # -- skill routing + prompt assembly ---------------------------------
                 ctx = select_skills_step(ctx, skill_root=self.skill_dir)
-
-                # Lazily wire evolution providers (pattern + episodic memory).
-                if not self._providers_ready:
-                    self._providers_ready = True
-                    try:
-                        from agent.learning.providers import create_providers
-                        self._pattern_provider, self._episodic_provider = create_providers(self.paths)
-                    except Exception:
-                        _log.warning("create_providers failed; injection disabled", exc_info=True)
-
-                ctx = inject_memory_step(
-                    ctx,
-                    pattern_provider=self._pattern_provider,
-                    episodic_provider=self._episodic_provider,
-                )
                 ctx = build_prompt_step(ctx)
 
                 # -- LLM call + parse ------------------------------------------------

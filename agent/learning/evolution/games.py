@@ -19,6 +19,7 @@ from agent.learning.stats import new_role_accum, finalize_role_metrics
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from agent.infrastructure.llm import ModelAdapter
 from agent.common import beijing_now_iso as _now, beijing_now_str, is_werewolf_win
+from agent.common.run_policy import RunType, policy_for_run_type
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
 from engine.config import GameConfig, STANDARD_12
 from engine.engine import GameEngine
@@ -69,6 +70,7 @@ class SelfPlayConfig:
     consolidation_window: int = 5
     auto_apply_skill_proposals: bool = False
     enable_batch_dream: bool = False
+    run_type: RunType = RunType.EVOLUTION_TRAINING
     temperature: float = 0.2
     game_config: GameConfig = STANDARD_12
     skill_dir: Path | None = None
@@ -476,6 +478,7 @@ async def _run_single_game(
         source_game_id=game_id,
         game_dir=game_dir,
         conn=conn,
+        run_policy=policy_for_run_type(config.run_type),
     )
 
     roles = assign_roles(config.game_config, seed=seed)
@@ -618,7 +621,8 @@ async def _run_single_game(
 
     # Evidence candidates are the new mid-term memory artifact; legacy
     # GameAnalysis stays available for the current long-term consolidator.
-    if config.enable_mid_memory and not game_error and winner is not None:
+    run_policy = persistence.run_policy
+    if config.enable_mid_memory and run_policy.learning_eligible and not game_error and winner is not None:
         try:
             evidence_result = await run_evidence_pipeline(
                 game_dir,
@@ -629,7 +633,7 @@ async def _run_single_game(
         except Exception as exc:
             _log.error("learning_error for %s: %s", game_id, exc, exc_info=True)
 
-    if config.enable_mid_memory and review_report is not None:
+    if config.enable_mid_memory and run_policy.learning_eligible and review_report is not None:
         try:
             from agent.learning.game_analysis import analyze_game, write_game_analysis
 

@@ -176,11 +176,11 @@ def load_llm_client(
     return ChatCompletionClient(
         api_key=api_key,
         base_url=os.environ.get("WEREWOLF_LLM_BASE_URL") or DEFAULT_BASE_URL,
-        model=os.environ.get("WEREWOLF_LLM_MODEL") or model_name or DEFAULT_MODEL,
+        model=model_name or os.environ.get("WEREWOLF_LLM_MODEL") or DEFAULT_MODEL,
         timeout=float(os.environ.get("WEREWOLF_LLM_TIMEOUT") or 45.0),
         temperature=float(
-            os.environ.get("WEREWOLF_LLM_TEMPERATURE")
-            or (temperature if temperature is not None else 0.4)
+            temperature if temperature is not None
+            else (os.environ.get("WEREWOLF_LLM_TEMPERATURE") or 0.4)
         ),
         thinking=os.environ.get("WEREWOLF_LLM_THINKING") or "disabled",
         max_retries=int(os.environ.get("WEREWOLF_LLM_MAX_RETRIES") or 5),

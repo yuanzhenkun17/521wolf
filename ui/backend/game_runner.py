@@ -8,16 +8,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent.common import beijing_now_iso
 from agent.common.json import to_jsonable
 from ui.backend.runner_utils import RunnerStatus
 from agent.common.paths import PathConfig, DEFAULT as DEFAULT_PATHS
+from agent.common.run_policy import RunType, policy_for_run_type
 from agent.infrastructure.archive import AgentTraceRecorder
 from agent.infrastructure.decision_log import AgentDecisionRecorder
 from agent.api.factory import create_agents, load_llm_client
-from agent.learning.review.evaluator import GameEvaluator
-from agent.learning.review.reviewer import GameReviewer
-from agent.learning.review.report_gen import ReportGenerator
-from agent.core.episodic_memory import EpisodicMemoryWriter
+from agent.learning.review.service import ReviewService
 from storage.replay import read_config_for_artifact, read_decisions_for_artifact, read_events_for_artifact
 from storage.runtime import GamePersistence
 from engine.config import GameConfig, STANDARD_12
@@ -70,6 +69,7 @@ class GameManager:
         *,
         log_dir: str | Path | None = None,
         db_path: str | Path | None = None,
+        game_run_service: Any | None = None,
     ) -> None:
         self._paths = (
             _GameManagerPaths(
@@ -88,6 +88,7 @@ class GameManager:
         self._paths.games_dir.mkdir(parents=True, exist_ok=True)
         self._games: dict[str, RunningGame] = {}
         self._lock = asyncio.Lock()
+        self._game_run_service = game_run_service
 
     async def start_game(
         self,
@@ -206,14 +207,30 @@ class GameManager:
         game.status = RunnerStatus.RUNNING
         cursor = 0
         persistence: GamePersistence | None = None
+        started_at = beijing_now_iso()
         try:
             roles = random_standard_roles(seed=game.seed)
             game_dir = self._game_dir(game.log_name)
-            persistence = GamePersistence(
-                game_id=game.game_id,
-                game_dir=game_dir,
-                db_path=self._db_path,
-            )
+            run_policy = policy_for_run_type(RunType.ORDINARY_GAME)
+            if self._game_run_service is not None:
+                from agent.game_run.service import GameRunConfig
+                run_config = GameRunConfig(
+                    run_type=RunType.ORDINARY_GAME,
+                    mode="dev",
+                    max_days=game.max_days,
+                )
+                handle = self._game_run_service.create_run(run_config)
+                persistence = handle.persistence
+                persistence.game_dir = game_dir
+                game.game_id = handle.run_id
+            else:
+                persistence = GamePersistence(
+                    game_id=game.game_id,
+                    game_dir=game_dir,
+                    db_path=self._db_path,
+                    run_policy=run_policy,
+                    run_metadata={"mode": "dev", "ruleset_version": "werewolf_12p_v1"},
+                )
 
             game.decision_recorder = persistence.create_decision_recorder()
             game.trace_recorder = AgentTraceRecorder()
@@ -226,7 +243,6 @@ class GameManager:
                 sheriff_vote_weight=STANDARD_12.sheriff_vote_weight,
                 night_order=STANDARD_12.night_order,
             )
-            game_dir = self._game_dir(game.log_name)
             game.engine = GameEngine(
                 roles,
                 create_agents(
@@ -274,42 +290,28 @@ class GameManager:
                 player_roles=player_roles_dict,
                 config=config,
                 winner=game.winner,
-                started_at="",
+                started_at=started_at,
                 total_rounds=getattr(game.engine.state, "day", 0) or 0,
                 public_events=[e.to_dict() for e in game.engine.logger.entries],
                 final_state={"player_roles": player_roles_dict, "winner": game.winner, "config": config},
                 deaths=deaths,
             )
-            # Persist episodic memory for cross-game learning
+            # Persist structured review (evaluations, decision_reviews, counterfactuals, reports)
+            # ordinary_game must NOT write episodic memory, patterns, or experience
             try:
-                agent_memories = getattr(game, "agent_memories", None)
-                if agent_memories:
-                    mem_writer = EpisodicMemoryWriter()
-                    situational_records, decision_outcomes = mem_writer.persist_game(
-                        game.game_id,
-                        player_memories=agent_memories,
-                        player_roles=player_roles_dict,
-                        winner=game.winner,
-                        decisions=self._decision_dicts(game),
-                        game_events=game.events,
-                    )
-                    # Write to evolution.db if available
-                    try:
-                        from storage.evolution.situational_repo import SituationalRecordStore
-                        from storage.evolution.outcome_repo import DecisionOutcomeStore
-                        from storage.shared.connection import get_evolution_connection
-                        evo_conn = get_evolution_connection()
-                        try:
-                            sit_store = SituationalRecordStore(evo_conn)
-                            sit_store.save_batch(situational_records)
-                            out_store = DecisionOutcomeStore(evo_conn)
-                            out_store.save_batch(decision_outcomes)
-                        finally:
-                            evo_conn.close()
-                    except Exception:
-                        _log.debug("Could not persist episodic memory to evolution.db", exc_info=True)
+                review_service = ReviewService()
+                player_roles_dict_for_review = {int(k): v for k, v in player_roles_dict.items()}
+                review_result = review_service.review_game(
+                    game_id=game.game_id,
+                    events=[e.to_dict() for e in game.engine.logger.entries],
+                    decisions=self._decision_dicts(game),
+                    player_roles=player_roles_dict_for_review,
+                    winner=game.winner or "unknown",
+                )
+                if persistence.conn:
+                    ReviewService.persist_to_db(persistence.conn, review_result)
             except Exception:
-                _log.debug("Episodic memory extraction failed", exc_info=True)
+                _log.debug("ReviewService failed for %s", game.game_id, exc_info=True)
             self._cache_completed_review(game.game_id)
             game.status = RunnerStatus.COMPLETED
             done_snapshot = self.snapshot(game, include_events=False)
@@ -617,7 +619,7 @@ class GameManager:
         ]
 
     def build_review(self, game_id: str) -> dict[str, Any] | None:
-        """Build structured review report using the new evaluation pipeline."""
+        """Build structured review report using the unified ReviewService."""
         cached = self._read_review_cache(game_id)
         if cached is not None:
             return cached
@@ -641,48 +643,42 @@ class GameManager:
         if not roles:
             return None
 
-        # Read decisions
         decisions: list[dict] = list(self._read_decisions(game_id))
         winner = self._winner_from_events(events)
-        total_days = max((e.get("day", 0) for e in events), default=0)
 
         try:
-            # Step 1: Evaluate
-            evaluator = GameEvaluator()
-            evaluation = evaluator.evaluate_game(
-                game_id,
+            review_service = ReviewService()
+            review_result = review_service.review_game(
+                game_id=game_id,
                 events=events,
                 decisions=decisions,
                 player_roles=roles,
                 winner=winner or "unknown",
             )
 
-            # Step 2: Review
-            reviewer = GameReviewer()
-            reviews, counterfactuals = reviewer.review_game(
-                game_id,
-                events=events,
-                decisions=decisions,
-                evaluation=evaluation,
-                player_roles=roles,
-                winner=winner or "unknown",
-            )
+            # Build summary dict compatible with existing UI
+            data: dict[str, Any] = {
+                "game_id": game_id,
+                "winner": winner,
+                "review_status": review_result.review_status,
+                "scoring_version": review_result.scoring_version,
+                "player_evaluations": [
+                    {
+                        "player_seat": pe.player_seat,
+                        "role": pe.role,
+                        "speech_score": pe.speech_score,
+                        "vote_score": pe.vote_score,
+                        "skill_score": pe.skill_score,
+                        "information_score": getattr(pe, "information_score", 0),
+                        "cooperation_score": getattr(pe, "cooperation_score", 0),
+                        "overall_score": getattr(pe, "overall_score", 0),
+                    }
+                    for pe in review_result.player_evaluations
+                ],
+            }
+            if review_result.review_report:
+                data.update(review_result.review_report.summary)
 
-            # Step 3: Generate report
-            generator = ReportGenerator()
-            report = generator.generate(
-                game_id,
-                evaluation=evaluation,
-                reviews=reviews,
-                counterfactuals=counterfactuals,
-                events=events,
-                player_roles=roles,
-                winner=winner or "unknown",
-                total_days=total_days,
-            )
-
-            data = report.summary
-            data["game_id"] = game_id
             self._write_review_cache(game_id, data)
             return data
         except Exception:

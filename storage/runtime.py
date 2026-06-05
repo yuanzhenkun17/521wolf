@@ -13,9 +13,9 @@ import json
 from pathlib import Path
 from typing import Any, Protocol, TYPE_CHECKING
 
+from agent.common.run_policy import RunPolicy, RunType
 from storage.interfaces import DecisionRecordData
 
-from storage.experience_store import ExperienceCandidateStore
 from storage.game_store import GameStore
 from storage.ids import storage_decision_id
 from storage.schema import get_connection
@@ -116,12 +116,18 @@ class GamePersistence:
         db_path: Path | str | None = None,
         conn: sqlite3.Connection | None = None,
         source_game_id: str | None = None,
+        run_policy: RunPolicy | None = None,
+        run_metadata: dict[str, Any] | None = None,
+        evolution_db_path: Path | str | None = None,
     ) -> None:
         if db_path is not None and conn is not None:
             raise ValueError("Pass either db_path or conn, not both")
         self.game_id = game_id
         self.game_dir = Path(game_dir) if game_dir is not None else None
         self.source_game_id = source_game_id or game_id
+        self.run_policy = run_policy
+        self.run_metadata = run_metadata
+        self.evolution_db_path = Path(evolution_db_path) if evolution_db_path is not None else None
         self._conn = get_connection(Path(db_path)) if db_path is not None else conn
         self._owns_conn = db_path is not None
         self._closed = False
@@ -170,6 +176,8 @@ class GamePersistence:
         final_state: dict | None = None,
         deaths: list[dict] | None = None,
         final_alive: dict[int, bool] | None = None,
+        role_version_ids: dict[int, str] | None = None,
+        skill_package_hashes: dict[int, str] | None = None,
     ) -> None:
         if self._conn is None:
             return
@@ -182,6 +190,8 @@ class GamePersistence:
                     "source_path": str(self.game_dir),
                 },
             )
+        # Derive run policy fields
+        rp = self.run_policy
         store = GameStore(self._conn)
         store.insert_game(
             game_id=self.game_id,
@@ -193,21 +203,56 @@ class GamePersistence:
             total_rounds=total_rounds,
             public_events=public_events,
             final_state=final_state,
+            run_type=rp.run_type.value if rp else None,
+            mode=self.run_metadata.get("mode") if self.run_metadata else None,
+            learning_eligible=1 if rp and rp.learning_eligible else 0,
+            leaderboard_scope=rp.leaderboard_scope.value if rp else None,
+            promote_eligible=1 if rp and rp.promote_eligible else 0,
+            model_id=self.run_metadata.get("model_id") if self.run_metadata else None,
+            model_config_hash=self.run_metadata.get("model_config_hash") if self.run_metadata else None,
+            ruleset_version=self.run_metadata.get("ruleset_version", "werewolf_12p_v1") if self.run_metadata else None,
+            run_metadata=self.run_metadata,
         )
         store.insert_players(
             self.game_id,
             player_roles,
             final_alive=final_alive,
             deaths=deaths,
+            role_version_ids=role_version_ids,
+            skill_package_hashes=skill_package_hashes,
         )
 
     def save_experience_candidates(self, candidates: list[Any]) -> list[str]:
-        if self._conn is None or not candidates:
+        if not candidates:
             return []
-        return ExperienceCandidateStore(self._conn).save_candidates(
-            self.game_id,
-            [self._candidate_with_storage_evidence(candidate) for candidate in candidates],
-        )
+        # Gate: only explicit evolution_training runs may write learning facts.
+        if self.run_policy is None:
+            raise PermissionError("Experience writes require an explicit RunPolicy")
+        if (
+            self.run_policy.run_type is not RunType.EVOLUTION_TRAINING
+            or not self.run_policy.learning_eligible
+        ):
+            return []
+        # Experience goes to evolution.db, NOT wolf.db
+        from storage.shared.connection import get_evolution_connection
+        evo_conn = get_evolution_connection(self.evolution_db_path)
+        try:
+            from storage.evolution.experience_repo import ExperienceCandidateStore
+            repo = ExperienceCandidateStore(evo_conn)
+            return repo.save_candidates(
+                self.game_id,
+                [self._candidate_with_storage_evidence(c) for c in candidates],
+                run_type=self.run_policy.run_type.value,
+                source_run_id=str(self.run_metadata.get("source_run_id") or "")
+                if self.run_metadata else "",
+                source_game_id=self.source_game_id,
+                artifact_game_id=self.game_id,
+                learning_eligible=self.run_policy.learning_eligible,
+                mode=str(self.run_metadata.get("mode") or "formal")
+                if self.run_metadata else "formal",
+            )
+        finally:
+            evo_conn.close()
 
     def commit(self) -> None:
         if self._conn is not None:

@@ -18,3 +18,4 @@ ui/frontend/dist/
 .claude/
 docs/.obsidian
 .omc/
+.codegraph/

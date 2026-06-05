@@ -32,17 +32,31 @@ class EvaluationStore:
         speech_score: float | None = None,
         vote_score: float | None = None,
         skill_score: float | None = None,
+        logic_score: float | None = None,
+        team_score: float | None = None,
+        risk_penalty: float | None = None,
+        role_score: float | None = None,
+        score_completeness: float | None = None,
+        # Legacy fields
         information_score: float | None = None,
         cooperation_score: float | None = None,
         overall_score: float | None = None,
+        # Metadata
+        scoring_version: str | None = None,
+        evaluator_config_hash: str | None = None,
+        ruleset_version: str | None = None,
         created_at: str | None = None,
     ) -> str:
         now = created_at or self._timestamp()
         self._conn.execute(
             "INSERT OR REPLACE INTO evaluations "
-            "(id, game_id, player_seat, role, speech_score, vote_score, "
-            "skill_score, information_score, cooperation_score, overall_score, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, game_id, player_seat, role, "
+            "speech_score, vote_score, skill_score, "
+            "logic_score, team_score, risk_penalty, role_score, score_completeness, "
+            "information_score, cooperation_score, overall_score, "
+            "scoring_version, evaluator_config_hash, ruleset_version, "
+            "created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 evaluation_id,
                 game_id,
@@ -51,9 +65,17 @@ class EvaluationStore:
                 speech_score,
                 vote_score,
                 skill_score,
+                logic_score,
+                team_score,
+                risk_penalty if risk_penalty is not None else 0.0,
+                role_score,
+                score_completeness if score_completeness is not None else 1.0,
                 information_score,
                 cooperation_score,
                 overall_score,
+                scoring_version or "scoring_v1",
+                evaluator_config_hash or "rule_heuristic_v1",
+                ruleset_version or "werewolf_12p_v1",
                 now,
             ),
         )

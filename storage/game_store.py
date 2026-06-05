@@ -31,11 +31,24 @@ class GameStore:
         total_rounds: int = 0,
         public_events: list[dict] | None = None,
         final_state: dict | None = None,
+        # Run policy fields
+        run_type: str | None = None,
+        mode: str | None = None,
+        learning_eligible: int | None = None,
+        leaderboard_scope: str | None = None,
+        promote_eligible: int | None = None,
+        model_id: str | None = None,
+        model_config_hash: str | None = None,
+        ruleset_version: str | None = None,
+        run_metadata: dict[str, Any] | None = None,
     ) -> str:
         self._conn.execute(
             "INSERT OR REPLACE INTO games "
-            "(id, seed, config, winner, started_at, finished_at, total_rounds, public_events, final_state) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, seed, config, winner, started_at, finished_at, total_rounds, "
+            "public_events, final_state, "
+            "run_type, mode, learning_eligible, leaderboard_scope, promote_eligible, "
+            "model_id, model_config_hash, ruleset_version) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 game_id,
                 seed,
@@ -46,8 +59,36 @@ class GameStore:
                 total_rounds,
                 json.dumps(public_events, ensure_ascii=False) if public_events else None,
                 json.dumps(final_state, ensure_ascii=False) if final_state else None,
+                run_type or "ordinary_game",
+                mode or "dev",
+                learning_eligible if learning_eligible is not None else 0,
+                leaderboard_scope or "demo",
+                promote_eligible if promote_eligible is not None else 0,
+                model_id,
+                model_config_hash,
+                ruleset_version or "werewolf_12p_v1",
             ),
         )
+        # Write additional run_metadata columns if provided
+        if run_metadata:
+            _run_meta_cols = {
+                "source_run_id", "comparison_group_id", "comparison_type",
+                "target_role", "target_version_id", "seed_set_id",
+                "evaluation_set_id", "paired_seed", "rankable",
+            }
+            updates = []
+            values = []
+            for col in _run_meta_cols:
+                if col in run_metadata:
+                    updates.append(f"{col} = ?")
+                    val = run_metadata[col]
+                    values.append(1 if val is True else 0 if val is False else val)
+            if updates:
+                values.append(game_id)
+                self._conn.execute(
+                    f"UPDATE games SET {', '.join(updates)} WHERE id = ?",
+                    values,
+                )
         self._conn.commit()
         return game_id
 
@@ -57,6 +98,8 @@ class GameStore:
         player_roles: dict[int, str],
         final_alive: dict[int, bool] | None = None,
         deaths: list[dict] | None = None,
+        role_version_ids: dict[int, str] | None = None,
+        skill_package_hashes: dict[int, str] | None = None,
     ) -> None:
         death_lookup: dict[int, dict] = {}
         if deaths:
@@ -81,9 +124,20 @@ class GameStore:
 
             self._conn.execute(
                 "INSERT OR IGNORE INTO players "
-                "(game_id, seat, role, team, alive, killed_day, killed_cause) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (game_id, seat, role_str, team, alive, killed_day, killed_cause),
+                "(game_id, seat, role, team, alive, killed_day, killed_cause, "
+                "role_version_id, skill_package_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    game_id,
+                    seat,
+                    role_str,
+                    team,
+                    alive,
+                    killed_day,
+                    killed_cause,
+                    (role_version_ids or {}).get(seat),
+                    (skill_package_hashes or {}).get(seat),
+                ),
             )
         self._conn.commit()
 

@@ -5,7 +5,14 @@ export function buildAssessmentScores(source) {
   const allLogs = source.logs ?? []
   const scores = new Map()
   players.forEach((player) => {
-    scores.set(player.id, { player, speech: 20, vote: 20, skill: 15, information: 50, cooperation: 50 })
+    scores.set(player.id, {
+      player,
+      speech: 20, vote: 20, skill: 15,
+      logic: 50, team: 50,
+      risk_penalty: 0, role_score: 0,
+      // Legacy aliases
+      information: 50, cooperation: 50,
+    })
   })
 
   const speechByPlayer = new Map()
@@ -111,8 +118,10 @@ export function buildAssessmentScores(source) {
       if (score) score.information += 10
     })
   for (const [, score] of scores) score.information = Math.min(Math.max(score.information, 0), 100)
+  // Map to spec: logic_score = information_score
+  for (const [, score] of scores) score.logic = score.information
 
-  // --- cooperation_score ---
+  // --- cooperation_score → team_score ---
   // Based on: vote alignment with teammates, protective actions, team coordination
   for (const day of dayNumbers) {
     const dayVotes = allVotes.filter((d) => (d.day || 1) === day)
@@ -152,6 +161,15 @@ export function buildAssessmentScores(source) {
       if (score) score.cooperation += 6
     })
   for (const [, score] of scores) score.cooperation = Math.min(Math.max(score.cooperation, 0), 100)
+  // Map to spec: team_score = cooperation_score
+  for (const [, score] of scores) score.team = score.cooperation
+
+  // --- role_score (spec formula: weighted_base - risk_penalty) ---
+  const weights = { speech: 0.25, vote: 0.25, skill: 0.20, logic: 0.20, team: 0.10 }
+  for (const [, score] of scores) {
+    const base = score.speech * weights.speech + score.vote * weights.vote + score.skill * weights.skill + score.logic * weights.logic + score.team * weights.team
+    score.role_score = Math.max(0, Math.round(base - score.risk_penalty))
+  }
 
   return [...scores.values()]
 }

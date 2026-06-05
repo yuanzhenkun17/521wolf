@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import ui.backend.app as app_module
 from agent.common.paths import PathConfig
 from storage.schema import get_connection
+from storage.shared.connection import get_evolution_connection
 from ui.backend.app import app
 from ui.backend.game_runner import GameManager, RunningGame
 from ui.backend.batch_role_evolution_runner import RoleBatchEvolutionRun
@@ -63,20 +64,112 @@ class UiBackendTests(unittest.TestCase):
                     "error": None,
                 }
 
+        class FakeVersionRegistry:
+            def get_baseline(self, role):
+                return f"{role}_v1"
+
+            def get_skill_dir(self, role, version_id):
+                return Path(tempfile.mkdtemp()) / role / version_id
+
         client = TestClient(app)
         old_manager = app_module.manager
+        old_registry = app_module.version_registry
         fake_manager = FakeGameManager()
         try:
             app_module.manager = fake_manager
+            app_module.version_registry = FakeVersionRegistry()
 
             response = client.post("/api/games", json={"seed": 7, "human_player_id": 3})
         finally:
             app_module.manager = old_manager
+            app_module.version_registry = old_registry
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(fake_manager.kwargs["seed"], 7)
         self.assertEqual(fake_manager.kwargs["human_player_id"], 3)
         self.assertEqual(response.json()["human_player_id"], 3)
+
+    def test_start_game_rejects_missing_baseline(self):
+        """Ordinary games must fail if any role lacks a baseline."""
+        class FakeVersionRegistry:
+            def get_baseline(self, role):
+                if role == "guard":
+                    return None  # missing baseline
+                return f"{role}_v1"
+
+            def get_skill_dir(self, role, version_id):
+                return Path(tempfile.mkdtemp()) / role / version_id
+
+        client = TestClient(app)
+        old_registry = app_module.version_registry
+        try:
+            app_module.version_registry = FakeVersionRegistry()
+
+            response = client.post("/api/games", json={"seed": 1})
+        finally:
+            app_module.version_registry = old_registry
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("guard", response.json()["detail"])
+
+    def test_start_game_ignores_user_provided_role_versions(self):
+        """User-supplied role_versions are ignored; baselines are always used."""
+        class FakeGameManager:
+            async def start_game(self, **kwargs):
+                self.kwargs = kwargs
+                return SimpleNamespace(game_id="baseline_game")
+
+            def snapshot(self, game, include_events=True):
+                return {
+                    "game_id": game.game_id,
+                    "log_name": game.game_id,
+                    "status": "starting",
+                    "winner": None,
+                    "seed": None,
+                    "human_player_id": None,
+                    "day": 0,
+                    "phase": "setup",
+                    "sheriff_id": None,
+                    "players": [],
+                    "event_count": 0,
+                    "events": [],
+                    "decisions": [],
+                    "error": None,
+                }
+
+        sentinel = Path("/fake/baseline/dir")
+
+        class FakeVersionRegistry:
+            def get_baseline(self, role):
+                return f"{role}_v1"
+
+            def get_skill_dir(self, role, version_id):
+                return sentinel
+
+        client = TestClient(app)
+        old_manager = app_module.manager
+        old_registry = app_module.version_registry
+        fake_manager = FakeGameManager()
+        try:
+            app_module.manager = fake_manager
+            app_module.version_registry = FakeVersionRegistry()
+
+            response = client.post(
+                "/api/games",
+                json={
+                    "seed": 1,
+                    "role_versions": {"seer": "seer_v99", "witch": "witch_v99"},
+                },
+            )
+        finally:
+            app_module.manager = old_manager
+            app_module.version_registry = old_registry
+
+        self.assertEqual(response.status_code, 201)
+        # role_skill_dirs must come from baselines, not the user-supplied versions
+        role_skill_dirs = fake_manager.kwargs["role_skill_dirs"]
+        for role_path in role_skill_dirs.values():
+            self.assertEqual(role_path, sentinel)
 
     def test_human_action_endpoints_poll_and_submit(self):
         class FakeGameManager:
@@ -996,7 +1089,7 @@ class UiBackendTests(unittest.TestCase):
                     "villagers": {"win_rate": 0.7},
                 },
             }
-            conn = get_connection(db_path)
+            conn = get_evolution_connection(db_path)
             conn.execute(
                 "INSERT INTO evolution_runs "
                 "(id, role, parent_hash, status, training_games, battle_games, "

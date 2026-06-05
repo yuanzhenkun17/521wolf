@@ -5,11 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent.common.run_policy import RunType, policy_for_run_type
 from agent.infrastructure.decision_log import DecisionRecord
 from agent.learning.models import ExperienceCandidate
 from engine.models import ActionType
 from storage.runtime import GamePersistence
 from storage.schema import get_connection
+from storage.shared.connection import get_evolution_connection
 
 
 class TestGamePersistence(unittest.TestCase):
@@ -43,16 +45,17 @@ class TestGamePersistence(unittest.TestCase):
                 winner="villagers",
                 deaths=[{"player_id": 2, "cause": "exile", "day": 1}],
             )
-            persistence.save_experience_candidates(
-                [
-                    ExperienceCandidate(
-                        candidate_id="c1",
-                        role="seer",
-                        candidate_type="positive_pattern",
-                        evidence_decision_ids=["d1"],
-                    )
-                ]
-            )
+            with self.assertRaises(PermissionError):
+                persistence.save_experience_candidates(
+                    [
+                        ExperienceCandidate(
+                            candidate_id="c1",
+                            role="seer",
+                            candidate_type="positive_pattern",
+                            evidence_decision_ids=["d1"],
+                        )
+                    ]
+                )
             persistence.close()
 
             self.assertTrue((game_dir / "game_events.jsonl").exists())
@@ -66,12 +69,9 @@ class TestGamePersistence(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM games").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM game_events").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0], 1)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM experience_candidates").fetchone()[0], 1)
+            # experience_candidates now go to evolution.db, not wolf.db
             decision = conn.execute("SELECT id FROM decisions").fetchone()
             self.assertEqual(decision["id"], "g1::d1")
-            candidate = conn.execute("SELECT evidence_decision_ids, raw_json FROM experience_candidates").fetchone()
-            self.assertEqual(json.loads(candidate["evidence_decision_ids"]), ["g1::d1"])
-            self.assertEqual(json.loads(candidate["raw_json"])["source_evidence_decision_ids"], ["d1"])
             game = conn.execute("SELECT config FROM games WHERE id = 'g1'").fetchone()
             self.assertEqual(json.loads(game["config"])["_storage"]["source_game_id"], "g1")
             player = conn.execute("SELECT role, alive FROM players WHERE seat = 2").fetchone()
@@ -109,16 +109,17 @@ class TestGamePersistence(unittest.TestCase):
                     started_at="2026-06-04T00:00:00",
                     winner="villagers",
                 )
-                persistence.save_experience_candidates(
-                    [
-                        ExperienceCandidate(
-                            candidate_id="c1",
-                            role="seer",
-                            candidate_type="positive_pattern",
-                            evidence_decision_ids=["d1"],
-                        )
-                    ]
-                )
+                with self.assertRaises(PermissionError):
+                    persistence.save_experience_candidates(
+                        [
+                            ExperienceCandidate(
+                                candidate_id="c1",
+                                role="seer",
+                                candidate_type="positive_pattern",
+                                evidence_decision_ids=["d1"],
+                            )
+                        ]
+                    )
                 persistence.close()
 
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM games").fetchone()[0], 2)
@@ -127,12 +128,48 @@ class TestGamePersistence(unittest.TestCase):
                 "selfplay::run_a::games::game_001::d1",
                 "selfplay::run_b::games::game_001::d1",
             ])
-            candidate_rows = conn.execute(
-                "SELECT game_id, evidence_decision_ids FROM experience_candidates ORDER BY game_id"
-            ).fetchall()
-            self.assertEqual(len(candidate_rows), 2)
-            for row in candidate_rows:
-                self.assertEqual(json.loads(row["evidence_decision_ids"]), [f"{row['game_id']}::d1"])
+            # experience_candidates now go to evolution.db, not wolf.db
+        conn.close()
+
+    def test_runtime_persistence_only_evolution_training_writes_candidates(self):
+        conn = get_connection(Path(":memory:"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            evo_db_path = root / "evolution.db"
+            persistence = GamePersistence(
+                game_id="g1",
+                source_game_id="game_001",
+                conn=conn,
+                run_policy=policy_for_run_type(RunType.EVOLUTION_TRAINING),
+                run_metadata={"mode": "formal", "source_run_id": "run_001"},
+                evolution_db_path=evo_db_path,
+            )
+            saved = persistence.save_experience_candidates(
+                [
+                    ExperienceCandidate(
+                        candidate_id="c1",
+                        role="seer",
+                        candidate_type="positive_pattern",
+                        evidence_decision_ids=["d1"],
+                    )
+                ]
+            )
+            self.assertEqual(saved, ["c1"])
+
+            evo_conn = get_evolution_connection(evo_db_path)
+            row = evo_conn.execute(
+                "SELECT run_type, learning_eligible, mode, source_run_id, source_game_id, "
+                "artifact_game_id, evidence_decision_ids "
+                "FROM experience_candidates WHERE candidate_id = 'c1'"
+            ).fetchone()
+            self.assertEqual(row["run_type"], "evolution_training")
+            self.assertEqual(row["learning_eligible"], 1)
+            self.assertEqual(row["mode"], "formal")
+            self.assertEqual(row["source_run_id"], "run_001")
+            self.assertEqual(row["source_game_id"], "game_001")
+            self.assertEqual(row["artifact_game_id"], "g1")
+            self.assertIn("g1::d1", json.loads(row["evidence_decision_ids"]))
+            evo_conn.close()
         conn.close()
 
 

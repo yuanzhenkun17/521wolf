@@ -23,6 +23,12 @@ from agent.common.action_types import (
     VOTE_ACTION_TYPES,
 )
 from agent.common.coercion import as_int
+from agent.core.memory_segments import (
+    CompressedSegmentSummary,
+    Segment,
+    SegmentEvent,
+    normalize_phase_group,
+)
 
 
 @dataclass(slots=True)
@@ -282,13 +288,27 @@ class AgentMemory:
         self._pinned_fact_keys: set[tuple[Any, ...]] = set()
         self.self_commitments: list[dict[str, Any]] = []
 
+        # Segment-based memory (Phase 3 refactor)
+        self.segments: list[Segment] = []
+        self.compressed_segment_summaries: dict[str, CompressedSegmentSummary] = {}
+        self._current_segment_key: str | None = None
+        self._seen_event_indices: set[int] = set()
+        self.game_id: str | None = None
+
     def build_context(self, request: ActionRequest) -> dict:
         self._observe_request(request)
+        self.update_segments(request)
         self._update_field_notes(request)
         self._pin_observation_facts(request)
         self._roll_old_phases()
         observation = request.observation
-        field_notes = self.field_notes.to_prompt_dict()
+
+        # Segment-based context (spec: open + recent 4 closed + compressed)
+        closed = [s for s in self.segments if s.closed]
+        recent_closed = closed[-4:] if len(closed) > 4 else closed
+        older_closed = closed[:-4] if len(closed) > 4 else []
+        open_seg = next((s for s in self.segments if not s.closed), None)
+
         ctx = {
             "private_facts": {
                 "known_roles": {player_id: role.value for player_id, role in observation.known_roles.items()},
@@ -296,16 +316,28 @@ class AgentMemory:
                 "metadata": dict(request.metadata),
             },
             "errors": self.errors[-3:],
+            # Segment-based memory (replaces legacy rolling_summary/pinned_facts/player_models/self_commitments)
+            "open_segment": open_seg.to_prompt_dicts() if open_seg else [],
+            "open_segment_key": open_seg.segment_key if open_seg else None,
+            "recent_closed_segments": [
+                {"segment_key": s.segment_key, "events": s.to_prompt_dicts()}
+                for s in recent_closed
+            ],
+            "compressed_segment_summaries": [
+                self.compressed_segment_summaries[s.segment_key].to_prompt_dict()
+                for s in older_closed
+                if s.segment_key in self.compressed_segment_summaries
+            ],
+            # Legacy fields (kept for backward compat, not rendered in prompt)
             "rolling_summary": list(self.rolling_summary[-_MAX_ROLLING_SUMMARIES:]),
             "pinned_facts": [
                 {k: v for k, v in f.items() if k != "_stable_key"}
                 for f in self.pinned_facts
             ],
             "recent_timeline": self._build_recent_timeline(),
-            "player_models": field_notes.get("player_profiles", {}),
+            "player_models": {},
             "self_commitments": list(self.self_commitments[-_MAX_SELF_COMMITMENTS:]),
         }
-        ctx["field_notes"] = field_notes
         return ctx
 
     def remember_action(self, request: ActionRequest, response: ActionResponse, decision: Any = None) -> None:
@@ -344,6 +376,11 @@ class AgentMemory:
         self.pinned_facts = []
         self._pinned_fact_keys = set()
         self.self_commitments = []
+        # Reset segment state
+        self.segments = []
+        self.compressed_segment_summaries = {}
+        self._current_segment_key = None
+        self._seen_event_indices = set()
 
     def remember_error(self, message: str) -> None:
         self.errors.append(message)
@@ -364,6 +401,54 @@ class AgentMemory:
             self._index_public_event(mem_event)
         if len(self.events) > _MAX_EVENTS:
             self.events = self.events[-_MAX_EVENTS:]
+
+    def update_segments(self, request: ActionRequest) -> None:
+        """Route visible events into segment windows based on phase_group changes."""
+        obs = request.observation
+        current_phase = obs.phase.value if hasattr(obs.phase, "value") else str(obs.phase)
+        phase_group = normalize_phase_group(current_phase)
+        segment_key = f"{phase_group}:{obs.day}"
+
+        # Close previous segment if phase_group changed
+        if self._current_segment_key and self._current_segment_key != segment_key:
+            for seg in self.segments:
+                if seg.segment_key == self._current_segment_key and not seg.closed:
+                    seg.closed = True
+                    break
+
+        # Find or create current segment
+        current_seg = None
+        for seg in self.segments:
+            if seg.segment_key == segment_key:
+                current_seg = seg
+                break
+        if current_seg is None:
+            current_seg = Segment(
+                segment_key=segment_key,
+                day=obs.day,
+                phase_group=phase_group,
+            )
+            self.segments.append(current_seg)
+        self._current_segment_key = segment_key
+
+        # Add new events to segment
+        for event in obs.visible_events:
+            if event.index > 0 and event.index in self._seen_event_indices:
+                continue
+            if event.index > 0:
+                self._seen_event_indices.add(event.index)
+            phase_str = event.phase.value if hasattr(event.phase, "value") else str(event.phase)
+            seg_event = SegmentEvent(
+                day=event.day,
+                phase=phase_str or current_phase,
+                event_type=event.type,
+                actor=event.actor,
+                target=event.target,
+                content=event.message,
+                public=event.public,
+                index=event.index if event.index > 0 else None,
+            )
+            current_seg.add_event(seg_event)
 
     def _index_public_event(self, event: MemoryEvent) -> None:
         claimed_role = extract_claimed_role(event.content)

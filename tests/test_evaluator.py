@@ -25,6 +25,11 @@ def _make_player_eval(**overrides) -> PlayerEvaluation:
         speech_score=0.7,
         vote_score=0.6,
         skill_score=0.8,
+        logic_score=0.65,
+        team_score=0.55,
+        risk_penalty=0.0,
+        role_score=0.66,
+        score_completeness=1.0,
         information_score=0.65,
         cooperation_score=0.55,
         overall_score=0.66,
@@ -50,6 +55,10 @@ def test_player_evaluation_to_dict_round_trip():
     assert d["speech_score"] == 0.7
     assert d["vote_score"] == 0.6
     assert d["skill_score"] == 0.8
+    assert d["logic_score"] == 0.65
+    assert d["team_score"] == 0.55
+    assert d["risk_penalty"] == 0.0
+    assert d["role_score"] == 0.66
     assert d["information_score"] == 0.65
     assert d["cooperation_score"] == 0.55
     assert d["overall_score"] == 0.66
@@ -58,6 +67,7 @@ def test_player_evaluation_to_dict_round_trip():
     expected_keys = {
         "id", "game_id", "player_seat", "role",
         "speech_score", "vote_score", "skill_score",
+        "logic_score", "team_score", "risk_penalty", "role_score",
         "information_score", "cooperation_score", "overall_score",
         "created_at",
     }

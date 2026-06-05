@@ -40,6 +40,7 @@ _LEADERBOARD_PATHS = [
 # Router imports
 from ui.backend.battle.game_routes import router as game_router
 from ui.backend.battle.leaderboard_routes import router as leaderboard_router
+from ui.backend.evaluation_routes import router as evaluation_router
 from ui.backend.evolution.version_routes import router as version_router
 from ui.backend.evolution.facade_routes import router as facade_router
 from ui.backend.game_adapter.selfplay_routes import router as selfplay_router
@@ -118,6 +119,7 @@ app.add_middleware(
 
 app.include_router(game_router)
 app.include_router(leaderboard_router)
+app.include_router(evaluation_router)
 app.include_router(version_router)
 app.include_router(facade_router)
 app.include_router(selfplay_router)

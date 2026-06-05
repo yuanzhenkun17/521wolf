@@ -22,7 +22,7 @@ def get_evolution_connection(
     paths: Any | None = None,
 ) -> sqlite3.Connection:
     """Open a connection to the evolution database, initializing its schema."""
-    from storage.evolution.schema import EVOLUTION_SCHEMA
+    from storage.evolution.schema import ensure_evolution_schema
 
     if db_path is not None:
         path = db_path
@@ -33,5 +33,5 @@ def get_evolution_connection(
 
         path = DEFAULT.evolution_db_path
     conn = _init_connection(path)
-    conn.executescript(EVOLUTION_SCHEMA)
+    ensure_evolution_schema(conn)
     return conn

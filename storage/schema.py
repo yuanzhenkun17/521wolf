@@ -16,7 +16,25 @@ CREATE TABLE IF NOT EXISTS games (
     finished_at TEXT,
     total_rounds INTEGER DEFAULT 0,
     public_events TEXT,
-    final_state TEXT
+    final_state TEXT,
+    -- Run policy columns (Phase 1 refactor)
+    run_type TEXT DEFAULT 'ordinary_game',
+    mode TEXT DEFAULT 'dev',
+    learning_eligible INTEGER DEFAULT 0,
+    leaderboard_scope TEXT DEFAULT 'demo',
+    promote_eligible INTEGER DEFAULT 0,
+    source_run_id TEXT,
+    comparison_group_id TEXT,
+    comparison_type TEXT,
+    model_id TEXT,
+    model_config_hash TEXT,
+    target_role TEXT,
+    target_version_id TEXT,
+    ruleset_version TEXT DEFAULT 'werewolf_12p_v1',
+    seed_set_id TEXT,
+    evaluation_set_id TEXT,
+    paired_seed INTEGER DEFAULT 0,
+    rankable INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS players (
@@ -28,6 +46,13 @@ CREATE TABLE IF NOT EXISTS players (
     alive INTEGER DEFAULT 1,
     killed_day INTEGER,
     killed_cause TEXT,
+    -- Run policy columns (Phase 1 refactor)
+    role_version_id TEXT,
+    skill_package_hash TEXT,
+    model_id TEXT,
+    model_config_hash TEXT,
+    role_sample_status TEXT DEFAULT 'valid',
+    role_sample_invalid_reason TEXT,
     UNIQUE(game_id, seat)
 );
 
@@ -66,78 +91,6 @@ CREATE TABLE IF NOT EXISTS decisions (
     prompt_tokens INTEGER,
     completion_tokens INTEGER,
     created_at TEXT NOT NULL
-);
-
--- Evidence learning domain
-CREATE TABLE IF NOT EXISTS experience_candidates (
-    game_id TEXT NOT NULL,
-    candidate_id TEXT NOT NULL,
-    role TEXT,
-    faction TEXT,
-    candidate_type TEXT,
-    topic TEXT,
-    sample_source TEXT,
-    evidence_decision_ids TEXT,
-    scenario TEXT,
-    conditions TEXT,
-    recommendation TEXT,
-    anti_pattern TEXT,
-    risk_boundaries TEXT,
-    counter_conditions TEXT,
-    supporting_evidence TEXT,
-    opposing_evidence TEXT,
-    confidence TEXT,
-    validation_need TEXT,
-    misleading_risk TEXT,
-    raw_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (game_id, candidate_id),
-    FOREIGN KEY (game_id) REFERENCES games(id)
-);
-
--- Evolution domain
-CREATE TABLE IF NOT EXISTS role_versions (
-    id TEXT PRIMARY KEY,
-    role TEXT NOT NULL,
-    parent_id TEXT REFERENCES role_versions(id),
-    source TEXT NOT NULL,
-    run_id TEXT,
-    skills TEXT NOT NULL,
-    notes TEXT,
-    status TEXT DEFAULT 'active',
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS skill_proposals (
-    id TEXT PRIMARY KEY,
-    source_version_id TEXT,
-    target_version_id TEXT REFERENCES role_versions(id),
-    target_file TEXT NOT NULL,
-    action_type TEXT NOT NULL,
-    content TEXT NOT NULL,
-    rationale TEXT,
-    confidence REAL,
-    risk TEXT,
-    expected_metric TEXT,
-    expected_direction TEXT,
-    evidence TEXT,
-    status TEXT DEFAULT 'proposed',
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS evolution_runs (
-    id TEXT PRIMARY KEY,
-    role TEXT NOT NULL,
-    parent_hash TEXT,
-    status TEXT NOT NULL,
-    training_games INTEGER DEFAULT 0,
-    battle_games INTEGER DEFAULT 0,
-    config TEXT,
-    candidate_hash TEXT,
-    battle_result TEXT,
-    errors TEXT,
-    started_at TEXT NOT NULL,
-    finished_at TEXT
 );
 
 -- Engine event domain
@@ -185,12 +138,28 @@ CREATE TABLE IF NOT EXISTS evaluations (
     game_id TEXT NOT NULL REFERENCES games(id),
     player_seat INTEGER,
     role TEXT,
+    -- Spec scoring dimensions (scoring_v1)
     speech_score REAL,
     vote_score REAL,
     skill_score REAL,
+    logic_score REAL,
+    team_score REAL,
+    risk_penalty REAL DEFAULT 0.0,
+    role_score REAL,
+    score_completeness REAL DEFAULT 1.0,
+    -- Legacy fields (kept for backward compat, not authoritative)
     information_score REAL,
     cooperation_score REAL,
     overall_score REAL,
+    -- Metadata
+    role_sample_status TEXT DEFAULT 'valid',
+    role_sample_invalid_reason TEXT,
+    ruleset_version TEXT DEFAULT 'werewolf_12p_v1',
+    scoring_version TEXT DEFAULT 'scoring_v1',
+    evaluator_config_hash TEXT DEFAULT 'rule_heuristic_v1',
+    evaluation_status TEXT DEFAULT 'completed',
+    review_status TEXT DEFAULT 'completed',
+    report_status TEXT DEFAULT 'completed',
     created_at TEXT
 );
 
@@ -233,18 +202,11 @@ CREATE INDEX IF NOT EXISTS idx_decisions_action ON decisions(action_type);
 CREATE INDEX IF NOT EXISTS idx_decisions_created ON decisions(created_at);
 CREATE INDEX IF NOT EXISTS idx_players_game ON players(game_id);
 CREATE INDEX IF NOT EXISTS idx_players_role ON players(role);
-CREATE INDEX IF NOT EXISTS idx_role_versions_role ON role_versions(role);
 CREATE INDEX IF NOT EXISTS idx_leaderboard_role ON leaderboard(role);
 CREATE INDEX IF NOT EXISTS idx_leaderboard_version ON leaderboard(version_id);
-CREATE INDEX IF NOT EXISTS idx_evolution_runs_role ON evolution_runs(role);
-CREATE INDEX IF NOT EXISTS idx_skill_proposals_source ON skill_proposals(source_version_id);
 CREATE INDEX IF NOT EXISTS idx_ge_game ON game_events(game_id);
 CREATE INDEX IF NOT EXISTS idx_ge_type ON game_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_ge_day ON game_events(game_id, day);
-CREATE INDEX IF NOT EXISTS idx_exp_game ON experience_candidates(game_id);
-CREATE INDEX IF NOT EXISTS idx_exp_role ON experience_candidates(role);
-CREATE INDEX IF NOT EXISTS idx_exp_type ON experience_candidates(candidate_type);
-CREATE INDEX IF NOT EXISTS idx_exp_created ON experience_candidates(created_at);
 
 -- Battle evaluation indexes (merged from battle.db)
 CREATE INDEX IF NOT EXISTS idx_eval_game ON evaluations(game_id);
@@ -253,6 +215,110 @@ CREATE INDEX IF NOT EXISTS idx_dr_game ON decision_reviews(game_id);
 CREATE INDEX IF NOT EXISTS idx_dr_decision ON decision_reviews(decision_id);
 CREATE INDEX IF NOT EXISTS idx_cf_game ON counterfactuals(game_id);
 CREATE INDEX IF NOT EXISTS idx_cf_decision ON counterfactuals(decision_id);
+
+-- LLM structured judgments (Phase 4 spec)
+CREATE TABLE IF NOT EXISTS llm_judgments (
+    judgment_id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL,
+    player_id INTEGER,
+    dimension TEXT NOT NULL,
+    prompt_version TEXT,
+    evaluator_config_hash TEXT,
+    input_refs TEXT,
+    raw_json TEXT,
+    normalized_fields TEXT,
+    validator_status TEXT DEFAULT 'valid',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_judgment_game ON llm_judgments(game_id);
+CREATE INDEX IF NOT EXISTS idx_judgment_player ON llm_judgments(player_id);
+CREATE INDEX IF NOT EXISTS idx_judgment_dimension ON llm_judgments(dimension);
+
+-- New indexes for run policy columns
+CREATE INDEX IF NOT EXISTS idx_games_run_type ON games(run_type);
+CREATE INDEX IF NOT EXISTS idx_games_learning ON games(learning_eligible);
+CREATE INDEX IF NOT EXISTS idx_games_leaderboard ON games(leaderboard_scope);
+
+-- Seed sets (immutable)
+CREATE TABLE IF NOT EXISTS seed_sets (
+    seed_set_id TEXT PRIMARY KEY,
+    purpose TEXT,
+    seeds_json TEXT NOT NULL,
+    ruleset_version TEXT DEFAULT 'werewolf_12p_v1',
+    created_at TEXT NOT NULL,
+    immutable INTEGER DEFAULT 1
+);
+
+-- Evaluation batches
+CREATE TABLE IF NOT EXISTS evaluation_batches (
+    id TEXT PRIMARY KEY,
+    comparison_group_id TEXT,
+    comparison_type TEXT,
+    mode TEXT DEFAULT 'dev',
+    model_id TEXT,
+    model_config_hash TEXT,
+    target_role TEXT,
+    target_version_id TEXT,
+    role_version_config TEXT,
+    game_count INTEGER,
+    evaluation_set_id TEXT,
+    seed_set_id TEXT,
+    max_days INTEGER DEFAULT 20,
+    player_count INTEGER DEFAULT 12,
+    ruleset_version TEXT DEFAULT 'werewolf_12p_v1',
+    rankable INTEGER DEFAULT 0,
+    rankable_reason TEXT,
+    summary TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_eval_batches_group ON evaluation_batches(comparison_group_id);
+CREATE INDEX IF NOT EXISTS idx_eval_batches_type ON evaluation_batches(comparison_type);
+
+-- Benchmark leaderboard
+CREATE TABLE IF NOT EXISTS benchmark_leaderboard (
+    id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    model_id TEXT,
+    model_config_hash TEXT,
+    target_role TEXT,
+    target_version_id TEXT,
+    comparison_group_id TEXT,
+    evaluation_set_id TEXT,
+    seed_set_id TEXT,
+    ruleset_version TEXT DEFAULT 'werewolf_12p_v1',
+    scoring_version TEXT DEFAULT 'scoring_v1',
+    evaluator_config_hash TEXT,
+    games_played INTEGER DEFAULT 0,
+    valid_game_rate REAL DEFAULT 0.0,
+    strength_score REAL DEFAULT 0.0,
+    avg_role_score REAL DEFAULT 0.0,
+    by_role_category_scores TEXT,
+    avg_speech_score REAL DEFAULT 0.0,
+    avg_vote_score REAL DEFAULT 0.0,
+    avg_skill_score REAL DEFAULT 0.0,
+    avg_logic_score REAL DEFAULT 0.0,
+    avg_team_score REAL DEFAULT 0.0,
+    risk_penalty REAL DEFAULT 0.0,
+    fallback_rate REAL DEFAULT 0.0,
+    llm_error_rate REAL DEFAULT 0.0,
+    policy_adjusted_rate REAL DEFAULT 0.0,
+    good_side_win_rate REAL DEFAULT 0.0,
+    wolf_side_win_rate REAL DEFAULT 0.0,
+    target_side_win_rate REAL DEFAULT 0.0,
+    rankable INTEGER DEFAULT 0,
+    data_sufficient INTEGER DEFAULT 0,
+    summary TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bench_scope ON benchmark_leaderboard(scope);
+CREATE INDEX IF NOT EXISTS idx_bench_subject ON benchmark_leaderboard(subject_id);
+CREATE INDEX IF NOT EXISTS idx_bench_group ON benchmark_leaderboard(comparison_group_id);
 """
 
 
@@ -263,5 +329,88 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
+    # Migrate existing tables first (adds new columns to old DBs)
+    _ensure_game_columns(conn)
+    _ensure_player_columns(conn)
+    _ensure_evaluation_columns(conn)
+    # Now run full schema (CREATE TABLE IF NOT EXISTS + indexes)
     conn.executescript(SCHEMA)
     return conn
+
+
+# Columns added to games table during Phase 1 refactor.
+# For existing DBs that already have the base schema, ALTER TABLE is needed.
+_GAMES_NEW_COLUMNS = [
+    ("run_type", "TEXT DEFAULT 'ordinary_game'"),
+    ("mode", "TEXT DEFAULT 'dev'"),
+    ("learning_eligible", "INTEGER DEFAULT 0"),
+    ("leaderboard_scope", "TEXT DEFAULT 'demo'"),
+    ("promote_eligible", "INTEGER DEFAULT 0"),
+    ("source_run_id", "TEXT"),
+    ("comparison_group_id", "TEXT"),
+    ("comparison_type", "TEXT"),
+    ("model_id", "TEXT"),
+    ("model_config_hash", "TEXT"),
+    ("target_role", "TEXT"),
+    ("target_version_id", "TEXT"),
+    ("ruleset_version", "TEXT DEFAULT 'werewolf_12p_v1'"),
+    ("seed_set_id", "TEXT"),
+    ("evaluation_set_id", "TEXT"),
+    ("paired_seed", "INTEGER DEFAULT 0"),
+    ("rankable", "INTEGER DEFAULT 0"),
+]
+
+_PLAYERS_NEW_COLUMNS = [
+    ("role_version_id", "TEXT"),
+    ("skill_package_hash", "TEXT"),
+    ("model_id", "TEXT"),
+    ("model_config_hash", "TEXT"),
+    ("role_sample_status", "TEXT DEFAULT 'valid'"),
+    ("role_sample_invalid_reason", "TEXT"),
+]
+
+_EVALUATIONS_NEW_COLUMNS = [
+    ("logic_score", "REAL"),
+    ("team_score", "REAL"),
+    ("risk_penalty", "REAL DEFAULT 0.0"),
+    ("role_score", "REAL"),
+    ("score_completeness", "REAL DEFAULT 1.0"),
+    ("role_sample_status", "TEXT DEFAULT 'valid'"),
+    ("role_sample_invalid_reason", "TEXT"),
+    ("ruleset_version", "TEXT DEFAULT 'werewolf_12p_v1'"),
+    ("scoring_version", "TEXT DEFAULT 'scoring_v1'"),
+    ("evaluator_config_hash", "TEXT DEFAULT 'rule_heuristic_v1'"),
+    ("evaluation_status", "TEXT DEFAULT 'completed'"),
+    ("review_status", "TEXT DEFAULT 'completed'"),
+    ("report_status", "TEXT DEFAULT 'completed'"),
+]
+
+
+def _ensure_game_columns(conn: sqlite3.Connection) -> None:
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "games" not in tables:
+        return
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(games)")}
+    for col, decl in _GAMES_NEW_COLUMNS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE games ADD COLUMN {col} {decl}")
+
+
+def _ensure_player_columns(conn: sqlite3.Connection) -> None:
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "players" not in tables:
+        return
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(players)")}
+    for col, decl in _PLAYERS_NEW_COLUMNS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE players ADD COLUMN {col} {decl}")
+
+
+def _ensure_evaluation_columns(conn: sqlite3.Connection) -> None:
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "evaluations" not in tables:
+        return
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(evaluations)")}
+    for col, decl in _EVALUATIONS_NEW_COLUMNS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE evaluations ADD COLUMN {col} {decl}")

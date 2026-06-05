@@ -13,12 +13,13 @@ const dimensions = [
   { key: 'speech', label: '发言' },
   { key: 'vote', label: '投票' },
   { key: 'skill', label: '技能' },
-  { key: 'information', label: '信息' },
-  { key: 'cooperation', label: '协作' }
+  { key: 'logic', label: '逻辑' },
+  { key: 'team', label: '团队' },
+  { key: 'role_score', label: '综合' }
 ]
 
 const hasExtendedDimensions = computed(() =>
-  props.scores.some((item) => item.information != null || item.cooperation != null)
+  props.scores.some((item) => item.logic != null || item.team != null || item.role_score != null)
 )
 
 const viewMode = ref('bar')
@@ -48,11 +49,10 @@ const radarDimensions = computed(() => {
   const base = [
     { key: 'speech', label: '发言' },
     { key: 'vote', label: '投票' },
-    { key: 'skill', label: '技能' }
+    { key: 'skill', label: '技能' },
+    { key: 'logic', label: '逻辑' },
+    { key: 'team', label: '团队' }
   ]
-  if (hasExtendedDimensions.value) {
-    base.push({ key: 'information', label: '信息' }, { key: 'cooperation', label: '协作' })
-  }
   return base
 })
 

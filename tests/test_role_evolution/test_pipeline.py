@@ -154,12 +154,16 @@ def _make_fake_battle_runner():
 # ---------------------------------------------------------------------------
 
 
-async def _setup_store(tmp_path: Path, role: str = "seer") -> tuple[VersionRegistry, str]:
+async def _setup_store(
+    tmp_path: Path, role: str = "seer",
+    store: VersionRegistry | None = None,
+) -> tuple[VersionRegistry, str]:
     """Create a VersionRegistry with a baseline version for *role*.
 
     Returns ``(store, parent_hash)``.
     """
-    store = VersionRegistry(tmp_path / "role_versions")
+    if store is None:
+        store = VersionRegistry(tmp_path / "role_versions")
     baseline_skills = {"claim.md": "# Seer claim v1\n"}
     parent_hash = await store.publish_skills(
         role, baseline_skills, source="test_setup",
@@ -168,12 +172,15 @@ async def _setup_store(tmp_path: Path, role: str = "seer") -> tuple[VersionRegis
     return store, parent_hash
 
 
-async def _run_pipeline(tmp_path: Path, role: str = "seer"):
+async def _run_pipeline(
+    tmp_path: Path, role: str = "seer",
+    store: VersionRegistry | None = None,
+):
     """Run a full evolution pipeline with fakes.
 
     Returns ``(run, store, parent_hash)``.
     """
-    store, parent_hash = await _setup_store(tmp_path, role)
+    store, parent_hash = await _setup_store(tmp_path, role, store=store)
 
     fake_selfplay = _make_fake_selfplay()
     fake_consolidator = _make_fake_consolidator(role=role, parent_hash=parent_hash)
@@ -242,154 +249,173 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _run_pipeline(tmp_path)
-
-            self.assertEqual(run.role, "seer")
-            self.assertEqual(run.parent_hash, parent_hash)
-            self.assertIsNotNone(run.candidate_hash)
-            self.assertNotEqual(run.candidate_hash, parent_hash)
-            self.assertEqual(run.status, EvolutionStatus.REVIEWING)
-            self.assertEqual(run.training_games, 5)
-            self.assertEqual(run.battle_games, 3)
-            self.assertEqual(run.training_run_id, "train_0")
-            self.assertIsNotNone(run.baseline_config)
+            try:
+                self.assertEqual(run.role, "seer")
+                self.assertEqual(run.parent_hash, parent_hash)
+                self.assertIsNotNone(run.candidate_hash)
+                self.assertNotEqual(run.candidate_hash, parent_hash)
+                self.assertEqual(run.status, EvolutionStatus.REVIEWING)
+                self.assertEqual(run.training_games, 5)
+                self.assertEqual(run.battle_games, 3)
+                self.assertEqual(run.training_run_id, "train_0")
+                self.assertIsNotNone(run.baseline_config)
+            finally:
+                store.close()
 
     async def test_training_uses_composite_baseline_skill_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             store = VersionRegistry(tmp_path / "role_versions")
-            seer_hash = await store.publish_skills(
-                "seer", {"claim.md": "# Seer\n"}, source="test_setup",
-            )
-            await store.set_baseline("seer", seer_hash, expected_current=None)
-            wolf_hash = await store.publish_skills(
-                "werewolf", {"attack.md": "# Wolf\n"}, source="test_setup",
-            )
-            await store.set_baseline("werewolf", wolf_hash, expected_current=None)
-
-            async def fake_selfplay(config, **kwargs):
-                self.assertEqual(config.game_concurrency, 3)
-                self.assertTrue((config.skill_dir / "seer").is_dir())
-                self.assertTrue((config.skill_dir / "werewolf").is_dir())
-
-                @dataclass
-                class _FakeResult:
-                    config: object
-                    games: list = field(default_factory=list)
-                    run_id: str = "train_0"
-
-                return _FakeResult(config=config)
-
-            async def no_proposals(run_dir, role_arg, model_adapter, **kwargs):
-                return SkillConsolidation(
-                    role=role_arg,
-                    run_id="evo_test",
-                    parent_hash=seer_hash,
-                    generated_at="2025-01-01T00:00:00Z",
-                    source_window=5,
-                    prompt_version="v1",
-                    proposals=[],
-                )
-
-            _install_fake_selfplay_module()
             try:
-                run = await run_evolution(
-                    store=store,
-                    role="seer",
-                    training_games=1,
-                    battle_games=1,
-                    game_concurrency=3,
-                    selfplay_runner=fake_selfplay,
-                    consolidator=no_proposals,
-                    applier=_make_fake_applier(),
-                    battle_runner=_make_fake_battle_runner(),
+                seer_hash = await store.publish_skills(
+                    "seer", {"claim.md": "# Seer\n"}, source="test_setup",
                 )
-            finally:
-                _restore_selfplay_module()
+                await store.set_baseline("seer", seer_hash, expected_current=None)
+                wolf_hash = await store.publish_skills(
+                    "werewolf", {"attack.md": "# Wolf\n"}, source="test_setup",
+                )
+                await store.set_baseline("werewolf", wolf_hash, expected_current=None)
 
-            self.assertEqual(run.parent_hash, seer_hash)
+                async def fake_selfplay(config, **kwargs):
+                    self.assertEqual(config.game_concurrency, 3)
+                    self.assertTrue((config.skill_dir / "seer").is_dir())
+                    self.assertTrue((config.skill_dir / "werewolf").is_dir())
+
+                    @dataclass
+                    class _FakeResult:
+                        config: object
+                        games: list = field(default_factory=list)
+                        run_id: str = "train_0"
+
+                    return _FakeResult(config=config)
+
+                async def no_proposals(run_dir, role_arg, model_adapter, **kwargs):
+                    return SkillConsolidation(
+                        role=role_arg,
+                        run_id="evo_test",
+                        parent_hash=seer_hash,
+                        generated_at="2025-01-01T00:00:00Z",
+                        source_window=5,
+                        prompt_version="v1",
+                        proposals=[],
+                    )
+
+                _install_fake_selfplay_module()
+                try:
+                    run = await run_evolution(
+                        store=store,
+                        role="seer",
+                        training_games=1,
+                        battle_games=1,
+                        game_concurrency=3,
+                        selfplay_runner=fake_selfplay,
+                        consolidator=no_proposals,
+                        applier=_make_fake_applier(),
+                        battle_runner=_make_fake_battle_runner(),
+                    )
+                finally:
+                    _restore_selfplay_module()
+
+                self.assertEqual(run.parent_hash, seer_hash)
+            finally:
+                store.close()
 
     # -- 2. promote updates baseline if CAS matches --------------------------
     async def test_promote_updates_baseline_if_cas_matches(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _make_reviewing_run(tmp_path)
+            try:
+                await promote(run, store)
 
-            await promote(run, store)
-
-            self.assertEqual(run.status, EvolutionStatus.PROMOTED)
-            baseline = store.get_baseline("seer")
-            self.assertEqual(baseline, run.candidate_hash)
+                self.assertEqual(run.status, EvolutionStatus.PROMOTED)
+                baseline = store.get_baseline("seer")
+                self.assertEqual(baseline, run.candidate_hash)
+            finally:
+                store.close()
 
     # -- 3. promote fails if CAS mismatch ------------------------------------
     async def test_promote_fails_if_cas_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _make_reviewing_run(tmp_path)
+            try:
+                # Externally change the baseline before promote
+                new_skills = {"claim.md": "# Externally changed\n"}
+                external_hash = await store.publish_skills(
+                    "seer", new_skills, parent_id=parent_hash, source="external",
+                )
+                await store.set_baseline("seer", version_id=external_hash, expected_current=parent_hash)
 
-            # Externally change the baseline before promote
-            new_skills = {"claim.md": "# Externally changed\n"}
-            external_hash = await store.publish_skills(
-                "seer", new_skills, parent_id=parent_hash, source="external",
-            )
-            await store.set_baseline("seer", version_id=external_hash, expected_current=parent_hash)
-
-            with self.assertRaises(BaselineChangedError):
-                await promote(run, store)
+                with self.assertRaises(BaselineChangedError):
+                    await promote(run, store)
+            finally:
+                store.close()
 
     # -- 4. reject leaves baseline unchanged ----------------------------------
     async def test_reject_leaves_baseline_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _make_reviewing_run(tmp_path)
+            try:
+                await reject(run, store)
 
-            await reject(run, store)
-
-            self.assertEqual(run.status, EvolutionStatus.REJECTED)
-            baseline = store.get_baseline("seer")
-            self.assertEqual(baseline, parent_hash)
+                self.assertEqual(run.status, EvolutionStatus.REJECTED)
+                baseline = store.get_baseline("seer")
+                self.assertEqual(baseline, parent_hash)
+            finally:
+                store.close()
 
     # -- 5. promote is idempotent --------------------------------------------
     async def test_promote_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _make_reviewing_run(tmp_path)
-
-            await promote(run, store)
-            self.assertEqual(run.status, EvolutionStatus.PROMOTED)
-            # Second call should be a no-op
-            await promote(run, store)
-            self.assertEqual(run.status, EvolutionStatus.PROMOTED)
+            try:
+                await promote(run, store)
+                self.assertEqual(run.status, EvolutionStatus.PROMOTED)
+                # Second call should be a no-op
+                await promote(run, store)
+                self.assertEqual(run.status, EvolutionStatus.PROMOTED)
+            finally:
+                store.close()
 
     # -- 6. reject is idempotent ---------------------------------------------
     async def test_reject_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _make_reviewing_run(tmp_path)
-
-            await reject(run, store)
-            self.assertEqual(run.status, EvolutionStatus.REJECTED)
-            await reject(run, store)
-            self.assertEqual(run.status, EvolutionStatus.REJECTED)
+            try:
+                await reject(run, store)
+                self.assertEqual(run.status, EvolutionStatus.REJECTED)
+                await reject(run, store)
+                self.assertEqual(run.status, EvolutionStatus.REJECTED)
+            finally:
+                store.close()
 
     # -- 7. terminal conflict: promote a rejected run -------------------------
     async def test_terminal_conflict_promote_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _make_reviewing_run(tmp_path)
-
-            await reject(run, store)
-            with self.assertRaises(InvalidRunStateError):
-                await promote(run, store)
+            try:
+                await reject(run, store)
+                with self.assertRaises(InvalidRunStateError):
+                    await promote(run, store)
+            finally:
+                store.close()
 
     # -- 8. terminal conflict: reject a promoted run --------------------------
     async def test_terminal_conflict_reject_promoted(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             run, store, parent_hash = await _make_reviewing_run(tmp_path)
-
-            await promote(run, store)
-            with self.assertRaises(InvalidRunStateError):
-                await reject(run, store)
+            try:
+                await promote(run, store)
+                with self.assertRaises(InvalidRunStateError):
+                    await reject(run, store)
+            finally:
+                store.close()
 
     # -- 9. promote only from reviewing ---------------------------------------
     async def test_promote_only_from_reviewing(self):
@@ -405,14 +431,17 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
                 with tempfile.TemporaryDirectory() as tmp:
                     tmp_path = Path(tmp)
                     store, parent_hash = await _setup_store(tmp_path)
-                    run = EvolutionRun(
-                        run_id=f"evo_{status}",
-                        role="seer",
-                        parent_hash=parent_hash,
-                        status=status,
-                    )
-                    with self.assertRaises(InvalidRunStateError):
-                        await promote(run, store)
+                    try:
+                        run = EvolutionRun(
+                            run_id=f"evo_{status}",
+                            role="seer",
+                            parent_hash=parent_hash,
+                            status=status,
+                        )
+                        with self.assertRaises(InvalidRunStateError):
+                            await promote(run, store)
+                    finally:
+                        store.close()
 
     # -- 10. reject only from reviewing ---------------------------------------
     async def test_reject_only_from_reviewing(self):
@@ -428,14 +457,17 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
                 with tempfile.TemporaryDirectory() as tmp:
                     tmp_path = Path(tmp)
                     store, parent_hash = await _setup_store(tmp_path)
-                    run = EvolutionRun(
-                        run_id=f"evo_{status}",
-                        role="seer",
-                        parent_hash=parent_hash,
-                        status=status,
-                    )
-                    with self.assertRaises(InvalidRunStateError):
-                        await reject(run, store)
+                    try:
+                        run = EvolutionRun(
+                            run_id=f"evo_{status}",
+                            role="seer",
+                            parent_hash=parent_hash,
+                            status=status,
+                        )
+                        with self.assertRaises(InvalidRunStateError):
+                            await reject(run, store)
+                    finally:
+                        store.close()
 
     # -- 11. state.json written at each stage ---------------------------------
     async def test_state_json_written_at_each_stage(self):
@@ -447,108 +479,116 @@ class TestPipeline(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             store, parent_hash = await _setup_store(tmp_path)
-
-            fake_selfplay = _make_fake_selfplay()
-            fake_consolidator = _make_fake_consolidator(
-                role="seer", parent_hash=parent_hash,
-            )
-            fake_applier = _make_fake_applier()
-            fake_battle = _make_fake_battle_runner()
-
-            _install_fake_selfplay_module()
             try:
-                run = await run_evolution(
-                    store=store,
-                    role="seer",
-                    training_games=5,
-                    battle_games=3,
-                    on_progress=on_progress,
-                    selfplay_runner=fake_selfplay,
-                    consolidator=fake_consolidator,
-                    applier=fake_applier,
-                    battle_runner=fake_battle,
+                fake_selfplay = _make_fake_selfplay()
+                fake_consolidator = _make_fake_consolidator(
+                    role="seer", parent_hash=parent_hash,
                 )
+                fake_applier = _make_fake_applier()
+                fake_battle = _make_fake_battle_runner()
+
+                _install_fake_selfplay_module()
+                try:
+                    run = await run_evolution(
+                        store=store,
+                        role="seer",
+                        training_games=5,
+                        battle_games=3,
+                        on_progress=on_progress,
+                        selfplay_runner=fake_selfplay,
+                        consolidator=fake_consolidator,
+                        applier=fake_applier,
+                        battle_runner=fake_battle,
+                    )
+                finally:
+                    _restore_selfplay_module()
+
+                # Final state.json should be reviewing
+                state_path = DEFAULT_PATHS.evolution_dir / run.run_id / "state.json"
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(state["status"], "reviewing")
+
+                # Verify progress callbacks confirm all stages were hit
+                stage_names = [s for s, _ in progress_log]
+                self.assertIn("training", stage_names)
+                self.assertIn("consolidating", stage_names)
+                self.assertIn("battling", stage_names)
+                self.assertIn("reviewing", stage_names)
             finally:
-                _restore_selfplay_module()
-
-            # Final state.json should be reviewing
-            state_path = DEFAULT_PATHS.evolution_dir / run.run_id / "state.json"
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            self.assertEqual(state["status"], "reviewing")
-
-            # Verify progress callbacks confirm all stages were hit
-            stage_names = [s for s, _ in progress_log]
-            self.assertIn("training", stage_names)
-            self.assertIn("consolidating", stage_names)
-            self.assertIn("battling", stage_names)
-            self.assertIn("reviewing", stage_names)
+                store.close()
 
     # -- 12. state.json recoverable -------------------------------------------
     async def test_state_json_recoverable(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             store = VersionRegistry(tmp_path / "role_versions")
-            run_id = "evo_interrupted"
+            try:
+                run_id = "evo_interrupted"
 
-            # Manually write a state.json with non-terminal status
-            evo_root = DEFAULT_PATHS.evolution_dir / run_id
-            evo_root.mkdir(parents=True, exist_ok=True)
-            state_path = evo_root / "state.json"
-            state = {
-                "run_id": run_id,
-                "role": "seer",
-                "parent_hash": "abc123",
-                "candidate_hash": None,
-                "status": "training",
-                "training_games": 20,
-                "battle_games": 10,
-            }
-            state_path.write_text(json.dumps(state), encoding="utf-8")
+                # Manually write a state.json with non-terminal status
+                evo_root = DEFAULT_PATHS.evolution_dir / run_id
+                evo_root.mkdir(parents=True, exist_ok=True)
+                state_path = evo_root / "state.json"
+                state = {
+                    "run_id": run_id,
+                    "role": "seer",
+                    "parent_hash": "abc123",
+                    "candidate_hash": None,
+                    "status": "training",
+                    "training_games": 20,
+                    "battle_games": 10,
+                }
+                state_path.write_text(json.dumps(state), encoding="utf-8")
 
-            interrupted = recover_interrupted_runs(store)
+                interrupted = recover_interrupted_runs(store)
 
-            self.assertEqual(len(interrupted), 1)
-            self.assertEqual(interrupted[0]["run_id"], run_id)
-            self.assertEqual(interrupted[0]["status"], EvolutionStatus.FAILED)
-            self.assertEqual(interrupted[0]["error"], "interrupted")
+                self.assertEqual(len(interrupted), 1)
+                self.assertEqual(interrupted[0]["run_id"], run_id)
+                self.assertEqual(interrupted[0]["status"], EvolutionStatus.FAILED)
+                self.assertEqual(interrupted[0]["error"], "interrupted")
 
-            # Cleanup
-            import shutil
-            shutil.rmtree(evo_root, ignore_errors=True)
+                # Cleanup
+                import shutil
+                shutil.rmtree(evo_root, ignore_errors=True)
+            finally:
+                store.close()
 
     # -- 13. active run blocks same role --------------------------------------
     async def test_active_run_blocks_same_role(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
+            store = VersionRegistry(tmp_path / "role_versions")
+            try:
+                # First evolution -- reaches reviewing (non-terminal)
+                run1, store, parent_hash = await _run_pipeline(tmp_path, "seer", store=store)
+                self.assertEqual(run1.status, EvolutionStatus.REVIEWING)
 
-            # First evolution — reaches reviewing (non-terminal)
-            run1, store, parent_hash = await _run_pipeline(tmp_path, "seer")
-            self.assertEqual(run1.status, EvolutionStatus.REVIEWING)
+                # Role should appear in active runs
+                active = scan_active_runs()
+                active_run_ids = [r["run_id"] for r in active]
+                self.assertIn(run1.run_id, active_run_ids)
 
-            # Role should appear in active runs
-            active = scan_active_runs()
-            active_run_ids = [r["run_id"] for r in active]
-            self.assertIn(run1.run_id, active_run_ids)
+                # Start a second evolution for the same role while first is active
+                run2, store, _ = await _run_pipeline(tmp_path, "seer", store=store)
+                self.assertEqual(run2.status, EvolutionStatus.REVIEWING)
 
-            # Start a second evolution for the same role while first is active
-            run2, store, _ = await _run_pipeline(tmp_path, "seer")
-            self.assertEqual(run2.status, EvolutionStatus.REVIEWING)
+                # Both should be active (non-terminal)
+                active = scan_active_runs()
+                active_run_ids = [r["run_id"] for r in active]
+                self.assertIn(run1.run_id, active_run_ids)
+                self.assertIn(run2.run_id, active_run_ids)
 
-            # Both should be active (non-terminal)
-            active = scan_active_runs()
-            active_run_ids = [r["run_id"] for r in active]
-            self.assertIn(run1.run_id, active_run_ids)
-            self.assertIn(run2.run_id, active_run_ids)
+                # Promote the first run -> terminal
+                await promote(run1, store)
+                self.assertEqual(run1.status, EvolutionStatus.PROMOTED)
 
-            # Promote the first run -> terminal
-            await promote(run1, store)
-            self.assertEqual(run1.status, EvolutionStatus.PROMOTED)
-
-            # Now only the second run should be active
-            active = scan_active_runs()
-            active_run_ids = [r["run_id"] for r in active]
-            self.assertNotIn(run1.run_id, active_run_ids)
-            self.assertIn(run2.run_id, active_run_ids)
+                # Now only the second run should be active
+                active = scan_active_runs()
+                active_run_ids = [r["run_id"] for r in active]
+                self.assertNotIn(run1.run_id, active_run_ids)
+                self.assertIn(run2.run_id, active_run_ids)
+            finally:
+                store.close()
 
 
 if __name__ == "__main__":

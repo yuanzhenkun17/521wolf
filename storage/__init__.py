@@ -12,7 +12,7 @@ from storage.game_event_store import GameEventStore
 from storage.decision_store import DecisionStore
 from storage.version_store import VersionStoreDB
 from storage.evolution_store import EvolutionStore
-from storage.experience_store import ExperienceCandidateStore
+from storage.evolution.experience_repo import ExperienceCandidateStore
 from storage.leaderboard_store import LeaderboardStore
 from storage.replay import read_decisions_for_artifact, read_events_for_artifact
 from storage.runtime import GamePersistence, open_storage_connection
@@ -22,6 +22,9 @@ from storage.runtime import GamePersistence, open_storage_connection
 # ---------------------------------------------------------------------------
 from storage.shared.connection import (
     get_evolution_connection,
+)
+from storage.registry.connection import (
+    get_registry_connection,
 )
 from storage.shared.interfaces import (
     compute_hash,
@@ -66,6 +69,7 @@ __all__ = [
     "open_storage_connection",
     # Shared
     "get_evolution_connection",
+    "get_registry_connection",
     "compute_hash",
     "normalize_skill_text",
     "normalize_skill_path",
@@ -86,4 +90,3 @@ __all__ = [
     "SituationalRecordStore",
     "DecisionOutcomeStore",
 ]
-

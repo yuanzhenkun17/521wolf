@@ -18,6 +18,7 @@ from agent.learning.evolution.state import run_dir, save_run_state
 from agent.learning.evolution.registry import VersionRegistry
 from agent.infrastructure.llm import AsyncRateLimiter, ModelAdapter
 from agent.common import notify as _notify, write_json as _write_json
+from agent.common.run_policy import RunType
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 _log = logging.getLogger(__name__)
@@ -165,6 +166,7 @@ async def run_config_battle(
             skill_dir=skill_dir_a,
             game_concurrency=game_concurrency,
             db_path=DEFAULT_PATHS.data_dir / "wolf.db",
+            run_type=RunType.EVOLUTION_AB_BASELINE,
         )
         cfg_b = SelfPlayConfig(
             games=battle_games,
@@ -175,6 +177,7 @@ async def run_config_battle(
             skill_dir=skill_dir_b,
             game_concurrency=game_concurrency,
             db_path=DEFAULT_PATHS.data_dir / "wolf.db",
+            run_type=RunType.EVOLUTION_AB_CANDIDATE,
         )
         result_a, result_b = await asyncio.gather(
             selfplay_runner(

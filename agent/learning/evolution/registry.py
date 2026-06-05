@@ -1,8 +1,12 @@
-"""Filesystem-based version registry.
+"""SQLite-backed version registry.
 
 Evolution system writes (publish, set_baseline, reject).
 Battle system reads (get_baseline, get_package, list_versions).
 The registry is the only bridge between the two systems.
+
+Backward-compatible: ``VersionRegistry(registry_root)`` stores data in
+``<registry_root>/registry.db``.  Also accepts a ``sqlite3.Connection``
+directly for tests (including ``":memory:"``).
 """
 from __future__ import annotations
 
@@ -12,42 +16,67 @@ import hashlib
 import json
 import logging
 import shutil
+import sqlite3
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from agent.common import beijing_now_iso
-from agent.common.json import write_json as _write_json, read_json as _read_json
 from agent.learning.evolution.models import (
     KnowledgePackage, KnowledgeDiff, VersionSummary,
     SkillFileRef, ProvenanceRecord, BattleMetrics,
 )
-from storage.interfaces import compute_hash, normalize_skill_text, normalize_skill_path
+from storage.interfaces import normalize_skill_text, normalize_skill_path
 
 _log = logging.getLogger(__name__)
 
 
 class VersionRegistry:
     """
-    On-disk layout:
-        data/registry/
-          <role>/
-            baseline.json
-            history.jsonl
-            versions/
-              <version_id>/
-                package.json
-                patterns.json
-                metrics.json
-                skills/
-                  *.md
+    SQLite-backed registry for role skill versions.
+
+    Stores all version data (packages, skill files, baselines, history)
+    in a single ``registry.db`` database.  For backward compatibility the
+    constructor accepts either a filesystem *directory* path (a ``registry.db``
+    file is created inside it) or an already-open ``sqlite3.Connection``.
     """
 
-    def __init__(self, registry_root: Path) -> None:
-        self.root = registry_root
+    def __init__(
+        self,
+        registry_root: Path | str | sqlite3.Connection,
+    ) -> None:
+        if isinstance(registry_root, sqlite3.Connection):
+            self._conn = registry_root
+        else:
+            root = Path(registry_root)
+            if str(root) == ":memory:":
+                from storage.registry.connection import get_registry_connection
+                self._conn = get_registry_connection(root)
+            else:
+                db_path = root / "registry.db"
+                from storage.registry.connection import get_registry_connection
+                self._conn = get_registry_connection(db_path)
         self._locks: dict[str, asyncio.Lock] = {}
+        self._owns_connection = not isinstance(registry_root, sqlite3.Connection)
 
-    # --- Name validation ---
+    def close(self) -> None:
+        """Close the underlying database connection (if owned by this instance)."""
+        if self._owns_connection:
+            try:
+                self._conn.commit()
+                self._conn.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> VersionRegistry:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    # ------------------------------------------------------------------ #
+    #  Name validation                                                    #
+    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _validate_name(name: str, label: str) -> None:
@@ -59,7 +88,9 @@ class VersionRegistry:
         if ":" in name:
             raise ValueError(f"Unsafe {label}: {name}")
 
-    # --- Path helpers ---
+    # ------------------------------------------------------------------ #
+    #  Internal helpers                                                   #
+    # ------------------------------------------------------------------ #
 
     def _next_version_id(self, role: str) -> str:
         """Generate sequential version ID like werewolf_v1, seer_v2."""
@@ -76,19 +107,45 @@ class VersionRegistry:
             self._locks[role] = asyncio.Lock()
         return self._locks[role]
 
-    def _role_dir(self, role: str) -> Path:
-        self._validate_name(role, "role")
-        return self.root / role
+    def _read_baseline(self, role: str) -> str | None:
+        """Read current baseline version_id for a role, or None."""
+        row = self._conn.execute(
+            "SELECT version_id FROM role_current_baseline WHERE role = ?",
+            (role,),
+        ).fetchone()
+        return row["version_id"] if row else None
 
-    def _baseline_path(self, role: str) -> Path:
-        return self._role_dir(role) / "baseline.json"
+    def _version_exists(self, version_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM role_versions WHERE id = ?", (version_id,),
+        ).fetchone()
+        return row is not None
 
-    def _history_path(self, role: str) -> Path:
-        return self._role_dir(role) / "history.jsonl"
+    def _compute_skill_content_hash(self, content: str) -> str:
+        """SHA-256 of normalized skill content, first 12 hex chars."""
+        normalized = normalize_skill_text(content)
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
-    def _version_dir(self, role: str, version_id: str) -> Path:
-        self._validate_name(version_id, "version_id")
-        return self._role_dir(role) / "versions" / version_id
+    @staticmethod
+    def _extract_battle_delta(battle_result: dict, role: str) -> dict[str, float | int]:
+        """Extract role-specific battle deltas for rejected-proposal learning."""
+        base = battle_result.get("baseline_metrics", {})
+        cand = battle_result.get("candidate_metrics", {})
+        role_base = base.get(role, {})
+        role_cand = cand.get(role, {})
+        return {
+            "role_score_delta": round(
+                (role_cand.get("role_weighted_score", 0) or 0)
+                - (role_base.get("role_weighted_score", 0) or 0),
+                3,
+            ),
+            "win_rate_delta": round(
+                (role_cand.get("win_rate", 0) or 0)
+                - (role_base.get("win_rate", 0) or 0),
+                3,
+            ),
+            "games": battle_result.get("games_played", 0),
+        }
 
     # ------------------------------------------------------------------ #
     #  Write operations (evolution system)                                #
@@ -104,10 +161,10 @@ class VersionRegistry:
         """
         Publish a new version.
 
-        1. Create version directory
-        2. Write skill .md files
-        3. Write package.json, patterns.json, metrics.json
-        4. Append 'created' event to history.jsonl
+        1. Normalize and hash skill contents
+        2. Check for existing version (idempotency)
+        3. Insert version row and skill file rows
+        4. Append 'created' event to history
         Returns version_id.
         """
         role = package.role
@@ -116,8 +173,7 @@ class VersionRegistry:
         self._validate_name(version_id, "version_id")
 
         async with self._lock_for(role):
-            vdir = self._version_dir(role, version_id)
-
+            # Normalize skills
             normalized_skills: dict[str, str] = {}
             for rel_path, content in skill_contents.items():
                 np = normalize_skill_path(rel_path)
@@ -143,60 +199,92 @@ class VersionRegistry:
                 created_at=package.created_at,
             )
 
-            pkg_path = vdir / "package.json"
-            if pkg_path.exists():
-                existing = KnowledgePackage.from_dict(_read_json(pkg_path))
-                if existing.to_dict() != package.to_dict():
+            # Idempotency check
+            row = self._conn.execute(
+                "SELECT * FROM role_versions WHERE id = ? AND role = ?",
+                (version_id, role),
+            ).fetchone()
+            if row is not None:
+                existing_pkg = KnowledgePackage.from_dict({
+                    "version_id": row["id"],
+                    "role": row["role"],
+                    "parent_id": row["parent_id"],
+                    "skills": json.loads(row["skills"]),
+                    "patterns": json.loads(row["patterns_json"]) if row["patterns_json"] else [],
+                    "provenance": json.loads(row["provenance_json"]) if row["provenance_json"] else {},
+                    "metrics": json.loads(row["metrics_json"]) if row["metrics_json"] else None,
+                    "created_at": row["created_at"],
+                })
+                if existing_pkg.to_dict() != package.to_dict():
                     raise ValueError(
                         f"Version {role}/{version_id} already exists with different metadata"
                     )
-                existing_skills_dir = vdir / "skills"
+                existing_file_rows = self._conn.execute(
+                    "SELECT file_path, content FROM skill_files WHERE version_id = ?",
+                    (version_id,),
+                ).fetchall()
+                existing_map = {r["file_path"]: r["content"] for r in existing_file_rows}
                 for rel_path, normalized_content in normalized_skills.items():
-                    skill_file = existing_skills_dir / rel_path
-                    if not skill_file.exists():
+                    if rel_path not in existing_map:
                         raise ValueError(
                             f"Version {role}/{version_id} is missing skill file {rel_path}"
                         )
-                    if normalize_skill_text(skill_file.read_text(encoding="utf-8")) != normalized_content:
+                    if normalize_skill_text(existing_map[rel_path]) != normalized_content:
                         raise ValueError(
                             f"Version {role}/{version_id} already exists with different skill content"
                         )
                 return version_id
 
-            vdir.mkdir(parents=True, exist_ok=False)
+            # Insert new version
+            now = beijing_now_iso()
+            self._conn.execute(
+                """INSERT INTO role_versions
+                   (id, role, parent_id, source, run_id, skills, notes, status,
+                    created_at, patterns_json, metrics_json, provenance_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)""",
+                (
+                    version_id,
+                    role,
+                    package.parent_id,
+                    package.provenance.source,
+                    package.provenance.run_id,
+                    json.dumps([s.to_dict() for s in package.skills], ensure_ascii=False),
+                    json.dumps([], ensure_ascii=False),
+                    now,
+                    json.dumps(package.patterns, ensure_ascii=False),
+                    json.dumps(package.metrics.to_dict(), ensure_ascii=False) if package.metrics else None,
+                    json.dumps(package.provenance.to_dict(), ensure_ascii=False),
+                ),
+            )
 
-            # Write skill .md files.  SkillFileRef entries are always generated
-            # from these normalized files; caller-provided hashes are ignored.
-            skills_dir = vdir / "skills"
-            skills_dir.mkdir(parents=True, exist_ok=True)
+            # Insert skill files
             for rel_path, normalized_content in normalized_skills.items():
-                skill_file = skills_dir / rel_path
-                skill_file.parent.mkdir(parents=True, exist_ok=True)
-                skill_file.write_text(normalized_content, encoding="utf-8")
+                self._conn.execute(
+                    """INSERT INTO skill_files
+                       (version_id, file_path, content_hash, content, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        version_id,
+                        rel_path,
+                        self._compute_skill_content_hash(normalized_content),
+                        normalized_content,
+                        now,
+                    ),
+                )
 
-            # Write package.json
-            _write_json(vdir / "package.json", package.to_dict())
-
-            # Write patterns.json (standalone copy for quick access)
-            _write_json(vdir / "patterns.json", package.patterns)
-
-            # Write metrics.json (standalone copy for quick access)
-            if package.metrics is not None:
-                _write_json(vdir / "metrics.json", package.metrics.to_dict())
-
-            # Append 'created' event to history.jsonl
-            self._append_history_event(role, {
-                "event": "created",
-                "version_id": version_id,
-                "role": role,
-                "source": package.provenance.source,
-                "created_at": package.created_at,
-            })
+            # History event
+            self._conn.execute(
+                """INSERT INTO role_baseline_history
+                   (role, version_id, reason, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (role, version_id, "created", now),
+            )
 
             _log.info(
                 "publish: %s/%s (source=%s)",
                 role, version_id, package.provenance.source,
             )
+            self._conn.commit()
             return version_id
 
     async def publish_skills(
@@ -280,30 +368,23 @@ class VersionRegistry:
             )
 
     async def initialize_from_skills(self, skills_root: Path) -> None:
-        """Initialize role baselines from ``skills/<role>/*.md`` directories."""
-        if not skills_root.exists():
-            _log.warning("initialize_from_skills: skills_root %s does not exist", skills_root)
-            return
+        """DEPRECATED: Initialize role baselines from skill directories.
 
-        for role_dir in sorted(p for p in skills_root.iterdir() if p.is_dir()):
-            role = role_dir.name
-            if self.get_baseline(role) is not None:
-                _log.debug("initialize_from_skills: %s already has baseline, skipping", role)
-                continue
-            skills: dict[str, str] = {}
-            for path in sorted(role_dir.rglob("*.md")):
-                rel_path = path.relative_to(role_dir).as_posix()
-                skills[rel_path] = path.read_text(encoding="utf-8")
-            if not skills:
-                _log.warning("initialize_from_skills: no .md files for role %s, skipping", role)
-                continue
-            await self.publish_skills(
-                role,
-                skills,
-                source="initialize_from_skills",
-                set_as_baseline=True,
-                expected_current=None,
-            )
+        This method is a no-op. Use ensure_default_baselines() for empty
+        baselines, or seed_skills.py / bootstrap_registry.py for content.
+        """
+        import warnings
+        warnings.warn(
+            "initialize_from_skills() is deprecated and does nothing. "
+            "Use ensure_default_baselines() for empty baselines, or "
+            "scripts/bootstrap_registry.py for seeded content.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        _log.warning(
+            "initialize_from_skills() is deprecated and is now a no-op. "
+            "Use ensure_default_baselines() or scripts/bootstrap_registry.py instead."
+        )
 
     async def set_baseline(
         self,
@@ -328,28 +409,33 @@ class VersionRegistry:
                 return False
 
             # Verify the target version exists
-            pkg_path = self._version_dir(role, version_id) / "package.json"
-            if not pkg_path.exists():
+            if not self._version_exists(version_id):
                 _log.warning(
                     "set_baseline: version %s not found for %s",
                     version_id, role,
                 )
                 return False
 
-            _write_json(self._baseline_path(role), {
-                "version_id": version_id,
-                "role": role,
-                "updated_at": beijing_now_iso(),
-            })
+            now = beijing_now_iso()
+            self._conn.execute(
+                """INSERT OR REPLACE INTO role_current_baseline
+                   (role, version_id, updated_at) VALUES (?, ?, ?)""",
+                (role, version_id, now),
+            )
 
-            self._append_history_event(role, {
-                "event": "baseline_set",
-                "version_id": version_id,
-                "previous_baseline": expected_current,
-                "updated_at": beijing_now_iso(),
-            })
+            self._conn.execute(
+                """INSERT INTO role_baseline_history
+                   (role, version_id, previous_version_id, reason, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (role, version_id, expected_current, "baseline_set", now),
+            )
+            self._conn.execute(
+                "UPDATE role_versions SET status = 'promoted' WHERE id = ? AND role = ?",
+                (version_id, role),
+            )
 
             _log.info("set_baseline: %s -> %s", role, version_id)
+            self._conn.commit()
             return True
 
     async def reject(
@@ -363,14 +449,19 @@ class VersionRegistry:
         self._validate_name(version_id, "version_id")
 
         async with self._lock_for(role):
-            self._append_history_event(role, {
-                "event": "rejected",
-                "version_id": version_id,
-                "role": role,
-                "reason": reason,
-                "rejected_at": beijing_now_iso(),
-            })
+            now = beijing_now_iso()
+            self._conn.execute(
+                """INSERT INTO role_baseline_history
+                   (role, version_id, reason, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (role, version_id, f"rejected: {reason}", now),
+            )
+            self._conn.execute(
+                "UPDATE role_versions SET status = 'rejected' WHERE id = ? AND role = ?",
+                (version_id, role),
+            )
             _log.info("reject: %s/%s reason=%s", role, version_id, reason)
+            self._conn.commit()
 
     async def save_rejected(
         self,
@@ -381,8 +472,12 @@ class VersionRegistry:
         """Persist rejected proposals for future consolidation."""
         self._validate_name(role, "role")
         async with self._lock_for(role):
-            rejected_path = self._role_dir(role) / "rejected.json"
-            existing = _read_json(rejected_path) if rejected_path.exists() else []
+            row = self._conn.execute(
+                "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
+                (role,),
+            ).fetchone()
+            existing: list[dict] = json.loads(row["proposals_json"]) if row else []
+
             metrics = self._extract_battle_delta(battle_result, role) if battle_result else {}
             for proposal in proposals:
                 existing.append({
@@ -394,15 +489,25 @@ class VersionRegistry:
                     "metrics_delta": metrics,
                     "rejected_at": beijing_now_iso(),
                 })
-            _write_json(rejected_path, existing[-10:])
+
+            kept = existing[-10:]
+            self._conn.execute(
+                """INSERT OR REPLACE INTO rejected_proposals
+                   (role, proposals_json) VALUES (?, ?)""",
+                (role, json.dumps(kept, ensure_ascii=False)),
+            )
+            self._conn.commit()
 
     async def load_rejected(self, role: str) -> list[dict]:
         """Load rejected proposals for a role."""
         self._validate_name(role, "role")
-        rejected_path = self._role_dir(role) / "rejected.json"
-        if not rejected_path.exists():
+        row = self._conn.execute(
+            "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
+            (role,),
+        ).fetchone()
+        if not row:
             return []
-        return _read_json(rejected_path)
+        return json.loads(row["proposals_json"])
 
     # ------------------------------------------------------------------ #
     #  Read operations (battle system)                                    #
@@ -414,85 +519,130 @@ class VersionRegistry:
         return self._read_baseline(role)
 
     def get_package(self, role: str, version_id: str) -> KnowledgePackage:
-        """Load a KnowledgePackage from disk."""
+        """Load a KnowledgePackage from the registry database."""
         self._validate_name(role, "role")
         self._validate_name(version_id, "version_id")
 
-        pkg_path = self._version_dir(role, version_id) / "package.json"
-        if not pkg_path.exists():
+        row = self._conn.execute(
+            "SELECT * FROM role_versions WHERE id = ? AND role = ?",
+            (version_id, role),
+        ).fetchone()
+        if row is None:
             raise FileNotFoundError(
-                f"Package {role}/{version_id} not found at {pkg_path}"
+                f"Package {role}/{version_id} not found in registry"
             )
-        data = _read_json(pkg_path)
-        return KnowledgePackage.from_dict(data)
+        return KnowledgePackage.from_dict({
+            "version_id": row["id"],
+            "role": row["role"],
+            "parent_id": row["parent_id"],
+            "skills": json.loads(row["skills"]),
+            "patterns": json.loads(row["patterns_json"]) if row["patterns_json"] else [],
+            "provenance": json.loads(row["provenance_json"]) if row["provenance_json"] else {},
+            "metrics": json.loads(row["metrics_json"]) if row["metrics_json"] else None,
+            "created_at": row["created_at"],
+        })
 
     def get_skill_dir(self, role: str, version_id: str) -> Path:
-        """Return the skill directory for a role version."""
-        self.get_package(role, version_id)
-        skills_dir = self._version_dir(role, version_id) / "skills"
-        if not skills_dir.exists():
-            raise FileNotFoundError(f"Skills dir for {role}/{version_id} not found")
+        """Return a directory path containing skill files for a role version.
+
+        Creates a temporary directory populated from the database.  The
+        caller (or test teardown) is responsible for cleanup.
+        """
+        self._validate_name(role, "role")
+        self._validate_name(version_id, "version_id")
+
+        # Ensure version exists and get package to check skill refs
+        row = self._conn.execute(
+            "SELECT id, skills FROM role_versions WHERE id = ? AND role = ?",
+            (version_id, role),
+        ).fetchone()
+        if row is None:
+            raise FileNotFoundError(
+                f"Version {role}/{version_id} not found in registry"
+            )
+
+        skill_rows = self._conn.execute(
+            "SELECT file_path, content FROM skill_files WHERE version_id = ?",
+            (version_id,),
+        ).fetchall()
+
+        # Detect corruption: package declares skill refs but none stored
+        declared_skills = json.loads(row["skills"]) if row["skills"] else []
+        if declared_skills and not skill_rows:
+            raise FileNotFoundError(
+                f"Skill files for {role}/{version_id} not found in registry "
+                f"(package declares {len(declared_skills)} skill refs but no files stored)"
+            )
+
+        tmp = Path(tempfile.mkdtemp(prefix=f"wolf_skill_{role}_{version_id}_"))
+        skills_dir = tmp / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+
+        for sr in skill_rows:
+            file_path = skills_dir / sr["file_path"]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(sr["content"], encoding="utf-8")
+
         return skills_dir
 
     def read_skill_contents(self, role: str, version_id: str) -> dict[str, str]:
         """Read skill file contents for a role version."""
-        package = self.get_package(role, version_id)
-        skills_dir = self.get_skill_dir(role, version_id)
-        result: dict[str, str] = {}
-        for ref in package.skills:
-            rel_path = normalize_skill_path(ref.path)
-            skill_file = skills_dir / rel_path
-            if not skill_file.exists():
-                raise FileNotFoundError(
-                    f"Skill file {role}/{version_id}/{rel_path} not found"
-                )
-            result[rel_path] = skill_file.read_text(encoding="utf-8")
-        return result
+        self._validate_name(role, "role")
+        self._validate_name(version_id, "version_id")
+
+        # Verify version exists
+        row = self._conn.execute(
+            "SELECT id FROM role_versions WHERE id = ? AND role = ?",
+            (version_id, role),
+        ).fetchone()
+        if row is None:
+            raise FileNotFoundError(
+                f"Version {role}/{version_id} not found in registry"
+            )
+
+        skill_rows = self._conn.execute(
+            "SELECT file_path, content FROM skill_files WHERE version_id = ?",
+            (version_id,),
+        ).fetchall()
+
+        return {r["file_path"]: r["content"] for r in skill_rows}
 
     def list_versions(self, role: str) -> list[VersionSummary]:
-        """List all versions for a role from history.jsonl.
+        """List all versions for a role.
 
-        Returns only 'created' events, in chronological order.
+        Returns only active versions, in chronological order.
         """
         self._validate_name(role, "role")
-        history_path = self._history_path(role)
-        if not history_path.exists():
+
+        rows = self._conn.execute(
+            """SELECT id, role, source, created_at
+               FROM role_versions
+               WHERE role = ?
+               ORDER BY created_at""",
+            (role,),
+        ).fetchall()
+        if not rows:
             return []
 
         current_baseline = self._read_baseline(role)
-        summaries: list[VersionSummary] = []
-        seen_ids: set[str] = set()
 
-        for line in history_path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            event = json.loads(line)
-            if event.get("event") != "created":
-                continue
-            vid = event.get("version_id", "")
-            if vid in seen_ids:
-                continue
-            seen_ids.add(vid)
-            summaries.append(VersionSummary(
-                version_id=vid,
-                role=event.get("role", role),
-                source=event.get("source", "unknown"),
-                created_at=event.get("created_at", ""),
-                is_baseline=(vid == current_baseline),
-            ))
-
-        return summaries
+        return [
+            VersionSummary(
+                version_id=row["id"],
+                role=row["role"],
+                source=row["source"],
+                created_at=row["created_at"],
+                is_baseline=(row["id"] == current_baseline),
+            )
+            for row in rows
+        ]
 
     def list_roles(self) -> list[str]:
         """List all roles that have entries in the registry."""
-        if not self.root.exists():
-            return []
-        roles: list[str] = []
-        for entry in sorted(self.root.iterdir()):
-            if entry.is_dir() and (entry / "history.jsonl").exists():
-                roles.append(entry.name)
-        return roles
+        rows = self._conn.execute(
+            "SELECT DISTINCT role FROM role_versions ORDER BY role"
+        ).fetchall()
+        return [row["role"] for row in rows]
 
     # ------------------------------------------------------------------ #
     #  Diff                                                               #
@@ -539,7 +689,8 @@ class VersionRegistry:
         """Garbage collect old versions.
 
         Keep: current baseline + its ancestor chain + last ``keep`` versions.
-        Returns number of versions removed.
+        Returns number of versions removed.  Deleted versions have their
+        status set to 'gc' and skill_files rows removed.
         """
         self._validate_name(role, "role")
 
@@ -555,8 +706,7 @@ class VersionRegistry:
         if baseline_id:
             self._trace_ancestors(role, baseline_id, keep_ids)
 
-        # 2. Keep the most recent ``keep`` versions (by list order, which is
-        #    chronological from history.jsonl)
+        # 2. Keep the most recent ``keep`` versions
         for vs in versions[-keep:]:
             keep_ids.add(vs.version_id)
 
@@ -564,20 +714,27 @@ class VersionRegistry:
         removed = 0
         for vs in versions:
             if vs.version_id not in keep_ids:
-                vdir = self._version_dir(role, vs.version_id)
-                if vdir.exists():
-                    shutil.rmtree(vdir)
-                    removed += 1
-                    _log.debug("gc: removed %s/%s", role, vs.version_id)
+                self._conn.execute(
+                    "UPDATE role_versions SET status = 'gc' WHERE id = ?",
+                    (vs.version_id,),
+                )
+                self._conn.execute(
+                    "DELETE FROM skill_files WHERE version_id = ?",
+                    (vs.version_id,),
+                )
+                removed += 1
+                _log.debug("gc: removed %s/%s", role, vs.version_id)
 
         if removed:
-            self._append_history_event(role, {
-                "event": "gc",
-                "removed_count": removed,
-                "kept_count": len(keep_ids),
-                "gc_at": beijing_now_iso(),
-            })
+            now = beijing_now_iso()
+            self._conn.execute(
+                """INSERT INTO role_baseline_history
+                   (role, version_id, reason, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (role, "", f"gc: removed {removed}, kept {len(keep_ids)}", now),
+            )
             _log.info("gc: %s removed %d versions, kept %d", role, removed, len(keep_ids))
+            self._conn.commit()
 
         return removed
 
@@ -608,60 +765,8 @@ class VersionRegistry:
         return tmp
 
     # ------------------------------------------------------------------ #
-    #  Internal helpers                                                   #
+    #  Diff helpers                                                       #
     # ------------------------------------------------------------------ #
-
-    def _append_history_event(self, role: str, event: dict[str, Any]) -> None:
-        """Append a single JSON line to history.jsonl.
-
-        This is append-only — no read-modify-write — so it is safe under
-        concurrent readers.  The caller must hold the role lock for writes.
-        """
-        history_path = self._history_path(role)
-        history_path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(event, ensure_ascii=False, default=str) + "\n"
-        with history_path.open("a", encoding="utf-8") as f:
-            f.write(line)
-
-    def _read_baseline(self, role: str) -> str | None:
-        """Read baseline.json, return version_id or None."""
-        bp = self._baseline_path(role)
-        if not bp.exists():
-            return None
-        try:
-            data = _read_json(bp)
-            return data.get("version_id")
-        except Exception:
-            _log.warning("_read_baseline: corrupt baseline.json for %s", role)
-            return None
-
-    def _compute_skill_content_hash(self, content: str) -> str:
-        """SHA-256 of normalized skill content, first 12 hex chars."""
-        normalized = normalize_skill_text(content)
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
-
-    @staticmethod
-    def _extract_battle_delta(battle_result: dict, role: str) -> dict[str, float | int]:
-        """Extract role-specific battle deltas for rejected-proposal learning."""
-        base = battle_result.get("baseline_metrics", {})
-        cand = battle_result.get("candidate_metrics", {})
-        role_base = base.get(role, {})
-        role_cand = cand.get(role, {})
-        return {
-            "role_score_delta": round(
-                (role_cand.get("role_weighted_score", 0) or 0)
-                - (role_base.get("role_weighted_score", 0) or 0),
-                3,
-            ),
-            "win_rate_delta": round(
-                (role_cand.get("win_rate", 0) or 0)
-                - (role_base.get("win_rate", 0) or 0),
-                3,
-            ),
-            "games": battle_result.get("games_played", 0),
-        }
-
-    # --- Diff helpers ---
 
     def _diff_skills(
         self,
@@ -681,8 +786,7 @@ class VersionRegistry:
             new_ref = new_map.get(path)
 
             if old_ref and not new_ref:
-                # File removed
-                before_text = self._read_skill_file(role, old_pkg.version_id, path)
+                before_text = self._read_skill_file_from_db(role, old_pkg.version_id, path)
                 changes.append({
                     "file": path,
                     "action": "removed",
@@ -690,8 +794,7 @@ class VersionRegistry:
                     "after_lines": [],
                 })
             elif new_ref and not old_ref:
-                # File added
-                after_text = self._read_skill_file(role, new_pkg.version_id, path)
+                after_text = self._read_skill_file_from_db(role, new_pkg.version_id, path)
                 changes.append({
                     "file": path,
                     "action": "added",
@@ -699,9 +802,8 @@ class VersionRegistry:
                     "after_lines": after_text.splitlines(),
                 })
             elif old_ref and new_ref and old_ref.content_hash != new_ref.content_hash:
-                # File modified
-                before_text = self._read_skill_file(role, old_pkg.version_id, path)
-                after_text = self._read_skill_file(role, new_pkg.version_id, path)
+                before_text = self._read_skill_file_from_db(role, old_pkg.version_id, path)
+                after_text = self._read_skill_file_from_db(role, new_pkg.version_id, path)
                 diff_lines = list(difflib.unified_diff(
                     before_text.splitlines(),
                     after_text.splitlines(),
@@ -716,16 +818,16 @@ class VersionRegistry:
                     "after_lines": after_text.splitlines(),
                     "diff": diff_lines,
                 })
-            # else: identical hash, no change
 
         return changes
 
-    def _read_skill_file(self, role: str, version_id: str, rel_path: str) -> str:
-        """Read a single skill file from a version's directory."""
-        skill_file = self._version_dir(role, version_id) / "skills" / rel_path
-        if not skill_file.exists():
-            return ""
-        return skill_file.read_text(encoding="utf-8")
+    def _read_skill_file_from_db(self, role: str, version_id: str, rel_path: str) -> str:
+        """Read a single skill file from the registry database."""
+        row = self._conn.execute(
+            "SELECT content FROM skill_files WHERE version_id = ? AND file_path = ?",
+            (version_id, rel_path),
+        ).fetchone()
+        return row["content"] if row else ""
 
     @staticmethod
     def _diff_patterns(
@@ -786,11 +888,10 @@ class VersionRegistry:
         while current and current not in visited:
             visited.add(current)
             result.add(current)
-            pkg_path = self._version_dir(role, current) / "package.json"
-            if not pkg_path.exists():
+            row = self._conn.execute(
+                "SELECT parent_id FROM role_versions WHERE id = ?",
+                (current,),
+            ).fetchone()
+            if not row:
                 break
-            try:
-                data = _read_json(pkg_path)
-                current = data.get("parent_id") or ""
-            except Exception:
-                break
+            current = row["parent_id"] or ""

@@ -7,11 +7,13 @@ import unittest
 from pathlib import Path
 
 from storage.schema import get_connection
+from storage.shared.connection import get_evolution_connection
+from storage.registry.connection import get_registry_connection
 from storage.game_store import GameStore
 from storage.decision_store import DecisionStore
 from storage.version_store import VersionStoreDB
 from storage.evolution_store import EvolutionStore
-from storage.experience_store import ExperienceCandidateStore
+from storage.evolution.experience_repo import ExperienceCandidateStore
 from storage.leaderboard_store import LeaderboardStore
 from agent.infrastructure.archive import DecisionArchive
 from agent.learning.models import ExperienceCandidate
@@ -55,6 +57,8 @@ class TestGameStore(unittest.TestCase):
             "g1",
             {0: "werewolf", 1: "seer", 2: "villager"},
             final_alive={0: True, 1: False, 2: True},
+            role_version_ids={1: "seer_v1"},
+            skill_package_hashes={1: "hash_001"},
         )
 
         rows = self.conn.execute(
@@ -63,6 +67,8 @@ class TestGameStore(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         self.assertEqual(rows[1]["role"], "seer")
         self.assertEqual(rows[1]["alive"], 0)
+        self.assertEqual(rows[1]["role_version_id"], "seer_v1")
+        self.assertEqual(rows[1]["skill_package_hash"], "hash_001")
 
     def test_list_games(self):
         self.store.insert_game("g1", seed=1, winner="werewolves", started_at="2026-01-01")
@@ -166,8 +172,15 @@ class TestDecisionStore(unittest.TestCase):
 
 class TestExperienceCandidateStore(unittest.TestCase):
     def setUp(self):
-        self.conn = get_connection(Path(":memory:"))
-        GameStore(self.conn).insert_game("g1", seed=1, started_at="2026-01-01")
+        self.conn = get_evolution_connection(Path(":memory:"))
+        # Create minimal games table for game_id references
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, seed INTEGER, config TEXT)"
+        )
+        self.conn.execute(
+            "INSERT INTO games (id, seed) VALUES ('g1', 1)"
+        )
+        self.conn.commit()
         self.store = ExperienceCandidateStore(self.conn)
 
     def tearDown(self):
@@ -189,7 +202,14 @@ class TestExperienceCandidateStore(unittest.TestCase):
             validation_need={"needs_multi_game_validation": True},
         )
 
-        saved = self.store.save_candidates("g1", [candidate], created_at="2026-01-01T00:00:00")
+        saved = self.store.save_candidates(
+            "g1",
+            [candidate],
+            run_type="evolution_training",
+            learning_eligible=True,
+            mode="formal",
+            created_at="2026-01-01T00:00:00",
+        )
         self.assertEqual(saved, ["cand_001"])
 
         rows = self.store.list_candidates(role="seer")
@@ -206,6 +226,9 @@ class TestExperienceCandidateStore(unittest.TestCase):
                 {"candidate_id": "b", "role": "witch"},
                 {"candidate_id": "c", "role": "seer"},
             ],
+            run_type="evolution_training",
+            learning_eligible=True,
+            mode="formal",
         )
 
         counts = self.store.count_by_role()
@@ -215,7 +238,7 @@ class TestExperienceCandidateStore(unittest.TestCase):
 
 class TestVersionStoreDB(unittest.TestCase):
     def setUp(self):
-        self.conn = get_connection(Path(":memory:"))
+        self.conn = get_registry_connection(Path(":memory:"))
         self.store = VersionStoreDB(self.conn)
 
     def tearDown(self):
@@ -260,7 +283,7 @@ class TestVersionStoreDB(unittest.TestCase):
 
 class TestEvolutionStore(unittest.TestCase):
     def setUp(self):
-        self.conn = get_connection(Path(":memory:"))
+        self.conn = get_evolution_connection(Path(":memory:"))
         self.store = EvolutionStore(self.conn)
 
     def tearDown(self):

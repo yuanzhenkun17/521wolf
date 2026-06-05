@@ -6,10 +6,11 @@ from agent.learning.evolution.consolidation import (
     _load_role_skills_for_str,
     consolidate_for_role,
 )
-from storage.experience_store import ExperienceCandidateStore
+from storage.evolution.experience_repo import ExperienceCandidateStore
 from storage.game_store import GameStore
 from storage.ids import artifact_game_id
 from storage.schema import get_connection
+from storage.shared.connection import get_evolution_connection
 
 
 def test_role_consolidator_prompt_lists_real_target_files(tmp_path: Path):
@@ -131,7 +132,22 @@ evolution:
         started_at="2026-06-04T00:00:00",
         config={"_storage": {"source_path": str(game_dir)}},
     )
-    ExperienceCandidateStore(conn).save_candidates(
+    conn.close()
+
+    # Experience candidates go to evolution.db
+    # Also insert game record into evolution.db for artifact resolution
+    evo_db_path = tmp_path / "data" / "evolution.db"
+    evo_conn = get_evolution_connection(evo_db_path)
+    # Create minimal games table in evolution.db for game_id lookup
+    evo_conn.execute(
+        "CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, seed INTEGER, config TEXT)"
+    )
+    evo_conn.execute(
+        "INSERT OR REPLACE INTO games (id, seed, config) VALUES (?, ?, ?)",
+        (game_id, 1, '{"_storage": {"source_path": "' + str(game_dir) + '"}}'),
+    )
+    evo_conn.commit()
+    ExperienceCandidateStore(evo_conn).save_candidates(
         game_id,
         [
             {
@@ -145,9 +161,12 @@ evolution:
                 "confidence": "medium",
             }
         ],
+        run_type="evolution_training",
+        learning_eligible=True,
+        mode="formal",
         created_at="2026-06-04T00:00:00",
     )
-    conn.close()
+    evo_conn.close()
 
     model = CapturingModel()
     result = asyncio.run(
@@ -158,7 +177,7 @@ evolution:
             run_id="evo_test",
             parent_hash="parent",
             skill_root=skill_root,
-            db_path=db_path,
+            db_path=evo_db_path,
             storage_root=storage_root,
         )
     )

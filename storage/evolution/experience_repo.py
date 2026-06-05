@@ -23,8 +23,19 @@ class ExperienceCandidateStore:
         game_id: str,
         candidates: list[Any],
         *,
+        run_type: str,
+        source_run_id: str = "",
+        source_game_id: str = "",
+        artifact_game_id: str = "",
+        learning_eligible: bool,
+        mode: str = "formal",
         created_at: str | None = None,
     ) -> list[str]:
+        if run_type != "evolution_training" or not learning_eligible:
+            raise PermissionError(
+                f"experience_candidates can only be written by evolution_training; "
+                f"got run_type={run_type!r}, learning_eligible={learning_eligible!r}"
+            )
         saved: list[str] = []
         now = created_at or self._timestamp()
         for index, candidate in enumerate(candidates, start=1):
@@ -36,8 +47,10 @@ class ExperienceCandidateStore:
                 "(game_id, candidate_id, role, faction, candidate_type, topic, sample_source, "
                 "evidence_decision_ids, scenario, conditions, recommendation, anti_pattern, "
                 "risk_boundaries, counter_conditions, supporting_evidence, opposing_evidence, "
-                "confidence, validation_need, misleading_risk, raw_json, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "confidence, validation_need, misleading_risk, raw_json, created_at, "
+                "run_type, source_run_id, source_game_id, artifact_game_id, learning_eligible, "
+                "mode, applicable_phase, applicable_action, llm_rationale, validator_status) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     game_id,
                     candidate_id,
@@ -60,6 +73,16 @@ class ExperienceCandidateStore:
                     str(data.get("misleading_risk") or "medium"),
                     _dump(data),
                     now,
+                    run_type,
+                    source_run_id,
+                    source_game_id or game_id,
+                    artifact_game_id or game_id,
+                    1 if learning_eligible else 0,
+                    mode,
+                    str(data.get("applicable_phase") or ""),
+                    str(data.get("applicable_action") or ""),
+                    str(data.get("llm_rationale") or ""),
+                    str(data.get("validator_status") or "valid"),
                 ),
             )
             saved.append(candidate_id)
@@ -79,6 +102,9 @@ class ExperienceCandidateStore:
         game_id: str | None = None,
         role: str | None = None,
         candidate_type: str | None = None,
+        run_type: str | None = None,
+        learning_eligible: bool | None = None,
+        mode: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         conditions: list[str] = []
@@ -92,6 +118,15 @@ class ExperienceCandidateStore:
         if candidate_type:
             conditions.append("candidate_type = ?")
             params.append(candidate_type)
+        if run_type:
+            conditions.append("run_type = ?")
+            params.append(run_type)
+        if learning_eligible is not None:
+            conditions.append("learning_eligible = ?")
+            params.append(1 if learning_eligible else 0)
+        if mode:
+            conditions.append("mode = ?")
+            params.append(mode)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         params.append(limit)
         rows = self._conn.execute(

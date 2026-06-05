@@ -63,6 +63,26 @@ class AgentLlmConfigTests(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old_env)
 
+    def test_explicit_model_and_temperature_override_environment(self):
+        old_env = dict(os.environ)
+        try:
+            os.environ.clear()
+            os.environ["WEREWOLF_LLM_API_KEY"] = "key"
+            os.environ["WEREWOLF_LLM_MODEL"] = "env/model"
+            os.environ["WEREWOLF_LLM_TEMPERATURE"] = "0.2"
+
+            client = load_llm_client(
+                env_path=None,
+                model_name="requested/model",
+                temperature=1.0,
+            )
+
+            self.assertEqual(client.model, "requested/model")
+            self.assertEqual(client.temperature, 1.0)
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
 
 if __name__ == "__main__":
     unittest.main()

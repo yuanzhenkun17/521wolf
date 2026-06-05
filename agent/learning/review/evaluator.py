@@ -4,8 +4,8 @@ Scores each player on 5 dimensions using rule-based heuristics:
 - speech_score: information quality and logical coherence
 - vote_score: voting consistency with stated positions
 - skill_score: role ability usage timing and effectiveness
-- information_score: how well private information was utilized
-- cooperation_score: team coordination quality
+- logic_score: how well private information was utilized
+- team_score: team coordination quality
 """
 from __future__ import annotations
 
@@ -71,13 +71,20 @@ class PlayerEvaluation:
     game_id: str
     player_seat: int
     role: str
-    speech_score: float
-    vote_score: float
-    skill_score: float
-    information_score: float
-    cooperation_score: float
-    overall_score: float
-    created_at: str
+    # Spec scoring dimensions (scoring_v1)
+    speech_score: float = 0.0
+    vote_score: float = 0.0
+    skill_score: float = 0.0
+    logic_score: float = 0.0
+    team_score: float = 0.0
+    risk_penalty: float = 0.0
+    role_score: float = 0.0
+    score_completeness: float = 1.0
+    # Legacy fields (backward compat)
+    information_score: float = 0.0
+    cooperation_score: float = 0.0
+    overall_score: float = 0.0
+    created_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -88,6 +95,10 @@ class PlayerEvaluation:
             "speech_score": round(self.speech_score, 3),
             "vote_score": round(self.vote_score, 3),
             "skill_score": round(self.skill_score, 3),
+            "logic_score": round(self.logic_score, 3),
+            "team_score": round(self.team_score, 3),
+            "risk_penalty": round(self.risk_penalty, 3),
+            "role_score": round(self.role_score, 3),
             "information_score": round(self.information_score, 3),
             "cooperation_score": round(self.cooperation_score, 3),
             "overall_score": round(self.overall_score, 3),
@@ -190,61 +201,42 @@ class GameEvaluator:
         info = self._score_information(seat, role, decisions, events, player_roles)
         coop = self._score_cooperation(seat, role, events, decisions, winner, player_roles)
 
-        # Weighted overall — role-aware weights
-        if _is_werewolf(role):
-            overall = (
-                speech * 0.25
-                + vote * 0.20
-                + skill * 0.20
-                + info * 0.15
-                + coop * 0.20
-            )
-        elif role.lower() == "seer":
-            overall = (
-                speech * 0.15
-                + vote * 0.20
-                + skill * 0.25
-                + info * 0.25
-                + coop * 0.15
-            )
-        elif role.lower() in ("witch", "guard"):
-            overall = (
-                speech * 0.15
-                + vote * 0.20
-                + skill * 0.30
-                + info * 0.20
-                + coop * 0.15
-            )
-        elif role.lower() == "hunter":
-            overall = (
-                speech * 0.20
-                + vote * 0.20
-                + skill * 0.25
-                + info * 0.15
-                + coop * 0.20
-            )
-        else:
-            # Villager — speech and vote matter most
-            overall = (
-                speech * 0.30
-                + vote * 0.30
-                + skill * 0.10
-                + info * 0.15
-                + coop * 0.15
-            )
+        # Weighted overall — spec weights (uniform across all roles)
+        # speech: 25%, vote: 25%, skill: 20%, logic: 20%, team: 10%
+        overall = (
+            speech * 0.25
+            + vote * 0.25
+            + skill * 0.20
+            + info * 0.20
+            + coop * 0.10
+        )
 
         now = beijing_now_iso()
+        speech_c = _clamp(speech)
+        vote_c = _clamp(vote)
+        skill_c = _clamp(skill)
+        info_c = _clamp(info)
+        coop_c = _clamp(coop)
+        overall_c = _clamp(overall)
+        # Map to spec dimensions: logic_score = info, team_score = coop
+        risk_penalty = 0.0  # Phase 1: no risk penalty from heuristic evaluator
+        role_score = max(0.0, overall_c - risk_penalty)
         return PlayerEvaluation(
             id=str(uuid.uuid4()),
             game_id=game_id,
             player_seat=seat,
             role=role,
-            speech_score=_clamp(speech),
-            vote_score=_clamp(vote),
-            skill_score=_clamp(skill),
-            information_score=_clamp(info),
-            cooperation_score=_clamp(coop),
-            overall_score=_clamp(overall),
+            speech_score=speech_c,
+            vote_score=vote_c,
+            skill_score=skill_c,
+            logic_score=info_c,
+            team_score=coop_c,
+            risk_penalty=risk_penalty,
+            role_score=role_score,
+            score_completeness=1.0,
+            information_score=info_c,
+            cooperation_score=coop_c,
+            overall_score=overall_c,
             created_at=now,
         )
 

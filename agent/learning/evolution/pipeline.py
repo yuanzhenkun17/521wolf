@@ -9,6 +9,7 @@ Any running stage may transition to -> failed on exception.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import uuid
@@ -40,6 +41,7 @@ from agent.infrastructure.llm import (
     rate_limit_model_adapter,
 )
 from agent.common import notify as _notify, beijing_now_iso as _now, write_json as _write_json
+from agent.common.run_policy import RunType
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
 
 _log = logging.getLogger(__name__)
@@ -135,6 +137,22 @@ def _resolve_start_from(
     if status in _LABEL_MAP:
         return status
     return EvolutionStatus.TRAINING
+
+
+def _make_selfplay_config(config_cls: Any, *, run_type: RunType, **kwargs: Any) -> Any:
+    """Construct SelfPlayConfig while tolerating lightweight test fakes."""
+    try:
+        params = inspect.signature(config_cls).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "run_type" in params:
+        return config_cls(**kwargs, run_type=run_type)
+    config = config_cls(**kwargs)
+    try:
+        setattr(config, "run_type", run_type)
+    except Exception:
+        pass
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +438,8 @@ async def _stage_training(
     baseline_config = run.baseline_config or build_baseline_config(store)
     skill_dir = build_composite_skill_dir(store, baseline_config)
 
-    config = SelfPlayConfig(
+    config = _make_selfplay_config(
+        SelfPlayConfig,
         games=training_games,
         output_dir=output_run_dir,
         enable_mid_memory=True,
@@ -428,6 +447,7 @@ async def _stage_training(
         skill_dir=skill_dir,
         game_concurrency=game_concurrency,
         db_path=DEFAULT_PATHS.data_dir / "wolf.db",
+        run_type=RunType.EVOLUTION_TRAINING,
     )
 
     completed = 0

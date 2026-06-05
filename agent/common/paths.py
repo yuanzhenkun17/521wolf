@@ -61,6 +61,11 @@ class PathConfig:
         return self.data_dir / "evolution.db"
 
     @property
+    def registry_db_path(self) -> Path:
+        """SQLite database for role version registry (independent from wolf.db and evolution.db)."""
+        return self.registry_dir / "registry.db"
+
+    @property
     def registry_dir(self) -> Path:
         """Version registry for role snapshots."""
         return self.data_dir / "registry"

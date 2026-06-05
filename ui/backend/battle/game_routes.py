@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from engine.config import STANDARD_12
 from ui.backend.shared.helpers import (
     get_game_manager,
     get_version_registry,
@@ -60,11 +61,21 @@ async def start_game(
     request: StartGameRequest | None = None,
 ) -> dict[str, Any]:
     try:
-        role_skill_dirs = None
-        if request is not None and request.role_versions:
-            role_skill_dirs = {}
-            for role, version_id in request.role_versions.items():
-                role_skill_dirs[role] = version_registry.get_skill_dir(role, version_id)
+        # Ordinary games always use each role's current baseline version.
+        # User-provided role_versions are ignored; we resolve baselines from
+        # the VersionRegistry instead.
+        role_skill_dirs: dict[str, Any] = {}
+        missing: list[str] = []
+        for role in STANDARD_12.role_counts:
+            baseline_version = version_registry.get_baseline(role.value)
+            if baseline_version is None:
+                missing.append(role.value)
+                continue
+            role_skill_dirs[role.value] = version_registry.get_skill_dir(role.value, baseline_version)
+        if missing:
+            raise ValueError(
+                f"registry missing baseline for roles: {', '.join(sorted(missing))}"
+            )
         game = await manager.start_game(
             seed=request.seed if request is not None else None,
             max_days=request.max_days if request is not None else 20,
@@ -198,7 +209,65 @@ def get_game_review(
     game = manager.get_game(game_id)
     if game is None:
         raise HTTPException(status_code=404, detail="game not found")
+
+    # Try DB first (authoritative per spec)
+    db_review = _read_review_from_db(game_id)
+    if db_review is not None:
+        return db_review
+
+    # Fallback: compute and cache
     review = manager.build_review(game_id)
     if review is None:
         raise HTTPException(status_code=404, detail="review not available")
     return review
+
+
+def _read_review_from_db(game_id: str) -> dict[str, Any] | None:
+    """Read structured review from SQLite. Returns None if no data."""
+    from agent.common.paths import DEFAULT as DEFAULT_PATHS
+    from storage.battle.evaluation_repo import EvaluationStore
+    from storage.battle.report_repo import ReportStore
+    from storage.schema import get_connection
+
+    db_path = DEFAULT_PATHS.battle_db_path
+    if not db_path.exists():
+        return None
+
+    conn = get_connection(db_path)
+    try:
+        # Check if evaluations exist for this game
+        eval_store = EvaluationStore(conn)
+        evaluations = eval_store.get_for_game(game_id)
+        if not evaluations:
+            return None
+
+        # Read report
+        report_store = ReportStore(conn)
+        report = report_store.get_for_game(game_id)
+
+        # Read decision reviews
+        dr_rows = conn.execute(
+            "SELECT * FROM decision_reviews WHERE game_id = ? ORDER BY player_seat, day",
+            (game_id,),
+        ).fetchall()
+
+        # Read counterfactuals
+        cf_rows = conn.execute(
+            "SELECT * FROM counterfactuals WHERE game_id = ?",
+            (game_id,),
+        ).fetchall()
+
+        result: dict[str, Any] = {
+            "game_id": game_id,
+            "source": "database",
+            "player_evaluations": evaluations,
+            "decision_reviews": [dict(r) for r in dr_rows],
+            "counterfactuals": [dict(r) for r in cf_rows],
+        }
+        if report and isinstance(report, dict):
+            result["report_summary"] = report.get("summary")
+        return result
+    except Exception:
+        return None
+    finally:
+        conn.close()

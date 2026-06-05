@@ -26,7 +26,7 @@ from agent.knowledge.skills.loader import MarkdownSkill, load_markdown_skills
 from agent.learning.dedup import deduplicate_proposals
 from agent.common import as_float as _as_float, compact_json as _compact_json, beijing_now_iso as _now
 from agent.common.paths import DEFAULT as DEFAULT_PATHS
-from storage.experience_store import ExperienceCandidateStore
+from storage.evolution.experience_repo import ExperienceCandidateStore
 from storage.replay import resolve_game_id_for_artifact
 
 _log = logging.getLogger(__name__)
@@ -248,22 +248,21 @@ async def consolidate_for_role(
     prompt_version: str = "role_consolidation_v2",
     skill_root: Path | str | None = None,
     store: "VersionStore | None" = None,
-    db_path: Path | str | None = DEFAULT_PATHS.data_dir / "wolf.db",
+    db_path: Path | str | None = DEFAULT_PATHS.data_dir / "evolution.db",
     storage_root: Path | str | None = DEFAULT_PATHS.runs_dir,
 ) -> SkillConsolidation:
-    """Consolidate mid-memory for a specific role, producing skill modification proposals.
+    """Consolidate formal experience candidates for a specific role into skill proposals.
 
     Steps:
-    1. Scan run_dir for mid-memory files (games/game*/mid_memory/*.json)
-    2. Load the most recent ``window`` analyses
-    3. Filter each analysis for the target role using ``filter_mid_memory_for_role()``
-    4. Load current skills for the role
-    5. Build a prompt with filtered analyses + current skills
-    6. Ask LLM to produce structured proposals
-    7. Parse LLM output into :class:`SkillConsolidation`
-    8. Only direct insights can generate actionable proposals
+    1. Resolve recent game artifacts in ``run_dir``
+    2. Load formal ``evolution_training`` experience candidates from evolution.db
+    3. Load current skills and rejected proposals for the role
+    4. Ask LLM to produce structured proposals
+    5. Parse LLM output into :class:`SkillConsolidation`
     """
-    # 1. Scan for mid-memory files and SQLite evidence candidates
+    # Formal self-evolution consolidation uses only training candidates, current
+    # skills, and rejected proposal history. Mid-memory reports remain analysis
+    # artifacts, not runtime/consolidation input.
     experience_candidates = _load_experience_candidates_for_role(
         run_dir=run_dir,
         role=role,
@@ -271,9 +270,8 @@ async def consolidate_for_role(
         db_path=db_path,
         storage_root=storage_root,
     )
-    mid_dir = run_dir / "games"
-    if not mid_dir.exists() and not experience_candidates:
-        _log.warning("No games directory found at %s", mid_dir)
+    if not experience_candidates:
+        _log.warning("No formal experience candidates found for role=%s in %s", role, run_dir)
         return SkillConsolidation(
             role=role,
             run_id=run_id,
@@ -283,39 +281,14 @@ async def consolidate_for_role(
             prompt_version=prompt_version,
         )
 
-    mid_memories: list[GameAnalysis] = []
-    if mid_dir.exists():
-        for game_dir in sorted(mid_dir.glob("game*")):
-            analysis_path = game_dir / "mid_memory"
-            if not analysis_path.is_dir():
-                continue
-            for json_file in sorted(analysis_path.glob("*.json")):
-                try:
-                    data = json.loads(json_file.read_text(encoding="utf-8"))
-                    analysis = load_game_analysis(
-                        data.get("game_id", ""), mid_memory_dir=analysis_path,
-                    )
-                    if analysis is not None:
-                        mid_memories.append(analysis)
-                except Exception:
-                    _log.warning("Failed to load analysis during consolidation from %s", json_file, exc_info=True)
-                    continue
-
-    # 2. Take most recent window
-    recent = mid_memories[-window:]
     source_games = sorted({
-        *(m.game_id for m in recent),
         *(str(item.get("game_id", "")) for item in experience_candidates if item.get("game_id")),
     })
 
-    # 3. Filter each analysis for the target role
-    filtered = [filter_mid_memory_for_role(m, role) for m in recent]
-
-    # 4. Load current skills + rejected proposals for the role
+    filtered: list[dict] = []
     skills = _load_role_skills_for_str(role, skill_root=skill_root)
     rejected = await store.load_rejected(role) if store is not None else []
 
-    # 5–7. Build prompt, call LLM, parse
     messages = _build_role_messages(
         filtered_analyses=filtered,
         skills=skills,
@@ -627,7 +600,14 @@ def _load_experience_candidates_for_role(
                 )
                 if game_id is None:
                     continue
-                rows.extend(store.list_candidates(game_id=game_id, role=role, limit=100))
+                rows.extend(store.list_candidates(
+                    game_id=game_id,
+                    role=role,
+                    run_type="evolution_training",
+                    learning_eligible=True,
+                    mode="formal",
+                    limit=100,
+                ))
             return rows
         finally:
             conn.close()

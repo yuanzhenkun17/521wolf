@@ -84,25 +84,33 @@ def select_skills(
     """Select role skills matching the current context.
 
     Returns:
-        Role skills matching role + action_type, sorted by name.
+        Active role skills matching role + action_type, limited to 3,
+        action-relevant skills first, then sorted by name.
     """
     idx = _get_skill_index(skill_root)
     selected: list[MarkdownSkill] = []
 
-    # Inject role skills matching role + action_type
+    # Inject role skills matching role + action_type, only active skills
     action_type = ctx.request.action_type
     for skill in idx.by_role.get(role, []):
+        if skill.status != "active":
+            continue
         if not skill.applicable_actions or action_type in skill.applicable_actions:
             if _requirements_match(skill.requires, ctx):
                 selected.append(skill)
 
-    return selected
+    # Sort action-relevant first, then by name, and limit to 3
+    selected.sort(
+        key=lambda s: (0 if action_type in s.applicable_actions else 1, s.name),
+    )
+    return selected[:3]
 
 
 def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType) -> str:
     """Format selected skills into a prompt block.
 
-    Role skills under role header, action-relevant skills listed first.
+    Only runtime_body is rendered (not system sections like Examples,
+    Deprecated Rules, Changelog, Provenance, or Evaluation Notes).
     """
     parts: list[str] = []
 
@@ -112,9 +120,10 @@ def format_skill_context(selected: list[MarkdownSkill], action_type: ActionType)
         action_skills = [s for s in selected if action_type in s.applicable_actions]
         other_skills = [s for s in selected if action_type not in s.applicable_actions]
         for skill in action_skills + other_skills:
+            body = skill.runtime_body or skill.body
             parts.append(f"### {skill.name}")
             parts.append("")
-            parts.append(skill.body)
+            parts.append(body)
             parts.append("")
 
     return chr(10).join(parts).strip()

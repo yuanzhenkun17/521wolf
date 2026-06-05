@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent.common import beijing_now_iso
+from agent.common.run_policy import RunPolicy, RunType, policy_for_run_type
 from agent.runner.shared import create_agents_for_game, create_engine
 
 _log = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ class BattleGameConfig:
     game_id: str | None = None
     output_dir: Path | None = None  # Override game log directory
     db_path: Path | None = None  # SQLite DB path
+    run_type: RunType = RunType.ORDINARY_GAME
+    model_id: str | None = None
+    model_config_hash: str | None = None
 
 
 @dataclass
@@ -76,9 +80,10 @@ class BattleRunner:
     - Persists archives, decisions, and SQLite records after each game
     """
 
-    def __init__(self, *, registry: Any | None = None, paths: Any | None = None) -> None:
+    def __init__(self, *, registry: Any | None = None, paths: Any | None = None, game_run_service: Any | None = None) -> None:
         self._registry = registry
         self._paths = paths
+        self._game_run_service = game_run_service
 
     def _resolve_paths(self) -> Any:
         """Resolve PathConfig, falling back to the project default."""
@@ -122,12 +127,9 @@ class BattleRunner:
                     except FileNotFoundError:
                         _log.warning("Missing Registry skills for %s/%s", role, baseline_id)
 
-        # 1. Generate game_id
+        # 1. Resolve games directory (but not game_id yet — service may generate it)
         games_dir = config.output_dir if config.output_dir is not None else paths.games_dir
         games_dir.mkdir(parents=True, exist_ok=True)
-        game_id = config.game_id or next_game_log_name(games_dir)
-        game_dir = games_dir / game_id
-        game_dir.mkdir(parents=True, exist_ok=True)
 
         # 2. Generate seed
         seed = config.seed if config.seed is not None else random.randint(0, 2**31 - 1)
@@ -136,23 +138,50 @@ class BattleRunner:
         roles = random_standard_roles(seed=seed)
         player_roles = {pid: r.value for pid, r in roles.items()}
 
-        # 4. Create recorders and persistence
+        # 4. Create persistence (and resolve game_id)
         db_path = config.db_path if config.db_path is not None else paths.battle_db_path
-        persistence = GamePersistence(
-            game_id=game_id,
-            game_dir=game_dir,
-            db_path=db_path,
-        )
+        run_policy = policy_for_run_type(config.run_type)
+        if self._game_run_service is not None:
+            from agent.game_run.service import GameRunConfig
+            run_config = GameRunConfig(
+                run_type=config.run_type,
+                mode="dev",
+                max_days=config.max_days,
+                model_id=config.model_id,
+                model_config_hash=config.model_config_hash,
+            )
+            handle = self._game_run_service.create_run(run_config)
+            persistence = handle.persistence
+            game_id = handle.run_id
+        else:
+            game_id = config.game_id or next_game_log_name(games_dir)
+            persistence = GamePersistence(
+                game_id=game_id,
+                game_dir=None,
+                db_path=db_path,
+                run_policy=run_policy,
+                run_metadata={
+                    "mode": "dev",
+                    "model_id": config.model_id,
+                    "model_config_hash": config.model_config_hash,
+                    "ruleset_version": "werewolf_12p_v1",
+                },
+            )
+
+        # 5. Create game directory using resolved game_id
+        game_dir = games_dir / game_id
+        game_dir.mkdir(parents=True, exist_ok=True)
+        persistence.game_dir = game_dir
 
         decision_recorder: AgentDecisionRecorder = persistence.create_decision_recorder()
         trace_recorder = AgentTraceRecorder()
 
-        # 5. Resolve LLM client
+        # 6. Resolve LLM client
         model = config.model
         if model is None:
             model = load_llm_client()
 
-        # 6. Create agents
+        # 7. Create agents
         agents = create_agents_for_game(
             roles,
             model=model,
@@ -165,7 +194,7 @@ class BattleRunner:
             paths=paths,
         )
 
-        # 7. Create engine with streaming logger
+        # 8. Create engine with streaming logger
         game_logger = persistence.create_event_logger(game_dir / "game_events.jsonl")
         engine = create_engine(
             roles,
@@ -176,7 +205,7 @@ class BattleRunner:
             logger=game_logger,
         )
 
-        # 8. Run engine and stream events
+        # 9. Run engine and stream events
         events: list[dict[str, Any]] = []
         cursor = 0
         game_error: str | None = None
@@ -195,7 +224,7 @@ class BattleRunner:
             _log.error("Battle game %s failed: %s", game_id, exc, exc_info=True)
             game_error = str(exc)
 
-        # 9. Persist trace archive
+        # 10. Persist trace archive
         try:
             trace_recorder.flush(
                 game_id=game_id,
@@ -211,7 +240,7 @@ class BattleRunner:
         except Exception:
             _log.warning("Failed to write trace archive for %s", game_id, exc_info=True)
 
-        # 10. Save game result to SQLite
+        # 11. Save game result to SQLite
         try:
             deaths = []
             if engine.state is not None:
@@ -240,81 +269,15 @@ class BattleRunner:
         finally:
             persistence.close()
 
-        # 11. Collect decisions
+        # 12. Collect decisions
         decisions = [
             {**record.to_dict(), "index": index}
             for index, record in enumerate(decision_recorder.records, start=1)
         ]
 
-        # 12. Post-game evolution: persist episodic memory and update patterns
-        try:
-            from agent.core.episodic_memory import EpisodicMemoryWriter
-            from agent.learning.providers import create_pattern_update_provider
-            from storage.evolution.pattern_repo import PatternStore
-            from storage.evolution.outcome_repo import DecisionOutcomeStore
-            from storage.evolution.situational_repo import SituationalRecordStore
-            from storage.shared.connection import get_evolution_connection
-
-            evo_conn = get_evolution_connection(paths=paths)
-
-            # -- Episodic memory: extract situational records from agent memories --
-            player_memories: dict[int, Any] = {}
-            for pid, agent in agents.items():
-                mem = getattr(agent, "memory", None)
-                if mem is not None:
-                    player_memories[pid] = mem
-
-            if player_memories:
-                writer = EpisodicMemoryWriter()
-                situational_records, decision_outcomes = writer.persist_game(
-                    game_id,
-                    player_memories=player_memories,
-                    player_roles=player_roles,
-                    winner=winner_str,
-                    decisions=decisions,
-                    game_events=events,
-                )
-                if situational_records:
-                    sit_store = SituationalRecordStore(evo_conn)
-                    sit_store.save_batch([r.to_dict() for r in situational_records])
-                if decision_outcomes:
-                    outcome_store = DecisionOutcomeStore(evo_conn)
-                    outcome_store.save_batch([o.to_dict() for o in decision_outcomes])
-
-            # -- Pattern engine: load existing patterns, update with this game ----
-            provider = create_pattern_update_provider(paths)
-            provider._ensure_engine()  # loads candidate + active + crystallized patterns
-            pat_engine = provider._engine
-
-            updated = pat_engine.update_after_game(
-                game_id=game_id,
-                decisions=decisions,
-                winner=winner_str,
-                player_roles=player_roles,
-            )
-            if updated:
-                p_store = PatternStore(evo_conn)
-                for pat in updated:
-                    p_store.save_pattern(
-                        pattern_id=pat.pattern_id,
-                        role=pat.role,
-                        situation=pat.situation,
-                        recommendation=pat.recommendation,
-                        win_rate_with=pat.win_rate_with,
-                        win_rate_without=pat.win_rate_without,
-                        sample_size=pat.sample_size,
-                        confidence=pat.confidence,
-                        alpha=pat.alpha,
-                        beta=pat.beta,
-                        status=pat.status,
-                        source_games=pat.source_games,
-                        created_at=pat.created_at,
-                        updated_at=pat.updated_at,
-                    )
-
-            evo_conn.close()
-        except Exception:
-            _log.warning("Post-game evolution persistence failed for %s", game_id, exc_info=True)
+        # 13. Post-game evolution: DISABLED per Phase 1/2 refactor.
+        #     ordinary_game must not write episodic memory, patterns, or experience.
+        #     Only evolution_training (learning_eligible=true) may write learning data.
 
         finished_at = beijing_now_iso()
         days = getattr(engine.state, "day", 0) or 0

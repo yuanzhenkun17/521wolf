@@ -105,44 +105,47 @@ class TestBatchEvolution(unittest.IsolatedAsyncioTestCase):
     async def test_batch_evolution_uses_one_snapshot_and_promotes_pack(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = VersionRegistry(Path(tmp) / "role_versions")
-            seer_base = await store.publish_skills(
-                "seer",
-                {"skill.md": "# seer base\n"},
-                source="test",
-            )
-            await store.set_baseline("seer", seer_base, expected_current=None)
-            wolf_base = await store.publish_skills(
-                "werewolf",
-                {"skill.md": "# werewolf base\n"},
-                source="test",
-            )
-            await store.set_baseline("werewolf", wolf_base, expected_current=None)
+            try:
+                seer_base = await store.publish_skills(
+                    "seer",
+                    {"skill.md": "# seer base\n"},
+                    source="test",
+                )
+                await store.set_baseline("seer", seer_base, expected_current=None)
+                wolf_base = await store.publish_skills(
+                    "werewolf",
+                    {"skill.md": "# werewolf base\n"},
+                    source="test",
+                )
+                await store.set_baseline("werewolf", wolf_base, expected_current=None)
 
-            result = await run_batch_evolution(
-                store=store,
-                roles=["seer", "werewolf"],
-                training_games=1,
-                battle_games=1,
-                role_concurrency=2,
-                game_concurrency=2,
-                llm_concurrency=2,
-                auto_promote=True,
-                selfplay_runner=_fake_selfplay,
-                consolidator=_fake_consolidator,
-                applier=_fake_applier,
-                battle_runner=_passing_battle,
-            )
+                result = await run_batch_evolution(
+                    store=store,
+                    roles=["seer", "werewolf"],
+                    training_games=1,
+                    battle_games=1,
+                    role_concurrency=2,
+                    game_concurrency=2,
+                    llm_concurrency=2,
+                    auto_promote=True,
+                    selfplay_runner=_fake_selfplay,
+                    consolidator=_fake_consolidator,
+                    applier=_fake_applier,
+                    battle_runner=_passing_battle,
+                )
 
-            self.assertEqual(
-                result.baseline_config.role_versions,
-                {"seer": seer_base, "werewolf": wolf_base},
-            )
-            self.assertEqual(set(result.accepted_roles), {"seer", "werewolf"})
-            self.assertTrue(result.combined_passed)
-            self.assertEqual(set(result.promoted_roles), {"seer", "werewolf"})
-            self.assertNotEqual(store.get_baseline("seer"), seer_base)
-            self.assertNotEqual(store.get_baseline("werewolf"), wolf_base)
-            json.dumps(result.to_dict())
+                self.assertEqual(
+                    result.baseline_config.role_versions,
+                    {"seer": seer_base, "werewolf": wolf_base},
+                )
+                self.assertEqual(set(result.accepted_roles), {"seer", "werewolf"})
+                self.assertTrue(result.combined_passed)
+                self.assertEqual(set(result.promoted_roles), {"seer", "werewolf"})
+                self.assertNotEqual(store.get_baseline("seer"), seer_base)
+                self.assertNotEqual(store.get_baseline("werewolf"), wolf_base)
+                json.dumps(result.to_dict())
+            finally:
+                store.close()
 
 
 if __name__ == "__main__":

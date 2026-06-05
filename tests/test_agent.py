@@ -512,7 +512,11 @@ class FieldNotesPromptTests(unittest.TestCase):
         self.memory = AgentMemory(player_id=5, role=Role.VILLAGER)
 
     def test_field_notes_appear_in_prompt_when_present(self):
-        """When memory_context has field_notes, they appear in the prompt."""
+        """Segment-based memory replaces field_notes in the prompt.
+
+        After Phase 3 refactor, field_notes are no longer rendered.
+        The prompt now uses segment events instead.
+        """
         ctx = AgentContext(request=self.request, player_id=5, role="villager")
         ctx = remember_step(ctx, self.memory)
         ctx = select_skills_step(ctx)
@@ -525,71 +529,22 @@ class FieldNotesPromptTests(unittest.TestCase):
             role=Role.VILLAGER,
             memory_context={
                 "private_facts": {"known_roles": {}, "seer_checks": {}, "metadata": {}},
-                "public_summary": "",
-                "self_history": "",
-                "suspicions": [],
-                "claims_seen": {},
-                "field_notes": {
-                    "game_state": {
-                        "day": 2, "phase": "exile_vote",
-                        "alive_players": [1, 2, 3, 5, 6, 8, 9, 10],
-                        "dead_players": [4, 7],
-                    },
-                    "player_profiles": {
-                        "3": {
-                            "speech_count": 2,
-                            "votes_cast": [{"target": 7, "day": 1, "phase": "exile_vote"}],
-                            "votes_received": [5, 9],
-                            "attacked": [8],
-                            "defended": [2],
-                            "followed": [9],
-                        },
-                    },
-                    "vote_patterns": ["第1天 P2/P3 同票 P9"],
-                    "key_events": ["P7 自称预言家"],
-                },
+                "open_segment": [
+                    {"text": "第2天 exile_vote 系统: P7 被放逐", "content": "P7 被放逐"},
+                ],
+                "open_segment_key": "exile_vote:2",
+                "recent_closed_segments": [],
+                "compressed_segment_summaries": [],
             },
             strategy_advice=strategy_advice,
             selected_skills=ctx.selected_skills,
             skill_context=ctx.skill_context,
         )
         combined = " ".join(m.get("content", "") for m in messages)
-        self.assertIn("结构化现场笔记", combined)
-        # Player profiles (not game_state which duplicates observation)
-        self.assertIn("投票给P7", combined)
-        self.assertIn("攻击过P8", combined)
-        self.assertIn("辩护过P2", combined)
+        # Segment-based memory should appear in prompt
+        self.assertIn("exile_vote:2", combined)
+        self.assertIn("P7", combined)
 
-    def test_format_field_notes_empty(self):
-        """Empty field_notes should produce empty string."""
-        from agent.knowledge.prompts import format_field_notes
-        self.assertEqual(format_field_notes({}), "")
-        self.assertEqual(format_field_notes({"game_state": {}}), "")
-
-    def test_format_field_notes_matches_memory_schema(self):
-        """format_field_notes should handle real AgentMemory.PlayerProfile schema."""
-        from agent.knowledge.prompts import format_field_notes
-
-        notes = {
-            "game_state": {"day": 3, "phase": "day_speech", "alive_players": [1, 2, 5], "dead_players": [3, 4]},
-            "player_profiles": {
-                "1": {
-                    "speech_count": 5,
-                    "votes_cast": [{"target": 3, "day": 2, "phase": "exile_vote"}],
-                    "votes_received": [2],
-                    "attacked": [4],
-                    "defended": [5],
-                    "followed": [],
-                },
-            },
-        }
-        result = format_field_notes(notes)
-        self.assertIn("P1", result)
-        self.assertIn("发言5次", result)
-        self.assertIn("投票给P3", result)
-        self.assertIn("被P2投票", result)
-        self.assertIn("攻击过P4", result)
-        self.assertIn("辩护过P5", result)
 
 
 
@@ -729,7 +684,8 @@ class PhaseWindowMemoryTests(unittest.TestCase):
         self.assertIn("2号发言怀疑P3", timeline_text)
         self.assertIn("2号投给3号", timeline_text)
 
-    def test_old_phase_rolls_into_summary_and_pins_role_claim(self):
+    def test_segment_data_present_in_memory_context(self):
+        """Verify segment data (open_segment, recent_closed_segments) replaces legacy fields."""
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
         visible_events = (
             self._entry(
@@ -758,30 +714,51 @@ class PhaseWindowMemoryTests(unittest.TestCase):
 
         memory_context = mem.build_context(self._request(visible_events))
 
-        summary_text = "\n".join(memory_context["rolling_summary"])
-        self.assertIn("day1/sheriff_election", summary_text)
-        self.assertIn("P1声称seer", summary_text)
-        facts = memory_context["pinned_facts"]
-        self.assertTrue(any(f["type"] == "role_claim" and f["actor"] == 1 for f in facts))
-        self.assertTrue(any(f["type"] == "claimed_check" and f["actor"] == 1 for f in facts))
+        # All events land in the open segment (same day, single-request flow)
+        open_seg = memory_context["open_segment"]
+        open_types = [e["type"] for e in open_seg]
+        self.assertIn("sheriff_speak", open_types)
+        self.assertIn("speak", open_types)
+        self.assertIn("exile_vote", open_types)
+        # Sheriff election seer claim content is preserved in the segment
+        self.assertTrue(any("预言家" in e["content"] for e in open_seg))
+        # No phase transition occurred, so no closed segments
+        self.assertEqual(memory_context["recent_closed_segments"], [])
 
-    def test_observation_facts_are_pinned_outside_hot_window(self):
+    def test_segment_events_preserve_observations_across_phases(self):
+        """Segment events contain observation data even outside the hot window."""
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
-        visible_events = (
+
+        # First request: day 1 exile_vote — puts events into exile_vote:1
+        day1_events = (
             self._entry(day=1, phase="day_speech", event_type="speak", actor=1, content="1号发言"),
             self._entry(day=1, phase="exile_vote", event_type="exile_vote", actor=2, target=3, content="2号投给3号"),
+        )
+        mem.build_context(
+            self._request(day1_events, day=1, phase=Phase.EXILE_VOTE, action_type=ActionType.EXILE_VOTE)
+        )
+
+        # Second request: day 2 day_speech — closes exile_vote:1, opens day_speech:2
+        day2_events = (
             self._entry(day=2, phase="day_speech", event_type="speak", actor=4, content="4号发言"),
         )
-
         memory_context = mem.build_context(
-            self._request(visible_events, day=2, phase=Phase.DAY_SPEECH, action_type=ActionType.SPEAK, dead_players=(3,), sheriff_id=1)
+            self._request(day2_events, day=2, phase=Phase.DAY_SPEECH, action_type=ActionType.SPEAK, dead_players=(3,), sheriff_id=1)
         )
 
-        facts = memory_context["pinned_facts"]
-        self.assertTrue(any(f["type"] == "dead_player" and f["target"] == 3 for f in facts))
-        self.assertTrue(any(f["type"] == "sheriff" and f["target"] == 1 for f in facts))
+        # Day 1 events are in a closed segment
+        closed = memory_context["recent_closed_segments"]
+        self.assertTrue(len(closed) > 0, "Day 1 events should be in closed segments")
+        closed_events = [e for seg in closed for e in seg["events"]]
+        self.assertTrue(any("1号发言" in e["content"] for e in closed_events))
+        self.assertTrue(any("2号投给3号" in e["content"] for e in closed_events))
+        # Current day event is in the open segment
+        open_seg = memory_context["open_segment"]
+        self.assertTrue(any("4号发言" in e["content"] for e in open_seg))
 
     def test_self_commitments_capture_public_stance(self):
+        # NOTE: self_commitments are legacy and not rendered in prompt;
+        # kept to verify remember_action() still populates the field.
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
         request = self._request([], phase=Phase.DAY_SPEECH, action_type=ActionType.SPEAK, candidates=())
         mem.remember_action(
@@ -795,6 +772,7 @@ class PhaseWindowMemoryTests(unittest.TestCase):
         self.assertIn("我站边P2", memory_context["self_commitments"][0]["text"])
 
     def test_prompt_uses_phase_memory_sections_instead_of_legacy_event_line(self):
+        """Prompt now uses segment-based memory, not legacy fields."""
         mem = AgentMemory(player_id=5, role=Role.VILLAGER)
         visible_events = (
             self._entry(day=1, phase="sheriff_election", event_type="sheriff_speak", actor=1, content="1号警上发言，我是预言家"),
@@ -813,11 +791,13 @@ class PhaseWindowMemoryTests(unittest.TestCase):
         )
         prompt = messages[1]["content"]
 
-        self.assertIn("前史摘要", prompt)
-        self.assertIn("不可丢关键事实", prompt)
-        self.assertIn("玩家画像", prompt)
-        self.assertIn("最近两个阶段完整时间流", prompt)
-        self.assertNotIn("结构化事实记忆", prompt)
+        # Segment-based: open segment should contain current phase events
+        self.assertIn("exile_vote:1", prompt)
+        self.assertIn("当前阶段", prompt)
+        # Legacy fields should NOT appear as prompt sections
+        self.assertNotIn("前史摘要", prompt)
+        self.assertNotIn("不可丢关键事实", prompt)
+        self.assertNotIn("玩家画像", prompt)
 
 
 class ReviewStatsTests(unittest.TestCase):

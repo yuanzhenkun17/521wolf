@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent.common import beijing_now_iso
+from agent.common.run_policy import RunType, policy_for_run_type
 from agent.runner.shared import create_agents_for_game, create_engine
 
 _log = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class TrainingConfig:
     enable_mid_memory: bool = True
     output_dir: Path | None = None
     db_path: Path | None = None
+    run_type: RunType = RunType.EVOLUTION_TRAINING
 
 
 @dataclass
@@ -114,8 +116,9 @@ class EvolutionRunner:
     - Triggers mid-memory analysis per game when enabled
     """
 
-    def __init__(self, *, paths: Any | None = None) -> None:
+    def __init__(self, *, paths: Any | None = None, game_run_service: Any | None = None) -> None:
         self._paths = paths
+        self._game_run_service = game_run_service
 
     def _resolve_paths(self) -> Any:
         if self._paths is not None:
@@ -170,6 +173,8 @@ class EvolutionRunner:
                 enable_mid_memory=config.enable_mid_memory,
                 db_path=db_path,
                 paths=paths,
+                run_type=config.run_type,
+                game_run_service=self._game_run_service,
             )
 
             results[i] = result
@@ -237,6 +242,7 @@ class EvolutionRunner:
             side_dir: Path,
             skill_dir: Path | None,
             role_skill_dirs: dict[str, Path] | None,
+            side_run_type: RunType,
         ) -> TrainingConfig:
             return TrainingConfig(
                 num_games=config.num_games,
@@ -250,17 +256,20 @@ class EvolutionRunner:
                 enable_mid_memory=False,  # No mid-memory during battle
                 output_dir=side_dir,
                 db_path=db_path,
+                run_type=side_run_type,
             )
 
         baseline_cfg = _make_training_config(
             baseline_dir,
             config.baseline_skill_dir,
             config.baseline_role_skill_dirs,
+            RunType.EVOLUTION_AB_BASELINE,
         )
         candidate_cfg = _make_training_config(
             candidate_dir,
             config.candidate_skill_dir,
             config.candidate_role_skill_dirs,
+            RunType.EVOLUTION_AB_CANDIDATE,
         )
 
         # Run both sides concurrently
@@ -310,6 +319,8 @@ async def _run_single_training_game(
     enable_mid_memory: bool,
     db_path: Path | None,
     paths: Any | None = None,
+    run_type: RunType = RunType.EVOLUTION_TRAINING,
+    game_run_service: Any | None = None,
 ) -> dict[str, Any]:
     """Run a single training game and return its result dict."""
     from agent.infrastructure.archive import AgentTraceRecorder, GameArchive
@@ -327,12 +338,30 @@ async def _run_single_training_game(
     roles = assign_roles(STANDARD_12, seed=seed)
     player_roles = {pid: r.value for pid, r in roles.items()}
 
-    # Set up persistence
-    persistence = GamePersistence(
-        game_id=game_id,
-        game_dir=game_dir,
-        db_path=db_path,
-    )
+    # Set up persistence with run policy
+    run_policy = policy_for_run_type(run_type)
+    if game_run_service is not None:
+        from agent.game_run.service import GameRunConfig
+        run_config = GameRunConfig(
+            run_type=run_type,
+            mode="formal",
+            max_days=max_days,
+        )
+        handle = game_run_service.create_run(run_config)
+        persistence = handle.persistence
+        persistence.game_dir = game_dir
+        game_id = handle.run_id
+    else:
+        persistence = GamePersistence(
+            game_id=game_id,
+            game_dir=game_dir,
+            db_path=db_path,
+            run_policy=run_policy,
+            run_metadata={
+                "mode": "formal",
+                "ruleset_version": "werewolf_12p_v1",
+            },
+        )
 
     # Create recorders (per-player trace recorders for detailed archives)
     decision_recorder: AgentDecisionRecorder = persistence.create_decision_recorder()
@@ -426,8 +455,8 @@ async def _run_single_training_game(
     except Exception:
         _log.warning("Failed to save training game to SQLite: %s", game_id, exc_info=True)
 
-    # Mid-memory analysis (evidence pipeline)
-    if enable_mid_memory and not game_error and winner_str != "error":
+    # Mid-memory analysis (evidence pipeline) — only for learning_eligible runs
+    if enable_mid_memory and run_policy.learning_eligible and not game_error and winner_str != "error":
         try:
             from agent.learning.pipeline import run_evidence_pipeline
             evidence_result = await run_evidence_pipeline(

@@ -18,12 +18,16 @@ Directory structure::
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from engine.models import ActionType, Role
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -38,6 +42,91 @@ class MarkdownSkill:
     requires: dict[str, Any] = field(default_factory=dict)
     body: str = ""
     evolution: dict[str, Any] = field(default_factory=lambda: {"enabled": False, "allowed_actions": []})
+    # Phase 3 fields
+    status: str = "active"  # "active" | "deprecated"
+    runtime_body: str = ""  # only runtime-relevant sections
+
+
+# Sections considered "runtime" — their content enters the prompt at decision time.
+_RUNTIME_SECTIONS = {"Strategy", "Heuristics", "Decision Rules", "Risk Boundaries"}
+# Sections considered "system" — useful for audit/tracking but never in prompt.
+_SYSTEM_SECTIONS = {"Examples", "Deprecated Rules", "Changelog", "Provenance", "Evaluation Notes"}
+
+# ---------------------------------------------------------------------------
+# Forbidden-content scanner
+# ---------------------------------------------------------------------------
+# Patterns that must NOT appear in runtime_body.  Each pattern is a compiled
+# regex; the human-readable label is stored alongside for violation messages.
+
+_FORBIDDEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # Player numbers: P1, P2, P10, 1号, 7号, etc.
+    (re.compile(r"\bP\d+\b", re.IGNORECASE), "player number (P1/P2/…)"),
+    (re.compile(r"\d+号"), "player number (N号)"),
+    # Game/run identifiers
+    (re.compile(r"\bgame_id\b", re.IGNORECASE), "game_id"),
+    (re.compile(r"\brun_id\b", re.IGNORECASE), "run_id"),
+    (re.compile(r"\bseed\b", re.IGNORECASE), "seed"),
+    (re.compile(r"\bsource_game_id\b", re.IGNORECASE), "source_game_id"),
+    # Model/provider identifiers
+    (re.compile(r"\bmodel_id\b", re.IGNORECASE), "model_id"),
+    (re.compile(r"\bprovider\b", re.IGNORECASE), "provider"),
+    (re.compile(r"\bgpt[-\s]?[34o]", re.IGNORECASE), "model name (GPT)"),
+    (re.compile(r"\bclaude[-\s]?(3|sonnet|opus|haiku)", re.IGNORECASE), "model name (Claude)"),
+    (re.compile(r"\bgemini\b", re.IGNORECASE), "model name (Gemini)"),
+    (re.compile(r"\bllama\b", re.IGNORECASE), "model name (Llama)"),
+    # A/B result details
+    (re.compile(r"\bwin[-_]?rate\b", re.IGNORECASE), "A/B result (win_rate)"),
+    (re.compile(r"\bvictory[-_]?count\b", re.IGNORECASE), "A/B result (victory_count)"),
+    (re.compile(r"\bloss[-_]?count\b", re.IGNORECASE), "A/B result (loss_count)"),
+    (re.compile(r"\bresult[=:]\s*\w+", re.IGNORECASE), "A/B result detail"),
+]
+
+# ---------------------------------------------------------------------------
+# Length limits
+# ---------------------------------------------------------------------------
+_RUNTIME_BODY_SOFT_LIMIT = 1800   # chars – warn
+_RUNTIME_BODY_HARD_LIMIT = 2400   # chars – error
+_SKILL_FILE_TOTAL_SOFT_LIMIT = 6000  # chars – warn (front-matter + body)
+
+
+def validate_runtime_body(body: str) -> list[str]:
+    """Return a list of forbidden-content violations found in *body*.
+
+    An empty list means the body is clean.
+    """
+    violations: list[str] = []
+    for pattern, label in _FORBIDDEN_PATTERNS:
+        if pattern.search(body):
+            violations.append(label)
+    return violations
+
+
+def check_skill_limits(skill: MarkdownSkill) -> list[str]:
+    """Return a list of limit warnings/errors for *skill*.
+
+    Items prefixed with ``"[soft]"`` are warnings; ``"[hard]"`` are errors.
+    An empty list means all limits are respected.
+    """
+    issues: list[str] = []
+    rb_len = len(skill.runtime_body)
+    if rb_len > _RUNTIME_BODY_HARD_LIMIT:
+        issues.append(
+            f"[hard] runtime_body length {rb_len} exceeds hard limit "
+            f"{_RUNTIME_BODY_HARD_LIMIT}"
+        )
+    elif rb_len > _RUNTIME_BODY_SOFT_LIMIT:
+        issues.append(
+            f"[soft] runtime_body length {rb_len} exceeds soft limit "
+            f"{_RUNTIME_BODY_SOFT_LIMIT}"
+        )
+
+    total_len = len(skill.body)
+    if total_len > _SKILL_FILE_TOTAL_SOFT_LIMIT:
+        issues.append(
+            f"[soft] skill body length {total_len} exceeds soft limit "
+            f"{_SKILL_FILE_TOTAL_SOFT_LIMIT}"
+        )
+    return issues
 
 
 _FRONT_MATTER_SEP = "---"
@@ -260,17 +349,38 @@ def _load_skill_file(path: Path, *, root: Path | None = None) -> MarkdownSkill |
         requires = {}
 
     evolution = _normalize_evolution(front.get("evolution", {}))
+    status = str(front.get("status", "active")).strip().lower()
+    if status not in ("active", "deprecated"):
+        status = "active"
 
-    return MarkdownSkill(
+    # Extract runtime_body from markdown sections
+    full_body = body.strip()
+    runtime_body = _extract_runtime_sections(full_body)
+
+    skill = MarkdownSkill(
         name=name,
         relative_path=_relative_skill_path(path, root),
         description=description,
         role=role,
         applicable_actions=actions,
         requires=requires,
-        body=body.strip(),
+        body=full_body,
         evolution=evolution,
+        status=status,
+        runtime_body=runtime_body,
     )
+
+    # --- runtime validation (warn only, never reject) ---
+    violations = validate_runtime_body(runtime_body)
+    if violations:
+        _log.warning(
+            "Skill %s has forbidden runtime content: %s", name, violations
+        )
+    limit_issues = check_skill_limits(skill)
+    for issue in limit_issues:
+        _log.warning("Skill %s limit issue: %s", name, issue)
+
+    return skill
 
 
 def _relative_skill_path(path: Path, root: Path | None) -> str:
@@ -296,3 +406,62 @@ def _normalize_evolution(value: Any) -> dict[str, Any]:
     evolution["enabled"] = bool(evolution.get("enabled", False))
     evolution["allowed_actions"] = allowed_actions
     return evolution
+
+
+def _extract_runtime_sections(body: str) -> str:
+    """Extract content under runtime section headings.
+
+    Runtime sections (Strategy, Heuristics, Decision Rules, Risk Boundaries)
+    are included in the prompt. System sections (Examples, Deprecated Rules,
+    Changelog, Provenance, Evaluation Notes) are excluded from the prompt.
+
+    If no explicit sections are found, the entire body is treated as runtime.
+    """
+    # Check if body has any section headings
+    heading_pattern = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+    headings = heading_pattern.findall(body)
+
+    if not headings:
+        # No sections — treat entire body as runtime
+        return body
+
+    # Check if any runtime sections exist
+    has_runtime = any(h.strip() in _RUNTIME_SECTIONS for h in headings)
+    if not has_runtime:
+        # No recognized runtime sections — treat entire body as runtime
+        return body
+
+    # Extract content under runtime section headings
+    sections = _split_into_sections(body)
+    runtime_parts = []
+    for heading, content in sections:
+        heading_clean = heading.strip()
+        if heading_clean in _RUNTIME_SECTIONS:
+            runtime_parts.append(f"## {heading}\n{content}")
+
+    return "\n\n".join(runtime_parts).strip()
+
+
+def _split_into_sections(body: str) -> list[tuple[str, str]]:
+    """Split markdown body into (heading, content) pairs."""
+    heading_pattern = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+    matches = list(heading_pattern.finditer(body))
+
+    if not matches:
+        return [("", body)]
+
+    sections = []
+    for i, match in enumerate(matches):
+        heading = match.group(1).strip()
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        content = body[start:end].strip()
+        sections.append((heading, content))
+
+    # Content before first heading
+    if matches[0].start() > 0:
+        pre = body[: matches[0].start()].strip()
+        if pre:
+            sections.insert(0, ("", pre))
+
+    return sections
