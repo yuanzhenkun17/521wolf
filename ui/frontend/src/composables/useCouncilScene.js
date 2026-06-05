@@ -92,7 +92,7 @@ function useCouncilScene(state, utils = {}, options = {}) {
       if (player) {
         speechByPlayer[player.id] = {
           text: `${playerLabel(player)}：${normalizePlayerText(latestPlayerLog.message)}`,
-          tone: latestPlayerLog.phase === 'night' || latestPlayerLog.visibility === 'god' ? 'night' : 'day'
+          tone: latestPlayerLog.phase === 'night' || latestPlayerLog.visibility === 'private' ? 'night' : 'day'
         }
       }
     }

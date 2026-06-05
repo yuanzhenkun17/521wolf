@@ -395,7 +395,7 @@ async def _run_single_training_game(
         winner=winner_str,
         started_at=started_at,
         finished_at=finished_at,
-        public_events=[e.to_dict() for e in engine.state.events],
+        public_events=[e.to_dict() for e in engine.logger.entries],
         decisions=all_decisions,
         final_state={"player_roles": player_roles, "winner": winner_str},
     )
@@ -419,7 +419,7 @@ async def _run_single_training_game(
             started_at=started_at,
             finished_at=finished_at,
             total_rounds=days,
-            public_events=[e.to_dict() for e in engine.state.events],
+            public_events=[e.to_dict() for e in engine.logger.entries],
             final_state=archive.final_state,
             deaths=deaths,
         )

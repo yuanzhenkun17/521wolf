@@ -189,14 +189,15 @@ def _load_decisions(conn: sqlite3.Connection, game_id: str) -> list[dict[str, An
 
 
 def _event_row(row: sqlite3.Row) -> dict[str, Any]:
+    public_val = row["public"] if "public" in row.keys() else 1
     return {
         "index": row["idx"],
         "day": row["day"],
         "phase": row["phase"],
         "event_type": row["event_type"],
         "message": row["message"] or "",
-        "level": row["level"] or "",
-        "visibility": row["visibility"] or "",
+        "public": bool(public_val),
+        "visibility": "public" if public_val else "private",
         "actor": row["actor"],
         "target": row["target"],
         "payload": _load_json(row["payload"], {}),

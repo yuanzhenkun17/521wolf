@@ -276,7 +276,7 @@ class GameManager:
                 winner=game.winner,
                 started_at="",
                 total_rounds=getattr(game.engine.state, "day", 0) or 0,
-                public_events=[e.to_dict() for e in game.engine.state.events],
+                public_events=[e.to_dict() for e in game.engine.logger.entries],
                 final_state={"player_roles": player_roles_dict, "winner": game.winner, "config": config},
                 deaths=deaths,
             )

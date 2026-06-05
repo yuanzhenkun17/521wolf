@@ -23,8 +23,8 @@ async def resolve_sheriff_death(engine: GameEngine, sheriff_id: int) -> None:
     if response.choice == "transfer" and response.target in alive:
         engine.state.sheriff_id = response.target
         engine.state.badge_destroyed = False
-        engine._log("sheriff_badge_transfer", f"警长 {sheriff_id} 号将警徽移交给 {response.target} 号")
+        engine._record("sheriff_badge_transfer", message=f"警长 {sheriff_id} 号将警徽移交给 {response.target} 号")
     else:
         engine.state.sheriff_id = None
         engine.state.badge_destroyed = True
-        engine._log("sheriff_badge_destroy", f"警长 {sheriff_id} 号撕毁警徽")
+        engine._record("sheriff_badge_destroy", message=f"警长 {sheriff_id} 号撕毁警徽")

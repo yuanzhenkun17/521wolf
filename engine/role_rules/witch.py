@@ -46,16 +46,16 @@ class WitchRule(BaseRoleRule):
             witch_ps.role_state["antidote_history"].append(
                 {"day": engine.state.day, "target": killed_target}
             )
-            engine._log("witch_result", f"女巫 {witch_id} 号使用解药救 {killed_target} 号", actor=witch_id, target=killed_target)
+            engine._record("witch_result", message=f"女巫 {witch_id} 号使用解药救 {killed_target} 号", public=False, actor=witch_id, target=killed_target)
             return True, None
         if response.choice == "poison" and metadata["can_poison"] and response.target in candidates:
             witch_ps.role_state["poison_available"] = False
             witch_ps.role_state["poison_history"].append(
                 {"day": engine.state.day, "target": response.target}
             )
-            engine._log("witch_result", f"女巫 {witch_id} 号使用毒药毒 {response.target} 号", actor=witch_id, target=response.target)
+            engine._record("witch_result", message=f"女巫 {witch_id} 号使用毒药毒 {response.target} 号", public=False, actor=witch_id, target=response.target)
             return False, response.target
-        engine._log("witch_result", f"女巫 {witch_id} 号未使用药", actor=witch_id)
+        engine._record("witch_result", message=f"女巫 {witch_id} 号未使用药", public=False, actor=witch_id)
         return False, None
 
     def valid_response(self, response: ActionResponse, candidates: tuple[int, ...], metadata: dict) -> bool:

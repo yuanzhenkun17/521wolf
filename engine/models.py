@@ -106,25 +106,11 @@ class DeathRecord:
 
 @dataclass(slots=True)
 class GameEvent:
-    """Internal engine state event for game logic.
+    """Unified game event model.
 
     GameEvent represents a state transition that occurred during game execution.
-    It is stored in GameState.events and used by the engine to drive game logic
-    (e.g., determining which events a player can see, resolving death triggers).
-
-    GameEvent is NOT persisted directly to JSONL or SQLite. For persistence,
-    replay, and UI display, use GameLogEntry (engine/logging.py) instead.
-
-    The engine creates GameEvents via ``engine._record()`` alongside GameLogEntries
-    via ``engine._log()``. The two models intentionally share core fields (day, phase,
-    actor, target, payload) but serve different roles:
-      - GameEvent: lightweight, in-memory, focused on game-rule semantics + visibility.
-      - GameLogEntry: enriched with index, message, level, visibility; persisted and
-        streamed to the frontend.
-
-    They do NOT share a common base class because GameLogEntry needs fields that
-    GameEvent does not (message, index, level, visibility), and their lifecycles
-    are independent.
+    It is the single source of truth for all game events -- used for game logic,
+    persistence, replay, and UI display.
     """
     type: str
     day: int
@@ -132,14 +118,13 @@ class GameEvent:
     actor: int | None = None
     target: int | None = None
     payload: dict[str, Any] = field(default_factory=dict)
-    # payload schemas vary by event type (e.g. "werewolf_result" carries
-    # {"votes": list[int]}, "seer_result" carries {"result": str}).
-    # See engine/role_state_types for action-metadata TypedDicts that
-    # document the most common payload shapes.
     public: bool = True
+    message: str = ""
+    index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "index": self.index,
             "event_type": self.type,
             "day": self.day,
             "phase": self.phase.value if hasattr(self.phase, "value") else self.phase,
@@ -147,6 +132,7 @@ class GameEvent:
             "target": self.target,
             "payload": dict(self.payload),
             "public": self.public,
+            "message": self.message,
         }
 
 
@@ -196,7 +182,6 @@ class GameState:
     players: dict[int, PlayerState]
     day: int = 0
     phase: Phase = Phase.SETUP
-    events: list[GameEvent] = field(default_factory=list)
     public_log: list[str] = field(default_factory=list)
     deaths: list[DeathRecord] = field(default_factory=list)
     sheriff_id: int | None = None

@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Callable
 
-from engine.logging import LogLevel
 from engine.models import ActionRequest, ActionResponse, ActionType
 from engine.public_log import append_public_event
 
@@ -32,9 +31,10 @@ async def ask(
             retry_count=retry,
             metadata=metadata or {},
         )
-        engine._log(
+        engine._record(
             "action_request",
-            f"请求 {player_id} 号执行 {action_type.value}",
+            message=f"请求 {player_id} 号执行 {action_type.value}",
+            public=False,
             actor=player_id,
             payload={
                 "action_type": action_type.value,
@@ -48,10 +48,10 @@ async def ask(
             if inspect.isawaitable(response):
                 response = await response
         except Exception as exc:
-            engine._log(
+            engine._record(
                 "agent_error",
-                f"{player_id} 号执行 {action_type.value} 失败，准备重试",
-                level=LogLevel.WARNING,
+                message=f"{player_id} 号执行 {action_type.value} 失败，准备重试",
+                public=False,
                 actor=player_id,
                 payload={
                     "action_type": action_type.value,
@@ -72,9 +72,10 @@ async def ask(
                 },
             )
             append_public_action(engine, player_id, response)
-            engine._log(
+            engine._record(
                 "action_response",
-                response_message(player_id, response),
+                message=response_message(player_id, response),
+                public=False,
                 actor=player_id,
                 target=response.target,
                 payload={
@@ -85,10 +86,10 @@ async def ask(
                 },
             )
             return response
-        engine._log(
+        engine._record(
             "invalid_response",
-            f"{player_id} 号返回非法响应，准备重试",
-            level=LogLevel.WARNING,
+            message=f"{player_id} 号返回非法响应，准备重试",
+            public=False,
             actor=player_id,
             target=getattr(response, "target", None),
             payload={
@@ -104,10 +105,10 @@ async def ask(
         target=default_response.target,
         payload={"action_type": action_type.value, "choice": default_response.choice},
     )
-    engine._log(
+    engine._record(
         "default_action",
-        f"{player_id} 号连续非法响应，使用默认动作",
-        level=LogLevel.WARNING,
+        message=f"{player_id} 号连续非法响应，使用默认动作",
+        public=False,
         actor=player_id,
         target=default_response.target,
         payload={"action_type": action_type.value, "choice": default_response.choice},

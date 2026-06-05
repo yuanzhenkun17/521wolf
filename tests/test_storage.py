@@ -468,7 +468,7 @@ class TestGameLoggerSink(unittest.TestCase):
                        payload={"cause": "werewolf"})
 
         self.assertEqual(len(sink.entries), 2)
-        self.assertEqual(sink.entries[0].event_type, "kill")
+        self.assertEqual(sink.entries[0].type, "kill")
         self.assertEqual(sink.entries[1].payload["cause"], "werewolf")
 
     def test_record_without_conn_still_works(self):

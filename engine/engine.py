@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from engine.actions import ask as ask_action
 from engine.config import GameConfig, STANDARD_12
-from engine.logging import GameLogger, LogLevel
+from engine.logging import GameLogger
 from engine.models import (
     ActionResponse,
     ActionType,
@@ -40,9 +40,9 @@ class GameEngine:
         )
         self.agents = agents
         self.logger = logger or GameLogger(stream_path=log_stream_path)
-        self._log(
+        self._record(
             "game_init",
-            f"游戏初始化：{self.config.name}，已创建 {len(self.state.players)} 名玩家",
+            message=f"游戏初始化：{self.config.name}，已创建 {len(self.state.players)} 名玩家",
             payload={"roles": {player_id: role.value for player_id, role in sorted(roles.items())}},
         )
         self._validate_setup()
@@ -129,7 +129,7 @@ class GameEngine:
                 }
                 for d in self.state.deaths
             ],
-            "events_count": len(self.state.events),
+            "events_count": len(self.logger.entries),
         }
 
     async def _ask(
@@ -143,44 +143,25 @@ class GameEngine:
     ) -> ActionResponse:
         return await ask_action(self, player_id, action_type, candidates, metadata, validator, default)
 
-    def _log(
+    def _record(
         self,
         event_type: str,
-        message: str,
+        *,
+        message: str = "",
         actor: int | None = None,
         target: int | None = None,
         payload: dict | None = None,
-        level: LogLevel = LogLevel.INFO,
+        public: bool = True,
     ) -> None:
         self.logger.record(
             day=self.state.day,
             phase=self.state.phase,
             event_type=event_type,
             message=message,
-            level=level,
             actor=actor,
             target=target,
             payload=payload or {},
-        )
-
-    def _record(
-        self,
-        event_type: str,
-        actor: int | None = None,
-        target: int | None = None,
-        payload: dict | None = None,
-        public: bool = True,
-    ) -> None:
-        self.state.events.append(
-            GameEvent(
-                type=event_type,
-                day=self.state.day,
-                phase=self.state.phase,
-                actor=actor,
-                target=target,
-                payload=payload or {},
-                public=public,
-            )
+            public=public,
         )
 
     def kill_player(self, player_id: int, cause: DeathCause) -> None:

@@ -54,9 +54,10 @@ class SeerRule(BaseRoleRule):
                 "target": response.target,
                 "result": result.value,
             }
-            engine._log(
+            engine._record(
                 "seer_result",
-                f"预言家 {seer_id} 号查验 {response.target} 号，结果 {result.value}",
+                message=f"预言家 {seer_id} 号查验 {response.target} 号，结果 {result.value}",
+                public=False,
                 actor=seer_id,
                 target=response.target,
                 payload={"result": result.value},

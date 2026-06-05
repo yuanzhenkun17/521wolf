@@ -527,7 +527,7 @@ async def _run_single_game(
         winner=winner_str,
         started_at=game_started_at,
         finished_at=_now(),
-        public_events=[e.to_dict() for e in engine.state.events],
+        public_events=[e.to_dict() for e in engine.logger.entries],
         decisions=all_decisions,
         final_state={"player_roles": player_roles, "winner": winner_str},
     )
@@ -547,7 +547,7 @@ async def _run_single_game(
             started_at=game_started_at,
             finished_at=_now(),
             total_rounds=getattr(engine.state, "day", 0) or 0,
-            public_events=[e.to_dict() for e in engine.state.events],
+            public_events=[e.to_dict() for e in engine.logger.entries],
             final_state=merged_archive.final_state,
             deaths=deaths,
         )

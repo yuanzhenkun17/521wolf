@@ -22,7 +22,7 @@ from storage.schema import get_connection
 
 if TYPE_CHECKING:
     from agent.infrastructure.decision_log import AgentDecisionRecorder
-    from engine.logging import GameLogEntry, GameLogger
+    from engine.logging import GameLogger
 
 
 class EventEntry(Protocol):
@@ -30,14 +30,13 @@ class EventEntry(Protocol):
 
     index: int
     day: int
-    phase: str
-    event_type: str
+    phase: Any
+    type: str
     message: str
-    level: Any  # has .value
-    visibility: Any  # has .value
     actor: int | None
     target: int | None
     payload: dict[str, Any]
+    public: bool
 
 
 def open_storage_connection(db_path: Path | str) -> sqlite3.Connection:
@@ -50,20 +49,19 @@ class SQLiteEventSink:
         self._game_id = game_id
 
     def record_event(self, entry: EventEntry) -> None:
+        phase_val = entry.phase.value if hasattr(entry.phase, "value") else entry.phase
         self._conn.execute(
             "INSERT INTO game_events "
-            "(game_id, idx, day, phase, event_type, message, level, "
-            "visibility, actor, target, payload) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "(game_id, idx, day, phase, event_type, message, public, actor, target, payload) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 self._game_id,
                 entry.index,
                 entry.day,
-                entry.phase,
-                entry.event_type,
+                phase_val,
+                entry.type,
                 entry.message,
-                entry.level.value,
-                entry.visibility.value,
+                1 if entry.public else 0,
                 entry.actor,
                 entry.target,
                 json.dumps(entry.payload, ensure_ascii=False),

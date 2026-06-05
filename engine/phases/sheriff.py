@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 async def run_sheriff_election(engine: GameEngine) -> int | None:
     engine.state.phase = Phase.SHERIFF_ELECTION
-    engine._log("sheriff_election_start", "警长竞选开始")
+    engine._record("sheriff_election_start", message="警长竞选开始")
     alive = engine.alive_ids()
     runners: set[int] = set()
     for player_id in alive:
@@ -44,7 +44,7 @@ async def run_sheriff_election(engine: GameEngine) -> int | None:
         if response.choice == "withdraw":
             runners.remove(player_id)
     if not runners:
-        engine._log("sheriff_election_end", "无人竞选警长", payload={"runners": []})
+        engine._record("sheriff_election_end", message="无人竞选警长", payload={"runners": []})
         return None
     votes: dict[int, int] = {}
     voters = tuple(player_id for player_id in alive if player_id not in initial_runners)
@@ -61,9 +61,9 @@ async def run_sheriff_election(engine: GameEngine) -> int | None:
     append_vote_public_events(engine, ActionType.SHERIFF_VOTE, voters, votes, prefix="警长票")
     winner = engine.resolve_exile_votes(votes)
     engine.state.sheriff_id = winner
-    engine._log(
+    engine._record(
         "sheriff_election_end",
-        f"警长竞选结束，警长为 {winner} 号" if winner is not None else "警长竞选结束，无人当选",
+        message=f"警长竞选结束，警长为 {winner} 号" if winner is not None else "警长竞选结束，无人当选",
         payload={"runners": sorted(runners), "votes": votes, "winner": winner},
     )
     return winner

@@ -41,9 +41,9 @@ async def run_night(engine: GameEngine) -> list[int]:
 
 async def run_night_without_death_reveal(engine: GameEngine) -> NightResult:
     result = await resolve_night_actions(engine)
-    engine._log(
+    engine._record(
         "night_end",
-        f"第 {engine.state.day} 夜结束，死亡结果将在警长竞选后公布",
+        message=f"第 {engine.state.day} 夜结束，死亡结果将在警长竞选后公布",
         payload={**result.payload(include_deaths=False), "deferred_death_reveal": True},
     )
     return result
@@ -52,7 +52,7 @@ async def run_night_without_death_reveal(engine: GameEngine) -> NightResult:
 async def resolve_night_actions(engine: GameEngine) -> NightResult:
     engine.state.phase = Phase.NIGHT
     engine.state.day += 1
-    engine._log("night_start", f"第 {engine.state.day} 夜开始", payload={"alive": engine.alive_ids()})
+    engine._record("night_start", message=f"第 {engine.state.day} 夜开始", payload={"alive": engine.alive_ids()})
     protected_target = None
     killed_target = None
     saved = False
@@ -102,9 +102,9 @@ async def reveal_night_deaths(
 
     night_deaths = [death.player_id for death in engine.state.deaths[night_death_start:]]
     await engine.resolve_death_triggers(night_deaths)
-    engine._log(
+    engine._record(
         event_type,
-        message or f"第 {engine.state.day} 夜结束，死亡玩家：{night_deaths or '无'}",
+        message=message or f"第 {engine.state.day} 夜结束，死亡玩家：{night_deaths or '无'}",
         payload={**result.payload(include_deaths=False), "deaths": night_deaths},
     )
     return night_deaths

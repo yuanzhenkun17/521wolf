@@ -1,121 +1,23 @@
 """Game event logging, persistence, and replay infrastructure.
 
-This module provides the persistence-oriented event model (GameLogEntry) and
-the logger (GameLogger) that records, streams, and serializes game events.
+This module provides the GameLogger that records, streams, and serializes
+game events as GameEvent objects (from engine.models).
 
-Relationship between GameEvent and GameLogEntry
-================================================
-
-The 521wolf engine uses two parallel event models that intentionally share
-core fields but serve different purposes:
-
-**GameEvent** (engine/models.py) -- internal engine state event:
-  - Created by ``engine._record()`` during game rule execution.
-  - Stored in ``GameState.events`` (in-memory list, not persisted directly).
-  - Used for game-logic decisions: visibility filtering, state transitions,
-    resolving death triggers, computing observations.
-  - Fields: type, day, phase, actor, target, payload, public (bool).
-  - Lightweight: no message text, no sequential index, no severity level.
-
-**GameLogEntry** (this module) -- persisted event for logging, replay, and UI:
-  - Created by ``GameLogger.record()`` via ``engine._log()``.
-  - Stored in ``GameLogger.entries`` and persisted to JSONL files and SQLite.
-  - Used for human-readable replay, real-time UI updates, and archival queries.
-  - Fields: index, day, phase, event_type, message, level, visibility,
-    actor, target, payload.
-  - Enriched: sequential index, human-readable message, severity level,
-    role-based visibility enum.
-
-When to use each:
-  - Game logic / rule enforcement: GameEvent (read from GameState.events).
-  - Persistence / JSONL / SQLite: GameLogEntry (via GameLogger and EventSink).
-  - UI display / replay: GameLogEntry (streamed via SSE or queried from store).
-  - Post-game analysis / review: GameLogEntry (from GameLogger.entries or DB).
-
-Why two separate models instead of a shared base:
-  - GameLogEntry needs fields GameEvent does not have (message, index, level,
-    visibility), and GameEvent has ``public: bool`` while GameLogEntry uses
-    ``visibility: LogVisibility`` -- different semantics.
-  - Their lifecycles are independent: GameEvent is ephemeral (in GameState),
-    GameLogEntry is persisted (JSONL, SQLite). Coupling them would force the
-    persistence model to inherit engine-internal semantics.
-  - The shared core fields (day, phase, actor, target, payload) are duplicated
-    by design to keep both models self-contained and focused on their role.
-
-Dict format consistency:
-  Both ``GameEvent.to_dict()`` and ``GameLogEntry.to_dict()`` use the key
-  ``"event_type"`` for the event type string. GameLogEntry.to_dict() includes
-  additional keys (index, message, level, visibility) that GameEvent.to_dict()
-  does not. The frontend normalizeEvent() function handles both formats with
-  a fallback: ``stringValue(raw.event_type) || stringValue(raw.type)``.
+GameLogger is the single source of truth for all game events. It creates
+GameEvent instances, persists them to JSONL files, streams them to an
+EventSink (e.g. SQLite), and provides serialization for replay and UI display.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
-
-class LogLevel(StrEnum):
-    INFO = "info"
-    WARNING = "warning"
-
-
-class LogVisibility(StrEnum):
-    GOD = "god"
-
-
-@dataclass(slots=True)
-class GameLogEntry:
-    """Persisted event for logging, replay, and UI display.
-
-    GameLogEntry represents a human-readable, persistable record of a game event.
-    It is created by GameLogger.record() (called via engine._log()) and stored
-    in GameLogger.entries. It is persisted to JSONL files and SQLite (via an
-    EventSink), and streamed to the frontend for real-time UI updates and replay.
-
-    GameLogEntry enriches the core event data (day, phase, event_type, actor,
-    target, payload) with fields needed for persistence and display:
-      - ``index``: sequential position in the game log (1-based).
-      - ``message``: human-readable description of the event.
-      - ``level``: severity level (info / warning) for filtering and display.
-      - ``visibility``: access control (god-only by default) for role-based visibility.
-
-    Contrast with GameEvent (engine/models.py), which is the lightweight in-memory
-    event used for game-rule semantics and stored in GameState.events. The two
-    models intentionally share core fields but serve different roles and do NOT
-    share a common base class. See the module docstring for a detailed comparison.
-    """
-    index: int
-    day: int
-    phase: str
-    event_type: str
-    message: str
-    level: LogLevel = LogLevel.INFO
-    visibility: LogVisibility = LogVisibility.GOD
-    actor: int | None = None
-    target: int | None = None
-    payload: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "index": self.index,
-            "day": self.day,
-            "phase": self.phase,
-            "event_type": self.event_type,
-            "message": self.message,
-            "level": self.level.value,
-            "visibility": self.visibility.value,
-            "actor": self.actor,
-            "target": self.target,
-            "payload": _jsonable(self.payload),
-        }
+from engine.models import GameEvent, Phase
 
 
 class EventSink(Protocol):
-    def record_event(self, entry: GameLogEntry) -> None:
+    def record_event(self, entry: GameEvent) -> None:
         ...
 
 
@@ -125,8 +27,9 @@ class GameLogger:
         stream_path: str | Path | None = None,
         sink: EventSink | None = None,
     ) -> None:
-        self.entries: list[GameLogEntry] = []
+        self.entries: list[GameEvent] = []
         self._stream_path: Path | None = Path(stream_path) if stream_path else None
+        self._next_index: int = 1
         if self._stream_path:
             self._stream_path.parent.mkdir(parents=True, exist_ok=True)
             self._stream_path.touch()
@@ -139,24 +42,30 @@ class GameLogger:
         phase: Any,
         event_type: str,
         message: str,
-        level: LogLevel = LogLevel.INFO,
-        visibility: LogVisibility = LogVisibility.GOD,
         actor: int | None = None,
         target: int | None = None,
         payload: dict[str, Any] | None = None,
-    ) -> GameLogEntry:
-        entry = GameLogEntry(
-            index=len(self.entries) + 1,
+        public: bool = True,
+    ) -> GameEvent:
+        if isinstance(phase, Phase):
+            phase_enum = phase
+        else:
+            try:
+                phase_enum = Phase(phase)
+            except ValueError:
+                phase_enum = phase  # type: ignore[assignment]
+        entry = GameEvent(
+            type=event_type,
             day=day,
-            phase=_value(phase),
-            event_type=event_type,
-            message=message,
-            level=level,
-            visibility=visibility,
+            phase=phase_enum,
             actor=actor,
             target=target,
             payload=payload or {},
+            public=public,
+            message=message,
+            index=self._next_index,
         )
+        self._next_index += 1
         self.entries.append(entry)
         if self._stream_path:
             line = json.dumps(entry.to_dict(), ensure_ascii=False, sort_keys=True)
@@ -175,9 +84,10 @@ class GameLogger:
         for entry in self.entries:
             actor = f" actor={entry.actor}" if entry.actor is not None else ""
             target = f" target={entry.target}" if entry.target is not None else ""
+            phase_str = entry.phase.value if hasattr(entry.phase, "value") else str(entry.phase)
             lines.append(
-                f"[{entry.index:04d}] 第 {entry.day} 天 {entry.phase} "
-                f"{entry.event_type}{actor}{target}: {entry.message}"
+                f"[{entry.index:04d}] 第 {entry.day} 天 {phase_str} "
+                f"{entry.type}{actor}{target}: {entry.message}"
             )
         return "\n".join(lines) + ("\n" if lines else "")
 
@@ -208,19 +118,3 @@ def next_game_log_name(log_dir: str | Path) -> str:
         if len(parts) == 2 and parts[1].isdigit():
             max_n = max(max_n, int(parts[1]))
     return f"{ts}_{max_n + 1}"
-
-
-def _value(value: Any) -> Any:
-    if isinstance(value, Enum):
-        return value.value
-    return value
-
-
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, dict):
-        return {str(_value(key)): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_jsonable(item) for item in value]
-    return value

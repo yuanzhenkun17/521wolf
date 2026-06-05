@@ -25,9 +25,9 @@ def kill_player(engine: GameEngine, player_id: int, cause: DeathCause) -> None:
         payload={"cause": cause.value},
     )
     engine._record("death", target=player_id, payload={"cause": cause.value})
-    engine._log(
+    engine._record(
         "death",
-        f"{player_id} 号死亡，原因：{cause.value}",
+        message=f"{player_id} 号死亡，原因：{cause.value}",
         target=player_id,
         payload={"cause": cause.value},
     )
@@ -72,11 +72,11 @@ def can_hunter_shoot(engine: GameEngine, player_id: int) -> bool:
 
 async def resolve_hunter_death(engine: GameEngine, hunter_id: int) -> int | None:
     if not can_hunter_shoot(engine, hunter_id):
-        engine._log("hunter_no_shot", f"猎人 {hunter_id} 号不能开枪", actor=hunter_id)
+        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号不能开枪", actor=hunter_id)
         return None
     candidates = tuple(player_id for player_id in engine.alive_ids() if player_id != hunter_id)
     if not candidates:
-        engine._log("hunter_no_shot", f"猎人 {hunter_id} 号无可射击目标", actor=hunter_id)
+        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号无可射击目标", actor=hunter_id)
         return None
     response = await engine._ask(
         hunter_id,
@@ -86,16 +86,16 @@ async def resolve_hunter_death(engine: GameEngine, hunter_id: int) -> int | None
         default=ActionResponse(ActionType.HUNTER_SHOOT),
     )
     if response.target is None:
-        engine._log("hunter_no_shot", f"猎人 {hunter_id} 号选择不开枪", actor=hunter_id)
+        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号选择不开枪", actor=hunter_id)
         return None
     hunter_ps = engine.state.players[hunter_id]
     hunter_ps.role_state["has_shot"] = True
     hunter_ps.role_state["shot_target"] = response.target
     kill_player(engine, response.target, DeathCause.HUNTER_SHOT)
     engine._record("hunter_shot", actor=hunter_id, target=response.target)
-    engine._log(
+    engine._record(
         "hunter_shot",
-        f"猎人 {hunter_id} 号开枪带走 {response.target} 号",
+        message=f"猎人 {hunter_id} 号开枪带走 {response.target} 号",
         actor=hunter_id,
         target=response.target,
     )

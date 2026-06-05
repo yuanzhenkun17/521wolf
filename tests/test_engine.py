@@ -45,7 +45,7 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             run(engine.run_until_finished(max_days=1))
 
-        events = [entry.event_type for entry in engine.logger.entries]
+        events = [entry.type for entry in engine.logger.entries]
         self.assertLess(events.index("night_end"), events.index("sheriff_election_start"))
         self.assertLess(events.index("sheriff_election_end"), events.index("death"))
 
@@ -148,7 +148,7 @@ class EngineTests(unittest.TestCase):
             )
         )
 
-        events = [entry.event_type for entry in engine.logger.entries]
+        events = [entry.type for entry in engine.logger.entries]
         self.assertEqual(response, ActionResponse(ActionType.SEER_CHECK, target=2))
         self.assertEqual(events.count("agent_error"), 2)
         self.assertIn("default_action", events)
@@ -229,7 +229,7 @@ class EngineTests(unittest.TestCase):
         speak_order = [
             entry.actor
             for entry in engine.logger.entries
-            if entry.event_type == "action_response"
+            if entry.type == "action_response"
             and entry.payload.get("action_type") == ActionType.SPEAK.value
         ]
         self.assertEqual(len(speech_order_requests), 1)
@@ -335,7 +335,7 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(engine.state.players[7].alive)
         self.assertFalse(engine.state.players[4].alive)
         self.assertEqual(engine.last_death_for(4).cause, DeathCause.HUNTER_SHOT)
-        self.assertIn("hunter_shot", [event.type for event in engine.state.events])
+        self.assertIn("hunter_shot", [event.type for event in engine.logger.entries])
 
     def test_exiled_hunter_has_last_word_but_hunter_shot_target_does_not(self):
         agents = agents_with()
@@ -367,11 +367,11 @@ class EngineTests(unittest.TestCase):
         last_word_index = next(
             index
             for index, entry in enumerate(engine.logger.entries)
-            if entry.event_type == "action_response"
+            if entry.type == "action_response"
             and entry.actor == 9
             and entry.payload.get("action_type") == ActionType.LAST_WORD.value
         )
-        exile_end_index = next(index for index, entry in enumerate(engine.logger.entries) if entry.event_type == "exile_vote_end")
+        exile_end_index = next(index for index, entry in enumerate(engine.logger.entries) if entry.type == "exile_vote_end")
 
         self.assertIn(ActionType.LAST_WORD, actions)
         self.assertLess(last_word_index, exile_end_index)
@@ -430,13 +430,13 @@ class EngineTests(unittest.TestCase):
 
         self.assertFalse(engine.state.players[7].alive)
         self.assertTrue(engine.state.players[4].alive)
-        self.assertNotIn("hunter_shot", [event.type for event in engine.state.events])
+        self.assertNotIn("hunter_shot", [event.type for event in engine.logger.entries])
 
         run(engine.run_day_speeches())
 
         hunter_actions = [request.action_type for request in agents[7].requests]
         shot_target_actions = [request.action_type for request in agents[4].requests]
-        event_types = [event.type for event in engine.state.events]
+        event_types = [event.type for event in engine.logger.entries]
         self.assertNotIn(ActionType.LAST_WORD, hunter_actions)
         self.assertIn(ActionType.HUNTER_SHOOT, hunter_actions)
         self.assertFalse(engine.state.players[4].alive)
@@ -458,7 +458,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(engine.state.winner, Winner.WEREWOLVES)
         # Game ends before hunter shot fires: all gods dead -> wolves win (variant rule)
         self.assertTrue(engine.state.players[9].alive)
-        self.assertNotIn("hunter_shot", [event.type for event in engine.state.events])
+        self.assertNotIn("hunter_shot", [event.type for event in engine.logger.entries])
         self.assertNotIn(ActionType.SPEAK, [request.action_type for request in agents[2].requests])
 
     def test_poisoned_hunter_does_not_shoot(self):
@@ -470,7 +470,7 @@ class EngineTests(unittest.TestCase):
         run(engine.resolve_hunter_death(7))
 
         self.assertTrue(engine.state.players[4].alive)
-        self.assertNotIn("hunter_shot", [event.type for event in engine.state.events])
+        self.assertNotIn("hunter_shot", [event.type for event in engine.logger.entries])
 
     def test_white_wolf_can_explode_during_speech_and_only_target_non_wolves(self):
         agents = agents_with()
@@ -498,10 +498,10 @@ class EngineTests(unittest.TestCase):
         action_responses = [
             (entry.actor, entry.payload.get("action_type"))
             for entry in engine.logger.entries
-            if entry.event_type == "action_response"
+            if entry.type == "action_response"
         ]
         explosion_index = next(
-            index for index, entry in enumerate(engine.logger.entries) if entry.event_type == "white_wolf_explosion"
+            index for index, entry in enumerate(engine.logger.entries) if entry.type == "white_wolf_explosion"
         )
         later_day_speech_entries = [
             entry
@@ -535,7 +535,7 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             run(engine.run_until_finished(max_days=1))
 
-        events = [(entry.day, entry.event_type) for entry in engine.logger.entries]
+        events = [(entry.day, entry.type) for entry in engine.logger.entries]
         self.assertIn((1, "white_wolf_explosion"), events)
         self.assertNotIn((1, "exile_vote_start"), events)
 

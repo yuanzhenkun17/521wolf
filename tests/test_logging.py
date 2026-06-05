@@ -6,7 +6,7 @@ from pathlib import Path
 from helpers import agents_with, run
 from engine.roles import standard_roles
 from engine.engine import GameEngine
-from engine.logging import GameLogger, LogVisibility, next_game_log_name
+from engine.logging import GameLogger, next_game_log_name
 from engine.models import ActionResponse, ActionType, DeathCause
 from engine.actions import response_message
 
@@ -19,7 +19,6 @@ class LoggingTests(unittest.TestCase):
             phase="night",
             event_type="night_start",
             message="第 1 夜开始",
-            visibility=LogVisibility.GOD,
             payload={"alive": [1, 2, 3]},
         )
 
@@ -28,7 +27,7 @@ class LoggingTests(unittest.TestCase):
         parsed = json.loads(jsonl.splitlines()[0])
 
         self.assertEqual(parsed["event_type"], "night_start")
-        self.assertEqual(parsed["visibility"], "god")
+        self.assertTrue(parsed["public"])
         self.assertIn("第 1 夜开始", text)
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -70,7 +69,7 @@ class LoggingTests(unittest.TestCase):
 
         run(engine.run_night())
 
-        event_types = [entry.event_type for entry in engine.logger.entries]
+        event_types = [entry.type for entry in engine.logger.entries]
         text_log = engine.logger.to_text()
 
         self.assertIn("night_start", event_types)
@@ -107,7 +106,7 @@ class LoggingTests(unittest.TestCase):
 
         run(engine.run_exile_vote())
 
-        event_types = [entry.event_type for entry in engine.logger.entries]
+        event_types = [entry.type for entry in engine.logger.entries]
         text_log = engine.logger.to_text()
 
         self.assertIn("hunter_shot", event_types)
@@ -119,7 +118,7 @@ class LoggingTests(unittest.TestCase):
 
         run(engine.resolve_death_triggers([5]))
 
-        event_types = [entry.event_type for entry in engine.logger.entries]
+        event_types = [entry.type for entry in engine.logger.entries]
         self.assertNotIn("hunter_no_shot", event_types)
 
 

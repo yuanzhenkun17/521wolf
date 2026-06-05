@@ -231,7 +231,7 @@ class BattleRunner:
                 started_at=started_at,
                 finished_at=beijing_now_iso(),
                 total_rounds=getattr(engine.state, "day", 0) or 0,
-                public_events=[e.to_dict() for e in engine.state.events] if engine.state else [],
+                public_events=[e.to_dict() for e in engine.logger.entries] if engine.state else [],
                 final_state={"player_roles": player_roles, "winner": winner_str},
                 deaths=deaths,
             )

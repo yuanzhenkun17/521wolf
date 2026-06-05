@@ -35,9 +35,10 @@ class WerewolfRule(BaseRoleRule):
             )
             votes.append(response.target)
         target = plurality(votes)
-        engine._log(
+        engine._record(
             "werewolf_result",
-            f"狼人最终击杀目标 {target} 号" if target else "狼人未产生击杀目标",
+            message=f"狼人最终击杀目标 {target} 号" if target else "狼人未产生击杀目标",
+            public=False,
             target=target,
             payload={"votes": votes},
         )

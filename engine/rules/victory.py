@@ -32,9 +32,9 @@ def check_winner(engine: GameEngine) -> Winner | None:
     engine.state.winner = determine_winner(engine)
     if engine.state.winner is not None:
         engine.state.phase = Phase.FINISHED
-        engine._log(
+        engine._record(
             "game_end",
-            f"游戏结束，胜利方：{engine.state.winner.value}",
+            message=f"游戏结束，胜利方：{engine.state.winner.value}",
             payload={"winner": engine.state.winner.value},
         )
     return engine.state.winner

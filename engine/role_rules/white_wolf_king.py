@@ -37,9 +37,9 @@ class WhiteWolfKingRule(WerewolfRule):
         engine.kill_player(player_id, DeathCause.SELF_EXPLODE)
         engine.kill_player(response.target, DeathCause.WHITE_WOLF)
         await engine.resolve_death_triggers([player_id, response.target])
-        engine._log(
+        engine._record(
             "white_wolf_explosion",
-            f"白狼王 {player_id} 号自爆并带走 {response.target} 号",
+            message=f"白狼王 {player_id} 号自爆并带走 {response.target} 号",
             actor=player_id,
             target=response.target,
         )

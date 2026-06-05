@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 async def run_day_speeches(engine: GameEngine) -> str:
     engine.state.phase = Phase.DAY_SPEECH
-    engine._log("day_speech_start", f"第 {engine.state.day} 天白天发言开始", payload={"alive": engine.alive_ids()})
+    engine._record("day_speech_start", message=f"第 {engine.state.day} 天白天发言开始", payload={"alive": engine.alive_ids()})
     await engine.resolve_pending_daybreak_actions()
     if engine.check_winner() is not None:
         return "finished"
@@ -22,7 +22,7 @@ async def run_day_speeches(engine: GameEngine) -> str:
         if interrupt is not None:
             return interrupt
         await engine._ask(player_id, ActionType.SPEAK, default=ActionResponse(ActionType.SPEAK, text=""))
-    engine._log("day_speech_end", f"第 {engine.state.day} 天白天发言结束")
+    engine._record("day_speech_end", message=f"第 {engine.state.day} 天白天发言结束")
     return "completed"
 
 
@@ -41,9 +41,9 @@ async def determine_speech_order(engine: GameEngine) -> list[int]:
     )
     ordered = speech_order_from_sheriff(alive, sheriff_id, response.choice or "forward")
     direction_name = "顺序" if response.choice != "reverse" else "逆序"
-    engine._log(
+    engine._record(
         "day_speech_order",
-        f"警长 {sheriff_id} 号选择{direction_name}发言，发言顺序为 {'、'.join(map(str, ordered))}",
+        message=f"警长 {sheriff_id} 号选择{direction_name}发言，发言顺序为 {'、'.join(map(str, ordered))}",
         actor=sheriff_id,
         payload={"sheriff_id": sheriff_id, "choice": response.choice or "forward", "order": ordered},
     )

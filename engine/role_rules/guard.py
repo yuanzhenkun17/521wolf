@@ -34,9 +34,10 @@ class GuardRule(BaseRoleRule):
         guard_ps.role_state["protect_history"].append(
             {"day": engine.state.day, "target": response.target}
         )
-        engine._log(
+        engine._record(
             "guard_result",
-            f"守卫 {guard_id} 号守护 {response.target} 号" if response.target else f"守卫 {guard_id} 号未守护",
+            message=f"守卫 {guard_id} 号守护 {response.target} 号" if response.target else f"守卫 {guard_id} 号未守护",
+            public=False,
             actor=guard_id,
             target=response.target,
         )
