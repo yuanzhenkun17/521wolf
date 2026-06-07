@@ -6,6 +6,7 @@ import json
 import sqlite3
 from typing import Any
 
+from storage.ids import public_decision_id, storage_decision_id
 from storage.interfaces import DecisionArchiveData, DecisionRecordData
 
 
@@ -20,6 +21,7 @@ class DecisionStore:
         player_id: int | None = None,
         created_at: str = "",
     ) -> str:
+        decision_id = storage_decision_id(game_id, archive.decision_id)
         self._conn.execute(
             "INSERT OR REPLACE INTO decisions "
             "(id, game_id, player_id, seat, role, day, phase, action_type, "
@@ -30,7 +32,7 @@ class DecisionStore:
             "policy_adjustments, errors, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                archive.decision_id,
+                decision_id,
                 game_id,
                 player_id,
                 archive.player_id,
@@ -68,6 +70,9 @@ class DecisionStore:
         record: DecisionRecordData,
         created_at: str = "",
     ) -> str:
+        if record.player_id is None:
+            raise ValueError("DecisionRecordData.player_id is required for SQLite persistence")
+        decision_id = storage_decision_id(game_id, record.decision_id)
         self._conn.execute(
             "INSERT OR REPLACE INTO decisions "
             "(id, game_id, seat, role, day, phase, action_type, "
@@ -76,9 +81,9 @@ class DecisionStore:
             "raw_output, source, policy_adjustments, errors, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
-                record.decision_id,
+                decision_id,
                 game_id,
-                record.player_id or 0,
+                record.player_id,
                 record.role,
                 record.day,
                 record.phase,
@@ -130,7 +135,7 @@ class DecisionStore:
         params.append(limit)
 
         rows = self._conn.execute(query, params).fetchall()
-        return [dict(row) for row in rows]
+        return [_public_decision_row(row) for row in rows]
 
     def count_by_role(self, role: str) -> dict[str, int]:
         row = self._conn.execute(
@@ -148,4 +153,15 @@ class DecisionStore:
             "SELECT * FROM decisions WHERE game_id = ? ORDER BY day, seat",
             (game_id,),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return [_public_decision_row(row) for row in rows]
+
+
+def _public_decision_row(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    game_id = str(data.get("game_id") or "")
+    storage_id = str(data.get("id") or "")
+    public_id = public_decision_id(storage_id, game_id) if game_id and storage_id else storage_id
+    data["storage_id"] = storage_id
+    data["id"] = public_id
+    data["decision_id"] = public_id
+    return data

@@ -17,7 +17,7 @@ export function buildAssessmentScores(source) {
 
   const speechByPlayer = new Map()
   decisions
-    .filter((decision) => ['speak', 'sheriff_speak'].includes(decision.action))
+    .filter((decision) => ['speech_order', 'speak', 'sheriff_speak'].includes(decision.action_type))
     .forEach((decision) => {
       if (!speechByPlayer.has(decision.actor_id)) speechByPlayer.set(decision.actor_id, [])
       speechByPlayer.get(decision.actor_id).push(decision)
@@ -33,7 +33,7 @@ export function buildAssessmentScores(source) {
     score.speech = Math.min(20 + participation + volume + Math.round(avgConf * 15), 100)
   }
 
-  const allVotes = decisions.filter((decision) => ['vote', 'sheriff_vote'].includes(decision.action))
+  const allVotes = decisions.filter((decision) => ['exile_vote', 'pk_vote', 'vote', 'sheriff_vote'].includes(decision.action_type))
   const dayNumbers = [...new Set(allLogs.filter((log) => log.day).map((log) => log.day))].sort((a, b) => a - b)
   for (const day of dayNumbers) {
     const dayVotes = allVotes.filter((decision) => (decision.day || 1) === day)
@@ -55,12 +55,12 @@ export function buildAssessmentScores(source) {
   for (const [, score] of scores) score.vote = Math.min(score.vote, 100)
 
   decisions
-    .filter((decision) => ['kill', 'werewolf_kill', 'guard', 'guard_protect', 'inspect', 'seer_check', 'poison', 'witch_act', 'antidote', 'shoot', 'hunter_shoot'].includes(decision.action))
+    .filter((decision) => ['kill', 'werewolf_kill', 'guard', 'guard_protect', 'inspect', 'seer_check', 'poison', 'witch_act', 'antidote', 'shoot', 'hunter_shoot'].includes(decision.action_type))
     .forEach((action) => {
       const score = scores.get(action.actor_id)
       if (!score) return
       const confBonus = Math.round((action.confidence || 0.7) * 5)
-      switch (action.action) {
+      switch (action.action_type) {
         case 'kill':
         case 'werewolf_kill':
           score.skill += 18 + confBonus
@@ -112,7 +112,7 @@ export function buildAssessmentScores(source) {
   }
   // Bonus for performing inspection actions (seer checks)
   decisions
-    .filter((d) => ['inspect', 'seer_check'].includes(d.action))
+    .filter((d) => ['inspect', 'seer_check'].includes(d.action_type))
     .forEach((d) => {
       const score = scores.get(d.actor_id)
       if (score) score.information += 10
@@ -141,21 +141,21 @@ export function buildAssessmentScores(source) {
   }
   // Protective actions demonstrate teamwork
   decisions
-    .filter((d) => ['guard', 'guard_protect', 'antidote'].includes(d.action))
+    .filter((d) => ['guard', 'guard_protect', 'antidote'].includes(d.action_type))
     .forEach((d) => {
       const score = scores.get(d.actor_id)
       if (score) score.cooperation += 12
     })
   // Sheriff speech participation shows engagement with group process
   decisions
-    .filter((d) => d.action === 'sheriff_speak')
+    .filter((d) => d.action_type === 'sheriff_speak')
     .forEach((d) => {
       const score = scores.get(d.actor_id)
       if (score) score.cooperation += 5
     })
   // Running for sheriff shows willingness to lead
   decisions
-    .filter((d) => d.action === 'sheriff_run' || d.action === 'sheriff_elect')
+    .filter((d) => d.action_type === 'sheriff_run' || d.action_type === 'sheriff_elect')
     .forEach((d) => {
       const score = scores.get(d.actor_id)
       if (score) score.cooperation += 6

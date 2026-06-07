@@ -24,7 +24,13 @@ class SeerRule(BaseRoleRule):
         result: dict[int, Team] = {}
         for target_str, entry in checks.items():
             if isinstance(entry, dict):
-                target_id = entry.get("target", int(target_str))
+                target_value = entry.get("target")
+                if target_value is None:
+                    target_value = target_str
+                try:
+                    target_id = int(target_value)
+                except (TypeError, ValueError):
+                    continue
                 result_str = entry.get("result", "")
                 # Convert Team string value back to Team enum
                 try:
@@ -47,7 +53,7 @@ class SeerRule(BaseRoleRule):
             default=ActionResponse(ActionType.SEER_CHECK),
         )
         if response.target is not None:
-            result = engine.state.players[response.target].team
+            result = seer_check_result(engine.state.players[response.target].role)
             seer_ps = engine.state.players[seer_id]
             seer_ps.role_state["checks"][str(response.target)] = {
                 "day": engine.state.day,
@@ -56,9 +62,21 @@ class SeerRule(BaseRoleRule):
             }
             engine._record(
                 "seer_result",
-                message=f"预言家 {seer_id} 号查验 {response.target} 号，结果 {result.value}",
+                message=f"预言家{seer_id}号查验{response.target}号，结果{seer_result_label(result)}",
                 public=False,
                 actor=seer_id,
                 target=response.target,
                 payload={"result": result.value},
             )
+
+
+def seer_check_result(role: Role) -> Team:
+    return Team.WEREWOLVES if role.team is Team.WEREWOLVES else Team.VILLAGERS
+
+
+def seer_result_label(result: Team) -> str:
+    if result is Team.WEREWOLVES:
+        return "狼人"
+    if result is Team.VILLAGERS:
+        return "好人"
+    return result.value

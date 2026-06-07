@@ -6,10 +6,34 @@ import re
 from pathlib import Path
 
 
+_WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:(?:/|$)")
+
+
 def safe_storage_id(value: str) -> str:
-    text = value.strip().replace("\\", "/")
-    text = re.sub(r"[^A-Za-z0-9_.:/-]+", "_", text)
-    return text.replace("/", "::").strip(":") or "unknown"
+    text = str(value).strip().replace("\\", "/")
+    _reject_unsafe_path_id(text)
+
+    segments = [segment for segment in text.split("/") if segment]
+    safe_segments = [
+        re.sub(r"[^A-Za-z0-9_.-]+", "_", segment)
+        for segment in segments
+    ]
+    return "::".join(segment for segment in safe_segments if segment) or "unknown"
+
+
+def _reject_unsafe_path_id(text: str) -> None:
+    if not text:
+        return
+    if "\0" in text:
+        raise ValueError("Unsafe storage id: contains NUL byte")
+    if text.startswith("//"):
+        raise ValueError(f"Unsafe storage id: absolute UNC path {text!r}")
+    if text.startswith("/"):
+        raise ValueError(f"Unsafe storage id: absolute path {text!r}")
+    if _WINDOWS_DRIVE_RE.match(text) or ":" in text:
+        raise ValueError(f"Unsafe storage id: drive or colon character {text!r}")
+    if any(segment in {".", ".."} for segment in text.split("/")):
+        raise ValueError(f"Unsafe storage id: relative path segment {text!r}")
 
 
 def artifact_game_id(
@@ -21,9 +45,9 @@ def artifact_game_id(
     if root is not None:
         try:
             relative = game_dir.resolve().relative_to(root.resolve())
-            return safe_storage_id(relative.as_posix())
         except ValueError:
-            pass
+            raise ValueError(f"Artifact path {str(game_dir)!r} is not under root {str(root)!r}") from None
+        return safe_storage_id(relative.as_posix())
     return safe_storage_id(game_dir.name or raw_game_id or "unknown")
 
 

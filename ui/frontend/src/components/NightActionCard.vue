@@ -1,5 +1,9 @@
 <script setup>
 import { computed } from 'vue'
+import {
+  displayRoleLabel,
+  normalizeHistoryDisplayText
+} from './history/historyDisplay.js'
 
 const props = defineProps({
   action: { type: Object, required: true },
@@ -12,7 +16,7 @@ const emit = defineEmits(['select'])
 
 const roleText = computed(() => {
   if (props.mode === 'vote') return props.action.actorName
-  return props.action.roleName
+  return displayRoleLabel(props.action.roleName)
 })
 
 const seatText = computed(() => {
@@ -21,12 +25,17 @@ const seatText = computed(() => {
 })
 
 const actionText = computed(() => {
-  if (props.mode === 'night' && props.nightActionDetail) return props.nightActionDetail(props.action)
-  if (props.mode === 'vote') return props.action.targetName
-  return props.action.public_summary || props.action.reason || '先过。'
+  const text = props.mode === 'night' && props.nightActionDetail
+    ? props.nightActionDetail(props.action)
+    : props.mode === 'vote'
+      ? props.action.targetName
+      : props.action.public_summary || props.action.reason || '先过。'
+  return normalizeHistoryDisplayText(text) || '暂无行动'
 })
 
-const reasonText = computed(() => props.action.private_reasoning || props.action.reason || '')
+const reasonText = computed(() =>
+  normalizeHistoryDisplayText(props.action.private_reasoning || props.action.reason || '')
+)
 const reasonPreview = computed(() => {
   const value = reasonText.value
   return value.length > 40 ? `${value.slice(0, 40)}…` : value

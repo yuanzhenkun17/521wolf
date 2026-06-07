@@ -7,17 +7,18 @@
 }
 
 .player-command-panel {
-  position: absolute;
+  position: fixed;
   left: 50%;
-  bottom: 58px;
+  bottom: clamp(18px, 4vh, 42px);
   z-index: 24;
   width: min(720px, calc(100vw - 64px));
   transform: translateX(-50%);
   display: grid;
-  grid-template-rows: 38px minmax(0, 1fr);
+  grid-template-rows: 38px auto;
   gap: 7px;
-  min-height: 154px;
-  height: 154px;
+  min-height: 166px;
+  height: auto;
+  max-height: min(224px, calc(100vh - 112px));
   padding: 10px 12px 12px;
   border: 5px solid transparent;
   border-radius: 0;
@@ -28,6 +29,8 @@
     repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 241, 194, 0.55), inset 0 0 28px rgba(88, 42, 14, 0.16);
   pointer-events: auto;
+  transform-origin: bottom center;
+  will-change: transform, opacity;
 }
 
 .player-skill-bar {
@@ -171,6 +174,7 @@
 
 .player-command-panel .primary {
   position: absolute;
+  z-index: 2;
   right: 6px;
   bottom: 6px;
   min-height: 24px;

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 
+from storage.shared.connection import record_schema_version
+
+SCHEMA_VERSION = 1
+
 REGISTRY_SCHEMA = """
 -- Role versions (primary version tracking table)
 CREATE TABLE IF NOT EXISTS role_versions (
@@ -67,4 +71,5 @@ CREATE INDEX IF NOT EXISTS idx_skill_files_version ON skill_files(version_id);
 def ensure_registry_schema(conn: sqlite3.Connection) -> None:
     """Create registry tables if they do not exist."""
     conn.executescript(REGISTRY_SCHEMA)
+    record_schema_version(conn, component="registry", version=SCHEMA_VERSION)
     conn.commit()

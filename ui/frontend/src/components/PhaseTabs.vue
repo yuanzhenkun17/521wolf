@@ -11,6 +11,45 @@ function title(page) {
   return props.pageTitle ? props.pageTitle(page) : page.key
 }
 
+function phaseName(page) {
+  return String(page?.phase || '').toLowerCase()
+}
+
+function dayNumber(page) {
+  const value = Number(page?.day || 1)
+  return Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function stepContext(page) {
+  const phase = phaseName(page)
+  if (phase === 'setup') return '开局'
+  if (phase === 'ended' || phase === 'result' || phase === 'finished') return '终局'
+  if (phase === 'sheriff' || phase === 'sheriff_vote' || phase === 'sheriff_result') return '警长'
+  return `第${dayNumber(page)}天`
+}
+
+function stepLabel(page) {
+  const phase = phaseName(page)
+  const map = {
+    setup: '准备',
+    night: '夜晚',
+    sheriff: '竞选',
+    sheriff_vote: '投票',
+    sheriff_result: '结果',
+    speech: '白天',
+    vote: '放逐',
+    ended: '结果',
+    result: '结果',
+    finished: '结果'
+  }
+  return map[phase] || title(page)
+}
+
+function stepClass(page) {
+  const phase = phaseName(page) || 'unknown'
+  return `phase-${phase.replace(/[^a-z0-9_-]/g, '-')}`
+}
+
 function selectPage(key) {
   emit('update:selectedPageKey', key)
   emit('select-page', key)
@@ -22,10 +61,16 @@ function selectPage(key) {
     <button
       v-for="page in pages"
       :key="page.key"
-      :class="{ active: selectedPageKey === page.key }"
+      :class="['phase-step', stepClass(page), { active: selectedPageKey === page.key }]"
+      :title="title(page)"
+      :aria-current="selectedPageKey === page.key ? 'step' : undefined"
       @click="selectPage(page.key)"
     >
-      {{ title(page) }}
+      <span class="phase-dot" aria-hidden="true"></span>
+      <span class="phase-copy">
+        <small>{{ stepContext(page) }}</small>
+        <b>{{ stepLabel(page) }}</b>
+      </span>
     </button>
   </nav>
 </template>

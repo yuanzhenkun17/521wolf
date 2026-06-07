@@ -16,6 +16,19 @@ from typing import Any, Protocol
 from engine.models import GameEvent, Phase
 
 
+_NIGHT_PUBLIC_EVENT_TYPES = {
+    "night_start",
+    "night_end",
+    "night_death_reveal",
+    "death",
+    "hunter_shot",
+    "hunter_no_shot",
+    "sheriff_badge_transfer",
+    "sheriff_badge_destroy",
+    "game_end",
+}
+
+
 class EventSink(Protocol):
     def record_event(self, entry: GameEvent) -> None:
         ...
@@ -61,7 +74,7 @@ class GameLogger:
             actor=actor,
             target=target,
             payload=payload or {},
-            public=public,
+            public=_resolve_public_visibility(phase_enum, event_type, public),
             message=message,
             index=self._next_index,
         )
@@ -118,3 +131,17 @@ def next_game_log_name(log_dir: str | Path) -> str:
         if len(parts) == 2 and parts[1].isdigit():
             max_n = max(max_n, int(parts[1]))
     return f"{ts}_{max_n + 1}"
+
+
+def _resolve_public_visibility(phase: Any, event_type: str, requested_public: bool) -> bool:
+    if not requested_public:
+        return False
+    if _is_night_phase(phase):
+        return event_type in _NIGHT_PUBLIC_EVENT_TYPES
+    return True
+
+
+def _is_night_phase(phase: Any) -> bool:
+    if phase is Phase.NIGHT:
+        return True
+    return str(getattr(phase, "value", phase)) == Phase.NIGHT.value

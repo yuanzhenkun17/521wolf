@@ -7,7 +7,7 @@ async def act(request: ActionRequest) -> ActionResponse:
     ...
 ```
 
-The core package intentionally does not depend on LangChain. A LangChain player can be added later by wrapping a runnable/agent behind the same `act(request)` contract.
+The `engine/` package intentionally does not depend on LangChain or LangGraph. LLM players and orchestration live in `app/` and still satisfy the same `act(request)` contract.
 
 ## Current Rule Set
 
@@ -21,7 +21,7 @@ The core package intentionally does not depend on LangChain. A LangChain player 
 ## Project Layout
 
 - `engine/`: rules engine. It owns phases, role rules, role state, voting, death chains, victory checks, logs, snapshots, and the `ActionRequest` / `ActionResponse` contract.
-- `agent/`: main Agent implementation. It owns the runtime pipeline, short-term memory, Markdown skill routing, LLM calls, parsing, policy repair, archive logs, review, self-play, evaluation, and role skill evolution.
+- `app/`: active runtime. It owns LangGraph orchestration, agent decision nodes, memory, Markdown skill routing, LLM services, review, evaluation, self-play, evidence extraction, and role skill evolution.
 - `storage/`: SQLite persistence and replay helpers for games, events, decisions, experience candidates, evolution runs, patterns, and leaderboards. Two databases: `wolf.db` (games + battle evaluation) and `evolution.db` (learning pipeline).
 - `ui/`: FastAPI backend plus Vue 3 frontend. It starts games, streams SSE events, handles human actions, reads persisted artifacts, and manages role evolution.
 - `scripts/`: maintenance scripts, including `seed_skills.py` for rebuilding the local skill registry under `data/registry/`.
@@ -31,7 +31,7 @@ Current top-level structure:
 
 ```text
 521wolf/
-├── agent/              # Agent runtime, memory, prompts, skills, LLM infra, learning_v2
+├── app/                # Active LangGraph runtime, services, business logic, entrypoints
 ├── engine/             # Rule engine, phases, role rules, role_state, logging
 ├── storage/            # SQLite schema, stores, replay
 ├── ui/
@@ -53,12 +53,12 @@ async def act(request: ActionRequest) -> ActionResponse:
     ...
 ```
 
-LLM prompting, model calls, structured memory, belief, skill routing, output parsing, and fallback behavior live in root-level `agent/`. This keeps the rules system independent from player reasoning. A future LangGraph implementation should be added behind the same `act(request)` contract, not inside the rules engine.
+LLM prompting, model calls, structured memory, belief, skill routing, output parsing, and fallback behavior live under `app/services` and `app/graphs/subgraphs/agent`. Game, evaluation, and evolution orchestration enter through `app.run`, which dispatches into LangGraph subgraphs behind the same `act(request)` contract. There is no root-level `agent/` package; active runtime code must use `app.*` entrypoints.
 
 ## Test
 
 ```bash
-uv run python -m unittest discover -s tests -v
+uv run pytest
 ```
 
 ## Seed Local Skills
@@ -97,7 +97,7 @@ export WEREWOLF_LLM_BASE_URL="https://router.shengsuanyun.com/api/v1"
 export WEREWOLF_LLM_MODEL="ali/qwen3.5-flash"
 ```
 
-The UI backend uses `agent.api.factory.load_llm_client()` and `agent.api.factory.create_agents()` to create one Agent per player. Each player receives a seat/role prompt plus the current `ActionRequest`, then returns an `ActionResponse`.
+The UI backend calls `app.run.run_game()`, `app.run.run_evaluation()`, and `app.run.run_evolution()`. Game setup uses `app.lib.game.create_agents()` / `create_engine()`, while the LLM client comes from `app.services.llm`. Each player receives a seat/role prompt plus the current `ActionRequest`, then returns an `ActionResponse`.
 Game logs are written under the configured runtime paths, typically:
 
 ```text

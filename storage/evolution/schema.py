@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 
+from storage.shared.connection import record_schema_version
+
+SCHEMA_VERSION = 1
+
 EVOLUTION_SCHEMA = """
 -- Evolution runs
 CREATE TABLE IF NOT EXISTS evolution_runs (
@@ -262,6 +266,8 @@ def ensure_evolution_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(EVOLUTION_SCHEMA)
     _ensure_exp_columns(conn)
     _ensure_rejected_columns(conn)
+    record_schema_version(conn, component="evolution", version=SCHEMA_VERSION)
+    conn.commit()
 
 
 def _ensure_exp_columns(conn: sqlite3.Connection) -> None:

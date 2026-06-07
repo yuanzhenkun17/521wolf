@@ -15,7 +15,7 @@ const messageKey = computed(() => `message-${props.game?.current_speaker_id || p
 <template>
   <section class="speaker-core">
     <header>
-      <span>DAY {{ dayLabel }}</span>
+      <span>第{{ dayLabel }}天</span>
       <i>{{ isNight ? '☾' : '☀' }}</i>
       <b>{{ isNight ? '黑夜' : '白天' }}</b>
     </header>

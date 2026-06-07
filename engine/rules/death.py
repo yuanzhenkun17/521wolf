@@ -16,7 +16,6 @@ def kill_player(engine: GameEngine, player_id: int, cause: DeathCause) -> None:
     engine.state.deaths.append(DeathRecord(player_id, cause, engine.state.day, engine.state.phase))
     if has_last_word(cause):
         engine.state.pending_last_words.append(player_id)
-    engine._record("death", target=player_id, payload={"cause": cause.value})
     engine._record(
         "death",
         message=f"{player_id} 号死亡，原因：{cause.value}",
@@ -84,12 +83,12 @@ async def resolve_hunter_death(engine: GameEngine, hunter_id: int) -> int | None
     hunter_ps.role_state["has_shot"] = True
     hunter_ps.role_state["shot_target"] = response.target
     kill_player(engine, response.target, DeathCause.HUNTER_SHOT)
-    engine._record("hunter_shot", actor=hunter_id, target=response.target)
     engine._record(
         "hunter_shot",
         message=f"猎人 {hunter_id} 号开枪带走 {response.target} 号",
         actor=hunter_id,
         target=response.target,
+        payload={"target": response.target},
     )
     await engine.resolve_sheriff_death(response.target)
     return response.target

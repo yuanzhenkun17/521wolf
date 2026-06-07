@@ -14,9 +14,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Any, Protocol
+
+STORAGE_TZ = timezone(timedelta(hours=8))
 
 
 # ---------------------------------------------------------------------------
@@ -44,12 +46,12 @@ class TimestampProvider(Protocol):
 
 
 def storage_timestamp() -> str:
-    """UTC ISO-8601 timestamp for storage ``created_at`` fields.
+    """Beijing-time ISO-8601 timestamp for storage time fields.
 
-    Replaces ``agent.common.beijing_now_iso`` with a simple, dependency-free
-    alternative.
+    Storage deliberately uses the same +08:00 timestamp semantics as the app
+    layer without importing app modules back into storage.
     """
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(STORAGE_TZ).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -297,8 +299,8 @@ class RoleHistoryData:
 
 
 # ---------------------------------------------------------------------------
-# Pure functions shared with agent/learning/evolution/store.py
-# These have no agent dependencies — only stdlib (hashlib, pathlib, json).
+# Pure skill-version helper functions.
+# These have no app-runtime dependencies — only stdlib (hashlib, pathlib, json).
 # ---------------------------------------------------------------------------
 
 

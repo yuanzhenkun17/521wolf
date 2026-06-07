@@ -1,29 +1,49 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { viewFromHash } from './gameSession.js'
 import { roleIconSpecs, roleMatches } from './useMatchUtils.js'
 
 export { roleIconSpecs, roleMatches }
 
 export const phaseText = {
-  lobby: 'LOBBY',
-  setup: 'SETUP',
-  night: 'NIGHT {day}',
-  sheriff: 'DAY {day} · SHERIFF',
-  sheriff_result: 'DAY {day} · SHERIFF RESULT',
-  speech: 'DAY {day} · SPEECH',
-  vote: 'DAY {day} · VOTE',
-  result: 'DAY {day} · RESULT',
-  ended: 'GAME OVER'
+  lobby: '选择模式',
+  setup: '开局配置',
+  night: '第{day}夜',
+  day_speech: '第{day}天 · 白天发言',
+  sheriff: '第{day}天 · 警长竞选',
+  sheriff_election: '第{day}天 · 警长竞选',
+  sheriff_result: '第{day}天 · 警长结果',
+  sheriff_election_end: '第{day}天 · 警长结果',
+  speech: '第{day}天 · 白天发言',
+  vote: '第{day}天 · 公投放逐',
+  exile_vote: '第{day}天 · 放逐投票',
+  pk_vote: '第{day}天 · 对决投票',
+  result: '第{day}天 · 结算',
+  finished: '游戏结束',
+  ended: '游戏结束'
 }
 
 export const phaseLabel = {
   lobby: '选择模式',
   setup: '开局配置',
   night: '黑夜行动',
+  night_start: '黑夜开始',
+  night_end: '黑夜结果',
+  night_result: '黑夜结果',
+  night_death_reveal: '死亡公布',
+  day_speech: '白天发言',
+  day_speech_start: '白天发言',
+  day_speech_end: '发言结束',
   sheriff: '警长竞选',
+  sheriff_election: '警长竞选',
+  sheriff_election_start: '警长竞选',
+  sheriff_election_end: '警长结果',
   sheriff_result: '警长结果',
   speech: '白天发言',
   vote: '公投放逐',
+  exile_vote: '放逐投票',
+  pk_vote: '对决投票',
   result: '结算',
+  finished: '结束',
   ended: '终局'
 }
 
@@ -53,13 +73,38 @@ export const decisionActionText = {
   seer_check: '预言查验',
   witch_act: '女巫行动',
   last_word: '遗言',
-  pk_speak: 'PK发言',
-  pk_vote: 'PK投票',
+  pk_speak: '对决发言',
+  pk_vote: '对决投票',
   hunter_shoot: '猎人开枪',
   speech_order: '发言顺序',
   sheriff_badge: '警徽处理',
   sheriff_badge_transfer: '移交警徽',
-  sheriff_badge_destroy: '撕毁警徽'
+  sheriff_badge_destroy: '撕毁警徽',
+  action_request: '行动请求',
+  action_response: '行动响应',
+  invalid_response: '非法响应',
+  default_action: '默认行动',
+  agent_error: '智能体错误',
+  night_start: '黑夜开始',
+  night_end: '黑夜结果',
+  night_result: '黑夜结果',
+  night_death_reveal: '死亡公布',
+  day_speech_start: '白天发言',
+  day_speech_end: '发言结束',
+  vote_prompt: '投票提醒',
+  exile: '放逐',
+  exile_vote_start: '放逐投票',
+  exile_vote_end: '放逐结果',
+  exile_vote_tie: '平票',
+  pk_vote_end: '对决投票结果',
+  sheriff_start: '警长竞选',
+  sheriff_result: '警长结果',
+  sheriff_election_start: '警长竞选',
+  sheriff_election_end: '警长结果',
+  game_over: '游戏结束',
+  game_end: '游戏结束',
+  finished: '结束',
+  ended: '终局'
 }
 
 export const historyPhaseTabs = [
@@ -95,7 +140,7 @@ export function compactList(value) {
 }
 
 export function fallbackCardImage(isWatch, player) {
-  if (!isWatch && player && !player.is_human) return '/cards/card-back.png'
+  if (!isWatch && player && !player.is_human && !player.role_visible) return '/cards/card-back.png'
   const hint = player?.role_hint || ''
   if (hint.includes('预言')) return '/cards/seer.png'
   if (hint.includes('女巫')) return '/cards/witch.png'
@@ -119,8 +164,20 @@ export function fallbackRoleIconImage(player) {
 
 export function createRefs() {
   const initialHash = typeof window !== 'undefined' ? window.location.hash : ''
+  const liveGame = ref(null)
+  const replayGame = ref(null)
+  const isReplayMode = ref(false)
+  const game = computed({
+    get: () => (isReplayMode.value ? replayGame.value : liveGame.value),
+    set: (value) => {
+      if (isReplayMode.value) replayGame.value = value
+      else liveGame.value = value
+    }
+  })
   return {
-    game: ref(null),
+    game,
+    liveGame,
+    replayGame,
     loading: ref(false),
     error: ref(''),
     speech: ref('我先报一下自己的视角：目前重点听发言逻辑和票型。'),
@@ -132,6 +189,7 @@ export function createRefs() {
     burstArmed: ref(false),
     playerCount: ref(12),
     watchRunning: ref(false),
+    activeSession: ref({ gameId: null, mode: '', running: false, sseConnected: false }),
     backendMode: ref('mock'),
     externalStatus: ref(null),
     archiveByGameId: ref({}),
@@ -142,11 +200,7 @@ export function createRefs() {
     judgeBoardStarting: ref(false),
     roleAssignmentComplete: ref(false),
     roleAssignmentCompleteNotice: ref(false),
-    currentView: ref(
-      initialHash === '#logs'
-        ? 'logs'
-        : (initialHash === '#evolution' ? 'evolution' : 'lobby')
-    ),
+    currentView: ref(viewFromHash(initialHash)),
     gameHistory: ref([]),
     selectedHistoryGameId: ref(null),
     selectedHistoryGame: ref(null),
@@ -154,10 +208,16 @@ export function createRefs() {
     historyPhase: ref('all'),
     assessDimension: ref('speech'),
     selectedHistoryPageKey: ref(''),
-    isReplayMode: ref(false),
+    isReplayMode,
     replaySourceGameId: ref(null),
     replayPageKey: ref(''),
+    replayCursor: ref(0),
+    replayPlaying: ref(false),
+    replaySpeed: ref(1),
+    replayTotal: ref(0),
+    replayEventLabel: ref(''),
     lastLiveGame: ref(null),
+    skipIntroGameId: ref(null),
     visualSeatSalt: ref(Math.random().toString(36).slice(2)),
     returnToMatchAvailable: ref(false),
     selectedDecision: ref(null),

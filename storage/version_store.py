@@ -117,32 +117,54 @@ class VersionStoreDB:
         return version
 
     def set_baseline(self, role: str, target_hash: str, expected_current: str) -> bool:
-        history = self.get_history(role)
-        if history.baseline != expected_current:
-            _log.warning(
-                "set_baseline: CAS mismatch for %s: expected=%s actual=%s",
-                role,
-                expected_current,
-                history.baseline,
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = self._conn.execute(
+                "SELECT id FROM role_versions WHERE role = ? ORDER BY created_at",
+                (role,),
+            ).fetchall()
+            if not rows:
+                raise FileNotFoundError(f"No history for role {role}")
+
+            baseline_row = self._conn.execute(
+                "SELECT id FROM role_versions WHERE role = ? AND status = 'baseline' LIMIT 1",
+                (role,),
+            ).fetchone()
+            current = baseline_row["id"] if baseline_row else rows[0]["id"]
+            if current != expected_current:
+                _log.warning(
+                    "set_baseline: CAS mismatch for %s: expected=%s actual=%s",
+                    role,
+                    expected_current,
+                    current,
+                )
+                self._conn.rollback()
+                return False
+
+            version = self._conn.execute(
+                "SELECT id FROM role_versions WHERE role = ? AND id = ?",
+                (role, target_hash),
+            ).fetchone()
+            if version is None:
+                _log.warning("set_baseline: target hash %s not found for %s", target_hash, role)
+                self._conn.rollback()
+                return False
+
+            self._conn.execute(
+                "UPDATE role_versions SET status = 'archived' "
+                "WHERE role = ? AND status = 'baseline' AND id <> ?",
+                (role, target_hash),
             )
-            return False
-
-        version = self.load_version(target_hash)
-        if version is None:
-            _log.warning("set_baseline: target hash %s not found for %s", target_hash, role)
-            return False
-
-        self._conn.execute(
-            "UPDATE role_versions SET status = 'archived' WHERE role = ? AND status = 'baseline'",
-            (role,),
-        )
-        self._conn.execute(
-            "UPDATE role_versions SET status = 'baseline' WHERE id = ?",
-            (target_hash,),
-        )
-        self._conn.commit()
-        _log.info("set_baseline: %s -> %s", role, target_hash)
-        return True
+            self._conn.execute(
+                "UPDATE role_versions SET status = 'baseline' WHERE role = ? AND id = ?",
+                (role, target_hash),
+            )
+            self._conn.commit()
+            _log.info("set_baseline: %s -> %s", role, target_hash)
+            return True
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def get_history(self, role: str) -> RoleHistoryData:
         rows = self._conn.execute(

@@ -37,7 +37,7 @@ class SeerCheckEntry(TypedDict):
     """One seer-check record stored inside ``SeerRoleState.checks``."""
     day: int
     target: int
-    result: str  # Team value as string (e.g. "werewolves", "villagers", "gods")
+    result: str  # Seer result Team value: "werewolves" or "villagers"
 
 
 # ---------------------------------------------------------------------------

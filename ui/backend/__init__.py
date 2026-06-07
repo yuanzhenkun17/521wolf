@@ -1,2 +1,2 @@
-"""HTTP interface for the Werewolf spectator UI."""
+"""FastAPI backend for the Vue UI."""
 

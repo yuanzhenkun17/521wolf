@@ -4,8 +4,12 @@ const props = defineProps({
   aliveMap: { type: Object, default: () => ({}) },
   sheriffId: [String, Number, null],
   selectedPage: Object,
-  roleIconImage: Function
+  roleIconImage: Function,
+  selectable: Boolean,
+  selectedPlayerId: [String, Number, null]
 })
+
+const emit = defineEmits(['select-player'])
 
 function roleImage(player) {
   return props.roleIconImage ? props.roleIconImage(player) : ''
@@ -16,6 +20,10 @@ function showSheriff(player) {
     && props.selectedPage
     && ['sheriff_result', 'speech', 'vote', 'night', 'ended'].includes(props.selectedPage.phase)
 }
+
+function selectPlayer(player) {
+  if (props.selectable) emit('select-player', player)
+}
 </script>
 
 <template>
@@ -23,7 +31,17 @@ function showSheriff(player) {
     <article
       v-for="player in players"
       :key="'history-seat-' + player.id"
-      :class="{ dead: !aliveMap[player.id], sheriff: player.is_sheriff || player.id === sheriffId }"
+      :class="{
+        dead: !aliveMap[player.id],
+        sheriff: player.is_sheriff || player.id === sheriffId,
+        selectable,
+        selected: selectable && player.id === selectedPlayerId
+      }"
+      :role="selectable ? 'button' : undefined"
+      :tabindex="selectable ? 0 : undefined"
+      @click="selectPlayer(player)"
+      @keydown.enter.prevent="selectPlayer(player)"
+      @keydown.space.prevent="selectPlayer(player)"
     >
       <img :src="roleImage(player)" :alt="player.role_hint" />
       <b>{{ player.seat }}号</b>

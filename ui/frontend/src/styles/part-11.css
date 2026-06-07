@@ -138,21 +138,36 @@
 }
 
 .player-command-in-enter-active {
-  animation: playerCommandSlideIn 560ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: playerCommandSlideIn 520ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .player-command-in-leave-active {
-  animation: playerCommandSlideIn 240ms cubic-bezier(0.22, 1, 0.36, 1) reverse;
+  animation: playerCommandSlideOut 240ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @keyframes playerCommandSlideIn {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(42px);
+    transform: translateX(-50%) translateY(calc(100% + 72px)) scale(0.98);
+  }
+  72% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-6px) scale(1);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes playerCommandSlideOut {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(calc(100% + 72px)) scale(0.98);
   }
 }
 
@@ -194,11 +209,17 @@
   justify-content: center;
   gap: 6px;
   padding: 2px 4px;
-  transition: opacity 0.2s ease;
+  border-radius: 5px;
+  transition: opacity 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .role-grid article.speaking {
   filter: drop-shadow(0 0 8px rgba(242, 202, 80, 0.5));
+}
+
+.role-grid article.linked {
+  background: rgba(255, 239, 198, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(91, 47, 18, 0.26);
 }
 
 .role-grid article.dead {
@@ -218,6 +239,11 @@
   line-height: 1;
   font-weight: 900;
   text-shadow: 0 1px 0 rgba(255, 236, 183, 0.62);
+}
+
+.role-grid article.linked .role-grid-seat b {
+  color: #2d1408;
+  text-shadow: 0 0 10px rgba(242, 202, 80, 0.72), 0 1px 0 rgba(255, 236, 183, 0.72);
 }
 
 .sheriff-badge-sm {

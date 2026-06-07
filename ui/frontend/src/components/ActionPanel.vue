@@ -19,6 +19,7 @@ const props = defineProps({
   pendingChoiceOptions: { type: Array, default: () => [] },
   actionInstruction: { type: String, default: '' },
   speechCountdownText: { type: String, default: '' },
+  canVotePlayers: { type: Array, default: () => [] },
   actionCandidates: { type: Array, default: () => [] },
   whiteWolfTargets: { type: Array, default: () => [] },
   needsTarget: Boolean,
@@ -37,15 +38,40 @@ const emit = defineEmits([
   'update:actionChoice',
   'update:burstArmed',
   'update:actionTarget',
+  'target-hover',
   'submit-speech',
   'submit-action'
 ])
 
 const waitingFor = computed(() => props.game?.waiting_for || '')
-const targetOptions = computed(() => (props.burstArmed ? props.whiteWolfTargets : props.actionCandidates))
-const hasPanelAction = computed(() => Boolean(props.pendingActionType || props.burstArmed))
-const needsChoice = computed(() => props.pendingChoiceOptions.length > 0 && props.pendingActionType !== 'witch_act')
-const panelNeedsTarget = computed(() => props.burstArmed || props.needsTarget)
+const pendingHumanAction = computed(() => props.game?.pending_human_action || null)
+const isPendingForHuman = computed(() => {
+  if (!pendingHumanAction.value) return false
+  const pendingPlayerId = Number(pendingHumanAction.value.player_id)
+  const humanPlayerId = Number(props.humanPlayer?.id || props.game?.human_player_id)
+  return !pendingPlayerId || !humanPlayerId || pendingPlayerId === humanPlayerId
+})
+const isVoteWaiting = computed(() => waitingFor.value === 'vote')
+const isWhiteWolfExplodePending = computed(() => props.pendingActionType === 'white_wolf_explode')
+const activeBurstArmed = computed(() => props.burstArmed && isWhiteWolfExplodePending.value && props.canWhiteWolfBurst)
+const targetOptions = computed(() => {
+  if (activeBurstArmed.value) return props.whiteWolfTargets
+  if (isVoteWaiting.value && !props.actionCandidates.length) return props.canVotePlayers
+  return props.actionCandidates
+})
+const hasPanelAction = computed(() => Boolean(props.pendingActionType || activeBurstArmed.value || isVoteWaiting.value))
+const hasHumanTurnContent = computed(() => waitingFor.value === 'speech' || hasPanelAction.value)
+const shouldShowPanel = computed(() =>
+  props.roleAssignmentComplete &&
+  !props.isWatch &&
+  !props.isReplayMode &&
+  isPendingForHuman.value &&
+  hasHumanTurnContent.value
+)
+const needsChoice = computed(() => props.pendingChoiceOptions.length > 0 && props.pendingActionType !== 'witch_act' && !activeBurstArmed.value)
+const panelNeedsTarget = computed(() => activeBurstArmed.value || props.needsTarget || isVoteWaiting.value)
+const selectedTargetPlayer = computed(() => targetOptions.value.find((player) => Number(player?.id) === Number(props.actionTarget)))
+const selectedTargetLabel = computed(() => selectedTargetPlayer.value ? targetLabel(selectedTargetPlayer.value) : '')
 const canSubmitPanelAction = computed(() => {
   if (props.loading) return false
   if (needsChoice.value && !props.actionChoice) return false
@@ -61,6 +87,15 @@ function optionValue(value) {
 
 function label(player) {
   return props.playerLabel ? props.playerLabel(player) : `${player?.seat || player?.id || ''}号`
+}
+
+function targetLabel(player) {
+  const fallback = player?.displaySeat ?? player?.seat ?? player?.id
+  const raw = props.playerLabel ? props.playerLabel(player) : (fallback == null || fallback === '' ? '玩家' : `${fallback}号`)
+  const text = String(raw || '').trim()
+  const seatMatch = text.match(/^\s*(\d+)\s*号/)
+  if (seatMatch) return `${seatMatch[1]}号`
+  return fallback == null || fallback === '' ? '玩家' : `${fallback}号`
 }
 
 function roleImage(player) {
@@ -82,6 +117,10 @@ function setActionTarget(value) {
   emit('update:actionTarget', optionValue(value))
 }
 
+function hoverTarget(value) {
+  emit('target-hover', value == null ? null : optionValue(value))
+}
+
 function skipWitchAction() {
   emit('update:witchChoice', 'skip')
   emit('update:actionTarget', null)
@@ -89,21 +128,25 @@ function skipWitchAction() {
 }
 
 function submitTargetAction() {
-  if (props.burstArmed) {
+  if (activeBurstArmed.value) {
     emit('submit-action', { action: 'white_wolf_burst', targetId: props.actionTarget, choice: 'burst' })
     return
   }
   emit('submit-action', {
-    action: props.pendingActionType,
+    action: props.pendingActionType || 'exile_vote',
     targetId: props.actionTarget,
-    choice: props.actionChoice || props.witchChoice
+    choice: props.pendingActionType === 'witch_act' ? props.witchChoice : (props.actionChoice || null)
   })
 }
 </script>
 
 <template>
   <Transition name="player-command-in">
-    <section v-if="roleAssignmentComplete && !isWatch && !isReplayMode" class="player-command-panel">
+    <section
+      v-if="shouldShowPanel"
+      class="player-command-panel"
+      :class="{ 'has-panel-action': hasPanelAction, 'has-action-instruction': Boolean(actionInstruction) }"
+    >
       <div class="player-skill-bar">
         <span class="player-seat-chip">
           <img v-if="humanPlayer" :src="roleImage(humanPlayer)" :alt="roleName" />
@@ -139,9 +182,9 @@ function submitTargetAction() {
             </button>
           </div>
           <button
-            v-if="isHumanWhiteWolf"
+            v-if="isHumanWhiteWolf && isWhiteWolfExplodePending"
             class="skill-card image-card white-wolf-card"
-            :class="{ active: burstArmed, used: skillState.white_wolf_burst_used }"
+            :class="{ active: activeBurstArmed, used: skillState.white_wolf_burst_used }"
             :disabled="loading || !canWhiteWolfBurst"
             title="白狼王自爆"
             aria-label="白狼王自爆"
@@ -157,7 +200,7 @@ function submitTargetAction() {
         {{ actionInstruction }}
       </div>
 
-      <div v-if="hasPanelAction" class="player-action-box">
+      <div v-if="hasPanelAction" class="player-action-box" :class="{ 'has-choice': needsChoice, 'has-target': panelNeedsTarget }">
         <div v-if="needsChoice" class="choice-action-row">
           <button
             v-for="option in pendingChoiceOptions"
@@ -170,19 +213,36 @@ function submitTargetAction() {
           </button>
         </div>
         <div v-if="panelNeedsTarget" class="target-action-row">
-          <select :value="actionTarget ?? ''" :disabled="loading || !targetOptions.length" @change="setActionTarget($event.target.value)">
-            <option value="">{{ targetOptions.length ? '选择目标' : '暂无目标' }}</option>
-            <option v-for="player in targetOptions" :key="player.id" :value="player.id">
-              {{ label(player) }}
-            </option>
-          </select>
+          <div class="target-action-head">
+            <span>目标</span>
+            <b>{{ selectedTargetLabel || (targetOptions.length ? '未选择' : '暂无目标') }}</b>
+          </div>
+          <div class="target-choice-strip" role="listbox" aria-label="选择目标">
+            <button
+              v-for="player in targetOptions"
+              :key="player.id"
+              type="button"
+              class="target-choice"
+              :class="{ active: Number(actionTarget) === Number(player.id), dead: player.alive === false }"
+              :disabled="loading"
+              :aria-selected="Number(actionTarget) === Number(player.id)"
+              role="option"
+              @mouseenter="hoverTarget(player.id)"
+              @mouseleave="hoverTarget(null)"
+              @focus="hoverTarget(player.id)"
+              @blur="hoverTarget(null)"
+              @click="setActionTarget(player.id)"
+            >
+              <span>{{ targetLabel(player) }}</span>
+            </button>
+          </div>
         </div>
         <button class="primary action-submit" :disabled="!canSubmitPanelAction" @click="submitTargetAction">
           确认
         </button>
       </div>
 
-      <form v-else class="player-chat-box" @submit.prevent="emit('submit-speech')">
+      <form v-else-if="waitingFor === 'speech'" class="player-chat-box" @submit.prevent="emit('submit-speech')">
         <textarea
           :value="speech"
           :disabled="loading"
@@ -191,6 +251,7 @@ function submitTargetAction() {
         ></textarea>
         <button class="primary" :disabled="loading || waitingFor !== 'speech'">发送</button>
       </form>
+
     </section>
   </Transition>
 

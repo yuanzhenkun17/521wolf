@@ -108,18 +108,29 @@ const mockEvolutionRuns = [
     started_at: '2026-06-05T08:20:00',
     parent_hash: 'base-seer-20260604',
     candidate_hash: 'cand-seer-review-a4',
+    config: { roles: ['seer'], training_games: 20, battle_games: 10, max_days: 5, auto_promote: false },
     training_games: 20,
     battle_games: 10,
     training_completed: 20,
     battle_completed: 10,
     battle_result: {
-      candidate: { avg_role_weighted_score: 0.69, target_side_win_rate: 0.64 },
-      baseline: { avg_role_weighted_score: 0.58, target_side_win_rate: 0.55 },
+      target_team: 'villagers',
+      candidate: { target_win_rate: 0.64 },
+      baseline: { target_win_rate: 0.55 },
+      candidate_win_rate: 0.64,
+      baseline_win_rate: 0.55,
+      win_rate_delta: 0.09,
+      significant: false,
       recommendation: 'promote'
     },
     combined_battle_result: {
-      candidate: { avg_role_weighted_score: 0.69, target_side_win_rate: 0.64 },
-      baseline: { avg_role_weighted_score: 0.58, target_side_win_rate: 0.55 },
+      target_team: 'villagers',
+      candidate: { target_win_rate: 0.64 },
+      baseline: { target_win_rate: 0.55 },
+      candidate_win_rate: 0.64,
+      baseline_win_rate: 0.55,
+      win_rate_delta: 0.09,
+      significant: false,
       recommendation: 'promote'
     }
   },
@@ -134,6 +145,7 @@ const mockEvolutionRuns = [
     started_at: '2026-06-05T07:35:00',
     parent_hash: 'base-witch-20260604',
     candidate_hash: 'cand-witch-review-a5',
+    config: { roles: ['witch'], training_games: 20, battle_games: 10, max_days: 5, auto_promote: false },
     training_games: 20,
     battle_games: 10,
     training_completed: 20,
@@ -148,7 +160,7 @@ const mockEvolutionRuns = [
 
 const mockEvolutionBatches = [
   {
-    kind: 'batch_role_evolution_run',
+    kind: 'role_evolution_batch',
     schema_version: 1,
     batch_id: 'mock-batch-all-roles',
     roles: MOCK_EVOLUTION_ROLES,
@@ -156,12 +168,37 @@ const mockEvolutionBatches = [
     stage: 'combined_battling',
     current_stage: 'combined_battling',
     started_at: '2026-06-05T06:10:00',
+    config: { roles: MOCK_EVOLUTION_ROLES, training_games: 20, battle_games: 10, max_days: 5, auto_promote: false },
     training_games: 20,
     battle_games: 10,
     training_completed: 140,
     battle_completed: 42,
-    role_concurrency: 2,
-    run_ids: ['mock-evo-seer-review', 'mock-evo-witch-active']
+    runs: ['mock-evo-seer-review', 'mock-evo-witch-active']
+  }
+]
+
+let mockBenchmarkCounter = 1
+
+const mockBenchmarkBatches = [
+  {
+    kind: 'benchmark_batch',
+    schema_version: 1,
+    batch_id: 'mock-bench-model-villager',
+    roles: ['villager'],
+    status: 'completed',
+    started_at: '2026-06-05T09:20:00',
+    finished_at: '2026-06-05T09:24:00',
+    config: { roles: ['villager'], battle_games: 10, max_days: 5 },
+    result: {
+      batch_id: 'mock-bench-model-villager',
+      game_count: 10,
+      completed: 10,
+      errored: 0,
+      score_summary: { game_count: 10 },
+      fairness: { is_fair: true, reason: 'mock' },
+      rankable: true,
+      rankable_reason: ''
+    }
   }
 ]
 
@@ -202,9 +239,6 @@ const mockSelfplayRuns = [
     max_days: 20,
     enable_sheriff: true,
     enable_batch_dream: false,
-    game_concurrency: 2,
-    llm_concurrency: 5,
-    llm_rpm: 60,
     created_at: '2026-06-05T08:40:00',
     started_at: '2026-06-05T08:40:00',
     artifact_run_id: 'mock-selfplay-eval-a',
@@ -222,9 +256,6 @@ const mockSelfplayRuns = [
     max_days: 20,
     enable_sheriff: true,
     enable_batch_dream: true,
-    game_concurrency: 1,
-    llm_concurrency: 5,
-    llm_rpm: 60,
     created_at: '2026-06-05T10:10:00',
     started_at: '2026-06-05T10:10:00',
     artifact_run_id: 'mock-selfplay-live-b'
@@ -559,6 +590,7 @@ function baseGame(mode = 'watch', scenario = 'good_win') {
     human_player_id: mode === 'play' ? 1 : null,
     waiting_for: 'none',
     pending_action: null,
+    pending_human_action: null,
     skill_state: {
       witch_antidote_used: false,
       witch_poison_used: false,
@@ -2067,16 +2099,167 @@ function ensureSeedHistory() {
   writeStoredHistory(archivedGames)
 }
 
+const MOCK_SPEECH_ACTIONS = new Set(['speak', 'speech', 'sheriff_speak', 'pk_speak', 'last_word'])
+const MOCK_VOTE_ACTIONS = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
+const MOCK_NO_TARGET_ACTIONS = new Set(['sheriff_run', 'sheriff_withdraw', 'speech_order'])
+
+function isWolfRoleName(role = '') {
+  return String(role || '').includes('狼人') || String(role || '').includes('白狼王')
+}
+
+function canonicalMockAction(actionType = '') {
+  if (actionType === 'speech') return 'speak'
+  if (actionType === 'vote') return 'exile_vote'
+  if (actionType === 'white_wolf_burst' || actionType === 'white_wolf_explosion') return 'white_wolf_explode'
+  return actionType || ''
+}
+
+function mockWaitingFor(actionType) {
+  if (MOCK_SPEECH_ACTIONS.has(actionType)) return 'speech'
+  if (MOCK_VOTE_ACTIONS.has(actionType)) return 'vote'
+  return 'action'
+}
+
+function mockPromptForAction(actionType) {
+  const prompts = {
+    sheriff_speak: '轮到你发表警长竞选发言。',
+    last_word: '轮到你发表遗言。',
+    exile_vote: '请选择放逐投票目标。',
+    pk_vote: '请选择 PK 投票目标。',
+    sheriff_vote: '请选择警长投票目标。',
+    guard_protect: '请选择守护目标。',
+    werewolf_kill: '请选择狼队夜刀目标。',
+    seer_check: '请选择查验目标。',
+    witch_act: '请选择女巫行动。',
+    hunter_shoot: '请选择开枪目标。',
+    white_wolf_explode: '请选择白狼王自爆目标。'
+  }
+  return prompts[actionType] || '请选择本轮行动。'
+}
+
+function mockCandidateIds(game, actionType) {
+  const humanId = Number(game.human_player_id)
+  const alive = game.players.filter((player) => player.alive)
+  if (MOCK_SPEECH_ACTIONS.has(actionType) || MOCK_NO_TARGET_ACTIONS.has(actionType)) return []
+  if (actionType === 'guard_protect') return alive.map((player) => player.id)
+  if (actionType === 'werewolf_kill') {
+    return alive
+      .filter((player) => player.id !== humanId && !isWolfRoleName(player.role_hint))
+      .map((player) => player.id)
+  }
+  return alive
+    .filter((player) => player.id !== humanId)
+    .map((player) => player.id)
+}
+
+function mockPendingMetadata(game, actionType, event = {}) {
+  if (actionType === 'witch_act') {
+    return {
+      can_save: !game.skill_state?.witch_antidote_used,
+      can_poison: !game.skill_state?.witch_poison_used,
+      antidote_available: !game.skill_state?.witch_antidote_used,
+      poison_available: !game.skill_state?.witch_poison_used,
+      attacked_player: event.decision?.target_id ?? event.log?.target_id ?? null
+    }
+  }
+  if (actionType === 'speech_order') return { choices: ['forward', 'reverse'] }
+  return {}
+}
+
+function mockPendingForEvent(game, event = {}) {
+  if (!game || game.mode !== 'play' || !game.human_player_id || game.winner) return null
+  const humanId = Number(game.human_player_id)
+  const actorId = Number(event.decision?.actor_id ?? event.log?.actor_id ?? 0)
+  if (!actorId || actorId !== humanId) return null
+
+  const actionType = canonicalMockAction(event.decision?.action || event.log?.type || event.log?.event_type || 'speak')
+  if (!actionType) return null
+  const human = game.players.find((player) => player.id === humanId)
+  if (!human?.alive && actionType !== 'last_word') return null
+
+  const candidateIds = mockCandidateIds(game, actionType)
+  return {
+    game_id: game.game_id,
+    player_id: humanId,
+    action_type: actionType,
+    day: event.day || game.day || 1,
+    phase: event.phase || game.phase,
+    prompt: mockPromptForAction(actionType),
+    candidate_ids: candidateIds,
+    metadata: mockPendingMetadata(game, actionType, event),
+    observation: {
+      role: human?.role_hint || '',
+      role_state: {
+        antidote_available: !game.skill_state?.witch_antidote_used,
+        poison_available: !game.skill_state?.witch_poison_used,
+        has_exploded: Boolean(game.skill_state?.white_wolf_burst_used)
+      }
+    }
+  }
+}
+
+function setPendingHumanEvent(game, event, pending) {
+  const actionType = canonicalMockAction(pending.action_type)
+  const waitingFor = mockWaitingFor(actionType)
+  game.phase = event.phase || game.phase
+  game.day = event.day || game.day || 1
+  game.current_speaker_id = waitingFor === 'speech' ? Number(game.human_player_id) : null
+  game.waiting_for = waitingFor
+  game.pending_human_action = pending
+  game.pending_action = waitingFor === 'speech'
+    ? null
+    : {
+        type: actionType,
+        prompt: pending.prompt,
+        candidate_ids: pending.candidate_ids || [],
+        options: pending.metadata || {}
+      }
+}
+
+function clearPendingHumanAction(game) {
+  game.pending_human_action = null
+  game.pending_action = null
+  game.waiting_for = 'none'
+}
+
+function consumePendingTimelineEvent(game, hadPending) {
+  if (!hadPending) return
+  game.timelineIndex = Math.min(game.timeline.length, game.timelineIndex + 1)
+}
+
+function applyHumanSkillState(game, actionType, choice) {
+  const action = canonicalMockAction(actionType)
+  const selected = choice === 'antidote' ? 'save' : (['skip', 'none', 'pass'].includes(choice) ? 'none' : choice)
+  if (action === 'witch_act') {
+    if (selected === 'save') game.skill_state.witch_antidote_used = true
+    if (selected === 'poison') game.skill_state.witch_poison_used = true
+  }
+  if (action === 'white_wolf_explode') {
+    game.skill_state.white_wolf_burst_used = true
+  }
+}
+
 function stepActiveGame() {
   if (!activeGame) activeGame = baseGame('watch', 'good_win')
+  if (activeGame.pending_human_action) {
+    return { game: activeGame, delay: MOCK_STEP_DELAY_MS[activeGame.phase] || 300 }
+  }
   const event = activeGame.timeline[activeGame.timelineIndex]
   if (!event) return { game: activeGame, delay: MOCK_STEP_DELAY_MS.ended }
 
+  const pending = mockPendingForEvent(activeGame, event)
+  if (pending) {
+    setPendingHumanEvent(activeGame, event, pending)
+    archiveActiveGame()
+    return { game: activeGame, delay: 220 }
+  }
+
   activeGame.phase = event.phase
-  activeGame.day = 1
+  activeGame.day = event.day || activeGame.day || 1
   activeGame.current_speaker_id = event.log?.actor_id || null
   activeGame.waiting_for = 'none'
   activeGame.pending_action = null
+  activeGame.pending_human_action = null
 
   if (event.decision?.actor_id) {
     activeGame.decisions.push(makeDecision(activeGame, event.decision))
@@ -2100,13 +2283,17 @@ function startGame(body = {}) {
 
 function addHumanSpeech(text = '') {
   if (!activeGame) startGame({ mode: 'play' })
-  activeGame.phase = 'speech'
-  activeGame.waiting_for = 'none'
+  const pending = activeGame.pending_human_action
+  const hadPending = Boolean(pending)
+  const actionType = canonicalMockAction(pending?.action_type || 'speak')
+  activeGame.phase = pending?.phase || 'speech'
+  activeGame.day = pending?.day || activeGame.day || 1
+  clearPendingHumanAction(activeGame)
   activeGame.current_speaker_id = activeGame.human_player_id || 1
   const message = text || `${activeGame.current_speaker_id}号玩家选择过麦，交给后置位继续分析。`
   activeGame.decisions.push(makeDecision(activeGame, {
     actor_id: activeGame.current_speaker_id,
-    action: 'speak',
+    action: actionType,
     reason: message,
     public_summary: message,
     source: 'human',
@@ -2117,22 +2304,27 @@ function addHumanSpeech(text = '') {
     actor_id: activeGame.current_speaker_id,
     message,
     visibility: 'public',
-    type: 'speech',
+    type: actionType === 'speak' ? 'speech' : actionType,
     source: 'human'
   }))
+  consumePendingTimelineEvent(activeGame, hadPending)
   archiveActiveGame()
   return activeGame
 }
 
-function addHumanVote(targetId) {
+function addHumanVote(targetId, actionType = 'vote') {
   if (!activeGame) startGame({ mode: 'play' })
+  const pending = activeGame.pending_human_action
+  const hadPending = Boolean(pending)
   const actorId = activeGame.human_player_id || 1
-  activeGame.phase = 'vote'
-  activeGame.waiting_for = 'none'
+  const action = canonicalMockAction(actionType || pending?.action_type || 'vote')
+  activeGame.phase = pending?.phase || 'vote'
+  activeGame.day = pending?.day || activeGame.day || 1
+  clearPendingHumanAction(activeGame)
   activeGame.current_speaker_id = actorId
   activeGame.decisions.push(makeDecision(activeGame, {
     actor_id: actorId,
-    action: 'vote',
+    action,
     target_id: targetId,
     reason: `${actorId}号玩家投票给${targetId}号。`,
     public_summary: `${actorId}号投票给${targetId}号。`,
@@ -2145,26 +2337,33 @@ function addHumanVote(targetId) {
     target_id: targetId,
     message: `我投${targetId}号。`,
     visibility: 'public',
-    type: 'vote',
+    type: action,
     source: 'human'
   }))
+  consumePendingTimelineEvent(activeGame, hadPending)
   archiveActiveGame()
   return activeGame
 }
 
 function addHumanGenericAction(actionType, targetId = null, choice = null, text = '') {
   if (!activeGame) startGame({ mode: 'play' })
+  const pending = activeGame.pending_human_action
+  const hadPending = Boolean(pending)
   const actorId = activeGame.human_player_id || 1
-  activeGame.waiting_for = 'none'
-  activeGame.pending_action = null
+  const action = canonicalMockAction(actionType || pending?.action_type || 'action')
+  activeGame.phase = pending?.phase || activeGame.phase
+  activeGame.day = pending?.day || activeGame.day || 1
+  clearPendingHumanAction(activeGame)
   activeGame.current_speaker_id = actorId
   const targetText = targetId ? `，目标 ${targetId} 号` : ''
   const choiceText = choice ? `，选择 ${choice}` : ''
-  const message = text || `${actorId}号提交 ${actionType}${choiceText}${targetText}`
+  const message = text || `${actorId}号提交 ${action}${choiceText}${targetText}`
+  applyHumanSkillState(activeGame, action, choice)
   activeGame.decisions.push(makeDecision(activeGame, {
     actor_id: actorId,
-    action: actionType,
+    action,
     target_id: targetId,
+    selected_skill: choice || '',
     reason: message,
     public_summary: message,
     source: 'human',
@@ -2176,9 +2375,10 @@ function addHumanGenericAction(actionType, targetId = null, choice = null, text 
     target_id: targetId,
     message,
     visibility: 'public',
-    type: actionType,
+    type: action,
     source: 'human'
   }))
+  consumePendingTimelineEvent(activeGame, hadPending)
   archiveActiveGame()
   return activeGame
 }
@@ -2306,6 +2506,13 @@ function createMockEvolutionRun(body = {}) {
     started_at: new Date().toISOString(),
     parent_hash: baseline?.version_id || `base-${role}`,
     candidate_hash: candidate,
+    config: {
+      roles: [role],
+      training_games: Number(body.training_games || 20),
+      battle_games: Number(body.battle_games || 10),
+      max_days: Number(body.max_days || 5),
+      auto_promote: Boolean(body.auto_promote)
+    },
     training_games: Number(body.training_games || 20),
     battle_games: Number(body.battle_games || 10),
     training_completed: 0,
@@ -2324,7 +2531,7 @@ function createMockEvolutionBatch(body = {}) {
   const roles = Array.isArray(body.roles) && body.roles.length ? body.roles : MOCK_EVOLUTION_ROLES
   const id = `mock-batch-${++mockEvolutionCounter}`
   const batch = {
-    kind: 'batch_role_evolution_run',
+    kind: 'role_evolution_batch',
     schema_version: 1,
     batch_id: id,
     roles,
@@ -2332,15 +2539,18 @@ function createMockEvolutionBatch(body = {}) {
     stage: 'queued',
     current_stage: 'queued',
     started_at: new Date().toISOString(),
+    config: {
+      roles,
+      training_games: Number(body.training_games || 20),
+      battle_games: Number(body.battle_games || 10),
+      max_days: Number(body.max_days || 5),
+      auto_promote: Boolean(body.auto_promote)
+    },
     training_games: Number(body.training_games || 20),
     battle_games: Number(body.battle_games || 10),
     training_completed: 0,
     battle_completed: 0,
-    role_concurrency: Number(body.role_concurrency || 2),
-    game_concurrency: Number(body.game_concurrency || 1),
-    llm_concurrency: Number(body.llm_concurrency || 5),
-    llm_rpm: Number(body.llm_rpm || 60),
-    run_ids: []
+    runs: []
   }
   mockEvolutionBatches.unshift(batch)
   mockEvolutionDiffs[id] = roles.slice(0, 4).map((role) => ({
@@ -2348,6 +2558,45 @@ function createMockEvolutionBatch(body = {}) {
     action: 'schedule',
     proposal_ref: `${id}-${role}`
   }))
+  return clone(batch)
+}
+
+function createMockBenchmarkBatch(body = {}) {
+  const roles = Array.isArray(body.roles) && body.roles.length ? body.roles : [MOCK_EVOLUTION_ROLES[0]]
+  const battleGames = Number(body.battle_games || 10)
+  const maxDays = Number(body.max_days || 5)
+  const id = `mock-bench-${++mockBenchmarkCounter}`
+  const batch = {
+    kind: 'benchmark_batch',
+    schema_version: 1,
+    batch_id: id,
+    roles,
+    status: 'completed',
+    started_at: new Date().toISOString(),
+    finished_at: new Date().toISOString(),
+    config: { roles, battle_games: battleGames, max_days: maxDays },
+    result: {
+      batch_id: id,
+      game_count: battleGames,
+      completed: battleGames,
+      errored: 0,
+      score_summary: { game_count: battleGames },
+      fairness: { is_fair: true, reason: 'mock' },
+      rankable: battleGames > 0,
+      rankable_reason: battleGames > 0 ? '' : 'No games in batch'
+    }
+  }
+  mockBenchmarkBatches.unshift(batch)
+  return clone(batch)
+}
+
+function stopMockBenchmarkBatch(batchId) {
+  const batch = mockBenchmarkBatches.find((item) => item.batch_id === batchId)
+  if (!batch) throw new Error('Mock benchmark batch not found')
+  batch.status = 'failed'
+  batch.stop_requested = true
+  batch.finished_at = batch.finished_at || new Date().toISOString()
+  batch.error = batch.error || 'stopped'
   return clone(batch)
 }
 
@@ -2618,9 +2867,6 @@ function createMockSelfplayRun(body = {}) {
     max_days: Number(body.max_days || 20),
     enable_sheriff: body.enable_sheriff !== false,
     enable_batch_dream: Boolean(body.enable_batch_dream),
-    game_concurrency: Number(body.game_concurrency || 1),
-    llm_concurrency: Number(body.llm_concurrency || 5),
-    llm_rpm: Number(body.llm_rpm || 60),
     created_at: new Date().toISOString(),
     started_at: new Date().toISOString(),
     artifact_run_id: id
@@ -2751,15 +2997,24 @@ export async function mockApiFetch(path, options = {}) {
   if (routePath === '/evolution-runs') {
     if (method === 'POST') {
       const roles = Array.isArray(body.roles) ? body.roles : []
-      const isSingle = roles.length === 1 && body.role_concurrency == null
+      const isSingle = roles.length === 1
       return isSingle ? createMockEvolutionRun(body) : createMockEvolutionBatch(body)
     }
     return {
       kind: 'evolution_runs',
       schema_version: 1,
       runs: clone(mockEvolutionRuns),
-      batches: clone(mockEvolutionBatches)
+      batches: clone([...mockEvolutionBatches, ...mockBenchmarkBatches])
     }
+  }
+
+  if ((routePath === '/benchmark' || routePath === '/benchmark/batch') && method === 'POST') {
+    return createMockBenchmarkBatch(body)
+  }
+
+  const benchmarkStopMatch = routePath.match(/^\/benchmark\/batch\/([^/]+)\/stop$/)
+  if (benchmarkStopMatch && method === 'POST') {
+    return stopMockBenchmarkBatch(decodeURIComponent(benchmarkStopMatch[1]))
   }
 
   const evolutionActionMatch = routePath.match(/^\/evolution-runs\/([^/]+)\/actions$/)
@@ -2847,7 +3102,8 @@ export async function mockApiFetch(path, options = {}) {
 
   const gameHumanActionMatch = routePath.match(/^\/games\/([^/]+)\/human-action$/)
   if (gameHumanActionMatch) {
-    return null
+    const gameId = decodeURIComponent(gameHumanActionMatch[1])
+    return activeGame?.game_id === gameId ? (activeGame.pending_human_action || null) : null
   }
 
   const gameStopMatch = routePath.match(/^\/games\/([^/]+)\/stop$/)
@@ -2875,7 +3131,7 @@ export async function mockApiFetch(path, options = {}) {
       return snapshot(addHumanSpeech(body.text || ''))
     }
     if (['exile_vote', 'pk_vote', 'sheriff_vote', 'vote'].includes(actionType)) {
-      return snapshot(addHumanVote(targetId || 1))
+      return snapshot(addHumanVote(targetId || 1, actionType))
     }
     return snapshot(addHumanGenericAction(actionType || 'action', targetId, body.choice || null, body.text || ''))
   }

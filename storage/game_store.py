@@ -17,8 +17,13 @@ def _role_team(role_str: str) -> str:
 
 
 class GameStore:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, autocommit: bool = True) -> None:
         self._conn = conn
+        self._autocommit = autocommit
+
+    def _commit(self) -> None:
+        if self._autocommit:
+            self._conn.commit()
 
     def insert_game(
         self,
@@ -89,7 +94,7 @@ class GameStore:
                     f"UPDATE games SET {', '.join(updates)} WHERE id = ?",
                     values,
                 )
-        self._conn.commit()
+        self._commit()
         return game_id
 
     def insert_players(
@@ -123,10 +128,18 @@ class GameStore:
                 alive = 1 if final_alive[seat] else 0
 
             self._conn.execute(
-                "INSERT OR IGNORE INTO players "
+                "INSERT INTO players "
                 "(game_id, seat, role, team, alive, killed_day, killed_cause, "
                 "role_version_id, skill_package_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(game_id, seat) DO UPDATE SET "
+                "role = excluded.role, "
+                "team = excluded.team, "
+                "alive = excluded.alive, "
+                "killed_day = excluded.killed_day, "
+                "killed_cause = excluded.killed_cause, "
+                "role_version_id = excluded.role_version_id, "
+                "skill_package_hash = excluded.skill_package_hash",
                 (
                     game_id,
                     seat,
@@ -139,7 +152,7 @@ class GameStore:
                     (skill_package_hashes or {}).get(seat),
                 ),
             )
-        self._conn.commit()
+        self._commit()
 
     def get_game(self, game_id: str) -> dict[str, Any] | None:
         row = self._conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()

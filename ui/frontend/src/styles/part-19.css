@@ -40,20 +40,26 @@
 
 .history-seat-ledger {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px 18px;
 }
 
 .history-seat-ledger article {
   position: relative;
-  display: grid;
-  grid-template-columns: 28px auto 1fr auto;
+  display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 10px;
   min-width: 0;
-  padding: 7px 8px;
-  border-bottom: 1px solid rgba(91, 47, 18, 0.12);
-  background: transparent;
+  padding: 10px 14px;
+  border: 1px solid rgba(91, 47, 18, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.5);
+  transition: background 0.15s ease;
+}
+
+.history-seat-ledger article:hover {
+  background: rgba(91, 47, 18, 0.04);
 }
 
 .history-seat-ledger article.dead {
@@ -65,31 +71,37 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 60%;
+  width: 50%;
   height: 2px;
   background: #c0392b;
   transform: translate(-50%, -50%);
+  opacity: 0.7;
+}
+
+.history-seat-ledger article.dead {
+  opacity: 0.6;
 }
 
 .history-seat-ledger article.sheriff {
-  box-shadow: none;
+  border-color: rgba(199, 166, 70, 0.4);
+  background: rgba(255, 248, 225, 0.5);
 }
 
 .history-seat-ledger img {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
+  flex-shrink: 0;
 }
 
 .history-seat-ledger b,
 .history-seat-ledger span {
   overflow: hidden;
   color: #3d1f0a;
-  font-size: 12px;
-  font-weight: 900;
+  font-size: 13px;
+  font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-shadow: 0 1px 2px rgba(255, 240, 200, 0.4);
 }
 
 .history-page-detail {

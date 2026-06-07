@@ -11,10 +11,13 @@ from storage.game_store import GameStore
 from storage.game_event_store import GameEventStore
 from storage.decision_store import DecisionStore
 from storage.version_store import VersionStoreDB
-from storage.evolution_store import EvolutionStore
+from storage.evolution.run_repo import EvolutionStore
 from storage.evolution.experience_repo import ExperienceCandidateStore
 from storage.leaderboard_store import LeaderboardStore
+from storage.evaluation_store import EvaluationStore
+from storage.review_store import CounterfactualStore, DecisionReviewStore
 from storage.replay import read_decisions_for_artifact, read_events_for_artifact
+from storage.run_policy import LeaderboardScope, RunPolicy, RunType, policy_for_run_type
 from storage.runtime import GamePersistence, open_storage_connection
 
 # ---------------------------------------------------------------------------
@@ -26,32 +29,29 @@ from storage.shared.connection import (
 from storage.registry.connection import (
     get_registry_connection,
 )
-from storage.shared.interfaces import (
+from storage.interfaces import (
     compute_hash,
     normalize_skill_text,
     normalize_skill_path,
     DecisionArchiveData,
     DecisionRecordData,
     EvolutionRunData,
+    RoleHistoryData,
+    RoleVersionData,
     SkillProposalData,
     SkillVersionConfigData,
 )
 
 # ---------------------------------------------------------------------------
-# New battle re-exports
+# Battle compatibility re-exports
 # ---------------------------------------------------------------------------
-from storage.battle.evaluation_repo import EvaluationStore
-from storage.battle.review_repo import DecisionReviewStore, CounterfactualStore
 from storage.battle.report_repo import ReportStore
 from storage.battle.leaderboard_repo import BattleLeaderboardStore
 
 # ---------------------------------------------------------------------------
 # New evolution re-exports
 # ---------------------------------------------------------------------------
-from storage.evolution.pattern_repo import PatternStore
 from storage.evolution.rejected_repo import RejectedProposalStore
-from storage.evolution.situational_repo import SituationalRecordStore
-from storage.evolution.outcome_repo import DecisionOutcomeStore
 
 __all__ = [
     # Core
@@ -63,6 +63,10 @@ __all__ = [
     "EvolutionStore",
     "LeaderboardStore",
     "ExperienceCandidateStore",
+    "LeaderboardScope",
+    "RunPolicy",
+    "RunType",
+    "policy_for_run_type",
     "read_decisions_for_artifact",
     "read_events_for_artifact",
     "GamePersistence",
@@ -76,6 +80,8 @@ __all__ = [
     "DecisionArchiveData",
     "DecisionRecordData",
     "EvolutionRunData",
+    "RoleHistoryData",
+    "RoleVersionData",
     "SkillProposalData",
     "SkillVersionConfigData",
     # Battle
@@ -85,8 +91,5 @@ __all__ = [
     "ReportStore",
     "BattleLeaderboardStore",
     # Evolution
-    "PatternStore",
     "RejectedProposalStore",
-    "SituationalRecordStore",
-    "DecisionOutcomeStore",
 ]

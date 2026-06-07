@@ -99,6 +99,7 @@
 }
 
 .lycan-app.logbook,
+.lycan-app.benchmark,
 .lycan-app.evolution {
   min-width: 0;
   min-height: 100vh;
@@ -111,6 +112,7 @@
 }
 
 .lycan-app.logbook::after,
+.lycan-app.benchmark::after,
 .lycan-app.evolution::after {
   opacity: 0.46;
   background: radial-gradient(circle at center, transparent 26%, rgba(0, 0, 0, 0.8) 100%);

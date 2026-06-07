@@ -27,9 +27,9 @@
 @media (max-width: 960px) {
   .battle-log-page {
     top: 72px;
-    right: 18px;
+    right: 0;
     bottom: 0;
-    left: 18px;
+    left: 0;
     width: auto;
     margin: 0;
     padding: 0 0 18px;

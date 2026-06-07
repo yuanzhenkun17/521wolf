@@ -1,4 +1,5 @@
 import { computed } from 'vue'
+import { normalizeHistoryDisplayText } from '../components/history/historyDisplay.js'
 
 const roleIconSpecs = [
   { key: 'whiteWolfKing', role: '白狼王', tokens: ['白狼王'], image: '/role-badges/white-wolf-king.png' },
@@ -112,15 +113,16 @@ function useMatchUtils(state) {
   function normalizePlayerText(text = '') {
     let value = String(text || '')
     const players = state.game?.value?.players ?? []
-    if (!players.length) return value
-    buildNormRegexCache(players)
-    for (const entry of normRegexCache) {
-      value = value.replaceAll(entry.seatNameSp, entry.visual)
-      value = value.replaceAll(entry.seatName, entry.visual)
-      if (entry.nameRe) value = value.replace(entry.nameRe, entry.visual)
-      value = value.replace(entry.seatRe, entry.visual)
+    if (players.length) {
+      buildNormRegexCache(players)
+      for (const entry of normRegexCache) {
+        value = value.replaceAll(entry.seatNameSp, entry.visual)
+        value = value.replaceAll(entry.seatName, entry.visual)
+        if (entry.nameRe) value = value.replace(entry.nameRe, entry.visual)
+        value = value.replace(entry.seatRe, entry.visual)
+      }
     }
-    return value
+    return normalizeHistoryDisplayText(value)
   }
 
   function logSpeaker(log) {
@@ -135,7 +137,7 @@ function useMatchUtils(state) {
   }
 
   function cardImage(player) {
-    if (!state.isWatch?.value && player && !player.is_human) return '/cards/card-back.png'
+    if (!state.isWatch?.value && player && !player.is_human && !player.role_visible) return '/cards/card-back.png'
     const hint = player?.role_hint || ''
     if (hint.includes('预言')) return '/cards/seer.png'
     if (hint.includes('女巫')) return '/cards/witch.png'

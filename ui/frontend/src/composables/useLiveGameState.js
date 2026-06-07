@@ -1,6 +1,182 @@
 import { computed } from 'vue'
-import { decisionActionText, judgeVisibleTypes, phaseLabel, phaseText, roleIconSpecs, roleMatches, seatHash } from './gameStateShared.js'
+import { displayActionLabel, displayPhaseLabel, displayWinnerLabel } from '../components/history/historyDisplay.js'
+import { decisionActionText, phaseLabel, phaseText, roleIconSpecs, roleMatches, seatHash } from './gameStateShared.js'
 import { choiceOptionsForAction } from './gameSnapshot.js'
+import { buildSceneEffects } from './sceneEffects.js'
+
+const chatSpeechTypes = new Set([
+  'speech',
+  'speak',
+  'talk',
+  'message',
+  'chat',
+  'statement',
+  'discussion',
+  'day_speech',
+  'player_speech',
+  'sheriff_speak',
+  'sheriff_speech',
+  'pk_speak',
+  'pk_speech',
+  'last_word'
+])
+const chatVoteTypes = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
+const sceneVotePhases = new Set(['vote', 'sheriff_vote'])
+const chatActionTypes = new Set([
+  'guard_protect',
+  'werewolf_kill',
+  'seer_check',
+  'witch_act',
+  'hunter_shoot',
+  'hunter_shot',
+  'white_wolf_explode',
+  'white_wolf_explosion',
+  'sheriff_run',
+  'sheriff_pass',
+  'sheriff_withdraw',
+  'sheriff_stay',
+  'sheriff_badge',
+  'speech_order'
+])
+const judgeAnnouncementTypes = new Set([
+  'setup',
+  'night_start',
+  'night_end',
+  'night_result',
+  'night_death_reveal',
+  'day_speech_start',
+  'day_speech_end',
+  'vote_prompt',
+  'exile',
+  'death',
+  'exile_vote_start',
+  'exile_vote_end',
+  'exile_vote_tie',
+  'pk_vote_end',
+  'sheriff_start',
+  'sheriff_result',
+  'sheriff_election_start',
+  'sheriff_election_end',
+  'sheriff_badge_transfer',
+  'sheriff_badge_destroy',
+  'game_over',
+  'game_end'
+])
+const judgeSpeakers = new Set(['法官', '系统'])
+const typedRecordLabels = new Set([
+  'action_request',
+  'action_response',
+  'invalid_response',
+  'default_action',
+  'agent_error'
+])
+
+function primaryLogTypes(log) {
+  return [
+    log?.type,
+    log?.event_type,
+    log?.action,
+    log?.action_type,
+    log?.kind,
+    log?._chatKind,
+    log?.category
+  ].map((value) => String(value || '').trim()).filter(Boolean)
+}
+
+function phaseLogTypes(log) {
+  return [log?.phase, log?.event_phase, log?.stage]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+}
+
+function normalizedLogType(log) {
+  return primaryLogTypes(log)[0] || ''
+}
+
+function hasAnyType(types, set) {
+  return types.some((type) => set.has(type))
+}
+
+function numericId(value) {
+  const id = Number(value)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+function rowTargetId(row = {}) {
+  return numericId(
+    row?.target_id
+    ?? row?.selected_target
+    ?? row?.target
+    ?? row?.payload?.target_id
+    ?? row?.payload?.target
+  )
+}
+
+function voteActionPhase(action = '') {
+  const value = String(action || '').trim()
+  if (value === 'sheriff_vote') return 'sheriff_vote'
+  if (chatVoteTypes.has(value)) return 'vote'
+  return ''
+}
+
+function logActorId(log) {
+  return numericId(
+    log?.actor_id
+    ?? log?.actor
+    ?? log?.player_id
+    ?? log?.playerId
+    ?? log?.speaker_id
+    ?? log?.speakerId
+    ?? log?.agent_id
+    ?? log?.seat
+    ?? log?._seat
+  )
+}
+
+function logText(log) {
+  return String(
+    log?._message
+    ?? log?.message
+    ?? log?.content
+    ?? log?.text
+    ?? log?.public_summary
+    ?? log?.public_text
+    ?? log?.payload?.message
+    ?? log?.payload?.text
+    ?? ''
+  )
+}
+
+function chatKindForLog(log) {
+  const hasActor = logActorId(log) !== null
+  const hasPlayerSpeaker = Boolean(log?.speaker) && !judgeSpeakers.has(log.speaker)
+  if (!hasActor && !hasPlayerSpeaker) return null
+  const primaryTypes = primaryLogTypes(log)
+  if (hasAnyType(primaryTypes, chatVoteTypes)) return { key: 'vote', label: '投票' }
+  if (hasAnyType(primaryTypes, chatActionTypes)) return { key: 'action', label: '行动' }
+  if (hasAnyType(primaryTypes, chatSpeechTypes)) {
+    return { key: 'speech', label: primaryTypes.includes('last_word') ? '遗言' : '发言' }
+  }
+  if (logText(log).trim() && hasAnyType(phaseLogTypes(log), chatSpeechTypes)) {
+    return { key: 'speech', label: '发言' }
+  }
+  return null
+}
+
+function isJudgeAnnouncementLog(log) {
+  const type = normalizedLogType(log)
+  if (judgeAnnouncementTypes.has(type)) return true
+  if (log?.visibility === 'system') return true
+  return judgeSpeakers.has(log?.speaker) && !chatKindForLog(log)
+}
+
+function winnerPromptText(winner) {
+  if (!winner) return ''
+  const label = displayWinnerLabel(winner)
+  if (!label || label === '未记录') return '游戏结束'
+  if (/获胜|胜利|平局|结束|取消|异常/.test(label)) return `游戏结束，${label}`
+  return `游戏结束，胜利方：${label}`
+}
 
 export function createLiveGameState(refs, helpers) {
   const {
@@ -29,32 +205,163 @@ export function createLiveGameState(refs, helpers) {
 
   const computedState = {}
 
+  function isWolfRole(role = '') {
+    const value = String(role || '')
+    return value.includes('狼人') || value.includes('白狼王')
+  }
+
+  function canSeePlayerRole(player) {
+    if (!player) return false
+    if (computedState.isWatch?.value || refs.isReplayMode.value || game.value?.winner) return true
+    const human = computedState.humanPlayer?.value
+    if (!human) return false
+    if (Number(player.id) === Number(human.id) || player.is_human) return true
+    return isWolfRole(human.role_hint) && isWolfRole(player.role_hint)
+  }
+
+  function visibleRoleIcon(player) {
+    return canSeePlayerRole(player) ? roleIconImage(player) : '/role-icons/未知.png'
+  }
+
+  function visibleCardImage(player) {
+    if (!player) return '/cards/judge.png'
+    return canSeePlayerRole(player) ? cardImage({ ...player, role_visible: true }) : '/cards/card-back.png'
+  }
+
+  function visiblePlayer(player) {
+    const roleVisible = canSeePlayerRole(player)
+    return {
+      ...player,
+      role_visible: roleVisible,
+      role_hint_actual: player?.role_hint || '',
+      role_hint: roleVisible ? (player?.role_hint || '') : '未知',
+      roleIcon: roleVisible ? roleIconImage(player) : '/role-icons/未知.png'
+    }
+  }
+
+  function playerForLog(log) {
+    const players = game.value?.players ?? []
+    const actorId = logActorId(log)
+    const speakerName = String(log?._speaker || log?.speaker || log?.actor_name || log?.player_name || '').trim()
+    return players.find((player) =>
+      Number(player.id) === actorId
+      || String(player.name || '').trim() === speakerName
+      || `${player.seat}号` === speakerName
+      || `${player.id}号` === speakerName
+    ) || null
+  }
+
+  function effectiveCurrentSpeakerId() {
+    const direct = numericId(
+      game.value?.current_speaker_id
+      ?? game.value?.currentSpeakerId
+      ?? game.value?.speaker_id
+      ?? game.value?.speakerId
+    )
+    if (direct) return direct
+    const pending = game.value?.pending_human_action
+    const pendingType = String(pending?.action_type || pending?.type || '').trim()
+    const pendingId = numericId(pending?.player_id ?? pending?.actor_id ?? pending?.speaker_id ?? pending?.seat)
+    if (pendingId && chatSpeechTypes.has(pendingType)) return pendingId
+    if (pending || ['action', 'vote'].includes(game.value?.waiting_for)) return null
+    const logs = game.value?.logs ?? []
+    for (let index = logs.length - 1; index >= 0; index -= 1) {
+      const log = logs[index]
+      if (log?.visibility === 'private' || chatKindForLog(log)?.key !== 'speech') continue
+      const actorId = logActorId(log)
+      if (actorId) return actorId
+      const player = playerForLog(log)
+      if (player?.id) return player.id
+    }
+    return null
+  }
+
+  function chatLogEntry(log) {
+    const player = playerForLog(log)
+    const kind = chatKindForLog(log)
+    const seat = player ? playerNumberById(player.id) : (log?.actor_id ? playerNumberById(log.actor_id) : '')
+    return {
+      ...log,
+      _chatKind: kind?.key || 'action',
+      _kindLabel: kind?.label || '行动',
+      _seat: seat,
+      _speaker: logSpeaker(log),
+      _message: logMessage(log) || logText(log),
+      _roleIcon: player ? visibleRoleIcon(player) : '/role-icons/未知.png',
+      _speaking: Boolean(player?.id && player.id === effectiveCurrentSpeakerId())
+    }
+  }
+
+  function recordKindForLog(log) {
+    const kind = chatKindForLog(log)
+    if (kind) return kind
+    const type = normalizedLogType(log)
+    if (typedRecordLabels.has(type)) {
+      return { key: 'event', label: decisionActionText[type] || displayActionLabel(type) }
+    }
+    if (isJudgeAnnouncementLog(log)) return { key: 'judge', label: log?.speaker === '系统' ? '系统' : '法官' }
+    return {
+      key: 'event',
+      label: decisionActionText[type] || phaseLabel[type] || displayActionLabel(type) || '记录'
+    }
+  }
+
+  function matchRecordEntry(log) {
+    const player = playerForLog(log)
+    const kind = recordKindForLog(log)
+    const actor = logActorId(log)
+    const seat = player
+      ? playerNumberById(player.id)
+      : (actor ? playerNumberById(actor) : (isJudgeAnnouncementLog(log) ? '法' : ''))
+    return {
+      ...log,
+      _chatKind: kind.key,
+      _kindLabel: kind.label,
+      _seat: seat,
+      _speaker: logSpeaker(log),
+      _message: logMessage(log) || logText(log),
+      _roleIcon: player ? visibleRoleIcon(player) : '/cards/judge.png',
+      _speaking: Boolean(player?.id && player.id === effectiveCurrentSpeakerId())
+    }
+  }
+
   computedState.isNight = computed(() => game.value?.phase === 'night')
   computedState.inLogs = computed(() => currentView.value === 'logs')
+  computedState.inBenchmark = computed(() => currentView.value === 'benchmark')
   computedState.inEvolution = computed(() => currentView.value === 'evolution')
   computedState.inLobby = computed(() =>
     currentView.value === 'lobby'
-    || (!game.value && !computedState.inLogs.value && !computedState.inEvolution.value)
+    || (!game.value && currentView.value !== 'match' && !computedState.inLogs.value && !computedState.inBenchmark.value && !computedState.inEvolution.value)
   )
-  computedState.inMatch = computed(() => currentView.value === 'match' && Boolean(game.value))
+  computedState.inMatch = computed(() => currentView.value === 'match')
   computedState.isWatch = computed(() => game.value?.mode === 'watch')
+  computedState.sceneEffects = computed(() =>
+    buildSceneEffects(game.value, {
+      canSeeLog,
+      isWatch: computedState.isWatch.value,
+      isReplayMode: refs.isReplayMode.value
+    })
+  )
   computedState.humanPlayer = computed(() => game.value?.players?.find((p) => p.id === game.value.human_player_id))
   computedState.livingPlayers = computed(() => game.value?.players?.filter((p) => p.alive) ?? [])
   computedState.canVotePlayers = computed(() => computedState.livingPlayers.value.filter((p) => p.id !== game.value?.human_player_id))
   computedState.publicLogs = computed(() => (game.value?.logs ?? []).filter(canSeeLog).slice(-10))
   computedState.chatLogs = computed(() =>
     (game.value?.logs ?? [])
-      .filter((log) => canSeeLog(log) && !['法官', '系统', '狼人团队'].includes(log.speaker))
+      .filter((log) => canSeeLog(log) && chatKindForLog(log))
+      .map(chatLogEntry)
       .slice(-80)
   )
+  computedState.matchRecordLogs = computed(() => {
+    const logs = game.value?.logs ?? []
+    if (computedState.isWatch.value || refs.isReplayMode.value) {
+      return logs.filter(canSeeLog).map(matchRecordEntry)
+    }
+    return computedState.chatLogs.value
+  })
   computedState.judgeLogs = computed(() =>
     (game.value?.logs ?? [])
-      .filter((log) =>
-        log.visibility === 'system'
-        || (canSeeLog(log) && ['法官', '系统', '狼人团队'].includes(log.speaker))
-        || (canSeeLog(log) && judgeVisibleTypes.has(log.type))
-        || (computedState.isWatch.value && log.phase === 'night' && log.visibility !== 'private')
-      )
+      .filter((log) => canSeeLog(log) && isJudgeAnnouncementLog(log))
       .slice(-80)
   )
   computedState.groupedJudgeLogs = computed(() => {
@@ -65,7 +372,13 @@ export function createLiveGameState(refs, helpers) {
       const phase = log.phase || 'unknown'
       const groupKey = `${day}-${phase}`
       if (!currentGroup || currentGroup.key !== groupKey) {
-        currentGroup = { key: groupKey, day, phase, phaseLabel: phaseText[phase] || phase, logs: [] }
+        currentGroup = {
+          key: groupKey,
+          day,
+          phase,
+          phaseLabel: (phaseText[phase] || displayPhaseLabel(phase)).replace('{day}', day),
+          logs: []
+        }
         groups.push(currentGroup)
       }
       currentGroup.logs.push(log)
@@ -73,27 +386,31 @@ export function createLiveGameState(refs, helpers) {
     return groups.slice(-10)
   })
   computedState.speakingPlayer = computed(() => {
-    if (!game.value?.current_speaker_id) return null
-    return game.value.players.find((p) => p.id === game.value.current_speaker_id)
+    const speakerId = effectiveCurrentSpeakerId()
+    if (!speakerId) return null
+    return game.value?.players?.find((p) => Number(p.id) === speakerId) || null
   })
   computedState.displayPhase = computed(() => {
-    if (!game.value) return 'LOBBY'
+    if (!game.value) return '选择模式'
     return (phaseText[game.value.phase] || '').replace('{day}', game.value.day)
   })
   computedState.promptText = computed(() => {
     if (!game.value) return '选择模式开始游戏'
-    if (game.value.winner) return game.value.winner
+    if (game.value.winner) return winnerPromptText(game.value.winner)
     if (game.value.waiting_for === 'speech') return '轮到你发言，所有智能体正在等待'
     if (game.value.waiting_for === 'vote') return '轮到你投票，提交后智能体继续行动'
+    if (game.value.waiting_for === 'action') {
+      return game.value.pending_action?.prompt || game.value.pending_human_action?.prompt || '轮到你行动，提交后智能体继续行动'
+    }
     if (computedState.speakingPlayer.value) return `${playerLabel(computedState.speakingPlayer.value)} 正在发言`
     return phaseLabel[game.value.phase]
   })
   computedState.speakerMessage = computed(() => {
     const speaker = computedState.speakingPlayer.value
-    if (!speaker) return game.value?.winner || computedState.promptText.value
+    if (!speaker) return game.value?.winner ? winnerPromptText(game.value.winner) : computedState.promptText.value
     const logs = (game.value?.logs ?? [])
-      .filter((log) => log.visibility !== 'private' && (log.actor_id === speaker.id || log.speaker === speaker.name))
-    return normalizePlayerText(logs.at(-1)?.message || computedState.promptText.value)
+      .filter((log) => log.visibility !== 'private' && (logActorId(log) === Number(speaker.id) || log.speaker === speaker.name))
+    return normalizePlayerText(logText(logs.at(-1)) || computedState.promptText.value)
   })
   computedState.speakerCarousel = computed(() => {
     const players = game.value?.players ?? []
@@ -106,9 +423,9 @@ export function createLiveGameState(refs, helpers) {
     const prev = order[(index - 1 + order.length) % order.length]
     const next = order[(index + 1) % order.length]
     return [
-      { key: `speaker-${prev.id}`, label: playerLabel(prev), image: cardImage(prev), tone: 'prev' },
-      { key: `speaker-${current.id}`, label: playerLabel(current), image: cardImage(current), tone: 'current' },
-      { key: `speaker-${next.id}`, label: playerLabel(next), image: cardImage(next), tone: 'next' }
+      { key: `speaker-${prev.id}`, label: playerLabel(prev), image: visibleCardImage(prev), tone: 'prev' },
+      { key: `speaker-${current.id}`, label: playerLabel(current), image: visibleCardImage(current), tone: 'current' },
+      { key: `speaker-${next.id}`, label: playerLabel(next), image: visibleCardImage(next), tone: 'next' }
     ]
   })
   computedState.inferredSheriffId = computed(() => {
@@ -155,8 +472,17 @@ export function createLiveGameState(refs, helpers) {
     return computedState.livingPlayers.value.filter((player) => ids.has(player.id))
   })
   computedState.whiteWolfTargets = computed(() => {
-    if (!computedState.humanPlayer.value?.alive || !computedState.isHumanWhiteWolf.value || computedState.skillState.value.white_wolf_burst_used) return []
-    return computedState.livingPlayers.value.filter((player) => player.id !== game.value?.human_player_id)
+    if (
+      computedState.pendingActionType.value !== 'white_wolf_explode'
+      || !computedState.humanPlayer.value?.alive
+      || !computedState.isHumanWhiteWolf.value
+      || computedState.skillState.value.white_wolf_burst_used
+    ) return []
+    const ids = new Set(computedState.pendingAction.value?.candidate_ids || [])
+    const candidates = ids.size
+      ? computedState.livingPlayers.value.filter((player) => ids.has(player.id))
+      : computedState.livingPlayers.value
+    return candidates.filter((player) => player.id !== game.value?.human_player_id)
   })
   computedState.canWhiteWolfBurst = computed(() => computedState.whiteWolfTargets.value.length > 0 && !refs.isReplayMode.value && !computedState.isWatch.value)
   computedState.needsTarget = computed(() => {
@@ -168,16 +494,16 @@ export function createLiveGameState(refs, helpers) {
     return Boolean(computedState.pendingActionType.value)
   })
   computedState.actionInstruction = computed(() => {
-    if (computedState.pendingActionType.value === 'witch_act' && witchChoice.value === 'poison') return '法官提醒：点击一名玩家的 3D 模型使用毒药。'
+    if (computedState.pendingActionType.value === 'witch_act' && witchChoice.value === 'poison') return '法官提醒：点击一名玩家模型使用毒药。'
     if (computedState.pendingActionType.value === 'witch_act' && witchChoice.value === 'antidote') {
       const attacked = computedState.pendingAction.value.options?.attacked_player
       return attacked ? `法官提醒：确认使用解药救 ${attacked} 号。` : '法官提醒：确认使用解药。'
     }
     if (computedState.pendingActionType.value === 'witch_act') return computedState.pendingAction.value.prompt || '女巫请选择是否发动技能。'
+    if (computedState.pendingActionType.value === 'white_wolf_explode' && burstArmed.value) return '白狼王自爆已准备，点击要带走的玩家模型。'
     if (computedState.pendingChoiceOptions.value.length) return computedState.pendingAction.value.prompt || '请选择本轮行动。'
-    if (computedState.pendingActionType.value) return computedState.pendingAction.value.prompt || '法官提醒：点击一名玩家的 3D 模型选择目标。'
+    if (computedState.pendingActionType.value) return computedState.pendingAction.value.prompt || '法官提醒：点击一名玩家模型选择目标。'
     if (game.value?.waiting_for === 'vote') return '投票环节，点击你要投票的玩家模型。'
-    if (burstArmed.value) return '白狼王自爆已准备，点击要带走的玩家模型。'
     return ''
   })
   computedState.speechCountdownText = computed(() => {
@@ -186,10 +512,81 @@ export function createLiveGameState(refs, helpers) {
     const seconds = String(value % 60).padStart(2, '0')
     return `${minutes}:${seconds}`
   })
-  computedState.pageVoteTally = computed(() => game.value?.vote_tally ?? [])
+  computedState.pageVoteTally = computed(() => {
+    const currentGame = game.value
+    if (!currentGame) return []
+    const phase = String(currentGame.phase || '').trim()
+    const pendingAction = String(currentGame.pending_action?.type || currentGame.pending_human_action?.action_type || '').trim()
+    const activePhase = sceneVotePhases.has(phase)
+      ? phase
+      : (currentGame.waiting_for === 'vote' ? voteActionPhase(pendingAction) || 'vote' : '')
+    if (!activePhase) return []
+
+    const rows = new Map()
+    const ensureVoteRow = (targetId, patch = {}) => {
+      if (!targetId) return
+      const row = rows.get(targetId) || { target_id: targetId, targetName: `${targetId}号`, voter_ids: [], voter_labels: [] }
+      if (patch.targetName) row.targetName = patch.targetName
+      if (patch.count != null) row.count = Math.max(Number(row.count) || 0, Number(patch.count) || 0)
+      ;(patch.voterLabels || []).forEach((label) => {
+        if (label && !row.voter_labels.includes(label)) row.voter_labels.push(label)
+      })
+      rows.set(targetId, row)
+      return row
+    }
+    const upsertVote = (targetId, voterId, patch = {}) => {
+      const row = ensureVoteRow(targetId, patch)
+      if (!row) return
+      if (voterId && !row.voter_ids.includes(voterId)) row.voter_ids.push(voterId)
+      rows.set(targetId, row)
+    }
+
+    ;(currentGame.vote_tally || []).forEach((row) => {
+      const targetId = rowTargetId(row)
+      if (!targetId) return
+      const voterIds = [
+        ...(Array.isArray(row.voter_ids) ? row.voter_ids : []),
+        ...(Array.isArray(row.voters) ? row.voters : []),
+        ...(Array.isArray(row.votes) ? row.votes.map((vote) => vote?.actor_id ?? vote?.player_id ?? vote?.actor) : [])
+      ].map(numericId).filter(Boolean)
+      const voterLabels = [
+        ...(Array.isArray(row.voters) ? row.voters : []),
+        ...(Array.isArray(row.votes) ? row.votes.map((vote) => vote?.actorName || vote?.actor_name || vote?.player_name) : [])
+      ].filter((value) => value && !numericId(value)).map(String)
+      const targetName = row.targetName || row.target || `${targetId}号`
+      const count = Number(row.count) || 0
+      if (!voterIds.length) {
+        ensureVoteRow(targetId, { targetName, count, voterLabels })
+      } else if (voterLabels.length) {
+        ensureVoteRow(targetId, { targetName, count, voterLabels })
+      }
+      voterIds.forEach((id) => upsertVote(targetId, id, { targetName, count }))
+    })
+
+    const collectRows = [...(currentGame.decisions || []), ...(currentGame.logs || [])]
+    collectRows.forEach((row) => {
+      const action = row?.action || row?.action_type || row?.type || row?.event_type || ''
+      if (voteActionPhase(action) !== activePhase) return
+      const rowPhase = String(row?.phase || activePhase).trim()
+      if (sceneVotePhases.has(rowPhase) && rowPhase !== activePhase) return
+      upsertVote(rowTargetId(row), logActorId(row))
+    })
+
+    return [...rows.values()]
+      .map((row) => {
+        const next = { ...row, count: Math.max(row.voter_ids.length + row.voter_labels.length, Number(row.count) || 0) }
+        if (!next.voter_labels.length) delete next.voter_labels
+        return next
+      })
+      .filter((row) => row.count > 0)
+      .sort((a, b) => b.count - a.count || a.target_id - b.target_id)
+  })
   computedState.sceneVoteTally = computed(() => computedState.pageVoteTally.value.map((row) => ({
     ...row,
-    voters: (row.voter_ids || []).map((id) => `${playerNumberById(id)}号`)
+    voters: [
+      ...(row.voter_ids || []).map((id) => `${playerNumberById(id)}号`),
+      ...(row.voter_labels || [])
+    ]
   })))
   computedState.roleStats = computed(() => {
     const players = game.value?.players ?? []
@@ -235,13 +632,15 @@ export function createLiveGameState(refs, helpers) {
     return makeShuffled()
   })
   computedState.playerIdentityList = computed(() =>
-    computedState.visualSeatPlayers.value.map((player, idx) => ({
-      ...player,
-      displaySeat: idx + 1,
-      roleIcon: computedState.isWatch.value ? roleIconImage(player) : (player.is_human ? roleIconImage(player) : '/role-icons/未知.png'),
-      isSheriff: player.is_sheriff || player.id === computedState.inferredSheriffId.value,
-      speaking: player.id === game.value?.current_speaker_id
-    }))
+    computedState.visualSeatPlayers.value.map((player, idx) => {
+      const display = visiblePlayer(player)
+      return {
+        ...display,
+        displaySeat: idx + 1,
+        isSheriff: player.is_sheriff || player.id === computedState.inferredSheriffId.value,
+        speaking: player.id === effectiveCurrentSpeakerId()
+      }
+    })
   )
   computedState.judgeBoardMessage = computed(() => {
     if (!judgeBoardStarted.value) return '你好，我是本局的法官，点击下方的开始按钮开启对局。'
@@ -257,7 +656,7 @@ export function createLiveGameState(refs, helpers) {
       targetName: decision.target_id ? `${playerNumberById(decision.target_id)}号` : '无目标',
       reason: normalizePlayerText(decision.reason),
       public_summary: normalizePlayerText(decision.public_summary),
-      actionName: decisionActionText[decision.action] || decision.action
+      actionName: decisionActionText[decision.action] || displayActionLabel(decision.action)
     }))
   )
 

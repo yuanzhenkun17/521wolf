@@ -137,29 +137,29 @@ class EvolutionStore:
         run_id: str | None = None,
     ) -> None:
         now = storage_timestamp()
-        for proposal in proposals:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO skill_proposals "
-                "(id, source_version_id, target_file, action_type, content, rationale, "
-                "confidence, risk, expected_metric, expected_direction, evidence, status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    proposal.proposal_id,
-                    source_version_id,
-                    proposal.target_file,
-                    proposal.action_type,
-                    proposal.content,
-                    proposal.rationale,
-                    proposal.confidence,
-                    proposal.risk,
-                    proposal.expected_metric,
-                    proposal.expected_direction,
-                    json.dumps([e.to_dict() for e in proposal.evidence], ensure_ascii=False),
-                    proposal.status,
-                    now,
-                ),
-            )
-        self._conn.commit()
+        with self._conn:
+            for proposal in proposals:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO skill_proposals "
+                    "(id, source_version_id, target_file, action_type, content, rationale, "
+                    "confidence, risk, expected_metric, expected_direction, evidence, status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        proposal.proposal_id,
+                        source_version_id,
+                        proposal.target_file,
+                        proposal.action_type,
+                        proposal.content,
+                        proposal.rationale,
+                        proposal.confidence,
+                        proposal.risk,
+                        proposal.expected_metric,
+                        proposal.expected_direction,
+                        json.dumps([e.to_dict() for e in proposal.evidence], ensure_ascii=False),
+                        proposal.status,
+                        now,
+                    ),
+                )
 
     def list_proposals(
         self,

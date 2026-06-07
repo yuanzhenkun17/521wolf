@@ -38,55 +38,55 @@ class ExperienceCandidateStore:
             )
         saved: list[str] = []
         now = created_at or self._timestamp()
-        for index, candidate in enumerate(candidates, start=1):
-            data = _candidate_dict(candidate)
-            candidate_id = str(data.get("candidate_id") or f"{game_id}_candidate_{index:03d}")
-            data["candidate_id"] = candidate_id
-            self._conn.execute(
-                "INSERT OR REPLACE INTO experience_candidates "
-                "(game_id, candidate_id, role, faction, candidate_type, topic, sample_source, "
-                "evidence_decision_ids, scenario, conditions, recommendation, anti_pattern, "
-                "risk_boundaries, counter_conditions, supporting_evidence, opposing_evidence, "
-                "confidence, validation_need, misleading_risk, raw_json, created_at, "
-                "run_type, source_run_id, source_game_id, artifact_game_id, learning_eligible, "
-                "mode, applicable_phase, applicable_action, llm_rationale, validator_status) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    game_id,
-                    candidate_id,
-                    str(data.get("role") or ""),
-                    str(data.get("faction") or ""),
-                    str(data.get("candidate_type") or ""),
-                    str(data.get("topic") or ""),
-                    str(data.get("sample_source") or ""),
-                    _dump(data.get("evidence_decision_ids") or []),
-                    str(data.get("scenario") or ""),
-                    _dump(data.get("conditions") or []),
-                    str(data.get("recommendation") or ""),
-                    str(data.get("anti_pattern") or ""),
-                    _dump(data.get("risk_boundaries") or []),
-                    _dump(data.get("counter_conditions") or []),
-                    _dump(data.get("supporting_evidence") or []),
-                    _dump(data.get("opposing_evidence") or []),
-                    str(data.get("confidence") or "low"),
-                    _dump(data.get("validation_need") or {}),
-                    str(data.get("misleading_risk") or "medium"),
-                    _dump(data),
-                    now,
-                    run_type,
-                    source_run_id,
-                    source_game_id or game_id,
-                    artifact_game_id or game_id,
-                    1 if learning_eligible else 0,
-                    mode,
-                    str(data.get("applicable_phase") or ""),
-                    str(data.get("applicable_action") or ""),
-                    str(data.get("llm_rationale") or ""),
-                    str(data.get("validator_status") or "valid"),
-                ),
-            )
-            saved.append(candidate_id)
-        self._conn.commit()
+        with self._conn:
+            for index, candidate in enumerate(candidates, start=1):
+                data = _candidate_dict(candidate)
+                candidate_id = str(data.get("candidate_id") or f"{game_id}_candidate_{index:03d}")
+                data["candidate_id"] = candidate_id
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO experience_candidates "
+                    "(game_id, candidate_id, role, faction, candidate_type, topic, sample_source, "
+                    "evidence_decision_ids, scenario, conditions, recommendation, anti_pattern, "
+                    "risk_boundaries, counter_conditions, supporting_evidence, opposing_evidence, "
+                    "confidence, validation_need, misleading_risk, raw_json, created_at, "
+                    "run_type, source_run_id, source_game_id, artifact_game_id, learning_eligible, "
+                    "mode, applicable_phase, applicable_action, llm_rationale, validator_status) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        game_id,
+                        candidate_id,
+                        str(data.get("role") or ""),
+                        str(data.get("faction") or ""),
+                        str(data.get("candidate_type") or ""),
+                        str(data.get("topic") or ""),
+                        str(data.get("sample_source") or ""),
+                        _dump(data.get("evidence_decision_ids") or []),
+                        str(data.get("scenario") or ""),
+                        _dump(data.get("conditions") or []),
+                        str(data.get("recommendation") or ""),
+                        str(data.get("anti_pattern") or ""),
+                        _dump(data.get("risk_boundaries") or []),
+                        _dump(data.get("counter_conditions") or []),
+                        _dump(data.get("supporting_evidence") or []),
+                        _dump(data.get("opposing_evidence") or []),
+                        str(data.get("confidence") or "low"),
+                        _dump(data.get("validation_need") or {}),
+                        str(data.get("misleading_risk") or "medium"),
+                        _dump(data),
+                        now,
+                        run_type,
+                        source_run_id,
+                        source_game_id or game_id,
+                        artifact_game_id or game_id,
+                        1 if learning_eligible else 0,
+                        mode,
+                        str(data.get("applicable_phase") or ""),
+                        str(data.get("applicable_action") or ""),
+                        str(data.get("llm_rationale") or ""),
+                        str(data.get("validator_status") or "valid"),
+                    ),
+                )
+                saved.append(candidate_id)
         return saved
 
     def get_candidate(self, game_id: str, candidate_id: str) -> dict[str, Any] | None:

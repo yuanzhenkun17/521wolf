@@ -71,7 +71,7 @@
   color: #2d1809;
   background:
     radial-gradient(ellipse at 18% 8%, rgba(255, 252, 229, 0.72), transparent 36%) padding-box,
-    linear-gradient(180deg, rgba(247, 224, 172, 0.98), rgba(226, 184, 109, 0.96)) padding-box,
+    linear-gradient(180deg, rgba(252, 240, 215, 0.98), rgba(240, 215, 160, 0.96)) padding-box,
     repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(255, 243, 200, 0.55);
   backdrop-filter: none;

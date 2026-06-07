@@ -113,15 +113,6 @@
   text-shadow: 0 0 14px rgba(242, 202, 80, 0.18);
 }
 
-.lycan-app.day:not(.lobbying) .topbar button {
-  border-color: rgba(242, 202, 80, 0.28);
-  color: #f5df8b;
-}
-
-.lycan-app.day:not(.lobbying) .topbar {
-  border-bottom-color: rgba(242, 202, 80, 0.36);
-}
-
 .lycan-app.night:not(.lobbying) {
   --match-accent: #9db8ff;
   --match-accent-soft: rgba(157, 184, 255, 0.18);
@@ -131,22 +122,10 @@
   --match-muted: #c7d3ff;
 }
 
-.lycan-app.night:not(.lobbying) .topbar {
-  border-bottom-color: rgba(157, 184, 255, 0.32);
-  background: rgba(7, 11, 24, 0.94);
-}
-
-.lycan-app.night:not(.lobbying) .brand strong,
 .lycan-app.night:not(.lobbying) .phase-orb span,
 .lycan-app.night:not(.lobbying) .phase-orb i {
   color: #9db8ff;
   text-shadow: 0 0 14px rgba(157, 184, 255, 0.18);
-}
-
-.lycan-app.night:not(.lobbying) .topbar button {
-  border-color: rgba(157, 184, 255, 0.34);
-  color: #d8e4ff;
-  background: rgba(15, 22, 44, 0.72);
 }
 
 .match-layout {

@@ -5,6 +5,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from storage.shared.connection import connect_sqlite, record_schema_version
+
+SCHEMA_VERSION = 1
+
 SCHEMA = """
 -- Game domain
 CREATE TABLE IF NOT EXISTS games (
@@ -324,17 +328,15 @@ CREATE INDEX IF NOT EXISTS idx_bench_group ON benchmark_leaderboard(comparison_g
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
     """Create a SQLite connection with WAL mode and schema initialized."""
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.row_factory = sqlite3.Row
+    conn = connect_sqlite(db_path)
     # Migrate existing tables first (adds new columns to old DBs)
     _ensure_game_columns(conn)
     _ensure_player_columns(conn)
     _ensure_evaluation_columns(conn)
     # Now run full schema (CREATE TABLE IF NOT EXISTS + indexes)
     conn.executescript(SCHEMA)
+    record_schema_version(conn, component="wolf", version=SCHEMA_VERSION)
+    conn.commit()
     return conn
 
 

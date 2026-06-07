@@ -1,6 +1,11 @@
 import { computed } from 'vue'
-import { buildAssessmentScores } from './assessmentScores.js'
 import { decisionActionText, phaseLabel } from './gameStateShared.js'
+import {
+  displayActionLabel,
+  displayRoleLabel,
+  normalizeHistoryDisplayText
+} from '../components/history/historyDisplay.js'
+import { AUTHORITATIVE_DEATH_EVENTS, deathTargetIds } from './gameTimeline.js'
 
 const HISTORY_PHASE_ALIASES = {
   result: 'night',
@@ -24,17 +29,6 @@ const HISTORY_PHASE_ORDER = [
 ]
 
 const HISTORY_PHASE_RANK = new Map(HISTORY_PHASE_ORDER.map((phase, index) => [phase, index]))
-const AUTHORITATIVE_DEATH_EVENTS = new Set([
-  'death',
-  'exile',
-  'exile_vote_end',
-  'pk_vote_end',
-  'white_wolf_burst_kill',
-  'white_wolf_burst_death',
-  'white_wolf_explosion'
-])
-const FALLBACK_DEATH_EVENTS = new Set(['werewolf_kill', 'hunter_shoot'])
-
 function normalizeHistoryPhase(phase = 'setup') {
   return HISTORY_PHASE_ALIASES[phase] || phase || 'setup'
 }
@@ -60,7 +54,8 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     selectedHistoryGame,
     historyPhase,
     selectedHistoryPageKey,
-    assessDimension
+    assessDimension,
+    reviewByGameId
   } = refs
   const {
     logSpeaker = (log) => log?.speaker || '',
@@ -74,6 +69,12 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
   function historyPlayerLabelById(id) {
     const player = historyPlayerById(id)
     return player?.seat ? `${player.seat}号` : `${id}号`
+  }
+
+  function voteVoterLabels(votes = []) {
+    return votes
+      .map((vote) => vote.actorName || historyPlayerLabelById(vote.actor_id))
+      .filter(Boolean)
   }
 
   function historyLogSpeaker(log) {
@@ -112,23 +113,13 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
       value = value.replace(new RegExp(`${player.seat}\\s*号`, 'g'), `${player.seat}号`)
       if (player.name) value = value.replaceAll(player.name, `${player.seat}号`)
     }
-    return value
+    return normalizeHistoryDisplayText(value)
   }
 
   function historyDecisionMatchesPage(decision, page) {
     if (!page) return true
     const decisionPhase = normalizeHistoryPhase(decision.phase || page.phase)
     return normalizeHistoryDay(decision.day || page.day) === normalizeHistoryDay(page.day) && String(decisionPhase) === String(normalizeHistoryPhase(page.phase))
-  }
-
-  function eventTargetId(log) {
-    return log?.target_id ?? log?.target ?? log?.payload?.target ?? log?.payload?.player_id ?? null
-  }
-
-  function eventKillsPlayer(log, hasAuthoritativeDeathEvents) {
-    const type = log?.event_type || log?.type || ''
-    if (AUTHORITATIVE_DEATH_EVENTS.has(type)) return true
-    return !hasAuthoritativeDeathEvents && FALLBACK_DEATH_EVENTS.has(type)
   }
 
   computedState.historyPages = computed(() => {
@@ -182,8 +173,9 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     for (const log of logs) {
       const logPage = { day: log.day, phase: normalizeHistoryPhase(log.phase) }
       if (historyPageSortValue(logPage) > selectedSort) continue
-      const targetId = eventTargetId(log)
-      if (eventKillsPlayer(log, hasAuthoritativeDeathEvents) && targetId) alive[targetId] = false
+      for (const targetId of deathTargetIds(log, hasAuthoritativeDeathEvents)) {
+        alive[targetId] = false
+      }
     }
     return alive
   })
@@ -215,8 +207,8 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
       reason: historyNormalizeText(decision.reason || ''),
       public_summary: historyNormalizeText(decision.public_summary || ''),
       private_reasoning: historyNormalizeText(decision.private_reasoning || ''),
-      actionName: decisionActionText[decision.action] || decision.action,
-      roleName: decision.role || historyPlayerById(decision.actor_id)?.role_hint || '未知身份',
+      actionName: decisionActionText[decision.action] || displayActionLabel(decision.action),
+      roleName: displayRoleLabel(decision.role || historyPlayerById(decision.actor_id)?.role_hint),
       selected_skill: decision.selected_skill || '',
       memory_summary: decision.memory_summary || [],
       memory_refs: decision.memory_refs || [],
@@ -271,7 +263,37 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     alive: selectedHistoryGame.value?.players?.filter((player) => player.alive).length ?? 0,
     total: selectedHistoryGame.value?.players?.length ?? 0
   }))
-  computedState.playerAssessmentScores = computed(() => buildAssessmentScores(selectedHistoryGame.value))
+  computedState.playerAssessmentScores = computed(() => {
+    const gameId = selectedHistoryGame.value?.game_id
+    const review = gameId ? reviewByGameId.value[gameId] : null
+    const reviewPayload = review?.data || review
+    const evals = reviewPayload?.player_evaluations || reviewPayload?.player_scores
+    if (evals?.length) {
+      const players = selectedHistoryGame.value?.players ?? []
+      return evals.map((ev) => {
+        const player = players.find((p) => p.id === ev.player_seat) || { id: ev.player_seat, role: ev.role }
+        const speech = ev.speech_score ?? 0
+        const vote = ev.vote_score ?? 0
+        const skill = ev.skill_score ?? 0
+        const logic = ev.logic_score ?? ev.information_score ?? 0
+        const team = ev.team_score ?? ev.cooperation_score ?? 0
+        const overall = ev.role_score ?? ev.overall_score ?? 0
+        return {
+          player,
+          speech: Math.round(speech * 100),
+          vote: Math.round(vote * 100),
+          skill: Math.round(skill * 100),
+          logic: Math.round(logic * 100),
+          team: Math.round(team * 100),
+          risk_penalty: ev.risk_penalty ?? 0,
+          role_score: Math.round(overall * 100),
+          information: Math.round(logic * 100),
+          cooperation: Math.round(team * 100)
+        }
+      })
+    }
+    return []
+  })
   computedState.activeAssessScores = computed(() =>
     computedState.playerAssessmentScores.value.map((item) => ({
       ...item,
@@ -283,7 +305,6 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     if (computedState.judgeBoardMessage.value) return [{ speaker: '法官', message: computedState.judgeBoardMessage.value }]
     const latestDecision = computedState.decisionRows.value.at(-1)
     if (latestDecision?.action?.startsWith('sheriff_')) {
-      if (latestDecision.action === 'sheriff_run') return [{ speaker: '法官', message: `${latestDecision.actorName}参与警长竞选。` }]
       if (latestDecision.action === 'sheriff_elect') {
         const winner = latestDecision.targetName !== '无目标' ? latestDecision.targetName : latestDecision.actorName
         return [{ speaker: '法官', message: `警长竞选结束，${winner}当选警长。` }]
@@ -299,8 +320,10 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     const tally = {}
     votes.forEach((vote) => {
       const key = vote.targetName || '未知'
-      if (!tally[key]) tally[key] = { target: key, count: 0 }
+      if (!tally[key]) tally[key] = { target: key, targetName: key, count: 0, voters: [] }
       tally[key].count++
+      const voter = vote.actorName || historyPlayerLabelById(vote.actor_id)
+      if (voter && !tally[key].voters.includes(voter)) tally[key].voters.push(voter)
     })
     return Object.values(tally).sort((a, b) => b.count - a.count)
   }
@@ -309,13 +332,15 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     const actor = action.actorName
     const target = action.targetName
     const currentAction = action.action
-    if (currentAction === 'kill' || currentAction === 'werewolf_kill') return `狼人选择击杀 ${target}`
-    if (currentAction === 'guard' || currentAction === 'guard_protect') return `${actor}守护 ${target}`
-    if (currentAction === 'inspect' || currentAction === 'seer_check') return `${actor}查验 ${target}`
-    if (currentAction === 'poison' || currentAction === 'witch_act') return `${actor}使用毒药 ${target}`
-    if (currentAction === 'antidote') return `${actor}使用解药 ${target}`
-    if (currentAction === 'shoot' || currentAction === 'hunter_shoot') return `${actor}开枪 ${target}`
-    return `${actor}行动 ${target}`
+    const hasTarget = target && target !== '无目标'
+    if (currentAction === 'kill' || currentAction === 'werewolf_kill') return hasTarget ? `狼人选择击杀${target}` : '狼人未选择击杀目标'
+    if (currentAction === 'guard' || currentAction === 'guard_protect') return hasTarget ? `${actor}守护${target}` : `${actor}未选择守护目标`
+    if (currentAction === 'inspect' || currentAction === 'seer_check') return hasTarget ? `${actor}查验${target}` : `${actor}未选择查验目标`
+    if (currentAction === 'poison') return hasTarget ? `${actor}使用毒药${target}` : `${actor}不使用毒药`
+    if (currentAction === 'witch_act') return hasTarget ? `${actor}使用药剂${target}` : `${actor}不使用药剂`
+    if (currentAction === 'antidote') return hasTarget ? `${actor}使用解药${target}` : `${actor}不使用解药`
+    if (currentAction === 'shoot' || currentAction === 'hunter_shoot') return hasTarget ? `${actor}开枪带走${target}` : `${actor}未选择开枪目标`
+    return hasTarget ? `${actor}${displayActionLabel(currentAction)}${target}` : `${actor}${displayActionLabel(currentAction)}`
   }
 
   return {

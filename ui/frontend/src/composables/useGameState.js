@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { normalizeHistoryDisplayText } from '../components/history/historyDisplay.js'
 import { createHistoryDerivedState } from './useHistoryDerivedState.js'
 import { createLiveGameState } from './useLiveGameState.js'
 import {
@@ -16,6 +17,31 @@ import {
   roleMatches,
   seatHash
 } from './gameStateShared.js'
+
+const PLAYER_HIDDEN_NIGHT_ACTION_TYPES = new Set([
+  'guard_protect',
+  'guard',
+  'werewolf_kill',
+  'werewolf_attack',
+  'wolf_kill',
+  'seer_check',
+  'seer_inspect',
+  'inspect',
+  'witch_act',
+  'witch_save',
+  'witch_poison'
+])
+
+function logTypes(log = {}) {
+  return [
+    log.type,
+    log.event_type,
+    log.action,
+    log.action_type,
+    log.kind,
+    log.category
+  ].map((value) => String(value || '').trim()).filter(Boolean)
+}
 
 function useGameState() {
   const refs = createRefs()
@@ -48,7 +74,7 @@ function useGameState() {
 
   function normalizePlayerText(text = '') {
     const fn = injectedUtils.value.normalizePlayerText
-    return typeof fn === 'function' ? fn(text) : String(text || '')
+    return typeof fn === 'function' ? fn(text) : normalizeHistoryDisplayText(text)
   }
 
   function cardImage(player) {
@@ -68,11 +94,17 @@ function useGameState() {
 
   function logMessage(log) {
     const fn = injectedUtils.value.logMessage
-    return typeof fn === 'function' ? fn(log) : (log?.message || '')
+    return typeof fn === 'function' ? fn(log) : normalizeHistoryDisplayText(log?.message || '')
   }
 
   function canSeeLog(log) {
-    return log.visibility !== 'private' && (log.visibility !== 'god' || liveState.isWatch?.value)
+    if (liveState.isWatch?.value || refs.isReplayMode.value) return true
+    if (log.visibility === 'private') return false
+    if (log.visibility === 'god' && !liveState.isWatch?.value) return false
+    if (!liveState.isWatch?.value && !refs.isReplayMode.value && !game.value?.winner) {
+      if (logTypes(log).some((type) => PLAYER_HIDDEN_NIGHT_ACTION_TYPES.has(type))) return false
+    }
+    return true
   }
 
   liveState = createLiveGameState(refs, {
