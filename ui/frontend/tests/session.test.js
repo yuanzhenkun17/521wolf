@@ -784,6 +784,36 @@ test('live vote tally keeps voter labels and clears outside vote phases', () => 
   assert.deepEqual(state.sceneVoteTally.value, [])
 })
 
+test('live vote tally scopes decision replay to current vote action and day', () => {
+  const state = useGameState()
+  const players = Array.from({ length: 6 }, (_, index) => ({
+    id: index + 1,
+    seat: index + 1,
+    name: `${index + 1}号`,
+    role_hint: '村民',
+    alive: true
+  }))
+  state.liveGame.value = normalizeGameSnapshot(game('live-vote-scope', {
+    mode: 'watch',
+    day: 2,
+    phase: 'vote',
+    waiting_for: 'vote',
+    pending_action: { type: 'pk_vote' },
+    players,
+    vote_tally: [],
+    decisions: [
+      { action: 'exile_vote', actor_id: 1, target_id: 4, day: 1, phase: 'vote' },
+      { action: 'exile_vote', actor_id: 2, target_id: 4, day: 1, phase: 'vote' },
+      { action: 'exile_vote', actor_id: 3, target_id: 5, day: 2, phase: 'vote' },
+      { action: 'pk_vote', actor_id: 6, target_id: 3, day: 2, phase: 'vote' }
+    ]
+  }), { mode: 'watch' })
+
+  assert.deepEqual(state.pageVoteTally.value, [
+    { target_id: 3, targetName: '3号', voter_ids: [6], count: 1 }
+  ])
+})
+
 test('scene effects expose full night outcomes only for watch and replay views', () => {
   const players = [
     { id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true },

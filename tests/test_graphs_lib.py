@@ -1665,6 +1665,67 @@ class TestLibGame:
         assert diagnostics[0]["exception_type"] == "ValueError"
         assert "no JSON object" in diagnostics[0]["exception_message"]
 
+    def test_agent_runtime_falls_back_for_non_dict_json(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.models import Role
+
+        class FakeModel:
+            async def ainvoke(self, messages):
+                return type("Result", (), {"content": "[]"})()
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            trace_recorder = self._CaptureTraceRecorder()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=FakeModel(),
+                recorder=recorder,
+                trace_recorder=trace_recorder,
+            )
+            response = await agent.act(self._speech_request())
+            return response, recorder, trace_recorder
+
+        response, recorder, trace_recorder = asyncio.run(_run())
+        assert response.text.startswith("1号玩家发言")
+        assert recorder.records[0].source == "fallback"
+        diagnostics = self._diagnostic_entries(trace_recorder.contexts[0], "parse_error", "parse.extract_json")
+        assert diagnostics[0]["exception_type"] == "ValueError"
+        assert "expected object, got list" in diagnostics[0]["exception_message"]
+
+    def test_agent_runtime_records_invalid_confidence_diagnostic(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.models import Role
+
+        class FakeModel:
+            async def ainvoke(self, messages):
+                return type("Result", (), {"content": '{"public_text":"ok","confidence":"high"}'})()
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            trace_recorder = self._CaptureTraceRecorder()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=FakeModel(),
+                recorder=recorder,
+                trace_recorder=trace_recorder,
+            )
+            response = await agent.act(self._speech_request())
+            return response, recorder, trace_recorder
+
+        response, recorder, trace_recorder = asyncio.run(_run())
+        assert response.text == "ok"
+        assert recorder.records[0].confidence == 0.5
+        diagnostics = self._diagnostic_entries(trace_recorder.contexts[0], "parse_error", "parse.confidence")
+        assert diagnostics[0]["exception_type"] == "ValueError"
+
     def test_agent_runtime_records_graph_fallback_diagnostics(self):
         import asyncio
 
@@ -1731,6 +1792,117 @@ class TestLibGame:
         response, recorder = asyncio.run(_run())
         assert response.text == "ok"
         assert recorder.records[0].errors == ["trace_recorder.record failed: RuntimeError: trace sink down"]
+
+    def test_agent_runtime_records_recorder_failure_without_raising(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from engine.models import Role
+
+        class FakeModel:
+            async def ainvoke(self, messages):
+                return type("Result", (), {"content": '{"public_text":"ok","confidence":1}'})()
+
+        class BrokenRecorder:
+            def record(self, decision):
+                raise RuntimeError("decision sink down")
+
+        async def _run():
+            trace_recorder = self._CaptureTraceRecorder()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=FakeModel(),
+                recorder=BrokenRecorder(),
+                trace_recorder=trace_recorder,
+            )
+            response = await agent.act(self._speech_request())
+            return response, trace_recorder
+
+        response, trace_recorder = asyncio.run(_run())
+        assert response.text == "ok"
+        assert trace_recorder.contexts[0].decision_record.errors == [
+            "recorder.record failed: RuntimeError: decision sink down"
+        ]
+        diagnostics = self._diagnostic_entries(trace_recorder.contexts[0], "record_error", "decision.record")
+        assert diagnostics[0]["exception_type"] == "RuntimeError"
+        assert diagnostics[0]["exception_message"] == "decision sink down"
+
+    def test_agent_policy_does_not_force_optional_invalid_targets_to_first_candidate(self):
+        from app.graphs.subgraphs.agent.nodes import _repair_or_fallback
+        from engine.models import ActionRequest, ActionResponse, ActionType, GameEvent, Observation, Phase, Role
+
+        observation = Observation(
+            player_id=1,
+            self_role=Role.VILLAGER,
+            phase=Phase.EXILE_VOTE,
+            day=1,
+            alive_players=(1, 2, 3),
+            dead_players=(),
+            sheriff_id=None,
+            visible_events=(
+                GameEvent(type="vote", day=1, phase=Phase.EXILE_VOTE, message="vote"),
+            ),
+        )
+
+        witch_request = ActionRequest(
+            player_id=1,
+            action_type=ActionType.WITCH_ACT,
+            phase=Phase.NIGHT,
+            observation=observation,
+            candidates=(2, 3),
+            metadata={"can_poison": True},
+        )
+        witch_response = _repair_or_fallback(
+            witch_request,
+            ActionResponse(ActionType.WITCH_ACT, choice="poison", target=99),
+            {"policy_adjustments": []},
+        )
+        assert witch_response.choice == "none"
+        assert witch_response.target is None
+
+        vote_request = ActionRequest(
+            player_id=1,
+            action_type=ActionType.EXILE_VOTE,
+            phase=Phase.EXILE_VOTE,
+            observation=observation,
+            candidates=(2, 3),
+        )
+        vote_response = _repair_or_fallback(
+            vote_request,
+            ActionResponse(ActionType.EXILE_VOTE, target=99),
+            {"policy_adjustments": []},
+        )
+        assert vote_response.target is None
+
+        white_wolf_request = ActionRequest(
+            player_id=1,
+            action_type=ActionType.WHITE_WOLF_EXPLODE,
+            phase=Phase.DAY_SPEECH,
+            observation=observation,
+            candidates=(2, 3),
+        )
+        white_wolf_response = _repair_or_fallback(
+            white_wolf_request,
+            ActionResponse(ActionType.WHITE_WOLF_EXPLODE, choice="pass", target=2),
+            {"policy_adjustments": []},
+        )
+        assert white_wolf_response.choice == "pass"
+        assert white_wolf_response.target is None
+
+        kill_request = ActionRequest(
+            player_id=1,
+            action_type=ActionType.WEREWOLF_KILL,
+            phase=Phase.NIGHT,
+            observation=observation,
+            candidates=(2, 3),
+        )
+        kill_response = _repair_or_fallback(
+            kill_request,
+            ActionResponse(ActionType.WEREWOLF_KILL, target=99),
+            {"policy_adjustments": []},
+        )
+        assert kill_response.target == 2
 
     def test_game_graph_uses_injected_model(self):
         import asyncio

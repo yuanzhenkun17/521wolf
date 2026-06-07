@@ -56,6 +56,7 @@ def can_hunter_shoot(engine: GameEngine, player_id: int) -> bool:
     return (
         player.role is Role.HUNTER
         and not player.alive
+        and not player.role_state.get("has_shot", False)
         and death is not None
         and death.cause in {DeathCause.WEREWOLF, DeathCause.EXILE}
     )
@@ -125,8 +126,6 @@ async def resolve_pending_daybreak_actions(engine: GameEngine) -> None:
         player_id = engine.state.pending_last_words.pop(0)
         await resolve_last_word(engine, player_id)
     while engine.state.pending_hunter_shots:
-        if engine.check_winner() is not None:
-            break
         player_id = engine.state.pending_hunter_shots.pop(0)
         await resolve_hunter_death(engine, player_id)
 

@@ -155,6 +155,31 @@ async def test_pending_hunter_shot_resolves_at_daybreak():
     assert engine.state.pending_hunter_shots == []
 
 
+async def test_pending_hunter_shot_resolves_before_daybreak_victory_check():
+    engine = _engine(
+        {
+            1: Role.WEREWOLF,
+            2: Role.HUNTER,
+            3: Role.VILLAGER,
+        },
+        responses={
+            2: [ActionResponse(ActionType.HUNTER_SHOOT, target=1)],
+        },
+    )
+    engine.state.day = 1
+    engine.state.phase = Phase.NIGHT
+
+    engine.kill_player(2, DeathCause.WEREWOLF)
+    await engine.resolve_death_triggers([2])
+    result = await engine.run_day_speeches()
+
+    assert result == "finished"
+    assert not engine.state.players[1].alive
+    assert engine.state.players[2].role_state["has_shot"] is True
+    assert engine.state.pending_hunter_shots == []
+    assert engine.state.winner is Winner.VILLAGERS
+
+
 async def test_hunter_shot_records_single_descriptive_event():
     engine = _engine(
         {
@@ -179,6 +204,37 @@ async def test_hunter_shot_records_single_descriptive_event():
     assert hunter_shots[0].payload == {"target": 1}
 
 
+async def test_hunter_cannot_shoot_twice():
+    engine = _engine(
+        {
+            1: Role.WEREWOLF,
+            2: Role.HUNTER,
+            3: Role.VILLAGER,
+            4: Role.SEER,
+        },
+        responses={
+            2: [
+                ActionResponse(ActionType.HUNTER_SHOOT, target=1),
+                ActionResponse(ActionType.HUNTER_SHOOT, target=3),
+            ],
+        },
+    )
+    engine.state.day = 1
+    engine.state.phase = Phase.DAY_SPEECH
+    engine.kill_player(2, DeathCause.EXILE)
+
+    first_target = await engine.resolve_hunter_death(2)
+    second_target = await engine.resolve_hunter_death(2)
+
+    assert first_target == 1
+    assert second_target is None
+    assert engine.can_hunter_shoot(2) is False
+    assert engine.state.players[3].alive
+    assert engine.state.players[2].role_state["shot_target"] == 1
+    assert len(_events(engine, "hunter_shot")) == 1
+    assert len(engine.agents[2].requests) == 1
+
+
 @pytest.mark.parametrize(
     "cause",
     [DeathCause.WITCH_POISON, DeathCause.HUNTER_SHOT, DeathCause.WHITE_WOLF],
@@ -191,3 +247,35 @@ def test_hunter_cannot_shoot_for_non_shootable_death_causes(cause: DeathCause):
     engine.kill_player(2, cause)
 
     assert engine.can_hunter_shoot(2) is False
+
+
+async def test_last_sheriff_runner_cannot_withdraw():
+    engine = _engine(
+        {
+            1: Role.VILLAGER,
+            2: Role.WEREWOLF,
+            3: Role.SEER,
+        },
+        responses={
+            1: [
+                ActionResponse(ActionType.SHERIFF_RUN, choice="run"),
+                ActionResponse(ActionType.SHERIFF_SPEAK, text="running"),
+                ActionResponse(ActionType.SHERIFF_WITHDRAW, choice="withdraw"),
+            ],
+            2: [
+                ActionResponse(ActionType.SHERIFF_RUN, choice="pass"),
+                ActionResponse(ActionType.SHERIFF_VOTE, target=1),
+            ],
+            3: [
+                ActionResponse(ActionType.SHERIFF_RUN, choice="pass"),
+                ActionResponse(ActionType.SHERIFF_VOTE, target=1),
+            ],
+        },
+    )
+
+    winner = await engine.run_sheriff_election()
+
+    assert winner == 1
+    assert engine.state.sheriff_id == 1
+    assert _events(engine, "invalid_response")[-1].actor == 1
+    assert _events(engine, "sheriff_election_end")[-1].payload["runners"] == [1]

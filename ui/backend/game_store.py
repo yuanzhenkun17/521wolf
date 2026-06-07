@@ -931,7 +931,11 @@ class GameStoreMixin:
             "pending_action": None,
             "pending_human_action": None,
             "current_speaker_id": None,
-            "vote_tally": _vote_tally(normalized_decisions),
+            "vote_tally": _vote_tally(
+                normalized_decisions,
+                current_day=day,
+                current_phase=phase,
+            ),
             "role_counts": dict(Counter(player["role"] for player in players)),
             "role_skill_dirs": dict(config.get("role_versions", {}) or {}),
             "config": config,

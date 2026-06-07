@@ -416,7 +416,12 @@ class LiveGameSession:
             "pending_action": _ui_pending_action(pending),
             "pending_human_action": pending,
             "current_speaker_id": pending.get("player_id") if pending and waiting_for == "speech" else None,
-            "vote_tally": _vote_tally(decisions),
+            "vote_tally": _vote_tally(
+                decisions,
+                current_day=self.engine.state.day,
+                current_phase=phase,
+                pending_action=pending,
+            ),
             "role_counts": role_counts,
             "role_skill_dirs": dict(self.request.role_versions),
             "started_at": self.started_at,

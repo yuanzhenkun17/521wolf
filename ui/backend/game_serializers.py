@@ -247,8 +247,16 @@ def _sanitize_pending_for_player_view(pending: Any, *, human_player_id: int) -> 
     return dict(pending)
 
 
-def _sanitize_vote_tally_for_player_view(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return _vote_tally(decisions)
+def _sanitize_vote_tally_for_player_view(
+    snapshot: dict[str, Any],
+    decisions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return _vote_tally(
+        decisions,
+        current_day=snapshot.get("day"),
+        current_phase=snapshot.get("phase"),
+        pending_action=snapshot.get("pending_human_action") or snapshot.get("pending_action"),
+    )
 
 
 def _player_view_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -298,7 +306,7 @@ def _player_view_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     safe["pending_action"] = _ui_pending_action(pending)
     safe["waiting_for"] = _waiting_for_pending(pending)
     safe["current_speaker_id"] = pending.get("player_id") if pending and safe["waiting_for"] == "speech" else None
-    safe["vote_tally"] = _sanitize_vote_tally_for_player_view(decisions)
+    safe["vote_tally"] = _sanitize_vote_tally_for_player_view(snapshot, decisions)
     safe["review"] = None
     return safe
 
@@ -661,18 +669,106 @@ def _choice_options(action_type: str, metadata: dict[str, Any]) -> list[dict[str
     }
     return options.get(action_type, [])
 
-def _vote_tally(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    votes: dict[int, list[dict[str, Any]]] = {}
+_VOTE_ACTIONS = {"exile_vote", "pk_vote", "sheriff_vote", "vote"}
+_VOTE_PHASE_ALIASES = {
+    "exile_vote": "vote",
+    "pk_vote": "vote",
+    "vote": "vote",
+    "sheriff_vote": "sheriff_vote",
+    "sheriff_election": "sheriff_vote",
+}
+
+
+def _vote_bucket_for_action(action: Any) -> str | None:
+    value = str(action or "")
+    if value == "sheriff_vote":
+        return "sheriff_vote"
+    if value in {"exile_vote", "pk_vote", "vote"}:
+        return "vote"
+    return None
+
+
+def _canonical_vote_action(action: Any) -> str:
+    value = str(action or "")
+    return "exile_vote" if value == "vote" else value
+
+
+def _vote_bucket_for_phase(phase: Any) -> str | None:
+    return _VOTE_PHASE_ALIASES.get(str(phase or ""))
+
+
+def _pending_vote_action(pending_action: Any) -> str | None:
+    if not isinstance(pending_action, dict):
+        return None
+    action = str(pending_action.get("action_type") or pending_action.get("type") or "")
+    return _canonical_vote_action(action) if action in _VOTE_ACTIONS else None
+
+
+def _scoped_vote_decisions(
+    decisions: list[dict[str, Any]],
+    *,
+    current_day: Any = None,
+    current_phase: Any = None,
+    pending_action: Any = None,
+) -> list[dict[str, Any]]:
+    has_scope = current_day is not None or current_phase is not None or pending_action is not None
+    current_day_id = _int_or_none(current_day)
+    active_action = _pending_vote_action(pending_action)
+    active_bucket = _vote_bucket_for_action(active_action) or _vote_bucket_for_phase(current_phase)
+    exact_action = active_action if active_action in {"exile_vote", "pk_vote", "sheriff_vote"} else None
+    if has_scope and active_bucket is None:
+        return []
+
+    scoped: list[dict[str, Any]] = []
     for decision in decisions:
-        action = decision.get("action") or decision.get("action_type")
-        if action not in {"exile_vote", "pk_vote", "sheriff_vote"}:
+        action = str(decision.get("action") or decision.get("action_type") or "")
+        if action not in _VOTE_ACTIONS:
             continue
+        if exact_action is not None and _canonical_vote_action(action) != exact_action:
+            continue
+        if current_day_id is not None and _int_or_none(decision.get("day")) != current_day_id:
+            continue
+        if active_bucket is not None:
+            decision_bucket = _vote_bucket_for_action(action) or _vote_bucket_for_phase(decision.get("phase"))
+            if decision_bucket != active_bucket:
+                continue
+        scoped.append(decision)
+
+    if not has_scope or exact_action is not None:
+        return scoped
+    latest_action = next(
+        (
+            _canonical_vote_action(decision.get("action") or decision.get("action_type"))
+            for decision in reversed(scoped)
+        ),
+        None,
+    )
+    if latest_action in {"exile_vote", "pk_vote", "sheriff_vote"}:
+        return [
+            decision
+            for decision in scoped
+            if _canonical_vote_action(decision.get("action") or decision.get("action_type")) == latest_action
+        ]
+    return scoped
+
+
+def _vote_tally(
+    decisions: list[dict[str, Any]],
+    *,
+    current_day: Any = None,
+    current_phase: Any = None,
+    pending_action: Any = None,
+) -> list[dict[str, Any]]:
+    votes: dict[int, list[dict[str, Any]]] = {}
+    for decision in _scoped_vote_decisions(
+        decisions,
+        current_day=current_day,
+        current_phase=current_phase,
+        pending_action=pending_action,
+    ):
         target = decision.get("target_id") or decision.get("selected_target")
-        if target is None:
-            continue
-        try:
-            target_id = int(target)
-        except (TypeError, ValueError):
+        target_id = _int_or_none(target)
+        if target_id is None:
             continue
         votes.setdefault(target_id, []).append(decision)
     return [

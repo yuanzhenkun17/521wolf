@@ -26,11 +26,13 @@ class WhiteWolfKingRule(WerewolfRule):
             player_id,
             ActionType.WHITE_WOLF_EXPLODE,
             candidates=candidates,
-            validator=lambda res: res.target in candidates
-            or (res.target is None and res.choice in {"pass", None}),
+            validator=lambda res: (
+                (res.choice == "explode" and res.target in candidates)
+                or (res.choice in {"pass", None} and res.target is None)
+            ),
             default=ActionResponse(ActionType.WHITE_WOLF_EXPLODE, choice="pass"),
         )
-        if response.target not in candidates:
+        if response.choice != "explode" or response.target not in candidates:
             return None
         ww_ps = engine.state.players[player_id]
         ww_ps.role_state["has_exploded"] = True

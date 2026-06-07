@@ -208,7 +208,7 @@ async def test_white_wolf_king_explosion_kills_self_and_good_target():
         {1: Role.WHITE_WOLF_KING, 2: Role.WEREWOLF, 3: Role.VILLAGER, 4: Role.SEER},
         responses={
             1: [
-                ActionResponse(ActionType.WHITE_WOLF_EXPLODE, target=3),
+                ActionResponse(ActionType.WHITE_WOLF_EXPLODE, choice="explode", target=3),
                 ActionResponse(ActionType.LAST_WORD, text="last word"),
             ],
         },
@@ -226,3 +226,26 @@ async def test_white_wolf_king_explosion_kills_self_and_good_target():
     assert engine.state.deaths[-1].cause is DeathCause.WHITE_WOLF
     assert engine.state.phase is Phase.NIGHT
     assert _events(engine, "white_wolf_explosion")[-1].public is True
+
+
+async def test_white_wolf_king_pass_with_target_does_not_explode():
+    engine = _engine(
+        {1: Role.WHITE_WOLF_KING, 2: Role.WEREWOLF, 3: Role.VILLAGER, 4: Role.SEER},
+        responses={
+            1: [
+                ActionResponse(ActionType.WHITE_WOLF_EXPLODE, choice="pass", target=3),
+                ActionResponse(ActionType.WHITE_WOLF_EXPLODE, choice="pass"),
+            ],
+        },
+    )
+    engine.state.day = 1
+    engine.state.phase = Phase.DAY_SPEECH
+
+    result = await rule_for(Role.WHITE_WOLF_KING).day_interrupt(engine, 1)
+
+    assert result is None
+    assert engine.state.players[1].role_state["has_exploded"] is False
+    assert engine.state.players[1].alive
+    assert engine.state.players[3].alive
+    assert _events(engine, "invalid_response")[-1].actor == 1
+    assert _events(engine, "white_wolf_explosion") == []

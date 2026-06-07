@@ -326,7 +326,7 @@ def _parse_node(state: dict) -> dict:
         state["parsed_decision"] = {}
         return state
     try:
-        state["parsed_decision"] = extract_json(raw)
+        parsed = extract_json(raw)
     except (ValueError, json.JSONDecodeError) as exc:
         _append_error(
             state,
@@ -336,7 +336,33 @@ def _parse_node(state: dict) -> dict:
             exc=exc,
         )
         state["parsed_decision"] = {}
-    state["confidence"] = float(state.get("parsed_decision", {}).get("confidence", 0.5) or 0.5)
+        return state
+
+    if not isinstance(parsed, dict):
+        message = f"JSON parse error: expected object, got {type(parsed).__name__}"
+        _append_error(
+            state,
+            message,
+            kind="parse_error",
+            stage="parse.extract_json",
+            exc=ValueError(message),
+        )
+        state["parsed_decision"] = {}
+        return state
+
+    state["parsed_decision"] = parsed
+    try:
+        state["confidence"] = float(parsed.get("confidence", 0.5) or 0.5)
+    except (TypeError, ValueError) as exc:
+        message = _issue_message("confidence parse failed", exc)
+        _append_error(
+            state,
+            message,
+            kind="parse_error",
+            stage="parse.confidence",
+            exc=exc,
+        )
+        state["confidence"] = 0.5
     return state
 
 
@@ -522,7 +548,19 @@ class AgentRuntimeAdapter:
             decision_record.errors.append(message)
 
         if self.recorder is not None:
-            self.recorder.record(decision_record)
+            try:
+                self.recorder.record(decision_record)
+            except Exception as exc:
+                _log.warning("recorder.record failed", exc_info=True)
+                message = _issue_message("recorder.record failed", exc)
+                _append_error(
+                    state,
+                    message,
+                    kind="record_error",
+                    stage="decision.record",
+                    exc=exc,
+                )
+                decision_record.errors.append(message)
 
         if self.trace_recorder is not None:
             try:
@@ -709,15 +747,29 @@ def _repair_or_fallback(request: ActionRequest, response: ActionResponse, state:
             f"repaired to {response.choice!r}."
         )
 
-    if response.target is not None and request.candidates and response.target not in request.candidates:
+    if response.target is not None and (
+        not request.candidates or response.target not in request.candidates
+    ):
         old_target = response.target
-        response = ActionResponse(
-            request.action_type,
-            target=request.candidates[0],
-            choice=response.choice,
-            text=response.text,
-        )
-        adjustments.append(f"target not in candidates; repaired target from {old_target} to {response.target}.")
+        if request.action_type in _REQUIRED_TARGET_ACTIONS and request.candidates:
+            response = ActionResponse(
+                request.action_type,
+                target=request.candidates[0],
+                choice=response.choice,
+                text=response.text,
+            )
+            adjustments.append(f"target not in candidates; repaired target from {old_target} to {response.target}.")
+        elif request.action_type == ActionType.SHERIFF_BADGE:
+            response = _fallback_response(request)
+            adjustments.append(f"target not in candidates; fallback for invalid target {old_target}.")
+        else:
+            response = ActionResponse(
+                request.action_type,
+                target=None,
+                choice=response.choice,
+                text=response.text,
+            )
+            adjustments.append(f"target not in candidates; cleared invalid target {old_target}.")
 
     if (
         response.target is None
@@ -747,8 +799,15 @@ def _repair_or_fallback(request: ActionRequest, response: ActionResponse, state:
             response = _fallback_response(request)
 
     if request.action_type == ActionType.WHITE_WOLF_EXPLODE:
+        if response.choice in {"pass", None} and response.target is not None:
+            adjustments.append("pass cannot include an explode target; cleared target.")
+            response = ActionResponse(request.action_type, choice="pass", text=response.text)
         valid_explode = (
-            (response.target is not None and response.target in request.candidates)
+            (
+                response.choice == "explode"
+                and response.target is not None
+                and response.target in request.candidates
+            )
             or (response.target is None and response.choice in {"pass", None})
         )
         if not valid_explode:

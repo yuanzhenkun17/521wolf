@@ -119,6 +119,29 @@ function voteActionPhase(action = '') {
   return ''
 }
 
+function voteAction(row = {}) {
+  return String(row?.action || row?.action_type || row?.type || row?.event_type || '').trim()
+}
+
+function canonicalVoteAction(action = '') {
+  const value = String(action || '').trim()
+  return value === 'vote' ? 'exile_vote' : value
+}
+
+function latestVoteActionForScope(rows = [], activePhase = '', currentDay = null) {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index]
+    const action = voteAction(row)
+    if (!action || voteActionPhase(action) !== activePhase) continue
+    const rowDay = numericId(row?.day)
+    if (currentDay && rowDay !== currentDay) continue
+    const rowPhase = String(row?.phase || activePhase).trim()
+    if (sceneVotePhases.has(rowPhase) && rowPhase !== activePhase) continue
+    return canonicalVoteAction(action)
+  }
+  return ''
+}
+
 function logActorId(log) {
   return numericId(
     log?.actor_id
@@ -521,6 +544,9 @@ export function createLiveGameState(refs, helpers) {
       ? phase
       : (currentGame.waiting_for === 'vote' ? voteActionPhase(pendingAction) || 'vote' : '')
     if (!activePhase) return []
+    const currentDay = numericId(currentGame.day)
+    const canonicalPendingAction = canonicalVoteAction(pendingAction)
+    const exactAction = ['exile_vote', 'pk_vote', 'sheriff_vote'].includes(canonicalPendingAction) ? canonicalPendingAction : ''
 
     const rows = new Map()
     const ensureVoteRow = (targetId, patch = {}) => {
@@ -564,9 +590,13 @@ export function createLiveGameState(refs, helpers) {
     })
 
     const collectRows = [...(currentGame.decisions || []), ...(currentGame.logs || [])]
+    const activeAction = exactAction || latestVoteActionForScope(collectRows, activePhase, currentDay)
     collectRows.forEach((row) => {
-      const action = row?.action || row?.action_type || row?.type || row?.event_type || ''
+      const action = voteAction(row)
       if (voteActionPhase(action) !== activePhase) return
+      if (activeAction && canonicalVoteAction(action) !== activeAction) return
+      const rowDay = numericId(row?.day)
+      if (currentDay && rowDay !== currentDay) return
       const rowPhase = String(row?.phase || activePhase).trim()
       if (sceneVotePhases.has(rowPhase) && rowPhase !== activePhase) return
       upsertVote(rowTargetId(row), logActorId(row))

@@ -18,6 +18,7 @@ import ui.backend.app as ui_backend_app
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
 from ui.backend.schemas import BenchmarkRequest, EvolutionStartRequest, GameStartRequest
 from ui.backend.sse import stream_queue_sse
+from ui.backend.game_serializers import _player_view_snapshot, _vote_tally
 import ui.backend.store as ui_backend_store
 from ui.backend.task_events import TaskEventLog
 
@@ -279,6 +280,60 @@ def test_human_player_id_starts_live_play_contract(tmp_path: Path) -> None:
     assert created["waiting_for"] in {"none", "speech", "vote", "action"}
     assert stop_response.status_code == 200
     assert stop_response.json()["status"] == "cancelled"
+
+
+def test_vote_tally_scopes_to_current_vote_round() -> None:
+    decisions = [
+        {"day": 1, "phase": "exile_vote", "action_type": "exile_vote", "actor_id": 1, "target_id": 4},
+        {"day": 1, "phase": "exile_vote", "action_type": "exile_vote", "actor_id": 2, "target_id": 4},
+        {"day": 2, "phase": "exile_vote", "action_type": "exile_vote", "actor_id": 3, "target_id": 5},
+        {"day": 2, "phase": "exile_vote", "action_type": "exile_vote", "actor_id": 4, "target_id": 5},
+        {"day": 2, "phase": "exile_vote", "action_type": "pk_vote", "actor_id": 6, "target_id": 3},
+    ]
+
+    current_exile = _vote_tally(
+        decisions,
+        current_day=2,
+        current_phase="exile_vote",
+        pending_action={"action_type": "exile_vote"},
+    )
+    current_pk = _vote_tally(
+        decisions,
+        current_day=2,
+        current_phase="exile_vote",
+        pending_action={"action_type": "pk_vote"},
+    )
+
+    assert [(row["target_id"], row["count"], row["voter_ids"]) for row in current_exile] == [(5, 2, [3, 4])]
+    assert [(row["target_id"], row["count"], row["voter_ids"]) for row in current_pk] == [(3, 1, [6])]
+
+    player_view = _player_view_snapshot(
+        {
+            "game_id": "player_vote_scope",
+            "mode": "play",
+            "status": "running",
+            "human_player_id": 1,
+            "day": 2,
+            "phase": "exile_vote",
+            "players": [
+                {"id": player_id, "role": "villager", "role_hint": "村民", "team": "villagers", "alive": True}
+                for player_id in range(1, 7)
+            ],
+            "events": [],
+            "decisions": decisions,
+            "pending_human_action": {
+                "player_id": 1,
+                "action_type": "pk_vote",
+                "phase": "exile_vote",
+                "day": 2,
+                "candidates": [3, 5],
+            },
+        }
+    )
+
+    assert [(row["target_id"], row["count"], row["voter_ids"]) for row in player_view["vote_tally"]] == [
+        (3, 1, [6])
+    ]
 
 
 def test_role_versions_flow_to_app_skill_dir(tmp_path: Path) -> None:

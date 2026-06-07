@@ -28,6 +28,7 @@ async def run_sheriff_election(engine: GameEngine) -> int | None:
     initial_runners = tuple(sorted(runners))
     for player_id in initial_runners:
         current_runners = tuple(sorted(runners))
+        can_withdraw = len(current_runners) > 1
         response = await engine._ask(
             player_id,
             ActionType.SHERIFF_WITHDRAW,
@@ -37,10 +38,10 @@ async def run_sheriff_election(engine: GameEngine) -> int | None:
                 "runners": list(current_runners),
                 "remaining_runners": list(current_runners),
             },
-            validator=lambda res: res.choice in {"withdraw", "stay", None},
+            validator=lambda res: res.choice in {"stay", None} or (res.choice == "withdraw" and can_withdraw),
             default=ActionResponse(ActionType.SHERIFF_WITHDRAW, choice="stay"),
         )
-        if response.choice == "withdraw":
+        if response.choice == "withdraw" and len(runners) > 1:
             runners.remove(player_id)
     if not runners:
         engine._record("sheriff_election_end", message="无人竞选警长", payload={"runners": []})
