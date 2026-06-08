@@ -17,6 +17,7 @@ from app.util.action_types import (
     SPEECH_ACTION_TYPES,
     VOTE_ACTION_TYPES,
 )
+from app.util.targets import EVENT_TARGET_KEYS, read_target_id
 
 
 @dataclass(slots=True)
@@ -122,7 +123,8 @@ def log_entries(game_log) -> list[dict]:
 
 def did_survive(player_id: int, game_log) -> bool:
     for entry in log_entries(game_log):
-        if entry.get("event_type") == "death" and entry.get("target") == player_id:
+        event_type = str(entry.get("event_type") or entry.get("type") or "")
+        if event_type == "death" and read_target_id(entry, keys=EVENT_TARGET_KEYS, include_payload=True) == player_id:
             return False
     return True
 
@@ -142,7 +144,7 @@ def _score_agent(player_id: int, role: Role, decisions: list[dict], winner_team,
     vote_decisions = [d for d in decisions if d.get("action_type") in VOTE_ACTION_TYPES]
     correct_votes = 0
     for d in vote_decisions:
-        target = d.get("selected_target")
+        target = _decision_target(d)
         if target is not None:
             target_role = get_role_of(target, roles)
             if target_role is not None:
@@ -150,7 +152,7 @@ def _score_agent(player_id: int, role: Role, decisions: list[dict], winner_team,
                 if is_correct: correct_votes += 1
     scores.vote_accuracy = correct_votes / len(vote_decisions) * 10 if vote_decisions else 5.0
     skill_decisions = [d for d in decisions if d.get("action_type") in NIGHT_SKILL_ACTION_TYPES]
-    correct_skills = sum(1 for d in skill_decisions if _is_good_skill_use(d.get("action_type"), d.get("selected_choice"), d.get("selected_target"), role, game_log, roles))
+    correct_skills = sum(1 for d in skill_decisions if _is_good_skill_use(d.get("action_type"), d.get("selected_choice"), _decision_target(d), role, game_log, roles))
     scores.skill_accuracy = correct_skills / len(skill_decisions) * 10 if skill_decisions else 5.0
     speech_decisions = [d for d in decisions if d.get("action_type") in SPEECH_ACTION_TYPES]
     if speech_decisions:
@@ -170,6 +172,11 @@ def _score_agent(player_id: int, role: Role, decisions: list[dict], winner_team,
 
 
 def _is_good_skill_use(action: str, choice, target, role: Role, game_log: dict, roles: dict[int, Role]) -> bool:
+    if action == "white_wolf_explode":
+        if choice != "explode" or target is None:
+            return False
+        target_role = get_role_of(target, roles)
+        return target_role is not None and target_role.team is not Team.WEREWOLVES
     if target is not None:
         target_role = get_role_of(target, roles)
         if target_role is None: return False
@@ -187,7 +194,7 @@ def _find_highlights(player_id, role, decisions, game_log, roles):
     for d in decisions:
         if d.get("source") == "llm":
             action = d.get("action_type", "")
-            target = d.get("selected_target")
+            target = _decision_target(d)
             if action in VOTE_ACTION_TYPES and target is not None:
                 tr = get_role_of(target, roles)
                 if tr and tr.team is Team.WEREWOLVES and role.team is not Team.WEREWOLVES:
@@ -216,12 +223,12 @@ def _find_mistakes(player_id, role, decisions, game_log, roles):
         if source == "fallback": m.append(f"{d.get('action_type', 'unknown')} 使用了回退动作")
         if source == "policy_adjusted": m.append(f"{d.get('action_type', 'unknown')} 被策略修正")
         if d.get("action_type") == "witch_act" and d.get("selected_choice") == "poison":
-            t = d.get("selected_target")
+            t = _decision_target(d)
             if t is not None:
                 tr = get_role_of(t, roles)
                 if tr and tr.team is not Team.WEREWOLVES: m.append(f"毒杀了 P{t} ({tr.value})——毒错好人")
         if d.get("action_type") == "hunter_shoot":
-            t = d.get("selected_target")
+            t = _decision_target(d)
             if t is not None:
                 tr = get_role_of(t, roles)
                 if tr and tr.team is not Team.WEREWOLVES: m.append(f"开枪带走了 P{t} ({tr.value})——带错好人")
@@ -239,14 +246,16 @@ def _detect_turning_points(game_log, agent_decisions):
     points = []
     for pid, decisions in agent_decisions.items():
         for d in decisions:
-            if d.get("action_type") == "werewolf_kill" and d.get("selected_target") is not None:
-                points.append(f"狼人首刀 P{d['selected_target']}")
+            target = _decision_target(d)
+            if d.get("action_type") == "werewolf_kill" and target is not None:
+                points.append(f"狼人首刀 P{target}")
                 break
         if points: break
     for pid, decisions in agent_decisions.items():
         for d in decisions:
             if d.get("action_type") == "witch_act" and d.get("selected_choice") == "poison":
-                points.append(f"女巫 P{pid} 使用毒药毒杀 P{d.get('selected_target')}")
+                target = _decision_target(d)
+                points.append(f"女巫 P{pid} 使用毒药毒杀 P{target}")
                 break
     for pid, decisions in agent_decisions.items():
         for d in decisions:
@@ -254,6 +263,10 @@ def _detect_turning_points(game_log, agent_decisions):
                 points.append(f"预言家 P{pid} 跳身份公布查验链")
                 break
     return points[:5]
+
+
+def _decision_target(decision: dict[str, Any]) -> int | None:
+    return read_target_id(decision)
 
 
 def _generate_recommendations(review):

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
+
+from storage.shared.database import StorageConnection
 
 
 class GameEventStore:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: StorageConnection) -> None:
         self._conn = conn
 
     def get_events(

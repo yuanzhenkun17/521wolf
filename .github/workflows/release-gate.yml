@@ -1,0 +1,155 @@
+name: Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_evolution:
+        description: Run an additional real LLM evolution smoke.
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  POSTGRES_DATABASE_URL: postgresql://wolf_app:wolf_password@127.0.0.1:5432/wolf_app
+  DATABASE_URL: postgresql://wolf_app:wolf_password@127.0.0.1:5432/wolf_app
+  POSTGRES_DISABLE_DOTENV: "1"
+  UI_BACKEND_USE_FAKE_LLM: "false"
+
+jobs:
+  real-llm-gate:
+    name: Real LLM release gate
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+    env:
+      WEREWOLF_LLM_API_KEY: ${{ secrets.WEREWOLF_LLM_API_KEY }}
+      WEREWOLF_LLM_BASE_URL: ${{ secrets.WEREWOLF_LLM_BASE_URL }}
+      WEREWOLF_LLM_MODEL: ${{ secrets.WEREWOLF_LLM_MODEL }}
+      WEREWOLF_LLM_TIMEOUT: ${{ vars.WEREWOLF_LLM_TIMEOUT || '60' }}
+      WEREWOLF_GAME_TIMEOUT: ${{ vars.WEREWOLF_GAME_TIMEOUT || '900' }}
+      LANGFUSE_TRACING_ENABLED: ${{ vars.LANGFUSE_TRACING_ENABLED || 'false' }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: wolf_app
+          POSTGRES_USER: wolf_app
+          POSTGRES_PASSWORD: wolf_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wolf_app -d wolf_app"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --frozen --dev
+
+      - name: Apply PostgreSQL migrations
+        run: uv run alembic upgrade head
+
+      - name: Seed default baselines
+        run: uv run python -m app.tools.seed_default_baseline
+
+      - name: Real LLM and PostgreSQL preflight
+        run: uv run python -m app.tools.real_llm_smoke --preflight-only --pretty
+
+      - name: Real LLM full game smoke, seed 20260608
+        run: >
+          uv run python -m app.tools.real_llm_smoke
+          --seed 20260608
+          --max-days 5
+          --agent-fast-smoke
+          --judge-max-decisions 1
+          --judge-timeout-seconds 20
+          --pretty
+
+      - name: Real LLM full game smoke, seed 20260609
+        run: >
+          uv run python -m app.tools.real_llm_smoke
+          --seed 20260609
+          --max-days 5
+          --agent-fast-smoke
+          --judge-max-decisions 1
+          --judge-timeout-seconds 20
+          --pretty
+
+      - name: Real LLM multi-seed evolution gate report
+        if: ${{ inputs.run_evolution }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import asyncio
+          import json
+
+          from app.run import run_evolution
+
+          ACCEPTED_STATUSES = {"reviewing", "promoted", "rejected", "completed"}
+
+          async def run_one(seed: int) -> dict:
+              return await asyncio.wait_for(
+                  run_evolution(
+                      role="seer",
+                      training_games=1,
+                      battle_games=1,
+                      max_days=3,
+                      seed_start=seed,
+                      battle_seed_start=seed,
+                      agent_fast_smoke=True,
+                      enable_decision_judge=True,
+                      evolve_judge_max_decisions=1,
+                      review_judge_max_decisions=1,
+                      judge_timeout_seconds=20,
+                  ),
+                  timeout=1800,
+              )
+
+          async def main() -> int:
+              summaries = []
+              for seed in (20260608, 20260609):
+                  result = await run_one(seed)
+                  gate_report = result.get("gate_report") or result.get("battle_gate_report") or {}
+                  summaries.append({
+                      "seed": seed,
+                      "status": result.get("status"),
+                      "role": result.get("role"),
+                      "training_game_count": len(result.get("training_games") or []),
+                      "battle_game_count": len(result.get("battle_games") or []),
+                      "gate_report": gate_report,
+                  })
+              print(json.dumps(
+                  {"kind": "release_gate_evolution_report", "summaries": summaries},
+                  ensure_ascii=False,
+                  default=str,
+              ))
+              return 0 if all(str(item.get("status") or "") in ACCEPTED_STATUSES for item in summaries) else 1
+
+          raise SystemExit(asyncio.run(main()))
+          PY

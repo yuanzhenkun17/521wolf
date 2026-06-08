@@ -354,7 +354,6 @@ function useGameActions(state, options = {}) {
   function startGameBody(mode, options = {}) {
     const body = {
       max_days: positiveInt(options.max_days, 20, 1, 100),
-      enable_sheriff: options.enable_sheriff !== false,
       player_count: positiveInt(options.player_count ?? state.playerCount.value, 12, 12, 12),
       human_player_id: mode === 'play' ? 1 : null
     }
@@ -818,8 +817,9 @@ function useGameActions(state, options = {}) {
   function submitVote() {
     if (state.isReplayMode.value || state.isWatch.value) return Promise.resolve()
     const actionType = state.pendingActionType.value || state.liveGame.value?.pending_human_action?.action_type || 'exile_vote'
+    const selectedTarget = state.actionTarget.value == null ? null : Number(state.actionTarget.value)
     return submitHumanAction(actionType, {
-      target: Number(state.actionTarget.value ?? state.voteTarget.value)
+      target: selectedTarget
     })
   }
 

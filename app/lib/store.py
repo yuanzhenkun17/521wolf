@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,7 +37,15 @@ class DecisionRecord(DictMixin):
     raw_output: str = ""
     errors: list[str] = field(default_factory=list)
     policy_adjustments: list[str] = field(default_factory=list)
-    source: Literal["llm", "llm_error", "fallback", "policy_adjusted", "tot", "got"] = "llm"
+    source: Literal[
+        "llm",
+        "llm_error",
+        "fallback",
+        "policy_adjusted",
+        "policy_skipped",
+        "tot",
+        "got",
+    ] = "llm"
 
 
 class DecisionSink(Protocol):
@@ -49,18 +56,14 @@ class DecisionSink(Protocol):
 class AgentDecisionRecorder:
     def __init__(self, stream_path: str | Path | None = None, sink: DecisionSink | None = None) -> None:
         self.records: list[DecisionRecord] = []
-        self._stream_path: Path | None = Path(stream_path) if stream_path else None
-        if self._stream_path:
-            self._stream_path.parent.mkdir(parents=True, exist_ok=True)
-            self._stream_path.touch()
+        # PostgreSQL-only runtime: keep the legacy argument accepted, but do
+        # not create local JSONL streams during a game.
+        self._stream_path: Path | None = None
+        self._legacy_stream_path: Path | None = Path(stream_path) if stream_path else None
         self._sink = sink
 
     def record(self, decision: DecisionRecord) -> None:
         self.records.append(decision)
-        if self._stream_path:
-            line = json.dumps(decision.to_dict(), ensure_ascii=False, sort_keys=True)
-            with self._stream_path.open("a", encoding="utf-8") as f:
-                f.write(line + "\n")
         if self._sink is not None:
             self._sink.record_decision(decision)
 
@@ -68,7 +71,7 @@ class AgentDecisionRecorder:
         lines = [json.dumps(r.to_dict(), ensure_ascii=False, sort_keys=True) for r in self.records]
         return "\n".join(lines) + ("\n" if lines else "")
 
-    def write_jsonl(self, path: str | Path) -> Path:
+    def export_jsonl(self, path: str | Path) -> Path:
         output = Path(path)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(self.to_jsonl(), encoding="utf-8")
@@ -87,6 +90,7 @@ class GameRunConfig:
     run_id: str | None = None
     game_dir: Path | str | None = None
     source_game_id: str | None = None
+    source_run_id: str | None = None
     seed: int | None = None
     max_days: int = 20
     player_count: int = 12
@@ -122,8 +126,7 @@ class GameRunHandle:
 class GameRunService:
     """Central service for creating app-layer game persistence sessions."""
 
-    def __init__(self, *, db_path: Path | str | None = None, paths: Any | None = None) -> None:
-        self._db_path = Path(db_path) if db_path else None
+    def __init__(self, *, paths: Any | None = None) -> None:
         self._paths = paths
 
     def create_run(self, config: GameRunConfig) -> GameRunHandle:
@@ -133,16 +136,16 @@ class GameRunService:
     def create_run_with_connection(
         self,
         config: GameRunConfig,
-        conn: sqlite3.Connection | None,
+        conn: Any | None,
     ) -> GameRunHandle:
-        """Create a run backed by an existing SQLite connection."""
+        """Create a run backed by an existing storage connection."""
         return self._create_run(config=config, conn=conn)
 
     def _create_run(
         self,
         *,
         config: GameRunConfig,
-        conn: sqlite3.Connection | None,
+        conn: Any | None,
     ) -> GameRunHandle:
         from storage.run_policy import RunType, policy_for_run_type
         from storage.runtime import GamePersistence
@@ -158,12 +161,11 @@ class GameRunService:
             "source_game_id": config.source_game_id,
             "run_policy": policy,
             "run_metadata": metadata,
-            "evolution_db_path": self._resolve_evolution_db_path(),
         }
         if conn is not None:
             persistence_kwargs["conn"] = conn
         else:
-            persistence_kwargs["db_path"] = self._resolve_db_path()
+            persistence_kwargs["provider"] = self._storage_provider()
 
         return GameRunHandle(
             run_id=run_id,
@@ -172,24 +174,10 @@ class GameRunService:
             persistence=GamePersistence(**persistence_kwargs),
         )
 
-    def _resolve_db_path(self) -> Path | None:
-        if self._db_path is not None:
-            return self._db_path
-        if self._paths is not None:
-            if hasattr(self._paths, "wolf_db_path"):
-                return Path(self._paths.wolf_db_path)
-            if hasattr(self._paths, "db_path"):
-                return Path(self._paths.db_path)
-        from app.config import DEFAULT_PATHS
+    def _storage_provider(self) -> Any | None:
+        from storage.provider import storage_provider_from_env
 
-        return DEFAULT_PATHS.wolf_db_path
-
-    def _resolve_evolution_db_path(self) -> Path | None:
-        if self._paths is not None and hasattr(self._paths, "evolution_db_path"):
-            return Path(self._paths.evolution_db_path)
-        from app.config import DEFAULT_PATHS
-
-        return DEFAULT_PATHS.evolution_db_path
+        return storage_provider_from_env(paths=self._paths)
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +300,7 @@ class GameArchive:
 
 
 class AgentTraceRecorder:
-    """Collects full decision traces during a game for post-game archive."""
+    """Collects full decision traces during a game for archive export."""
 
     def __init__(self) -> None:
         self._traces: list[DecisionArchive] = []
@@ -325,16 +313,14 @@ class AgentTraceRecorder:
     def snapshot(self) -> list[DecisionArchive]:
         return list(self._traces)
 
-    def flush(self, game_id: str, output_dir: Path, **meta) -> GameArchive:
-        from app.util.manifest import build_run_manifest, write_manifest
+    def build_archive(self, game_id: str, **meta) -> GameArchive:
+        """Build an in-memory archive without writing runtime artifacts."""
         from app.util.time import beijing_now_iso
 
-        output = Path(output_dir)
         config = dict(meta.get("config", {}) or {})
         started_at = str(meta.get("started_at") or beijing_now_iso())
         finished_at = str(meta.get("finished_at") or beijing_now_iso())
-        error_summary = str(meta.get("error_summary") or meta.get("error") or "")
-        archive = GameArchive(
+        return GameArchive(
             game_id=game_id,
             seed=int(meta.get("seed", 0) or 0),
             config=config,
@@ -346,6 +332,27 @@ class AgentTraceRecorder:
             decisions=self.snapshot(),
             final_state=dict(meta.get("final_state", {}) or {}),
         )
+
+    def flush(self, game_id: str, output_dir: Path | None = None, **meta) -> GameArchive:
+        """Backward-compatible in-memory flush.
+
+        ``output_dir`` is accepted for old callers but no files are written.
+        Use ``export_archive`` for an explicit artifact export.
+        """
+        _ = output_dir
+        return self.build_archive(game_id, **meta)
+
+    def export_archive(self, game_id: str, output_dir: Path, **meta) -> GameArchive:
+        """Explicitly export archive and manifest files for offline inspection."""
+        from app.util.manifest import build_run_manifest, write_manifest
+
+        output = Path(output_dir)
+        config = dict(meta.get("config", {}) or {})
+        archive = self.build_archive(game_id, **meta)
+        started_at = archive.started_at
+        finished_at = archive.finished_at
+        error_summary = str(meta.get("error_summary") or meta.get("error") or "")
+        output.mkdir(parents=True, exist_ok=True)
         archive.write_json(output / "archive.json")
         manifest = build_run_manifest(
             run_type="game",
@@ -380,7 +387,7 @@ def _generate_id() -> str:
 def _run_metadata(config: GameRunConfig, run_id: str) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "mode": config.mode,
-        "source_run_id": run_id,
+        "source_run_id": config.source_run_id or run_id,
         "model_id": config.model_id,
         "model_config_hash": config.model_config_hash,
         "ruleset_version": config.ruleset_version,

@@ -11,7 +11,7 @@ from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.evolution_serializers import _evolution_batch_summary
 from ui.backend.schemas import BenchmarkRequest
-from ui.backend.sse import _sse, stream_task_event_log_sse
+from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import _last_event_id_from_request, _set_task_contract
 
 _TERMINAL_BENCHMARK_SSE_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
@@ -74,7 +74,12 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
         last_event_id = _last_event_id_from_request(request)
 
         async def stream() -> AsyncIterator[str]:
-            if store.task_event_log.has_events(batch_id):
+            if task_event_log_matches_entity(
+                store.task_event_log,
+                batch_id,
+                batch,
+                terminal_statuses=_TERMINAL_BENCHMARK_SSE_STATUSES,
+            ):
                 async for frame in stream_task_event_log_sse(
                     store.task_event_log,
                     batch_id,

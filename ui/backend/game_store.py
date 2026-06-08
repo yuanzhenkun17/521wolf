@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import uuid
 from collections import Counter
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
 
-from app.util.json import read_json, write_json
-from app.util.time import BEIJING_TZ, beijing_now_iso
-from ui.backend.constants import EVOLUTION_PHASE_LABELS, LOG_SOURCE_LABELS
+from app.util.json import to_jsonable
+from app.util.time import beijing_now_iso
+from storage.game_read_model import GameReadRepository
+from storage.provider import storage_provider_from_env
+from storage.public_events import public_events_only
+from storage.runtime import GamePersistence
+from ui.backend.constants import LOG_SOURCE_LABELS
 from ui.backend.history_index import GameHistoryIndex, history_facets, source_counts
 from ui.backend.live_game import (
     LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS,
@@ -25,14 +26,12 @@ from ui.backend.live_game import (
 )
 from ui.backend.schemas import GameStartRequest, HumanActionRequest
 from ui.backend.serializers import (
-    _archive_payload,
     _dead_players,
     _fallback_version,
     _frontend_review,
     _normalize_decision,
     _normalize_event,
     _normalize_roles,
-    _read_jsonl,
     _role_label,
     _sheriff_from_events,
     _team_for_role,
@@ -41,15 +40,29 @@ from ui.backend.serializers import (
 from ui.backend.task_state import _match_filter, _pagination
 
 
-class GameStoreMixin:
-    def _game_history_index_path(self) -> Path:
-        return self.paths.runs_dir / "game_history_index.json"
+class _FanoutSink:
+    def __init__(self, *sinks: Any) -> None:
+        self._sinks = [sink for sink in sinks if sink is not None]
 
+    def record_event(self, entry: Any) -> None:
+        for sink in self._sinks:
+            record = getattr(sink, "record_event", None)
+            if callable(record):
+                record(entry)
+
+    def record_decision(self, decision: Any) -> None:
+        for sink in self._sinks:
+            record = getattr(sink, "record_decision", None)
+            if callable(record):
+                record(decision)
+
+
+class GameStoreMixin:
     def _game_history_index(self) -> GameHistoryIndex:
         index = getattr(self, "_game_history_index_cache", None)
         if index is None:
             index = GameHistoryIndex(
-                self._game_history_index_path(),
+                None,
                 build_rows=self._build_game_history_rows,
                 fingerprint=self._game_history_fingerprint,
             )
@@ -64,11 +77,7 @@ class GameStoreMixin:
     def _game_history_fingerprint(self) -> dict[str, Any]:
         return {
             "memory": self._game_history_memory_fingerprint(),
-            "disk": {
-                "normal": self._directory_children_signature(self.paths.games_dir, include_children=True),
-                "benchmark": self._benchmark_history_signature(),
-                "evolution": self._evolution_history_signature(),
-            },
+            "postgres": self._postgres_history_fingerprint(),
         }
 
     def _game_history_memory_fingerprint(self) -> list[dict[str, Any]]:
@@ -103,67 +112,32 @@ class GameStoreMixin:
             "decision_count": len(decisions),
         }
 
-    def _benchmark_history_signature(self) -> dict[str, Any]:
-        base = self.paths.runs_dir / "evaluation_batches"
-        batches = []
-        for batch_dir in self._iter_dirs(base):
-            batches.append(
-                {
-                    "name": batch_dir.name,
-                    "dir": self._path_signature(batch_dir),
-                    "games": self._directory_children_signature(batch_dir / "games", include_children=True),
-                }
-            )
-        return {"root": self._path_signature(base), "batches": batches}
-
-    def _evolution_history_signature(self) -> dict[str, Any]:
-        runs = []
-        for run_dir in self._iter_dirs(self.paths.evolution_dir):
-            phases = []
-            for phase_dir in self._iter_dirs(run_dir):
-                phases.append(
-                    {
-                        "name": phase_dir.name,
-                        "dir": self._directory_children_signature(phase_dir, include_children=True),
-                    }
-                )
-            runs.append({"name": run_dir.name, "dir": self._path_signature(run_dir), "phases": phases})
-        return {"root": self._path_signature(self.paths.evolution_dir), "runs": runs}
-
-    def _directory_children_signature(self, path: Path, *, include_children: bool) -> dict[str, Any]:
-        signature = self._path_signature(path)
-        if not signature.get("exists"):
-            return signature
-        children = self._iter_dirs(path)
-        signature["dir_count"] = len(children)
-        if include_children:
-            signature["children"] = [self._game_dir_signature(child) for child in children]
-        return signature
-
-    def _game_dir_signature(self, path: Path) -> dict[str, Any]:
-        return {
-            "name": path.name,
-            **self._path_signature(path),
-            "files": {
-                name: self._path_signature(path / name)
-                for name in ("ui_snapshot.json", "meta.json", "game_events.jsonl", "agent_decisions.jsonl")
-            },
-        }
-
-    @staticmethod
-    def _path_signature(path: Path) -> dict[str, Any]:
+    def _postgres_history_fingerprint(self) -> dict[str, Any]:
         try:
-            stat = path.stat()
-        except OSError:
-            return {"exists": False}
-        return {"exists": True, "mtime_ns": stat.st_mtime_ns}
-
-    @staticmethod
-    def _iter_dirs(path: Path) -> list[Path]:
+            conn = self._open_wolf_connection()
+        except Exception as exc:  # noqa: BLE001 - history cache invalidation is best-effort.
+            return {"available": False, "error": type(exc).__name__}
         try:
-            return sorted((item for item in path.iterdir() if item.is_dir()), key=lambda item: item.name)
-        except OSError:
-            return []
+            return {"available": True, **GameReadRepository(conn).history_fingerprint()}
+        finally:
+            conn.close()
+
+    def _open_wolf_connection(self) -> Any:
+        return storage_provider_from_env(paths=self.paths).open_wolf_connection()
+
+    def _load_game_from_pg(self, game_id: str) -> dict[str, Any] | None:
+        conn = self._open_wolf_connection()
+        try:
+            return GameReadRepository(conn).load_game_detail(game_id)
+        finally:
+            conn.close()
+
+    def _list_games_from_pg(self) -> list[dict[str, Any]]:
+        conn = self._open_wolf_connection()
+        try:
+            return GameReadRepository(conn).list_history_rows()
+        finally:
+            conn.close()
 
     def _live_game_heartbeat_timeout_seconds(self) -> float:
         value = getattr(self, "live_game_heartbeat_timeout_seconds", LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS)
@@ -171,75 +145,6 @@ class GameStoreMixin:
             return max(1.0, float(value))
         except (TypeError, ValueError):
             return LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS
-
-    @staticmethod
-    def _append_live_game_diagnostic(snapshot: dict[str, Any], diagnostic: dict[str, Any]) -> None:
-        diagnostics = snapshot.get("diagnostics")
-        if not isinstance(diagnostics, list):
-            diagnostics = []
-            snapshot["diagnostics"] = diagnostics
-        item = {key: value for key, value in diagnostic.items() if value is not None}
-        identity = (item.get("kind"), item.get("stage"), item.get("message"))
-        for existing in diagnostics:
-            if not isinstance(existing, dict):
-                continue
-            if (existing.get("kind"), existing.get("stage"), existing.get("message")) == identity:
-                return
-        diagnostics.append(item)
-
-    def _mark_loaded_live_game_interrupted(
-        self,
-        snapshot: dict[str, Any],
-        *,
-        reason: str,
-        stage: str,
-        kind: str,
-        fallback_time: str | None = None,
-    ) -> dict[str, Any]:
-        status = str(snapshot.get("status") or "").lower()
-        if status in LIVE_GAME_TERMINAL_STATUSES and status != "interrupted":
-            return snapshot
-        now = beijing_now_iso()
-        last_heartbeat_at = (
-            snapshot.get("last_heartbeat_at")
-            or snapshot.get("updated_at")
-            or snapshot.get("finished_at")
-            or snapshot.get("started_at")
-            or fallback_time
-            or now
-        )
-        interrupted = {
-            **snapshot,
-            "status": "interrupted",
-            "stop_requested": False,
-            "cancelled": False,
-            "interrupted": True,
-            "failed": False,
-            "last_heartbeat_at": last_heartbeat_at,
-            "interrupted_at": snapshot.get("interrupted_at") or now,
-            "finished_at": snapshot.get("finished_at") or now,
-            "error": snapshot.get("error") or reason,
-        }
-        self._append_live_game_diagnostic(
-            interrupted,
-            {
-                "kind": kind,
-                "stage": stage,
-                "message": reason,
-                "last_heartbeat_at": last_heartbeat_at,
-                "at": interrupted["interrupted_at"],
-            },
-        )
-        return interrupted
-
-    def _persist_recovered_live_game(self, game_dir: Path, snapshot: dict[str, Any]) -> None:
-        try:
-            write_json(game_dir / "ui_snapshot.json", snapshot)
-            write_json(game_dir / "review.json", snapshot.get("review") or {})
-            write_json(game_dir / "archive.json", _archive_payload(str(snapshot.get("game_id") or game_dir.name), snapshot))
-        except Exception:
-            # Recovery metadata is best-effort; the in-memory response still carries the interruption.
-            return
 
     def skill_dir_for_request(self, request: GameStartRequest) -> str | None:
         if not request.role_versions:
@@ -276,48 +181,6 @@ class GameStoreMixin:
             effective[str(role)] = str(version_id)
         return effective
 
-    def _log_source_id(
-        self,
-        source: str,
-        run_id: str,
-        game_dir_name: str,
-        *,
-        phase: str | None = None,
-    ) -> str:
-        if source == "benchmark":
-            return f"benchmark:{run_id}:{game_dir_name}"
-        if source == "evolution" and phase:
-            return f"evolution:{run_id}:{phase}:{game_dir_name}"
-        return str(game_dir_name)
-
-    def _parse_external_log_id(self, game_id: str) -> dict[str, str] | None:
-        parts = str(game_id or "").split(":")
-        if parts[0] == "benchmark" and len(parts) == 3:
-            batch_id, game_dir = parts[1], parts[2]
-            if self._safe_log_part(batch_id) and self._safe_log_part(game_dir):
-                return {"source": "benchmark", "run_id": batch_id, "game_dir": game_dir}
-        if parts[0] == "evolution" and len(parts) == 4:
-            run_id, phase, game_dir = parts[1], parts[2], parts[3]
-            if self._safe_log_part(run_id) and self._safe_log_part(phase) and self._safe_log_part(game_dir):
-                return {"source": "evolution", "run_id": run_id, "phase": phase, "game_dir": game_dir}
-        return None
-
-    @staticmethod
-    def _safe_log_part(value: str) -> bool:
-        text = str(value or "")
-        return bool(text) and text not in {".", ".."} and "/" not in text and "\\" not in text
-
-    def _source_phase_label(self, phase: str | None) -> str | None:
-        if not phase:
-            return None
-        return EVOLUTION_PHASE_LABELS.get(phase, str(phase))
-
-    def _directory_time_iso(self, path: Path) -> str | None:
-        try:
-            return datetime.fromtimestamp(path.stat().st_mtime, tz=BEIJING_TZ).isoformat()
-        except OSError:
-            return None
-
     def _snapshot_log_time(self, snapshot: dict[str, Any], fallback: str | None = None) -> str | None:
         config = snapshot.get("config") if isinstance(snapshot.get("config"), dict) else {}
         return (
@@ -335,191 +198,6 @@ class GameStoreMixin:
             or config.get("updated_at")
             or fallback
         )
-
-    def _with_log_source(
-        self,
-        snapshot: dict[str, Any],
-        *,
-        public_game_id: str,
-        source: str,
-        original_game_id: str | None = None,
-        source_run_id: str | None = None,
-        source_phase: str | None = None,
-        fallback_time: str | None = None,
-    ) -> dict[str, Any]:
-        data = dict(snapshot)
-        original = str(original_game_id or data.get("source_game_id") or data.get("log_name") or data.get("game_id") or public_game_id)
-        source_label = LOG_SOURCE_LABELS.get(source, "人机/玩家")
-        phase_label = self._source_phase_label(source_phase)
-        config = data.get("config") if isinstance(data.get("config"), dict) else {}
-        log_time = self._snapshot_log_time(data, fallback_time)
-        data["game_id"] = public_game_id
-        data["log_name"] = data.get("log_name") or original
-        data["source_game_id"] = original
-        data["log_source"] = source
-        data["log_source_label"] = source_label
-        data["source_run_id"] = source_run_id
-        data["source_phase"] = source_phase
-        data["source_phase_label"] = phase_label
-        data["log_time"] = log_time
-        data["config"] = {
-            **config,
-            "log_source": source,
-            "log_source_label": source_label,
-            "source_game_id": original,
-            "source_run_id": source_run_id,
-            "source_phase": source_phase,
-            "source_phase_label": phase_label,
-            "log_time": log_time,
-        }
-        return data
-
-    def _load_game_from_directory(
-        self,
-        game_dir: Path,
-        *,
-        public_game_id: str,
-        source: str,
-        source_run_id: str | None = None,
-        source_phase: str | None = None,
-    ) -> dict[str, Any] | None:
-        fallback_time = self._directory_time_iso(game_dir)
-        path = game_dir / "ui_snapshot.json"
-        if path.exists():
-            try:
-                data = read_json(path)
-                if not isinstance(data, dict):
-                    return None
-                if source == "normal" and str(data.get("status") or "").lower() not in LIVE_GAME_TERMINAL_STATUSES:
-                    data = self._mark_loaded_live_game_interrupted(
-                        data,
-                        reason="interrupted by backend restart",
-                        kind="live_game_interrupted",
-                        stage="live_game.recover",
-                        fallback_time=fallback_time,
-                    )
-                    self._persist_recovered_live_game(game_dir, data)
-                return self._with_log_source(
-                    data,
-                    public_game_id=public_game_id,
-                    source=source,
-                    original_game_id=data.get("game_id"),
-                    source_run_id=source_run_id,
-                    source_phase=source_phase,
-                    fallback_time=fallback_time,
-                )
-            except (OSError, json.JSONDecodeError):
-                return None
-
-        meta_path = game_dir / "meta.json"
-        events_path = game_dir / "game_events.jsonl"
-        decisions_path = game_dir / "agent_decisions.jsonl"
-        if not meta_path.exists() and (events_path.exists() or decisions_path.exists()):
-            original_game_id = game_dir.name
-            events = _read_jsonl(events_path)
-            decisions = _read_jsonl(decisions_path)
-            result = {
-                "game_id": public_game_id,
-                "events": events,
-                "decisions": decisions,
-                "status": "running",
-                "started_at": fallback_time,
-                "last_heartbeat_at": fallback_time,
-            }
-            snapshot = self.snapshot_from_result(result, mode="watch", config={"started_at": fallback_time})
-            snapshot["log_name"] = original_game_id
-            if source == "normal":
-                snapshot = self._mark_loaded_live_game_interrupted(
-                    snapshot,
-                    reason="interrupted by backend restart",
-                    kind="live_game_interrupted",
-                    stage="live_game.recover",
-                    fallback_time=fallback_time,
-                )
-                self._persist_recovered_live_game(game_dir, snapshot)
-            return self._with_log_source(
-                snapshot,
-                public_game_id=public_game_id,
-                source=source,
-                original_game_id=original_game_id,
-                source_run_id=source_run_id,
-                source_phase=source_phase,
-                fallback_time=fallback_time,
-            )
-        if not meta_path.exists():
-            return None
-        try:
-            meta = read_json(meta_path)
-        except (OSError, json.JSONDecodeError):
-            return None
-        if not isinstance(meta, dict):
-            return None
-
-        original_game_id = str(meta.get("game_id") or game_dir.name)
-        events = _read_jsonl(game_dir / "game_events.jsonl")
-        decisions = _read_jsonl(game_dir / "agent_decisions.jsonl")
-        config = {
-            **meta,
-            "source_run_id": source_run_id,
-            "source_phase": source_phase,
-            "source_phase_label": self._source_phase_label(source_phase),
-        }
-        result = {
-            "game_id": public_game_id,
-            "seed": meta.get("seed"),
-            "winner": meta.get("winner"),
-            "player_roles": meta.get("player_roles", {}),
-            "events": events,
-            "decisions": decisions,
-            "status": "completed" if meta.get("finished") else "running",
-            "started_at": meta.get("started_at") or fallback_time,
-            "finished_at": meta.get("finished_at") or fallback_time,
-            "last_heartbeat_at": meta.get("last_heartbeat_at") or meta.get("updated_at") or fallback_time,
-            "diagnostics": meta.get("diagnostics") if isinstance(meta.get("diagnostics"), list) else [],
-        }
-        snapshot = self.snapshot_from_result(result, mode="watch", config=config)
-        snapshot["log_name"] = original_game_id
-        if source == "normal" and str(snapshot.get("status") or "").lower() not in LIVE_GAME_TERMINAL_STATUSES:
-            snapshot = self._mark_loaded_live_game_interrupted(
-                snapshot,
-                reason="interrupted by backend restart",
-                kind="live_game_interrupted",
-                stage="live_game.recover",
-                fallback_time=fallback_time,
-            )
-            self._persist_recovered_live_game(game_dir, snapshot)
-        return self._with_log_source(
-            snapshot,
-            public_game_id=public_game_id,
-            source=source,
-            original_game_id=original_game_id,
-            source_run_id=source_run_id,
-            source_phase=source_phase,
-            fallback_time=fallback_time,
-        )
-
-    def _load_external_game_from_disk(self, game_id: str) -> dict[str, Any] | None:
-        parsed = self._parse_external_log_id(game_id)
-        if parsed is None:
-            return None
-        if parsed["source"] == "benchmark":
-            game_dir = self.paths.runs_dir / "evaluation_batches" / parsed["run_id"] / "games" / parsed["game_dir"]
-            return self._load_game_from_directory(
-                game_dir,
-                public_game_id=game_id,
-                source="benchmark",
-                source_run_id=parsed["run_id"],
-            )
-        if parsed["source"] == "evolution":
-            game_dir = self.paths.evolution_dir / parsed["run_id"] / parsed["phase"] / parsed["game_dir"]
-            return self._load_game_from_directory(
-                game_dir,
-                public_game_id=game_id,
-                source="evolution",
-                source_run_id=parsed["run_id"],
-                source_phase=parsed["phase"],
-            )
-        return None
 
     def _game_list_row(self, game: dict[str, Any]) -> dict[str, Any]:
         source = str(game.get("log_source") or "normal")
@@ -564,51 +242,6 @@ class GameStoreMixin:
             "config": config,
         }
 
-    def _list_benchmark_games_from_disk(self) -> list[dict[str, Any]]:
-        base = self.paths.runs_dir / "evaluation_batches"
-        if not base.exists():
-            return []
-        rows: list[dict[str, Any]] = []
-        for batch_dir in sorted((item for item in base.iterdir() if item.is_dir()), key=lambda item: item.name, reverse=True):
-            games_dir = batch_dir / "games"
-            if not games_dir.exists():
-                continue
-            for game_dir in sorted((item for item in games_dir.iterdir() if item.is_dir()), key=lambda item: item.name):
-                public_id = self._log_source_id("benchmark", batch_dir.name, game_dir.name)
-                loaded = self._load_game_from_directory(
-                    game_dir,
-                    public_game_id=public_id,
-                    source="benchmark",
-                    source_run_id=batch_dir.name,
-                )
-                if loaded is not None:
-                    rows.append(self._game_list_row(loaded))
-        return rows
-
-    def _list_evolution_games_from_disk(self) -> list[dict[str, Any]]:
-        if not self.paths.evolution_dir.exists():
-            return []
-        rows: list[dict[str, Any]] = []
-        for run_dir in sorted((item for item in self.paths.evolution_dir.iterdir() if item.is_dir()), key=lambda item: item.name, reverse=True):
-            for phase_dir in sorted((item for item in run_dir.iterdir() if item.is_dir()), key=lambda item: item.name):
-                for game_dir in sorted((item for item in phase_dir.iterdir() if item.is_dir()), key=lambda item: item.name):
-                    public_id = self._log_source_id(
-                        "evolution",
-                        run_dir.name,
-                        game_dir.name,
-                        phase=phase_dir.name,
-                    )
-                    loaded = self._load_game_from_directory(
-                        game_dir,
-                        public_game_id=public_id,
-                        source="evolution",
-                        source_run_id=run_dir.name,
-                        source_phase=phase_dir.name,
-                    )
-                    if loaded is not None:
-                        rows.append(self._game_list_row(loaded))
-        return rows
-
     async def start_game(self, request: GameStartRequest) -> dict[str, Any]:
         game_id = f"ui_{uuid.uuid4().hex[:12]}"
         skill_dir = self.skill_dir_for_request(request)
@@ -627,8 +260,20 @@ class GameStoreMixin:
 
         config = replace(STANDARD_12, max_days=request.max_days, enable_sheriff=request.enable_sheriff)
         roles = assign_roles(config, seed=request.seed)
+        provider = storage_provider_from_env(paths=self.paths)
+        persistence = GamePersistence(
+            game_id=game_id,
+            provider=provider,
+            run_metadata={
+                "mode": "play" if human_player_id is not None else "watch",
+                "source_run_id": game_id,
+                "ruleset_version": "werewolf_12p_v1",
+            },
+        )
         event_sink = BroadcastEventSink()
-        recorder = AgentDecisionRecorder(sink=event_sink)
+        db_event_sink = persistence.create_event_sink()
+        db_decision_sink = persistence.create_decision_sink()
+        recorder = AgentDecisionRecorder(sink=_FanoutSink(event_sink, db_decision_sink))
         agents = create_agents(
             roles,
             client=self.model_for_run(),
@@ -638,8 +283,7 @@ class GameStoreMixin:
             human_player_id=human_player_id,
             paths=self.paths,
         )
-        game_dir = self.paths.games_dir / game_id
-        logger = GameLogger(stream_path=game_dir / "game_events.jsonl", sink=event_sink)
+        logger = GameLogger(sink=_FanoutSink(event_sink, db_event_sink))
         engine = create_engine(
             roles,
             agents,
@@ -657,6 +301,8 @@ class GameStoreMixin:
             event_sink=event_sink,
             skill_dir=skill_dir,
         )
+        setattr(session, "persistence", persistence)
+        self._persist_live_session_start(session)
         self.live_sessions[game_id] = session
         session.task = asyncio.create_task(self.run_live_session(game_id))
         snapshot = session.snapshot()
@@ -672,7 +318,7 @@ class GameStoreMixin:
             await session.run()
             snapshot = session.snapshot()
             self.games[game_id] = snapshot
-            self.write_live_session_files(session, snapshot)
+            self.persist_live_session(session, snapshot)
         finally:
             if self.live_sessions.get(game_id) is session and session.status in LIVE_GAME_TERMINAL_STATUSES:
                 self.live_sessions.pop(game_id, None)
@@ -697,18 +343,20 @@ class GameStoreMixin:
                 timeout_seconds=resolved_timeout,
             ):
                 continue
+            if self._live_session_waiting_for_human_within_timeout(session):
+                continue
             session.mark_interrupted(
                 "live game heartbeat timed out",
                 stage="live_game.watchdog",
-                kind="live_game_heartbeat_timeout",
+                kind="live_game_interrupted",
                 timeout_seconds=resolved_timeout,
             )
             snapshot = session.snapshot()
             self.games[game_id] = snapshot
             try:
-                self.write_live_session_files(session, snapshot)
+                self.persist_live_session(session, snapshot)
             except Exception:
-                # Keep the interrupted state visible even if archival persistence fails.
+                # Keep the interrupted state visible even if final persistence fails.
                 pass
             self.live_sessions.pop(game_id, None)
             interrupted.append(snapshot)
@@ -716,43 +364,56 @@ class GameStoreMixin:
             self.invalidate_game_history_index()
         return interrupted
 
+    def _live_session_waiting_for_human_within_timeout(self, session: Any) -> bool:
+        human = getattr(session, "human", None)
+        if human is None:
+            return False
+        try:
+            is_waiting = bool(getattr(human, "is_waiting", False))
+        except Exception:
+            return False
+        if not is_waiting:
+            return False
+        try:
+            human_timeout = float(getattr(human, "timeout_seconds"))
+        except (TypeError, ValueError):
+            return False
+        return not live_game_heartbeat_timed_out(
+            getattr(session, "last_heartbeat_at", None),
+            timeout_seconds=human_timeout,
+        )
+
     def get_game(self, game_id: str) -> dict[str, Any] | None:
         self.check_live_game_watchdog()
-        external = self._load_external_game_from_disk(game_id)
-        if external is not None:
-            return external
         live = self.live_sessions.get(game_id)
         if live is not None:
             snapshot = live.snapshot()
             self.games[game_id] = snapshot
             if live.status in LIVE_GAME_TERMINAL_STATUSES:
-                self.write_live_session_files(live, snapshot)
+                self.persist_live_session(live, snapshot)
             return snapshot
-        if game_id in self.games:
-            return self.games[game_id]
-        loaded = self.load_game_from_disk(game_id)
+        loaded = self._load_game_from_pg(game_id)
         if loaded is not None:
             self.games[game_id] = loaded
-        return loaded
+            return loaded
+        cached = self.games.get(game_id)
+        if cached is not None and str(cached.get("status") or "").lower() not in LIVE_GAME_TERMINAL_STATUSES:
+            return cached
+        return None
 
     def _build_game_history_rows(self) -> list[dict[str, Any]]:
         self.check_live_game_watchdog()
-        games = {game_id: game for game_id, game in self.games.items()}
+        rows = self._list_games_from_pg()
+        games: dict[str, dict[str, Any]] = {}
+        for game_id, game in self.games.items():
+            if str(game.get("status") or "").lower() not in LIVE_GAME_TERMINAL_STATUSES:
+                games[game_id] = game
         for game_id, session in self.live_sessions.items():
             games[game_id] = session.snapshot()
-        if self.paths.games_dir.exists():
-            for child in self.paths.games_dir.iterdir():
-                if not child.is_dir() or child.name in games:
-                    continue
-                loaded = self.load_game_from_disk(child.name)
-                if loaded is not None:
-                    games[child.name] = loaded
-        rows = [
+        rows.extend(
             self._game_list_row(game)
             for game in sorted(games.values(), key=lambda item: str(item.get("game_id", "")), reverse=True)
-        ]
-        rows.extend(self._list_benchmark_games_from_disk())
-        rows.extend(self._list_evolution_games_from_disk())
+        )
         return sorted(rows, key=lambda item: str(item.get("log_time") or item.get("game_id") or ""), reverse=True)
 
     def list_games(self) -> list[dict[str, Any]]:
@@ -812,7 +473,7 @@ class GameStoreMixin:
             snapshot = live.snapshot()
             self.games[game_id] = snapshot
             if live.task is None or live.task.done():
-                self.write_live_session_files(live, snapshot)
+                self.persist_live_session(live, snapshot)
             return snapshot
         game = self.get_game(game_id)
         if game is None:
@@ -844,7 +505,248 @@ class GameStoreMixin:
             "error": game.get("error") or "cancelled",
         }
         self.games[game_id] = stopped
+        self._persist_snapshot_to_pg(stopped)
         return stopped
+
+    def _persist_live_session_start(self, session: LiveGameSession) -> None:
+        self._persist_snapshot_to_pg(
+            session.snapshot(),
+            persistence=getattr(session, "persistence", None),
+        )
+
+    def persist_live_session(self, session: LiveGameSession, snapshot: dict[str, Any] | None = None) -> None:
+        snapshot = snapshot or session.snapshot()
+        terminal = str(snapshot.get("status") or session.status or "").lower() in LIVE_GAME_TERMINAL_STATUSES
+        if terminal:
+            with session.persist_lock:
+                if session.files_written:
+                    return
+                session.files_written = True
+        try:
+            self._persist_snapshot_to_pg(
+                snapshot,
+                persistence=getattr(session, "persistence", None),
+            )
+            if terminal:
+                persistence = getattr(session, "persistence", None)
+                close = getattr(persistence, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            if terminal:
+                with session.persist_lock:
+                    session.files_written = False
+            raise
+        finally:
+            self.invalidate_game_history_index()
+
+    def _persist_snapshot_to_pg(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        persistence: GamePersistence | None = None,
+    ) -> None:
+        game_id = str(snapshot.get("game_id") or "")
+        if not game_id:
+            raise ValueError("snapshot game_id is required for PostgreSQL persistence")
+
+        owns_persistence = persistence is None
+        if persistence is None:
+            persistence = GamePersistence(
+                game_id=game_id,
+                provider=storage_provider_from_env(paths=self.paths),
+                run_metadata={
+                    "mode": snapshot.get("mode") or "watch",
+                    "source_run_id": game_id,
+                    "ruleset_version": "werewolf_12p_v1",
+                },
+            )
+
+        try:
+            config = self._pg_snapshot_config(snapshot)
+            events = self._pg_snapshot_events(snapshot)
+            final_state = self._pg_snapshot_final_state(snapshot)
+            player_roles = self._pg_snapshot_player_roles(snapshot)
+            final_alive = self._pg_snapshot_final_alive(snapshot)
+            persistence.save_game_result(
+                seed=self._pg_snapshot_seed(snapshot),
+                player_roles=player_roles,
+                config=config,
+                winner=self._pg_snapshot_winner(snapshot),
+                started_at=str(snapshot.get("started_at") or config.get("started_at") or beijing_now_iso()),
+                finished_at=snapshot.get("finished_at"),
+                total_rounds=self._pg_snapshot_total_rounds(snapshot, events),
+                public_events=public_events_only(events),
+                final_state=final_state,
+                deaths=self._pg_snapshot_deaths(snapshot),
+                final_alive=final_alive,
+            )
+        finally:
+            if owns_persistence:
+                persistence.close()
+
+    def _pg_snapshot_config(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        config = dict(snapshot.get("config") if isinstance(snapshot.get("config"), dict) else {})
+        config.update(
+            {
+                "seed": snapshot.get("seed", config.get("seed")),
+                "max_days": snapshot.get("max_days", config.get("max_days")),
+                "enable_sheriff": snapshot.get("enable_sheriff", config.get("enable_sheriff", True)),
+                "skill_dir": snapshot.get("skill_dir", config.get("skill_dir")),
+                "role_versions": dict(
+                    snapshot.get("role_skill_dirs")
+                    if isinstance(snapshot.get("role_skill_dirs"), dict)
+                    else config.get("role_versions") or {}
+                ),
+                "role_skill_dirs": dict(
+                    snapshot.get("role_skill_dirs")
+                    if isinstance(snapshot.get("role_skill_dirs"), dict)
+                    else config.get("role_skill_dirs") or {}
+                ),
+                "player_count": snapshot.get("player_count", config.get("player_count", 12)),
+                "human_player_id": snapshot.get("human_player_id", config.get("human_player_id")),
+                "mode": snapshot.get("mode", config.get("mode", "watch")),
+                "log_source": snapshot.get("log_source", config.get("log_source", "normal")),
+                "log_name": snapshot.get("log_name", config.get("log_name", snapshot.get("game_id"))),
+                "source_game_id": snapshot.get(
+                    "source_game_id",
+                    config.get("source_game_id", snapshot.get("game_id")),
+                ),
+                "started_at": snapshot.get("started_at", config.get("started_at")),
+                "finished_at": snapshot.get("finished_at", config.get("finished_at")),
+                "last_heartbeat_at": snapshot.get("last_heartbeat_at", config.get("last_heartbeat_at")),
+            }
+        )
+        return to_jsonable(config)
+
+    def _pg_snapshot_final_state(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        fields = (
+            "game_id",
+            "log_name",
+            "status",
+            "stop_requested",
+            "cancelled",
+            "interrupted",
+            "failed",
+            "cancelled_at",
+            "interrupted_at",
+            "last_heartbeat_at",
+            "mode",
+            "winner",
+            "seed",
+            "max_days",
+            "enable_sheriff",
+            "skill_dir",
+            "human_player_id",
+            "player_count",
+            "day",
+            "phase",
+            "sheriff_id",
+            "review",
+            "diagnostics",
+            "waiting_for",
+            "pending_action",
+            "pending_human_action",
+            "current_speaker_id",
+            "vote_tally",
+            "role_counts",
+            "role_skill_dirs",
+            "started_at",
+            "finished_at",
+            "manifest",
+            "error",
+        )
+        final_state = {key: snapshot.get(key) for key in fields if key in snapshot}
+        final_state.setdefault("status", "running")
+        final_state["config"] = self._pg_snapshot_config(snapshot)
+        final_state["players"] = list(snapshot.get("players") or [])
+        final_state["deaths"] = self._pg_snapshot_deaths(snapshot)
+        return to_jsonable(final_state)
+
+    def _pg_snapshot_events(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_events = snapshot.get("events") or snapshot.get("logs") or []
+        return [to_jsonable(event) for event in raw_events if isinstance(event, dict)]
+
+    def _pg_snapshot_player_roles(self, snapshot: dict[str, Any]) -> dict[int, str]:
+        roles: dict[int, str] = {}
+        player_roles = snapshot.get("player_roles")
+        if isinstance(player_roles, dict):
+            for player_id, role in player_roles.items():
+                try:
+                    roles[int(player_id)] = str(role)
+                except (TypeError, ValueError):
+                    continue
+        for player in snapshot.get("players") or []:
+            if not isinstance(player, dict):
+                continue
+            seat = player.get("seat", player.get("id"))
+            role = player.get("role")
+            if seat is None or role is None:
+                continue
+            try:
+                roles[int(seat)] = str(role)
+            except (TypeError, ValueError):
+                continue
+        return roles
+
+    def _pg_snapshot_final_alive(self, snapshot: dict[str, Any]) -> dict[int, bool] | None:
+        alive: dict[int, bool] = {}
+        for player in snapshot.get("players") or []:
+            if not isinstance(player, dict):
+                continue
+            seat = player.get("seat", player.get("id"))
+            if seat is None:
+                continue
+            try:
+                alive[int(seat)] = bool(player.get("alive", True))
+            except (TypeError, ValueError):
+                continue
+        return alive or None
+
+    def _pg_snapshot_deaths(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_deaths = snapshot.get("deaths")
+        if isinstance(raw_deaths, list):
+            return [to_jsonable(death) for death in raw_deaths if isinstance(death, dict)]
+        deaths: dict[int, dict[str, Any]] = {}
+        for event in self._pg_snapshot_events(snapshot):
+            event_type = str(event.get("event_type") or event.get("type") or "")
+            if event_type != "death":
+                continue
+            target = event.get("target")
+            try:
+                seat = int(target)
+            except (TypeError, ValueError):
+                continue
+            deaths[seat] = {
+                "player_id": seat,
+                "day": event.get("day"),
+                "phase": event.get("phase"),
+                "cause": (event.get("payload") if isinstance(event.get("payload"), dict) else {}).get("cause"),
+            }
+        return list(deaths.values())
+
+    def _pg_snapshot_total_rounds(self, snapshot: dict[str, Any], events: list[dict[str, Any]]) -> int:
+        days = [self._safe_int(snapshot.get("day"), default=0)]
+        for event in events:
+            days.append(self._safe_int(event.get("day"), default=0))
+        return max(days) if days else 0
+
+    def _pg_snapshot_seed(self, snapshot: dict[str, Any]) -> int:
+        config = snapshot.get("config") if isinstance(snapshot.get("config"), dict) else {}
+        return self._safe_int(snapshot.get("seed", config.get("seed")), default=0)
+
+    def _pg_snapshot_winner(self, snapshot: dict[str, Any]) -> str | None:
+        winner = snapshot.get("winner")
+        return str(winner) if winner is not None and str(winner) else None
+
+    @staticmethod
+    def _safe_int(value: Any, *, default: int) -> int:
+        try:
+            if value is None or value == "":
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     def snapshot_from_result(
         self,
@@ -942,32 +844,5 @@ class GameStoreMixin:
             "manifest": manifest,
             "error": result.get("error"),
         }
-
-    def write_game_files(self, game_id: str, snapshot: dict[str, Any], result: dict[str, Any]) -> None:
-        game_dir = self.paths.games_dir / game_id
-        game_dir.mkdir(parents=True, exist_ok=True)
-        write_json(game_dir / "ui_snapshot.json", snapshot)
-        write_json(game_dir / "review.json", snapshot.get("review") or {})
-        write_json(game_dir / "archive.json", _archive_payload(game_id, snapshot))
-        self.invalidate_game_history_index()
-
-    def write_live_session_files(self, session: LiveGameSession, snapshot: dict[str, Any] | None = None) -> None:
-        with session.persist_lock:
-            if session.files_written:
-                return
-            session.files_written = True
-        try:
-            self.write_game_files(session.game_id, snapshot or session.snapshot(), session.result())
-        except Exception:
-            with session.persist_lock:
-                session.files_written = False
-            raise
-
-    def load_game_from_disk(self, game_id: str) -> dict[str, Any] | None:
-        return self._load_game_from_directory(
-            self.paths.games_dir / game_id,
-            public_game_id=game_id,
-            source="normal",
-        )
 
 

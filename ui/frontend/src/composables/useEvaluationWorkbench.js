@@ -22,11 +22,25 @@ function normalizeBatchRun(run) {
   const roleNames = roleKeys.length
     ? roleKeys.map((role) => roleMeta(role).label).join('、')
     : '未知角色'
+  const scoreSummary = run?.result?.score_summary || run?.score_summary || {}
+  const judgeAggregate = scoreSummary?.decision_judge_aggregate || run?.decision_judge_aggregate || null
+  const judgeTags = Array.isArray(judgeAggregate?.top_mistake_tags)
+    ? judgeAggregate.top_mistake_tags.slice(0, 3).map((item) => ({
+      tag: String(item?.tag || ''),
+      count: Number(item?.count || 0)
+    })).filter((item) => item.tag)
+    : []
   return {
     ...run,
     id,
     roleKeys,
     displayRole: roleNames,
+    scoreSummary,
+    judgeAggregate,
+    judgeTags,
+    judgeScoreLabel: judgeAggregate?.avg_score == null ? '—' : Number(judgeAggregate.avg_score).toFixed(1),
+    judgeBadRatePct: judgeAggregate?.bad_rate == null ? null : pct(judgeAggregate.bad_rate),
+    judgeDecisionCount: Number(judgeAggregate?.judged_decisions || 0),
     statusLabel: statusText(run?.status),
     isActive: BENCHMARK_ACTIVE_STATUSES.has(run?.status),
     isTerminal: BENCHMARK_TERMINAL_STATUSES.has(run?.status)

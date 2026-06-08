@@ -240,7 +240,7 @@ function childRunKey(run, index) {
         <label>最大天数<input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" /></label>
         <label class="evo-check-field">
           自动晋升
-          <input v-model="evo.form.value.auto_promote" type="checkbox" />
+          <input v-model="evo.form.value.auto_promote" type="checkbox" disabled />
         </label>
       </div>
 

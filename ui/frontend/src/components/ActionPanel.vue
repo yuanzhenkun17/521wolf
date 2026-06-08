@@ -43,6 +43,8 @@ const emit = defineEmits([
   'submit-action'
 ])
 
+const optionalTargetActions = new Set(['exile_vote', 'pk_vote', 'sheriff_vote', 'hunter_shoot'])
+
 const waitingFor = computed(() => props.game?.waiting_for || '')
 const pendingHumanAction = computed(() => props.game?.pending_human_action || null)
 const isPendingForHuman = computed(() => {
@@ -69,13 +71,14 @@ const shouldShowPanel = computed(() =>
   hasHumanTurnContent.value
 )
 const needsChoice = computed(() => props.pendingChoiceOptions.length > 0 && props.pendingActionType !== 'witch_act' && !activeBurstArmed.value)
-const panelNeedsTarget = computed(() => activeBurstArmed.value || props.needsTarget || isVoteWaiting.value)
+const panelTargetRequired = computed(() => activeBurstArmed.value || props.needsTarget)
+const panelShowsTarget = computed(() => panelTargetRequired.value || isVoteWaiting.value || optionalTargetActions.has(props.pendingActionType))
 const selectedTargetPlayer = computed(() => targetOptions.value.find((player) => Number(player?.id) === Number(props.actionTarget)))
 const selectedTargetLabel = computed(() => selectedTargetPlayer.value ? targetLabel(selectedTargetPlayer.value) : '')
 const canSubmitPanelAction = computed(() => {
   if (props.loading) return false
   if (needsChoice.value && !props.actionChoice) return false
-  if (panelNeedsTarget.value && props.actionTarget == null) return false
+  if (panelTargetRequired.value && props.actionTarget == null) return false
   return true
 })
 
@@ -200,7 +203,7 @@ function submitTargetAction() {
         {{ actionInstruction }}
       </div>
 
-      <div v-if="hasPanelAction" class="player-action-box" :class="{ 'has-choice': needsChoice, 'has-target': panelNeedsTarget }">
+      <div v-if="hasPanelAction" class="player-action-box" :class="{ 'has-choice': needsChoice, 'has-target': panelShowsTarget }">
         <div v-if="needsChoice" class="choice-action-row">
           <button
             v-for="option in pendingChoiceOptions"
@@ -212,7 +215,7 @@ function submitTargetAction() {
             {{ option.label }}
           </button>
         </div>
-        <div v-if="panelNeedsTarget" class="target-action-row">
+        <div v-if="panelShowsTarget" class="target-action-row">
           <div class="target-action-head">
             <span>目标</span>
             <b>{{ selectedTargetLabel || (targetOptions.length ? '未选择' : '暂无目标') }}</b>

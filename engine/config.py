@@ -20,8 +20,9 @@ class GameConfig:
     enable_sheriff: bool = True
     sheriff_vote_weight: float = 1.5
     max_days: int = 20
-    runner_max_retries: int = 5
-    runner_retry_delay: float = 1.0
+    runner_max_retries: int = 2
+    runner_retry_delay: float = 0.0
+    runner_action_timeout: float | None = None
     night_order: tuple[Role, ...] = (
         Role.GUARD,
         Role.WEREWOLF,
@@ -40,6 +41,7 @@ class GameConfig:
 
 STANDARD_12 = GameConfig(
     name="standard_12",
+    runner_max_retries=1,
     role_counts={
         Role.WEREWOLF: 3,
         Role.WHITE_WOLF_KING: 1,

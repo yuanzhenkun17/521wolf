@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import Any
 
+from storage.shared.database import StorageConnection
 from storage.shared.interfaces import storage_timestamp, TimestampProvider
 
 _log = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ class ReportStore:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -32,8 +32,12 @@ class ReportStore:
     ) -> str:
         now = created_at or self._timestamp()
         self._conn.execute(
-            "INSERT OR REPLACE INTO reports (id, game_id, summary, created_at) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO reports (id, game_id, summary, created_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(game_id) DO UPDATE SET "
+            "id = excluded.id, "
+            "summary = excluded.summary, "
+            "created_at = excluded.created_at",
             (report_id, game_id, summary, now),
         )
         self._conn.commit()

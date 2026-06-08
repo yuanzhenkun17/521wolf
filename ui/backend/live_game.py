@@ -324,11 +324,20 @@ class LiveGameSession:
             source="human",  # type: ignore[arg-type]
         )
         response.decision_id = decision.decision_id
+        response.on_accepted = lambda accepted_response: self._record_accepted_human_decision(
+            decision,
+            accepted_response,
+        )
         accepted = self.human.submit(response)
         if accepted:
             self.heartbeat()
-            self.recorder.record(decision)
         return accepted
+
+    def _record_accepted_human_decision(self, decision: Any, response: Any) -> None:
+        decision.selected_target = response.target
+        decision.selected_choice = response.choice
+        decision.public_text = response.text
+        self.recorder.record(decision)
 
     def pending_action(self) -> dict[str, Any] | None:
         if self.human is None:

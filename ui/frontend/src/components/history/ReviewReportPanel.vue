@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import {
+  displayActionLabel,
   displayDayLabel,
   displayPhaseLabel,
   displayRoleLabel,
@@ -34,6 +35,50 @@ const reviewPlayerScores = computed(() => {
 const reviewTurningPoints = computed(() => reviewData.value?.turning_points || [])
 const reviewCounterfactuals = computed(() => reviewData.value?.counterfactuals || [])
 const reviewTimeline = computed(() => reviewData.value?.timeline || [])
+const decisionJudgeData = computed(() => {
+  const judge = reviewData.value?.decision_judge
+  return judge && typeof judge === 'object' ? judge : null
+})
+const decisionJudgeSummary = computed(() => {
+  const summary = decisionJudgeData.value?.summary
+  return summary && typeof summary === 'object' ? summary : {}
+})
+const decisionJudgeMetrics = computed(() => {
+  const metrics = decisionJudgeData.value?.metrics
+  return metrics && typeof metrics === 'object' ? metrics : {}
+})
+const decisionJudgeJudgments = computed(() => {
+  const rows = decisionJudgeData.value?.judgments
+  return Array.isArray(rows) ? rows.filter((item) => item && typeof item === 'object') : []
+})
+const decisionJudgeLowestRows = computed(() => {
+  const lowest = decisionJudgeSummary.value?.lowest_decisions
+  if (Array.isArray(lowest) && lowest.length) return lowest.filter((item) => item && typeof item === 'object').slice(0, 3)
+  return [...decisionJudgeJudgments.value]
+    .sort((a, b) => Number(a.score ?? 99) - Number(b.score ?? 99))
+    .slice(0, 3)
+})
+const decisionJudgeQualityRows = computed(() => {
+  const counts = decisionJudgeSummary.value?.quality_counts
+  if (!counts || typeof counts !== 'object') return []
+  const order = { bad: 0, unknown: 1, ok: 2, good: 3 }
+  return Object.entries(counts)
+    .map(([quality, count]) => ({
+      quality,
+      count,
+      label: qualityLabel(quality),
+      className: qualityClass(quality)
+    }))
+    .sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9))
+})
+const showDecisionJudge = computed(() =>
+  Boolean(decisionJudgeData.value && (
+    decisionJudgeJudgments.value.length
+    || decisionJudgeLowestRows.value.length
+    || decisionJudgeData.value.status === 'failed'
+    || decisionJudgeData.value.status === 'degraded'
+  ))
+)
 const scoreDimensions = [
   { key: 'speech', label: '发言', fields: ['speech_score', 'speech', 'speech_quality'] },
   { key: 'vote', label: '投票', fields: ['vote_score', 'vote', 'vote_accuracy'] },
@@ -78,6 +123,10 @@ function phaseLabel(phase) {
   return displayPhaseLabel(phase)
 }
 
+function actionLabel(action) {
+  return displayActionLabel(action)
+}
+
 function winnerLabel(winner) {
   return displayWinnerLabel(winner)
 }
@@ -101,6 +150,18 @@ function scorePercent(value) {
   return Math.round(Math.max(0, Math.min(num, 100)))
 }
 
+function scoreText(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '—'
+  return `${Math.round(num * 10) / 10}`
+}
+
+function averageScoreText(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return '—'
+  return `${Math.round(num * 10) / 10}`
+}
+
 function playerSeat(score) {
   return score.player_seat ?? score.player_id ?? score.seat ?? '—'
 }
@@ -122,6 +183,35 @@ function formatReviewText(value) {
     return formatReviewText(value.description || value.summary || value.event || value.message || JSON.stringify(value))
   }
   return normalizeHistoryDisplayText(value) || '—'
+}
+
+function qualityLabel(quality) {
+  const key = String(quality || '').trim().toLowerCase()
+  return {
+    good: '优秀',
+    ok: '可接受',
+    bad: '需复盘',
+    unknown: '证据不足'
+  }[key] || normalizeHistoryDisplayText(quality) || '未知'
+}
+
+function qualityClass(quality) {
+  const key = String(quality || '').trim().toLowerCase()
+  if (key === 'good') return 'quality-good'
+  if (key === 'ok') return 'quality-ok'
+  if (key === 'bad') return 'quality-bad'
+  if (key === 'unknown') return 'quality-unknown'
+  return ''
+}
+
+function judgeStatusLabel(status) {
+  const key = String(status || '').trim().toLowerCase()
+  return {
+    ok: '已完成',
+    degraded: '部分完成',
+    failed: '评审失败',
+    skipped: '未启用'
+  }[key] || normalizeHistoryDisplayText(status) || '未记录'
 }
 
 function radarPoint(index, value, total, cx = 80, cy = 80, radius = 46) {
@@ -248,6 +338,96 @@ function jsonText(value) {
               </span>
             </div>
           </article>
+        </div>
+      </section>
+
+      <section v-if="showDecisionJudge" class="review-judge-section">
+        <header class="review-judge-head">
+          <div>
+            <small>LLM 决策复盘</small>
+            <h4>关键决策评分</h4>
+          </div>
+          <b>{{ judgeStatusLabel(decisionJudgeData.status) }}</b>
+        </header>
+
+        <div class="review-judge-summary">
+          <span>
+            <small>平均分</small>
+            <b>{{ averageScoreText(decisionJudgeSummary.average_score) }}</b>
+          </span>
+          <span>
+            <small>已评审</small>
+            <b>{{ decisionJudgeMetrics.judged ?? decisionJudgeSummary.judged ?? decisionJudgeJudgments.length }}</b>
+          </span>
+          <span>
+            <small>候选决策</small>
+            <b>{{ decisionJudgeMetrics.key_decisions ?? decisionJudgeData.selection?.key_decisions ?? '—' }}</b>
+          </span>
+          <span>
+            <small>失败</small>
+            <b>{{ decisionJudgeMetrics.failed ?? 0 }}</b>
+          </span>
+        </div>
+
+        <div v-if="decisionJudgeQualityRows.length" class="review-judge-quality">
+          <span
+            v-for="row in decisionJudgeQualityRows"
+            :key="'judge-quality-' + row.quality"
+            :class="['review-judge-quality-chip', row.className]"
+          >
+            <small>{{ row.label }}</small>
+            <b>{{ row.count }}</b>
+          </span>
+        </div>
+
+        <div v-if="decisionJudgeLowestRows.length" class="review-judge-lowest">
+          <h4>低分决策</h4>
+          <article
+            v-for="item in decisionJudgeLowestRows"
+            :key="'judge-lowest-' + (item.decision_id || item.player_id || item.action_type)"
+            class="review-judge-low-row"
+          >
+            <header>
+              <span>{{ item.player_id ?? '—' }}号</span>
+              <em>{{ roleLabel(item.role) }}</em>
+              <strong>{{ actionLabel(item.action_type) }}</strong>
+              <b>{{ scoreText(item.score) }}</b>
+            </header>
+            <p>{{ formatReviewText(item.reason) }}</p>
+            <p v-if="item.suggestion" class="review-judge-suggestion">{{ formatReviewText(item.suggestion) }}</p>
+          </article>
+        </div>
+
+        <div v-if="decisionJudgeJudgments.length" class="review-judge-list">
+          <article
+            v-for="item in decisionJudgeJudgments"
+            :key="'judge-item-' + item.decision_id"
+            class="review-judge-card"
+          >
+            <header>
+              <div>
+                <span>{{ item.player_id ?? '—' }}号</span>
+                <em>{{ roleLabel(item.role) }}</em>
+                <strong>{{ actionLabel(item.action_type) }}</strong>
+              </div>
+              <b :class="['review-judge-score', qualityClass(item.quality)]">
+                {{ scoreText(item.score) }}
+              </b>
+            </header>
+            <p>{{ formatReviewText(item.reason) }}</p>
+            <p v-if="item.suggestion" class="review-judge-suggestion">{{ formatReviewText(item.suggestion) }}</p>
+            <div v-if="item.mistake_tags?.length" class="review-judge-tags">
+              <span v-for="tag in item.mistake_tags" :key="'judge-tag-' + item.decision_id + '-' + tag">
+                {{ formatReviewText(tag) }}
+              </span>
+            </div>
+          </article>
+        </div>
+
+        <div v-if="decisionJudgeData.warnings?.length" class="review-judge-warnings">
+          <span v-for="warning in decisionJudgeData.warnings" :key="'judge-warning-' + warning">
+            {{ formatReviewText(warning) }}
+          </span>
         </div>
       </section>
 
@@ -580,6 +760,324 @@ function jsonText(value) {
   line-height: 1;
 }
 
+.review-judge-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(76, 88, 104, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.72), rgba(255, 252, 245, 0.48)),
+    var(--log-surface);
+}
+
+.review-judge-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(76, 88, 104, 0.16);
+}
+
+.review-judge-head div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.review-judge-head small {
+  color: var(--log-text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.review-judge-head h4 {
+  margin: 0;
+  color: var(--log-text);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.review-judge-head b {
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(76, 88, 104, 0.1);
+  color: #405066;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.review-judge-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-judge-summary span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(76, 88, 104, 0.13);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.review-judge-summary small,
+.review-judge-quality-chip small {
+  color: var(--log-text-secondary);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.review-judge-summary b {
+  overflow: hidden;
+  color: var(--log-text);
+  font-size: 17px;
+  font-weight: 950;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-judge-quality {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.review-judge-quality-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid rgba(76, 88, 104, 0.13);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.review-judge-quality-chip b {
+  color: var(--log-text);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.quality-good {
+  --judge-quality-color: #237a57;
+  --judge-quality-bg: rgba(35, 122, 87, 0.12);
+}
+
+.quality-ok {
+  --judge-quality-color: #6f6536;
+  --judge-quality-bg: rgba(177, 152, 63, 0.16);
+}
+
+.quality-bad {
+  --judge-quality-color: #a33d35;
+  --judge-quality-bg: rgba(163, 61, 53, 0.12);
+}
+
+.quality-unknown {
+  --judge-quality-color: #5f6f86;
+  --judge-quality-bg: rgba(95, 111, 134, 0.12);
+}
+
+.review-judge-quality-chip.quality-good,
+.review-judge-quality-chip.quality-ok,
+.review-judge-quality-chip.quality-bad,
+.review-judge-quality-chip.quality-unknown {
+  border-color: color-mix(in srgb, var(--judge-quality-color) 24%, transparent);
+  background: var(--judge-quality-bg);
+}
+
+.review-judge-quality-chip.quality-good b,
+.review-judge-quality-chip.quality-ok b,
+.review-judge-quality-chip.quality-bad b,
+.review-judge-quality-chip.quality-unknown b {
+  color: var(--judge-quality-color);
+}
+
+.review-judge-lowest {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.review-judge-lowest h4 {
+  margin: 2px 0 0;
+}
+
+.review-judge-low-row,
+.review-judge-card {
+  min-width: 0;
+  border: 1px solid rgba(76, 88, 104, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.review-judge-low-row {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+}
+
+.review-judge-low-row header,
+.review-judge-card header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.review-judge-low-row header span,
+.review-judge-card header span {
+  display: inline-grid;
+  min-width: 34px;
+  height: 23px;
+  place-items: center;
+  border-radius: 999px;
+  background: #405066;
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.review-judge-low-row header em,
+.review-judge-card header em,
+.review-judge-low-row header strong,
+.review-judge-card header strong {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-judge-low-row header em,
+.review-judge-card header em {
+  background: rgba(64, 80, 102, 0.09);
+  color: #405066;
+}
+
+.review-judge-low-row header strong,
+.review-judge-card header strong {
+  background: rgba(35, 122, 87, 0.1);
+  color: #237a57;
+}
+
+.review-judge-low-row header b {
+  margin-left: auto;
+  color: #a33d35;
+  font-size: 16px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.review-judge-low-row p,
+.review-judge-card p {
+  margin: 0;
+  color: var(--log-text);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.review-judge-suggestion {
+  padding-top: 6px;
+  border-top: 1px dashed rgba(76, 88, 104, 0.17);
+  color: var(--log-text-secondary) !important;
+}
+
+.review-judge-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-judge-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+}
+
+.review-judge-card header {
+  justify-content: space-between;
+}
+
+.review-judge-card header div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.review-judge-score {
+  display: inline-grid;
+  min-width: 34px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--judge-quality-bg, rgba(76, 88, 104, 0.1));
+  color: var(--judge-quality-color, #405066);
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.review-judge-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.review-judge-tags span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgba(163, 61, 53, 0.08);
+  color: #8f342d;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-judge-warnings {
+  display: grid;
+  gap: 5px;
+}
+
+.review-judge-warnings span {
+  padding: 7px 9px;
+  border: 1px solid rgba(163, 61, 53, 0.16);
+  border-radius: 7px;
+  background: rgba(163, 61, 53, 0.08);
+  color: #8f342d;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .review-tp-card {
   padding: 10px 12px;
   margin-bottom: 6px;
@@ -751,11 +1249,23 @@ function jsonText(value) {
   .review-score-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .review-judge-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 960px) {
   .review-score-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .review-judge-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-judge-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -783,6 +1293,21 @@ function jsonText(value) {
     font-size: 9px;
   }
 
+  .review-judge-section {
+    padding: 10px;
+  }
+
+  .review-judge-low-row header,
+  .review-judge-card header,
+  .review-judge-card header div {
+    flex-wrap: wrap;
+  }
+
+  .review-judge-low-row header b,
+  .review-judge-score {
+    margin-left: 0;
+  }
+
   .review-cf-confidence {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -796,6 +1321,15 @@ function jsonText(value) {
 
   .review-score-card {
     min-height: 232px;
+  }
+
+  .review-judge-head,
+  .review-judge-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .review-judge-head b {
+    justify-self: start;
   }
 
   .review-tl-item {

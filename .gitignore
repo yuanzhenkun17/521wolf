@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -5,17 +6,50 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+
+# Local environment
 .env
 .env.*
 !.env.example
-runs/*
-data/*
+
+# Runtime data and generated artifacts
+/runs/
+/data/
+*.log
+*.pid
+*.pid.lock
+*.tmp
+*.temp
+
+# Browser/test output
+/test-results/
+/playwright-report/
+/coverage/
+/.nyc_output/
+/screenshots/
+/artifacts/
+ui/frontend/test-results/
+ui/frontend/playwright-report/
+ui/frontend/coverage/
+ui/frontend/screenshots/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+ui/frontend/*.err
+ui/frontend/debug-*.cjs
+ui/frontend/debug-*.png
+ui/frontend/logs-*-check.png
+ui/frontend/*-smoke*.png
+
+# Frontend dependencies/build output
 node_modules/
 dist/
 *.tsbuildinfo
 ui/frontend/node_modules/
 ui/frontend/dist/
+
+# Local tools
 .claude/
-docs/.obsidian
+docs/
 .omc/
 .codegraph/

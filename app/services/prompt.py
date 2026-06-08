@@ -125,7 +125,7 @@ _USER_TEMPLATE = """当前阶段: {phase}
 
 
 EXPECTED_LLM_SCHEMA_VERSION = "1.0"
-SCHEMA_VERSIONED_STAGES = frozenset({"decision", "consolidate", "apply", "evidence"})
+SCHEMA_VERSIONED_STAGES = frozenset({"decision", "consolidate", "apply", "evidence", "decision_judge"})
 
 
 @dataclass(frozen=True)

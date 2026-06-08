@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from collections import Counter
-from pathlib import Path
 from typing import Any
 
 from app.util.json import to_jsonable
 from engine import Role
+from storage.public_events import is_public_event, public_events_only, sanitize_public_payload
 
 
-_TERMINAL_GAME_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 _WOLF_ROLES = {"werewolf", "white_wolf_king", "狼人", "白狼王"}
 _HIDDEN_ACTION_EVENT_TYPES = {
     "action_request",
@@ -21,7 +19,6 @@ _HIDDEN_ACTION_EVENT_TYPES = {
     "guard_result",
     "hunter_shoot",
     "hunter_no_shot",
-    "hunter_shot",
     "seer_check",
     "seer_result",
     "werewolf_kill",
@@ -29,27 +26,7 @@ _HIDDEN_ACTION_EVENT_TYPES = {
     "witch_act",
     "witch_result",
 }
-_PUBLIC_PAYLOAD_REDACT_KEYS = {
-    "antidote_used",
-    "killedTarget",
-    "killed_target",
-    "poisonTarget",
-    "poisonedTarget",
-    "poisoned_target",
-    "poison_target",
-    "protectedTarget",
-    "protected_target",
-    "roles",
-    "saved",
-    "used_antidote",
-}
-_NIGHT_OUTCOME_EVENT_TYPES = {
-    "death_result",
-    "night_death",
-    "night_death_reveal",
-    "night_end",
-    "night_result",
-}
+_REDACTED_TERMINAL_GAME_STATUSES = {"failed", "cancelled", "interrupted"}
 _PUBLIC_DECISION_ACTIONS = {
     "exile_vote",
     "last_word",
@@ -62,7 +39,6 @@ _PUBLIC_DECISION_ACTIONS = {
     "sheriff_withdraw",
     "speak",
     "speech_order",
-    "white_wolf_explode",
 }
 
 
@@ -74,15 +50,18 @@ def _int_or_none(value: Any) -> int | None:
     return number if number > 0 else None
 
 
-def _is_terminal_game(snapshot: dict[str, Any]) -> bool:
-    return bool(snapshot.get("winner")) or str(snapshot.get("status") or "").lower() in _TERMINAL_GAME_STATUSES
+def _is_completed_game(snapshot: dict[str, Any]) -> bool:
+    status = str(snapshot.get("status") or "").lower()
+    if status in _REDACTED_TERMINAL_GAME_STATUSES:
+        return False
+    return bool(snapshot.get("winner")) or status == "completed"
 
 
 def _is_player_view_snapshot(snapshot: dict[str, Any]) -> bool:
     return (
         str(snapshot.get("mode") or "") == "play"
         and _int_or_none(snapshot.get("human_player_id")) is not None
-        and not _is_terminal_game(snapshot)
+        and not _is_completed_game(snapshot)
     )
 
 
@@ -134,7 +113,10 @@ def _sanitize_player_for_view(player: dict[str, Any], *, visible_role_ids: set[i
 
 
 def _visibility(event: dict[str, Any]) -> str:
-    return str(event.get("visibility") or ("private" if event.get("public") is False else "public"))
+    visibility = event.get("visibility")
+    if visibility:
+        return str(visibility).lower()
+    return "public" if is_public_event(event) else "private"
 
 
 def _event_type(event: dict[str, Any]) -> str:
@@ -143,6 +125,16 @@ def _event_type(event: dict[str, Any]) -> str:
 
 def _event_actor(event: dict[str, Any]) -> int | None:
     return _int_or_none(event.get("actor_id", event.get("actor")))
+
+
+def _event_target(event: dict[str, Any]) -> int | None:
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    return _int_or_none(
+        event.get("target_id")
+        or event.get("target")
+        or payload.get("target_id")
+        or payload.get("target")
+    )
 
 
 def _event_visible_to_player(event: dict[str, Any], *, human_player_id: int) -> bool:
@@ -162,27 +154,7 @@ def _sanitize_public_payload(event: dict[str, Any], *, keep_private: bool) -> di
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     if keep_private:
         return dict(payload)
-    event_type = _event_type(event)
-    if event_type in _NIGHT_OUTCOME_EVENT_TYPES:
-        return {
-            key: _sanitize_public_death_value(value) if key in {"dead_players", "death_ids", "deaths"} else value
-            for key, value in payload.items()
-            if key in {"dead_players", "death_ids", "deaths", "deferred_death_reveal"}
-        }
-    return {key: value for key, value in payload.items() if key not in _PUBLIC_PAYLOAD_REDACT_KEYS}
-
-
-def _sanitize_public_death_value(value: Any) -> Any:
-    values = value if isinstance(value, list) else [value]
-    sanitized: list[Any] = []
-    for item in values:
-        if isinstance(item, dict):
-            player_id = _int_or_none(item.get("id") or item.get("player_id") or item.get("seat"))
-            if player_id is not None:
-                sanitized.append(player_id)
-            continue
-        sanitized.append(item)
-    return sanitized if isinstance(value, list) else (sanitized[0] if sanitized else None)
+    return sanitize_public_payload(event)
 
 
 def _sanitize_event_for_player_view(event: dict[str, Any], *, human_player_id: int) -> dict[str, Any] | None:
@@ -386,6 +358,7 @@ def _pending_action_payload(request: Any) -> dict[str, Any]:
     action_type = request.action_type.value if hasattr(request.action_type, "value") else str(request.action_type)
     phase = request.phase.value if hasattr(request.phase, "value") else str(request.phase)
     role_state = to_jsonable(getattr(observation, "role_state", {}) or {})
+    target_required = _target_required(action_type)
     return {
         "player_id": request.player_id,
         "action_type": action_type,
@@ -394,6 +367,8 @@ def _pending_action_payload(request: Any) -> dict[str, Any]:
         "candidates": list(getattr(request, "candidates", ()) or ()),
         "candidate_ids": list(getattr(request, "candidates", ()) or ()),
         "retry_count": getattr(request, "retry_count", 0),
+        "target_required": target_required,
+        "allow_no_target": not target_required,
         "metadata": metadata,
         "prompt": _action_prompt(action_type),
         "observation": {
@@ -427,12 +402,18 @@ def _ui_pending_action(pending: dict[str, Any] | None) -> dict[str, Any] | None:
     action_type = str(pending.get("action_type") or pending.get("type") or "")
     metadata = pending.get("metadata") if isinstance(pending.get("metadata"), dict) else {}
     candidate_ids = list(pending.get("candidate_ids") or pending.get("candidates") or [])
+    raw_target_required = pending.get("target_required")
+    target_required = _target_required(action_type) if raw_target_required is None else bool(raw_target_required)
     return {
         "type": action_type,
         "prompt": pending.get("prompt") or _action_prompt(action_type),
         "candidate_ids": candidate_ids,
+        "target_required": target_required,
+        "allow_no_target": not target_required,
         "options": {
             **metadata,
+            "target_required": target_required,
+            "allow_no_target": not target_required,
             "choices": _choice_options(action_type, metadata),
         },
     }
@@ -461,7 +442,7 @@ def _normalize_event(event: dict[str, Any]) -> dict[str, Any]:
         "actor_id": actor,
         "target_id": target,
         "speaker": event.get("speaker") or (f"{actor}号" if actor else "法官"),
-        "visibility": event.get("visibility") or ("private" if event.get("public") is False else "public"),
+        "visibility": _visibility(event),
         "message": event.get("message", ""),
     }
 
@@ -551,7 +532,7 @@ def _archive_payload(
     *,
     stored: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    events = list(snapshot.get("events") or snapshot.get("logs") or [])
+    events = public_events_only(list(snapshot.get("events") or snapshot.get("logs") or []))
     decisions = list(snapshot.get("decisions") or [])
     review = snapshot.get("review")
     has_snapshot_review = "review" in snapshot
@@ -637,6 +618,9 @@ def _action_prompt(action_type: str) -> str:
         "hunter_shoot": "请选择开枪目标。",
     }.get(action_type, "请选择本轮行动。")
 
+def _target_required(action_type: str) -> bool:
+    return action_type in {"guard_protect", "werewolf_kill", "seer_check"}
+
 def _choice_options(action_type: str, metadata: dict[str, Any]) -> list[dict[str, Any]]:
     if action_type == "speech_order":
         values = metadata.get("choices") if isinstance(metadata.get("choices"), list) else ["forward", "reverse"]
@@ -670,9 +654,10 @@ def _choice_options(action_type: str, metadata: dict[str, Any]) -> list[dict[str
     return options.get(action_type, [])
 
 _VOTE_ACTIONS = {"exile_vote", "pk_vote", "sheriff_vote", "vote"}
+_EXACT_VOTE_ACTIONS = {"exile_vote", "pk_vote", "sheriff_vote"}
 _VOTE_PHASE_ALIASES = {
-    "exile_vote": "vote",
-    "pk_vote": "vote",
+    "exile_vote": "exile_vote",
+    "pk_vote": "pk_vote",
     "vote": "vote",
     "sheriff_vote": "sheriff_vote",
     "sheriff_election": "sheriff_vote",
@@ -683,8 +668,10 @@ def _vote_bucket_for_action(action: Any) -> str | None:
     value = str(action or "")
     if value == "sheriff_vote":
         return "sheriff_vote"
-    if value in {"exile_vote", "pk_vote", "vote"}:
-        return "vote"
+    if value in {"exile_vote", "pk_vote"}:
+        return value
+    if value == "vote":
+        return "exile_vote"
     return None
 
 
@@ -695,6 +682,15 @@ def _canonical_vote_action(action: Any) -> str:
 
 def _vote_bucket_for_phase(phase: Any) -> str | None:
     return _VOTE_PHASE_ALIASES.get(str(phase or ""))
+
+
+def _vote_phase_compatible(decision_phase: Any, expected_action: str) -> bool:
+    phase_bucket = _vote_bucket_for_phase(decision_phase)
+    if phase_bucket is None or phase_bucket == "vote":
+        return True
+    if expected_action in {"exile_vote", "pk_vote"} and phase_bucket in {"exile_vote", "pk_vote"}:
+        return True
+    return phase_bucket == expected_action
 
 
 def _pending_vote_action(pending_action: Any) -> str | None:
@@ -714,9 +710,11 @@ def _scoped_vote_decisions(
     has_scope = current_day is not None or current_phase is not None or pending_action is not None
     current_day_id = _int_or_none(current_day)
     active_action = _pending_vote_action(pending_action)
-    active_bucket = _vote_bucket_for_action(active_action) or _vote_bucket_for_phase(current_phase)
-    exact_action = active_action if active_action in {"exile_vote", "pk_vote", "sheriff_vote"} else None
-    if has_scope and active_bucket is None:
+    phase_bucket = _vote_bucket_for_phase(current_phase)
+    exact_action = active_action if active_action in _EXACT_VOTE_ACTIONS else None
+    if exact_action is None and phase_bucket in _EXACT_VOTE_ACTIONS:
+        exact_action = phase_bucket
+    if has_scope and exact_action is None and phase_bucket is None:
         return []
 
     scoped: list[dict[str, Any]] = []
@@ -724,14 +722,22 @@ def _scoped_vote_decisions(
         action = str(decision.get("action") or decision.get("action_type") or "")
         if action not in _VOTE_ACTIONS:
             continue
-        if exact_action is not None and _canonical_vote_action(action) != exact_action:
+        canonical_action = _canonical_vote_action(action)
+        if exact_action is not None and canonical_action != exact_action:
             continue
         if current_day_id is not None and _int_or_none(decision.get("day")) != current_day_id:
             continue
-        if active_bucket is not None:
-            decision_bucket = _vote_bucket_for_action(action) or _vote_bucket_for_phase(decision.get("phase"))
-            if decision_bucket != active_bucket:
+        if exact_action is not None:
+            if not _vote_phase_compatible(decision.get("phase"), exact_action):
                 continue
+        elif phase_bucket == "vote":
+            if canonical_action == "sheriff_vote":
+                continue
+            decision_bucket = _vote_bucket_for_phase(decision.get("phase"))
+            if decision_bucket not in {None, "vote", "exile_vote", "pk_vote"}:
+                continue
+        elif phase_bucket == "sheriff_vote" and canonical_action != "sheriff_vote":
+            continue
         scoped.append(decision)
 
     if not has_scope or exact_action is not None:
@@ -743,7 +749,7 @@ def _scoped_vote_decisions(
         ),
         None,
     )
-    if latest_action in {"exile_vote", "pk_vote", "sheriff_vote"}:
+    if latest_action in _EXACT_VOTE_ACTIONS:
         return [
             decision
             for decision in scoped
@@ -790,11 +796,10 @@ def _vote_tally(
 def _dead_players(events: list[dict[str, Any]]) -> set[int]:
     dead: set[int] = set()
     for event in events:
-        if (event.get("event_type") or event.get("type")) == "death" and event.get("target") is not None:
-            try:
-                dead.add(int(event["target"]))
-            except (TypeError, ValueError):
-                continue
+        if (event.get("event_type") or event.get("type")) == "death":
+            target_id = _event_target(event)
+            if target_id is not None:
+                dead.add(target_id)
     return dead
 
 def _sheriff_from_events(events: list[dict[str, Any]]) -> int | None:
@@ -802,12 +807,22 @@ def _sheriff_from_events(events: list[dict[str, Any]]) -> int | None:
     for event in events:
         event_type = event.get("event_type") or event.get("type")
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-        if event_type in {"sheriff_election_end", "sheriff_result"} and payload.get("winner") is not None:
-            sheriff_id = int(payload["winner"])
+        if event_type in {"sheriff_election_end", "sheriff_result"}:
+            next_sheriff = _int_or_none(payload.get("winner")) or _event_target(event)
+            if next_sheriff is not None:
+                sheriff_id = next_sheriff
         elif event_type in {"sheriff_badge_destroy", "sheriff_destroy"}:
             sheriff_id = None
-        elif event_type in {"sheriff_badge_transfer", "sheriff_transfer"} and event.get("target") is not None:
-            sheriff_id = int(event["target"])
+        elif event_type in {"sheriff_badge_transfer", "sheriff_transfer"}:
+            next_sheriff = _int_or_none(
+                event.get("target_id")
+                or event.get("target")
+                or payload.get("to")
+                or payload.get("target_id")
+                or payload.get("target")
+            )
+            if next_sheriff is not None:
+                sheriff_id = next_sheriff
     return sheriff_id
 
 def _team_for_role(role: str) -> str:
@@ -827,11 +842,3 @@ def _role_label(role: str) -> str:
         "guard": "守卫",
     }.get(role, role)
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
-    return rows

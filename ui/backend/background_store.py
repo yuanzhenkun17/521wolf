@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
-from app.util.json import read_json, to_jsonable
+from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 from ui.backend.constants import (
     BACKGROUND_ACTIVE_STATUSES,
-    BACKGROUND_STABLE_STATUSES,
-    BACKGROUND_STATE_FILE,
-    TASK_EVENT_LOG_FILE,
 )
 from ui.backend.task_events import TaskEventLog
 from ui.backend.task_state import _set_task_contract
@@ -23,13 +19,9 @@ _log = logging.getLogger(__name__)
 
 class BackgroundTaskStoreMixin:
     @property
-    def _background_state_path(self) -> Path:
-        return self.paths.runs_dir / BACKGROUND_STATE_FILE
-
-    @property
     def task_event_log(self) -> TaskEventLog:
         if self._task_event_log is None:
-            self._task_event_log = TaskEventLog(self.paths.runs_dir / TASK_EVENT_LOG_FILE)
+            self._task_event_log = TaskEventLog(connection_factory=self._open_ui_task_connection)
             self._task_event_log.load()
         return self._task_event_log
 
@@ -124,23 +116,62 @@ class BackgroundTaskStoreMixin:
         return json.dumps(comparable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def _persist_background_tasks(self) -> None:
+        changed: list[dict[str, Any]]
+        payload: dict[str, Any]
+        fingerprint: str
+        previous_fingerprint: str | None = None
         try:
             with self.background_state_lock:
                 payload = self._background_tasks_payload()
                 fingerprint = self._background_tasks_fingerprint(payload)
                 if fingerprint == self._background_state_fingerprint:
                     return
-                self._write_background_json(self._background_state_path, payload)
-                self._background_state_fingerprint = fingerprint
+                previous_fingerprint = self._background_state_fingerprint
                 changed = self._changed_background_entities()
+                self._background_state_fingerprint = fingerprint
+            self._persist_background_entities(payload)
         except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
-            _log.warning("failed to persist ui backend task index", exc_info=True)
-            return
+            with self.background_state_lock:
+                if "fingerprint" in locals() and self._background_state_fingerprint == fingerprint:
+                    self._background_state_fingerprint = previous_fingerprint
+            _log.warning("failed to persist ui backend task index to PostgreSQL", exc_info=True)
+            changed = changed if "changed" in locals() else []
         for entity in changed:
             try:
                 self.task_event_log.publish(entity)
             except Exception:  # noqa: BLE001 - task event replay is best-effort UI metadata
                 _log.warning("failed to publish task event for %s", self._task_entity_key(entity), exc_info=True)
+
+    def _persist_background_entities(self, payload: dict[str, Any]) -> None:
+        conn = self._open_ui_task_connection()
+        try:
+            _ensure_background_task_tables(conn)
+            for entity in [*payload.get("evolution_runs", []), *payload.get("evolution_batches", [])]:
+                if not isinstance(entity, dict):
+                    continue
+                entity_id = self._task_entity_key(entity)
+                if not entity_id:
+                    continue
+                conn.execute(
+                    "INSERT INTO ui_background_tasks "
+                    "(entity_id, entity_kind, status, payload, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(entity_id) DO UPDATE SET "
+                    "entity_kind = excluded.entity_kind, "
+                    "status = excluded.status, "
+                    "payload = excluded.payload, "
+                    "updated_at = excluded.updated_at",
+                    (
+                        entity_id,
+                        entity.get("kind"),
+                        entity.get("status"),
+                        json.dumps(to_jsonable(entity), ensure_ascii=False),
+                        payload.get("updated_at") or beijing_now_iso(),
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
 
     def _changed_background_entities(self) -> list[dict[str, Any]]:
         changed: list[dict[str, Any]] = []
@@ -185,172 +216,41 @@ class BackgroundTaskStoreMixin:
         return json.dumps(to_jsonable(comparable), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def load_background_tasks(self) -> None:
-        state_path = self._background_state_path
-        if state_path.exists():
-            try:
-                payload = read_json(state_path)
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                _log.warning("failed to load ui backend task index %s", state_path, exc_info=True)
-            else:
-                if isinstance(payload, dict):
-                    for run in payload.get("evolution_runs", []) or []:
-                        if not isinstance(run, dict):
-                            continue
-                        run_id = run.get("run_id")
-                        if run_id:
-                            self.evolution_runs.setdefault(str(run_id), dict(run))
-                    for batch in payload.get("evolution_batches", []) or []:
-                        if not isinstance(batch, dict):
-                            continue
-                        batch_id = batch.get("batch_id")
-                        if batch_id:
-                            self.evolution_batches.setdefault(str(batch_id), dict(batch))
-        self._load_evolution_state_runs()
-
-    def _load_evolution_state_runs(self) -> None:
-        if not self.paths.evolution_dir.exists():
-            return
-        for state_path in sorted(self.paths.evolution_dir.glob("*/state.json")):
-            try:
-                payload = read_json(state_path)
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                _log.warning("failed to load evolution run state %s", state_path, exc_info=True)
-                continue
-            if not isinstance(payload, dict):
-                continue
-            run = self._evolution_state_to_ui_run(payload, state_path=state_path)
-            if run is None:
-                continue
-            run_id = str(run["run_id"])
-            existing = self.evolution_runs.get(run_id)
-            if existing is None:
-                self.evolution_runs[run_id] = run
-            else:
-                self._merge_evolution_state_run(existing, run)
-
-    def _evolution_state_to_ui_run(
-        self,
-        payload: dict[str, Any],
-        *,
-        state_path: Path,
-    ) -> dict[str, Any] | None:
-        run_id = str(payload.get("run_id") or state_path.parent.name).strip()
-        if not run_id:
-            return None
-        role = str(payload.get("role") or "").strip()
-        training_games, training_count = self._restore_evolution_games(payload.get("training_games"))
-        battle_games, battle_count = self._restore_evolution_games(payload.get("battle_games"))
-        training_count = self._restore_count(payload.get("training_game_count"), training_count)
-        battle_count = self._restore_count(payload.get("battle_game_count"), battle_count)
-        proposals = self._restore_evolution_proposals(payload.get("proposals"))
-        diff = [dict(item) for item in payload.get("diff", []) or [] if isinstance(item, dict)]
-        config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
-        if not config:
-            config = {
-                "roles": [role] if role else [],
-                "training_games": training_count,
-                "battle_games": battle_count,
-            }
-        updated_at = payload.get("last_heartbeat_at") or payload.get("updated_at")
-        run = {
-            "kind": "role_evolution_run",
-            "schema_version": self._restore_count(payload.get("schema_version"), 1) or 1,
-            "run_id": run_id,
-            "role": role,
-            "status": str(payload.get("status") or ""),
-            "started_at": payload.get("started_at"),
-            "finished_at": payload.get("finished_at"),
-            "last_heartbeat_at": updated_at,
-            "parent_hash": payload.get("parent_hash"),
-            "candidate_hash": payload.get("candidate_hash"),
-            "candidate_skill_dir": payload.get("candidate_skill_dir"),
-            "baseline_skill_dir": payload.get("baseline_skill_dir"),
-            "training_run_id": payload.get("training_run_id"),
-            "training_output_dir": payload.get("training_output_dir"),
-            "training_games": training_games,
-            "training_game_count": training_count,
-            "training_completed": training_count,
-            "battle_games": battle_games,
-            "battle_game_count": battle_count,
-            "battle_completed": battle_count,
-            "battle_result": payload.get("battle_result") if isinstance(payload.get("battle_result"), dict) else {},
-            "proposals": proposals,
-            "diff": diff,
-            "current_stage": payload.get("current_stage"),
-            "progress": payload.get("progress") if isinstance(payload.get("progress"), dict) else {},
-            "diagnostics": [dict(item) for item in payload.get("diagnostics", []) or [] if isinstance(item, dict)],
-            "warnings": list(payload.get("warnings", []) or []),
-            "errors": list(payload.get("errors", []) or []),
-            "config": config,
-            "source_state_path": str(state_path),
-        }
-        if payload.get("batch_id"):
-            run["batch_id"] = payload.get("batch_id")
-        if payload.get("interrupted_at"):
-            run["interrupted_at"] = payload.get("interrupted_at")
-        if payload.get("error"):
-            run["error"] = payload.get("error")
-        return {key: value for key, value in run.items() if value is not None}
-
-    def _merge_evolution_state_run(self, existing: dict[str, Any], restored: dict[str, Any]) -> None:
-        existing_status = str(existing.get("status") or "").lower()
-        restored_status = str(restored.get("status") or "").lower()
-        for key, value in restored.items():
-            if self._missing_background_value(existing.get(key)) and not self._missing_background_value(value):
-                existing[key] = value
-        if existing_status in BACKGROUND_ACTIVE_STATUSES and restored_status in BACKGROUND_STABLE_STATUSES:
-            for key in (
-                "status",
-                "finished_at",
-                "parent_hash",
-                "candidate_hash",
-                "candidate_skill_dir",
-                "baseline_skill_dir",
-                "training_run_id",
-                "training_output_dir",
-                "training_games",
-                "training_game_count",
-                "training_completed",
-                "battle_games",
-                "battle_game_count",
-                "battle_completed",
-                "battle_result",
-                "proposals",
-                "diff",
-                "current_stage",
-                "progress",
-                "diagnostics",
-                "warnings",
-                "errors",
-            ):
-                if key in restored and not self._missing_background_value(restored.get(key)):
-                    existing[key] = restored[key]
-
-    @staticmethod
-    def _restore_evolution_games(raw: Any) -> tuple[list[dict[str, Any]], int]:
-        if isinstance(raw, list):
-            games = [dict(item) for item in raw if isinstance(item, dict)]
-            return games, len(games)
-        return [], BackgroundTaskStoreMixin._restore_count(raw, 0)
-
-    @staticmethod
-    def _restore_count(raw: Any, default: int) -> int:
+        conn = None
         try:
-            return max(0, int(raw))
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _restore_evolution_proposals(raw: Any) -> list[dict[str, Any]]:
-        if isinstance(raw, dict):
-            raw = raw.get("proposals", [])
-        if not isinstance(raw, list):
-            return []
-        return [dict(item) for item in raw if isinstance(item, dict)]
-
-    @staticmethod
-    def _missing_background_value(value: Any) -> bool:
-        return value is None or value == "" or value == [] or value == {}
+            conn = self._open_ui_task_connection()
+            _ensure_background_task_tables(conn)
+            rows = conn.execute(
+                "SELECT entity_id, entity_kind, status, payload, updated_at "
+                "FROM ui_background_tasks ORDER BY updated_at, entity_id"
+            ).fetchall()
+        except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
+            _log.warning("failed to load ui backend task index from PostgreSQL", exc_info=True)
+            return
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - cleanup is best-effort
+                    pass
+        for row in rows:
+            payload = _background_payload_from_row(row)
+            if payload is None:
+                continue
+            entity_id = str(payload.get("run_id") or payload.get("batch_id") or row["entity_id"])
+            if not entity_id:
+                continue
+            if payload.get("run_id") or payload.get("kind") == "role_evolution_run":
+                payload.setdefault("run_id", entity_id)
+                self.evolution_runs.setdefault(entity_id, payload)
+            elif payload.get("batch_id") or payload.get("kind") in {"role_evolution_batch", "benchmark_batch"}:
+                payload.setdefault("batch_id", entity_id)
+                self.evolution_batches.setdefault(entity_id, payload)
+        self._background_state_fingerprint = self._background_tasks_fingerprint(self._background_tasks_payload())
+        for entity in [*self.evolution_runs.values(), *self.evolution_batches.values()]:
+            key = self._task_entity_key(entity)
+            if key:
+                self._task_event_fingerprints[key] = self._task_entity_fingerprint(entity)
 
     def recover_background_tasks(self) -> int:
         now = beijing_now_iso()
@@ -417,5 +317,37 @@ class BackgroundTaskStoreMixin:
     def restore_background_tasks(self) -> int:
         self.load_background_tasks()
         return self.recover_background_tasks()
+
+
+def _ensure_background_task_tables(conn: Any) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ui_background_tasks (
+            entity_id text PRIMARY KEY,
+            entity_kind text NOT NULL,
+            status text,
+            payload jsonb NOT NULL,
+            updated_at timestamptz NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ui_background_tasks_kind "
+        "ON ui_background_tasks(entity_kind)"
+    )
+    conn.commit()
+
+
+def _background_payload_from_row(row: Any) -> dict[str, Any] | None:
+    payload = row["payload"]
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            _log.warning("skipping invalid PostgreSQL ui background task payload for %s", row["entity_id"])
+            return None
+    if not isinstance(payload, dict):
+        return None
+    return dict(payload)
 
 

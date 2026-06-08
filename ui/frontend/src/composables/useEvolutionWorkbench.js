@@ -462,6 +462,250 @@ function normalizeSampleGame(game, bucket) {
   }
 }
 
+function asArray(value) {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === 'object') return Object.values(value)
+  return []
+}
+
+function firstArray(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) return value
+  }
+  return []
+}
+
+function firstObject(...values) {
+  for (const value of values) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value
+  }
+  return {}
+}
+
+function uniqueText(values) {
+  const seen = new Set()
+  return asArray(values)
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
+}
+
+function shortText(value, fallback = '—') {
+  const text = String(value ?? '').trim()
+  return text || fallback
+}
+
+function gateDecisionText(value) {
+  return {
+    promote: '允许晋升',
+    promoted: '已晋升',
+    review: '需要复核',
+    review_required: '需要复核',
+    reject: '拒绝',
+    rejected: '已拒绝',
+    block: '阻断',
+    blocked: '阻断',
+    pending: '待评审',
+    allow: '允许'
+  }[String(value || '').toLowerCase()] || shortText(value)
+}
+
+function proposalStatusText(value) {
+  return {
+    accepted: '已接受',
+    accept: '已接受',
+    rejected: '已拒绝',
+    reject: '已拒绝',
+    pending: '待处理',
+    review: '待处理',
+    review_required: '待处理',
+    applied: '已应用',
+    skipped: '已跳过'
+  }[String(value || '').toLowerCase()] || shortText(value, '待处理')
+}
+
+function normalizePairedSeed(row, index = 0) {
+  const baseline = firstObject(row?.baseline, row?.baseline_result)
+  const candidate = firstObject(row?.candidate, row?.candidate_result)
+  const baselineScore = firstFinite(row?.baseline_score, row?.baseline_role_score, baseline.score, baseline.role_score)
+  const candidateScore = firstFinite(row?.candidate_score, row?.candidate_role_score, candidate.score, candidate.role_score)
+  const scoreDelta = firstFinite(
+    row?.score_delta,
+    row?.role_score_delta,
+    baselineScore != null && candidateScore != null ? candidateScore - baselineScore : null
+  )
+  return {
+    ...row,
+    id: shortText(row?.id || row?.pair_id || row?.seed || row?.battle_seed || index, String(index)),
+    seed: shortText(row?.seed || row?.battle_seed || row?.paired_seed || index + 1),
+    baselineScore,
+    candidateScore,
+    scoreDelta,
+    winnerSide: shortText(row?.winner_side || row?.winner || row?.side, '—'),
+    status: shortText(row?.status || row?.result || (row?.rankable === false ? 'unrankable' : 'rankable'), '—'),
+    failureReason: shortText(row?.failure_reason || row?.reason || row?.error, ''),
+    baselineGameId: row?.baseline_game_id || baseline.game_id || '',
+    candidateGameId: row?.candidate_game_id || candidate.game_id || ''
+  }
+}
+
+function normalizeGateReport(source = {}, run = {}) {
+  const gate = firstObject(
+    source.gate_report,
+    source.promotion_gate,
+    source.gate,
+    source.gateReport,
+    run?.gate_report,
+    run?.promotion_gate,
+    run?.gate,
+    run?.battle_result?.gate_report,
+    run?.combined_battle_result?.gate_report
+  )
+  const metrics = firstObject(gate.metrics, gate.metric_summary, source.metrics, source.metric_summary)
+  const blockedReasons = uniqueText(firstArray(
+    gate.blocked_reasons,
+    gate.reasons,
+    gate.fail_reasons,
+    source.blocked_reasons,
+    source.reasons
+  ))
+  const riskTags = uniqueText([
+    ...firstArray(gate.risk_tags, source.risk_tags),
+    ...firstArray(gate.overfit_risk_tags, source.overfit_risk_tags)
+  ])
+  const decision = shortText(
+    gate.decision ||
+      gate.status ||
+      source.decision ||
+      source.gate_decision ||
+      run?.gate_decision ||
+      run?.recommendation,
+    ''
+  )
+  return {
+    ...gate,
+    decision,
+    decisionLabel: gateDecisionText(decision),
+    blockedReasons,
+    riskTags,
+    metrics,
+    pairedValidCount: firstFinite(metrics.paired_valid_count, metrics.valid_pairs, gate.paired_valid_count, source.paired_valid_count),
+    roleScoreDelta: firstFinite(metrics.role_score_delta, gate.role_score_delta, source.role_score_delta),
+    winRateDelta: firstFinite(metrics.win_rate_delta, gate.win_rate_delta, source.win_rate_delta, run?.winRateDelta),
+    qualityDelta: firstFinite(metrics.decision_quality_delta, metrics.quality_delta, gate.decision_quality_delta)
+  }
+}
+
+function proposalRiskTags(proposal) {
+  const risk = firstObject(proposal?.risk, proposal?.risk_summary, proposal?.overfit_risk)
+  return uniqueText([
+    ...firstArray(proposal?.risk_tags, proposal?.overfit_risk_tags),
+    ...firstArray(risk.tags, risk.risk_tags, risk.overfit_risk_tags)
+  ])
+}
+
+function normalizeProposal(proposal, index = 0) {
+  const gate = firstObject(proposal?.gate, proposal?.gate_report, proposal?.promotion_gate)
+  const risk = firstObject(proposal?.risk, proposal?.risk_summary, proposal?.overfit_risk)
+  const apiId = String(proposal?.proposal_id || proposal?.id || '').trim()
+  const status = shortText(proposal?.review_status || proposal?.status || proposal?.decision, 'pending')
+  const targetFile = shortText(proposal?.target_file || proposal?.file || proposal?.path || proposal?.skill_file, '—')
+  const title = shortText(
+    proposal?.title ||
+      proposal?.summary ||
+      proposal?.name ||
+      (targetFile !== '—' ? targetFile : ''),
+    `提案 ${index + 1}`
+  )
+  return {
+    ...proposal,
+    apiId,
+    id: apiId || `proposal-${index + 1}`,
+    title,
+    targetFile,
+    operation: shortText(proposal?.operation || proposal?.action || proposal?.change_type, '变更'),
+    status,
+    statusLabel: proposalStatusText(status),
+    summary: shortText(proposal?.summary || proposal?.description || proposal?.rationale || proposal?.reason),
+    rationale: shortText(proposal?.rationale || proposal?.evidence || proposal?.reason || proposal?.summary),
+    riskTags: proposalRiskTags(proposal),
+    riskLevel: shortText(proposal?.risk_level || risk.level || risk.risk_level || risk.severity, ''),
+    riskScore: firstFinite(proposal?.risk_score, proposal?.overfit_risk_score, risk.score, risk.overfit_risk_score),
+    gateDecision: shortText(proposal?.gate_decision || gate.decision || gate.status, ''),
+    gateLabel: gateDecisionText(proposal?.gate_decision || gate.decision || gate.status),
+    gateReasons: uniqueText(firstArray(proposal?.gate_reasons, gate.blocked_reasons, gate.reasons)),
+    pairedSeeds: firstArray(proposal?.paired_seeds, proposal?.paired_seed_summary, proposal?.battle_pairs)
+      .map(normalizePairedSeed)
+      .slice(0, 6),
+    diffPreview: shortText(proposal?.diff_preview || proposal?.patch || proposal?.diff || proposal?.after, '')
+  }
+}
+
+function proposalSource(data, run) {
+  if (Array.isArray(data)) return data
+  return firstArray(
+    data?.proposals,
+    data?.items,
+    data?.proposal_reviews,
+    data?.proposalReview,
+    run?.proposals,
+    run?.proposal_reviews,
+    run?.proposalReview
+  )
+}
+
+function pairedSeedSource(data, run) {
+  return firstArray(
+    data?.paired_seed_summary,
+    data?.paired_seeds,
+    data?.battle_pairs,
+    data?.gate_report?.paired_seed_summary,
+    data?.gate_report?.paired_seeds,
+    run?.paired_seed_summary,
+    run?.paired_seeds,
+    run?.battle_pairs,
+    run?.battle_result?.paired_seed_summary,
+    run?.battle_result?.paired_seeds,
+    run?.combined_battle_result?.paired_seed_summary,
+    run?.combined_battle_result?.paired_seeds
+  )
+}
+
+function normalizeProposalReview(data = null, run = null, options = {}) {
+  const source = Array.isArray(data) ? { proposals: data } : firstObject(data)
+  const proposals = proposalSource(source, run).map(normalizeProposal)
+  const pairedSeeds = pairedSeedSource(source, run).map(normalizePairedSeed)
+  const gate = normalizeGateReport(source, run || {})
+  const acceptedCount = proposals.filter((proposal) => ['accepted', 'accept', 'applied'].includes(String(proposal.status).toLowerCase())).length
+  const rejectedCount = proposals.filter((proposal) => ['rejected', 'reject'].includes(String(proposal.status).toLowerCase())).length
+  const pendingCount = Math.max(0, proposals.length - acceptedCount - rejectedCount)
+  return {
+    loading: false,
+    error: options.error || '',
+    unsupported: Boolean(options.unsupported),
+    source: options.source || (data ? 'api' : 'run-detail'),
+    proposals,
+    gate,
+    pairedSeeds,
+    summary: {
+      total: proposals.length,
+      accepted: acceptedCount,
+      rejected: rejectedCount,
+      pending: pendingCount,
+      riskTagCount: uniqueText(proposals.flatMap((proposal) => proposal.riskTags)).length,
+      pairedSeedCount: pairedSeeds.length
+    }
+  }
+}
+
+function isMissingProposalEndpoint(error) {
+  const message = String(error?.message || '').toLowerCase()
+  return message.includes('404') || message.includes('not found') || message.includes('unexpected')
+}
+
 function useEvolutionWorkbench(options = {}) {
   const { apiFetch, apiBase } = options.apiFetch
     ? { apiFetch: options.apiFetch, apiBase: options.apiBase || '/api' }
@@ -480,6 +724,7 @@ function useEvolutionWorkbench(options = {}) {
   const selectedRun = ref(null)
   const selectedDiff = ref([])
   const selectedDiffData = ref(null)
+  const selectedProposalReview = ref(normalizeProposalReview(null, null, { source: 'none' }))
   const selectedGames = ref(emptySampleGames())
   const selectedGameBucket = ref('training')
   const selectedGameId = ref('')
@@ -522,16 +767,17 @@ function useEvolutionWorkbench(options = {}) {
   const refreshRequests = createLatestOnlyTracker()
   const runSelectionRequests = createLatestOnlyTracker()
   const diffRequests = createLatestOnlyTracker()
+  const proposalReviewRequests = createLatestOnlyTracker()
   const sampleListRequests = createLatestOnlyTracker()
   const sampleDetailRequests = createLatestOnlyTracker()
   const versionDetailRequests = createLatestOnlyTracker()
   const actionRequests = createLatestOnlyTracker()
 
   const form = ref({
-    training_games: 20,
-    battle_games: 10,
+    training_games: 5,
+    battle_games: 4,
     max_days: 5,
-    auto_promote: false
+    auto_promote: true
   })
 
   const roleRows = computed(() => roles.value.map((role) => {
@@ -664,6 +910,7 @@ function useEvolutionWorkbench(options = {}) {
     if (!selectedSampleHistoryGameId.value) return '缺少历史对局 ID，无法打开大厅回放或日志。'
     return ''
   })
+  const selectedProposalRows = computed(() => selectedProposalReview.value.proposals || [])
 
   function setError(message) {
     error.value = message || ''
@@ -699,6 +946,14 @@ function useEvolutionWorkbench(options = {}) {
   function clearDiffSelection() {
     selectedDiff.value = []
     selectedDiffData.value = null
+  }
+
+  function clearProposalReview({ unsupported = false, message = '' } = {}) {
+    selectedProposalReview.value = normalizeProposalReview(null, selectedRun.value, {
+      source: unsupported ? 'unsupported' : 'run-detail',
+      unsupported,
+      error: message
+    })
   }
 
   function selectRole(role) {
@@ -856,12 +1111,20 @@ function useEvolutionWorkbench(options = {}) {
     if (selectedRun.value?.role) selectRole(selectedRun.value.role)
     if (selectedRun.value?.entityType === 'batch') {
       clearDiffSelection()
+      clearProposalReview({
+        unsupported: true,
+        message: '批量任务不直接提供逐条提案评审，请进入子运行查看。'
+      })
       clearSampleSelection({
         unsupported: true,
         message: '批量任务不直接提供样本局和 diff，请在子运行中查看单角色详情。'
       })
     } else {
-      await Promise.all([loadDiff(id, { parentToken: token }), loadRunGames(id, { parentToken: token })])
+      await Promise.all([
+        loadDiff(id, { parentToken: token }),
+        loadRunGames(id, { parentToken: token }),
+        loadProposalReview(id, { parentToken: token })
+      ])
     }
     if (!token.isLatest() || selectedRunId.value !== id) return
     if (selectedRun.value?.isActive) {
@@ -903,6 +1166,29 @@ function useEvolutionWorkbench(options = {}) {
         selectedDiff.value = []
         selectedDiffData.value = null
       }
+    }
+  }
+
+  async function loadProposalReview(id = selectedRunId.value, { parentToken = null } = {}) {
+    if (!id) return
+    const token = proposalReviewRequests.next()
+    selectedProposalReview.value = {
+      ...normalizeProposalReview(null, selectedRun.value, { source: 'run-detail' }),
+      loading: true,
+      error: ''
+    }
+    try {
+      const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/proposals`)
+      if (!token.isLatest() || (parentToken && !parentToken.isLatest()) || selectedRunId.value !== id) return
+      selectedProposalReview.value = normalizeProposalReview(data, selectedRun.value, { source: 'api' })
+    } catch (err) {
+      if (!token.isLatest() || (parentToken && !parentToken.isLatest()) || selectedRunId.value !== id) return
+      const missing = isMissingProposalEndpoint(err)
+      selectedProposalReview.value = normalizeProposalReview(null, selectedRun.value, {
+        source: 'run-detail',
+        unsupported: missing,
+        error: missing ? '' : (err?.message || '提案评审读取失败')
+      })
     }
   }
 
@@ -1173,12 +1459,16 @@ function useEvolutionWorkbench(options = {}) {
           selectedRun.value = normalizeRun({ ...(current || selectedRun.value || {}), ...(payload || {}), run_id: id })
           if (selectedRun.value?.entityType === 'batch') {
             clearDiffSelection()
+            clearProposalReview({
+              unsupported: true,
+              message: '批量任务不直接提供逐条提案评审，请进入子运行查看。'
+            })
             clearSampleSelection({
               unsupported: true,
               message: '批量任务不直接提供样本局和 diff，请在子运行中查看单角色详情。'
             })
           } else {
-            await Promise.all([loadDiff(id), loadRunGames(id)])
+            await Promise.all([loadDiff(id), loadRunGames(id), loadProposalReview(id)])
           }
           return
         }
@@ -1229,10 +1519,10 @@ function useEvolutionWorkbench(options = {}) {
         method: 'POST',
         body: JSON.stringify({
           roles: [selectedRole.value],
-          training_games: numberField('training_games', 20),
-          battle_games: numberField('battle_games', 10),
+          training_games: numberField('training_games', 5),
+          battle_games: numberField('battle_games', 4),
           max_days: numberField('max_days', 5),
-          auto_promote: Boolean(form.value.auto_promote)
+          auto_promote: true
         })
       })
       if (!token.isLatest()) return
@@ -1260,10 +1550,10 @@ function useEvolutionWorkbench(options = {}) {
         method: 'POST',
         body: JSON.stringify({
           roles: [...selectedBatchRoles.value],
-          training_games: numberField('training_games', 20),
-          battle_games: numberField('battle_games', 10),
+          training_games: numberField('training_games', 5),
+          battle_games: numberField('battle_games', 4),
           max_days: numberField('max_days', 5),
-          auto_promote: Boolean(form.value.auto_promote)
+          auto_promote: true
         })
       })
       if (!token.isLatest()) return
@@ -1296,6 +1586,64 @@ function useEvolutionWorkbench(options = {}) {
       await loadRoles()
     } catch (err) {
       if (token.isLatest()) setError(err?.message || '操作失败')
+    } finally {
+      if (token.isLatest()) actionLoading.value = ''
+    }
+  }
+
+  async function updateProposal(id, proposalId, action, body = {}) {
+    if (!id || !proposalId || !action) return
+    const token = actionRequests.next()
+    actionLoading.value = `proposal-${action}:${proposalId}`
+    setError('')
+    try {
+      const result = await apiFetch(
+        `/evolution-runs/${encodeURIComponent(id)}/proposals/${encodeURIComponent(proposalId)}/${encodeURIComponent(action)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify(body)
+        }
+      )
+      if (!token.isLatest()) return
+      if (result?.run || result?.run_id || result?.batch_id) {
+        selectedRun.value = normalizeRun(result.run || { ...(selectedRun.value || {}), ...(result || {}), run_id: id })
+      }
+      await loadProposalReview(id)
+    } catch (err) {
+      if (token.isLatest()) setError(err?.message || '提案操作失败')
+    } finally {
+      if (token.isLatest()) actionLoading.value = ''
+    }
+  }
+
+  async function acceptProposal(proposal, id = selectedRunId.value) {
+    const proposalId = proposal?.apiId || proposal?.proposal_id || proposal?.id
+    await updateProposal(id, proposalId, 'accept')
+  }
+
+  async function rejectProposal(proposal, id = selectedRunId.value, reason = '') {
+    const proposalId = proposal?.apiId || proposal?.proposal_id || proposal?.id
+    await updateProposal(id, proposalId, 'reject', {
+      reason: reason || 'manual_reject'
+    })
+  }
+
+  async function applyAcceptedProposals(id = selectedRunId.value) {
+    if (!id) return
+    const token = actionRequests.next()
+    actionLoading.value = `proposal-apply:${id}`
+    setError('')
+    try {
+      const result = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/proposals/apply-accepted`, {
+        method: 'POST'
+      })
+      if (!token.isLatest()) return
+      if (result?.run || result?.run_id || result?.batch_id) {
+        selectedRun.value = normalizeRun(result.run || { ...(selectedRun.value || {}), ...(result || {}), run_id: id })
+      }
+      await Promise.all([loadProposalReview(id), loadDiff(id)])
+    } catch (err) {
+      if (token.isLatest()) setError(err?.message || '应用已接受提案失败')
     } finally {
       if (token.isLatest()) actionLoading.value = ''
     }
@@ -1357,6 +1705,8 @@ function useEvolutionWorkbench(options = {}) {
     selectedRunSummary,
     selectedDiff,
     selectedDiffData,
+    selectedProposalReview,
+    selectedProposalRows,
     selectedGames,
     sampleBuckets,
     selectedGameBucket,
@@ -1385,6 +1735,10 @@ function useEvolutionWorkbench(options = {}) {
     startSingle,
     startBatch,
     runAction,
+    loadProposalReview,
+    acceptProposal,
+    rejectProposal,
+    applyAcceptedProposals,
     rollback,
     selectSampleGame,
     loadMoreSampleGames,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import TYPE_CHECKING, Callable
 
@@ -58,9 +59,11 @@ async def ask(
     validator: Callable[[ActionResponse], bool] | None = None,
     default: ActionResponse | None = None,
 ) -> ActionResponse:
-    default_response = sanitize_response_for_action(default or ActionResponse(action_type))
+    default_response = sanitize_response_for_action(default or ActionResponse(action_type), metadata)
     validator = validator or (lambda response: response.action_type == action_type)
-    for retry in range(2):
+    max_attempts = _configured_max_attempts(engine)
+    retry_delay = _configured_retry_delay(engine)
+    for retry in range(max_attempts):
         request = ActionRequest(
             player_id=player_id,
             action_type=action_type,
@@ -69,6 +72,7 @@ async def ask(
             candidates=candidates,
             retry_count=retry,
             metadata=metadata or {},
+            defer_decision_recording=True,
         )
         engine._record(
             "action_request",
@@ -85,12 +89,21 @@ async def ask(
         try:
             response = engine.agents[player_id].act(request)
             if inspect.isawaitable(response):
-                response = await response
-            response = sanitize_response_for_action(response)
+                timeout = _configured_action_timeout(engine)
+                if timeout is None:
+                    response = await response
+                else:
+                    response = await asyncio.wait_for(response, timeout=timeout)
+            response = sanitize_response_for_action(response, metadata)
         except Exception as exc:
+            will_retry = retry + 1 < max_attempts
             engine._record(
                 "agent_error",
-                message=f"{player_id}号执行{action_label(action_type)}失败，准备重试",
+                message=(
+                    f"{player_id}号执行{action_label(action_type)}失败，准备重试"
+                    if will_retry
+                    else f"{player_id}号执行{action_label(action_type)}失败，使用默认动作"
+                ),
                 public=False,
                 actor=player_id,
                 payload={
@@ -100,8 +113,11 @@ async def ask(
                     "retry_count": retry,
                 },
             )
+            if will_retry and retry_delay > 0:
+                await asyncio.sleep(retry_delay)
             continue
         if response.action_type == action_type and validator(response):
+            await _notify_accepted(engine, player_id, response)
             engine._record(
                 action_type.value,
                 message=response.text,
@@ -127,9 +143,14 @@ async def ask(
                 },
             )
             return response
+        will_retry = retry + 1 < max_attempts
         engine._record(
             "invalid_response",
-            message=f"{player_id} 号返回非法响应，准备重试",
+            message=(
+                f"{player_id} 号返回非法响应，准备重试"
+                if will_retry
+                else f"{player_id} 号返回非法响应，使用默认动作"
+            ),
             public=False,
             actor=player_id,
             target=getattr(response, "target", None),
@@ -140,6 +161,8 @@ async def ask(
                 "retry_count": retry,
             },
         )
+        if will_retry and retry_delay > 0:
+            await asyncio.sleep(retry_delay)
     engine._record(
         "default_action",
         public=_is_public_action(action_type),
@@ -156,6 +179,60 @@ async def ask(
         payload={"action_type": action_type.value, "choice": default_response.choice},
     )
     return default_response
+
+
+def _configured_max_attempts(engine: GameEngine) -> int:
+    config = getattr(engine, "config", None)
+    raw_value = getattr(config, "runner_max_retries", 2)
+    try:
+        return max(1, int(raw_value))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _configured_retry_delay(engine: GameEngine) -> float:
+    config = getattr(engine, "config", None)
+    raw_value = getattr(config, "runner_retry_delay", 0.0)
+    try:
+        return max(0.0, float(raw_value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _configured_action_timeout(engine: GameEngine) -> float | None:
+    config = getattr(engine, "config", None)
+    raw_value = getattr(config, "runner_action_timeout", None)
+    if raw_value is None:
+        return None
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+async def _notify_accepted(engine: GameEngine, player_id: int, response: ActionResponse) -> None:
+    callback = getattr(response, "on_accepted", None)
+    if callback is None:
+        return
+    try:
+        result = callback(response)
+        if inspect.isawaitable(result):
+            await result
+    except Exception as exc:
+        engine._record(
+            "decision_record_error",
+            message=f"{player_id}号已接受动作的决策记录失败",
+            public=False,
+            actor=player_id,
+            target=response.target,
+            payload={
+                "action_type": response.action_type.value,
+                "decision_id": response.decision_id,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
 
 
 def response_message(player_id: int, response: ActionResponse) -> str:
@@ -198,7 +275,19 @@ _SPEECH_TEXT_ACTION_TYPES = {
 }
 
 
-def sanitize_response_for_action(response: ActionResponse) -> ActionResponse:
+def sanitize_response_for_action(response: ActionResponse, metadata: dict | None = None) -> ActionResponse:
+    if response.action_type is ActionType.WITCH_ACT and response.choice == "save":
+        if metadata is None or "attacked_player" not in metadata:
+            return response
+        attacked_player = metadata.get("attacked_player")
+        return ActionResponse(
+            action_type=response.action_type,
+            target=attacked_player if attacked_player is not None else None,
+            choice=response.choice,
+            text=response.text,
+            decision_id=response.decision_id,
+            on_accepted=response.on_accepted,
+        )
     if response.action_type not in _SPEECH_TEXT_ACTION_TYPES:
         return response
     if response.target is None and response.choice is None:
@@ -207,6 +296,7 @@ def sanitize_response_for_action(response: ActionResponse) -> ActionResponse:
         action_type=response.action_type,
         text=response.text,
         decision_id=response.decision_id,
+        on_accepted=response.on_accepted,
     )
 
 
@@ -215,6 +305,12 @@ _PRIVATE_ACTION_TYPES = {
     ActionType.WEREWOLF_KILL,
     ActionType.SEER_CHECK,
     ActionType.WITCH_ACT,
+    ActionType.SHERIFF_VOTE,
+    ActionType.SHERIFF_BADGE,
+    ActionType.EXILE_VOTE,
+    ActionType.PK_VOTE,
+    ActionType.HUNTER_SHOOT,
+    ActionType.WHITE_WOLF_EXPLODE,
 }
 
 

@@ -12,11 +12,13 @@ from typing import Any
 
 from app.util.action_types import (
     AGENT_ACTION_TYPES,
+    DAY_INTERRUPT_ACTION_TYPES,
     NIGHT_SKILL_ACTION_TYPES,
     SPEECH_ACTION_TYPES,
     VOTE_ACTION_TYPES,
 )
 from app.util.json import DictMixin
+from app.util.targets import EVENT_TARGET_KEYS, read_target_id
 
 
 # ---------------------------------------------------------------------------
@@ -204,11 +206,15 @@ def select_key_decisions(
     selected: dict[str, KeyDecision] = {}
 
     for item in evidence_inputs:
-        if item.action_type in RULE_KEY_ACTIONS:
+        if _is_rule_key_action(item):
             selected[item.decision_id] = _to_key(
                 item,
                 key_reason="rule_natural_key_action",
-                impact_level=_impact_for_action(item.action_type, item.decision_result.selected_choice),
+                impact_level=_impact_for_action(
+                    item.action_type,
+                    item.decision_result.selected_choice,
+                    item.decision_result.selected_target,
+                ),
                 note="规则上直接改变死亡、信息、轮次或票型的动作。",
             )
         elif _has_execution_signal(item):
@@ -240,7 +246,12 @@ def select_key_decisions(
                 note=window.note,
             )
 
-    return sorted(selected.values(), key=lambda item: (item.day or 0, item.phase, item.decision_id))
+    input_by_id = {item.decision_id: item for item in evidence_inputs}
+    ranked = sorted(
+        selected.values(),
+        key=lambda item: _key_decision_sort_key(item, input_by_id.get(item.decision_id)),
+    )
+    return _diversify_key_decisions(ranked)
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +332,199 @@ ROLE_RUBRICS: dict[str, dict[str, Any]] = {
     },
 }
 
+ROLE_ACTION_RUBRICS: dict[str, dict[str, dict[str, Any]]] = {
+    "seer": {
+        "seer_check": {
+            "focus": "查验是否解决当前站边、票型或身份链中的关键矛盾。",
+            "criteria": [
+                "查验目标能打开多人关系，而不是只验证低价值单点。",
+                "查验结果能服务后续警徽流、遗言或白天归票。",
+                "避免重复查已经高度可信、已可推出或信息增量很低的位置。",
+            ],
+            "mistake_tags": ["low_information_gain", "unclear_badge_flow"],
+            "related_skills": ["seer/check_priority.md", "seer/sheriff_badge_flow.md"],
+        },
+        "sheriff_run": {
+            "focus": "是否用上警行为建立可信预言家信息链。",
+            "criteria": [
+                "上警目的明确，能说明验人、站边和后续警徽安排。",
+                "对跳或压力下仍能区分已知信息、推理和怀疑。",
+            ],
+            "mistake_tags": ["unclear_badge_flow", "poor_counter_claim_handling"],
+            "related_skills": ["seer/sheriff_badge_flow.md", "seer/claim_and_vote.md"],
+        },
+        "sheriff_speak": {
+            "focus": "警上发言是否清晰传播查验链和警徽流。",
+            "criteria": [
+                "清楚交代查验结果、警徽流和站边逻辑。",
+                "被对跳时优先拆解信息收益，而不是只情绪化互踩。",
+            ],
+            "mistake_tags": ["unclear_badge_flow", "poor_counter_claim_handling"],
+            "related_skills": ["seer/sheriff_badge_flow.md", "seer/claim_and_vote.md"],
+        },
+        "sheriff_badge": {
+            "focus": "警徽移交或处置是否最大化预言家信息延续。",
+            "criteria": [
+                "优先交给能承接验人信息和归票权的可信好人。",
+                "避免把警徽交给身份未明且可能扰乱信息链的位置。",
+            ],
+            "mistake_tags": ["unclear_badge_flow"],
+            "related_skills": ["seer/sheriff_badge_flow.md"],
+        },
+    },
+    "witch": {
+        "witch_act": {
+            "focus": "救药和毒药是否在收益、风险和信息边界之间取得平衡。",
+            "criteria": [
+                "解药优先覆盖高价值且刀口可信的好人目标。",
+                "毒药需要足够狼证据，低信息局面应避免情绪毒或证明身份式用毒。",
+                "考虑守卫、猎人、白狼王和药况暴露带来的次生风险。",
+            ],
+            "mistake_tags": ["medicine_overuse", "poison_low_confidence"],
+            "related_skills": ["witch/medicine_policy.md", "witch/save_poison_boundary.md"],
+        },
+        "speak": {
+            "focus": "白天发言是否保护药况信息，同时推动可信归票。",
+            "criteria": [
+                "必要时只释放能改变票型的信息，不完整暴露药况。",
+                "避免为了自证提前交代全部夜间细节。",
+            ],
+            "mistake_tags": ["medicine_overuse", "vote_fragmentation"],
+            "related_skills": ["witch/day_control_vote.md", "witch/save_poison_boundary.md"],
+        },
+    },
+    "guard": {
+        "guard_protect": {
+            "focus": "守护是否符合刀口概率、高价值目标和连守节奏。",
+            "criteria": [
+                "优先保护信息链核心、稳定带队者或已暴露高价值神职。",
+                "考虑上一轮守护和连守限制，必要时转守狼队下一刀口。",
+                "避免守毒冲突和机械重复守同一类目标。",
+            ],
+            "mistake_tags": ["guard_tempo_error"],
+            "related_skills": ["guard/protect_policy.md", "guard/protect_tempo.md"],
+        },
+    },
+    "hunter": {
+        "hunter_shoot": {
+            "focus": "开枪或不开枪是否基于高置信狼证据和死亡来源判断。",
+            "criteria": [
+                "开枪目标应有查杀、票型、发言矛盾或收益链支持。",
+                "置信度不足时，不开枪可以是保护好人阵营的正确选择。",
+                "临终信息要帮助好人收敛狼坑，而不是扩大分歧。",
+            ],
+            "mistake_tags": ["shot_low_confidence", "vote_fragmentation"],
+            "related_skills": ["hunter/shoot_policy.md", "hunter/shot_timing.md"],
+        },
+        "last_word": {
+            "focus": "遗言是否收敛枪位和后续归票线。",
+            "criteria": [
+                "明确区分高置信目标、备选怀疑和不应带走的位置。",
+                "给出可被复盘的票型或发言依据。",
+            ],
+            "mistake_tags": ["shot_low_confidence"],
+            "related_skills": ["hunter/shot_timing.md"],
+        },
+    },
+    "villager": {
+        "exile_vote": {
+            "focus": "投票是否基于公开信息推动好人归票收敛。",
+            "criteria": [
+                "优先处理能解释票型和发言矛盾的狼坑位置。",
+                "避免无证据分票、情绪票或跟随未验证强势发言。",
+            ],
+            "mistake_tags": ["vote_fragmentation", "seer_side_misread"],
+            "related_skills": ["villager/vote_policy.md", "villager/late_game_vote.md"],
+        },
+        "pk_vote": {
+            "focus": "PK 票是否在有限候选中选择更高狼面和更高信息收益目标。",
+            "criteria": [
+                "比较两名候选的发言、票型、站边和被保关系。",
+                "投票理由应能帮助后续回合继续推理。",
+            ],
+            "mistake_tags": ["vote_fragmentation", "seer_side_misread"],
+            "related_skills": ["villager/late_game_vote.md", "villager/vote_policy.md"],
+        },
+        "speak": {
+            "focus": "发言是否基于公开信息推进站边和归票。",
+            "criteria": [
+                "说明相信或质疑预言家线的公开依据。",
+                "把怀疑对象收敛成可投票排序，避免空泛表态。",
+            ],
+            "mistake_tags": ["seer_side_misread", "vote_fragmentation"],
+            "related_skills": ["villager/day_reasoning.md", "villager/late_game_vote.md"],
+        },
+    },
+    "werewolf": {
+        "werewolf_kill": {
+            "focus": "夜刀是否优先清除关键神职、带队好人或信息链核心。",
+            "criteria": [
+                "目标选择能削弱好人信息链或保护狼队身份结构。",
+                "避免低价值刀、情绪刀和暴露狼队站位的刀口。",
+            ],
+            "mistake_tags": ["low_value_night_kill", "pack_exposure"],
+            "related_skills": ["werewolf/night_kill.md"],
+        },
+        "sheriff_run": {
+            "focus": "悍跳或上警是否能制造可信伪视角并压制真信息链。",
+            "criteria": [
+                "伪验人、站边和发言节奏自洽。",
+                "能给队友留切割或倒钩空间，而不是集体暴露。",
+            ],
+            "mistake_tags": ["pack_exposure", "poor_counter_claim_handling"],
+            "related_skills": ["werewolf/claim_and_vote_pressure.md", "werewolf/day_cover_vote.md"],
+        },
+        "sheriff_speak": {
+            "focus": "警上发言是否构造自洽伪视角并引导错误站边。",
+            "criteria": [
+                "怀疑链和验人说法能解释公开事件。",
+                "不因硬保或硬踩队友造成狼队连坐。",
+            ],
+            "mistake_tags": ["pack_exposure", "poor_counter_claim_handling"],
+            "related_skills": ["werewolf/claim_and_vote_pressure.md", "werewolf/day_cover_vote.md"],
+        },
+        "exile_vote": {
+            "focus": "投票是否服务狼队抗推、冲票或切割节奏。",
+            "criteria": [
+                "票型选择要能解释，避免突兀暴露团队关系。",
+                "关键轮次优先制造好人误放逐，而不是只保个人安全。",
+            ],
+            "mistake_tags": ["pack_exposure", "vote_fragmentation"],
+            "related_skills": ["werewolf/claim_and_vote_pressure.md", "werewolf/day_cover_vote.md"],
+        },
+        "pk_vote": {
+            "focus": "PK 票是否利用有限候选制造好人误判并保护狼队结构。",
+            "criteria": [
+                "在冲票、倒钩、切割之间选择团队收益最高的路线。",
+                "投票理由保持前后一致，避免票型成为狼队证据。",
+            ],
+            "mistake_tags": ["pack_exposure"],
+            "related_skills": ["werewolf/claim_and_vote_pressure.md", "werewolf/day_cover_vote.md"],
+        },
+    },
+    "white_wolf_king": {
+        "white_wolf_explode": {
+            "focus": "自爆是否带来明确净收益并改变轮次节奏。",
+            "criteria": [
+                "带人目标应是可信神职、信息链核心或稳定带队好人。",
+                "自爆时机要能挽救狼队压力、截断查验链或避免更差票型暴露。",
+                "避免无收益早爆、带走低价值目标或暴露剩余队友。",
+            ],
+            "mistake_tags": ["bad_explode_timing", "low_value_explode_target", "pack_exposure"],
+            "related_skills": ["white_wolf_king/explode_timing.md", "white_wolf_king/explode_window.md"],
+        },
+        "speak": {
+            "focus": "自爆前发言是否误导好人并保护狼队关系。",
+            "criteria": [
+                "发言为可能自爆、倒钩或转移焦点留下解释空间。",
+                "不在爆前把队友关系暴露成连续狼坑。",
+            ],
+            "mistake_tags": ["pack_exposure", "bad_explode_timing"],
+            "related_skills": ["white_wolf_king/explode_window.md", "white_wolf_king/team_cover_vote.md"],
+        },
+    },
+}
+
 ACTION_FOCUS: dict[str, list[str]] = {
     "seer_check": ["information_use", "role_objective_alignment", "risk_control"],
     "witch_act": ["information_use", "risk_control", "role_objective_alignment"],
@@ -329,8 +533,12 @@ ACTION_FOCUS: dict[str, list[str]] = {
     "werewolf_kill": ["threat_targeting", "pack_coordination", "risk_control"],
     "speak": ["communication_value", "team_coordination", "reasoning_quality"],
     "sheriff_speak": ["communication_value", "team_coordination", "reasoning_quality"],
+    "sheriff_run": ["role_objective_alignment", "communication_value", "risk_control"],
+    "sheriff_badge": ["information_flow", "team_coordination", "risk_control"],
+    "last_word": ["communication_value", "information_use", "team_coordination"],
     "exile_vote": ["information_use", "team_coordination", "risk_control"],
     "pk_vote": ["information_use", "team_coordination", "risk_control"],
+    "white_wolf_explode": ["timing_value", "target_value", "pack_coordination"],
 }
 
 assert ACTION_FOCUS.keys() <= AGENT_ACTION_TYPES, (
@@ -348,6 +556,35 @@ def get_role_rubric(role: str) -> dict[str, Any]:
             "role_specific_risks": [],
         },
     )
+
+
+def get_role_action_rubric(role: str, action_type: str) -> dict[str, Any]:
+    role_text = str(role or "")
+    action_text = str(action_type or "")
+    role_rubrics = ROLE_ACTION_RUBRICS.get(role_text, {})
+    rubric = role_rubrics.get(action_text)
+    if rubric is None and action_text in {"pk_speak", "last_word"}:
+        rubric = role_rubrics.get("speak")
+    if rubric is None and action_text == "sheriff_vote":
+        rubric = role_rubrics.get("exile_vote") or role_rubrics.get("pk_vote")
+    return dict(rubric or {})
+
+
+def get_decision_rubric(role: str, action_type: str) -> dict[str, Any]:
+    role_text = str(role or "")
+    action_text = str(action_type or "")
+    role_rubric = get_role_rubric(role_text)
+    action_rubric = get_role_action_rubric(role_text, action_text)
+    return {
+        "role": role_text,
+        "action_type": action_text,
+        "role_rubric": role_rubric,
+        "action_focus": get_action_focus(action_text, role_text),
+        "action_rubric": action_rubric,
+        "expected_mistake_tags": action_rubric.get("mistake_tags", []),
+        "related_skills": action_rubric.get("related_skills", []),
+        "recommended_skill_files": action_rubric.get("related_skills", []),
+    }
 
 
 def get_action_focus(action_type: str, role: str = "") -> list[str]:
@@ -379,6 +616,7 @@ def score_dimension(dimension: str, evidence: DecisionEvidence) -> str:
 RULE_KEY_ACTIONS: frozenset[str] = (
     NIGHT_SKILL_ACTION_TYPES
     | VOTE_ACTION_TYPES
+    | DAY_INTERRUPT_ACTION_TYPES
     | frozenset({
         "hunter_shoot",
         "sheriff_run",
@@ -389,10 +627,35 @@ RULE_KEY_ACTIONS: frozenset[str] = (
 HIGHEST_IMPACT_ACTIONS: frozenset[str] = (
     VOTE_ACTION_TYPES
     | frozenset({
-        "white_wolf_explode",
         "werewolf_kill",
     })
 )
+
+IMPACT_PRIORITY: dict[str, int] = {
+    "highest": 0,
+    "high": 1,
+    "contextual": 2,
+}
+
+ACTION_SELECTION_PRIORITY: dict[str, int] = {
+    "white_wolf_explode": 0,
+    "werewolf_kill": 1,
+    "witch_act": 2,
+    "exile_vote": 3,
+    "pk_vote": 4,
+    "seer_check": 5,
+    "guard_protect": 6,
+    "hunter_shoot": 7,
+    "sheriff_vote": 8,
+    "sheriff_badge": 9,
+    "sheriff_run": 10,
+    "sheriff_withdraw": 11,
+    "speech_order": 12,
+    "speak": 80,
+    "sheriff_speak": 81,
+    "pk_speak": 82,
+    "last_word": 83,
+}
 
 DAY_WINDOW_ACTIONS: frozenset[str] = (
     SPEECH_ACTION_TYPES
@@ -428,7 +691,7 @@ def _detect_turning_windows(events: list[dict[str, Any]]) -> list[TurningWindow]
             continue
         event_type = str(event.get("event_type") or event.get("type") or "")
         day = _as_int(event.get("day"))
-        target = event.get("target")
+        target = read_target_id(event, keys=EVENT_TARGET_KEYS, include_payload=True)
         if event_type in {"exile_result", "exile_vote_end", "pk_vote_end"}:
             _append_window(
                 windows,
@@ -491,6 +754,39 @@ def _append_note(decision: KeyDecision, note: str) -> None:
         decision.selection_notes.append(note)
 
 
+def _key_decision_sort_key(
+    decision: KeyDecision,
+    evidence_input: DecisionEvidenceInput | None,
+) -> tuple[int, int, int, int, str, str]:
+    return (
+        IMPACT_PRIORITY.get(decision.impact_level, 3),
+        ACTION_SELECTION_PRIORITY.get(decision.action_type, 60),
+        _decision_index(evidence_input),
+        decision.day or 0,
+        decision.phase,
+        decision.decision_id,
+    )
+
+
+def _decision_index(item: DecisionEvidenceInput | None) -> int:
+    if item is None or item.decision_index is None:
+        return 1_000_000
+    return item.decision_index
+
+
+def _diversify_key_decisions(decisions: list[KeyDecision]) -> list[KeyDecision]:
+    buckets: dict[str, list[KeyDecision]] = {}
+    for decision in decisions:
+        buckets.setdefault(decision.action_type, []).append(decision)
+
+    diversified: list[KeyDecision] = []
+    while any(buckets.values()):
+        for bucket in buckets.values():
+            if bucket:
+                diversified.append(bucket.pop(0))
+    return diversified
+
+
 def _phase_matches(actual: str, expected: str) -> bool:
     normalized = actual.lower()
     if normalized == expected:
@@ -524,9 +820,20 @@ def _to_key(
     )
 
 
-def _impact_for_action(action_type: str, choice: Any) -> str:
+def _is_rule_key_action(item: DecisionEvidenceInput) -> bool:
+    if item.action_type == "white_wolf_explode":
+        return (
+            item.decision_result.selected_choice == "explode"
+            and item.decision_result.selected_target is not None
+        )
+    return item.action_type in RULE_KEY_ACTIONS
+
+
+def _impact_for_action(action_type: str, choice: Any, target: Any = None) -> str:
     if action_type == "witch_act" and choice == "poison":
         return "highest"
+    if action_type == "white_wolf_explode":
+        return "highest" if choice == "explode" and target is not None else "contextual"
     if action_type in HIGHEST_IMPACT_ACTIONS:
         return "highest"
     return "high"
@@ -629,13 +936,10 @@ def _selected_target(
     parsed_decision: dict[str, Any],
     final_response: dict[str, Any],
 ) -> int | None:
-    return _as_int(
-        _first_present(
-            merged.get("selected_target"),
-            merged.get("target"),
-            final_response.get("target"),
-            parsed_decision.get("target"),
-        )
+    return read_target_id(
+        merged,
+        final_response,
+        parsed_decision,
     )
 
 

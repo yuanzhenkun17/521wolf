@@ -20,7 +20,7 @@ LLM_BASE_URL = "https://router.shengsuanyun.com/api/v1"
 LLM_DEFAULT_MODEL = "ali/qwen3.5-flash"
 LLM_DEFAULT_TEMPERATURE = 0.4
 LLM_DEFAULT_TIMEOUT = 45.0
-LLM_DEFAULT_MAX_RETRIES = 5
+LLM_DEFAULT_MAX_RETRIES = 0
 LLM_DEFAULT_RETRY_INITIAL_DELAY = 1.0
 LLM_DEFAULT_RETRY_MAX_DELAY = 30.0
 LLM_RUNTIME_DEFAULT_MAX_ATTEMPTS = 1
@@ -70,18 +70,21 @@ def load_llm_config(
             "Missing LLM API key. Set WEREWOLF_LLM_API_KEY in .env or environment."
         )
 
+    timeout = float(os.environ.get("WEREWOLF_LLM_TIMEOUT") or LLM_DEFAULT_TIMEOUT)
+    runtime_timeout = timeout
+
     return {
         "api_key": resolved_api_key,
         "base_url": os.environ.get("WEREWOLF_LLM_BASE_URL") or LLM_BASE_URL,
         "model": os.environ.get("WEREWOLF_LLM_MODEL") or LLM_DEFAULT_MODEL,
-        "timeout": float(os.environ.get("WEREWOLF_LLM_TIMEOUT") or LLM_DEFAULT_TIMEOUT),
+        "timeout": timeout,
         "temperature": float(os.environ.get("WEREWOLF_LLM_TEMPERATURE") or LLM_DEFAULT_TEMPERATURE),
         "thinking": os.environ.get("WEREWOLF_LLM_THINKING") or "disabled",
         "max_retries": int(os.environ.get("WEREWOLF_LLM_MAX_RETRIES") or LLM_DEFAULT_MAX_RETRIES),
         "retry_initial_delay": float(os.environ.get("WEREWOLF_LLM_RETRY_INITIAL_DELAY") or LLM_DEFAULT_RETRY_INITIAL_DELAY),
         "retry_max_delay": float(os.environ.get("WEREWOLF_LLM_RETRY_MAX_DELAY") or LLM_DEFAULT_RETRY_MAX_DELAY),
         "runtime_max_attempts": int(os.environ.get("WEREWOLF_LLM_RUNTIME_MAX_ATTEMPTS") or LLM_RUNTIME_DEFAULT_MAX_ATTEMPTS),
-        "runtime_timeout": float(os.environ.get("WEREWOLF_LLM_RUNTIME_TIMEOUT") or LLM_RUNTIME_DEFAULT_TIMEOUT),
+        "runtime_timeout": runtime_timeout,
         "runtime_retry_initial_delay": float(os.environ.get("WEREWOLF_LLM_RUNTIME_RETRY_INITIAL_DELAY") or LLM_RUNTIME_DEFAULT_RETRY_INITIAL_DELAY),
         "runtime_retry_max_delay": float(os.environ.get("WEREWOLF_LLM_RUNTIME_RETRY_MAX_DELAY") or LLM_RUNTIME_DEFAULT_RETRY_MAX_DELAY),
         "runtime_circuit_failures": int(os.environ.get("WEREWOLF_LLM_RUNTIME_CIRCUIT_FAILURES") or LLM_RUNTIME_DEFAULT_CIRCUIT_FAILURES),
@@ -161,18 +164,6 @@ class PathConfig:
     @property
     def versions_dir(self) -> Path:
         return self.data_dir / "versions"
-
-    @property
-    def wolf_db_path(self) -> Path:
-        return self.data_dir / "wolf.db"
-
-    @property
-    def evolution_db_path(self) -> Path:
-        return self.data_dir / "evolution.db"
-
-    @property
-    def registry_db_path(self) -> Path:
-        return self.registry_dir / "registry.db"
 
     @property
     def registry_dir(self) -> Path:

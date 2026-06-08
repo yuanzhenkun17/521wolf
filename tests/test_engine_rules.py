@@ -16,6 +16,8 @@ def _engine(
     *,
     responses: dict[int, list[ActionResponse]] | None = None,
     sheriff_vote_weight: float = 1.5,
+    max_days: int = 20,
+    enable_sheriff: bool = True,
 ) -> GameEngine:
     agents = {
         player_id: ScriptedAgent((responses or {}).get(player_id, []))
@@ -25,6 +27,8 @@ def _engine(
         name="test_rules",
         role_counts=Counter(roles.values()),
         sheriff_vote_weight=sheriff_vote_weight,
+        max_days=max_days,
+        enable_sheriff=enable_sheriff,
     )
     return GameEngine(roles, agents, config=config)
 
@@ -88,6 +92,36 @@ def test_werewolves_win_at_parity():
     assert engine.check_winner() is Winner.WEREWOLVES
 
 
+async def test_run_until_finished_records_no_winner_when_max_days_reached():
+    engine = _engine(
+        {
+            1: Role.WEREWOLF,
+            2: Role.VILLAGER,
+            3: Role.SEER,
+            4: Role.GUARD,
+        },
+        responses={
+            1: [ActionResponse(ActionType.WEREWOLF_KILL, target=2)],
+            4: [ActionResponse(ActionType.GUARD_PROTECT, target=2)],
+        },
+        max_days=1,
+        enable_sheriff=False,
+    )
+
+    winner = await engine.run_until_finished()
+
+    assert winner is None
+    assert engine.state.winner is None
+    assert engine.state.phase is Phase.FINISHED
+    event = _events(engine, "game_end")[-1]
+    assert event.payload == {
+        "winner": None,
+        "outcome": "no_winner",
+        "terminal_reason": "max_days_reached",
+        "max_days": 1,
+    }
+
+
 def test_kill_and_revive_update_death_state_and_last_words():
     engine = _engine({1: Role.WEREWOLF, 2: Role.HUNTER, 3: Role.VILLAGER})
     engine.state.day = 1
@@ -101,8 +135,11 @@ def test_kill_and_revive_update_death_state_and_last_words():
     death_events = _events(engine, "death")
     assert len(death_events) == 1
     assert death_events[0].target == 2
-    assert death_events[0].message == "2 号死亡，原因：exile"
-    assert death_events[0].payload == {"cause": DeathCause.EXILE.value}
+    assert death_events[0].message == "2 号死亡"
+    assert death_events[0].payload == {}
+    detail_events = _events(engine, "death_detail")
+    assert detail_events[0].public is False
+    assert detail_events[0].payload == {"causes": [DeathCause.EXILE.value]}
 
     engine.revive_player(2)
 
@@ -249,6 +286,17 @@ def test_hunter_cannot_shoot_for_non_shootable_death_causes(cause: DeathCause):
     assert engine.can_hunter_shoot(2) is False
 
 
+def test_hunter_cannot_shoot_when_death_causes_include_poison():
+    engine = _engine({1: Role.WEREWOLF, 2: Role.HUNTER, 3: Role.WITCH})
+    engine.state.day = 1
+    engine.state.phase = Phase.NIGHT
+
+    engine.kill_player(2, DeathCause.WEREWOLF, causes=(DeathCause.WEREWOLF, DeathCause.WITCH_POISON))
+
+    assert engine.state.deaths[-1].causes == (DeathCause.WEREWOLF, DeathCause.WITCH_POISON)
+    assert engine.can_hunter_shoot(2) is False
+
+
 async def test_last_sheriff_runner_cannot_withdraw():
     engine = _engine(
         {
@@ -279,3 +327,120 @@ async def test_last_sheriff_runner_cannot_withdraw():
     assert engine.state.sheriff_id == 1
     assert _events(engine, "invalid_response")[-1].actor == 1
     assert _events(engine, "sheriff_election_end")[-1].payload["runners"] == [1]
+    assert _events(engine, "sheriff_election_end")[-1].payload["auto_elected"] is True
+
+
+async def test_sheriff_vote_tie_enters_pk_and_revote():
+    engine = _engine(
+        {
+            1: Role.VILLAGER,
+            2: Role.WEREWOLF,
+            3: Role.SEER,
+            4: Role.HUNTER,
+        },
+        responses={
+            1: [
+                ActionResponse(ActionType.SHERIFF_RUN, choice="run"),
+                ActionResponse(ActionType.SHERIFF_SPEAK, text="run 1"),
+                ActionResponse(ActionType.SHERIFF_WITHDRAW, choice="stay"),
+                ActionResponse(ActionType.SHERIFF_SPEAK, text="pk 1"),
+            ],
+            2: [
+                ActionResponse(ActionType.SHERIFF_RUN, choice="run"),
+                ActionResponse(ActionType.SHERIFF_SPEAK, text="run 2"),
+                ActionResponse(ActionType.SHERIFF_WITHDRAW, choice="stay"),
+                ActionResponse(ActionType.SHERIFF_SPEAK, text="pk 2"),
+            ],
+            3: [
+                ActionResponse(ActionType.SHERIFF_RUN, choice="pass"),
+                ActionResponse(ActionType.SHERIFF_VOTE, target=1),
+                ActionResponse(ActionType.SHERIFF_VOTE, target=1),
+            ],
+            4: [
+                ActionResponse(ActionType.SHERIFF_RUN, choice="pass"),
+                ActionResponse(ActionType.SHERIFF_VOTE, target=2),
+                ActionResponse(ActionType.SHERIFF_VOTE, target=1),
+            ],
+        },
+    )
+
+    winner = await engine.run_sheriff_election()
+
+    assert winner == 1
+    assert engine.state.sheriff_id == 1
+    assert _events(engine, "sheriff_vote_tie")[-1].payload["tied"] == (1, 2)
+    assert _events(engine, "sheriff_election_end")[-1].payload["pk_votes"] == {3: 1, 4: 1}
+
+
+async def test_exile_vote_excludes_self_and_reveals_full_tally_only_at_end():
+    engine = _engine(
+        {
+            1: Role.VILLAGER,
+            2: Role.WEREWOLF,
+            3: Role.SEER,
+        },
+        responses={
+            1: [
+                ActionResponse(ActionType.EXILE_VOTE, target=1),
+                ActionResponse(ActionType.EXILE_VOTE, target=2),
+            ],
+            2: [ActionResponse(ActionType.EXILE_VOTE, target=1)],
+            3: [ActionResponse(ActionType.EXILE_VOTE, target=1)],
+        },
+    )
+    engine.state.day = 1
+    engine.state.phase = Phase.DAY_SPEECH
+
+    exiled = await engine.run_exile_vote()
+
+    assert exiled == 1
+    assert 1 not in engine.agents[1].requests[0].candidates
+    assert _events(engine, "invalid_response")[-1].actor == 1
+    assert all(not event.public for event in _events(engine, ActionType.EXILE_VOTE.value))
+    assert _events(engine, "exile_vote_end")[-1].payload["votes"] == {1: 2, 2: 1, 3: 1}
+
+
+async def test_exile_tie_records_pk_votes_in_pk_phase():
+    engine = _engine(
+        {
+            1: Role.VILLAGER,
+            2: Role.WEREWOLF,
+            3: Role.SEER,
+            4: Role.GUARD,
+        },
+        responses={
+            1: [
+                ActionResponse(ActionType.EXILE_VOTE, target=2),
+                ActionResponse(ActionType.PK_SPEAK, text="pk 1"),
+            ],
+            2: [
+                ActionResponse(ActionType.EXILE_VOTE, target=1),
+                ActionResponse(ActionType.PK_SPEAK, text="pk 2"),
+            ],
+            3: [
+                ActionResponse(ActionType.EXILE_VOTE, target=1),
+                ActionResponse(ActionType.PK_VOTE, target=1),
+            ],
+            4: [
+                ActionResponse(ActionType.EXILE_VOTE, target=2),
+                ActionResponse(ActionType.PK_VOTE, target=2),
+            ],
+        },
+    )
+    engine.state.day = 1
+    engine.state.phase = Phase.DAY_SPEECH
+
+    exiled = await engine.run_exile_vote()
+
+    assert exiled is None
+    assert _events(engine, "exile_vote_tie")[-1].phase is Phase.EXILE_VOTE
+    assert _events(engine, "pk_vote_start")[-1].phase is Phase.PK_VOTE
+    assert _events(engine, "pk_vote_end")[-1].phase is Phase.PK_VOTE
+    pk_requests = [
+        request
+        for agent in engine.agents.values()
+        for request in agent.requests
+        if request.action_type is ActionType.PK_VOTE
+    ]
+    assert [request.phase for request in pk_requests] == [Phase.PK_VOTE, Phase.PK_VOTE]
+    assert all(event.phase is Phase.PK_VOTE for event in _events(engine, ActionType.PK_VOTE.value))

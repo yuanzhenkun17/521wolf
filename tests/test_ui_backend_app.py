@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
+import json
 import re
 import asyncio
+import ast
 import time
 import threading
+import tempfile
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import PathConfig
-from app.util.json import write_json
+from storage.public_events import public_events_only
 import ui.backend.app as ui_backend_app
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
 from ui.backend.schemas import BenchmarkRequest, EvolutionStartRequest, GameStartRequest
 from ui.backend.sse import stream_queue_sse
-from ui.backend.game_serializers import _player_view_snapshot, _vote_tally
+from ui.backend.game_serializers import _dead_players, _player_view_snapshot, _sheriff_from_events, _vote_tally
 import ui.backend.store as ui_backend_store
 from ui.backend.task_events import TaskEventLog
 
@@ -26,23 +32,468 @@ LIVE_GAME_TIMEOUT_SECONDS = 30.0
 LIVE_GAME_POLL_SECONDS = 0.1
 
 
+@dataclass
+class _FakeVersionSummary:
+    version_id: str
+    role: str
+    source: str = ""
+    created_at: str = "2026-01-01T00:00:00+08:00"
+    is_baseline: bool = False
+    status: str = "active"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version_id": self.version_id,
+            "role": self.role,
+            "source": self.source,
+            "created_at": self.created_at,
+            "is_baseline": self.is_baseline,
+            "status": self.status,
+        }
+
+
+class FakeVersionRegistry:
+    def __init__(self, root: Path) -> None:
+        self._registry_dir = root / "registry"
+        self._registry_dir.mkdir(parents=True, exist_ok=True)
+        self._versions: dict[str, dict[str, dict[str, Any]]] = {}
+        self._baselines: dict[str, str] = {}
+        self._rejected: dict[str, list[dict[str, Any]]] = {}
+        self._scratch: list[Path] = []
+
+    @property
+    def registry_dir(self) -> Path:
+        return self._registry_dir
+
+    def close(self) -> None:
+        return None
+
+    def publish_skills(
+        self,
+        role: str,
+        skill_contents: dict[str, str],
+        *,
+        parent_id: str | None = None,
+        source: str = "manual",
+        run_id: str | None = None,
+        proposal_ids: list[str] | None = None,
+        version_id: str | None = None,
+        set_as_baseline: bool = False,
+        expected_current: str | None = None,
+    ) -> str:
+        del parent_id, run_id, proposal_ids
+        role_versions = self._versions.setdefault(role, {})
+        version_id = version_id or f"{role}_v{len(role_versions) + 1}"
+        role_versions[version_id] = {
+            "summary": _FakeVersionSummary(
+                version_id=version_id,
+                role=role,
+                source=source,
+                is_baseline=False,
+            ),
+            "contents": dict(skill_contents),
+        }
+        if set_as_baseline and not self.set_baseline(role, version_id, expected_current=expected_current):
+            raise RuntimeError(f"Failed to set baseline for {role}")
+        return version_id
+
+    def get_baseline(self, role: str) -> str | None:
+        return self._baselines.get(role)
+
+    def set_baseline(
+        self,
+        role: str,
+        version_id: str,
+        expected_current: str | None = None,
+    ) -> bool:
+        if version_id not in self._versions.get(role, {}):
+            return False
+        if self._baselines.get(role) != expected_current:
+            return False
+        previous = self._baselines.get(role)
+        if previous in self._versions.get(role, {}):
+            self._versions[role][previous]["summary"].is_baseline = False
+        self._baselines[role] = version_id
+        self._versions[role][version_id]["summary"].is_baseline = True
+        self._versions[role][version_id]["summary"].status = "promoted"
+        return True
+
+    def reject(self, role: str, version_id: str, reason: str = "") -> None:
+        del reason
+        if version_id not in self._versions.get(role, {}):
+            raise FileNotFoundError(f"Version {role}/{version_id} not found")
+        self._versions[role][version_id]["summary"].status = "rejected"
+
+    def read_skill_contents(self, role: str, version_id: str) -> dict[str, str]:
+        try:
+            return dict(self._versions[role][version_id]["contents"])
+        except KeyError as exc:
+            raise FileNotFoundError(f"Version {role}/{version_id} not found") from exc
+
+    def get_skill_dir(self, role: str, version_id: str) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="ui_backend_skills_"))
+        self._scratch.append(root)
+        for rel_path, content in self.read_skill_contents(role, version_id).items():
+            output = root / rel_path
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(content, encoding="utf-8")
+        return root
+
+    def build_skill_dir(self, role_versions: dict[str, str]) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="ui_backend_skillset_"))
+        self._scratch.append(root)
+        for role, version_id in role_versions.items():
+            for rel_path, content in self.read_skill_contents(role, version_id).items():
+                output = root / role / rel_path
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(content, encoding="utf-8")
+        return root
+
+    def list_versions(self, role: str) -> list[_FakeVersionSummary]:
+        return [item["summary"] for item in self._versions.get(role, {}).values()]
+
+    def list_roles(self) -> list[str]:
+        return sorted(self._versions)
+
+    def save_rejected(
+        self,
+        role: str,
+        proposals: list[dict[str, Any]],
+        battle_result: dict[str, Any] | None = None,
+    ) -> None:
+        rows = self._rejected.setdefault(role, [])
+        for proposal in proposals:
+            row = dict(proposal)
+            row["battle_result"] = battle_result
+            row["rejected_at"] = "2026-01-01T00:00:00+08:00"
+            rows.append(row)
+
+    def load_rejected(self, role: str) -> list[dict[str, Any]]:
+        return list(self._rejected.get(role, []))
+
+
 class FakeModel:
+    _ACTION_RE = re.compile(r"本次行动:\s*([a-z_]+)")
+    _CANDIDATES_RE = re.compile(r"可选目标 candidates:\s*(\[[^\n]*\])")
+
     async def ainvoke(self, messages: Any) -> Any:
+        prompt = self._prompt_from_messages(messages)
+        action_type = self._action_type(prompt)
+        candidates = self._candidates(prompt)
+        choice, target = self._decision(action_type, candidates)
+        content = json.dumps(
+            {
+                "schema_version": "1.0",
+                "choice": choice,
+                "target": target,
+                "public_text": "ok",
+                "private_reasoning": "test fake model",
+                "confidence": 1,
+                "alternatives": candidates[:3],
+                "rejected_reasons": [],
+                "selected_skills": [],
+            },
+            ensure_ascii=False,
+        )
         return type(
             "Result",
             (),
-            {
-                "content": (
-                    '{"choice":null,"target":null,"public_text":"ok",'
-                    '"private_reasoning":"test fake model",'
-                    '"confidence":1,"alternatives":[],"rejected_reasons":[],"selected_skills":[]}'
-                )
-            },
+            {"content": content},
         )()
+
+    def _prompt_from_messages(self, messages: Any) -> str:
+        if hasattr(messages, "to_messages"):
+            items = list(messages.to_messages())
+        elif isinstance(messages, (list, tuple)):
+            items = list(messages)
+        else:
+            items = [messages]
+        return "\n".join(self._message_content(message) for message in items)
+
+    def _message_content(self, message: Any) -> str:
+        if isinstance(message, dict):
+            return str(message.get("content", ""))
+        if isinstance(message, tuple) and len(message) >= 2:
+            return str(message[1])
+        return str(getattr(message, "content", message))
+
+    def _action_type(self, prompt: str) -> str:
+        match = self._ACTION_RE.search(prompt)
+        return match.group(1) if match else "speak"
+
+    def _candidates(self, prompt: str) -> list[int]:
+        match = self._CANDIDATES_RE.search(prompt)
+        if not match:
+            return []
+        try:
+            value = ast.literal_eval(match.group(1))
+        except (SyntaxError, ValueError):
+            return []
+        if not isinstance(value, list):
+            return []
+        candidates: list[int] = []
+        for item in value:
+            try:
+                candidates.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return candidates
+
+    def _decision(self, action_type: str, candidates: list[int]) -> tuple[str | None, int | None]:
+        if action_type == "sheriff_run":
+            return "pass", None
+        if action_type == "sheriff_withdraw":
+            return "stay", None
+        if action_type == "sheriff_badge":
+            return "destroy", None
+        if action_type == "speech_order":
+            return "forward", None
+        if action_type == "witch_act":
+            return "none", None
+        if action_type == "white_wolf_explode":
+            return "pass", None
+        if action_type == "guard_protect":
+            return None, max(candidates) if candidates else None
+        if action_type == "werewolf_kill":
+            return None, min(candidates) if candidates else None
+        if action_type in {"seer_check", "hunter_shoot"}:
+            return None, min(candidates) if candidates else None
+        if action_type in {"exile_vote", "pk_vote", "sheriff_vote"}:
+            return None, max(candidates) if candidates else None
+        return None, None
+
+
+class _FakePersistenceSink:
+    def __init__(self) -> None:
+        self.records: list[Any] = []
+
+    def record_event(self, entry: Any) -> None:
+        self.records.append(entry)
+
+    def record_decision(self, decision: Any) -> None:
+        self.records.append(decision)
+
+
+class _FakeGamePersistence:
+    instances: list["_FakeGamePersistence"] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self.args = args
+        self.kwargs = kwargs
+        self.event_sink = _FakePersistenceSink()
+        self.decision_sink = _FakePersistenceSink()
+        self.saved_results: list[dict[str, Any]] = []
+        self.closed = False
+        self.instances.append(self)
+
+    def create_event_sink(self) -> _FakePersistenceSink:
+        return self.event_sink
+
+    def create_decision_sink(self) -> _FakePersistenceSink:
+        return self.decision_sink
+
+    def save_game_result(self, **kwargs: Any) -> None:
+        self.saved_results.append(kwargs)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _UiCursor:
+    rowcount = 0
+
+    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+        self._rows = list(rows or [])
+        self.rowcount = len(self._rows)
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return list(self._rows)
+
+
+class _UiMemoryDatabase:
+    def __init__(self) -> None:
+        self.background_tasks: dict[str, dict[str, Any]] = {}
+        self.task_events: dict[int, dict[str, Any]] = {}
+        self.background_upserts = 0
+        self.event_upserts = 0
+        self.deletes = 0
+        self.lock = threading.Lock()
+
+
+class _UiMemoryConnection:
+    def __init__(self, db: _UiMemoryDatabase) -> None:
+        self._db = db
+        self.closed = False
+        self.commits = 0
+        self.rollbacks = 0
+
+    def execute(self, sql: str, parameters: Any = ()) -> _UiCursor:
+        if self.closed:
+            raise RuntimeError("connection closed")
+        text = " ".join(sql.split())
+        params = tuple(parameters)
+
+        if text.startswith("CREATE TABLE") or text.startswith("CREATE INDEX"):
+            return _UiCursor()
+
+        if text == "SELECT 1 AS ok":
+            return _UiCursor([{"ok": 1}])
+
+        if text.startswith("SELECT version_num FROM public.alembic_version"):
+            return _UiCursor([{"version_num": "20260608_0001"}])
+
+        if text.startswith("INSERT INTO ui_background_tasks"):
+            entity_id, entity_kind, status, payload, updated_at = params
+            with self._db.lock:
+                self._db.background_tasks[str(entity_id)] = {
+                    "entity_id": str(entity_id),
+                    "entity_kind": entity_kind,
+                    "status": status,
+                    "payload": payload,
+                    "updated_at": updated_at,
+                }
+                self._db.background_upserts += 1
+            return _UiCursor()
+
+        if text.startswith("SELECT entity_id, entity_kind, status, payload, updated_at FROM ui_background_tasks"):
+            with self._db.lock:
+                rows = sorted(
+                    (dict(row) for row in self._db.background_tasks.values()),
+                    key=lambda row: (str(row.get("updated_at") or ""), str(row.get("entity_id") or "")),
+                )
+            return _UiCursor(rows)
+
+        if text.startswith("INSERT INTO ui_task_events"):
+            event_id, entity_id, entity_kind, event, status, payload, created_at = params
+            with self._db.lock:
+                self._db.task_events[int(event_id)] = {
+                    "id": int(event_id),
+                    "entity_id": str(entity_id),
+                    "entity_kind": entity_kind,
+                    "event": event,
+                    "status": status,
+                    "payload": payload,
+                    "created_at": created_at,
+                }
+                self._db.event_upserts += 1
+            return _UiCursor()
+
+        if text.startswith("SELECT id, entity_id, entity_kind, event, status, payload, created_at FROM ui_task_events"):
+            limit = int(params[0])
+            with self._db.lock:
+                rows = sorted(
+                    (dict(row) for row in self._db.task_events.values()),
+                    key=lambda row: int(row["id"]),
+                    reverse=True,
+                )[:limit]
+            return _UiCursor(rows)
+
+        if text.startswith("DELETE FROM ui_task_events WHERE id < ?"):
+            cutoff = int(params[0])
+            with self._db.lock:
+                for event_id in [event_id for event_id in self._db.task_events if event_id < cutoff]:
+                    self._db.task_events.pop(event_id, None)
+                    self._db.deletes += 1
+            return _UiCursor()
+
+        if text.startswith("SELECT * FROM games WHERE id = ?"):
+            return _UiCursor()
+
+        if "FROM games g LEFT JOIN" in text:
+            return _UiCursor()
+
+        if text.startswith("SELECT COUNT(*) AS total") and " FROM " in text:
+            row: dict[str, Any] = {"total": 0}
+            for alias in re.findall(r"\bAS\s+(max_[A-Za-z0-9_]+)", text):
+                row[alias] = None
+            return _UiCursor([row])
+
+        if "FROM benchmark_leaderboard" in text:
+            return _UiCursor()
+
+        raise AssertionError(f"unexpected SQL: {text}")
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+    def __enter__(self) -> "_UiMemoryConnection":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
+
+
+class _UiFakeStorageProvider:
+    def __init__(self) -> None:
+        self.db = _UiMemoryDatabase()
+
+    def open_wolf_connection(self) -> _UiMemoryConnection:
+        return _UiMemoryConnection(self.db)
+
+    def open_registry_connection(self) -> _UiMemoryConnection:
+        raise AssertionError("registry connection should not be used in UI backend tests")
+
+    def open_evolution_connection(self) -> _UiMemoryConnection:
+        raise AssertionError("evolution connection should not be used in UI backend tests")
+
+
+@pytest.fixture(autouse=True)
+def _fake_ui_pg_provider(monkeypatch: pytest.MonkeyPatch) -> _UiFakeStorageProvider:
+    import storage.provider as provider_mod
+    import ui.backend.game_store as ui_backend_game_store
+
+    provider = _UiFakeStorageProvider()
+    provider_from_env = lambda *, paths=None: provider
+    monkeypatch.setattr(provider_mod, "storage_provider_from_env", provider_from_env)
+    monkeypatch.setattr(ui_backend_game_store, "storage_provider_from_env", provider_from_env)
+    return provider
 
 
 def _test_client(tmp_path: Path) -> TestClient:
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=FakeModel())
+    store = app.state.backend_store
+    store._registry = FakeVersionRegistry(tmp_path)
+    _FakeGamePersistence.instances.clear()
+    import ui.backend.game_store as ui_backend_game_store
+
+    ui_backend_game_store.GamePersistence = _FakeGamePersistence
+    terminal_statuses = {"completed", "cancelled", "interrupted", "failed"}
+
+    def pg_games() -> list[dict[str, Any]]:
+        return [
+            game
+            for game in store.games.values()
+            if str(game.get("status") or "").lower() in terminal_statuses
+        ]
+
+    store._postgres_history_fingerprint = lambda: {
+        "games": [
+            (
+                game.get("game_id"),
+                game.get("status"),
+                game.get("log_time"),
+                game.get("finished_at"),
+                game.get("started_at"),
+                game.get("last_heartbeat_at"),
+            )
+            for game in pg_games()
+        ]
+    }
+    store._load_game_from_pg = lambda game_id: store.games.get(game_id)
+    store._list_games_from_pg = lambda: [store._game_list_row(game) for game in pg_games()]
     return TestClient(app)
 
 
@@ -84,12 +535,6 @@ def _history_snapshot(game_id: str, *, status: str, log_time: str) -> dict[str, 
         "decisions": [],
         "config": {"log_time": log_time},
     }
-
-
-def _write_history_snapshot(game_dir: Path, game_id: str, *, status: str, log_time: str) -> None:
-    game_dir.mkdir(parents=True, exist_ok=True)
-    write_json(game_dir / "ui_snapshot.json", _history_snapshot(game_id, status=status, log_time=log_time))
-
 
 def _stop_game_for_timeout(client: TestClient, game_id: str) -> dict[str, Any]:
     response = client.post(f"/api/games/{game_id}/stop")
@@ -150,6 +595,13 @@ def test_health_and_roles_contract(tmp_path: Path) -> None:
     assert health["external"]["provider"] == "app-langgraph"
     assert health["external"]["supports_human"] is True
     assert health["external"]["supports_sse"] is True
+    startup_checks = health["external"]["startup_checks"]
+    assert startup_checks["status"] == "degraded"
+    assert startup_checks["checks"]["postgresql"]["status"] == "ok"
+    assert startup_checks["checks"]["alembic"]["status"] == "ok"
+    assert startup_checks["checks"]["registry_baseline"]["status"] == "degraded"
+    assert "seer" in startup_checks["checks"]["registry_baseline"]["missing_roles"]
+    assert startup_checks["checks"]["llm"]["status"] == "ok"
 
     assert roles_response.status_code == 200
     roles = roles_response.json()["roles"]
@@ -256,7 +708,7 @@ def test_games_create_list_read_archive_and_review_contract(tmp_path: Path) -> N
     assert archive["summary"]
     assert isinstance(archive["highlights"], list)
     assert archive["decision_count"] == len(completed["decisions"])
-    assert len(archive["events"]) == len(completed["events"])
+    assert archive["events"] == public_events_only(completed["events"])
 
     assert review_response.status_code == 200
     review = review_response.json()
@@ -334,6 +786,118 @@ def test_vote_tally_scopes_to_current_vote_round() -> None:
     assert [(row["target_id"], row["count"], row["voter_ids"]) for row in player_view["vote_tally"]] == [
         (3, 1, [6])
     ]
+
+
+def test_archive_rebuild_helpers_accept_target_id_only_events() -> None:
+    events = [
+        {"event_type": "death", "target_id": "2", "message": "2 died"},
+        {"event_type": "death", "payload": {"target_id": "3"}, "message": "3 died"},
+        {"event_type": "sheriff_election_end", "target_id": "1", "payload": {}},
+        {"event_type": "sheriff_badge_transfer", "target_id": "4", "payload": {}},
+    ]
+
+    assert _dead_players(events) == {2, 3}
+    assert _sheriff_from_events(events) == 4
+
+
+def test_player_view_redacts_abnormal_terminal_play_snapshots() -> None:
+    for status in ("cancelled", "interrupted", "failed"):
+        snapshot = _player_view_snapshot(
+            {
+                "game_id": f"player_view_{status}",
+                "mode": "play",
+                "status": status,
+                "human_player_id": 1,
+                "day": 1,
+                "phase": "night",
+                "players": [
+                    {
+                        "id": 1,
+                        "role": "seer",
+                        "role_hint": "预言家",
+                        "team": "villagers",
+                        "role_state": {"checks": {"2": "werewolves"}},
+                    },
+                    {
+                        "id": 2,
+                        "role": "werewolf",
+                        "role_hint": "狼人",
+                        "team": "werewolves",
+                        "role_state": {"wolf_chat": ["kill 1"]},
+                    },
+                ],
+                "events": [
+                    {
+                        "event_type": "game_init",
+                        "visibility": "public",
+                        "payload": {"roles": {"1": "seer", "2": "werewolf"}, "seat_count": 12},
+                    },
+                    {
+                        "event_type": "seer_result",
+                        "actor_id": 2,
+                        "visibility": "private",
+                        "payload": {"target": 1, "role": "seer"},
+                    },
+                    {
+                        "event_type": "god_debug",
+                        "visibility": "god",
+                        "payload": {"roles": {"1": "seer", "2": "werewolf"}},
+                    },
+                    {
+                        "event_type": "hunter_shot",
+                        "actor_id": 2,
+                        "target_id": 1,
+                        "visibility": "public",
+                        "payload": {"target": 1},
+                    },
+                ],
+                "decisions": [],
+            }
+        )
+
+        assert snapshot["players"][0]["role"] == "seer"
+        assert snapshot["players"][0]["role_state"] == {"checks": {"2": "werewolves"}}
+        assert snapshot["players"][1]["role"] == "unknown"
+        assert snapshot["players"][1]["role_state"] == {}
+
+        event_types = [event["event_type"] for event in snapshot["events"]]
+        assert event_types == ["game_init", "hunter_shot"]
+        assert snapshot["events"][0]["payload"] == {"seat_count": 12}
+        assert snapshot["events"][1]["target_id"] == 1
+
+
+def test_player_view_hides_other_white_wolf_pass_decisions() -> None:
+    base_snapshot = {
+        "game_id": "white_wolf_pass_player_view",
+        "mode": "play",
+        "status": "running",
+        "day": 1,
+        "phase": "day_speech",
+        "players": [
+            {"id": 1, "role": "villager", "role_hint": "村民", "team": "villagers", "alive": True},
+            {"id": 2, "role": "white_wolf_king", "role_hint": "白狼王", "team": "werewolves", "alive": True},
+        ],
+        "events": [],
+        "decisions": [
+            {
+                "decision_id": "d_pass",
+                "player_id": 2,
+                "actor_id": 2,
+                "role": "white_wolf_king",
+                "day": 1,
+                "phase": "day_speech",
+                "action_type": "white_wolf_explode",
+                "choice": "pass",
+                "target_id": None,
+            }
+        ],
+    }
+
+    villager_view = _player_view_snapshot({**base_snapshot, "human_player_id": 1})
+    white_wolf_view = _player_view_snapshot({**base_snapshot, "human_player_id": 2})
+
+    assert villager_view["decisions"] == []
+    assert [decision["action"] for decision in white_wolf_view["decisions"]] == ["white_wolf_explode"]
 
 
 def test_role_versions_flow_to_app_skill_dir(tmp_path: Path) -> None:
@@ -597,6 +1161,73 @@ def test_evolution_and_benchmark_create_and_list_contract(
     assert listed_benchmark["diagnostics"] == []
     assert listed_benchmark["result"]["completed"] == 0
     assert "games" not in listed_benchmark["result"]
+
+
+def test_evolution_start_normalizes_legacy_manual_defaults(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run_evolution(
+        *,
+        role: str,
+        training_games: int,
+        battle_games: int,
+        run_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        captured.update(
+            {
+                "role": role,
+                "training_games": training_games,
+                "battle_games": battle_games,
+                "auto_promote": kwargs["auto_promote"],
+            }
+        )
+        return {
+            "run_id": run_id,
+            "role": role,
+            "status": "rejected",
+            "training_games": [],
+            "battle_games": [],
+            "battle_result": {"completed": 0},
+            "proposals": [],
+            "diff": [],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(ui_backend_store, "run_evolution", fake_run_evolution)
+
+    with _test_client(tmp_path) as client:
+        response = client.post(
+            "/api/evolution-runs",
+            json={
+                "roles": ["seer"],
+                "training_games": 20,
+                "battle_games": 10,
+                "max_days": 5,
+                "auto_promote": False,
+            },
+        )
+        run_id = response.json()["run_id"]
+        detail_response = client.get(f"/api/evolution-runs/{run_id}")
+
+    assert response.status_code == 200
+    assert captured == {
+        "role": "seer",
+        "training_games": 5,
+        "battle_games": 4,
+        "auto_promote": True,
+    }
+    assert detail_response.status_code == 200
+    assert detail_response.json()["config"] == {
+        "roles": ["seer"],
+        "training_games": 5,
+        "battle_games": 4,
+        "max_days": 5,
+        "auto_promote": True,
+    }
 
 
 def test_fake_model_game_review_evolution_benchmark_smoke(tmp_path: Path, monkeypatch) -> None:
@@ -894,15 +1525,12 @@ def test_benchmark_stop_surfaces_progress_in_summary(tmp_path: Path) -> None:
     assert listed["diagnostics"][0]["kind"] == "benchmark_stopped"
 
 
-def test_background_tasks_persist_skips_unchanged_state(tmp_path: Path, monkeypatch) -> None:
+def test_background_tasks_persist_skips_unchanged_state(
+    tmp_path: Path,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
     paths = PathConfig(root=tmp_path)
     store = ui_backend_store.BackendStore(paths=paths, model=FakeModel())
-    writes: list[tuple[Path, dict[str, Any]]] = []
-
-    def fake_write_json(path: Path, payload: dict[str, Any]) -> None:
-        writes.append((path, payload))
-
-    monkeypatch.setattr(ui_backend_store, "write_json", fake_write_json)
 
     batch = store.queue_benchmark(
         BenchmarkRequest(
@@ -911,11 +1539,12 @@ def test_background_tasks_persist_skips_unchanged_state(tmp_path: Path, monkeypa
             max_days=1,
         )
     )
-    assert len(writes) == 1
+    assert _fake_ui_pg_provider.db.background_upserts == 1
+    assert batch["batch_id"] in _fake_ui_pg_provider.db.background_tasks
 
     store._persist_background_tasks()
     store._persist_background_tasks()
-    assert len(writes) == 1
+    assert _fake_ui_pg_provider.db.background_upserts == 1
 
     store._mark_benchmark_stage(
         batch,
@@ -929,10 +1558,17 @@ def test_background_tasks_persist_skips_unchanged_state(tmp_path: Path, monkeypa
     )
     store._persist_background_tasks()
     store._persist_background_tasks()
-    assert len(writes) == 2
+    assert _fake_ui_pg_provider.db.background_upserts == 2
+    row = _fake_ui_pg_provider.db.background_tasks[batch["batch_id"]]
+    payload = json.loads(row["payload"])
+    assert payload["batch_id"] == batch["batch_id"]
+    assert payload["progress"]["stage"] == "evaluating"
 
 
-def test_background_tasks_persist_is_thread_safe(tmp_path: Path, monkeypatch) -> None:
+def test_background_tasks_persist_is_thread_safe(
+    tmp_path: Path,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
     paths = PathConfig(root=tmp_path)
     store = ui_backend_store.BackendStore(paths=paths, model=FakeModel())
     store.evolution_batches["bench_concurrent"] = {
@@ -942,16 +1578,7 @@ def test_background_tasks_persist_is_thread_safe(tmp_path: Path, monkeypatch) ->
         "status": "running",
         "started_at": "2026-01-01T00:00:00+08:00",
     }
-    writes: list[dict[str, Any]] = []
     errors: list[BaseException] = []
-    write_lock = threading.Lock()
-
-    def fake_write_json(path: Path, payload: dict[str, Any]) -> None:
-        time.sleep(0.001)
-        with write_lock:
-            writes.append(payload)
-
-    monkeypatch.setattr(ui_backend_store, "write_json", fake_write_json)
 
     def worker() -> None:
         try:
@@ -967,8 +1594,9 @@ def test_background_tasks_persist_is_thread_safe(tmp_path: Path, monkeypatch) ->
         thread.join()
 
     assert errors == []
-    assert len(writes) == 1
-    assert writes[0]["evolution_batches"][0]["batch_id"] == "bench_concurrent"
+    assert _fake_ui_pg_provider.db.background_upserts == 1
+    row = _fake_ui_pg_provider.db.background_tasks["bench_concurrent"]
+    assert json.loads(row["payload"])["batch_id"] == "bench_concurrent"
 
 
 def test_background_tasks_restore_active_runs_as_interrupted(tmp_path: Path) -> None:
@@ -1048,24 +1676,37 @@ def test_background_tasks_restore_active_runs_as_interrupted(tmp_path: Path) -> 
     assert listed_benchmark["diagnostics"][0]["kind"] == "benchmark_interrupted"
 
 
-def test_background_tasks_restore_evolution_state_files(tmp_path: Path) -> None:
+def test_background_tasks_restore_pg_task_rows(tmp_path: Path, _fake_ui_pg_provider: _UiFakeStorageProvider) -> None:
     paths = PathConfig(root=tmp_path)
     active_run_id = "evolve_seer_state_active"
     reviewing_run_id = "evolve_witch_state_reviewing"
     promoted_run_id = "evolve_guard_state_promoted"
     failed_run_id = "evolve_hunter_state_failed"
 
-    write_json(
-        paths.evolution_dir / active_run_id / "state.json",
+    def seed_task(entity_id: str, payload: dict[str, Any], updated_at: str) -> None:
+        _fake_ui_pg_provider.db.background_tasks[entity_id] = {
+            "entity_id": entity_id,
+            "entity_kind": payload["kind"],
+            "status": payload["status"],
+            "payload": json.dumps(payload, ensure_ascii=False),
+            "updated_at": updated_at,
+        }
+
+    seed_task(
+        active_run_id,
         {
+            "kind": "role_evolution_run",
             "run_id": active_run_id,
             "role": "seer",
             "parent_hash": "baseline_seer",
             "status": "training",
-            "training_games": 3,
-            "battle_games": 2,
+            "training_game_count": 3,
+            "battle_game_count": 2,
+            "training_games": [],
+            "battle_games": [],
             "candidate_hash": "candidate_seer_state",
             "current_stage": "training",
+            "last_heartbeat_at": "2026-01-01T01:00:00+08:00",
             "progress": {"stage": "training", "percent": 0.25, "completed_games": 1},
             "diagnostics": [
                 {
@@ -1074,59 +1715,57 @@ def test_background_tasks_restore_evolution_state_files(tmp_path: Path) -> None:
                     "message": "scheduler down",
                 }
             ],
-            "updated_at": "2026-01-01T01:00:00+08:00",
-            "proposals": {
-                "proposals": [
-                    {
-                        "proposal_id": "p1",
-                        "target_file": "seer.md",
-                        "content": "Prefer hard claims.",
-                    }
-                ]
-            },
+            "proposals": [{"proposal_id": "p1", "target_file": "seer.md", "content": "Prefer hard claims."}],
             "diff": [{"filename": "seer.md", "action": "update"}],
             "errors": [],
         },
+        "2026-01-01T01:00:00+08:00",
     )
-    write_json(
-        paths.evolution_dir / reviewing_run_id / "state.json",
+    seed_task(
+        reviewing_run_id,
         {
+            "kind": "role_evolution_run",
             "run_id": reviewing_run_id,
             "role": "witch",
             "parent_hash": "baseline_witch",
             "status": "reviewing",
-            "training_games": 1,
-            "battle_games": 0,
+            "training_game_count": 1,
+            "battle_game_count": 0,
             "candidate_hash": "candidate_witch_state",
             "battle_result": {"completed": 0},
-            "updated_at": "2026-01-01T02:00:00+08:00",
+            "last_heartbeat_at": "2026-01-01T02:00:00+08:00",
         },
+        "2026-01-01T02:00:00+08:00",
     )
-    write_json(
-        paths.evolution_dir / promoted_run_id / "state.json",
+    seed_task(
+        promoted_run_id,
         {
+            "kind": "role_evolution_run",
             "run_id": promoted_run_id,
             "role": "guard",
             "parent_hash": "baseline_guard",
             "status": "promoted",
-            "training_games": 0,
-            "battle_games": 1,
+            "training_game_count": 0,
+            "battle_game_count": 1,
             "candidate_hash": "candidate_guard_state",
-            "updated_at": "2026-01-01T03:00:00+08:00",
+            "last_heartbeat_at": "2026-01-01T03:00:00+08:00",
         },
+        "2026-01-01T03:00:00+08:00",
     )
-    write_json(
-        paths.evolution_dir / failed_run_id / "state.json",
+    seed_task(
+        failed_run_id,
         {
+            "kind": "role_evolution_run",
             "run_id": failed_run_id,
             "role": "hunter",
             "parent_hash": "baseline_hunter",
             "status": "failed",
-            "training_games": 0,
-            "battle_games": 0,
+            "training_game_count": 0,
+            "battle_game_count": 0,
             "errors": ["boom"],
-            "updated_at": "2026-01-01T04:00:00+08:00",
+            "last_heartbeat_at": "2026-01-01T04:00:00+08:00",
         },
+        "2026-01-01T04:00:00+08:00",
     )
 
     app = ui_backend_app.create_app(paths=paths, model=FakeModel())
@@ -1154,7 +1793,6 @@ def test_background_tasks_restore_evolution_state_files(tmp_path: Path) -> None:
     assert active_run["diagnostics"][0]["kind"] == "training_error"
     assert active_run["diagnostics"][1]["kind"] == "evolution_interrupted"
     assert active_run["diagnostics"][1]["previous_stage"] == "training"
-    assert active_run["source_state_path"].endswith("state.json")
 
     assert reviewing_run["status"] == "reviewing"
     assert "interrupted_at" not in reviewing_run
@@ -1190,7 +1828,10 @@ def test_background_tasks_restore_evolution_state_files(tmp_path: Path) -> None:
     assert "interrupted_at" not in listed_reviewing
 
 
-def test_background_tasks_merge_index_with_evolution_state_files(tmp_path: Path) -> None:
+def test_background_tasks_restore_uses_pg_task_payload_only(
+    tmp_path: Path,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
     paths = PathConfig(root=tmp_path)
     run_id = "evolve_seer_index_merge"
     first_app = ui_backend_app.create_app(paths=paths, model=FakeModel())
@@ -1207,26 +1848,12 @@ def test_background_tasks_merge_index_with_evolution_state_files(tmp_path: Path)
         "battle_games": [],
     }
     store._persist_background_tasks()
-    write_json(
-        paths.evolution_dir / run_id / "state.json",
-        {
-            "run_id": run_id,
-            "role": "seer",
-            "parent_hash": "baseline_seer",
-            "status": "reviewing",
-            "training_games": 1,
-            "battle_games": 1,
-            "candidate_hash": "candidate_from_state",
-            "battle_result": {"completed": 1},
-            "updated_at": "2026-01-01T00:10:00+08:00",
-        },
-    )
 
     restarted_app = ui_backend_app.create_app(paths=paths, model=FakeModel())
     restarted_run = restarted_app.state.backend_store.evolution_runs[run_id]
 
-    assert restarted_run["status"] == "reviewing"
-    assert "interrupted_at" not in restarted_run
+    assert restarted_run["status"] == "interrupted"
+    assert restarted_run["interrupted_at"]
     assert restarted_run["config"] == {
         "roles": ["seer"],
         "training_games": 9,
@@ -1234,10 +1861,8 @@ def test_background_tasks_merge_index_with_evolution_state_files(tmp_path: Path)
         "max_days": 1,
     }
     assert restarted_run["last_heartbeat_at"] == "2026-01-01T00:05:00+08:00"
-    assert restarted_run["candidate_hash"] == "candidate_from_state"
-    assert restarted_run["training_game_count"] == 1
-    assert restarted_run["battle_game_count"] == 1
-    assert restarted_run["battle_result"] == {"completed": 1}
+    assert "candidate_hash" not in restarted_run
+    assert "battle_result" not in restarted_run
 
 
 def test_evolution_sample_game_details_match_frontend_contract(tmp_path: Path) -> None:
@@ -1463,7 +2088,6 @@ def test_live_game_watchdog_marks_stale_sessions_interrupted(tmp_path: Path) -> 
     assert payload["last_heartbeat_at"] == "2026-01-01T00:00:00+08:00"
     assert payload["diagnostics"][0]["kind"] == "live_game_interrupted"
     assert payload["diagnostics"][0]["last_heartbeat_at"] == "2026-01-01T00:00:00+08:00"
-    assert (tmp_path / "runs" / "games" / game_id / "ui_snapshot.json").exists()
 
     history = history_response.json()
     assert history["counts"]["normal"] == 1
@@ -1472,6 +2096,148 @@ def test_live_game_watchdog_marks_stale_sessions_interrupted(tmp_path: Path) -> 
 
     assert "event: done" in events_response.text
     assert '"status": "interrupted"' in events_response.text
+
+
+def test_live_game_watchdog_waits_for_pending_human_timeout(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from app.util.time import beijing_now
+
+    class FakeEngine:
+        def __init__(self) -> None:
+            self.logger = SimpleNamespace(entries=[])
+            self.state = SimpleNamespace(
+                players={},
+                phase="exile_vote",
+                day=1,
+                sheriff_id=None,
+                winner=None,
+            )
+
+    game_id = "live_watchdog_human_pending"
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        session = LiveGameSession(
+            game_id=game_id,
+            request=GameStartRequest(max_days=1, human_player_id=1),
+            engine=FakeEngine(),
+            recorder=SimpleNamespace(records=[]),
+            human=SimpleNamespace(is_waiting=True, timeout_seconds=300.0, current_request=None),
+            event_sink=BroadcastEventSink(),
+        )
+        session.last_heartbeat_at = (beijing_now() - timedelta(seconds=10)).isoformat()
+        store.live_sessions[game_id] = session
+
+        interrupted = store.check_live_game_watchdog(timeout_seconds=0.001)
+
+    assert interrupted == []
+    assert store.live_sessions[game_id] is session
+    assert session.status == "running"
+    assert session.interrupted is False
+
+
+async def test_human_player_submit_from_thread_wakes_waiting_loop() -> None:
+    from engine.models import ActionRequest, ActionResponse, ActionType, Observation, Phase, Role
+    from engine.players import HumanPlayer
+
+    human = HumanPlayer(1, timeout_seconds=2)
+    request = ActionRequest(
+        player_id=1,
+        action_type=ActionType.EXILE_VOTE,
+        phase=Phase.EXILE_VOTE,
+        observation=Observation(
+            player_id=1,
+            self_role=Role.VILLAGER,
+            phase=Phase.EXILE_VOTE,
+            day=1,
+            alive_players=(1, 2),
+            dead_players=(),
+            sheriff_id=None,
+            visible_events=(),
+        ),
+        candidates=(2,),
+    )
+    task = asyncio.create_task(human.act(request))
+    for _ in range(100):
+        if human.is_waiting:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError("human player did not enter waiting state")
+
+    submitted: list[bool] = []
+    submitter = threading.Thread(
+        target=lambda: submitted.append(
+            human.submit(ActionResponse(ActionType.EXILE_VOTE, target=2, text="thread submit"))
+        )
+    )
+    submitter.start()
+    submitter.join(timeout=1)
+
+    response = await asyncio.wait_for(task, timeout=1)
+
+    assert submitted == [True]
+    assert response.target == 2
+    assert response.text == "thread submit"
+
+
+async def test_live_human_invalid_submission_is_not_recorded_until_engine_accepts() -> None:
+    from app.lib.store import AgentDecisionRecorder
+    from engine.config import GameConfig
+    from engine.engine import GameEngine
+    from engine.models import ActionResponse, ActionType, Phase, Role
+    from engine.players import HumanPlayer, ScriptedAgent
+    from ui.backend.schemas import HumanActionRequest
+
+    roles = {1: Role.VILLAGER, 2: Role.WEREWOLF, 3: Role.SEER}
+    human = HumanPlayer(1, timeout_seconds=2)
+    recorder = AgentDecisionRecorder()
+    engine = GameEngine(
+        roles,
+        {1: human, 2: ScriptedAgent(), 3: ScriptedAgent()},
+        config=GameConfig(name="human_recording_test", role_counts=Counter(roles.values())),
+    )
+    engine.state.day = 1
+    engine.state.phase = Phase.EXILE_VOTE
+    session = LiveGameSession(
+        game_id="human_recording_test",
+        request=GameStartRequest(max_days=1, human_player_id=1),
+        engine=engine,
+        recorder=recorder,
+        human=human,
+        event_sink=BroadcastEventSink(),
+    )
+
+    async def _wait_for_retry(retry_count: int) -> None:
+        for _ in range(100):
+            current = human.current_request
+            if human.is_waiting and current is not None and current.retry_count == retry_count:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"human request retry {retry_count} was not reached")
+
+    ask_task = asyncio.create_task(
+        engine._ask(
+            1,
+            ActionType.EXILE_VOTE,
+            candidates=(2, 3),
+            validator=lambda res: res.target in (2, 3),
+            default=ActionResponse(ActionType.EXILE_VOTE),
+        )
+    )
+    await _wait_for_retry(0)
+
+    assert session.submit(HumanActionRequest(action_type="exile_vote", target=99, text="bad")) is True
+    await _wait_for_retry(1)
+    assert recorder.records == []
+
+    assert session.submit(HumanActionRequest(action_type="exile_vote", target=2, text="good")) is True
+    response = await asyncio.wait_for(ask_task, timeout=2)
+
+    assert response.target == 2
+    assert [record.selected_target for record in recorder.records] == [2]
+    assert recorder.records[0].public_text == "good"
+    assert [event.target for event in engine.logger.entries if event.type == "invalid_response"] == [99]
 
 
 def test_evolution_sse_replays_task_event_log(tmp_path: Path) -> None:
@@ -1675,9 +2441,13 @@ def test_benchmark_sse_streams_task_events_until_terminal(tmp_path: Path) -> Non
     assert store.task_event_log.subscriber_count(batch_id) == 0
 
 
-def test_task_event_log_appends_and_compacts_backlog(tmp_path: Path) -> None:
-    path = tmp_path / "task-events.jsonl"
-    log = TaskEventLog(path, max_backlog=3, compact_every=0, compact_max_bytes=0)
+def test_task_event_log_appends_and_compacts_pg_backlog() -> None:
+    db = _UiMemoryDatabase()
+    log = TaskEventLog(
+        connection_factory=lambda: _UiMemoryConnection(db),
+        max_backlog=3,
+        compact_every=0,
+    )
 
     for index in range(5):
         log.publish(
@@ -1689,38 +2459,53 @@ def test_task_event_log_appends_and_compacts_backlog(tmp_path: Path) -> None:
             }
         )
 
-    rows_before_compact = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(rows_before_compact) == 5
+    assert len(db.task_events) == 5
     assert [item["id"] for item in log.replay("append_compact_run")] == [3, 4, 5]
 
     log.compact()
-    rows_after_compact = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(rows_after_compact) == 3
+    assert sorted(db.task_events) == [3, 4, 5]
 
-    loaded = TaskEventLog(path, max_backlog=3, compact_every=0, compact_max_bytes=0)
+    loaded = TaskEventLog(
+        connection_factory=lambda: _UiMemoryConnection(db),
+        max_backlog=3,
+        compact_every=0,
+    )
     loaded.load()
     assert [item["id"] for item in loaded.replay("append_compact_run")] == [3, 4, 5]
 
 
-def test_task_event_log_load_skips_corrupt_jsonl_rows(tmp_path: Path) -> None:
-    path = tmp_path / "task-events.jsonl"
-    path.write_text(
-        "\n".join(
-            [
-                '{"id": 1, "entity_id": "corrupt_replay", "status": "training", "payload": {"status": "training"}}',
-                '{"id": 2, ',
-                '{"id": 3, "entity_id": "corrupt_replay", "status": "completed", "payload": {"status": "completed"}}',
-            ]
-        ),
-        encoding="utf-8",
-    )
+def test_task_event_log_loads_pg_rows_and_continues_ids() -> None:
+    db = _UiMemoryDatabase()
+    db.task_events[1] = {
+        "id": 1,
+        "entity_id": "pg_replay",
+        "entity_kind": "role_evolution_run",
+        "event": "progress",
+        "status": "training",
+        "payload": json.dumps({"run_id": "pg_replay", "status": "training"}),
+        "created_at": "2026-01-01T00:00:00+08:00",
+    }
+    db.task_events[3] = {
+        "id": 3,
+        "entity_id": "pg_replay",
+        "entity_kind": "role_evolution_run",
+        "event": "completed",
+        "status": "completed",
+        "payload": {"run_id": "pg_replay", "status": "completed"},
+        "created_at": "2026-01-01T00:00:02+08:00",
+    }
 
-    log = TaskEventLog(path, max_backlog=10, compact_every=0, compact_max_bytes=0)
+    log = TaskEventLog(
+        connection_factory=lambda: _UiMemoryConnection(db),
+        max_backlog=10,
+        compact_every=0,
+    )
     log.load()
 
-    assert [item["id"] for item in log.replay("corrupt_replay")] == [1, 3]
-    log.publish({"kind": "role_evolution_run", "run_id": "corrupt_replay", "status": "reviewing"})
-    assert [item["id"] for item in log.replay("corrupt_replay")] == [1, 3, 4]
+    assert [item["id"] for item in log.replay("pg_replay")] == [1, 3]
+    log.publish({"kind": "role_evolution_run", "run_id": "pg_replay", "status": "reviewing"})
+    assert [item["id"] for item in log.replay("pg_replay")] == [1, 3, 4]
+    assert 4 in db.task_events
 
 
 def test_game_history_pagination_filters_and_sse_resume(tmp_path: Path) -> None:
@@ -1814,25 +2599,36 @@ def test_game_history_counts_facets_and_index_cache(tmp_path: Path, monkeypatch)
                     status="cancelled",
                     log_time="2026-01-01T00:00:02+08:00",
                 ),
+                "bench_game_a": {
+                    **_history_snapshot(
+                        "bench_game_a",
+                        status="completed",
+                        log_time="2026-01-01T00:00:03+08:00",
+                    ),
+                    "log_source": "benchmark",
+                    "source_run_id": "bench_counts",
+                },
+                "evo_game_a": {
+                    **_history_snapshot(
+                        "evo_game_a",
+                        status="completed",
+                        log_time="2026-01-01T00:00:04+08:00",
+                    ),
+                    "log_source": "evolution",
+                    "source_run_id": "evolve_counts",
+                    "source_phase": "training",
+                },
+                "evo_game_b": {
+                    **_history_snapshot(
+                        "evo_game_b",
+                        status="failed",
+                        log_time="2026-01-01T00:00:05+08:00",
+                    ),
+                    "log_source": "evolution",
+                    "source_run_id": "evolve_counts",
+                    "source_phase": "battle",
+                },
             }
-        )
-        _write_history_snapshot(
-            store.paths.runs_dir / "evaluation_batches" / "bench_counts" / "games" / "bench_game_a",
-            "bench_game_a",
-            status="completed",
-            log_time="2026-01-01T00:00:03+08:00",
-        )
-        _write_history_snapshot(
-            store.paths.evolution_dir / "evolve_counts" / "training" / "evo_game_a",
-            "evo_game_a",
-            status="completed",
-            log_time="2026-01-01T00:00:04+08:00",
-        )
-        _write_history_snapshot(
-            store.paths.evolution_dir / "evolve_counts" / "battle" / "evo_game_b",
-            "evo_game_b",
-            status="failed",
-            log_time="2026-01-01T00:00:05+08:00",
         )
 
         calls = 0
@@ -1848,8 +2644,7 @@ def test_game_history_counts_facets_and_index_cache(tmp_path: Path, monkeypatch)
         normal_response = client.get("/api/games?source=normal&limit=1&offset=0")
         second_page_response = client.get("/api/games?source=evolution&status=completed&limit=1&offset=0")
         calls_after_cached_page = calls
-        _write_history_snapshot(
-            store.paths.games_dir / "ui_normal_c",
+        store.games["ui_normal_c"] = _history_snapshot(
             "ui_normal_c",
             status="completed",
             log_time="2026-01-01T00:00:06+08:00",
@@ -1875,7 +2670,6 @@ def test_game_history_counts_facets_and_index_cache(tmp_path: Path, monkeypatch)
     assert rebuilt["pagination"] == {"total": 3, "offset": 0, "limit": 10, "returned": 3, "has_more": False}
     assert rebuilt["counts"] == {"all": 6, "normal": 3, "benchmark": 1, "evolution": 2}
     assert calls == 2
-    assert (tmp_path / "runs" / "game_history_index.json").exists()
 
 
 def test_evolution_history_and_games_pagination_filters(tmp_path: Path) -> None:
@@ -2030,12 +2824,9 @@ def test_ui_backend_does_not_import_agent_package() -> None:
 
 def test_role_leaderboard_reads_persisted_scores(tmp_path: Path) -> None:
     """The leaderboard endpoint surfaces benchmark_leaderboard scores, not zeros."""
-    from app.lib.score import open_eval_connection, persist_leaderboard_entry
-    from app.lib.version import VersionRegistry
-
     paths = PathConfig(root=tmp_path)
-    reg = VersionRegistry(paths.registry_dir)
-    vid = reg.publish_skills(
+    registry = FakeVersionRegistry(tmp_path)
+    vid = registry.publish_skills(
         "seer",
         {
             "vote.md": (
@@ -2057,20 +2848,20 @@ def test_role_leaderboard_reads_persisted_scores(tmp_path: Path) -> None:
         set_as_baseline=True,
         expected_current=None,
     )
-    conn = open_eval_connection(paths)
-    persist_leaderboard_entry(conn, {
-        "scope": "role_version",
-        "subject_id": vid,
-        "target_role": "seer",
-        "target_version_id": vid,
-        "avg_role_score": 7.3,
-        "target_side_win_rate": 0.6,
-        "rankable": True,
-        "game_count": 5,
-    })
-    conn.close()
 
     app = ui_backend_app.create_app(paths=paths, model=FakeModel())
+    store = app.state.backend_store
+    store._registry = registry
+    store.leaderboard_scores_for_role = lambda role: {
+        vid: {
+            "target_version_id": vid,
+            "avg_role_score": 7.3,
+            "target_side_win_rate": 0.6,
+            "fallback_rate": 0.0,
+            "rankable": True,
+            "games_played": 5,
+        }
+    } if role == "seer" else {}
     with TestClient(app) as client:
         resp = client.get("/api/roles/seer/leaderboard")
 

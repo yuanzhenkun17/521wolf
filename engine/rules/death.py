@@ -8,19 +8,38 @@ if TYPE_CHECKING:
     from engine.engine import GameEngine
 
 
-def kill_player(engine: GameEngine, player_id: int, cause: DeathCause) -> None:
+def kill_player(
+    engine: GameEngine,
+    player_id: int,
+    cause: DeathCause,
+    *,
+    causes: tuple[DeathCause, ...] | None = None,
+    public: bool = True,
+    announce: bool = True,
+    phase: Phase | None = None,
+) -> None:
     player = engine.state.players[player_id]
     if not player.alive:
         return
+    death_causes = causes or (cause,)
     player.alive = False
-    engine.state.deaths.append(DeathRecord(player_id, cause, engine.state.day, engine.state.phase))
+    engine.state.deaths.append(DeathRecord(player_id, cause, engine.state.day, phase or engine.state.phase, death_causes))
     if has_last_word(cause):
         engine.state.pending_last_words.append(player_id)
+    if not announce:
+        return
     engine._record(
         "death",
-        message=f"{player_id} 号死亡，原因：{cause.value}",
+        message=f"{player_id} 号死亡",
         target=player_id,
-        payload={"cause": cause.value},
+        public=public,
+    )
+    engine._record(
+        "death_detail",
+        message=f"{player_id} 号死亡，原因：{'/'.join(cause.value for cause in death_causes)}",
+        target=player_id,
+        payload={"causes": [cause.value for cause in death_causes]},
+        public=False,
     )
 
 
@@ -58,17 +77,18 @@ def can_hunter_shoot(engine: GameEngine, player_id: int) -> bool:
         and not player.alive
         and not player.role_state.get("has_shot", False)
         and death is not None
+        and DeathCause.WITCH_POISON not in death.causes
         and death.cause in {DeathCause.WEREWOLF, DeathCause.EXILE}
     )
 
 
 async def resolve_hunter_death(engine: GameEngine, hunter_id: int) -> int | None:
     if not can_hunter_shoot(engine, hunter_id):
-        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号不能开枪", actor=hunter_id)
+        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号不能开枪", actor=hunter_id, public=False)
         return None
     candidates = tuple(player_id for player_id in engine.alive_ids() if player_id != hunter_id)
     if not candidates:
-        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号无可射击目标", actor=hunter_id)
+        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号无可射击目标", actor=hunter_id, public=False)
         return None
     response = await engine._ask(
         hunter_id,
@@ -78,12 +98,11 @@ async def resolve_hunter_death(engine: GameEngine, hunter_id: int) -> int | None
         default=ActionResponse(ActionType.HUNTER_SHOOT),
     )
     if response.target is None:
-        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号选择不开枪", actor=hunter_id)
+        engine._record("hunter_no_shot", message=f"猎人 {hunter_id} 号选择不开枪", actor=hunter_id, public=False)
         return None
     hunter_ps = engine.state.players[hunter_id]
     hunter_ps.role_state["has_shot"] = True
     hunter_ps.role_state["shot_target"] = response.target
-    kill_player(engine, response.target, DeathCause.HUNTER_SHOT)
     engine._record(
         "hunter_shot",
         message=f"猎人 {hunter_id} 号开枪带走 {response.target} 号",
@@ -91,16 +110,22 @@ async def resolve_hunter_death(engine: GameEngine, hunter_id: int) -> int | None
         target=response.target,
         payload={"target": response.target},
     )
+    kill_player(engine, response.target, DeathCause.HUNTER_SHOT)
     await engine.resolve_sheriff_death(response.target)
     return response.target
 
 
-async def resolve_death_triggers(engine: GameEngine, player_ids: list[int] | tuple[int, ...]) -> None:
+async def resolve_death_triggers(
+    engine: GameEngine,
+    player_ids: list[int] | tuple[int, ...],
+    *,
+    delay_night_hunter: bool = True,
+) -> None:
     for player_id in player_ids:
         await engine.resolve_sheriff_death(player_id)
         if not is_hunter(engine, player_id):
             continue
-        if should_delay_hunter_shot(engine, player_id):
+        if delay_night_hunter and should_delay_hunter_shot(engine, player_id):
             queue_pending_hunter_shot(engine, player_id)
             continue
         await resolve_hunter_death(engine, player_id)

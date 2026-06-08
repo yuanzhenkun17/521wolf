@@ -21,6 +21,7 @@ def create_agent_runtime(
     recorder: Any = None,
     trace_recorder: Any = None,
     paths: Any = None,
+    agent_runtime_config: dict[str, Any] | None = None,
 ) -> Any:
     """Create an AgentRuntime adapter backed by the app/ LangGraph runtime."""
     shared_model = model or create_llm()
@@ -41,6 +42,7 @@ def create_agent_runtime(
         game_id=game_id,
         skill_dir=skill_dir,
         paths=paths,
+        agent_runtime_config=agent_runtime_config,
     )
 
 
@@ -54,6 +56,7 @@ def create_agents(
     role_skill_dirs: dict[str, Path] | None = None,
     human_player_id: int | None = None,
     paths=None,
+    agent_runtime_config: dict[str, Any] | None = None,
 ) -> dict[int, Any]:
     """Create agents for each player."""
     shared_client = client or create_llm()
@@ -76,6 +79,7 @@ def create_agents(
             recorder=decision_recorder,
             trace_recorder=trace_recorder,
             paths=paths,
+            agent_runtime_config=agent_runtime_config,
         )
     return result
 

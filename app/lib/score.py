@@ -130,6 +130,98 @@ def aggregate_batch_scores(
     return summary
 
 
+def compute_decision_quality_metrics(games: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute batch-level decision quality counters and rates from game records."""
+    decision_count = 0
+    fallback_count = 0
+    llm_error_count = 0
+    policy_adjusted_count = 0
+    policy_skipped_count = 0
+    event_count = 0
+    invalid_response_count = 0
+    default_action_count = 0
+
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        for decision in _iter_mapping_items(game.get("decisions")):
+            decision_count += 1
+            source = str(_item_value(decision, "source") or "").strip().lower()
+            if source == "fallback":
+                fallback_count += 1
+            elif source == "llm_error":
+                llm_error_count += 1
+            elif source == "policy_skipped":
+                policy_skipped_count += 1
+            if source == "policy_adjusted" or _has_policy_adjustments(
+                _item_value(decision, "policy_adjustments")
+            ):
+                policy_adjusted_count += 1
+
+        for event in _iter_mapping_items(game.get("events")):
+            event_count += 1
+            event_type = str(_item_value(event, "event_type", "type") or "").strip()
+            if event_type == "invalid_response":
+                invalid_response_count += 1
+            elif event_type == "default_action":
+                default_action_count += 1
+
+    return {
+        "decision_count": decision_count,
+        "fallback_count": fallback_count,
+        "llm_error_count": llm_error_count,
+        "policy_adjusted_count": policy_adjusted_count,
+        "policy_skipped_count": policy_skipped_count,
+        "fallback_rate": _safe_rate(fallback_count, decision_count),
+        "llm_error_rate": _safe_rate(llm_error_count, decision_count),
+        "policy_adjusted_rate": _safe_rate(policy_adjusted_count, decision_count),
+        "policy_skipped_rate": _safe_rate(policy_skipped_count, decision_count),
+        "event_count": event_count,
+        "invalid_response_count": invalid_response_count,
+        "default_action_count": default_action_count,
+        "invalid_response_rate": _safe_rate(invalid_response_count, event_count),
+        "default_action_rate": _safe_rate(default_action_count, event_count),
+    }
+
+
+def _iter_mapping_items(value: Any) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if item is not None]
+
+
+def _item_value(item: Any, *keys: str) -> Any:
+    for key in keys:
+        if isinstance(item, dict) and key in item:
+            return item.get(key)
+        if hasattr(item, key):
+            return getattr(item, key)
+    return None
+
+
+def _has_policy_adjustments(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return False
+        try:
+            decoded = json.loads(text)
+        except json.JSONDecodeError:
+            return True
+        return bool(decoded)
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return bool(value)
+
+
+def _safe_rate(count: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(count / denominator, 6)
+
+
 # ---------------------------------------------------------------------------
 # Role score computation
 # ---------------------------------------------------------------------------
@@ -206,10 +298,10 @@ def compute_rankable(
     is_fair: bool = False,
 ) -> tuple[bool, str]:
     """Determine if an evaluation batch result is rankable."""
-    if not is_fair:
-        return False, "Fairness check failed"
     if game_count < 1:
         return False, "No games in batch"
+    if not is_fair:
+        return False, "Fairness check failed"
     if mode == "dev" and paired_seed and valid_game_rate < 0.5:
         return False, f"valid_game_rate {valid_game_rate:.1%} < 50% for dev/paired"
     if mode == "prod" and valid_game_rate < 0.8:
@@ -304,13 +396,43 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
     updated_at = str(entry.get("updated_at") or beijing_now_iso())
     try:
         conn.execute(
-            """INSERT OR REPLACE INTO benchmark_leaderboard
+            """INSERT INTO benchmark_leaderboard
             (id, scope, subject_id, model_id, model_config_hash, target_role, target_version_id,
              comparison_group_id, evaluation_set_id, seed_set_id,
              games_played, valid_game_rate, strength_score, avg_role_score, by_role_category_scores,
              avg_speech_score, avg_vote_score, avg_skill_score, avg_logic_score, avg_team_score,
-             risk_penalty, target_side_win_rate, rankable, data_sufficient, summary, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             risk_penalty, fallback_rate, llm_error_rate, policy_adjusted_rate,
+             target_side_win_rate, rankable, data_sufficient, summary, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                scope = excluded.scope,
+                subject_id = excluded.subject_id,
+                model_id = excluded.model_id,
+                model_config_hash = excluded.model_config_hash,
+                target_role = excluded.target_role,
+                target_version_id = excluded.target_version_id,
+                comparison_group_id = excluded.comparison_group_id,
+                evaluation_set_id = excluded.evaluation_set_id,
+                seed_set_id = excluded.seed_set_id,
+                games_played = excluded.games_played,
+                valid_game_rate = excluded.valid_game_rate,
+                strength_score = excluded.strength_score,
+                avg_role_score = excluded.avg_role_score,
+                by_role_category_scores = excluded.by_role_category_scores,
+                avg_speech_score = excluded.avg_speech_score,
+                avg_vote_score = excluded.avg_vote_score,
+                avg_skill_score = excluded.avg_skill_score,
+                avg_logic_score = excluded.avg_logic_score,
+                avg_team_score = excluded.avg_team_score,
+                risk_penalty = excluded.risk_penalty,
+                fallback_rate = excluded.fallback_rate,
+                llm_error_rate = excluded.llm_error_rate,
+                policy_adjusted_rate = excluded.policy_adjusted_rate,
+                target_side_win_rate = excluded.target_side_win_rate,
+                rankable = excluded.rankable,
+                data_sufficient = excluded.data_sufficient,
+                summary = excluded.summary,
+                updated_at = excluded.updated_at""",
             (
                 row_id,
                 scope,
@@ -333,6 +455,9 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
                 entry.get("avg_logic_score", 0.0),
                 entry.get("avg_team_score", 0.0),
                 entry.get("risk_penalty", 0.0),
+                entry.get("fallback_rate", 0.0),
+                entry.get("llm_error_rate", 0.0),
+                entry.get("policy_adjusted_rate", 0.0),
                 entry.get("target_side_win_rate", 0.0),
                 1 if entry.get("rankable") else 0,
                 1 if entry.get("rankable") else 0,
@@ -352,16 +477,10 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
 # ---------------------------------------------------------------------------
 
 def open_eval_connection(paths: Any = None) -> Any:
-    """Open a connection to the main wolf.db (holds evaluation_batches + leaderboard)."""
-    from storage.schema import get_connection
+    """Open the wolf-domain storage connection used by evaluation persistence."""
+    from storage.provider import storage_provider_from_env
 
-    if paths is not None and hasattr(paths, "wolf_db_path"):
-        db_path = paths.wolf_db_path
-    else:
-        from app.config import DEFAULT_PATHS
-
-        db_path = DEFAULT_PATHS.wolf_db_path
-    return get_connection(db_path)
+    return storage_provider_from_env(paths=paths).open_wolf_connection()
 
 
 def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
@@ -371,14 +490,35 @@ def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
     """
     summary = batch.get("score_summary")
     created_at = str(batch.get("created_at") or beijing_now_iso())
+    started_at = _nullable_timestamp(batch.get("started_at"))
+    finished_at = _nullable_timestamp(batch.get("finished_at"))
     try:
         conn.execute(
-            """INSERT OR REPLACE INTO evaluation_batches
+            """INSERT INTO evaluation_batches
             (id, comparison_group_id, comparison_type, mode, model_id, model_config_hash,
              target_role, target_version_id, role_version_config, game_count,
              evaluation_set_id, seed_set_id, max_days, rankable, rankable_reason,
              summary, started_at, finished_at, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                comparison_group_id = excluded.comparison_group_id,
+                comparison_type = excluded.comparison_type,
+                mode = excluded.mode,
+                model_id = excluded.model_id,
+                model_config_hash = excluded.model_config_hash,
+                target_role = excluded.target_role,
+                target_version_id = excluded.target_version_id,
+                role_version_config = excluded.role_version_config,
+                game_count = excluded.game_count,
+                evaluation_set_id = excluded.evaluation_set_id,
+                seed_set_id = excluded.seed_set_id,
+                max_days = excluded.max_days,
+                rankable = excluded.rankable,
+                rankable_reason = excluded.rankable_reason,
+                summary = excluded.summary,
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                created_at = excluded.created_at""",
             (
                 str(batch.get("batch_id", "")),
                 batch.get("comparison_group_id"),
@@ -397,16 +537,25 @@ def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
                 1 if batch.get("rankable") else 0,
                 batch.get("rankable_reason", ""),
                 json.dumps(summary, ensure_ascii=False) if summary is not None else None,
-                batch.get("started_at", ""),
-                batch.get("finished_at", ""),
+                started_at,
+                finished_at,
                 created_at,
             ),
         )
         conn.commit()
         return None
     except Exception as exc:  # noqa: BLE001 — persistence is best-effort
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001 — keep original persistence warning
+            pass
         _log.warning("save_evaluation_batch failed", exc_info=True)
         return _persistence_warning("save_evaluation_batch", exc)
+
+
+def _nullable_timestamp(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def load_comparison_group(conn: Any, comparison_group_id: str, *, exclude_batch_id: str = "") -> list[dict[str, Any]]:

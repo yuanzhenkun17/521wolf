@@ -1,9 +1,5 @@
-"""Registry sub-package -- independent database for role version tracking."""
+"""Registry storage domain backed by the PostgreSQL registry schema."""
 
-from storage.registry.connection import get_registry_connection
-from storage.registry.schema import ensure_registry_schema
+from storage.postgres import get_registry_postgres_connection
 
-__all__ = [
-    "get_registry_connection",
-    "ensure_registry_schema",
-]
+__all__ = ["get_registry_postgres_connection"]

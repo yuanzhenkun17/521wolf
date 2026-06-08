@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from typing import Any
 
+from storage.shared.database import StorageConnection, StorageRow, insert_returning_id
 from storage.shared.interfaces import storage_timestamp, TimestampProvider
 
 _log = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ class RejectedProposalStore:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -43,14 +43,15 @@ class RejectedProposalStore:
         else:
             proposal_json = json.dumps(proposal, ensure_ascii=False, default=str)
 
-        cursor = self._conn.execute(
+        rejection_id = insert_returning_id(
+            self._conn,
             "INSERT INTO rejected_proposals "
             "(role, proposal_json, battle_score_delta, battle_win_rate_delta, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (role, proposal_json, battle_score_delta, battle_win_rate_delta, now),
         )
         self._conn.commit()
-        return cursor.lastrowid or 0
+        return rejection_id
 
     def save_batch(
         self,
@@ -68,7 +69,8 @@ class RejectedProposalStore:
             else:
                 proposal_json = json.dumps(proposal, ensure_ascii=False, default=str)
 
-            cursor = self._conn.execute(
+            rejection_id = insert_returning_id(
+                self._conn,
                 "INSERT INTO rejected_proposals "
                 "(role, proposal_json, battle_score_delta, battle_win_rate_delta, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -80,7 +82,7 @@ class RejectedProposalStore:
                     str(rej.get("created_at") or now),
                 ),
             )
-            saved.append(cursor.lastrowid or 0)
+            saved.append(rejection_id)
         self._conn.commit()
         return saved
 
@@ -125,7 +127,7 @@ class RejectedProposalStore:
         return cursor.rowcount
 
 
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_dict(row: StorageRow) -> dict[str, Any]:
     data = dict(row)
     raw = data.get("proposal_json")
     if raw:

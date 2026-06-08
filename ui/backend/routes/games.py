@@ -7,7 +7,6 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from app.util.json import read_json
 from ui.backend.schemas import GameStartRequest, HumanActionRequest
 from ui.backend.serializers import _archive_payload, _player_view_snapshot, _player_view_sse_payload
 from ui.backend.sse import sse_after_cursor, stream_queue_sse
@@ -53,9 +52,6 @@ def register_game_routes(api: FastAPI, store: Any) -> None:
         if game is None:
             raise HTTPException(status_code=404, detail="game not found")
         view_game = _player_view_snapshot(game)
-        archive_path = store.paths.games_dir / game_id / "archive.json"
-        if archive_path.exists():
-            return _archive_payload(game_id, view_game, stored=read_json(archive_path))
         return _archive_payload(game_id, view_game)
 
     @api.get("/api/games/{game_id}/review")
@@ -90,7 +86,7 @@ def register_game_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/games/{game_id}/stop")
     def stop_game(game_id: str) -> dict[str, Any]:
-        return store.stop_game(game_id)
+        return _player_view_snapshot(store.stop_game(game_id))
 
     @api.get("/api/games/{game_id}/events")
     def game_events(game_id: str, request: Request) -> StreamingResponse:

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  POSTGRES_DATABASE_URL: postgresql://wolf_app:wolf_password@127.0.0.1:5432/wolf_app
+  DATABASE_URL: postgresql://wolf_app:wolf_password@127.0.0.1:5432/wolf_app
+  POSTGRES_DISABLE_DOTENV: "1"
+  UI_BACKEND_USE_FAKE_LLM: "true"
+  WEREWOLF_LLM_API_KEY: ci-fake-key
+  WEREWOLF_LLM_BASE_URL: https://example.invalid/v1
+  WEREWOLF_LLM_MODEL: ci-fake-model
+  LANGFUSE_TRACING_ENABLED: "false"
+  OTEL_SDK_DISABLED: "true"
+
+jobs:
+  backend:
+    name: Backend schema, API, and tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: wolf_app
+          POSTGRES_USER: wolf_app
+          POSTGRES_PASSWORD: wolf_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wolf_app -d wolf_app"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --frozen --dev
+
+      - name: Apply PostgreSQL migrations
+        run: uv run alembic upgrade head
+
+      - name: Validate baseline skills
+        run: uv run python -m app.tools.seed_default_baseline --dry-run
+
+      - name: Run backend tests
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend tests and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui/frontend
+
+      - name: Run frontend tests
+        run: npm test --prefix ui/frontend
+
+      - name: Build frontend
+        run: npm run build --prefix ui/frontend

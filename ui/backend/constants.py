@@ -41,6 +41,4 @@ BACKGROUND_STABLE_STATUSES = {
     "interrupted",
 }
 
-BACKGROUND_STATE_FILE = "ui_backend_tasks.json"
-TASK_EVENT_LOG_FILE = "ui_backend_task_events.jsonl"
 MANUAL_STOP_REASON = "stopped"

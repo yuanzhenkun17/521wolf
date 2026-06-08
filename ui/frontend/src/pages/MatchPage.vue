@@ -116,6 +116,7 @@ let introTimer = 0
 let introRemoveTimer = 0
 let introSettledGameId = null
 const introWaitTimers = new Set()
+const optionalTargetActions = new Set(['exile_vote', 'pk_vote', 'sheriff_vote', 'hunter_shoot'])
 
 function phaseName(phase) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : displayPhaseLabel(phase)
@@ -131,7 +132,11 @@ const hasPendingHumanAction = computed(() => {
 const sceneSelectableIds = computed(() => {
   if (!hasPendingHumanAction.value) return []
   if (props.burstArmed) return props.whiteWolfTargets.map((player) => player.id)
-  if (props.pendingActionType) return props.needsTarget ? props.actionCandidates.map((player) => player.id) : []
+  if (props.pendingActionType) {
+    return props.needsTarget || optionalTargetActions.has(props.pendingActionType)
+      ? props.actionCandidates.map((player) => player.id)
+      : []
+  }
   if (props.game?.waiting_for === 'vote') return props.canVotePlayers.map((player) => player.id)
   return []
 })

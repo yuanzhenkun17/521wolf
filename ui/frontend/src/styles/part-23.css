@@ -204,6 +204,7 @@
 .source-tot { background: #2563eb; color: #fff; }
 .source-got { background: #7c3aed; color: #fff; }
 .source-fallback { background: #d97706; color: #fff; }
+.source-policy_skipped { background: #64748b; color: #fff; }
 .source-policy_adjusted { background: #ea580c; color: #fff; }
 
 /* Confidence bar */

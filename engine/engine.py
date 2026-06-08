@@ -43,7 +43,19 @@ class GameEngine:
         self._record(
             "game_init",
             message=f"游戏初始化：{self.config.name}，已创建 {len(self.state.players)} 名玩家",
+            payload={
+                "players": sorted(roles),
+                "role_counts": {
+                    role.value if hasattr(role, "value") else str(role): count
+                    for role, count in sorted(self.config.role_counter.items(), key=lambda item: item[0].value)
+                },
+            },
+        )
+        self._record(
+            "game_roles",
+            message="完整身份表",
             payload={"roles": {player_id: role.value for player_id, role in sorted(roles.items())}},
+            public=False,
         )
         self._validate_setup()
         # Initialize per-player role_state from each role's rule
@@ -90,7 +102,7 @@ class GameEngine:
         role_rule = rule_for(player.role)
         visible = tuple(
             e for e in self.logger.entries
-            if e.public or e.actor == player_id
+            if e.public or e.actor == player_id or player_id in e.visible_to
         )
         return Observation(
             player_id=player_id,
@@ -128,6 +140,10 @@ class GameEngine:
                 {
                     "player_id": d.player_id,
                     "cause": d.cause.value if hasattr(d.cause, "value") else str(d.cause),
+                    "causes": [
+                        cause.value if hasattr(cause, "value") else str(cause)
+                        for cause in d.causes
+                    ],
                     "day": d.day,
                     "phase": d.phase.value if hasattr(d.phase, "value") else str(d.phase),
                 }
@@ -156,6 +172,7 @@ class GameEngine:
         target: int | None = None,
         payload: dict | None = None,
         public: bool = True,
+        visible_to: tuple[int, ...] = (),
     ) -> None:
         self.logger.record(
             day=self.state.day,
@@ -166,10 +183,20 @@ class GameEngine:
             target=target,
             payload=payload or {},
             public=public,
+            visible_to=visible_to,
         )
 
-    def kill_player(self, player_id: int, cause: DeathCause) -> None:
-        death.kill_player(self, player_id, cause)
+    def kill_player(
+        self,
+        player_id: int,
+        cause: DeathCause,
+        *,
+        causes: tuple[DeathCause, ...] | None = None,
+        public: bool = True,
+        announce: bool = True,
+        phase: Phase | None = None,
+    ) -> None:
+        death.kill_player(self, player_id, cause, causes=causes, public=public, announce=announce, phase=phase)
 
     def revive_player(self, player_id: int) -> None:
         death.revive_player(self, player_id)
@@ -183,14 +210,19 @@ class GameEngine:
     async def resolve_hunter_death(self, hunter_id: int) -> int | None:
         return await death.resolve_hunter_death(self, hunter_id)
 
-    async def resolve_death_triggers(self, player_ids: list[int] | tuple[int, ...]) -> None:
-        await death.resolve_death_triggers(self, player_ids)
+    async def resolve_death_triggers(
+        self,
+        player_ids: list[int] | tuple[int, ...],
+        *,
+        delay_night_hunter: bool = True,
+    ) -> None:
+        await death.resolve_death_triggers(self, player_ids, delay_night_hunter=delay_night_hunter)
 
     async def resolve_sheriff_death(self, sheriff_id: int) -> None:
         await sheriff_rules.resolve_sheriff_death(self, sheriff_id)
 
-    async def run_sheriff_election(self) -> int | None:
-        return await sheriff.run_sheriff_election(self)
+    async def run_sheriff_election(self, *, first_night_deaths: tuple[int, ...] = ()) -> int | str | None:
+        return await sheriff.run_sheriff_election(self, first_night_deaths=first_night_deaths)
 
     async def run_night(self) -> list[int]:
         return await night.run_night(self)
@@ -207,7 +239,7 @@ class GameEngine:
     async def resolve_exiled_player(self, player_id: int) -> None:
         await death.resolve_exiled_player(self, player_id)
 
-    async def run_exile_vote(self) -> int | None:
+    async def run_exile_vote(self) -> int | str | None:
         return await exile.run_exile_vote(self)
 
     def resolve_exile_votes(
@@ -221,20 +253,27 @@ class GameEngine:
     def check_winner(self) -> Winner | None:
         return victory.check_winner(self)
 
-    async def run_until_finished(self, max_days: int | None = None) -> Winner:
+    async def run_until_finished(self, max_days: int | None = None) -> Winner | None:
         effective_max_days = max_days if max_days is not None else self.config.max_days
         for day_index in range(effective_max_days):
             if day_index == 0:
-                first_night = await night.run_night_without_death_reveal(self)
                 if self.config.enable_sheriff:
-                    await self.run_sheriff_election()
-                self.state.phase = Phase.DAY_SPEECH
-                await night.reveal_night_deaths(
-                    self,
-                    first_night,
-                    event_type="night_death_reveal",
-                    message=f"第 {self.state.day} 天天亮，公布昨夜死亡玩家：{first_night.death_ids or '无'}",
-                )
+                    first_night = await night.run_night_without_death_reveal(self)
+                    sheriff_result = await self.run_sheriff_election(first_night_deaths=tuple(first_night.death_ids))
+                    self.state.phase = Phase.DAY_SPEECH
+                    await night.reveal_night_deaths(
+                        self,
+                        first_night,
+                        event_type="night_death_reveal",
+                        message=f"第 {self.state.day} 天天亮，公布昨夜死亡玩家：{first_night.death_ids or '无'}",
+                    )
+                    if sheriff_result == "white_wolf_exploded":
+                        winner = self.check_winner()
+                        if winner is not None:
+                            return winner
+                        continue
+                else:
+                    await self.run_night()
             else:
                 await self.run_night()
             if not self.state.pending_hunter_shots:
@@ -247,8 +286,21 @@ class GameEngine:
                 return winner
             if day_result == "white_wolf_exploded":
                 continue
-            await self.run_exile_vote()
+            exile_result = await self.run_exile_vote()
             winner = self.check_winner()
             if winner is not None:
                 return winner
-        raise RuntimeError("game did not finish within max_days")
+            if exile_result == "white_wolf_exploded":
+                continue
+        self.state.phase = Phase.FINISHED
+        self._record(
+            "game_end",
+            message=f"游戏结束，达到最大天数 {effective_max_days}，无胜者",
+            payload={
+                "winner": None,
+                "outcome": "no_winner",
+                "terminal_reason": "max_days_reached",
+                "max_days": effective_max_days,
+            },
+        )
+        return None

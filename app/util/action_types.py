@@ -75,6 +75,10 @@ NIGHT_SKILL_ACTION_TYPES: frozenset[str] = frozenset({
     ActionType.WEREWOLF_KILL.value,
     ActionType.SEER_CHECK.value,
     ActionType.WITCH_ACT.value,
+})
+
+#: Daytime interrupt actions that are role-specific but not night skills.
+DAY_INTERRUPT_ACTION_TYPES: frozenset[str] = frozenset({
     ActionType.WHITE_WOLF_EXPLODE.value,
 })
 

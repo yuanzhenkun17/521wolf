@@ -14,8 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from enum import Enum
 
-from app.util.json import compact_json, read_json_object, write_json
-from app.util.manifest import build_run_manifest, write_manifest
+from app.util.json import compact_json, to_jsonable
 
 _log = logging.getLogger(__name__)
 
@@ -352,18 +351,863 @@ def annotate_proposal_quality(
 
 
 # ---------------------------------------------------------------------------
+# Trust loop helpers: review state, paired battles, gate reports, reject risk
+# ---------------------------------------------------------------------------
+
+PROPOSAL_REVIEW_STATUSES = {"proposed", "accepted", "rejected"}
+_ACCEPTED_STATUS_ALIASES = {
+    "accept",
+    "accepted",
+    "approve",
+    "approved",
+    "apply",
+    "applied",
+    "promote",
+    "promoted",
+    "yes",
+    "true",
+}
+_REJECTED_STATUS_ALIASES = {
+    "reject",
+    "rejected",
+    "decline",
+    "declined",
+    "deny",
+    "denied",
+    "drop",
+    "dropped",
+    "block",
+    "blocked",
+    "no",
+    "false",
+}
+_PROPOSED_STATUS_ALIASES = {
+    "",
+    "new",
+    "open",
+    "pending",
+    "proposal",
+    "proposed",
+    "review",
+    "reviewing",
+    "queued",
+    "skipped",
+}
+
+
+def normalize_proposal_review_status(value: Any, *, default: str = "proposed") -> str:
+    """Return canonical proposal review status: proposed, accepted, or rejected."""
+    fallback = default if default in PROPOSAL_REVIEW_STATUSES else "proposed"
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return "accepted" if value else "rejected"
+    text = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if text in _ACCEPTED_STATUS_ALIASES:
+        return "accepted"
+    if text in _REJECTED_STATUS_ALIASES:
+        return "rejected"
+    if text in _PROPOSED_STATUS_ALIASES:
+        return "proposed"
+    return fallback
+
+
+def normalize_proposal_reviews(
+    proposals: list[SkillProposal | dict[str, Any]],
+    decisions: dict[str, Any] | list[dict[str, Any]] | None = None,
+    *,
+    default: str = "proposed",
+) -> list[dict[str, Any]]:
+    """Return proposal dicts with canonical review/status fields.
+
+    ``decisions`` may be a mapping of proposal_id -> status/decision row, or a
+    list of rows containing proposal_id plus status/review_status/decision.
+    The input proposals are not mutated.
+    """
+    decision_by_id = _proposal_decision_map(decisions)
+    normalized: list[dict[str, Any]] = []
+    for proposal in proposals or []:
+        row = proposal.to_dict() if isinstance(proposal, SkillProposal) else dict(proposal)
+        proposal_id = str(row.get("proposal_id", ""))
+        decision = decision_by_id.get(proposal_id, {})
+        row_status = _first_present(row, ("review_status", "status", "decision"), default_value=default)
+        if isinstance(decision, dict):
+            status_value = _first_present(
+                decision,
+                ("review_status", "status", "decision", "action"),
+                default_value=row_status,
+            )
+        elif proposal_id in decision_by_id:
+            status_value = decision
+        else:
+            status_value = row_status
+        status = normalize_proposal_review_status(status_value, default=default)
+        row["status"] = status
+        row["review_status"] = status
+        if isinstance(decision, dict):
+            for key in ("review_reason", "reviewed_by", "reviewed_at", "risk_tags"):
+                if key in decision:
+                    row[key] = decision[key]
+        normalized.append(row)
+    return normalized
+
+
+def accepted_proposals_for_apply(
+    proposals: list[SkillProposal | dict[str, Any]],
+    decisions: dict[str, Any] | list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Return accepted proposals converted to legacy ``status=proposed``.
+
+    The applier currently treats ``status=proposed`` as eligible. This adapter
+    lets a future review endpoint apply only accepted rows without changing the
+    legacy applier contract.
+    """
+    accepted: list[dict[str, Any]] = []
+    for row in normalize_proposal_reviews(proposals, decisions):
+        if row.get("review_status") != "accepted":
+            continue
+        item = dict(row)
+        item["status"] = "proposed"
+        accepted.append(item)
+    return accepted
+
+
+def build_paired_seed_battle_table(
+    run: dict[str, Any] | None = None,
+    *,
+    battle_result: dict[str, Any] | None = None,
+    role: str = "",
+    target_team: str = "",
+) -> list[dict[str, Any]]:
+    """Build paired baseline/candidate rows keyed by seed.
+
+    Accepts either a persisted run shape containing ``battle_games`` or a
+    battle_result containing side game lists. Missing sides are preserved as
+    unrankable rows so callers can explain sample loss.
+    """
+    result = battle_result if isinstance(battle_result, dict) else {}
+    run_data = run if isinstance(run, dict) else {}
+    if not result and isinstance(run_data.get("battle_result"), dict):
+        result = dict(run_data.get("battle_result") or {})
+    resolved_role = role or str(run_data.get("role") or "")
+    target = target_team or str(result.get("target_team") or "")
+    games = _collect_battle_games(run_data, result)
+    by_seed: dict[Any, dict[str, Any]] = {}
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        seed = game.get("seed")
+        if seed is None:
+            seed = _infer_seed_from_game_id(game.get("game_id") or game.get("source_game_id"))
+        if seed is None:
+            seed = game.get("game_id") or game.get("source_game_id") or len(by_seed)
+        side = _battle_game_side(game)
+        if side not in {"baseline", "candidate"}:
+            continue
+        row = by_seed.setdefault(seed, {"seed": seed})
+        row[side] = dict(game)
+
+    seeds = list(result.get("seeds") or [])
+    for seed in seeds:
+        by_seed.setdefault(seed, {"seed": seed})
+
+    rows = [_build_paired_seed_row(seed, pair, role=resolved_role, target_team=target) for seed, pair in by_seed.items()]
+    return sorted(rows, key=lambda item: str(item.get("seed", "")))
+
+
+def build_evolution_gate_report(
+    run: dict[str, Any] | None = None,
+    *,
+    battle_result: dict[str, Any] | None = None,
+    proposals: list[SkillProposal | dict[str, Any]] | None = None,
+    rejected: list[dict[str, Any]] | None = None,
+    role: str = "",
+    target_team: str = "",
+    thresholds: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a machine-readable promotion gate report for the trust loop."""
+    run_data = run if isinstance(run, dict) else {}
+    result = battle_result if isinstance(battle_result, dict) else {}
+    if not result and isinstance(run_data.get("battle_result"), dict):
+        result = dict(run_data.get("battle_result") or {})
+    resolved_role = role or str(run_data.get("role") or "")
+    target = target_team or str(result.get("target_team") or "")
+    threshold_values = _gate_thresholds(thresholds)
+    paired_rows = build_paired_seed_battle_table(
+        run_data,
+        battle_result=result,
+        role=resolved_role,
+        target_team=target,
+    )
+    paired_summary = _paired_seed_summary(paired_rows)
+    role_score = _role_score_gate_summary(paired_rows, result)
+    decision_quality = _decision_quality_summary_for_gate(paired_rows, run_data, result)
+    proposal_rows = normalize_proposal_reviews(_proposal_rows(proposals, run_data), default="proposed")
+    proposal_risks = [
+        assess_proposal_risk(
+            proposal,
+            rejected=rejected,
+            paired_seed_table=paired_rows,
+            duplicate_threshold=float(threshold_values["duplicate_similarity_threshold"]),
+        )
+        for proposal in proposal_rows
+    ]
+    risk_tags = sorted({tag for risk in proposal_risks for tag in risk.get("risk_tags", [])})
+
+    blocked_reasons: list[str] = []
+    review_reasons: list[str] = []
+    battle_passed = bool(result.get("significant"))
+    if result.get("skipped"):
+        blocked_reasons.append(str(result.get("reason") or "battle_skipped"))
+    elif not battle_passed:
+        blocked_reasons.append("battle_not_significant")
+    if paired_summary["valid_count"] < threshold_values["min_paired_valid_seeds"]:
+        review_reasons.append("paired_valid_count_below_minimum")
+    if role_score["delta"] is not None and role_score["delta"] < threshold_values["min_role_score_delta"]:
+        review_reasons.append("role_score_delta_below_minimum")
+    if decision_quality["candidate"]["issue_rate"] > threshold_values["max_decision_issue_rate"]:
+        review_reasons.append("candidate_decision_issue_rate_above_ceiling")
+    if decision_quality["delta"] > threshold_values["max_decision_issue_delta"]:
+        review_reasons.append("decision_issue_delta_above_ceiling")
+    if paired_summary["valid_count"] and paired_summary["candidate_edge_rate"] < threshold_values["min_candidate_edge_rate"]:
+        review_reasons.append("paired_candidate_edge_rate_below_minimum")
+    if "duplicate_rejected" in risk_tags:
+        review_reasons.append("proposal_duplicates_rejected_buffer")
+    if "overfit_high" in risk_tags:
+        review_reasons.append("proposal_overfit_risk_high")
+    if any(str(row.get("risk", "")).lower() == "high" for row in proposal_rows):
+        review_reasons.append("proposal_high_risk")
+
+    blocked_reasons = _unique_str(blocked_reasons)
+    review_reasons = _unique_str(review_reasons)
+    promote_allowed = battle_passed and not blocked_reasons and not review_reasons
+    if promote_allowed:
+        decision = "promote"
+    elif blocked_reasons and "battle_not_significant" in blocked_reasons:
+        decision = "reject"
+    else:
+        decision = "review_required"
+
+    return {
+        "schema_version": "trust_loop_gate_v1",
+        "decision": decision,
+        "promote_allowed": promote_allowed,
+        "blocked_reasons": blocked_reasons,
+        "review_reasons": review_reasons,
+        "reasons": _unique_str([*blocked_reasons, *review_reasons]),
+        "thresholds": threshold_values,
+        "metrics": {
+            "win_rate_delta": _as_float(result.get("win_rate_delta"), 0.0),
+            "role_score_delta": role_score["delta"],
+            "paired_valid_count": paired_summary["valid_count"],
+            "paired_candidate_wins": paired_summary["candidate_wins"],
+            "paired_baseline_wins": paired_summary["baseline_wins"],
+            "paired_ties": paired_summary["ties"],
+            "paired_candidate_edge_rate": paired_summary["candidate_edge_rate"],
+            "decision_issue_delta": decision_quality["delta"],
+        },
+        "role_score": role_score,
+        "paired_seed_summary": paired_rows,
+        "paired_summary": paired_summary,
+        "decision_quality": decision_quality,
+        "risk_tags": risk_tags,
+        "proposal_risks": proposal_risks,
+        "significance": {
+            "passed": battle_passed,
+            "reasons": list((result.get("significance") or {}).get("reasons", []) or [])
+            if isinstance(result.get("significance"), dict) else [],
+        },
+    }
+
+
+def reject_buffer_similarity(
+    proposal: SkillProposal | dict[str, Any],
+    rejected: list[dict[str, Any]] | None,
+    *,
+    threshold: float = 0.72,
+) -> dict[str, Any]:
+    """Compare one proposal with rejected-buffer entries."""
+    row = proposal.to_dict() if isinstance(proposal, SkillProposal) else dict(proposal or {})
+    best: dict[str, Any] | None = None
+    best_score = 0.0
+    for item in rejected or []:
+        if not isinstance(item, dict):
+            continue
+        score = _proposal_similarity(row, item)
+        if score > best_score:
+            best_score = score
+            best = item
+    duplicate = bool(best is not None and best_score >= threshold)
+    return {
+        "duplicate_rejected": duplicate,
+        "similarity": round(best_score, 4),
+        "threshold": threshold,
+        "matched_rejection": _compact_rejection_match(best) if duplicate else None,
+        "normalized_hash": _normalized_proposal_hash(row),
+    }
+
+
+def detect_overfit_risk(
+    proposal: SkillProposal | dict[str, Any],
+    *,
+    paired_seed_table: list[dict[str, Any]] | None = None,
+    rejected: list[dict[str, Any]] | None = None,
+    duplicate_threshold: float = 0.72,
+) -> dict[str, Any]:
+    """Return deterministic overfit risk tags and gate effect for a proposal."""
+    row = proposal.to_dict() if isinstance(proposal, SkillProposal) else dict(proposal or {})
+    text = _proposal_risk_text(row).lower()
+    tags: list[str] = []
+    evidence: list[str] = []
+
+    pattern_checks = [
+        ("seed_specific", r"\bseed[_\s:#-]*\d+\b"),
+        ("game_id_specific", r"\b(game_id|source_game_id)\b|\b[a-z]+_[a-z0-9_]*_\d{3,}\b"),
+        ("player_specific", r"\b(player|p)[_\s:#-]*\d+\b|\d+\s*号"),
+        ("model_specific", r"\b(model_id|gpt-|claude|deepseek|qwen|glm)\b"),
+        ("database_specific", r"\b(postgres|postgresql|database|run_id|table|schema)\b"),
+    ]
+    for tag, pattern in pattern_checks:
+        if re.search(pattern, text):
+            tags.append(tag)
+            evidence.append(tag)
+
+    for tag in _as_str_list(row.get("risk_tags")):
+        if tag:
+            tags.append(tag)
+    if str(row.get("risk", "")).lower() == "high":
+        tags.append("proposal_high_risk")
+    tags.extend(_proposal_high_risk_fields(row))
+
+    similarity = reject_buffer_similarity(row, rejected, threshold=duplicate_threshold)
+    if similarity["duplicate_rejected"]:
+        tags.append("duplicate_rejected")
+        evidence.append("matched_rejected_buffer")
+
+    paired_summary = _paired_seed_summary(paired_seed_table or [])
+    if paired_summary["valid_count"] >= 3 and paired_summary["candidate_edge_rate"] < 0.5:
+        tags.append("paired_seed_unstable")
+        evidence.append("candidate_edge_rate_below_half")
+    avg_delta = paired_summary.get("avg_score_delta")
+    if avg_delta is not None and avg_delta <= 0 and paired_summary["candidate_wins"] > 0:
+        tags.append("role_score_not_improved")
+        evidence.append("non_positive_avg_score_delta")
+
+    tags = _unique_str(tags)
+    score = _overfit_score(tags)
+    if score >= 0.75 or "seed_specific" in tags and "duplicate_rejected" in tags:
+        gate_effect = "block"
+        tags.append("overfit_high")
+    elif score >= 0.35 or tags:
+        gate_effect = "review_required"
+    else:
+        gate_effect = "allow"
+    tags = _unique_str(tags)
+    return {
+        "overfit_risk_score": round(score, 4),
+        "overfit_risk_tags": tags,
+        "risk_tags": tags,
+        "overfit_evidence": _unique_str(evidence),
+        "gate_effect": gate_effect,
+        "similarity": similarity,
+    }
+
+
+def assess_proposal_risk(
+    proposal: SkillProposal | dict[str, Any],
+    *,
+    rejected: list[dict[str, Any]] | None = None,
+    paired_seed_table: list[dict[str, Any]] | None = None,
+    duplicate_threshold: float = 0.72,
+) -> dict[str, Any]:
+    """Combined reject-buffer similarity and overfit report for one proposal."""
+    row = proposal.to_dict() if isinstance(proposal, SkillProposal) else dict(proposal or {})
+    risk = detect_overfit_risk(
+        row,
+        paired_seed_table=paired_seed_table,
+        rejected=rejected,
+        duplicate_threshold=duplicate_threshold,
+    )
+    return {
+        "proposal_id": str(row.get("proposal_id", "")),
+        "target_file": str(row.get("target_file", "")),
+        "review_status": normalize_proposal_review_status(row.get("review_status", row.get("status"))),
+        "risk": str(row.get("risk", "")),
+        **risk,
+    }
+
+
+def _proposal_decision_map(decisions: dict[str, Any] | list[dict[str, Any]] | None) -> dict[str, Any]:
+    if not decisions:
+        return {}
+    if isinstance(decisions, dict):
+        result: dict[str, Any] = {}
+        for key, value in decisions.items():
+            result[str(key)] = value
+        return result
+    result = {}
+    if isinstance(decisions, list):
+        for item in decisions:
+            if not isinstance(item, dict):
+                continue
+            proposal_id = item.get("proposal_id") or item.get("id")
+            if proposal_id:
+                result[str(proposal_id)] = dict(item)
+    return result
+
+
+def _unique_str(values: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def _first_present(mapping: Any, keys: tuple[str, ...], *, default_value: Any = None) -> Any:
+    if not isinstance(mapping, dict):
+        return default_value
+    for key in keys:
+        if key in mapping and mapping.get(key) is not None:
+            return mapping.get(key)
+    return default_value
+
+
+def _collect_battle_games(run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
+    games: list[dict[str, Any]] = []
+    for source in (run.get("battle_games"), result.get("battle_games")):
+        if isinstance(source, list):
+            games.extend(dict(item) for item in source if isinstance(item, dict))
+    for key, side in (("baseline_games", "baseline"), ("candidate_games", "candidate")):
+        source = result.get(key)
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            row.setdefault("side", side)
+            games.append(row)
+    return games
+
+
+def _battle_game_side(game: dict[str, Any]) -> str:
+    side = str(game.get("side") or game.get("variant") or "").strip().lower()
+    if side in {"baseline", "candidate"}:
+        return side
+    text = " ".join(str(game.get(key) or "") for key in ("game_id", "source_game_id", "storage_run_type"))
+    lowered = text.lower()
+    if "candidate" in lowered:
+        return "candidate"
+    if "baseline" in lowered:
+        return "baseline"
+    return ""
+
+
+def _infer_seed_from_game_id(value: Any) -> int | None:
+    text = str(value or "")
+    match = re.search(r"_(\d{3,})$", text)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _build_paired_seed_row(seed: Any, pair: dict[str, Any], *, role: str, target_team: str) -> dict[str, Any]:
+    baseline = pair.get("baseline") if isinstance(pair.get("baseline"), dict) else None
+    candidate = pair.get("candidate") if isinstance(pair.get("candidate"), dict) else None
+    baseline_score = _extract_role_score(baseline, role) if baseline else None
+    candidate_score = _extract_role_score(candidate, role) if candidate else None
+    score_delta = (
+        round(candidate_score - baseline_score, 6)
+        if candidate_score is not None and baseline_score is not None
+        else None
+    )
+    baseline_rankable = _game_rankable(baseline) if baseline else False
+    candidate_rankable = _game_rankable(candidate) if candidate else False
+    failure_reason = _paired_failure_reason(baseline, candidate, baseline_rankable, candidate_rankable)
+    winner_side = _paired_winner_side(
+        baseline,
+        candidate,
+        baseline_score=baseline_score,
+        candidate_score=candidate_score,
+        target_team=target_team,
+        rankable=baseline_rankable and candidate_rankable,
+    )
+    return {
+        "seed": seed,
+        "baseline_game_id": baseline.get("game_id") if baseline else None,
+        "candidate_game_id": candidate.get("game_id") if candidate else None,
+        "baseline_winner": baseline.get("winner") if baseline else None,
+        "candidate_winner": candidate.get("winner") if candidate else None,
+        "baseline_score": baseline_score,
+        "candidate_score": candidate_score,
+        "score_delta": score_delta,
+        "baseline_rankable": baseline_rankable,
+        "candidate_rankable": candidate_rankable,
+        "winner_side": winner_side,
+        "failure_reason": failure_reason,
+    }
+
+
+def _extract_role_score(game: dict[str, Any] | None, role: str = "") -> float | None:
+    if not isinstance(game, dict):
+        return None
+    for key in ("target_role_score", "target_role_role_weighted_score", "role_score", "avg_role_score"):
+        if key in game:
+            value = _nullable_float(game.get(key))
+            if value is not None:
+                return value
+    summary = game.get("score_summary") if isinstance(game.get("score_summary"), dict) else {}
+    for key in ("target_role_role_weighted_score", "target_role_score", "avg_role_score"):
+        value = _nullable_float(summary.get(key))
+        if value is not None:
+            return value
+    for key in ("by_role_category", "by_role_category_scores", "by_role"):
+        by_role = summary.get(key) if isinstance(summary.get(key), dict) else game.get(key)
+        if isinstance(by_role, dict) and role:
+            value = _nullable_float(by_role.get(role))
+            if value is not None:
+                return value
+    for key in ("player_scores", "scores"):
+        value = _score_from_player_rows(game.get(key), role)
+        if value is not None:
+            return value
+    return None
+
+
+def _score_from_player_rows(rows: Any, role: str) -> float | None:
+    if not isinstance(rows, list):
+        return None
+    scores: list[float] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        if role and str(item.get("role") or "") != role:
+            continue
+        score = _nullable_float(item.get("role_score"))
+        if score is not None:
+            scores.append(score)
+    if not scores:
+        return None
+    return round(sum(scores) / len(scores), 6)
+
+
+def _nullable_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _game_rankable(game: dict[str, Any] | None) -> bool:
+    if not isinstance(game, dict):
+        return False
+    if "rankable" in game:
+        return bool(game.get("rankable"))
+    winner = _normalize_winner_value(game.get("winner"))
+    return not game.get("error") and winner not in {"", "unknown", "none"}
+
+
+def _paired_failure_reason(
+    baseline: dict[str, Any] | None,
+    candidate: dict[str, Any] | None,
+    baseline_rankable: bool,
+    candidate_rankable: bool,
+) -> str:
+    if baseline is None:
+        return "missing_baseline_game"
+    if candidate is None:
+        return "missing_candidate_game"
+    if not baseline_rankable:
+        return str(baseline.get("error") or "baseline_unrankable")
+    if not candidate_rankable:
+        return str(candidate.get("error") or "candidate_unrankable")
+    return ""
+
+
+def _paired_winner_side(
+    baseline: dict[str, Any] | None,
+    candidate: dict[str, Any] | None,
+    *,
+    baseline_score: float | None,
+    candidate_score: float | None,
+    target_team: str,
+    rankable: bool,
+) -> str:
+    if not rankable:
+        return "invalid"
+    if baseline_score is not None and candidate_score is not None:
+        if candidate_score > baseline_score:
+            return "candidate"
+        if baseline_score > candidate_score:
+            return "baseline"
+        return "tie"
+    target = _normalize_winner_value(target_team)
+    baseline_win = _normalize_winner_value((baseline or {}).get("winner")) == target if target else False
+    candidate_win = _normalize_winner_value((candidate or {}).get("winner")) == target if target else False
+    if candidate_win and not baseline_win:
+        return "candidate"
+    if baseline_win and not candidate_win:
+        return "baseline"
+    return "tie"
+
+
+def _normalize_winner_value(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"villager", "village", "villagers", "good"}:
+        return "villagers"
+    if text in {"werewolf", "werewolves", "wolf", "wolves", "evil"}:
+        return "werewolves"
+    return text
+
+
+def _paired_seed_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    valid_rows = [
+        row for row in rows
+        if isinstance(row, dict)
+        and row.get("baseline_rankable")
+        and row.get("candidate_rankable")
+        and row.get("winner_side") != "invalid"
+    ]
+    candidate_wins = sum(1 for row in valid_rows if row.get("winner_side") == "candidate")
+    baseline_wins = sum(1 for row in valid_rows if row.get("winner_side") == "baseline")
+    ties = sum(1 for row in valid_rows if row.get("winner_side") == "tie")
+    deltas = [
+        float(row["score_delta"]) for row in valid_rows
+        if isinstance(row.get("score_delta"), (int, float))
+    ]
+    return {
+        "seed_count": len(rows),
+        "valid_count": len(valid_rows),
+        "candidate_wins": candidate_wins,
+        "baseline_wins": baseline_wins,
+        "ties": ties,
+        "candidate_edge_rate": round(candidate_wins / len(valid_rows), 6) if valid_rows else 0.0,
+        "avg_score_delta": round(sum(deltas) / len(deltas), 6) if deltas else None,
+    }
+
+
+def _role_score_gate_summary(rows: list[dict[str, Any]], result: dict[str, Any]) -> dict[str, Any]:
+    baseline_scores = [
+        float(row["baseline_score"]) for row in rows
+        if isinstance(row.get("baseline_score"), (int, float))
+    ]
+    candidate_scores = [
+        float(row["candidate_score"]) for row in rows
+        if isinstance(row.get("candidate_score"), (int, float))
+    ]
+    baseline_avg = _average_or_result(baseline_scores, result.get("baseline"))
+    candidate_avg = _average_or_result(candidate_scores, result.get("candidate"))
+    delta = (
+        round(candidate_avg - baseline_avg, 6)
+        if baseline_avg is not None and candidate_avg is not None
+        else None
+    )
+    return {
+        "baseline_avg": baseline_avg,
+        "candidate_avg": candidate_avg,
+        "delta": delta,
+        "paired_score_count": min(len(baseline_scores), len(candidate_scores)),
+    }
+
+
+def _average_or_result(values: list[float], side_summary: Any) -> float | None:
+    if values:
+        return round(sum(values) / len(values), 6)
+    if isinstance(side_summary, dict):
+        for key in ("avg_role_score", "target_role_score", "target_role_role_weighted_score"):
+            value = _nullable_float(side_summary.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _decision_quality_summary_for_gate(
+    rows: list[dict[str, Any]],
+    run: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    from app.lib.score import compute_decision_quality_metrics
+
+    baseline_games = [row.get("baseline") for row in _pair_rows_with_games(run, result)]
+    candidate_games = [row.get("candidate") for row in _pair_rows_with_games(run, result)]
+    if not baseline_games and not candidate_games:
+        baseline_games = [row.get("baseline") for row in rows if isinstance(row.get("baseline"), dict)]
+        candidate_games = [row.get("candidate") for row in rows if isinstance(row.get("candidate"), dict)]
+    baseline = compute_decision_quality_metrics([g for g in baseline_games if isinstance(g, dict)])
+    candidate = compute_decision_quality_metrics([g for g in candidate_games if isinstance(g, dict)])
+    baseline_issue = _trust_decision_issue_rate(baseline)
+    candidate_issue = _trust_decision_issue_rate(candidate)
+    return {
+        "baseline": {**baseline, "issue_rate": round(baseline_issue, 6)},
+        "candidate": {**candidate, "issue_rate": round(candidate_issue, 6)},
+        "delta": round(candidate_issue - baseline_issue, 6),
+    }
+
+
+def _pair_rows_with_games(run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
+    games = _collect_battle_games(run, result)
+    by_seed: dict[Any, dict[str, Any]] = {}
+    for game in games:
+        seed = game.get("seed")
+        if seed is None:
+            continue
+        side = _battle_game_side(game)
+        if side:
+            by_seed.setdefault(seed, {})[side] = game
+    return list(by_seed.values())
+
+
+def _trust_decision_issue_rate(metrics: dict[str, Any]) -> float:
+    rates = [
+        metrics.get("fallback_rate"),
+        metrics.get("llm_error_rate"),
+        metrics.get("policy_skipped_rate"),
+        metrics.get("invalid_response_rate"),
+        metrics.get("default_action_rate"),
+    ]
+    return max((_as_float(rate, 0.0) for rate in rates), default=0.0)
+
+
+def _proposal_rows(
+    proposals: list[SkillProposal | dict[str, Any]] | None,
+    run: dict[str, Any],
+) -> list[SkillProposal | dict[str, Any]]:
+    if proposals is not None:
+        return list(proposals)
+    value = run.get("proposals")
+    if isinstance(value, dict) and isinstance(value.get("proposals"), list):
+        return [item for item in value.get("proposals", []) if isinstance(item, dict)]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _gate_thresholds(thresholds: dict[str, Any] | None) -> dict[str, Any]:
+    values = dict(thresholds or {})
+    return {
+        "min_paired_valid_seeds": int(values.get("min_paired_valid_seeds", 4) or 0),
+        "min_role_score_delta": float(values.get("min_role_score_delta", 0.0) or 0.0),
+        "max_decision_issue_rate": float(values.get("max_decision_issue_rate", 0.10) or 0.0),
+        "max_decision_issue_delta": float(values.get("max_decision_issue_delta", 0.05) or 0.0),
+        "min_candidate_edge_rate": float(values.get("min_candidate_edge_rate", 0.50) or 0.0),
+        "duplicate_similarity_threshold": float(values.get("duplicate_similarity_threshold", 0.72) or 0.0),
+    }
+
+
+def _proposal_risk_text(proposal: dict[str, Any]) -> str:
+    parts = [
+        proposal.get("target_file"),
+        proposal.get("action_type"),
+        proposal.get("section"),
+        proposal.get("content"),
+        proposal.get("rationale"),
+        proposal.get("expected_metric"),
+    ]
+    for key in ("diff", "before", "after"):
+        value = proposal.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+    return "\n".join(str(part or "") for part in parts)
+
+
+def _normalized_proposal_hash(proposal: dict[str, Any]) -> str:
+    return _short_text_hash(_normalize_similarity_text(_proposal_risk_text(proposal)))
+
+
+def _normalize_similarity_text(text: str) -> str:
+    value = str(text or "").lower()
+    value = re.sub(r"\bseed[_\s:#-]*\d+\b", " seed_n ", value)
+    value = re.sub(r"\b(game|game_id|source_game_id)[_\s:#-]*[a-z0-9_-]+\b", " game_n ", value)
+    value = re.sub(r"\b(player|p)[_\s:#-]*\d+\b", " player_n ", value)
+    value = re.sub(r"\d+\s*号", " player_n ", value)
+    value = re.sub(r"\d+", " n ", value)
+    value = re.sub(r"[^\w\u4e00-\u9fff]+", " ", value)
+    return " ".join(value.split())
+
+
+def _similarity_tokens(proposal: dict[str, Any]) -> set[str]:
+    text = _normalize_similarity_text(_proposal_risk_text(proposal))
+    return {token for token in text.split() if token and token != "n"}
+
+
+def _proposal_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
+    left_hash = _normalized_proposal_hash(left)
+    right_hash = _normalized_proposal_hash(right)
+    same_target = str(left.get("target_file", "")) == str(right.get("target_file", "")) and bool(left.get("target_file"))
+    same_action = str(left.get("action_type", "")) == str(right.get("action_type", "")) and bool(left.get("action_type"))
+    if same_target and same_action and left_hash == right_hash:
+        return 1.0
+    left_tokens = _similarity_tokens(left)
+    right_tokens = _similarity_tokens(right)
+    if not left_tokens or not right_tokens:
+        content_score = 0.0
+    else:
+        content_score = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+    score = content_score * 0.75
+    if same_target:
+        score += 0.15
+    if same_action:
+        score += 0.10
+    left_tags = set(_as_str_list(left.get("risk_tags")))
+    right_tags = set(_as_str_list(right.get("risk_tags")))
+    if left_tags and right_tags:
+        score += 0.10 * (len(left_tags & right_tags) / len(left_tags | right_tags))
+    return max(0.0, min(1.0, score))
+
+
+def _compact_rejection_match(item: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    return {
+        "proposal_id": item.get("proposal_id"),
+        "target_file": item.get("target_file"),
+        "action_type": item.get("action_type"),
+        "reason": item.get("review_reason") or item.get("rejection_reason") or item.get("reason"),
+        "source_run_id": item.get("source_run_id"),
+    }
+
+
+def _overfit_score(tags: list[str]) -> float:
+    weights = {
+        "seed_specific": 0.35,
+        "game_id_specific": 0.30,
+        "player_specific": 0.25,
+        "model_specific": 0.20,
+        "database_specific": 0.20,
+        "duplicate_rejected": 0.35,
+        "paired_seed_unstable": 0.25,
+        "role_score_not_improved": 0.20,
+        "proposal_high_risk": 0.30,
+        "role_identity": 0.20,
+        "private_info": 0.20,
+        "front_matter": 0.20,
+        "global_policy": 0.20,
+    }
+    return min(1.0, sum(weights.get(tag, 0.10) for tag in set(tags)))
+
+
+# ---------------------------------------------------------------------------
 # Evolution config
 # ---------------------------------------------------------------------------
 
 @dataclass
 class EvolutionConfig:
-    training_games: int = 20
-    battle_games: int = 10
+    training_games: int = 5
+    battle_games: int = 4
     role_concurrency: int = 2
     game_concurrency: int = 1
     llm_concurrency: int = 20
     llm_rpm: int = 60
-    auto_promote: bool = False
+    auto_promote: bool = True
     max_proposals: int = 3
     consolidation_window: int = 5
     prompt_version: str = "role_consolidation_v2"
@@ -377,6 +1221,12 @@ class EvolutionConfig:
     battle_error_rate_ceiling: float = 0.30
     battle_min_completed_games: int = 4
     battle_confidence_z: float = 1.96
+    # Auto-promotion is stricter than battle significance: small A/B samples
+    # may justify human review, but should not silently replace the baseline.
+    promotion_min_completed_games: int = 8
+    promotion_min_valid_game_rate: float = 0.85
+    promotion_max_decision_issue_rate: float = 0.10
+    promotion_min_proposal_quality: float = 0.60
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
@@ -393,129 +1243,123 @@ _EVOLUTION_DEFAULTS = EvolutionConfig()
 # ---------------------------------------------------------------------------
 
 class EvolutionStateManager:
-    """Manages per-role evolution run state persistence."""
+    """PostgreSQL-backed per-role evolution run state access."""
 
-    def __init__(self, db_path: Path | str | None = None, root_dir: Path | str | None = None) -> None:
-        if root_dir is not None:
-            self._root_dir = Path(root_dir)
-        elif db_path is not None:
-            path = Path(db_path)
-            self._root_dir = path if path.suffix == "" else path.parent / path.stem
-        else:
-            from app.config import DEFAULT_PATHS
-
-            self._root_dir = DEFAULT_PATHS.evolution_dir
-        self._root_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, root_dir: Path | str | None = None) -> None:
+        self._legacy_root_dir = Path(root_dir) if root_dir is not None else None
 
     def run_dir(self, run_id: str) -> Path:
-        """Return the on-disk directory for an evolution run."""
+        """Return the legacy run directory location without creating files."""
         _validate_run_id(run_id)
-        return self._root_dir / run_id
+        if self._legacy_root_dir is not None:
+            return self._legacy_root_dir / run_id
+        from app.config import DEFAULT_PATHS
 
-    def state_path(self, run_id: str) -> Path:
-        """Return the state.json path for an evolution run."""
-        return self.run_dir(run_id) / "state.json"
+        return DEFAULT_PATHS.evolution_dir / run_id
 
     def save_run(self, run: EvolutionRun) -> None:
-        """Persist the current run state to JSON."""
+        """Persist the current run state to PostgreSQL."""
         from app.util.time import beijing_now_iso
+        from storage.evolution.run_repo import EvolutionStore
+        from storage.interfaces import EvolutionRunData
+        from storage.provider import storage_provider_from_env
 
-        state_path = self.state_path(run.run_id)
-        existing = read_json_object(state_path, default={})
-        payload = run.to_dict()
+        _validate_run_id(run.run_id)
         updated_at = beijing_now_iso()
+        payload = to_jsonable(run.to_dict())
         payload["updated_at"] = updated_at
-        terminal_statuses = {
-            EvolutionStatus.PROMOTED.value,
-            EvolutionStatus.REJECTED.value,
-            EvolutionStatus.FAILED.value,
-            EvolutionStatus.REVIEWING.value,
-        }
-        started_at = run.started_at or existing.get("started_at") or updated_at
-        finished_at = run.finished_at or existing.get("finished_at")
-        if not finished_at and str(run.status) in terminal_statuses:
-            finished_at = updated_at
-        manifest = run.manifest or build_run_manifest(
-            run_type="evolve",
-            run_id=run.run_id,
-            model_config_hash="",
-            seed=None,
-            config={
-                "role": run.role,
-                "training_games": run.training_games,
-                "battle_games": run.battle_games,
-                "parent_hash": run.parent_hash,
-                "baseline_config": run.baseline_config.to_dict()
-                if run.baseline_config is not None and hasattr(run.baseline_config, "to_dict")
-                else run.baseline_config,
-            },
-            started_at=started_at,
-            finished_at=finished_at,
-            status=run.status,
-            error_summary="; ".join(str(item) for item in run.errors),
-            paths={
-                "run_dir": str(self.run_dir(run.run_id)),
-                "state": "state.json",
-                "manifest": "manifest.json",
-                "baseline_skill_dir": run.baseline_skill_dir,
-                "candidate_skill_dir": run.candidate_skill_dir,
-                "training_output_dir": run.training_output_dir,
-            },
-            metadata={
-                "role": run.role,
-                "current_stage": run.current_stage,
-                "progress": run.progress,
-                "warnings": run.warnings,
-                "diagnostics": run.diagnostics,
-            },
-        )
-        payload["started_at"] = started_at
-        payload["finished_at"] = finished_at
-        payload["manifest"] = manifest
-        write_manifest(self.run_dir(run.run_id) / "manifest.json", manifest)
-        write_json(state_path, payload)
+        payload["started_at"] = run.started_at or updated_at
+        payload["finished_at"] = run.finished_at
+
+        conn = storage_provider_from_env().open_evolution_connection()
+        try:
+            EvolutionStore(conn).save_run(
+                EvolutionRunData(
+                    run_id=run.run_id,
+                    role=run.role,
+                    parent_hash=run.parent_hash,
+                    status=run.status,
+                    training_games=run.training_games,
+                    battle_games=run.battle_games,
+                    baseline_config=run.baseline_config,
+                    candidate_hash=run.candidate_hash,
+                    battle_result=run.battle_result,
+                    errors=list(run.errors),
+                    training_run_id=run.training_run_id,
+                    training_output_dir=run.training_output_dir,
+                    runtime_state=payload,
+                    started_at=run.started_at or updated_at,
+                    finished_at=run.finished_at,
+                )
+            )
+        finally:
+            conn.close()
 
     def load_run(self, run_id: str) -> EvolutionRun | None:
-        """Load a persisted run by id."""
-        path = self.state_path(run_id)
-        if not path.exists():
-            return None
+        """Load a persisted run by id from PostgreSQL."""
+        _validate_run_id(run_id)
+        from storage.evolution.run_repo import EvolutionStore
+        from storage.provider import storage_provider_from_env
+
+        conn = storage_provider_from_env().open_evolution_connection()
         try:
-            return EvolutionRun.from_dict(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
-            _log.warning("Skipping unreadable evolution run state %s: %s", path, exc)
+            stored = EvolutionStore(conn).get_run(run_id)
+        finally:
+            conn.close()
+        if stored is None:
             return None
+        return _evolution_run_from_storage(stored)
 
     def list_runs(self, role: str) -> list[EvolutionRun]:
-        """List persisted runs for a role, ordered by run id."""
-        runs: list[EvolutionRun] = []
-        if not self._root_dir.exists():
-            return runs
-        for state_path in sorted(self._root_dir.glob("*/state.json")):
-            try:
-                run = EvolutionRun.from_dict(json.loads(state_path.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                continue
-            if run.role == role:
-                runs.append(run)
-        return runs
+        """List persisted runs for a role from PostgreSQL."""
+        from storage.evolution.run_repo import EvolutionStore
+        from storage.provider import storage_provider_from_env
+
+        conn = storage_provider_from_env().open_evolution_connection()
+        try:
+            stored = EvolutionStore(conn).list_runs(role=role, limit=200)
+        finally:
+            conn.close()
+        return [_evolution_run_from_storage(item) for item in stored]
 
     def scan_active_runs(self) -> list[EvolutionRun]:
         """Return non-terminal runs for recovery dashboards."""
+        from storage.evolution.run_repo import EvolutionStore
+        from storage.provider import storage_provider_from_env
+
         terminal = {
             EvolutionStatus.PROMOTED.value,
             EvolutionStatus.REJECTED.value,
             EvolutionStatus.FAILED.value,
         }
-        active: list[EvolutionRun] = []
-        for state_path in sorted(self._root_dir.glob("*/state.json")):
-            try:
-                run = EvolutionRun.from_dict(json.loads(state_path.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                continue
-            if str(run.status) not in terminal:
-                active.append(run)
-        return active
+        conn = storage_provider_from_env().open_evolution_connection()
+        try:
+            stored = EvolutionStore(conn).list_runs(limit=200)
+        finally:
+            conn.close()
+        return [
+            _evolution_run_from_storage(item)
+            for item in stored
+            if str(item.status) not in terminal
+        ]
+
+
+def _evolution_run_from_storage(data: Any) -> EvolutionRun:
+    runtime_state = getattr(data, "runtime_state", None)
+    if isinstance(runtime_state, dict):
+        return EvolutionRun.from_dict(runtime_state)
+    return EvolutionRun(
+        run_id=str(getattr(data, "run_id", "")),
+        role=str(getattr(data, "role", "")),
+        parent_hash=str(getattr(data, "parent_hash", "")),
+        status=str(getattr(data, "status", "")),
+        training_games=int(getattr(data, "training_games", 0) or 0),
+        battle_games=int(getattr(data, "battle_games", 0) or 0),
+        baseline_config=getattr(data, "baseline_config", None),
+        candidate_hash=getattr(data, "candidate_hash", None),
+        battle_result=getattr(data, "battle_result", None),
+        errors=list(getattr(data, "errors", []) or []),
+    )
 
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -612,6 +1456,9 @@ def _summarize_evidence_for_role(game: dict[str, Any], role: str) -> dict[str, A
             "key_decisions": counts.get("key_decisions"),
             "role_key_decisions": counts.get("role_key_decisions"),
         }
+    judge_summary = _compact_training_judge_summary(evidence.get("decision_judge"))
+    if judge_summary:
+        result["decision_judge"] = judge_summary
     return result
 
 
@@ -623,7 +1470,7 @@ def _dict_items(value: Any) -> list[dict[str, Any]]:
 
 def _compact_training_key_decision(item: dict[str, Any]) -> dict[str, Any]:
     quote = str(item.get("reason") or item.get("public_text") or "")[:180]
-    return {
+    result = {
         "decision_id": item.get("decision_id"),
         "day": item.get("day"),
         "phase": item.get("phase"),
@@ -637,6 +1484,46 @@ def _compact_training_key_decision(item: dict[str, Any]) -> dict[str, Any]:
         "quote": quote,
         "notes": item.get("notes", []),
     }
+    judge = _compact_training_decision_judge(item.get("judge"))
+    if judge:
+        result["judge"] = judge
+    return result
+
+
+def _compact_training_judge_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    summary = value.get("summary") if isinstance(value.get("summary"), dict) else {}
+    metrics = value.get("metrics") if isinstance(value.get("metrics"), dict) else {}
+    result: dict[str, Any] = {
+        "status": value.get("status"),
+        "reason": value.get("reason"),
+        "average_score": summary.get("average_score"),
+        "quality_counts": summary.get("quality_counts", {}),
+        "top_mistake_tags": summary.get("top_mistake_tags", []),
+        "top_rubric_misses": summary.get("top_rubric_misses", []),
+        "related_skills": summary.get("related_skills", []),
+        "degraded_reasons": value.get("degraded_reasons", []),
+        "judged": metrics.get("judged", summary.get("judged")),
+        "failed": metrics.get("failed"),
+    }
+    return {key: item for key, item in result.items() if item not in (None, "", [], {})}
+
+
+def _compact_training_decision_judge(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {
+        "score": value.get("score"),
+        "quality": value.get("quality"),
+        "reason": str(value.get("reason") or "")[:180],
+        "mistake_tags": value.get("mistake_tags", []),
+        "rubric_misses": value.get("rubric_misses", []),
+        "related_skills": value.get("related_skills", []),
+        "suggestion": str(value.get("suggestion") or "")[:180],
+        "confidence": value.get("confidence"),
+    }
+    return {key: item for key, item in result.items() if item not in (None, "", [], {})}
 
 
 def build_consolidation_messages(

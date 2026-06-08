@@ -59,6 +59,7 @@ class GameLogger:
         target: int | None = None,
         payload: dict[str, Any] | None = None,
         public: bool = True,
+        visible_to: tuple[int, ...] = (),
     ) -> GameEvent:
         if isinstance(phase, Phase):
             phase_enum = phase
@@ -75,6 +76,7 @@ class GameLogger:
             target=target,
             payload=payload or {},
             public=_resolve_public_visibility(phase_enum, event_type, public),
+            visible_to=tuple(sorted(set(visible_to))),
             message=message,
             index=self._next_index,
         )

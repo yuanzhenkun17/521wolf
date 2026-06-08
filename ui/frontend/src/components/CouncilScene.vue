@@ -12,7 +12,6 @@ const SPEECH_EVENT_TYPES = new Set([
   'discussion',
   'day_speech',
   'player_speech',
-  'sheriff_run',
   'sheriff_speak',
   'sheriff_speech',
   'pk_speak',

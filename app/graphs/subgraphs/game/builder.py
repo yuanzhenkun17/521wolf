@@ -51,9 +51,9 @@ def build_game_subgraph(
     # After game loop: always record
     workflow.add_edge("game_loop", "record")
 
-    # After recording: persist if game_dir is set, else end
+    # After recording: persist when PostgreSQL persistence is available.
     def _should_persist(state: GameState) -> str:
-        if state.get("game_dir"):
+        if state.get("persistence") or state.get("game_persistence"):
             return "persist"
         return END
 

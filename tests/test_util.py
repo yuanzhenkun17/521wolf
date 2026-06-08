@@ -218,6 +218,7 @@ class TestActionTypes:
             VOTE_ACTION_TYPES,
             TARGET_ACTION_TYPES,
             CHOICE_ACTION_TYPES,
+            DAY_INTERRUPT_ACTION_TYPES,
             NIGHT_SKILL_ACTION_TYPES,
             SHERIFF_ACTION_TYPES,
         )
@@ -230,6 +231,8 @@ class TestActionTypes:
         assert "seer_check" in TARGET_ACTION_TYPES
         assert "witch_act" in CHOICE_ACTION_TYPES
         assert "seer_check" in NIGHT_SKILL_ACTION_TYPES
+        assert "white_wolf_explode" not in NIGHT_SKILL_ACTION_TYPES
+        assert "white_wolf_explode" in DAY_INTERRUPT_ACTION_TYPES
 
     def test_is_valid_action_type(self):
         from app.util.action_types import is_valid_action_type
@@ -312,7 +315,6 @@ class TestPaths:
         pc = PathConfig(root=tmp_path)
         assert pc.runs_dir == tmp_path / "runs"
         assert pc.data_dir == tmp_path / "data"
-        assert pc.wolf_db_path == tmp_path / "data" / "wolf.db"
         assert pc.registry_dir == tmp_path / "data" / "registry"
 
     def test_path_config_custom_root(self, tmp_path):

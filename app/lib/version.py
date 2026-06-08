@@ -8,16 +8,19 @@ import logging
 import os
 import shutil
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from pathlib import PurePosixPath
-from typing import Any, Iterator
+from typing import Any, Iterator, Protocol
 
 from app.util.json import read_json, write_json
 from app.util.time import beijing_now_iso
-from storage.interfaces import normalize_skill_path
+from storage.interfaces import compute_hash
+from storage.interfaces import normalize_skill_path, normalize_skill_text
+from storage.shared.database import StorageConnection
 
 _log = logging.getLogger(__name__)
 
@@ -26,6 +29,8 @@ _SCRATCH_DIR_PREFIXES = ("wolf_skill_", "wolf_skills_")
 _SKILL_STATUS_VALUES = {"active", "deprecated"}
 _EVOLUTION_ALLOWED_ACTIONS = {"append_rule", "rewrite_section", "deprecate_rule"}
 _REJECTED_BUFFER_LIMIT = 50
+_LOCK_GUARD = threading.Lock()
+_PROCESS_LOCKS: dict[str, threading.Lock] = {}
 
 
 @dataclass
@@ -221,18 +226,8 @@ class VersionRegistry:
     @contextmanager
     def _locked(self) -> Iterator[None]:
         """Cross-process registry lock for read-modify-write operations."""
-        lock_path = self._dir / ".registry.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("a+b") as lock_file:
-            lock_file.seek(0, os.SEEK_END)
-            if lock_file.tell() == 0:
-                lock_file.write(b"\0")
-                lock_file.flush()
-            _lock_file(lock_file)
-            try:
-                yield
-            finally:
-                _unlock_file(lock_file)
+        with _path_locked(self._dir / ".registry.lock"):
+            yield
 
     def _read_skill_contents_unlocked(self, role: str, version_id: str) -> dict[str, str]:
         files_dir = self._role_dir(role) / version_id / "skills"
@@ -469,7 +464,475 @@ class VersionRegistry:
                 f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def build_baseline_config(registry: VersionRegistry) -> SkillVersionConfig:
+class VersionRegistryProtocol(Protocol):
+    """Runtime interface shared by filesystem and database-backed registries."""
+
+    @property
+    def registry_dir(self) -> Path:
+        ...
+
+    def close(self) -> None:
+        ...
+
+    def publish_skills(
+        self,
+        role: str,
+        skill_contents: dict[str, str],
+        *,
+        parent_id: str | None = None,
+        source: str = "manual",
+        run_id: str | None = None,
+        proposal_ids: list[str] | None = None,
+        version_id: str | None = None,
+        set_as_baseline: bool = False,
+        expected_current: str | None = None,
+    ) -> str:
+        ...
+
+    def get_baseline(self, role: str) -> str | None:
+        ...
+
+    def set_baseline(
+        self,
+        role: str,
+        version_id: str,
+        expected_current: str | None = None,
+    ) -> bool:
+        ...
+
+    def reject(self, role: str, version_id: str, reason: str = "") -> None:
+        ...
+
+    def read_skill_contents(self, role: str, version_id: str) -> dict[str, str]:
+        ...
+
+    def get_skill_dir(self, role: str, version_id: str) -> Path:
+        ...
+
+    def build_skill_dir(self, role_versions: dict[str, str]) -> Path:
+        ...
+
+    def list_versions(self, role: str) -> list[VersionSummary]:
+        ...
+
+    def list_roles(self) -> list[str]:
+        ...
+
+    def save_rejected(
+        self,
+        role: str,
+        proposals: list[dict[str, Any]],
+        battle_result: dict[str, Any] | None = None,
+    ) -> None:
+        ...
+
+    def load_rejected(self, role: str) -> list[dict[str, Any]]:
+        ...
+
+
+class PostgresVersionRegistry:
+    """PostgreSQL-backed registry for role skill versions."""
+
+    def __init__(
+        self,
+        conn: StorageConnection,
+        *,
+        registry_dir: Path | str,
+        owns_conn: bool = True,
+    ) -> None:
+        self._conn = conn
+        self._dir = Path(registry_dir)
+        self._owns_conn = owns_conn
+        self._closed = False
+        self._scratch_dir().mkdir(parents=True, exist_ok=True)
+        self._cleanup_scratch_best_effort()
+
+    @property
+    def registry_dir(self) -> Path:
+        return self._dir
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        if self._owns_conn:
+            self._conn.close()
+        self._closed = True
+
+    def cleanup_scratch(self, max_age_seconds: int = DEFAULT_SCRATCH_MAX_AGE_SECONDS) -> int:
+        if max_age_seconds < 0:
+            raise ValueError("max_age_seconds must be non-negative")
+        scratch_dir = self._scratch_dir()
+        if not scratch_dir.exists():
+            return 0
+        try:
+            entries = list(scratch_dir.iterdir())
+        except OSError as exc:
+            _log.warning("cleanup_scratch: failed to scan %s: %s", scratch_dir, exc)
+            return 0
+        now = time.time()
+        deleted = 0
+        for entry in entries:
+            if not self._is_registry_scratch_dir(entry):
+                continue
+            try:
+                age_seconds = now - entry.stat().st_mtime
+            except OSError as exc:
+                _log.warning("cleanup_scratch: failed to stat %s: %s", entry, exc)
+                continue
+            if age_seconds <= max_age_seconds:
+                continue
+            try:
+                shutil.rmtree(entry)
+            except OSError as exc:
+                _log.warning("cleanup_scratch: failed to remove %s: %s", entry, exc)
+                continue
+            deleted += 1
+        return deleted
+
+    def publish_skills(
+        self,
+        role: str,
+        skill_contents: dict[str, str],
+        *,
+        parent_id: str | None = None,
+        source: str = "manual",
+        run_id: str | None = None,
+        proposal_ids: list[str] | None = None,
+        version_id: str | None = None,
+        set_as_baseline: bool = False,
+        expected_current: str | None = None,
+    ) -> str:
+        _validate_name(role, "role")
+        normalized = {
+            normalize_skill_path(path): normalize_skill_text(str(content))
+            for path, content in skill_contents.items()
+        }
+        _raise_for_skill_manifest_issues(validate_skill_manifests(role, normalized))
+        version_id = version_id or compute_hash(normalized)
+        _validate_name(version_id, "version_id")
+
+        existing = self._load_version_row(role, version_id)
+        if existing is not None:
+            existing_skills = _loads_json_object(existing["skills"], default={})
+            self._conn.commit()
+            if existing_skills != normalized:
+                raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
+        else:
+            now = beijing_now_iso()
+            notes = [
+                item
+                for item in (
+                    f"proposal_ids={','.join(proposal_ids)}" if proposal_ids else "",
+                )
+                if item
+            ]
+            try:
+                self._conn.execute(
+                    "INSERT INTO role_versions "
+                    "(id, role, parent_id, source, run_id, skills, notes, status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        version_id,
+                        role,
+                        parent_id,
+                        source,
+                        run_id,
+                        json.dumps(normalized, ensure_ascii=False),
+                        json.dumps(notes, ensure_ascii=False),
+                        "active",
+                        now,
+                    ),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                existing = self._load_version_row(role, version_id)
+                if existing is None:
+                    raise
+                existing_skills = _loads_json_object(existing["skills"], default={})
+                self._conn.commit()
+                if existing_skills != normalized:
+                    raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
+
+        if set_as_baseline:
+            ok = self.set_baseline(role, version_id, expected_current=expected_current)
+            if not ok:
+                raise RuntimeError(f"Failed to set baseline for {role}: expected {expected_current!r}")
+        return version_id
+
+    def get_baseline(self, role: str) -> str | None:
+        _validate_name(role, "role")
+        row = self._conn.execute(
+            "SELECT version_id FROM role_current_baseline WHERE role = ?",
+            (role,),
+        ).fetchone()
+        if row is not None:
+            result = str(row["version_id"])
+        else:
+            row = self._conn.execute(
+                "SELECT id FROM role_versions WHERE role = ? AND status = 'baseline' "
+                "ORDER BY created_at LIMIT 1",
+                (role,),
+            ).fetchone()
+            result = str(row["id"]) if row is not None else None
+        self._conn.commit()
+        return result
+
+    def set_baseline(
+        self,
+        role: str,
+        version_id: str,
+        expected_current: str | None = None,
+    ) -> bool:
+        _validate_name(role, "role")
+        _validate_name(version_id, "version_id")
+        from storage.shared.database import begin_write, execute_for_update
+
+        begin_write(self._conn)
+        try:
+            rows = execute_for_update(
+                self._conn,
+                "SELECT id, status FROM role_versions WHERE role = ? ORDER BY created_at",
+                (role,),
+            ).fetchall()
+            if not any(str(row["id"]) == version_id for row in rows):
+                self._conn.rollback()
+                return False
+            current = self._current_baseline_unlocked(role, rows)
+            if current != expected_current:
+                self._conn.rollback()
+                return False
+            now = beijing_now_iso()
+            self._conn.execute(
+                "UPDATE role_versions SET status = 'archived' "
+                "WHERE role = ? AND status = 'baseline' AND id <> ?",
+                (role, version_id),
+            )
+            self._conn.execute(
+                "UPDATE role_versions SET status = 'baseline' WHERE role = ? AND id = ?",
+                (role, version_id),
+            )
+            self._conn.execute(
+                "INSERT INTO role_current_baseline (role, version_id, updated_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(role) DO UPDATE SET "
+                "version_id = excluded.version_id, updated_at = excluded.updated_at",
+                (role, version_id, now),
+            )
+            self._conn.execute(
+                "INSERT INTO role_baseline_history "
+                "(role, version_id, previous_version_id, reason, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (role, version_id, current, "baseline_set", now),
+            )
+            self._conn.commit()
+            return True
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def reject(self, role: str, version_id: str, reason: str = "") -> None:
+        _validate_name(role, "role")
+        _validate_name(version_id, "version_id")
+        row = self._load_version_row(role, version_id)
+        if row is None:
+            self._conn.commit()
+            raise FileNotFoundError(f"Version {role}/{version_id} not found")
+        now = beijing_now_iso()
+        try:
+            self._conn.execute(
+                "UPDATE role_versions SET status = 'rejected' WHERE role = ? AND id = ?",
+                (role, version_id),
+            )
+            self._conn.execute(
+                "INSERT INTO role_baseline_history "
+                "(role, version_id, previous_version_id, reason, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (role, version_id, None, f"rejected: {reason}" if reason else "rejected", now),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def read_skill_contents(self, role: str, version_id: str) -> dict[str, str]:
+        _validate_name(role, "role")
+        _validate_name(version_id, "version_id")
+        row = self._load_version_row(role, version_id)
+        if row is None:
+            self._conn.commit()
+            raise FileNotFoundError(f"Version {role}/{version_id} not found")
+        data = _loads_json_object(row["skills"], default={})
+        result = {normalize_skill_path(path): str(content) for path, content in data.items()}
+        self._conn.commit()
+        return result
+
+    def get_skill_dir(self, role: str, version_id: str) -> Path:
+        self._cleanup_scratch_best_effort()
+        contents = self.read_skill_contents(role, version_id)
+        tmp = Path(
+            tempfile.mkdtemp(
+                prefix=f"wolf_skill_{_fs_safe_part(role)}_{_fs_safe_part(version_id)}_",
+                dir=self._scratch_dir(),
+            )
+        )
+        for rel_path, content in contents.items():
+            output = tmp / rel_path
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(content, encoding="utf-8")
+        return tmp
+
+    def build_skill_dir(self, role_versions: dict[str, str]) -> Path:
+        self._cleanup_scratch_best_effort()
+        tmp = Path(tempfile.mkdtemp(prefix="wolf_skills_", dir=self._scratch_dir()))
+        for role, version_id in role_versions.items():
+            role_dst = tmp / role
+            contents = self.read_skill_contents(role, version_id)
+            for rel_path, content in contents.items():
+                output = role_dst / _strip_role_prefix(rel_path, role)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(content, encoding="utf-8")
+        return tmp
+
+    def list_versions(self, role: str) -> list[VersionSummary]:
+        _validate_name(role, "role")
+        baseline = self.get_baseline(role)
+        rows = self._conn.execute(
+            "SELECT id, role, source, created_at, status "
+            "FROM role_versions WHERE role = ? ORDER BY created_at",
+            (role,),
+        ).fetchall()
+        result = [
+            VersionSummary(
+                version_id=str(row["id"]),
+                role=str(row["role"]),
+                source=str(row["source"] or ""),
+                created_at=str(row["created_at"] or ""),
+                is_baseline=str(row["id"]) == baseline,
+                status=str(row["status"] or "active"),
+            )
+            for row in rows
+        ]
+        self._conn.commit()
+        return result
+
+    def list_roles(self) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT role FROM role_versions ORDER BY role"
+        ).fetchall()
+        result = [str(row["role"]) for row in rows]
+        self._conn.commit()
+        return result
+
+    def save_rejected(
+        self,
+        role: str,
+        proposals: list[dict[str, Any]],
+        battle_result: dict[str, Any] | None = None,
+    ) -> None:
+        _validate_name(role, "role")
+        from storage.shared.database import begin_write, execute_for_update
+
+        begin_write(self._conn)
+        try:
+            self._conn.execute(
+                "INSERT INTO rejected_proposals (role, proposals_json) VALUES (?, ?) "
+                "ON CONFLICT(role) DO NOTHING",
+                (role, "[]"),
+            )
+            row = execute_for_update(
+                self._conn,
+                "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
+                (role,),
+            ).fetchone()
+            existing = _dedupe_rejected_rows(_rejected_rows_from_value(row["proposals_json"] if row else []))
+            seen = {_rejected_proposal_key(item) for item in existing}
+            for proposal in proposals:
+                row_data = dict(proposal)
+                key = _rejected_proposal_key(row_data)
+                if key in seen:
+                    continue
+                row_data["battle_result"] = battle_result
+                row_data["rejected_at"] = beijing_now_iso()
+                row_data["dedupe_key"] = key
+                existing.append(row_data)
+                seen.add(key)
+            payload = existing[-_REJECTED_BUFFER_LIMIT:]
+            self._conn.execute(
+                "UPDATE rejected_proposals SET proposals_json = ? WHERE role = ?",
+                (json.dumps(payload, ensure_ascii=False), role),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def load_rejected(self, role: str) -> list[dict[str, Any]]:
+        _validate_name(role, "role")
+        row = self._conn.execute(
+            "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
+            (role,),
+        ).fetchone()
+        if row is None:
+            self._conn.commit()
+            return []
+        result = _rejected_rows_from_value(row["proposals_json"])
+        self._conn.commit()
+        return result
+
+    def _load_version_row(self, role: str, version_id: str) -> Any | None:
+        return self._conn.execute(
+            "SELECT * FROM role_versions WHERE role = ? AND id = ?",
+            (role, version_id),
+        ).fetchone()
+
+    def _current_baseline_unlocked(self, role: str, rows: list[Any]) -> str | None:
+        row = self._conn.execute(
+            "SELECT version_id FROM role_current_baseline WHERE role = ?",
+            (role,),
+        ).fetchone()
+        if row is not None:
+            return str(row["version_id"])
+        baseline_row = next((item for item in rows if item["status"] == "baseline"), None)
+        return str(baseline_row["id"]) if baseline_row is not None else None
+
+    def _scratch_dir(self) -> Path:
+        return self._dir / "scratch"
+
+    def _cleanup_scratch_best_effort(self) -> None:
+        try:
+            self.cleanup_scratch()
+        except Exception as exc:
+            _log.warning("cleanup_scratch: ignored failure: %s", exc)
+
+    def _is_registry_scratch_dir(self, path: Path) -> bool:
+        if path.parent != self._scratch_dir():
+            return False
+        if not path.name.startswith(_SCRATCH_DIR_PREFIXES):
+            return False
+        if path.is_symlink():
+            return False
+        return path.is_dir()
+
+
+def version_registry_from_env(
+    registry_dir: Path | str | None = None,
+    *,
+    paths: Any | None = None,
+) -> VersionRegistryProtocol:
+    """Build the PostgreSQL-backed runtime registry."""
+    resolved_dir = _resolve_registry_dir(registry_dir, paths)
+    from storage.provider import storage_provider_from_env
+
+    provider = storage_provider_from_env(paths=paths)
+    return PostgresVersionRegistry(
+        provider.open_registry_connection(),
+        registry_dir=resolved_dir,
+        owns_conn=True,
+    )
+
+
+def build_baseline_config(registry: VersionRegistryProtocol) -> SkillVersionConfig:
     """Build a baseline config from the current registry state."""
     role_versions = {
         role: baseline
@@ -483,7 +946,7 @@ def build_baseline_config(registry: VersionRegistry) -> SkillVersionConfig:
     )
 
 
-def build_composite_skill_dir(registry: VersionRegistry, config: SkillVersionConfig) -> Path | None:
+def build_composite_skill_dir(registry: VersionRegistryProtocol, config: SkillVersionConfig) -> Path | None:
     """Build a composite skill directory from a SkillVersionConfig.
 
     Copies skill files from each version hash into a temporary directory.
@@ -493,7 +956,7 @@ def build_composite_skill_dir(registry: VersionRegistry, config: SkillVersionCon
     return registry.build_skill_dir(config.role_versions)
 
 
-def promote_version(registry: VersionRegistry, role: str, version_id: str) -> None:
+def promote_version(registry: VersionRegistryProtocol, role: str, version_id: str) -> None:
     """Promote a version to be the new baseline for a role."""
     current = registry.get_baseline(role)
     if current == version_id:
@@ -502,7 +965,7 @@ def promote_version(registry: VersionRegistry, role: str, version_id: str) -> No
         raise RuntimeError(f"Failed to promote {role}/{version_id}")
 
 
-def reject_version(registry: VersionRegistry, role: str, version_id: str) -> None:
+def reject_version(registry: VersionRegistryProtocol, role: str, version_id: str) -> None:
     """Mark a version as rejected for a role."""
     registry.reject(role, version_id)
 
@@ -618,6 +1081,50 @@ def _strip_role_prefix(rel_path: str, role: str) -> str:
     return path.as_posix()
 
 
+def _resolve_registry_dir(registry_dir: Path | str | None, paths: Any | None) -> Path:
+    if registry_dir is not None:
+        return Path(registry_dir)
+    if paths is not None and hasattr(paths, "registry_dir"):
+        value = getattr(paths, "registry_dir")
+        if value is not None:
+            return Path(value)
+    from app.config import DEFAULT_PATHS
+
+    return DEFAULT_PATHS.registry_dir
+
+
+def _loads_json(value: Any, *, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value
+
+
+def _loads_json_object(value: Any, *, default: dict[str, Any]) -> dict[str, Any]:
+    data = _loads_json(value, default=default)
+    if not isinstance(data, dict):
+        return dict(default)
+    return {str(key): value for key, value in data.items()}
+
+
+def _rejected_rows_from_value(value: Any) -> list[dict[str, Any]]:
+    data = _loads_json(value, default=[])
+    if isinstance(data, dict):
+        data = data.get("proposals", [])
+    if not isinstance(data, list):
+        return []
+    return [dict(item) for item in data if isinstance(item, dict)]
+
+
+def _fs_safe_part(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value))
+    return safe.strip("._") or "version"
+
+
 def _validate_name(name: str, label: str) -> None:
     if not name or not name.strip():
         raise ValueError(f"Empty {label}")
@@ -670,16 +1177,28 @@ def _dedupe_rejected_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 @contextmanager
 def _path_locked(lock_path: Path) -> Iterator[None]:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+b") as lock_file:
-        lock_file.seek(0, os.SEEK_END)
-        if lock_file.tell() == 0:
-            lock_file.write(b"\0")
-            lock_file.flush()
-        _lock_file(lock_file)
-        try:
-            yield
-        finally:
-            _unlock_file(lock_file)
+    process_lock = _process_lock_for_path(lock_path)
+    with process_lock:
+        with lock_path.open("a+b") as lock_file:
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+            _lock_file(lock_file)
+            try:
+                yield
+            finally:
+                _unlock_file(lock_file)
+
+
+def _process_lock_for_path(lock_path: Path) -> threading.Lock:
+    key = str(lock_path.resolve())
+    with _LOCK_GUARD:
+        lock = _PROCESS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PROCESS_LOCKS[key] = lock
+        return lock
 
 
 def _lock_file(file_obj: Any) -> None:

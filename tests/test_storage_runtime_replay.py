@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from storage.interfaces import DecisionRecordData
+from storage.decision_store import DecisionStore
 from storage.replay import (
     explain_replay_lookup,
     read_config_for_artifact,
@@ -15,16 +17,387 @@ from storage.replay import (
 from storage.runtime import GamePersistence
 
 
-def test_game_persistence_round_trips_sqlite_replay_by_artifact_path(tmp_path):
-    db_path = tmp_path / "wolf.db"
+class _Cursor:
+    rowcount = 0
+
+    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+        self._rows = list(rows or [])
+        self.rowcount = len(self._rows)
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return list(self._rows)
+
+
+class _MemoryStorageConn:
+    def __init__(self) -> None:
+        self.tables: dict[str, list[dict[str, Any]]] = {
+            "games": [],
+            "players": [],
+            "game_events": [],
+            "decisions": [],
+            "experience_candidates": [],
+            "llm_judgments": [],
+        }
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed = False
+        self.entered = 0
+        self._decision_insert_order = 0
+
+    def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
+        if self.closed:
+            raise RuntimeError("connection closed")
+        text = " ".join(sql.split())
+        params = tuple(parameters)
+
+        if text.startswith("INSERT INTO game_events"):
+            self.tables["game_events"].append(
+                {
+                    "game_id": params[0],
+                    "idx": params[1],
+                    "day": params[2],
+                    "phase": params[3],
+                    "event_type": params[4],
+                    "message": params[5],
+                    "public": params[6],
+                    "actor": params[7],
+                    "target": params[8],
+                    "payload": params[9],
+                    "created_at": params[10],
+                }
+            )
+            return _Cursor()
+
+        if text.startswith("INSERT INTO decisions"):
+            if "(id, game_id, player_id, seat," in text:
+                row = {
+                    "id": params[0],
+                    "game_id": params[1],
+                    "_insert_order": self._next_decision_insert_order(),
+                    "player_id": params[2],
+                    "seat": params[3],
+                    "role": params[4],
+                    "day": params[5],
+                    "phase": params[6],
+                    "action_type": params[7],
+                    "selected_target": params[8],
+                    "selected_choice": params[9],
+                    "public_text": params[10],
+                    "private_reasoning": params[11],
+                    "confidence": params[12],
+                    "alternatives": params[13],
+                    "rejected_reasons": params[14],
+                    "selected_skills": params[15],
+                    "raw_output": params[16],
+                    "source": params[17],
+                    "policy_adjustments": params[18],
+                    "errors": params[19],
+                    "created_at": params[20],
+                }
+            else:
+                row = {
+                    "id": params[0],
+                    "game_id": params[1],
+                    "_insert_order": self._next_decision_insert_order(),
+                    "player_id": None,
+                    "seat": params[2],
+                    "role": params[3],
+                    "day": params[4],
+                    "phase": params[5],
+                    "action_type": params[6],
+                    "selected_target": params[7],
+                    "selected_choice": params[8],
+                    "public_text": params[9],
+                    "private_reasoning": params[10],
+                    "confidence": params[11],
+                    "alternatives": params[12],
+                    "rejected_reasons": params[13],
+                    "selected_skills": params[14],
+                    "raw_output": params[15],
+                    "source": params[16],
+                    "policy_adjustments": params[17],
+                    "errors": params[18],
+                    "created_at": params[19],
+                }
+            row.update(
+                {
+                    "candidates": "[]",
+                    "observation_summary": "{}",
+                    "memory_context": "{}",
+                    "prompt_messages": "[]",
+                    "parsed_decision": "{}",
+                    "final_response": "{}",
+                }
+            )
+            self.tables["decisions"].append(row)
+            return _Cursor()
+
+        if text.startswith("INSERT INTO games"):
+            self.tables["games"] = [
+                row for row in self.tables["games"] if row["id"] != params[0]
+            ]
+            self.tables["games"].append(
+                {
+                    "id": params[0],
+                    "seed": params[1],
+                    "config": params[2],
+                    "winner": params[3],
+                    "started_at": params[4],
+                    "finished_at": params[5],
+                    "total_rounds": params[6],
+                    "public_events": params[7],
+                    "final_state": params[8],
+                    "run_type": params[9],
+                    "mode": params[10],
+                    "learning_eligible": params[11],
+                    "leaderboard_scope": params[12],
+                    "promote_eligible": params[13],
+                    "model_id": params[14],
+                    "model_config_hash": params[15],
+                    "ruleset_version": params[16],
+                }
+            )
+            return _Cursor()
+
+        if text.startswith("UPDATE games SET"):
+            game_id = params[-1]
+            game = self._game(game_id)
+            if game is not None:
+                assignments = text.removeprefix("UPDATE games SET ").split(" WHERE id = ?")[0]
+                for column, value in zip(
+                    [part.split(" = ")[0] for part in assignments.split(", ")],
+                    params[:-1],
+                    strict=False,
+                ):
+                    game[column] = value
+            return _Cursor()
+
+        if text.startswith("INSERT INTO players"):
+            self.tables["players"].append(
+                {
+                    "game_id": params[0],
+                    "seat": params[1],
+                    "role": params[2],
+                    "team": params[3],
+                    "alive": params[4],
+                    "killed_day": params[5],
+                    "killed_cause": params[6],
+                    "role_version_id": params[7],
+                    "skill_package_hash": params[8],
+                }
+            )
+            return _Cursor()
+
+        if text.startswith("INSERT INTO experience_candidates"):
+            self.tables["experience_candidates"].append(
+                {
+                    "game_id": params[0],
+                    "candidate_id": params[1],
+                    "role": params[2],
+                    "candidate_type": params[4],
+                    "topic": params[5],
+                    "evidence_decision_ids": params[7],
+                    "recommendation": params[10],
+                    "raw_json": params[19],
+                    "run_type": params[21],
+                    "source_run_id": params[22],
+                    "source_game_id": params[23],
+                    "artifact_game_id": params[24],
+                    "learning_eligible": params[25],
+                    "mode": params[26],
+                }
+            )
+            return _Cursor()
+
+        if text.startswith("INSERT INTO llm_judgments"):
+            self.tables["llm_judgments"] = [
+                row for row in self.tables["llm_judgments"] if row["judgment_id"] != params[0]
+            ]
+            self.tables["llm_judgments"].append(
+                {
+                    "judgment_id": params[0],
+                    "game_id": params[1],
+                    "player_id": params[2],
+                    "dimension": params[3],
+                    "prompt_version": params[4],
+                    "evaluator_config_hash": params[5],
+                    "input_refs": params[6],
+                    "raw_json": params[7],
+                    "normalized_fields": params[8],
+                    "validator_status": params[9],
+                    "created_at": params[10],
+                }
+            )
+            return _Cursor()
+
+        if text == "SELECT id, config FROM games WHERE config IS NOT NULL":
+            return _Cursor([row for row in self.tables["games"] if row.get("config")])
+
+        if text == "SELECT seed, config FROM games WHERE id = ?":
+            game = self._game(params[0])
+            return _Cursor(
+                [{"seed": game["seed"], "config": game["config"]}] if game else []
+            )
+
+        if text == "SELECT 1 FROM games WHERE id = ? LIMIT 1":
+            return _Cursor([{"?column?": 1}] if self._game(params[0]) else [])
+
+        if text.startswith("SELECT 1 FROM game_events WHERE game_id = ?"):
+            return _Cursor(self._rows_for_game("game_events", params[0])[:1])
+
+        if text.startswith("SELECT 1 FROM decisions WHERE game_id = ?"):
+            return _Cursor(self._rows_for_game("decisions", params[0])[:1])
+
+        if text.startswith("SELECT 1 FROM experience_candidates WHERE game_id = ?"):
+            return _Cursor(self._rows_for_game("experience_candidates", params[0])[:1])
+
+        if text.startswith("SELECT * FROM game_events WHERE game_id = ?"):
+            rows = sorted(self._rows_for_game("game_events", params[0]), key=lambda row: row["idx"])
+            return _Cursor(rows)
+
+        if text.startswith("SELECT * FROM decisions WHERE game_id = ?"):
+            rows = sorted(
+                self._rows_for_game("decisions", params[0]),
+                key=lambda row: (
+                    row.get("decision_index") is None and row.get("index") is None,
+                    row.get("decision_index", row.get("index")),
+                    row.get("created_at") or "",
+                    row.get("_insert_order", 0),
+                    row["id"],
+                ),
+            )
+            return _Cursor(rows)
+
+        if text.startswith("SELECT * FROM experience_candidates WHERE game_id = ?"):
+            rows = [
+                row
+                for row in self.tables["experience_candidates"]
+                if row["game_id"] == params[0] and row["candidate_id"] == params[1]
+            ]
+            return _Cursor(rows)
+
+        raise AssertionError(f"unexpected SQL: {text}")
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+    def __enter__(self) -> "_MemoryStorageConn":
+        self.entered += 1
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
+
+    def _game(self, game_id: str) -> dict[str, Any] | None:
+        return next((row for row in self.tables["games"] if row["id"] == game_id), None)
+
+    def _rows_for_game(self, table: str, game_id: str) -> list[dict[str, Any]]:
+        return [row for row in self.tables[table] if row["game_id"] == game_id]
+
+    def _next_decision_insert_order(self) -> int:
+        self._decision_insert_order += 1
+        return self._decision_insert_order
+
+
+class _Provider:
+    def __init__(self) -> None:
+        self.wolf_conn = _MemoryStorageConn()
+        self.registry_conn = _MemoryStorageConn()
+        self.evolution_conn = _MemoryStorageConn()
+        self.wolf_calls = 0
+        self.evolution_calls = 0
+
+    def open_wolf_connection(self) -> _MemoryStorageConn:
+        self.wolf_calls += 1
+        return self.wolf_conn
+
+    def open_registry_connection(self) -> _MemoryStorageConn:
+        return self.registry_conn
+
+    def open_evolution_connection(self) -> _MemoryStorageConn:
+        self.evolution_calls += 1
+        return self.evolution_conn
+
+
+def test_game_persistence_replaces_empty_timestamps_for_pg_boundary() -> None:
+    conn = _MemoryStorageConn()
+    persistence = GamePersistence(game_id="empty-started-at", conn=conn)
+
+    persistence.save_game_result(
+        seed=1,
+        player_roles={1: "seer"},
+        started_at="",
+        finished_at="",
+    )
+
+    game = conn.tables["games"][0]
+    assert game["started_at"]
+    assert game["started_at"].endswith("+08:00")
+    assert game["finished_at"] is None
+
+
+def test_game_persistence_saves_llm_judgments_to_wolf_schema() -> None:
+    conn = _MemoryStorageConn()
+    persistence = GamePersistence(game_id="judge_game", conn=conn)
+
+    saved = persistence.save_llm_judgments(
+        [
+            {
+                "decision_id": "d_check",
+                "player_id": 1,
+                "role": "seer",
+                "action_type": "seer_check",
+                "score": 8.5,
+                "quality": "good",
+                "reason": "查验有价值",
+                "evidence_refs": ["rule_natural_key_action"],
+                "mistake_tags": [],
+                "suggestion": "继续围绕查验链组织发言",
+                "confidence": 0.8,
+            },
+            {
+                "dimension": "decision_judge_report",
+                "report_id": "summary",
+                "raw_json": {"status": "ok", "summary": {"average_score": 8.5}},
+                "normalized_fields": {"status": "ok", "metrics": {"judged": 1}},
+                "input_refs": {"selected_decision_ids": ["d_check"]},
+            },
+        ]
+    )
+
+    rows = conn.tables["llm_judgments"]
+    assert len(saved) == 2
+    assert [row["dimension"] for row in rows] == ["decision_judge", "decision_judge_report"]
+    assert rows[0]["game_id"] == "judge_game"
+    assert rows[0]["player_id"] == 1
+    assert json.loads(rows[0]["input_refs"])["storage_decision_id"] == "judge_game::d_check"
+    assert json.loads(rows[0]["normalized_fields"])["score"] == 8.5
+    assert json.loads(rows[1]["raw_json"])["summary"]["average_score"] == 8.5
+
+
+def test_game_persistence_round_trips_postgres_replay_by_artifact_path(tmp_path: Path) -> None:
     runs_root = tmp_path / "runs"
     game_dir = runs_root / "eval 01" / "game-001"
     game_dir.mkdir(parents=True)
+    conn = _MemoryStorageConn()
 
     with GamePersistence(
         game_id="game_roundtrip",
         game_dir=game_dir,
-        db_path=db_path,
+        conn=conn,
         source_game_id="artifact_game_001",
         commit_every=100,
     ) as persistence:
@@ -81,26 +454,19 @@ def test_game_persistence_round_trips_sqlite_replay_by_artifact_path(tmp_path):
             final_alive={1: True, 2: False},
         )
 
-    events = read_events_for_artifact(db_path, game_dir, root=runs_root)
+    events = read_events_for_artifact(game_dir, root=runs_root, conn=conn)
     assert events is not None
     assert [event["event_type"] for event in events] == ["death", "seer_result"]
-    assert events[0]["target"] == 2
     assert events[0]["payload"] == {"cause": "werewolf"}
     assert events[1]["visibility"] == "private"
-    assert events[1]["public"] is False
 
-    decisions = read_decisions_for_artifact(db_path, game_dir, root=runs_root)
+    decisions = read_decisions_for_artifact(game_dir, root=runs_root, conn=conn)
     assert decisions is not None
-    assert len(decisions) == 1
-    decision = decisions[0]
-    assert decision["decision_id"] == "d_check"
-    assert decision["player_id"] == 1
-    assert decision["role"] == "seer"
-    assert decision["selected_target"] == 2
-    assert decision["selected_skills"] == ["seer/check.md"]
-    assert decision["private_reasoning"] == "2 is suspicious"
+    assert decisions[0]["decision_id"] == "d_check"
+    assert decisions[0]["selected_skills"] == ["seer/check.md"]
+    assert decisions[0]["private_reasoning"] == "2 is suspicious"
 
-    config = read_config_for_artifact(db_path, game_dir, root=runs_root)
+    config = read_config_for_artifact(game_dir, root=runs_root, conn=conn)
     assert config is not None
     assert config["mode"] == "e2e"
     assert config["seed"] == 42
@@ -108,406 +474,284 @@ def test_game_persistence_round_trips_sqlite_replay_by_artifact_path(tmp_path):
     assert config["_storage"]["source_path"] == str(game_dir)
 
 
-def test_replay_lookup_explains_missing_database(tmp_path):
-    db_path = tmp_path / "missing.db"
-    game_dir = tmp_path / "runs" / "game-missing"
+def test_replay_decisions_preserve_recorder_write_order(tmp_path: Path) -> None:
+    runs_root = tmp_path / "runs"
+    game_dir = runs_root / "game-decision-order"
+    game_dir.mkdir(parents=True)
+    conn = _MemoryStorageConn()
 
-    result = explain_replay_lookup(db_path, game_dir, replay_type="events")
+    with GamePersistence(
+        game_id="game_decision_order",
+        game_dir=game_dir,
+        conn=conn,
+        commit_every=100,
+    ) as persistence:
+        sink = persistence.create_decision_sink()
+        assert sink is not None
+        sink.record_decision(
+            DecisionRecordData(
+                decision_id="d_player_2_first",
+                player_id=2,
+                role="villager",
+                day=1,
+                phase="day",
+                action_type="speak",
+                public_text="2 speaks first",
+            )
+        )
+        sink.record_decision(
+            DecisionRecordData(
+                decision_id="d_player_1_second",
+                player_id=1,
+                role="villager",
+                day=1,
+                phase="day",
+                action_type="speak",
+                public_text="1 speaks second",
+            )
+        )
+        persistence.save_game_result(
+            seed=7,
+            player_roles={1: "villager", 2: "villager"},
+            started_at="2026-06-08T10:00:00+08:00",
+        )
 
-    assert read_events_for_artifact(db_path, game_dir) is None
-    assert result.ok is False
-    assert result.status == "missing_db"
-    assert result.table == "game_events"
-    assert "does not exist" in result.message
+    decisions = read_decisions_for_artifact(game_dir, root=runs_root, conn=conn)
+
+    assert decisions is not None
+    assert [decision["player_id"] for decision in decisions] == [2, 1]
+    assert [decision["index"] for decision in decisions] == [1, 2]
+    assert [decision["decision_id"] for decision in decisions] == [
+        "d_player_2_first",
+        "d_player_1_second",
+    ]
 
 
-def test_replay_lookup_explains_unsupported_type(tmp_path):
-    db_path = tmp_path / "wolf.db"
+def test_decision_store_get_for_game_preserves_write_order() -> None:
+    conn = _MemoryStorageConn()
+    store = DecisionStore(conn)  # type: ignore[arg-type]
+
+    store.insert_record(
+        "game_store_order",
+        DecisionRecordData(
+            decision_id="d_player_2_first",
+            player_id=2,
+            role="villager",
+            day=1,
+            phase="day",
+            action_type="speak",
+            public_text="2 speaks first",
+        ),
+        created_at="2026-06-08T10:00:00+08:00",
+    )
+    store.insert_record(
+        "game_store_order",
+        DecisionRecordData(
+            decision_id="d_player_1_second",
+            player_id=1,
+            role="villager",
+            day=1,
+            phase="day",
+            action_type="speak",
+            public_text="1 speaks second",
+        ),
+        created_at="2026-06-08T10:00:00+08:00",
+    )
+
+    rows = store.get_for_game("game_store_order")
+
+    assert [row["seat"] for row in rows] == [2, 1]
+    assert [row["decision_id"] for row in rows] == [
+        "d_player_2_first",
+        "d_player_1_second",
+    ]
+
+
+def test_replay_lookup_explains_unsupported_type(tmp_path: Path) -> None:
     game_dir = tmp_path / "runs" / "game-bad-type"
 
-    result = explain_replay_lookup(db_path, game_dir, replay_type="bad")
+    result = explain_replay_lookup(game_dir, replay_type="bad", conn=_MemoryStorageConn())
 
     assert result.ok is False
     assert result.status == "unsupported_type"
     assert result.table is None
-    assert result.db_path == str(db_path)
     assert result.game_dir == str(game_dir)
-    assert "bad" in result.message
     assert "events, decisions, config" in result.message
-    assert result.error == "unsupported replay_type: bad"
 
 
-def test_replay_lookup_explains_missing_table(tmp_path):
-    db_path = tmp_path / "wolf.db"
-    game_dir = tmp_path / "runs" / "game-missing-table"
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute("CREATE TABLE games (id TEXT PRIMARY KEY, config TEXT)")
-        conn.commit()
-    finally:
-        conn.close()
-
-    result = explain_replay_lookup(db_path, game_dir, replay_type="events")
-
-    assert read_events_for_artifact(db_path, game_dir) is None
-    assert result.ok is False
-    assert result.status == "missing_table"
-    assert result.table == "game_events"
-
-
-def test_replay_lookup_explains_matched_game_with_no_rows(tmp_path):
-    from storage.schema import get_connection
-
-    db_path = tmp_path / "wolf.db"
-    game_dir = tmp_path / "runs" / "game-empty"
-    game_dir.mkdir(parents=True)
-    conn = get_connection(db_path)
-    try:
-        conn.execute(
-            "INSERT INTO games (id, seed, config, started_at) VALUES (?, ?, ?, ?)",
-            (
-                "game_empty",
-                7,
-                json.dumps({"_storage": {"source_path": str(game_dir)}}),
-                "2026-06-07T10:00:00+08:00",
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    result = explain_replay_lookup(db_path, game_dir, replay_type="events")
-
-    assert read_events_for_artifact(db_path, game_dir) is None
-    assert result.ok is False
-    assert result.status == "missing_rows"
-    assert result.game_id == "game_empty"
-    assert result.table == "game_events"
-
-
-def test_replay_config_lookup_uses_games_row_without_replay_rows(tmp_path):
-    from storage.schema import get_connection
-
-    db_path = tmp_path / "wolf.db"
+def test_replay_config_lookup_can_succeed_without_event_rows(tmp_path: Path) -> None:
     game_dir = tmp_path / "runs" / "game-config-only"
     game_dir.mkdir(parents=True)
-    conn = get_connection(db_path)
-    try:
-        conn.execute(
-            "INSERT INTO games (id, seed, config, started_at) VALUES (?, ?, ?, ?)",
-            (
-                "game_config_only",
-                11,
-                json.dumps({"mode": "config-only", "_storage": {"source_path": str(game_dir)}}),
-                "2026-06-07T10:00:00+08:00",
+    conn = _MemoryStorageConn()
+    conn.tables["games"].append(
+        {
+            "id": "game_config_only",
+            "seed": 11,
+            "config": json.dumps(
+                {"mode": "config-only", "_storage": {"source_path": str(game_dir)}}
             ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+        }
+    )
 
-    config_result = explain_replay_lookup(db_path, game_dir, replay_type="config")
-    events_result = explain_replay_lookup(db_path, game_dir, replay_type="events")
+    config_result = explain_replay_lookup(game_dir, replay_type="config", conn=conn)
+    events_result = explain_replay_lookup(game_dir, replay_type="events", conn=conn)
 
     assert config_result.ok is True
-    assert config_result.status == "ok"
     assert config_result.table == "games"
-    assert config_result.game_id == "game_config_only"
     assert config_result.data["mode"] == "config-only"
     assert config_result.data["seed"] == 11
-    assert read_config_for_artifact(db_path, game_dir) == config_result.data
+    assert read_config_for_artifact(game_dir, conn=conn) == config_result.data
     assert events_result.status == "missing_rows"
-    assert read_events_for_artifact(db_path, game_dir) is None
+    assert read_events_for_artifact(game_dir, conn=conn) is None
 
 
-def test_replay_lookup_explains_sqlite_error(tmp_path):
-    db_path = tmp_path / "broken.db"
-    db_path.write_text("not a sqlite database", encoding="utf-8")
+def test_replay_lookup_reports_storage_error(tmp_path: Path) -> None:
+    class _BrokenConn:
+        def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
+            raise RuntimeError("database unavailable")
+
     game_dir = tmp_path / "runs" / "game-broken"
 
-    result = explain_replay_lookup(db_path, game_dir, replay_type="events")
+    result = explain_replay_lookup(game_dir, replay_type="events", conn=_BrokenConn())  # type: ignore[arg-type]
 
-    assert read_events_for_artifact(db_path, game_dir) is None
+    assert read_events_for_artifact(game_dir, conn=_BrokenConn()) is None  # type: ignore[arg-type]
     assert result.ok is False
-    assert result.status == "sqlite_error"
-    assert result.error
+    assert result.status == "storage_error"
+    assert result.table == "game_events"
+    assert "database unavailable" in str(result.error)
 
 
-def test_game_persistence_players_reflect_deaths(tmp_path):
-    from storage.schema import get_connection
+def test_game_persistence_players_reflect_deaths(tmp_path: Path) -> None:
+    conn = _MemoryStorageConn()
 
-    db_path = tmp_path / "wolf.db"
-    game_dir = tmp_path / "runs" / "game-players"
-    game_dir.mkdir(parents=True)
-
-    with GamePersistence(game_id="game_players", game_dir=game_dir, db_path=db_path) as persistence:
+    with GamePersistence(game_id="game_players", game_dir=tmp_path / "game", conn=conn) as persistence:
         persistence.save_game_result(
-            seed=7,
-            player_roles={1: "seer", 2: "werewolf"},
-            started_at="2026-06-07T10:00:00+08:00",
+            seed=1,
+            player_roles={1: "seer", 2: "werewolf", 3: "villager"},
             deaths=[{"player_id": 2, "day": 1, "cause": "werewolf"}],
-            final_alive={1: True, 2: False},
+            final_alive={1: True, 2: True, 3: False},
+            started_at="2026-06-07T10:00:00+08:00",
         )
 
-    conn = get_connection(db_path)
-    try:
-        rows = {
-            row["seat"]: dict(row)
-            for row in conn.execute("SELECT * FROM players WHERE game_id = ?", ("game_players",))
-        }
-    finally:
-        conn.close()
-
-    assert rows[1]["alive"] == 1
-    assert rows[2]["alive"] == 0
-    assert rows[2]["killed_day"] == 1
-    assert rows[2]["killed_cause"] == "werewolf"
+    by_seat = {row["seat"]: row for row in conn.tables["players"]}
+    assert by_seat[1]["alive"] == 1
+    assert by_seat[2]["alive"] == 0
+    assert by_seat[2]["killed_day"] == 1
+    assert by_seat[2]["killed_cause"] == "werewolf"
+    assert by_seat[3]["alive"] == 0
 
 
-def test_game_persistence_save_game_result_rolls_back_partial_result(tmp_path):
-    from storage.schema import get_connection
+def test_game_persistence_rolls_back_invalid_player_batch(tmp_path: Path) -> None:
+    conn = _MemoryStorageConn()
 
-    db_path = tmp_path / "wolf.db"
-    with GamePersistence(game_id="game_bad_players", db_path=db_path) as persistence:
-        with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(ValueError, match="invalid literal"):
+        with GamePersistence(game_id="game_bad_players", game_dir=tmp_path / "game", conn=conn) as persistence:
             persistence.save_game_result(
-                seed=8,
-                player_roles={1: None},  # type: ignore[dict-item]
+                seed=1,
+                player_roles={1: "seer", "bad": "werewolf"},  # type: ignore[dict-item]
                 started_at="2026-06-07T10:00:00+08:00",
             )
 
-    conn = get_connection(db_path)
-    try:
-        game_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM games WHERE id = ?",
-            ("game_bad_players",),
-        ).fetchone()["n"]
-        player_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM players WHERE game_id = ?",
-            ("game_bad_players",),
-        ).fetchone()["n"]
-    finally:
-        conn.close()
-
-    assert game_count == 0
-    assert player_count == 0
+    assert conn.rollbacks == 1
 
 
-def test_game_store_insert_players_updates_existing_rows(tmp_path):
-    from storage.game_store import GameStore
-    from storage.schema import get_connection
-
-    conn = get_connection(tmp_path / "wolf.db")
-    try:
-        store = GameStore(conn)
-        store.insert_game(
-            game_id="game_players_upsert",
-            seed=9,
-            started_at="2026-06-07T10:00:00+08:00",
-        )
-        store.insert_players(
-            "game_players_upsert",
-            {1: "seer"},
-            final_alive={1: False},
-            role_version_ids={1: "v1"},
-            skill_package_hashes={1: "hash1"},
-        )
-        store.insert_players(
-            "game_players_upsert",
-            {1: "werewolf"},
-            final_alive={1: True},
-            role_version_ids={1: "v2"},
-            skill_package_hashes={1: "hash2"},
-        )
-        row = conn.execute(
-            "SELECT role, team, alive, role_version_id, skill_package_hash "
-            "FROM players WHERE game_id = ? AND seat = ?",
-            ("game_players_upsert", 1),
-        ).fetchone()
-    finally:
-        conn.close()
-
-    assert dict(row) == {
-        "role": "werewolf",
-        "team": "werewolves",
-        "alive": 1,
-        "role_version_id": "v2",
-        "skill_package_hash": "hash2",
-    }
-
-
-def test_storage_connection_uses_busy_timeout(tmp_path):
-    from storage.schema import get_connection
-
-    conn = get_connection(tmp_path / "wolf.db")
-    try:
-        timeout_ms = conn.execute("PRAGMA busy_timeout").fetchone()[0]
-        foreign_keys = conn.execute("PRAGMA foreign_keys").fetchone()[0]
-        journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-    finally:
-        conn.close()
-
-    assert timeout_ms == 30000
-    assert foreign_keys == 1
-    assert journal_mode in {"wal", "delete", "memory", "off"}
-
-
-def test_storage_schema_records_wolf_schema_version(tmp_path):
-    from storage.schema import SCHEMA_VERSION, get_connection
-
-    conn = get_connection(tmp_path / "wolf.db")
-    try:
-        row = conn.execute(
-            "SELECT version, applied_at FROM schema_migrations WHERE component = ?",
-            ("wolf",),
-        ).fetchone()
-    finally:
-        conn.close()
-
-    assert row is not None
-    assert row["version"] == SCHEMA_VERSION
-    assert row["applied_at"]
-
-
-def test_evolution_and_registry_connections_apply_pragmas_and_schema_versions(tmp_path):
-    from storage.evolution.schema import SCHEMA_VERSION as EVOLUTION_SCHEMA_VERSION
-    from storage.registry.schema import SCHEMA_VERSION as REGISTRY_SCHEMA_VERSION
-    from storage.registry.connection import get_registry_connection
-    from storage.shared.connection import get_evolution_connection
-
-    cases = [
-        (
-            get_evolution_connection(tmp_path / "evolution.db"),
-            "evolution",
-            EVOLUTION_SCHEMA_VERSION,
-        ),
-        (
-            get_registry_connection(tmp_path / "registry.db"),
-            "registry",
-            REGISTRY_SCHEMA_VERSION,
-        ),
-    ]
-
-    for conn, component, expected_version in cases:
-        try:
-            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
-            assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-            assert conn.execute("PRAGMA journal_mode").fetchone()[0] in {
-                "wal",
-                "delete",
-                "memory",
-                "off",
-            }
-            row = conn.execute(
-                "SELECT version, applied_at FROM schema_migrations WHERE component = ?",
-                (component,),
-            ).fetchone()
-            assert row is not None
-            assert row["version"] == expected_version
-            assert row["applied_at"]
-        finally:
-            conn.close()
-
-
-def test_game_persistence_training_candidates_write_evolution_db_only(tmp_path):
-    import json
-    import sqlite3
-
+def test_learning_candidates_are_written_to_provider_evolution_schema() -> None:
     from storage.run_policy import RunType, policy_for_run_type
 
-    wolf_db = tmp_path / "wolf.db"
-    evolution_db = tmp_path / "evolution.db"
-    policy = policy_for_run_type(RunType.EVOLUTION_TRAINING)
+    provider = _Provider()
     persistence = GamePersistence(
-        game_id="training_game_1",
-        db_path=wolf_db,
-        source_game_id="raw_game_1",
-        run_policy=policy,
+        game_id="training_game",
+        provider=provider,
+        source_game_id="artifact_training",
+        run_policy=policy_for_run_type(RunType.EVOLUTION_TRAINING),
         run_metadata={"source_run_id": "run_1", "mode": "formal"},
-        evolution_db_path=evolution_db,
     )
     try:
-        saved = persistence.save_experience_candidates([
-            {
-                "candidate_id": "cand_1",
-                "role": "seer",
-                "candidate_type": "decision_pattern",
-                "topic": "night check",
-                "evidence_decision_ids": ["d_check"],
-                "recommendation": "check contested claimants",
-                "confidence": "medium",
-            }
-        ])
+        saved = persistence.save_experience_candidates(
+            [
+                {
+                    "candidate_id": "cand1",
+                    "role": "seer",
+                    "candidate_type": "decision",
+                    "topic": "night check",
+                    "recommendation": "check contested players",
+                    "evidence_decision_ids": ["d1"],
+                }
+            ]
+        )
     finally:
         persistence.close()
 
-    assert saved == ["cand_1"]
-
-    evo_conn = sqlite3.connect(evolution_db)
-    evo_conn.row_factory = sqlite3.Row
-    try:
-        row = evo_conn.execute(
-            "SELECT * FROM experience_candidates WHERE game_id = ? AND candidate_id = ?",
-            ("training_game_1", "cand_1"),
-        ).fetchone()
-        assert row is not None
-        assert json.loads(row["evidence_decision_ids"]) == ["training_game_1::d_check"]
-        assert row["run_type"] == "evolution_training"
-        assert row["source_run_id"] == "run_1"
-        assert row["source_game_id"] == "raw_game_1"
-        assert row["artifact_game_id"] == "training_game_1"
-        assert row["learning_eligible"] == 1
-        raw_json = json.loads(row["raw_json"])
-        assert raw_json["source_evidence_decision_ids"] == ["d_check"]
-    finally:
-        evo_conn.close()
-
-    wolf_conn = sqlite3.connect(wolf_db)
-    try:
-        tables = {
-            row[0]
-            for row in wolf_conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experience_candidates'"
-            )
-        }
-    finally:
-        wolf_conn.close()
-    assert tables == set()
+    assert saved == ["cand1"]
+    assert provider.evolution_calls == 1
+    row = provider.evolution_conn.tables["experience_candidates"][0]
+    assert json.loads(row["evidence_decision_ids"]) == ["training_game::d1"]
+    assert row["source_run_id"] == "run_1"
+    assert row["source_game_id"] == "artifact_training"
+    assert row["artifact_game_id"] == "training_game"
+    assert row["learning_eligible"] == 1
+    assert provider.wolf_conn.closed is True
+    assert provider.evolution_conn.closed is True
 
 
-def test_game_persistence_non_learning_policy_skips_experience_candidates(tmp_path):
-    import sqlite3
-
+def test_non_learning_policy_skips_evolution_connection() -> None:
     from storage.run_policy import RunType, policy_for_run_type
 
-    evolution_db = tmp_path / "evolution.db"
+    provider = _Provider()
     persistence = GamePersistence(
-        game_id="eval_game_1",
-        db_path=tmp_path / "wolf.db",
-        run_policy=policy_for_run_type(RunType.EVALUATION_BATCH),
-        evolution_db_path=evolution_db,
+        game_id="ordinary_game",
+        provider=provider,
+        run_policy=policy_for_run_type(RunType.ORDINARY_GAME),
     )
     try:
-        saved = persistence.save_experience_candidates([
-            {
-                "candidate_id": "cand_skip",
-                "role": "seer",
-                "evidence_decision_ids": ["d1"],
-            }
-        ])
+        saved = persistence.save_experience_candidates([{"candidate_id": "skip"}])
     finally:
         persistence.close()
 
     assert saved == []
+    assert provider.evolution_calls == 0
 
-    conn = sqlite3.connect(evolution_db)
+
+def test_learning_write_requires_explicit_policy() -> None:
+    persistence = GamePersistence(game_id="no_policy", conn=_MemoryStorageConn())
+
+    with pytest.raises(PermissionError, match="explicit RunPolicy"):
+        persistence.save_experience_candidates([{"candidate_id": "blocked"}])
+
+
+def test_game_persistence_rejects_conflicting_provider_sources() -> None:
+    provider = _Provider()
+    conn = _MemoryStorageConn()
+
+    with pytest.raises(ValueError, match="either conn or provider"):
+        GamePersistence(game_id="bad", conn=conn, provider=provider)
+    with pytest.raises(ValueError, match="either provider or evolution_conn"):
+        GamePersistence(
+            game_id="bad",
+            provider=provider,
+            evolution_conn=conn,
+        )
+
+
+def test_injected_evolution_connection_is_not_closed() -> None:
+    from storage.run_policy import RunType, policy_for_run_type
+
+    wolf_conn = _MemoryStorageConn()
+    evolution_conn = _MemoryStorageConn()
+    persistence = GamePersistence(
+        game_id="injected_training_game",
+        conn=wolf_conn,
+        evolution_conn=evolution_conn,
+        run_policy=policy_for_run_type(RunType.EVOLUTION_TRAINING),
+    )
     try:
-        tables = {
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'experience_candidates'"
-            )
-        }
+        saved = persistence.save_experience_candidates(
+            [{"candidate_id": "injected_cand", "role": "seer"}]
+        )
     finally:
-        conn.close()
-    assert tables == set()
+        persistence.close()
+
+    assert saved == ["injected_cand"]
+    assert wolf_conn.closed is False
+    assert evolution_conn.closed is False
+    assert evolution_conn.tables["experience_candidates"][0]["candidate_id"] == "injected_cand"

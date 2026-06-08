@@ -19,9 +19,7 @@ const HISTORY_PHASE_ALIASES = {
   result: 'night',
   sheriff_election: 'sheriff',
   day_speech: 'speech',
-  exile_vote: 'vote',
   pk_speak: 'speech',
-  pk_vote: 'vote',
   finished: 'ended'
 }
 
@@ -32,14 +30,53 @@ const HISTORY_PHASE_ORDER = [
   'sheriff_vote',
   'sheriff_result',
   'speech',
+  'exile_vote',
+  'pk_vote',
   'vote',
   'ended'
 ]
 
 const HISTORY_PHASE_RANK = new Map(HISTORY_PHASE_ORDER.map((phase, index) => [phase, index]))
-const SPEECH_EVENT_TYPES = new Set(['speech', 'sheriff_run', 'sheriff_speak', 'pk_speak', 'last_word'])
-const REPLAY_VOTE_PHASES = new Set(['vote', 'sheriff_vote'])
+const SPEECH_EVENT_TYPES = new Set([
+  'speech',
+  'speak',
+  'talk',
+  'message',
+  'chat',
+  'statement',
+  'discussion',
+  'day_speech',
+  'player_speech',
+  'sheriff_speak',
+  'sheriff_speech',
+  'pk_speak',
+  'pk_speech',
+  'last_word'
+])
+const REPLAY_VOTE_PHASES = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
 const REPLAY_VOTE_ACTIONS = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
+const REPLAY_VOTE_RESULT_EVENTS = new Set([
+  'exile',
+  'exile_vote_end',
+  'exile_vote_tie',
+  'pk_vote_end',
+  'sheriff_election_end',
+  'sheriff_result',
+  'sheriff_vote_tie'
+])
+const VOTE_PHASE_BY_TYPE = {
+  vote: 'exile_vote',
+  exile: 'exile_vote',
+  exile_vote: 'exile_vote',
+  exile_vote_start: 'exile_vote',
+  exile_vote_end: 'exile_vote',
+  exile_vote_tie: 'exile_vote',
+  pk_vote: 'pk_vote',
+  pk_vote_start: 'pk_vote',
+  pk_vote_end: 'pk_vote',
+  sheriff_vote: 'sheriff_vote',
+  sheriff_vote_tie: 'sheriff_vote'
+}
 const REPLAY_SPEEDS = [0.5, 1, 2, 4]
 const REPLAY_BASE_INTERVAL_MS = 900
 const DEFAULT_HISTORY_PAGE_SIZE = 80
@@ -70,21 +107,38 @@ function actorId(row) {
   return numericHistoryId(row?.actor_id ?? row?.player_id ?? row?.actor ?? row?.playerId ?? row?.payload?.actor_id)
 }
 
+function rowType(row = {}) {
+  return String(row.type || row.event_type || row.action || row.action_type || row.kind || '').trim()
+}
+
 function voteActionPhase(row) {
-  const action = String(row?.action || row?.action_type || row?.type || row?.event_type || row?.kind || '').trim()
-  if (!REPLAY_VOTE_ACTIONS.has(action)) return ''
-  return normalizeHistoryPhase(action)
+  return VOTE_PHASE_BY_TYPE[rowType(row)] || ''
+}
+
+function rowHistoryPhase(row = {}, fallback = 'setup') {
+  const rawPhase = normalizeHistoryPhase(row?.phase ?? fallback)
+  const votePhase = voteActionPhase(row)
+  if (rawPhase === 'vote' && votePhase && votePhase !== 'sheriff_vote') return votePhase
+  if ((row?.phase == null || row?.phase === '') && votePhase) return votePhase
+  return rawPhase
+}
+
+function votePhaseMatches(row, pagePhase) {
+  const actionPhase = voteActionPhase(row)
+  if (!actionPhase) return false
+  const rowPhase = rowHistoryPhase(row, pagePhase)
+  if (rowPhase === pagePhase) return actionPhase === pagePhase || pagePhase === 'vote'
+  if (rowPhase === 'vote' && pagePhase !== 'sheriff_vote') return actionPhase === pagePhase
+  return false
 }
 
 function replayVotesForPage(rows = [], page = {}) {
   const currentDay = normalizeHistoryDay(page.day)
   const currentPhase = normalizeHistoryPhase(page.phase)
   return rows.reduce((votes, row, index) => {
-    const actionPhase = voteActionPhase(row)
-    if (actionPhase !== currentPhase) return votes
+    if (!votePhaseMatches(row, currentPhase)) return votes
     const rowDay = normalizeHistoryDay(row.day ?? currentDay)
-    const rowPhase = normalizeHistoryPhase(row.phase ?? currentPhase)
-    if (rowDay !== currentDay || rowPhase !== currentPhase) return votes
+    if (rowDay !== currentDay) return votes
     const voterId = actorId(row)
     const targetId = numericHistoryId(eventTargetId(row))
     if (!voterId || !targetId) return votes
@@ -107,6 +161,16 @@ function tallyReplayVotes(votes = []) {
     row.count = row.voter_ids.length
   }
   return [...grouped.values()].sort((a, b) => b.count - a.count || a.target_id - b.target_id)
+}
+
+function hasReplayVoteResultLog(logs = [], page = {}) {
+  const currentDay = normalizeHistoryDay(page.day)
+  const currentPhase = normalizeHistoryPhase(page.phase)
+  return logs.some((log) =>
+    normalizeHistoryDay(log.day ?? currentDay) === currentDay
+    && (rowHistoryPhase(log, currentPhase) === currentPhase || votePhaseMatches(log, currentPhase))
+    && REPLAY_VOTE_RESULT_EVENTS.has(rowType(log))
+  )
 }
 
 function buildReplayVoteTally(decisions = [], page = {}, logs = [], sourceLogs = logs) {
@@ -388,12 +452,12 @@ function useGameHistory(state, options = {}) {
     if (!source || !page) return null
     const selectedSort = historyPageSortValue(page)
     const logs = (source.logs ?? []).filter((log) =>
-      historyPageSortValue({ day: log.day, phase: normalizeHistoryPhase(log.phase) }) <= selectedSort
+      historyPageSortValue({ day: log.day, phase: rowHistoryPhase(log) }) <= selectedSort
     )
     const decisions = (source.decisions ?? []).filter((decision) => {
       const decisionPage = {
         day: normalizeHistoryDay(decision.day || page.day),
-        phase: normalizeHistoryPhase(decision.phase || page.phase)
+        phase: rowHistoryPhase(decision, page.phase)
       }
       return historyPageSortValue(decisionPage) <= selectedSort
     })
@@ -440,7 +504,7 @@ function useGameHistory(state, options = {}) {
     if (!source || !page) return 0
     const selectedSort = historyPageSortValue(page)
     return replayEvents(source).filter((log) =>
-      historyPageSortValue({ day: log.day, phase: normalizeHistoryPhase(log.phase) }) <= selectedSort
+      historyPageSortValue({ day: log.day, phase: rowHistoryPhase(log) }) <= selectedSort
     ).length
   }
 
@@ -459,28 +523,17 @@ function useGameHistory(state, options = {}) {
     if (!shownLogs.length) return []
     const latest = shownLogs.at(-1)
     const latestDay = normalizeHistoryDay(latest.day)
-    const latestPhase = normalizeHistoryPhase(latest.phase)
-    const phaseLogsTotal = replayEvents(source).filter((log) =>
-      normalizeHistoryDay(log.day) === latestDay && normalizeHistoryPhase(log.phase) === latestPhase
-    ).length || 1
-    const phaseLogsShown = shownLogs.filter((log) =>
-      normalizeHistoryDay(log.day) === latestDay && normalizeHistoryPhase(log.phase) === latestPhase
-    ).length
-    const samePhaseDecisionLimit = Math.ceil((phaseLogsShown / phaseLogsTotal) * allDecisions.filter((decision) =>
-      normalizeHistoryDay(decision.day || latestDay) === latestDay
-      && normalizeHistoryPhase(decision.phase || latestPhase) === latestPhase
-    ).length)
-    let samePhaseSeen = 0
+    const latestPhase = rowHistoryPhase(latest)
+    const samePhaseVoteResultsPublic = hasReplayVoteResultLog(shownLogs, { day: latestDay, phase: latestPhase })
     return allDecisions.filter((decision) => {
       const decisionPage = {
         day: normalizeHistoryDay(decision.day || latestDay),
-        phase: normalizeHistoryPhase(decision.phase || latestPhase)
+        phase: rowHistoryPhase(decision, latestPhase)
       }
       const decisionSort = historyPageSortValue(decisionPage)
       if (decisionSort < cursorSort) return true
       if (decisionSort > cursorSort) return false
-      samePhaseSeen += 1
-      return samePhaseSeen <= samePhaseDecisionLimit
+      return !REPLAY_VOTE_ACTIONS.has(rowType(decision)) || samePhaseVoteResultsPublic
     })
   }
 
@@ -492,7 +545,7 @@ function useGameHistory(state, options = {}) {
     const logs = events.slice(0, clamped)
     const latestLog = logs.at(-1) || {}
     const day = latestLog.day ?? source.day ?? 1
-    const phase = normalizeHistoryPhase(latestLog.phase || (clamped >= total && source.winner ? 'ended' : 'setup'))
+    const phase = rowHistoryPhase(latestLog, clamped >= total && source.winner ? 'ended' : 'setup')
     const cursorSort = historyPageSortValue({ day, phase })
     const decisions = decisionsForReplayCursor(source, logs, cursorSort)
     const voteTally = buildReplayVoteTally(decisions, { day, phase }, logs, events)

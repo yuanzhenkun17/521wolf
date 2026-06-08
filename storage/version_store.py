@@ -1,11 +1,11 @@
-"""Version store backed by SQLite."""
+"""Version store backed by the registry storage database."""
 
 from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 
+from storage.shared.database import StorageConnection, begin_write, execute_for_update
 from storage.interfaces import (
     RoleHistoryData,
     RoleVersionData,
@@ -26,7 +26,7 @@ class HashCollisionError(Exception):
 class VersionStoreDB:
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -117,19 +117,17 @@ class VersionStoreDB:
         return version
 
     def set_baseline(self, role: str, target_hash: str, expected_current: str) -> bool:
-        self._conn.execute("BEGIN IMMEDIATE")
+        begin_write(self._conn)
         try:
-            rows = self._conn.execute(
-                "SELECT id FROM role_versions WHERE role = ? ORDER BY created_at",
+            rows = execute_for_update(
+                self._conn,
+                "SELECT id, status FROM role_versions WHERE role = ? ORDER BY created_at",
                 (role,),
             ).fetchall()
             if not rows:
                 raise FileNotFoundError(f"No history for role {role}")
 
-            baseline_row = self._conn.execute(
-                "SELECT id FROM role_versions WHERE role = ? AND status = 'baseline' LIMIT 1",
-                (role,),
-            ).fetchone()
+            baseline_row = next((row for row in rows if row["status"] == "baseline"), None)
             current = baseline_row["id"] if baseline_row else rows[0]["id"]
             if current != expected_current:
                 _log.warning(
@@ -141,11 +139,7 @@ class VersionStoreDB:
                 self._conn.rollback()
                 return False
 
-            version = self._conn.execute(
-                "SELECT id FROM role_versions WHERE role = ? AND id = ?",
-                (role, target_hash),
-            ).fetchone()
-            if version is None:
+            if not any(row["id"] == target_hash for row in rows):
                 _log.warning("set_baseline: target hash %s not found for %s", target_hash, role)
                 self._conn.rollback()
                 return False

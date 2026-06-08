@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
+from storage.decision_order import decision_timeline_order_clause
 from storage.ids import public_decision_id, storage_decision_id
 from storage.interfaces import DecisionArchiveData, DecisionRecordData
+from storage.shared.database import StorageConnection, StorageRow
 
 
 class DecisionStore:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: StorageConnection) -> None:
         self._conn = conn
 
     def insert_archive(
@@ -23,14 +24,41 @@ class DecisionStore:
     ) -> str:
         decision_id = storage_decision_id(game_id, archive.decision_id)
         self._conn.execute(
-            "INSERT OR REPLACE INTO decisions "
+            "INSERT INTO decisions "
             "(id, game_id, player_id, seat, role, day, phase, action_type, "
             "candidates, observation_summary, memory_context, selected_skills, "
             "prompt_messages, raw_output, parsed_decision, final_response, "
             "selected_target, selected_choice, public_text, private_reasoning, "
             "confidence, alternatives, rejected_reasons, source, "
             "policy_adjustments, errors, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "game_id = excluded.game_id, "
+            "player_id = excluded.player_id, "
+            "seat = excluded.seat, "
+            "role = excluded.role, "
+            "day = excluded.day, "
+            "phase = excluded.phase, "
+            "action_type = excluded.action_type, "
+            "candidates = excluded.candidates, "
+            "observation_summary = excluded.observation_summary, "
+            "memory_context = excluded.memory_context, "
+            "selected_skills = excluded.selected_skills, "
+            "prompt_messages = excluded.prompt_messages, "
+            "raw_output = excluded.raw_output, "
+            "parsed_decision = excluded.parsed_decision, "
+            "final_response = excluded.final_response, "
+            "selected_target = excluded.selected_target, "
+            "selected_choice = excluded.selected_choice, "
+            "public_text = excluded.public_text, "
+            "private_reasoning = excluded.private_reasoning, "
+            "confidence = excluded.confidence, "
+            "alternatives = excluded.alternatives, "
+            "rejected_reasons = excluded.rejected_reasons, "
+            "source = excluded.source, "
+            "policy_adjustments = excluded.policy_adjustments, "
+            "errors = excluded.errors, "
+            "created_at = excluded.created_at",
             (
                 decision_id,
                 game_id,
@@ -71,23 +99,46 @@ class DecisionStore:
         created_at: str = "",
     ) -> str:
         if record.player_id is None:
-            raise ValueError("DecisionRecordData.player_id is required for SQLite persistence")
+            raise ValueError("DecisionRecordData.player_id is required for persistence")
         decision_id = storage_decision_id(game_id, record.decision_id)
+        action_type = record.action_type.value if hasattr(record.action_type, "value") else record.action_type
         self._conn.execute(
-            "INSERT OR REPLACE INTO decisions "
-            "(id, game_id, seat, role, day, phase, action_type, "
+            "INSERT INTO decisions "
+            "(id, game_id, player_id, seat, role, day, phase, action_type, "
             "selected_target, selected_choice, public_text, private_reasoning, "
             "confidence, alternatives, rejected_reasons, selected_skills, "
             "raw_output, source, policy_adjustments, errors, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "game_id = excluded.game_id, "
+            "player_id = excluded.player_id, "
+            "seat = excluded.seat, "
+            "role = excluded.role, "
+            "day = excluded.day, "
+            "phase = excluded.phase, "
+            "action_type = excluded.action_type, "
+            "selected_target = excluded.selected_target, "
+            "selected_choice = excluded.selected_choice, "
+            "public_text = excluded.public_text, "
+            "private_reasoning = excluded.private_reasoning, "
+            "confidence = excluded.confidence, "
+            "alternatives = excluded.alternatives, "
+            "rejected_reasons = excluded.rejected_reasons, "
+            "selected_skills = excluded.selected_skills, "
+            "raw_output = excluded.raw_output, "
+            "source = excluded.source, "
+            "policy_adjustments = excluded.policy_adjustments, "
+            "errors = excluded.errors, "
+            "created_at = excluded.created_at",
             (
                 decision_id,
                 game_id,
                 record.player_id,
+                record.player_id,
                 record.role,
                 record.day,
                 record.phase,
-                record.action_type,
+                action_type,
                 record.selected_target,
                 record.selected_choice,
                 record.public_text,
@@ -150,13 +201,14 @@ class DecisionStore:
 
     def get_for_game(self, game_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
-            "SELECT * FROM decisions WHERE game_id = ? ORDER BY day, seat",
+            "SELECT * FROM decisions WHERE game_id = ? "
+            f"ORDER BY {decision_timeline_order_clause(self._conn)}",
             (game_id,),
         ).fetchall()
         return [_public_decision_row(row) for row in rows]
 
 
-def _public_decision_row(row: sqlite3.Row) -> dict[str, Any]:
+def _public_decision_row(row: StorageRow) -> dict[str, Any]:
     data = dict(row)
     game_id = str(data.get("game_id") or "")
     storage_id = str(data.get("id") or "")

@@ -136,9 +136,148 @@ def _evolution_battle_result_summary(result: Any) -> Any:
     )
     return {key: result.get(key) for key in keys if key in result}
 
+def _proposal_review_summary(run: dict[str, Any]) -> dict[str, Any]:
+    stored = run.get("proposal_review") if isinstance(run.get("proposal_review"), dict) else {}
+    proposals = [item for item in run.get("proposals", []) or [] if isinstance(item, dict)]
+    counts: dict[str, int] = {}
+    accepted_ids: list[str] = []
+    rejected_ids: list[str] = []
+    pending_ids: list[str] = []
+    for proposal in proposals:
+        proposal_id = str(proposal.get("proposal_id") or "").strip()
+        status = str(proposal.get("status") or proposal.get("review_status") or "proposed").strip().lower()
+        if status in {"accept", "approved", "approve"}:
+            status = "accepted"
+        elif status in {"reject", "declined", "deny", "denied"}:
+            status = "rejected"
+        elif status in {"", "pending", "reviewing"}:
+            status = "proposed"
+        counts[status] = counts.get(status, 0) + 1
+        if not proposal_id:
+            continue
+        if status == "accepted":
+            accepted_ids.append(proposal_id)
+        elif status == "rejected":
+            rejected_ids.append(proposal_id)
+        else:
+            pending_ids.append(proposal_id)
+    applied_ids = [
+        str(item)
+        for item in (run.get("applied_proposal_ids") or stored.get("applied_proposal_ids") or [])
+        if str(item)
+    ]
+    if stored:
+        summary = dict(stored)
+        summary.setdefault("schema_version", 1)
+        summary.setdefault("total", len(proposals))
+        summary.setdefault("accepted_count", len(accepted_ids))
+        summary.setdefault("rejected_count", len(rejected_ids))
+        summary.setdefault("pending_count", len(pending_ids))
+        summary.setdefault("accepted_proposal_ids", accepted_ids)
+        summary.setdefault("rejected_proposal_ids", rejected_ids)
+        summary.setdefault("pending_proposal_ids", pending_ids)
+        summary.setdefault("applied_proposal_ids", applied_ids)
+        summary.setdefault("counts", counts)
+        return summary
+    if not proposals:
+        status = "empty"
+    elif pending_ids:
+        status = "partial" if accepted_ids or rejected_ids else "unreviewed"
+    elif accepted_ids and rejected_ids:
+        status = "mixed"
+    elif accepted_ids:
+        status = "accepted"
+    else:
+        status = "rejected"
+    if applied_ids:
+        status = "applied"
+    return {
+        "schema_version": 1,
+        "status": status,
+        "total": len(proposals),
+        "accepted_count": len(accepted_ids),
+        "rejected_count": len(rejected_ids),
+        "pending_count": len(pending_ids),
+        "accepted_proposal_ids": accepted_ids,
+        "rejected_proposal_ids": rejected_ids,
+        "pending_proposal_ids": pending_ids,
+        "applied_proposal_ids": applied_ids,
+        "counts": counts,
+        "updated_at": run.get("last_heartbeat_at") or run.get("finished_at"),
+    }
+
+def _evolution_gate_report(run: dict[str, Any]) -> dict[str, Any]:
+    battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
+    gate = run.get("gate_report")
+    if not isinstance(gate, dict):
+        gate = run.get("promotion_gate")
+    if not isinstance(gate, dict):
+        gate = battle.get("promotion_gate")
+    if not isinstance(gate, dict):
+        gate = {}
+    decision = str(gate.get("decision") or gate.get("recommendation") or run.get("recommendation") or "").strip()
+    if not decision:
+        if gate.get("promote_allowed") is True:
+            decision = "promote"
+        elif gate:
+            decision = "review_required"
+        else:
+            decision = "unknown"
+    blocked = gate.get("blocked_reasons")
+    if blocked is None:
+        blocked = gate.get("reasons")
+    metrics = gate.get("metrics") if isinstance(gate.get("metrics"), dict) else {}
+    return {
+        "schema_version": 1,
+        "decision": decision,
+        "promote_allowed": bool(gate.get("promote_allowed", decision == "promote")),
+        "recommendation": gate.get("recommendation") or run.get("recommendation"),
+        "blocked_reasons": [str(item) for item in blocked or []],
+        "metrics": metrics,
+        "risk_tags": [str(item) for item in gate.get("risk_tags", []) or []],
+        "raw": gate,
+    }
+
+def _paired_seed_summary(run: dict[str, Any]) -> dict[str, Any]:
+    explicit = run.get("paired_seed_summary")
+    if isinstance(explicit, dict):
+        return explicit
+    pairs = run.get("paired_seed_pairs")
+    if not isinstance(pairs, list):
+        pairs = run.get("battle_pairs")
+    if not isinstance(pairs, list):
+        pairs = []
+    valid = [
+        item for item in pairs
+        if isinstance(item, dict)
+        and item.get("baseline_rankable", True)
+        and item.get("candidate_rankable", True)
+    ]
+    candidate_wins = len([item for item in valid if isinstance(item, dict) and item.get("winner_side") == "candidate"])
+    baseline_wins = len([item for item in valid if isinstance(item, dict) and item.get("winner_side") == "baseline"])
+    ties = len([item for item in valid if isinstance(item, dict) and item.get("winner_side") in {"tie", "draw", None, ""}])
+    deltas = []
+    for item in valid:
+        try:
+            deltas.append(float(item.get("score_delta")))
+        except (TypeError, ValueError):
+            continue
+    return {
+        "schema_version": 1,
+        "paired": bool(pairs),
+        "pair_count": len([item for item in pairs if isinstance(item, dict)]),
+        "valid_pair_count": len(valid),
+        "candidate_wins": candidate_wins,
+        "baseline_wins": baseline_wins,
+        "ties": ties,
+        "avg_score_delta": sum(deltas) / len(deltas) if deltas else None,
+    }
+
 def _evolution_run_summary(run: dict[str, Any]) -> dict[str, Any]:
     training_games = [game for game in run.get("training_games", []) or [] if isinstance(game, dict)]
     battle_games = [game for game in run.get("battle_games", []) or [] if isinstance(game, dict)]
+    gate_report = _evolution_gate_report(run)
+    paired_summary = _paired_seed_summary(run)
     summary = {
         key: run.get(key)
         for key in (
@@ -167,6 +306,10 @@ def _evolution_run_summary(run: dict[str, Any]) -> dict[str, Any]:
             "stage_progress",
             "diagnostics",
             "recommendation",
+            "promotion_gate",
+            "gate_report",
+            "paired_seed_summary",
+            "proposal_review",
             "error",
         )
         if key in run
@@ -185,6 +328,10 @@ def _evolution_run_summary(run: dict[str, Any]) -> dict[str, Any]:
             "overall_progress": run.get("overall_progress") if isinstance(run.get("overall_progress"), dict) else _overall_progress(run, training_games=training_games, battle_games=battle_games),
             "stage_progress": run.get("stage_progress") if isinstance(run.get("stage_progress"), dict) else run.get("progress", {}),
             "battle_result": _evolution_battle_result_summary(run.get("battle_result")),
+            "promotion_gate": run.get("promotion_gate") if isinstance(run.get("promotion_gate"), dict) else gate_report["raw"],
+            "gate_report": gate_report,
+            "paired_seed_summary": paired_summary,
+            "proposal_review": _proposal_review_summary(run),
         }
     )
     return summary

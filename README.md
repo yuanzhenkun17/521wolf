@@ -1,107 +1,202 @@
 # 521wolf
 
-Python rules engine for a 12-player Werewolf game. The engine owns the hardcoded game rules and calls each player through one async interface:
+521wolf is a 12-player Werewolf MVP with a hardcoded rules engine, LLM-driven
+agents, PostgreSQL persistence, a FastAPI backend, and a Vue workbench for live
+play, replay, benchmark, review, and role-skill evolution.
 
-```python
-async def act(request: ActionRequest) -> ActionResponse:
-    ...
+The current runtime is PostgreSQL-only. SQLite/local JSON files are not a
+supported source of truth; local `runs/` artifacts are only auxiliary outputs.
+
+## What Is Included
+
+- Standard 12-player White Wolf King rule set.
+- Roles: villager, werewolf, white wolf king, seer, witch, hunter, guard.
+- Full game flow: night actions, sheriff election, day speeches, exile/PK votes,
+  death handling, win detection, and replayable event logs.
+- Player-view information isolation for backend snapshots, archives, and SSE
+  event streams.
+- LLM agent pipeline with role skills, policy enforcement, retry/timeout
+  handling, and decision records.
+- Benchmark, review, leaderboard, and evolution workflows backed by PostgreSQL.
+- Vue frontend with lobby, match, history, benchmark, and evolution pages.
+
+## Requirements
+
+- Python 3.11+
+- `uv`
+- Node.js and npm
+- PostgreSQL
+
+## Setup
+
+Install Python dependencies:
+
+```powershell
+uv sync
 ```
 
-The `engine/` package intentionally does not depend on LangChain or LangGraph. LLM players and orchestration live in `app/` and still satisfy the same `act(request)` contract.
+Install frontend dependencies:
 
-## Current Rule Set
-
-- 12 players: 3 werewolves, 1 white wolf king, 4 villagers, seer, witch, hunter, guard.
-- Sheriff election, sheriff vote weight, and badge transfer/destroy.
-- Night actions: guard, wolves, seer, witch.
-- Witch: first-night self-save is supported by the action model, antidote and poison are one-use, and same guard plus save still dies.
-- Day actions: ordered speeches, white wolf king explosion, exile vote, immediate exile last words, PK vote on tie.
-- Win condition: villagers win when all wolves die; wolves win by slaughtering all villagers, slaughtering all gods, or reaching parity with the good players.
-
-## Project Layout
-
-- `engine/`: rules engine. It owns phases, role rules, role state, voting, death chains, victory checks, logs, snapshots, and the `ActionRequest` / `ActionResponse` contract.
-- `app/`: active runtime. It owns LangGraph orchestration, agent decision nodes, memory, Markdown skill routing, LLM services, review, evaluation, self-play, evidence extraction, and role skill evolution.
-- `storage/`: SQLite persistence and replay helpers for games, events, decisions, experience candidates, evolution runs, patterns, and leaderboards. Two databases: `wolf.db` (games + battle evaluation) and `evolution.db` (learning pipeline).
-- `ui/`: FastAPI backend plus Vue 3 frontend. It starts games, streams SSE events, handles human actions, reads persisted artifacts, and manages role evolution.
-- `scripts/`: maintenance scripts, including `seed_skills.py` for rebuilding the local skill registry under `data/registry/`.
-- `docs/`: design notes, current feature inventory, implementation plan, and architecture documents.
-
-Current top-level structure:
-
-```text
-521wolf/
-├── app/                # Active LangGraph runtime, services, business logic, entrypoints
-├── engine/             # Rule engine, phases, role rules, role_state, logging
-├── storage/            # SQLite schema, stores, replay
-├── ui/
-│   ├── backend/        # FastAPI app and runners
-│   └── frontend/       # Vue 3 UI
-├── tests/              # Unit, integration, backend, storage, and structure tests
-├── docs/               # Current docs and design specs
-├── scripts/            # Utility scripts
-├── data/               # Local runtime data, gitignored except examples
-└── runs/               # Local selfplay/evolution/game artifacts, gitignored
+```powershell
+npm install --prefix ui/frontend
 ```
 
-## Agent Boundary
+Create a local environment file:
 
-The rules engine only depends on the `PlayerAgent` protocol:
-
-```python
-async def act(request: ActionRequest) -> ActionResponse:
-    ...
+```powershell
+Copy-Item .env.example .env
 ```
 
-LLM prompting, model calls, structured memory, belief, skill routing, output parsing, and fallback behavior live under `app/services` and `app/graphs/subgraphs/agent`. Game, evaluation, and evolution orchestration enter through `app.run`, which dispatches into LangGraph subgraphs behind the same `act(request)` contract. There is no root-level `agent/` package; active runtime code must use `app.*` entrypoints.
+Set at least these values in `.env`:
 
-## Test
+```dotenv
+POSTGRES_DATABASE_URL=postgresql://wolf_app:password@127.0.0.1:5432/wolf_app
+DATABASE_URL=${POSTGRES_DATABASE_URL}
 
-```bash
-uv run pytest
-```
-
-## Seed Local Skills
-
-Versioned Markdown skills live under local gitignored `data/registry/`. On a fresh checkout, rebuild the seed baselines before running UI games or role evolution:
-
-```bash
-uv run python scripts/seed_skills.py
-```
-
-## Run With LLM Agents
-
-LLM players use an OpenAI-compatible chat completions endpoint. Configure it with a local ignored `.env` file:
-
-```bash
-cp .env.example .env
-```
-
-Then edit `.env`:
-
-```bash
 WEREWOLF_LLM_API_KEY=your-api-key
-WEREWOLF_LLM_BASE_URL=https://router.shengsuanyun.com/api/v1
-WEREWOLF_LLM_MODEL=ali/qwen3.5-flash
-WEREWOLF_LLM_TIMEOUT=45
-WEREWOLF_LLM_TEMPERATURE=0.4
+WEREWOLF_LLM_BASE_URL=https://your-provider.example/v1
+WEREWOLF_LLM_MODEL=your-model
 ```
 
-Langfuse tracing is optional. It stays disabled unless `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are both configured.
+For UI/demo flows that should avoid real model calls, set:
 
-Shell environment variables override values loaded from `.env`:
-
-```bash
-export WEREWOLF_LLM_API_KEY="your-api-key"
-export WEREWOLF_LLM_BASE_URL="https://router.shengsuanyun.com/api/v1"
-export WEREWOLF_LLM_MODEL="ali/qwen3.5-flash"
+```dotenv
+UI_BACKEND_USE_FAKE_LLM=true
 ```
 
-The UI backend calls `app.run.run_game()`, `app.run.run_evaluation()`, and `app.run.run_evolution()`. Game setup uses `app.lib.game.create_agents()` / `create_engine()`, while the LLM client comes from `app.services.llm`. Each player receives a seat/role prompt plus the current `ActionRequest`, then returns an `ActionResponse`.
-Game logs are written under the configured runtime paths, typically:
+Optional Langfuse tracing is intended for a self-hosted Langfuse server. Set
+`LANGFUSE_BASE_URL` to your own deployment URL; do not rely on a Langfuse Cloud
+default URL.
+
+```dotenv
+LANGFUSE_TRACING_ENABLED=false
+LANGFUSE_PUBLIC_KEY=your-public-key
+LANGFUSE_SECRET_KEY=your-secret-key
+LANGFUSE_BASE_URL=http://127.0.0.1:3000
+
+# Optional trace metadata and capture controls.
+LANGFUSE_ENVIRONMENT=local
+LANGFUSE_RELEASE=
+LANGFUSE_SAMPLE_RATE=1.0
+LANGFUSE_CAPTURE_INPUT_OUTPUT=false
+```
+
+If PostgreSQL is only reachable through a remote host, keep the tunnel open and
+point `POSTGRES_DATABASE_URL` at the local forwarded port.
+
+## Database
+
+Apply the schema:
+
+```powershell
+uv run alembic upgrade head
+```
+
+Validate the default role baselines without writing:
+
+```powershell
+uv run python -m app.tools.seed_default_baseline --dry-run
+```
+
+Publish missing baselines:
+
+```powershell
+uv run python -m app.tools.seed_default_baseline
+```
+
+If an existing baseline intentionally needs to be replaced by
+`skills/default_baseline`, rerun with `--force` after reviewing the diff:
+
+```powershell
+uv run python -m app.tools.seed_default_baseline --force
+```
+
+## Runtime Data Boundaries
+
+PostgreSQL is the authoritative runtime store for games, decisions, UI task
+events, benchmark/evolution state, leaderboards, and role registry baselines.
+The local `runs/` and `data/` directories are ignored workspace artifacts, not
+supported sources of truth.
+
+Use PostgreSQL dump/restore or explicit one-shot import scripts for data
+migration. Do not migrate by committing local JSON, SQLite, pid, log, screenshot,
+or generated report files. The detailed boundary and migration policy is in
+[`docs/runtime-data-boundaries.md`](docs/runtime-data-boundaries.md).
+
+## Run Locally
+
+Start the backend:
+
+```powershell
+uv run uvicorn ui.backend.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Start the frontend:
+
+```powershell
+npm run dev --prefix ui/frontend
+```
+
+Open the Vite URL printed by the frontend command, usually
+`http://127.0.0.1:5173`. The frontend proxies `/api` to
+`http://127.0.0.1:8000` by default. To use a different backend URL:
+
+```powershell
+$env:UI_FRONTEND_API_PROXY_TARGET = "http://127.0.0.1:8001"
+npm run dev --prefix ui/frontend
+```
+
+## Health Check
+
+The backend exposes:
 
 ```text
-runs/games/game1/game_events.jsonl
-runs/games/game1/archive.json
-data/wolf.db
+GET /api/health
 ```
+
+Startup diagnostics cover PostgreSQL connectivity, Alembic head status, registry
+baselines, and LLM configuration. `status=degraded` can still be usable for fake
+LLM demos; `status=error` means a required dependency such as PostgreSQL or the
+schema migration is missing.
+
+## Verification
+
+Backend and engine tests:
+
+```powershell
+uv run pytest -q
+```
+
+Frontend tests:
+
+```powershell
+npm test --prefix ui/frontend
+```
+
+Frontend production build:
+
+```powershell
+npm run build --prefix ui/frontend
+```
+
+Useful focused smoke checks:
+
+```powershell
+uv run python -m app.tools.seed_default_baseline --dry-run
+```
+
+```powershell
+uv run pytest tests/test_api_contracts.py tests/test_ui_backend_app.py -q
+```
+
+## Notes
+
+- Keep secrets in `.env`; do not put them in frontend `VITE_*` variables.
+- Keep runtime artifacts, screenshots, pid files, and local logs out of source
+  control. Use ignored folders such as `runs/`, `screenshots/`, `test-results/`,
+  and `playwright-report/` for local diagnostics.
+- `POSTGRES_DISABLE_DOTENV=1` is useful for tests that must prove connection
+  information is not implicitly loaded from `.env`.
+- Evolution can auto-promote candidate skill versions. Use dry-run/review
+  workflows and inspect diffs before relying on automatic promotion for real
+  baselines.

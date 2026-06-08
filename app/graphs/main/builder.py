@@ -27,9 +27,11 @@ def build_root_graph(*, use_checkpointer: bool = False) -> Any:
     Dispatch based on state["run_type"].
 
     Args:
-        use_checkpointer: Enable SQLite checkpointing for state persistence.
+        use_checkpointer: Deprecated compatibility flag; local checkpoint
+            storage is disabled in PostgreSQL-only mode.
     """
-    cache_key = f"root:checkpointer={use_checkpointer}"
+    _ = use_checkpointer
+    cache_key = "root:postgres"
     if cache_key in _cache:
         return _cache[cache_key]
 
@@ -52,16 +54,7 @@ def build_root_graph(*, use_checkpointer: bool = False) -> Any:
     workflow.add_edge("eval", END)
     workflow.add_edge("evolve", END)
 
-    checkpointer = None
-    if use_checkpointer:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-        import sqlite3
-        from app.config import DEFAULT_PATHS
-        db_path = str(DEFAULT_PATHS.wolf_db_path).replace(".db", "_checkpoint.db")
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
-
-    graph = workflow.compile(checkpointer=checkpointer)
+    graph = workflow.compile()
     _cache[cache_key] = graph
     return graph
 

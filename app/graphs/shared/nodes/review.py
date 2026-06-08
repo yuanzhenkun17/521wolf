@@ -6,6 +6,7 @@ evidence.py — evidence extraction pipeline (training → experience candidates
 
 from __future__ import annotations
 
+import importlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -77,6 +78,15 @@ async def review_node(state: dict) -> dict:
         if warnings:
             state["review"]["warnings"] = warnings
             _append_warnings(state, warnings)
+        if _review_judge_enabled(state):
+            await _attach_decision_judge_report(
+                state,
+                game_id=str(game_id or ""),
+                winner=winner,
+                roles_raw=roles_raw,
+                game_events=game_events,
+                decisions_raw=decisions_raw,
+            )
     except Exception as exc:
         _log.warning("review_node failed: %s", exc, exc_info=True)
         state["review"] = {"status": "failed", "error": str(exc)}
@@ -86,6 +96,221 @@ async def review_node(state: dict) -> dict:
         _append_warnings(state, [f"review failed: {type(exc).__name__}: {exc}"])
 
     return state
+
+
+async def _attach_decision_judge_report(
+    state: dict,
+    *,
+    game_id: str,
+    winner: Any,
+    roles_raw: Any,
+    game_events: Any,
+    decisions_raw: Any,
+) -> None:
+    from app.lib.decision_judge import judge_key_decisions
+    from app.lib.judge_policy import resolve_judge_policy
+
+    review = state.setdefault("review", {})
+    try:
+        config = _dict_value(state.get("config"))
+        policy = resolve_judge_policy("play", config, state)
+        report = await judge_key_decisions(
+            state.get("model"),
+            game_id=game_id,
+            winner=winner,
+            roles=roles_raw,
+            events=game_events,
+            decisions=decisions_raw,
+            review=review,
+            max_decisions=policy.max_decisions,
+            concurrency=policy.concurrency,
+            timeout_seconds=policy.timeout_seconds,
+            judge_fn=state.get("decision_judge_fn"),
+        )
+        review["decision_judge"] = report
+        _score_langfuse_decision_judge_report(report, game_id=game_id)
+        persisted = _persist_decision_judge_report(state, report, game_id=game_id)
+        if persisted:
+            report.setdefault("persistence", {})["llm_judgment_ids"] = persisted
+        report_warnings = _list_str(report.get("warnings") if isinstance(report, dict) else None)
+        if report_warnings:
+            existing = _list_str(review.get("warnings"))
+            merged = existing + [warning for warning in report_warnings if warning not in existing]
+            review["warnings"] = merged
+            _append_warnings(state, report_warnings)
+    except Exception as exc:  # noqa: BLE001 - judge is advisory, heuristic review remains valid
+        _log.warning("decision judge failed: %s", exc, exc_info=True)
+        message = f"decision judge failed: {type(exc).__name__}: {exc}"
+        review["decision_judge"] = {"status": "failed", "error": str(exc), "warnings": [message]}
+        _score_langfuse_decision_judge_report(review["decision_judge"], game_id=game_id)
+        existing = _list_str(review.get("warnings"))
+        if message not in existing:
+            review["warnings"] = existing + [message]
+        _append_warnings(state, [message])
+
+
+def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
+    if not isinstance(report, dict):
+        return
+    try:
+        observability = importlib.import_module("app.services.observability")
+        summary = _dict_value(report.get("summary"))
+        metrics = _dict_value(report.get("metrics"))
+        quality_counts = _dict_value(summary.get("quality_counts"))
+        metadata = {
+            "metric_family": "review.decision_judge",
+            "game_id": str(game_id or report.get("game_id") or ""),
+            "reason": report.get("reason"),
+        }
+        _score_langfuse_value(
+            observability,
+            "review.decision_judge_average_score",
+            summary.get("average_score"),
+            data_type="NUMERIC",
+            metadata=metadata,
+        )
+        _score_langfuse_value(
+            observability,
+            "review.decision_judge_judged",
+            metrics.get("judged"),
+            data_type="NUMERIC",
+            metadata=metadata,
+        )
+        _score_langfuse_value(
+            observability,
+            "review.decision_judge_failed",
+            metrics.get("failed"),
+            data_type="NUMERIC",
+            metadata=metadata,
+        )
+        _score_langfuse_value(
+            observability,
+            "review.decision_judge_status",
+            report.get("status"),
+            data_type="CATEGORICAL",
+            metadata=metadata,
+        )
+        if quality_counts:
+            _score_langfuse_value(
+                observability,
+                "review.decision_judge_bad_count",
+                quality_counts.get("bad", 0),
+                data_type="NUMERIC",
+                metadata=metadata,
+            )
+            _score_langfuse_value(
+                observability,
+                "review.decision_judge_good_count",
+                quality_counts.get("good", 0),
+                data_type="NUMERIC",
+                metadata=metadata,
+            )
+    except Exception:  # noqa: BLE001 - observability must never affect review
+        _log.debug("Langfuse decision judge scoring failed", exc_info=True)
+
+
+def _score_langfuse_value(
+    observability: Any,
+    name: str,
+    value: Any,
+    *,
+    data_type: str,
+    metadata: dict[str, Any],
+) -> None:
+    if value is None:
+        return
+    observability.score_current_trace(
+        name,
+        value,
+        data_type=data_type,
+        metadata=metadata,
+    )
+
+
+def _persist_decision_judge_report(state: dict, report: dict[str, Any], *, game_id: str) -> list[str]:
+    if not isinstance(report, dict):
+        return []
+    rows = _llm_judgment_rows(report)
+    if not rows:
+        return []
+    try:
+        saved = _save_llm_judgment_rows(state, rows, game_id=game_id)
+        return saved
+    except Exception as exc:  # noqa: BLE001 - persistence is advisory for review
+        message = f"decision judge persistence failed: {type(exc).__name__}: {exc}"
+        _log.warning(message, exc_info=True)
+        review = state.setdefault("review", {})
+        existing = _list_str(review.get("warnings"))
+        if message not in existing:
+            review["warnings"] = existing + [message]
+        report_warnings = _list_str(report.get("warnings"))
+        if message not in report_warnings:
+            report["warnings"] = report_warnings + [message]
+        _append_warnings(state, [message])
+        return []
+
+
+def _llm_judgment_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in report.get("judgments", []) or []:
+        if isinstance(item, dict) and item.get("decision_id"):
+            row = dict(item)
+            row.setdefault("dimension", "decision_judge")
+            row.setdefault("prompt_version", "decision_judge_v1")
+            rows.append(row)
+    if rows:
+        rows.append({
+            "dimension": "decision_judge_report",
+            "report_id": "summary",
+            "status": report.get("status"),
+            "summary": report.get("summary", {}),
+            "metrics": report.get("metrics", {}),
+            "selection": report.get("selection", {}),
+            "warnings": report.get("warnings", []),
+            "raw_json": {
+                "schema_version": report.get("schema_version"),
+                "status": report.get("status"),
+                "game_id": report.get("game_id"),
+                "winner": report.get("winner"),
+                "selection": report.get("selection", {}),
+                "summary": report.get("summary", {}),
+                "metrics": report.get("metrics", {}),
+                "warnings": report.get("warnings", []),
+            },
+            "normalized_fields": {
+                "status": report.get("status"),
+                "summary": report.get("summary", {}),
+                "metrics": report.get("metrics", {}),
+            },
+            "input_refs": {
+                "selected_decision_ids": [
+                    str(item.get("decision_id"))
+                    for item in report.get("judgments", []) or []
+                    if isinstance(item, dict) and item.get("decision_id")
+                ],
+                "selection": report.get("selection", {}),
+            },
+        })
+    return rows
+
+
+def _save_llm_judgment_rows(state: dict, rows: list[dict[str, Any]], *, game_id: str) -> list[str]:
+    persistence = state.get("persistence") or state.get("game_persistence")
+    save = getattr(persistence, "save_llm_judgments", None)
+    if callable(save):
+        return list(save(rows))
+
+    provider = state.get("storage_provider")
+    if provider is None:
+        return []
+
+    from storage.runtime import GamePersistence
+
+    runtime = GamePersistence(game_id=game_id or "unknown", provider=provider, source_game_id=game_id or None)
+    try:
+        return runtime.save_llm_judgments(rows)
+    finally:
+        runtime.close()
 
 
 async def evidence_node(state: dict) -> dict:
@@ -274,6 +499,43 @@ def _append_warnings(state: dict, messages: list[str]) -> None:
             warnings.append(text)
 
 
+def _review_judge_enabled(state: dict) -> bool:
+    config = _dict_value(state.get("config"))
+    for container in (state, config):
+        for key in (
+            "enable_llm_judge",
+            "enable_decision_judge",
+            "review_llm_judge",
+            "review_decision_judge",
+        ):
+            if key in container:
+                return _as_bool(container.get(key))
+    return False
+
+
+def _review_judge_max_decisions(state: dict) -> int:
+    config = _dict_value(state.get("config"))
+    for container in (state, config):
+        for key in (
+            "judge_max_decisions",
+            "review_judge_max_decisions",
+            "decision_judge_max_decisions",
+        ):
+            if key in container:
+                value = _as_positive_int(container.get(key))
+                return value if value is not None else 8
+    return 8
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "y", "on", "enabled"}
+
+
 def _load_replay_inputs(
     state: dict,
     game_dir: Path | str,
@@ -281,24 +543,6 @@ def _load_replay_inputs(
     need_decisions: bool,
     need_events: bool,
 ) -> dict[str, Any]:
-    db_path = _resolve_db_path(state)
-    if not db_path:
-        diagnostics: dict[str, Any] = {}
-        if need_decisions:
-            diagnostics["decisions"] = _missing_replay_diagnostic("decisions", game_dir, "no db_path available")
-        if need_events:
-            diagnostics["events"] = _missing_replay_diagnostic("events", game_dir, "no db_path available")
-        if need_decisions or need_events:
-            diagnostics["config"] = _missing_replay_diagnostic("config", game_dir, "no db_path available")
-        return {
-            "decisions": [],
-            "events": [],
-            "config": {},
-            "game_id": None,
-            "diagnostics": diagnostics,
-            "warnings": ["evidence replay skipped: no db_path available"],
-        }
-
     from storage.replay import explain_replay_lookup
 
     root = _resolve_replay_root(state)
@@ -310,7 +554,7 @@ def _load_replay_inputs(
     game_id: str | None = None
 
     if need_decisions:
-        result = explain_replay_lookup(db_path, game_dir, root=root, replay_type="decisions")
+        result = explain_replay_lookup(game_dir, root=root, replay_type="decisions")
         diagnostics["decisions"] = _lookup_diagnostic(result)
         if result.ok and isinstance(result.data, list):
             decisions = result.data
@@ -319,7 +563,7 @@ def _load_replay_inputs(
             warnings.append(_replay_warning("decisions", result))
 
     if need_events:
-        result = explain_replay_lookup(db_path, game_dir, root=root, replay_type="events")
+        result = explain_replay_lookup(game_dir, root=root, replay_type="events")
         diagnostics["events"] = _lookup_diagnostic(result)
         if result.ok and isinstance(result.data, list):
             events = result.data
@@ -327,7 +571,7 @@ def _load_replay_inputs(
         else:
             warnings.append(_replay_warning("events", result))
 
-    result = explain_replay_lookup(db_path, game_dir, root=root, replay_type="config")
+    result = explain_replay_lookup(game_dir, root=root, replay_type="config")
     diagnostics["config"] = _lookup_diagnostic(result)
     if result.ok and isinstance(result.data, dict):
         config = result.data
@@ -356,17 +600,6 @@ def _lookup_diagnostic(result: Any) -> dict[str, Any]:
     if result.error:
         diagnostic["error"] = result.error
     return diagnostic
-
-
-def _missing_replay_diagnostic(replay_type: str, game_dir: Path | str, message: str) -> dict[str, Any]:
-    table = {"decisions": "decisions", "events": "game_events", "config": "games"}.get(replay_type)
-    return {
-        "status": "missing_db_path",
-        "game_id": None,
-        "table": table,
-        "message": message,
-        "candidates": [Path(game_dir).name],
-    }
 
 
 def _replay_warning(replay_type: str, result: Any) -> str:
@@ -408,9 +641,9 @@ def _evidence_metadata(
 ) -> dict[str, Any]:
     replay_missing = _replay_has_status(
         replay_diagnostics,
-        {"missing_db_path", "missing_db", "missing_table", "missing_rows", "not_found"},
+        {"missing_table", "missing_rows", "not_found"},
     )
-    replay_error = _replay_has_status(replay_diagnostics, {"sqlite_error", "unsupported_type"})
+    replay_error = _replay_has_status(replay_diagnostics, {"storage_error", "unsupported_type"})
     statuses = {
         key: str(value.get("status"))
         for key, value in replay_diagnostics.items()
@@ -441,7 +674,7 @@ def _replay_has_status(replay_diagnostics: dict[str, Any], statuses: set[str]) -
             continue
         if str(diagnostic.get("status") or "") in statuses:
             return True
-        if "error" in diagnostic and "sqlite_error" in statuses:
+        if "error" in diagnostic and "storage_error" in statuses:
             return True
     return False
 
@@ -465,25 +698,6 @@ def _evidence_reliability(
 
 def _resolve_game_dir(state: dict) -> Any:
     return state.get("game_dir") or state.get("path")
-
-
-def _resolve_db_path(state: dict) -> Any:
-    for key in ("db_path", "wolf_db_path"):
-        value = state.get(key)
-        if value:
-            return value
-
-    paths = state.get("paths")
-    value = _mapping_or_attr(paths, "wolf_db_path") or _mapping_or_attr(paths, "db_path")
-    if value:
-        return value
-
-    for container_key in ("config", "batch_config"):
-        container = state.get(container_key)
-        value = _mapping_or_attr(container, "db_path") or _mapping_or_attr(container, "wolf_db_path")
-        if value:
-            return value
-    return None
 
 
 def _resolve_replay_root(state: dict) -> Any:
@@ -522,6 +736,12 @@ def _mapping_or_attr(value: Any, key: str) -> Any:
 
 def _list_value(value: Any) -> list[dict[str, Any]]:
     return value if isinstance(value, list) else []
+
+
+def _list_str(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
 
 
 def _dict_value(value: Any) -> dict[str, Any]:

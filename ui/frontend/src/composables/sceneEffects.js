@@ -14,8 +14,7 @@ const PUBLIC_DEATH_TYPES = new Set([
   'shoot',
   'white_wolf_burst_kill',
   'white_wolf_burst_death',
-  'white_wolf_explosion',
-  'white_wolf_explode'
+  'white_wolf_explosion'
 ])
 const VOTE_ACTIONS = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
 const PUBLIC_SKILL_KILL_ACTIONS = new Set([
@@ -23,7 +22,6 @@ const PUBLIC_SKILL_KILL_ACTIONS = new Set([
   'hunter_shot',
   'shoot',
   'white_wolf_burst',
-  'white_wolf_explode',
   'white_wolf_explosion'
 ])
 
@@ -53,6 +51,29 @@ function actorId(row = {}) {
 
 function payloadOf(row = {}) {
   return row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : {}
+}
+
+function rowChoice(row = {}) {
+  const payload = payloadOf(row)
+  return String(
+    payload.choice
+    ?? payload.selected_choice
+    ?? payload.selected_skill
+    ?? row.choice
+    ?? row.selected_choice
+    ?? row.selected_skill
+    ?? row.action_choice
+    ?? ''
+  ).trim().toLowerCase()
+}
+
+function isLegacyWhiteWolfExplodeKill(row = {}) {
+  if (rowType(row) !== 'white_wolf_explode') return false
+  return ['explode', 'burst'].includes(rowChoice(row)) && Boolean(targetId(row))
+}
+
+function isPublicSkillKill(row = {}) {
+  return PUBLIC_SKILL_KILL_ACTIONS.has(rowType(row)) || isLegacyWhiteWolfExplodeKill(row)
 }
 
 function firstNumeric(row = {}, keys = []) {
@@ -331,7 +352,7 @@ function buildPublicLogEffects(logs, effects, seen, preciseNightOutcomes) {
       return
     }
 
-    if (!PUBLIC_DEATH_TYPES.has(type)) return
+    if (!PUBLIC_DEATH_TYPES.has(type) && !isLegacyWhiteWolfExplodeKill(log)) return
     if (type === 'death' && ['exile', 'self_explode'].includes(deathCause(log))) return
     const targets = target ? [target] : parseSeatIds(textOf(log))
     targets.forEach((id, idIndex) => {
@@ -355,7 +376,7 @@ function buildPublicDecisionEffects(decisions, effects, seen, preciseNightOutcom
     const target = targetId(decision)
     if (!target) return
     const row = { ...decision, sequence: decision.sequence ?? decision.index ?? index + 1 }
-    if (PUBLIC_SKILL_KILL_ACTIONS.has(type)) {
+    if (isPublicSkillKill(decision)) {
       if (preciseNightOutcomes.has(`${dayOf(decision)}:${target}`)) return
       preciseNightOutcomes.add(`${dayOf(decision)}:${target}`)
       addEffect(effects, seen, {
@@ -399,7 +420,7 @@ export function buildSceneEffects(game, { canSeeLog, isWatch = false, isReplayMo
     buildPublicDecisionEffects(allDecisions, effects, seen, preciseNightOutcomes)
   } else {
     buildPublicDecisionEffects(
-      allDecisions.filter((decision) => VOTE_ACTIONS.has(rowType(decision)) || PUBLIC_SKILL_KILL_ACTIONS.has(rowType(decision))),
+      allDecisions.filter((decision) => VOTE_ACTIONS.has(rowType(decision)) || isPublicSkillKill(decision)),
       effects,
       seen,
       preciseNightOutcomes

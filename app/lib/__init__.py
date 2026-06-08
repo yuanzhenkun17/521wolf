@@ -6,6 +6,7 @@ from app.lib.score import (
     FairnessResult,
     PlayerScore,
     aggregate_batch_scores,
+    compute_decision_quality_metrics,
     compute_model_leaderboard_entry,
     compute_rankable,
     compute_role_score,
@@ -27,6 +28,16 @@ from app.lib.evidence import (
     normalize_decisions,
     select_key_decisions,
 )
+from app.lib.decision_judge import (
+    DecisionJudgment,
+    GameJudgmentReport,
+    attach_judgments_to_evidence_summary,
+    build_decision_judge_messages,
+    judge_key_decisions,
+    parse_decision_judgment,
+    summarize_judgments,
+)
+from app.lib.judge_policy import JudgePolicy, apply_judge_policy, resolve_judge_policy
 from app.lib.evolve import (
     EvolutionConfig,
     EvolutionRun,
@@ -60,6 +71,7 @@ __all__ = [
     "FairnessResult",
     "PlayerScore",
     "aggregate_batch_scores",
+    "compute_decision_quality_metrics",
     "compute_model_leaderboard_entry",
     "compute_rankable",
     "compute_role_score",
@@ -86,6 +98,17 @@ __all__ = [
     "get_role_rubric",
     "normalize_decisions",
     "select_key_decisions",
+    # decision judge
+    "DecisionJudgment",
+    "GameJudgmentReport",
+    "attach_judgments_to_evidence_summary",
+    "build_decision_judge_messages",
+    "judge_key_decisions",
+    "parse_decision_judgment",
+    "summarize_judgments",
+    "JudgePolicy",
+    "apply_judge_policy",
+    "resolve_judge_policy",
     # evolve
     "EvolutionConfig",
     "EvolutionRun",

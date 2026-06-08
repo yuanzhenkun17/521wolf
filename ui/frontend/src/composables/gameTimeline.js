@@ -5,8 +5,7 @@ const AUTHORITATIVE_DEATH_EVENTS = new Set([
   'pk_vote_end',
   'white_wolf_burst_kill',
   'white_wolf_burst_death',
-  'white_wolf_explosion',
-  'white_wolf_explode'
+  'white_wolf_explosion'
 ])
 const FALLBACK_DEATH_EVENTS = new Set(['werewolf_kill', 'hunter_shoot'])
 const NIGHT_OUTCOME_EVENTS = new Set(['night_end', 'night_result', 'night_death', 'night_death_reveal', 'death_result'])
@@ -25,6 +24,20 @@ function logType(row = {}) {
 
 function payloadOf(row = {}) {
   return row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : {}
+}
+
+function rowChoice(row = {}) {
+  const payload = payloadOf(row)
+  return String(
+    payload.choice
+    ?? payload.selected_choice
+    ?? payload.selected_skill
+    ?? row.choice
+    ?? row.selected_choice
+    ?? row.selected_skill
+    ?? row.action_choice
+    ?? ''
+  ).trim().toLowerCase()
 }
 
 function truthyFlag(value) {
@@ -59,8 +72,14 @@ function eventTargetId(row = {}) {
   )
 }
 
+function isLegacyWhiteWolfExplodeKill(log = {}) {
+  if (logType(log) !== 'white_wolf_explode') return false
+  return ['explode', 'burst'].includes(rowChoice(log)) && Boolean(eventTargetId(log))
+}
+
 function eventKillsPlayer(log = {}, hasAuthoritativeDeathEvents = true) {
   const type = logType(log)
+  if (isLegacyWhiteWolfExplodeKill(log)) return true
   if (AUTHORITATIVE_DEATH_EVENTS.has(type)) return true
   return !hasAuthoritativeDeathEvents && FALLBACK_DEATH_EVENTS.has(type)
 }

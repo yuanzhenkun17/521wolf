@@ -30,15 +30,59 @@ class TestServicesLLM:
         monkeypatch.setenv("WEREWOLF_LLM_TIMEOUT", "33")
         monkeypatch.setenv("WEREWOLF_LLM_MAX_RETRIES", "4")
 
-        from app.services.llm import create_llm
+        from app.services.llm import create_llm, get_runtime_policy
 
         llm = create_llm(env_path=None, model="override-model", temperature=0.0)
 
         assert llm.model_name == "override-model"
         assert llm.temperature == 0.0
         assert llm.request_timeout == 33.0
+        assert get_runtime_policy(llm).timeout == 33.0
         assert llm.max_retries == 4
         assert str(llm.openai_api_base).rstrip("/") == "https://config.example/v1"
+
+    def test_create_llm_defaults_runtime_policy_to_llm_timeout(self, monkeypatch):
+        monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "test-key")
+        monkeypatch.setenv("WEREWOLF_LLM_TIMEOUT", "45")
+
+        from app.services.llm import create_llm, get_runtime_policy
+
+        llm = create_llm(env_path=None, max_retries=1)
+
+        assert llm.request_timeout == 45.0
+        assert get_runtime_policy(llm).timeout == 45.0
+
+    def test_create_llm_ignores_legacy_runtime_timeout_env(self, monkeypatch):
+        monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "test-key")
+        monkeypatch.setenv("WEREWOLF_LLM_TIMEOUT", "45")
+        monkeypatch.setenv("WEREWOLF_LLM_RUNTIME_TIMEOUT", "120")
+
+        from app.services.llm import create_llm, get_runtime_policy
+
+        llm = create_llm(env_path=None, max_retries=1)
+
+        assert llm.request_timeout == 45.0
+        assert get_runtime_policy(llm).timeout == 45.0
+
+    def test_create_llm_accepts_explicit_runtime_timeout_override(self, monkeypatch):
+        monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "test-key")
+
+        from app.services.llm import create_llm, get_runtime_policy
+
+        llm = create_llm(env_path=None, timeout=60.0, runtime_timeout=120.0, max_retries=1)
+
+        assert llm.request_timeout == 60.0
+        assert get_runtime_policy(llm).timeout == 120.0
+
+    def test_default_llm_retries_are_disabled_unless_configured(self, monkeypatch):
+        monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "test-key")
+        monkeypatch.delenv("WEREWOLF_LLM_MAX_RETRIES", raising=False)
+
+        from app.services.llm import create_llm
+
+        llm = create_llm(env_path=None)
+
+        assert llm.max_retries == 0
 
     def test_create_llm_accepts_explicit_api_key_without_env(self, monkeypatch):
         monkeypatch.delenv("WEREWOLF_LLM_API_KEY", raising=False)
@@ -602,13 +646,16 @@ class TestServicesChain:
             run_compress_chain,
             run_consolidate_chain,
             run_apply_chain,
+            run_decision_judge_chain,
             run_evidence_chain,
             build_decision_chain,
+            build_decision_judge_chain,
             build_evidence_chain,
             build_raw_message_chain,
             create_apply_chain,
             create_consolidate_chain,
             create_decision_chain,
+            create_decision_judge_chain,
             create_evidence_chain,
         )
         assert callable(build_apply_chain)
@@ -617,13 +664,16 @@ class TestServicesChain:
         assert callable(run_compress_chain)
         assert callable(run_consolidate_chain)
         assert callable(run_apply_chain)
+        assert callable(run_decision_judge_chain)
         assert callable(run_evidence_chain)
         assert callable(build_decision_chain)
+        assert callable(build_decision_judge_chain)
         assert callable(build_evidence_chain)
         assert callable(build_raw_message_chain)
         assert callable(create_apply_chain)
         assert callable(create_consolidate_chain)
         assert callable(create_decision_chain)
+        assert callable(create_decision_judge_chain)
         assert callable(create_evidence_chain)
 
     def test_decision_chain_runs_with_fake_model(self):
@@ -679,11 +729,13 @@ class TestServicesChain:
         from app.services.chain import (
             build_apply_chain,
             build_consolidate_chain,
+            build_decision_judge_chain,
             build_evidence_chain,
             build_raw_message_chain,
             run_apply_chain,
             run_consolidate_chain,
             run_decision_chain,
+            run_decision_judge_chain,
             run_evidence_chain,
         )
 
@@ -699,10 +751,12 @@ class TestServicesChain:
             assert await build_consolidate_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
             assert await build_apply_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
             assert await build_evidence_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
+            assert await build_decision_judge_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
             assert await run_decision_chain(model, messages=messages) == '{"schema_version":"1.0","ok":true}'
             assert await run_consolidate_chain(model, messages=messages) == '{"schema_version":"1.0","ok":true}'
             assert await run_apply_chain(model, messages=messages) == '{"schema_version":"1.0","ok":true}'
             assert await run_evidence_chain(model, messages=messages) == '{"schema_version":"1.0","ok":true}'
+            assert await run_decision_judge_chain(model, messages=messages) == '{"schema_version":"1.0","ok":true}'
 
         asyncio.run(_run())
 
@@ -712,6 +766,7 @@ class TestServicesChain:
         from app.services.chain import (
             build_apply_chain,
             build_consolidate_chain,
+            build_decision_judge_chain,
             build_evidence_chain,
             run_decision_chain,
         )
@@ -727,6 +782,7 @@ class TestServicesChain:
             assert await build_consolidate_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
             assert await build_apply_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
             assert await build_evidence_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
+            assert await build_decision_judge_chain(model).ainvoke(messages) == '{"schema_version":"1.0","ok":true}'
             assert await run_decision_chain(model, messages=messages) == '{"schema_version":"1.0","ok":true}'
 
         asyncio.run(_run())
@@ -758,6 +814,7 @@ class TestServicesChain:
             run_apply_chain,
             run_consolidate_chain,
             run_decision_chain,
+            run_decision_judge_chain,
             run_evidence_chain,
         )
 
@@ -776,6 +833,7 @@ class TestServicesChain:
                 ("consolidate", run_consolidate_chain),
                 ("apply", run_apply_chain),
                 ("evidence", run_evidence_chain),
+                ("decision_judge", run_decision_judge_chain),
             ]:
                 with pytest.raises(LLMCallError) as caught:
                     await runner(model, messages=messages)

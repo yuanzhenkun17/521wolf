@@ -11,7 +11,6 @@ const ROLE_LABELS = {
 const PHASE_ALIASES = {
   sheriff_election: 'sheriff',
   day_speech: 'speech',
-  exile_vote: 'vote',
   finished: 'ended'
 }
 
@@ -32,6 +31,8 @@ const SPEECH_ACTIONS = new Set([
   'last_word'
 ])
 const VOTE_ACTIONS = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
+const REQUIRED_TARGET_ACTIONS = new Set(['guard_protect', 'werewolf_kill', 'seer_check'])
+const OPTIONAL_TARGET_ACTIONS = new Set(['exile_vote', 'pk_vote', 'sheriff_vote', 'hunter_shoot'])
 
 const CHOICE_ACTIONS = {
   sheriff_run: [
@@ -148,6 +149,14 @@ function choiceOptionsForAction(actionType, metadata = {}) {
   return CHOICE_ACTIONS[actionType] || []
 }
 
+function targetRequiredForAction(actionType, metadata = {}) {
+  const action = canonicalActionType(actionType)
+  if (typeof metadata.target_required === 'boolean') return metadata.target_required
+  if (typeof metadata.allow_no_target === 'boolean') return !metadata.allow_no_target
+  if (OPTIONAL_TARGET_ACTIONS.has(action)) return false
+  return REQUIRED_TARGET_ACTIONS.has(action)
+}
+
 function normalizeCandidateIds(value = []) {
   if (!Array.isArray(value)) return []
   return value
@@ -181,11 +190,19 @@ function normalizePendingHumanAction(pending) {
   const metadata = pending.metadata || {}
   const roleState = pending.observation?.role_state || {}
   const candidates = normalizeCandidateIds(pending.candidate_ids || pending.candidates || [])
+  const targetRequired = targetRequiredForAction(actionType, {
+    ...metadata,
+    target_required: pending.target_required ?? metadata.target_required,
+    allow_no_target: pending.allow_no_target ?? metadata.allow_no_target
+  })
+  const allowNoTarget = !targetRequired
   const normalizedPending = {
     ...pending,
     action_type: actionType,
     type: actionType,
-    candidate_ids: candidates
+    candidate_ids: candidates,
+    target_required: targetRequired,
+    allow_no_target: allowNoTarget
   }
   const waitingFor = SPEECH_ACTIONS.has(actionType)
     ? 'speech'
@@ -200,8 +217,12 @@ function normalizePendingHumanAction(pending) {
           type: actionType,
           prompt: pending.prompt || ACTION_PROMPTS[actionType] || '请选择本轮行动。',
           candidate_ids: candidates,
+          target_required: targetRequired,
+          allow_no_target: allowNoTarget,
           options: {
             ...metadata,
+            target_required: targetRequired,
+            allow_no_target: allowNoTarget,
             choices: choiceOptionsForAction(actionType, metadata),
             poison_available: metadata.can_poison ?? metadata.poison_available ?? roleState.poison_available ?? false,
             antidote_available: metadata.can_save ?? metadata.antidote_available ?? roleState.antidote_available ?? false,
@@ -280,5 +301,6 @@ export {
   normalizeLogEntry,
   normalizePendingHumanAction,
   normalizePhase,
-  normalizePlayer
+  normalizePlayer,
+  targetRequiredForAction
 }

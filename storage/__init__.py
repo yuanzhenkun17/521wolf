@@ -1,12 +1,8 @@
-"""SQLite storage layer for 521wolf runtime and learning data.
+"""PostgreSQL storage layer for 521wolf runtime and learning data.
 
 Facade: re-exports the active storage modules and shared data interfaces.
 """
 
-# ---------------------------------------------------------------------------
-# Core storage imports
-# ---------------------------------------------------------------------------
-from storage.schema import get_connection
 from storage.game_store import GameStore
 from storage.game_event_store import GameEventStore
 from storage.decision_store import DecisionStore
@@ -19,16 +15,12 @@ from storage.review_store import CounterfactualStore, DecisionReviewStore
 from storage.replay import read_decisions_for_artifact, read_events_for_artifact
 from storage.run_policy import LeaderboardScope, RunPolicy, RunType, policy_for_run_type
 from storage.runtime import GamePersistence, open_storage_connection
+from storage.provider import (
+    PostgresStorageProvider,
+    StorageProvider,
+    storage_provider_from_env,
+)
 
-# ---------------------------------------------------------------------------
-# New shared re-exports
-# ---------------------------------------------------------------------------
-from storage.shared.connection import (
-    get_evolution_connection,
-)
-from storage.registry.connection import (
-    get_registry_connection,
-)
 from storage.interfaces import (
     compute_hash,
     normalize_skill_text,
@@ -55,7 +47,6 @@ from storage.evolution.rejected_repo import RejectedProposalStore
 
 __all__ = [
     # Core
-    "get_connection",
     "GameStore",
     "GameEventStore",
     "DecisionStore",
@@ -71,9 +62,10 @@ __all__ = [
     "read_events_for_artifact",
     "GamePersistence",
     "open_storage_connection",
+    "PostgresStorageProvider",
+    "StorageProvider",
+    "storage_provider_from_env",
     # Shared
-    "get_evolution_connection",
-    "get_registry_connection",
     "compute_hash",
     "normalize_skill_text",
     "normalize_skill_path",

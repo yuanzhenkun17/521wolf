@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from ui.backend.constants import ROLE_ORDER
 
+DEFAULT_EVOLUTION_TRAINING_GAMES = 5
+DEFAULT_EVOLUTION_BATTLE_GAMES = 4
+LEGACY_EVOLUTION_TRAINING_GAMES = 20
+LEGACY_EVOLUTION_BATTLE_GAMES = 10
+
 
 def _normalize_requested_roles(raw: Any) -> list[str]:
     if raw in (None, ""):
@@ -49,10 +54,10 @@ class HumanActionRequest(BaseModel):
 
 class EvolutionStartRequest(BaseModel):
     roles: list[str] = Field(default_factory=list)
-    training_games: int = Field(default=20, ge=0, le=200)
-    battle_games: int = Field(default=10, ge=0, le=200)
+    training_games: int = Field(default=DEFAULT_EVOLUTION_TRAINING_GAMES, ge=0, le=200)
+    battle_games: int = Field(default=DEFAULT_EVOLUTION_BATTLE_GAMES, ge=0, le=200)
     max_days: int = Field(default=5, ge=1, le=100)
-    auto_promote: bool = False
+    auto_promote: bool = True
 
     @field_validator("roles", mode="before")
     @classmethod
@@ -60,8 +65,27 @@ class EvolutionStartRequest(BaseModel):
         return _normalize_requested_roles(value)
 
 
+def automatic_evolution_request(request: EvolutionStartRequest) -> EvolutionStartRequest:
+    """The UI backend currently runs self-evolution without a manual review gate."""
+    if request.auto_promote:
+        return request
+    updates: dict[str, Any] = {"auto_promote": True}
+    if (
+        request.training_games == LEGACY_EVOLUTION_TRAINING_GAMES
+        and request.battle_games == LEGACY_EVOLUTION_BATTLE_GAMES
+    ):
+        updates["training_games"] = DEFAULT_EVOLUTION_TRAINING_GAMES
+        updates["battle_games"] = DEFAULT_EVOLUTION_BATTLE_GAMES
+    return request.model_copy(update=updates)
+
+
 class EvolutionActionRequest(BaseModel):
     action: str = ""
+
+
+class EvolutionProposalRejectRequest(BaseModel):
+    reason: str = ""
+    tags: list[str] = Field(default_factory=list)
 
 
 class BenchmarkRequest(BaseModel):

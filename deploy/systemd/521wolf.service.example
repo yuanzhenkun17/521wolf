@@ -1,0 +1,18 @@
+[Unit]
+Description=521wolf FastAPI backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/521wolf/app
+EnvironmentFile=/opt/521wolf/.env
+ExecStart=/usr/bin/env uv run uvicorn ui.backend.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+# Keep logs in journald. Inspect with:
+#   journalctl -u 521wolf -f
+
+[Install]
+WantedBy=multi-user.target

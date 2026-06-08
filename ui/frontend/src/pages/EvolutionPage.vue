@@ -4,6 +4,7 @@ import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.js'
 import EvolutionConsolePanel from '../components/evolution/EvolutionConsolePanel.vue'
 import EvolutionEventsPanel from '../components/evolution/EvolutionEventsPanel.vue'
 import EvolutionLeaderboardPanel from '../components/evolution/EvolutionLeaderboardPanel.vue'
+import EvolutionProposalReviewPanel from '../components/evolution/EvolutionProposalReviewPanel.vue'
 import EvolutionRunsPanel from '../components/evolution/EvolutionRunsPanel.vue'
 import EvolutionSamplesPanel from '../components/evolution/EvolutionSamplesPanel.vue'
 import EvolutionVersionsPanel from '../components/evolution/EvolutionVersionsPanel.vue'
@@ -25,6 +26,7 @@ const activeTab = ref('console')
 
 const navTabs = [
   { key: 'console', label: '控制台', icon: '⚙' },
+  { key: 'review', label: '审核', icon: '✓' },
   { key: 'runs', label: '运行', icon: '▶' },
   { key: 'leaderboard', label: '排行榜', icon: '📊' },
   { key: 'versions', label: '版本', icon: '📋' },
@@ -62,6 +64,7 @@ onMounted(() => evo.refreshAll())
         :selected-can-terminate="selectedCanTerminate"
       />
       <EvolutionRunsPanel v-if="activeTab === 'runs'" :evo="evo" />
+      <EvolutionProposalReviewPanel v-if="activeTab === 'review'" :evo="evo" />
       <EvolutionLeaderboardPanel v-if="activeTab === 'leaderboard'" :evo="evo" />
       <EvolutionVersionsPanel v-if="activeTab === 'versions'" :evo="evo" />
       <EvolutionEventsPanel v-if="activeTab === 'events'" :evo="evo" />
@@ -2518,7 +2521,7 @@ onMounted(() => evo.refreshAll())
 
   .evo-nav {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 5px;
     padding-bottom: 0;
   }

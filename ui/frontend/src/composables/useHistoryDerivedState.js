@@ -11,9 +11,7 @@ const HISTORY_PHASE_ALIASES = {
   result: 'night',
   sheriff_election: 'sheriff',
   day_speech: 'speech',
-  exile_vote: 'vote',
   pk_speak: 'speech',
-  pk_vote: 'vote',
   finished: 'ended'
 }
 
@@ -24,9 +22,23 @@ const HISTORY_PHASE_ORDER = [
   'sheriff_vote',
   'sheriff_result',
   'speech',
+  'exile_vote',
+  'pk_vote',
   'vote',
   'ended'
 ]
+const VOTE_ACTION_PHASES = {
+  exile: 'exile_vote',
+  vote: 'exile_vote',
+  exile_vote: 'exile_vote',
+  exile_vote_start: 'exile_vote',
+  exile_vote_end: 'exile_vote',
+  exile_vote_tie: 'exile_vote',
+  pk_vote: 'pk_vote',
+  pk_vote_start: 'pk_vote',
+  pk_vote_end: 'pk_vote',
+  sheriff_vote: 'sheriff_vote'
+}
 
 const HISTORY_PHASE_RANK = new Map(HISTORY_PHASE_ORDER.map((phase, index) => [phase, index]))
 function normalizeHistoryPhase(phase = 'setup') {
@@ -36,6 +48,22 @@ function normalizeHistoryPhase(phase = 'setup') {
 function normalizeHistoryDay(day) {
   const value = Number(day)
   return Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function rowType(row = {}) {
+  return String(row?.type || row?.event_type || row?.action || row?.action_type || row?.kind || '').trim()
+}
+
+function votePhaseForRow(row = {}) {
+  return VOTE_ACTION_PHASES[rowType(row)] || ''
+}
+
+function rowHistoryPhase(row = {}, fallback = 'setup') {
+  const rawPhase = normalizeHistoryPhase(row?.phase ?? fallback)
+  const votePhase = votePhaseForRow(row)
+  if (rawPhase === 'vote' && votePhase && votePhase !== 'sheriff_vote') return votePhase
+  if ((row?.phase == null || row?.phase === '') && votePhase) return votePhase
+  return rawPhase
 }
 
 function historyPageKey(day, phase) {
@@ -88,7 +116,7 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
   }
 
   function historyPageKeyFor(log) {
-    return historyPageKey(log?.day ?? 1, log?.phase || 'setup')
+    return historyPageKey(log?.day ?? 1, rowHistoryPhase(log))
   }
 
   function historyPageTitle(page) {
@@ -101,6 +129,8 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
       sheriff_vote: '警长投票',
       sheriff_result: '上警/退水',
       speech: `第${day}天`,
+      exile_vote: `第${day}天放逐投票`,
+      pk_vote: `第${day}天对决投票`,
       vote: `第${day}天投票`,
       ended: '结果'
     }
@@ -118,8 +148,15 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
 
   function historyDecisionMatchesPage(decision, page) {
     if (!page) return true
+    const pagePhase = normalizeHistoryPhase(page.phase)
+    const actionPhase = votePhaseForRow(decision)
+    const rawPhase = rowHistoryPhase(decision, page.phase)
+    if (actionPhase) {
+      return normalizeHistoryDay(decision.day || page.day) === normalizeHistoryDay(page.day)
+        && (actionPhase === pagePhase || (rawPhase === pagePhase && pagePhase === 'vote'))
+    }
     const decisionPhase = normalizeHistoryPhase(decision.phase || page.phase)
-    return normalizeHistoryDay(decision.day || page.day) === normalizeHistoryDay(page.day) && String(decisionPhase) === String(normalizeHistoryPhase(page.phase))
+    return normalizeHistoryDay(decision.day || page.day) === normalizeHistoryDay(page.day) && String(decisionPhase) === String(pagePhase)
   }
 
   computedState.historyPages = computed(() => {
@@ -137,10 +174,10 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     }
     ensurePage(1, 'setup')
     logs.forEach((log) => {
-      ensurePage(log.day, log.phase).logs.push(log)
+      ensurePage(log.day, rowHistoryPhase(log)).logs.push(log)
     })
     decisions.forEach((decision) => {
-      ensurePage(decision.day, decision.phase || 'setup')
+      ensurePage(decision.day, rowHistoryPhase(decision))
     })
     const maxObservedDay = Math.max(
       1,
@@ -155,6 +192,9 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     })
     if (!selectedHistoryPageKey.value && pages.length) selectedHistoryPageKey.value = pages[0].key
     if (historyPhase.value === 'all') return pages
+    if (historyPhase.value === 'vote') {
+      return pages.filter((page) => ['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(page.phase))
+    }
     return pages.filter((page) => page.phase === historyPhase.value)
   })
   computedState.selectedHistoryPage = computed(() => {
@@ -225,13 +265,21 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
   computedState.sheriffVoteTally = computed(() => tallyByTargetName(computedState.sheriffVotes.value))
   computedState.currentVoteTally = computed(() => {
     const page = computedState.selectedHistoryPage.value
-    if (!page || !['vote', 'sheriff_vote'].includes(page.phase)) return []
-    return tallyByTargetName(computedState.filteredHistoryDecisionRows.value.filter((decision) => decision.action === 'vote' || decision.action === 'sheriff_vote'))
+    if (!page || !['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(page.phase)) return []
+    return tallyByTargetName(computedState.filteredHistoryDecisionRows.value.filter((decision) => {
+      const phase = VOTE_ACTION_PHASES[decision.action] || ''
+      if (page.phase === 'vote') return ['vote', 'exile_vote', 'pk_vote'].includes(decision.action)
+      return phase === page.phase
+    }))
   })
   computedState.voteDecisions = computed(() => {
     const page = computedState.selectedHistoryPage.value
-    if (!page || !['vote', 'sheriff_vote'].includes(page.phase)) return []
-    return computedState.filteredHistoryDecisionRows.value.filter((decision) => decision.action === 'vote' || decision.action === 'sheriff_vote')
+    if (!page || !['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(page.phase)) return []
+    return computedState.filteredHistoryDecisionRows.value.filter((decision) => {
+      const phase = VOTE_ACTION_PHASES[decision.action] || ''
+      if (page.phase === 'vote') return ['vote', 'exile_vote', 'pk_vote'].includes(decision.action)
+      return phase === page.phase
+    })
   })
   computedState.pageNightActions = computed(() => {
     const page = computedState.selectedHistoryPage.value
@@ -242,9 +290,9 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
   })
   computedState.pageVoteResults = computed(() => {
     const page = computedState.selectedHistoryPage.value
-    if (!page || !['vote', 'sheriff_vote'].includes(page.phase)) return []
+    if (!page || !['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(page.phase)) return []
     const grouped = new Map()
-    for (const vote of computedState.filteredHistoryDecisionRows.value.filter((decision) => ['vote', 'sheriff_vote'].includes(decision.action))) {
+    for (const vote of computedState.voteDecisions.value) {
       const key = vote.target_id || 'unknown'
       if (!grouped.has(key)) grouped.set(key, { targetId: vote.target_id, targetName: vote.targetName, votes: [] })
       grouped.get(key).votes.push(vote)

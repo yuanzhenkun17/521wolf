@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import threading
-from pathlib import Path
 from typing import Any, Callable
-
-from app.util.json import read_json_object, write_json
 
 
 SOURCE_KEYS = ("normal", "benchmark", "evolution")
@@ -19,7 +15,7 @@ class GameHistoryIndex:
 
     def __init__(
         self,
-        path: Path,
+        path: object | None,
         *,
         build_rows: Callable[[], list[dict[str, Any]]],
         fingerprint: Callable[[], dict[str, Any]],
@@ -42,41 +38,10 @@ class GameHistoryIndex:
             if self._rows is not None and self._fingerprint_value == fingerprint:
                 return [dict(row) for row in self._rows]
 
-            loaded = self._load_from_disk(fingerprint)
-            if loaded is not None:
-                self._rows = loaded
-                self._fingerprint_value = fingerprint
-                return [dict(row) for row in loaded]
-
             rows = [dict(row) for row in self._build_rows()]
             self._rows = rows
             self._fingerprint_value = fingerprint
-            self._write_to_disk(rows, fingerprint)
             return [dict(row) for row in rows]
-
-    def _load_from_disk(self, fingerprint: str) -> list[dict[str, Any]] | None:
-        payload = read_json_object(self.path, default=None)
-        if not isinstance(payload, dict):
-            return None
-        if payload.get("schema_version") != HISTORY_INDEX_SCHEMA_VERSION:
-            return None
-        if payload.get("fingerprint") != fingerprint:
-            return None
-        rows = payload.get("rows")
-        if not isinstance(rows, list):
-            return None
-        return [dict(row) for row in rows if isinstance(row, dict)]
-
-    def _write_to_disk(self, rows: list[dict[str, Any]], fingerprint: str) -> None:
-        write_json(
-            self.path,
-            {
-                "kind": "ui_game_history_index",
-                "schema_version": HISTORY_INDEX_SCHEMA_VERSION,
-                "fingerprint": fingerprint,
-                "rows": rows,
-            },
-        )
 
 
 def source_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -106,4 +71,6 @@ def _source(row: dict[str, Any]) -> str:
 
 
 def _stable_json(value: Any) -> str:
+    import json
+
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)

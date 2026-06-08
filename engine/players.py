@@ -37,13 +37,17 @@ class HumanPlayer:
         self.player_id = player_id
         self.timeout_seconds = timeout_seconds if timeout_seconds is not None else self.DEFAULT_TIMEOUT
         self._pending: asyncio.Future[ActionResponse] | None = None
+        self._pending_loop: asyncio.AbstractEventLoop | None = None
         self._current_request: ActionRequest | None = None
+        self._submit_scheduled: bool = False
         self._timed_out_count: int = 0
 
     async def act(self, request: ActionRequest) -> ActionResponse:
         loop = asyncio.get_running_loop()
         self._pending = loop.create_future()
+        self._pending_loop = loop
         self._current_request = request
+        self._submit_scheduled = False
         try:
             return await asyncio.wait_for(self._pending, timeout=self.timeout_seconds)
         except asyncio.TimeoutError:
@@ -61,14 +65,35 @@ class HumanPlayer:
             )
         finally:
             self._pending = None
+            self._pending_loop = None
             self._current_request = None
+            self._submit_scheduled = False
 
     def submit(self, response: ActionResponse) -> bool:
         """Submit the human's response. Returns True if accepted."""
-        if self._pending is not None and not self._pending.done():
-            self._pending.set_result(response)
+        pending = self._pending
+        if pending is None or pending.done() or self._submit_scheduled:
+            return False
+        self._submit_scheduled = True
+        loop = self._pending_loop or pending.get_loop()
+
+        def _complete() -> None:
+            if not pending.done():
+                pending.set_result(response)
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            _complete()
             return True
-        return False
+        try:
+            loop.call_soon_threadsafe(_complete)
+        except RuntimeError:
+            self._submit_scheduled = False
+            return False
+        return True
 
     @property
     def is_waiting(self) -> bool:

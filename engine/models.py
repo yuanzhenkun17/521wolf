@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable
 
 
 class Team(StrEnum):
@@ -46,6 +46,7 @@ class Phase(StrEnum):
     NIGHT = "night"
     DAY_SPEECH = "day_speech"
     EXILE_VOTE = "exile_vote"
+    PK_VOTE = "pk_vote"
     FINISHED = "finished"
 
 
@@ -102,6 +103,11 @@ class DeathRecord:
     cause: DeathCause
     day: int
     phase: Phase
+    causes: tuple[DeathCause, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.causes:
+            self.causes = (self.cause,)
 
 
 @dataclass(slots=True)
@@ -119,11 +125,12 @@ class GameEvent:
     target: int | None = None
     payload: dict[str, Any] = field(default_factory=dict)
     public: bool = True
+    visible_to: tuple[int, ...] = ()
     message: str = ""
     index: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "index": self.index,
             "event_type": self.type,
             "day": self.day,
@@ -134,6 +141,9 @@ class GameEvent:
             "public": self.public,
             "message": self.message,
         }
+        if self.visible_to:
+            data["visible_to"] = list(self.visible_to)
+        return data
 
 
 @dataclass(slots=True)
@@ -163,6 +173,7 @@ class ActionRequest:
     candidates: tuple[int, ...] = ()
     retry_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    defer_decision_recording: bool = False
     # metadata carries per-action-type information.  Common shapes are
     # documented in engine.role_state_types (WitchActionMetadata,
     # SheriffWithdrawMetadata, SpeechOrderMetadata).
@@ -175,6 +186,7 @@ class ActionResponse:
     choice: str | None = None
     text: str = ""
     decision_id: str | None = None
+    on_accepted: Callable[["ActionResponse"], Any] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(slots=True)

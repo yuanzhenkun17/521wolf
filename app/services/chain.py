@@ -1,11 +1,12 @@
 """LCEL chains — the **only** file in app/ that calls the LLM.
 
-5 chains:
+6 chains:
 1. decision_chain   — per-step agent decision (tool calling / JSON output)
 2. compress_chain   — memory segment compression (prompt | llm | parser)
 3. consolidate_chain — experience → skill proposals
 4. apply_chain      — proposals → skill file diffs
 5. evidence_chain   — evidence evaluation
+6. decision_judge_chain — rule-selected decision review
 
 All other app/ code that needs LLM must go through a chain function here.
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
+import importlib
 from typing import Any
 
 from langchain_core.output_parsers import JsonOutputParser
@@ -156,7 +158,12 @@ async def run_compress_chain(
 # Chain 1: decision_chain — per-step agent decision
 # ===========================================================================
 
-def build_decision_chain(llm: Any, tools: list | None = None):
+def build_decision_chain(
+    llm: Any,
+    tools: list | None = None,
+    *,
+    metadata: dict[str, Any] | None = None,
+):
     """Build the decision chain: prompt -> LLM[.bind_tools(tools)] -> parser.
 
     Uses tool calling if tools are provided, else JSON output parsing.
@@ -167,7 +174,12 @@ def build_decision_chain(llm: Any, tools: list | None = None):
     prompt = build_decision_prompt_template()
     bound_llm = llm.bind_tools(tools) if tools and hasattr(llm, "bind_tools") else llm
     parser = PydanticOutputParser(pydantic_object=DecisionOutput) if tools else JsonOutputParser()
-    return prompt | _llm_runnable(bound_llm, stage="decision") | RunnableLambda(_message_content) | parser
+    return (
+        prompt
+        | _llm_runnable(bound_llm, stage="decision", metadata=metadata)
+        | RunnableLambda(_message_content)
+        | parser
+    )
 
 
 def create_decision_chain(llm: Any, tools: list | None = None):
@@ -179,23 +191,40 @@ async def run_decision_chain(
     model: Any,
     *,
     messages: list[dict[str, str]],
+    prompt_budget: Any | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """Call the LLM for a single agent decision. Returns raw output text."""
-    return await build_raw_message_chain(model, stage="decision").ainvoke(messages)
+    return await build_raw_message_chain(
+        model,
+        stage="decision",
+        prompt_budget=prompt_budget,
+        metadata=metadata,
+    ).ainvoke(messages)
 
 
 # ===========================================================================
 # Chain 3/4/5: consolidate, apply, evidence
 # ===========================================================================
 
-def build_raw_message_chain(llm: Any, *, stage: str = "raw_message"):
+def build_raw_message_chain(
+    llm: Any,
+    *,
+    stage: str = "raw_message",
+    prompt_budget: Any | None = None,
+    metadata: dict[str, Any] | None = None,
+):
     """Build a raw message chain: messages -> LLM -> content string."""
-    return RunnableLambda(_identity) | _llm_runnable(llm, stage=stage) | RunnableLambda(_message_content)
+    return (
+        RunnableLambda(_identity)
+        | _llm_runnable(llm, stage=stage, prompt_budget=prompt_budget, metadata=metadata)
+        | RunnableLambda(_message_content)
+    )
 
 
-def build_consolidate_chain(llm: Any):
+def build_consolidate_chain(llm: Any, *, metadata: dict[str, Any] | None = None):
     """Build the skill-consolidation chain."""
-    return build_raw_message_chain(llm, stage="consolidate")
+    return build_raw_message_chain(llm, stage="consolidate", metadata=metadata)
 
 
 def create_consolidate_chain(llm: Any):
@@ -203,9 +232,9 @@ def create_consolidate_chain(llm: Any):
     return build_consolidate_chain(llm)
 
 
-def build_apply_chain(llm: Any):
+def build_apply_chain(llm: Any, *, metadata: dict[str, Any] | None = None):
     """Build the skill-apply chain."""
-    return build_raw_message_chain(llm, stage="apply")
+    return build_raw_message_chain(llm, stage="apply", metadata=metadata)
 
 
 def create_apply_chain(llm: Any):
@@ -213,9 +242,9 @@ def create_apply_chain(llm: Any):
     return build_apply_chain(llm)
 
 
-def build_evidence_chain(llm: Any):
+def build_evidence_chain(llm: Any, *, metadata: dict[str, Any] | None = None):
     """Build the evidence-judging chain."""
-    return build_raw_message_chain(llm, stage="evidence")
+    return build_raw_message_chain(llm, stage="evidence", metadata=metadata)
 
 
 def create_evidence_chain(llm: Any):
@@ -223,31 +252,54 @@ def create_evidence_chain(llm: Any):
     return build_evidence_chain(llm)
 
 
+def build_decision_judge_chain(llm: Any, *, metadata: dict[str, Any] | None = None):
+    """Build the decision-judging chain."""
+    return build_raw_message_chain(llm, stage="decision_judge", metadata=metadata)
+
+
+def create_decision_judge_chain(llm: Any):
+    """Backward-compatible alias for build_decision_judge_chain."""
+    return build_decision_judge_chain(llm)
+
+
 async def run_consolidate_chain(
     model: Any,
     *,
     messages: list[dict[str, str]],
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """Call the LLM for skill consolidation. Returns raw output text."""
-    return await build_consolidate_chain(model).ainvoke(messages)
+    return await build_consolidate_chain(model, metadata=metadata).ainvoke(messages)
 
 
 async def run_apply_chain(
     model: Any,
     *,
     messages: list[dict[str, str]],
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """Call the LLM to apply skill proposals to markdown files."""
-    return await build_apply_chain(model).ainvoke(messages)
+    return await build_apply_chain(model, metadata=metadata).ainvoke(messages)
 
 
 async def run_evidence_chain(
     model: Any,
     *,
     messages: list[dict[str, str]],
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """Call the LLM for evidence evaluation/judging."""
-    return await build_evidence_chain(model).ainvoke(messages)
+    return await build_evidence_chain(model, metadata=metadata).ainvoke(messages)
+
+
+async def run_decision_judge_chain(
+    model: Any,
+    *,
+    messages: list[dict[str, str]],
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Call the LLM for an explainable key-decision judgment."""
+    return await build_decision_judge_chain(model, metadata=metadata).ainvoke(messages)
 
 
 def _compress_inputs_to_messages(inputs: dict[str, Any]) -> list[dict[str, str]]:
@@ -281,30 +333,126 @@ def _identity(value: Any) -> Any:
     return value
 
 
-def _llm_runnable(llm: Any, *, stage: str) -> RunnableLambda:
+def _llm_runnable(
+    llm: Any,
+    *,
+    stage: str,
+    prompt_budget: Any | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> RunnableLambda:
+    extra_metadata = dict(metadata or {})
+
     async def _call(messages: Any) -> Any:
-        prepared_messages = prepare_llm_messages(messages, stage=stage)
+        prepared_messages = prepare_llm_messages(messages, stage=stage, budget=prompt_budget)
+        model = _model_identifier(llm)
+        observation_metadata = _llm_observation_metadata(
+            stage=stage,
+            model=model,
+            prompt_budget=prompt_budget,
+            messages=prepared_messages,
+            extra_metadata=extra_metadata,
+        )
         started = time.perf_counter()
         try:
-            return await invoke_llm_with_policy(
-                llm,
-                prepared_messages,
+            observability = _observability()
+            with observability.observe_llm_call(
                 stage=stage,
-                circuit_key=f"{stage}:{_model_identifier(llm) or 'unknown'}",
-            )
+                model=model,
+                messages=prepared_messages,
+                metadata=observation_metadata,
+            ) as observation:
+                result = await invoke_llm_with_policy(
+                    llm,
+                    prepared_messages,
+                    stage=stage,
+                    circuit_key=f"{stage}:{model or 'unknown'}",
+                )
+                elapsed_ms = int(round((time.perf_counter() - started) * 1000))
+                _update_observation(
+                    observability,
+                    observation,
+                    output=_message_raw_content(result),
+                    metadata={
+                        **observation_metadata,
+                        "elapsed_ms": elapsed_ms,
+                        "attempts": int(getattr(result, "llm_attempts", 1) or 1),
+                        **_output_diagnostic(_message_raw_content(result)),
+                    },
+                )
+                return result
         except LLMCallError:
             raise
         except Exception as exc:
             elapsed_ms = int(round((time.perf_counter() - started) * 1000))
+            _update_observation(
+                _observability(),
+                locals().get("observation"),
+                metadata={
+                    **observation_metadata,
+                    "elapsed_ms": elapsed_ms,
+                    "attempts": int(getattr(exc, "llm_attempts", 1) or 1),
+                    "exception_type": type(exc).__name__,
+                    "exception_message": redact(str(exc), context="diagnostic"),
+                },
+                level="ERROR",
+                status_message=redact(str(exc), context="diagnostic"),
+            )
             raise LLMCallError(
                 stage=stage,
-                model=_model_identifier(llm),
+                model=model,
                 elapsed_ms=elapsed_ms,
                 exc=exc,
                 messages=prepared_messages,
             ) from exc
 
     return RunnableLambda(_call)
+
+
+def _observability() -> Any:
+    return importlib.import_module("app.services.observability")
+
+
+def _update_observation(observability: Any, observation: Any, **kwargs: Any) -> None:
+    update = getattr(observability, "update_observation", None)
+    if not callable(update):
+        return
+    try:
+        update(observation, **kwargs)
+    except Exception:  # noqa: BLE001
+        _log.debug("observability update failed", exc_info=True)
+
+
+def _message_raw_content(message: Any) -> str:
+    raw = message.content if hasattr(message, "content") else str(message)
+    return raw if isinstance(raw, str) else str(raw)
+
+
+def _llm_observation_metadata(
+    *,
+    stage: str,
+    model: str | None,
+    prompt_budget: Any | None,
+    messages: Any,
+    extra_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "stage": stage,
+        "model": model,
+        "message_summary": redaction_summary(messages),
+    }
+    if stage in _SCHEMA_VERSIONED_STAGES:
+        metadata["expected_schema_version"] = EXPECTED_LLM_SCHEMA_VERSION
+    if prompt_budget is not None:
+        metadata["prompt_budget"] = {
+            "max_total_chars": getattr(prompt_budget, "max_total_chars", None),
+            "max_message_chars": getattr(prompt_budget, "max_message_chars", None),
+            "min_message_chars": getattr(prompt_budget, "min_message_chars", None),
+        }
+    if extra_metadata:
+        for key, value in extra_metadata.items():
+            if value is not None:
+                metadata[str(key)] = value
+    return metadata
 
 
 def _model_identifier(llm: Any) -> str | None:
@@ -329,7 +477,7 @@ def _model_identifier(llm: Any) -> str | None:
     return None
 
 
-_SCHEMA_VERSIONED_STAGES = frozenset({"decision", "consolidate", "apply", "evidence"})
+_SCHEMA_VERSIONED_STAGES = frozenset({"decision", "consolidate", "apply", "evidence", "decision_judge"})
 
 
 def _output_diagnostic(text: str) -> dict[str, Any]:

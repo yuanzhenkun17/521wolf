@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from storage.shared.interfaces import TimestampProvider, storage_timestamp
+from storage.shared.database import StorageConnection
 
 
 class EvaluationStore:
@@ -13,7 +13,7 @@ class EvaluationStore:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -46,14 +46,33 @@ class EvaluationStore:
     ) -> str:
         now = created_at or self._timestamp()
         self._conn.execute(
-            "INSERT OR REPLACE INTO evaluations "
+            "INSERT INTO evaluations "
             "(id, game_id, player_seat, role, "
             "speech_score, vote_score, skill_score, "
             "logic_score, team_score, risk_penalty, role_score, score_completeness, "
             "information_score, cooperation_score, overall_score, "
             "scoring_version, evaluator_config_hash, ruleset_version, "
             "created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "game_id = excluded.game_id, "
+            "player_seat = excluded.player_seat, "
+            "role = excluded.role, "
+            "speech_score = excluded.speech_score, "
+            "vote_score = excluded.vote_score, "
+            "skill_score = excluded.skill_score, "
+            "logic_score = excluded.logic_score, "
+            "team_score = excluded.team_score, "
+            "risk_penalty = excluded.risk_penalty, "
+            "role_score = excluded.role_score, "
+            "score_completeness = excluded.score_completeness, "
+            "information_score = excluded.information_score, "
+            "cooperation_score = excluded.cooperation_score, "
+            "overall_score = excluded.overall_score, "
+            "scoring_version = excluded.scoring_version, "
+            "evaluator_config_hash = excluded.evaluator_config_hash, "
+            "ruleset_version = excluded.ruleset_version, "
+            "created_at = excluded.created_at",
             (
                 evaluation_id,
                 game_id,
@@ -90,10 +109,21 @@ class EvaluationStore:
             for ev in evaluations:
                 eid = str(ev["id"])
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO evaluations "
+                    "INSERT INTO evaluations "
                     "(id, game_id, player_seat, role, speech_score, vote_score, "
                     "skill_score, information_score, cooperation_score, overall_score, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "game_id = excluded.game_id, "
+                    "player_seat = excluded.player_seat, "
+                    "role = excluded.role, "
+                    "speech_score = excluded.speech_score, "
+                    "vote_score = excluded.vote_score, "
+                    "skill_score = excluded.skill_score, "
+                    "information_score = excluded.information_score, "
+                    "cooperation_score = excluded.cooperation_score, "
+                    "overall_score = excluded.overall_score, "
+                    "created_at = excluded.created_at",
                     (
                         eid,
                         str(ev["game_id"]),

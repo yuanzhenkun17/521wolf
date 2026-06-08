@@ -29,6 +29,38 @@ class TestGraphState:
         }
         assert s["seed"] == 42
 
+    def test_game_state_schema_preserves_lifecycle_metadata(self):
+        from langgraph.graph import END, START, StateGraph
+
+        from app.graphs.shared.state import GameState
+
+        workflow = StateGraph(GameState)
+
+        def start_node(state: GameState) -> dict:
+            return {
+                "started_at": "2026-06-08T07:00:00+08:00",
+                "outcome": "no_winner",
+                "terminal_reason": "max_days_reached",
+            }
+
+        def finish_node(state: GameState) -> dict:
+            assert state["started_at"] == "2026-06-08T07:00:00+08:00"
+            assert state["terminal_reason"] == "max_days_reached"
+            return {"finished_at": "2026-06-08T07:10:00+08:00"}
+
+        workflow.add_node("start", start_node)
+        workflow.add_node("finish", finish_node)
+        workflow.add_edge(START, "start")
+        workflow.add_edge("start", "finish")
+        workflow.add_edge("finish", END)
+
+        result = workflow.compile().invoke({"game_id": "schema_lifecycle"})
+
+        assert result["started_at"] == "2026-06-08T07:00:00+08:00"
+        assert result["finished_at"] == "2026-06-08T07:10:00+08:00"
+        assert result["outcome"] == "no_winner"
+        assert result["terminal_reason"] == "max_days_reached"
+
     def test_play_state_typeddict(self):
         from app.graphs.shared.state import PlayState
         s: PlayState = {
@@ -184,6 +216,178 @@ class TestSharedNodes:
             for warning in result["review"]["warnings"]
         )
 
+    def test_review_node_does_not_run_decision_judge_by_default(self):
+        from app.graphs.shared.nodes.review import review_node
+        import asyncio
+
+        async def fail_if_called(_messages):
+            raise AssertionError("decision judge should be opt-in")
+
+        async def _run():
+            return await review_node({
+                "game_id": "g_judge_default_off",
+                "roles": {"1": "seer", "2": "werewolf"},
+                "winner": "villagers",
+                "decisions": [
+                    {
+                        "decision_id": "d_check",
+                        "player_id": 1,
+                        "role": "seer",
+                        "day": 1,
+                        "phase": "night",
+                        "action_type": "seer_check",
+                        "selected_target": 2,
+                    }
+                ],
+                "decision_judge_fn": fail_if_called,
+            })
+
+        result = asyncio.run(_run())
+        assert result["review"]["status"] == "ok"
+        assert "decision_judge" not in result["review"]
+
+    def test_review_node_attaches_decision_judge_report_when_enabled(self):
+        from app.graphs.shared.nodes.review import review_node
+        import asyncio
+
+        captured = []
+        saved_rows = []
+
+        async def fake_judge(messages):
+            captured.append(messages)
+            return (
+                '{"schema_version":"1.0","decision_id":"d_check","score":8.5,'
+                '"quality":"good","reason":"查验狼人有信息增量",'
+                '"evidence_refs":["rule_natural_key_action"],"mistake_tags":[],'
+                '"suggestion":"继续围绕查验链组织发言","confidence":0.8}'
+            )
+
+        class FakePersistence:
+            def save_llm_judgments(self, rows):
+                saved_rows.extend(rows)
+                return [f"judgment_{index}" for index, _row in enumerate(rows)]
+
+        async def _run():
+            return await review_node({
+                "game_id": "g_judge_on",
+                "config": {"enable_llm_judge": True, "judge_max_decisions": 1},
+                "persistence": FakePersistence(),
+                "roles": {"1": "seer", "2": "werewolf"},
+                "winner": "villagers",
+                "decisions": [
+                    {
+                        "decision_id": "d_check",
+                        "player_id": 1,
+                        "role": "seer",
+                        "day": 1,
+                        "phase": "night",
+                        "action_type": "seer_check",
+                        "selected_target": 2,
+                        "private_reasoning": "2 looks suspicious",
+                        "confidence": 0.9,
+                    }
+                ],
+                "game_events": [
+                    {"event_type": "night_end", "day": 1, "phase": "night"},
+                ],
+                "decision_judge_fn": fake_judge,
+            })
+
+        result = asyncio.run(_run())
+        report = result["review"]["decision_judge"]
+
+        assert result["review"]["status"] == "ok"
+        assert report["status"] == "ok"
+        assert report["metrics"]["judged"] == 1
+        assert report["selection"]["selected_for_judge"] == 1
+        assert report["summary"]["average_score"] == 8.5
+        assert report["judgments"][0]["decision_id"] == "d_check"
+        assert report["judgments"][0]["quality"] == "good"
+        assert report["persistence"]["llm_judgment_ids"] == ["judgment_0", "judgment_1"]
+        assert [row["dimension"] for row in saved_rows] == ["decision_judge", "decision_judge_report"]
+        assert captured
+        assert "schema_version" in captured[0][1]["content"]
+
+    def test_review_node_keeps_report_when_decision_judge_persistence_fails(self):
+        from app.graphs.shared.nodes.review import review_node
+        import asyncio
+
+        async def fake_judge(_messages):
+            return (
+                '{"schema_version":"1.0","decision_id":"d_check","score":8.0,'
+                '"quality":"good","reason":"ok","evidence_refs":[],"mistake_tags":[],'
+                '"suggestion":"hold","confidence":0.7}'
+            )
+
+        class BrokenPersistence:
+            def save_llm_judgments(self, rows):
+                raise RuntimeError("database down")
+
+        async def _run():
+            return await review_node({
+                "game_id": "g_judge_persist_down",
+                "config": {"enable_llm_judge": True, "judge_max_decisions": 1},
+                "persistence": BrokenPersistence(),
+                "roles": {"1": "seer", "2": "werewolf"},
+                "winner": "villagers",
+                "decisions": [
+                    {
+                        "decision_id": "d_check",
+                        "player_id": 1,
+                        "role": "seer",
+                        "day": 1,
+                        "phase": "night",
+                        "action_type": "seer_check",
+                        "selected_target": 2,
+                    }
+                ],
+                "decision_judge_fn": fake_judge,
+            })
+
+        result = asyncio.run(_run())
+        report = result["review"]["decision_judge"]
+
+        assert result["review"]["status"] == "ok"
+        assert report["status"] == "ok"
+        assert report["metrics"]["judged"] == 1
+        assert any("decision judge persistence failed" in warning for warning in result["review"]["warnings"])
+
+    def test_review_node_keeps_heuristic_review_when_decision_judge_fails(self):
+        from app.graphs.shared.nodes.review import review_node
+        import asyncio
+
+        async def broken_judge(_messages):
+            raise RuntimeError("judge down")
+
+        async def _run():
+            return await review_node({
+                "game_id": "g_judge_down",
+                "config": {"enable_llm_judge": True, "judge_max_decisions": 1},
+                "roles": {"1": "seer", "2": "werewolf"},
+                "winner": "villagers",
+                "decisions": [
+                    {
+                        "decision_id": "d_check",
+                        "player_id": 1,
+                        "role": "seer",
+                        "day": 1,
+                        "phase": "night",
+                        "action_type": "seer_check",
+                        "selected_target": 2,
+                    }
+                ],
+                "decision_judge_fn": broken_judge,
+            })
+
+        result = asyncio.run(_run())
+        report = result["review"]["decision_judge"]
+
+        assert result["review"]["status"] == "ok"
+        assert report["status"] == "failed"
+        assert report["metrics"]["failed"] == 1
+        assert any("decision judge failed for d_check" in warning for warning in result["review"]["warnings"])
+        assert result["warnings"] == result["review"]["warnings"]
+
     def test_evidence_node_failure_surfaces_top_level_warning(self, tmp_path, monkeypatch):
         from app.graphs.shared.nodes import review as review_nodes
         import asyncio
@@ -228,68 +432,72 @@ class TestSharedNodes:
         assert isinstance(result, dict)
         assert result["evidence"]["status"] == "skipped"
 
-    def test_evidence_node_loads_replay_when_state_inputs_empty(self, tmp_path):
+    def test_evidence_node_loads_replay_when_state_inputs_empty(self, tmp_path, monkeypatch):
         from app.graphs.shared.nodes.review import evidence_node
-        from storage.interfaces import DecisionRecordData
-        from storage.runtime import GamePersistence
+        from storage.replay import ReplayLookupResult
         import asyncio
 
-        db_path = tmp_path / "wolf.db"
         runs_root = tmp_path / "runs"
         game_dir = runs_root / "batch-1" / "game-001"
         game_dir.mkdir(parents=True)
 
-        with GamePersistence(
-            game_id="indexed_game_001",
-            game_dir=game_dir,
-            db_path=db_path,
-            commit_every=100,
-        ) as persistence:
-            logger = persistence.create_event_logger()
-            logger.record(
-                day=1,
-                phase="night",
-                event_type="seer_result",
-                message="seer checked 2",
-                actor=1,
-                target=2,
-                payload={"result": "werewolves"},
-                public=False,
+        def fake_lookup(path, *, root=None, replay_type="events", **_kwargs):
+            assert path == game_dir
+            assert root == runs_root
+            if replay_type == "decisions":
+                return ReplayLookupResult(
+                    status="ok",
+                    game_id="indexed_game_001",
+                    table="decisions",
+                    message="decisions found",
+                    data=[
+                        {
+                            "decision_id": "d_check",
+                            "player_id": 1,
+                            "role": "seer",
+                            "day": 1,
+                            "phase": "night",
+                            "action_type": "seer_check",
+                            "selected_target": 2,
+                            "public_text": "checked 2",
+                            "private_reasoning": "2 is wolf",
+                            "confidence": 0.9,
+                        }
+                    ],
+                )
+            if replay_type == "events":
+                return ReplayLookupResult(
+                    status="ok",
+                    game_id="indexed_game_001",
+                    table="game_events",
+                    message="events found",
+                    data=[
+                        {
+                            "day": 1,
+                            "phase": "night",
+                            "event_type": "seer_result",
+                            "message": "seer checked 2",
+                            "actor": 1,
+                            "target": 2,
+                            "payload": {"result": "werewolves"},
+                            "public": False,
+                        }
+                    ],
+                )
+            return ReplayLookupResult(
+                status="ok",
+                game_id="indexed_game_001",
+                table="games",
+                message="config found",
+                data={"mode": "offline-review", "seed": 7},
             )
 
-            sink = persistence.create_decision_sink()
-            sink.record_decision(
-                DecisionRecordData(
-                    decision_id="d_check",
-                    player_id=1,
-                    role="seer",
-                    day=1,
-                    phase="night",
-                    action_type="seer_check",
-                    selected_target=2,
-                    public_text="checked 2",
-                    private_reasoning="2 is wolf",
-                    confidence=0.9,
-                )
-            )
-            persistence.save_game_result(
-                seed=7,
-                player_roles={1: "seer", 2: "werewolf"},
-                config={"mode": "offline-review"},
-                winner="villagers",
-                started_at="2026-06-07T10:00:00+08:00",
-                finished_at="2026-06-07T10:03:00+08:00",
-                total_rounds=1,
-                public_events=[],
-                final_state={"winner": "villagers"},
-                final_alive={1: True, 2: False},
-            )
+        monkeypatch.setattr("storage.replay.explain_replay_lookup", fake_lookup)
 
         async def _run():
             return await evidence_node(
                 {
                     "game_dir": game_dir,
-                    "db_path": db_path,
                     "root": runs_root,
                     "decisions": [],
                     "game_events": [],
@@ -316,19 +524,29 @@ class TestSharedNodes:
         assert result["key_decisions"][0].decision_id == "d_check"
         assert "warnings" not in result
 
-    def test_evidence_node_reports_replay_miss_instead_of_silent_zero(self, tmp_path):
+    def test_evidence_node_reports_replay_miss_instead_of_silent_zero(self, tmp_path, monkeypatch):
         from app.graphs.shared.nodes.review import evidence_node
+        from storage.replay import ReplayLookupResult
         import asyncio
 
-        db_path = tmp_path / "missing.db"
         game_dir = tmp_path / "runs" / "missing-game"
         game_dir.mkdir(parents=True)
+
+        def fake_lookup(_path, *, replay_type="events", **_kwargs):
+            table = {"decisions": "decisions", "events": "game_events", "config": "games"}[replay_type]
+            return ReplayLookupResult(
+                status="not_found",
+                table=table,
+                message="no indexed game matched the artifact path",
+                candidates=(game_dir.name,),
+            )
+
+        monkeypatch.setattr("storage.replay.explain_replay_lookup", fake_lookup)
 
         async def _run():
             return await evidence_node(
                 {
                     "game_dir": game_dir,
-                    "db_path": db_path,
                     "decisions": [],
                     "game_events": [],
                 }
@@ -338,8 +556,8 @@ class TestSharedNodes:
         assert result["evidence"]["status"] == "skipped"
         assert result["evidence"]["reason"] == "no_decisions"
         assert result["evidence"]["evidence_inputs"] == 0
-        assert result["evidence"]["replay"]["decisions"]["status"] == "missing_db"
-        assert result["evidence"]["replay"]["events"]["status"] == "missing_db"
+        assert result["evidence"]["replay"]["decisions"]["status"] == "not_found"
+        assert result["evidence"]["replay"]["events"]["status"] == "not_found"
         metadata = result["evidence"]["metadata"]
         assert metadata["used_state_decisions"] is False
         assert metadata["used_replay_decisions"] is False
@@ -347,25 +565,35 @@ class TestSharedNodes:
         assert metadata["replay_error"] is False
         assert metadata["evidence_source"] == "unavailable"
         assert metadata["reliability"] == "none"
-        assert metadata["replay_statuses"]["decisions"] == "missing_db"
-        assert metadata["replay_statuses"]["events"] == "missing_db"
+        assert metadata["replay_statuses"]["decisions"] == "not_found"
+        assert metadata["replay_statuses"]["events"] == "not_found"
         assert any("evidence replay decisions unavailable" in warning for warning in result["warnings"])
         assert any("no decisions available" in warning for warning in result["warnings"])
 
-    def test_evidence_node_records_replay_db_error_metadata(self, tmp_path):
+    def test_evidence_node_records_replay_storage_error_metadata(self, tmp_path, monkeypatch):
         from app.graphs.shared.nodes.review import evidence_node
+        from storage.replay import ReplayLookupResult
         import asyncio
 
-        db_path = tmp_path / "broken.db"
-        db_path.write_text("not a sqlite database", encoding="utf-8")
         game_dir = tmp_path / "runs" / "broken-game"
         game_dir.mkdir(parents=True)
+
+        def fake_lookup(_path, *, replay_type="events", **_kwargs):
+            table = {"decisions": "decisions", "events": "game_events", "config": "games"}[replay_type]
+            return ReplayLookupResult(
+                status="storage_error",
+                table=table,
+                message="storage error while loading replay",
+                error="RuntimeError: storage unavailable",
+                candidates=(game_dir.name,),
+            )
+
+        monkeypatch.setattr("storage.replay.explain_replay_lookup", fake_lookup)
 
         async def _run():
             return await evidence_node(
                 {
                     "game_dir": game_dir,
-                    "db_path": db_path,
                     "decisions": [],
                     "game_events": [],
                 }
@@ -373,8 +601,8 @@ class TestSharedNodes:
 
         result = asyncio.run(_run())
         assert result["evidence"]["status"] == "skipped"
-        assert result["evidence"]["replay"]["decisions"]["status"] == "sqlite_error"
-        assert result["evidence"]["replay"]["events"]["status"] == "sqlite_error"
+        assert result["evidence"]["replay"]["decisions"]["status"] == "storage_error"
+        assert result["evidence"]["replay"]["events"]["status"] == "storage_error"
         metadata = result["evidence"]["metadata"]
         assert metadata["used_state_decisions"] is False
         assert metadata["used_replay_decisions"] is False
@@ -382,20 +610,30 @@ class TestSharedNodes:
         assert metadata["replay_error"] is True
         assert metadata["evidence_source"] == "unavailable"
         assert metadata["reliability"] == "none"
-        assert metadata["replay_statuses"]["decisions"] == "sqlite_error"
+        assert metadata["replay_statuses"]["decisions"] == "storage_error"
         assert any("evidence replay decisions unavailable" in warning for warning in result["warnings"])
 
-    def test_evidence_node_records_state_fallback_metadata_when_replay_events_missing(self, tmp_path):
+    def test_evidence_node_records_state_fallback_metadata_when_replay_events_missing(self, tmp_path, monkeypatch):
         from app.graphs.shared.nodes.review import evidence_node
+        from storage.replay import ReplayLookupResult
         import asyncio
 
-        db_path = tmp_path / "missing.db"
+        def fake_lookup(_path, *, replay_type="events", **_kwargs):
+            assert replay_type in {"events", "config"}
+            table = {"events": "game_events", "config": "games"}[replay_type]
+            return ReplayLookupResult(
+                status="not_found",
+                table=table,
+                message="no indexed game matched the artifact path",
+                candidates=(tmp_path.name,),
+            )
+
+        monkeypatch.setattr("storage.replay.explain_replay_lookup", fake_lookup)
 
         async def _run():
             return await evidence_node(
                 {
                     "game_dir": tmp_path,
-                    "db_path": db_path,
                     "game_id": "state_fallback_game",
                     "game_events": [],
                     "decisions": [
@@ -415,7 +653,7 @@ class TestSharedNodes:
         result = asyncio.run(_run())
         assert result["evidence"]["status"] == "ok"
         assert result["evidence"]["input_source"] == "state"
-        assert result["evidence"]["replay"]["events"]["status"] == "missing_db"
+        assert result["evidence"]["replay"]["events"]["status"] == "not_found"
         metadata = result["evidence"]["metadata"]
         assert metadata["used_state_decisions"] is True
         assert metadata["used_state_events"] is False
@@ -425,7 +663,7 @@ class TestSharedNodes:
         assert metadata["replay_error"] is False
         assert metadata["evidence_source"] == "state"
         assert metadata["reliability"] == "degraded"
-        assert metadata["replay_statuses"]["events"] == "missing_db"
+        assert metadata["replay_statuses"]["events"] == "not_found"
         assert any("evidence replay events unavailable" in warning for warning in result["warnings"])
         assert any("running without game events" in warning for warning in result["warnings"])
 
@@ -442,7 +680,6 @@ class TestSharedNodes:
             return await review_nodes.evidence_node(
                 {
                     "game_dir": tmp_path,
-                    "db_path": tmp_path / "missing.db",
                     "game_id": "memory_game",
                     "game_events": [
                         {"event_type": "night_end", "day": 1, "phase": "night"},
@@ -861,8 +1098,42 @@ class TestLibEvolve:
         assert EvolutionStatus.PROMOTED == "promoted"
         assert EvolutionStatus.REJECTED == "rejected"
 
-    def test_evolution_state_manager_persists_runs(self, tmp_path):
+    def test_evolution_state_manager_persists_runs_to_postgresql(self, tmp_path, monkeypatch):
         from app.lib.evolve import EvolutionRun, EvolutionStateManager
+
+        saved_runs = {}
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        class FakeProvider:
+            def open_evolution_connection(self):
+                return FakeConn()
+
+        class FakeEvolutionStore:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def save_run(self, run):
+                saved_runs[run.run_id] = run
+
+            def get_run(self, run_id):
+                return saved_runs.get(run_id)
+
+            def list_runs(self, role=None, status=None, limit=50):
+                rows = list(saved_runs.values())
+                if role is not None:
+                    rows = [run for run in rows if run.role == role]
+                if status is not None:
+                    rows = [run for run in rows if run.status == status]
+                return rows[:limit]
+
+        monkeypatch.setattr(
+            "storage.provider.storage_provider_from_env",
+            lambda: FakeProvider(),
+        )
+        monkeypatch.setattr("storage.evolution.run_repo.EvolutionStore", FakeEvolutionStore)
 
         manager = EvolutionStateManager(root_dir=tmp_path / "evolution")
         run = EvolutionRun(
@@ -881,9 +1152,45 @@ class TestLibEvolve:
         assert loaded.role == "seer"
         assert [r.run_id for r in manager.list_runs("seer")] == ["run_001"]
         assert [r.run_id for r in manager.scan_active_runs()] == ["run_001"]
+        assert not (tmp_path / "evolution" / "run_001" / "state.json").exists()
+        assert not (tmp_path / "evolution" / "run_001" / "manifest.json").exists()
 
-    def test_evolution_state_manager_load_run_skips_corrupt_state(self, tmp_path):
+    def test_evolution_state_manager_ignores_missing_postgres_run(self, tmp_path, monkeypatch):
         from app.lib.evolve import EvolutionRun, EvolutionStateManager
+
+        saved_runs = {}
+
+        class FakeConn:
+            def close(self):
+                pass
+
+        class FakeProvider:
+            def open_evolution_connection(self):
+                return FakeConn()
+
+        class FakeEvolutionStore:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def save_run(self, run):
+                saved_runs[run.run_id] = run
+
+            def get_run(self, run_id):
+                return saved_runs.get(run_id)
+
+            def list_runs(self, role=None, status=None, limit=50):
+                rows = list(saved_runs.values())
+                if role is not None:
+                    rows = [run for run in rows if run.role == role]
+                if status is not None:
+                    rows = [run for run in rows if run.status == status]
+                return rows[:limit]
+
+        monkeypatch.setattr(
+            "storage.provider.storage_provider_from_env",
+            lambda: FakeProvider(),
+        )
+        monkeypatch.setattr("storage.evolution.run_repo.EvolutionStore", FakeEvolutionStore)
 
         manager = EvolutionStateManager(root_dir=tmp_path / "evolution")
         run = EvolutionRun(
@@ -894,13 +1201,11 @@ class TestLibEvolve:
             training_games=3,
         )
         manager.save_run(run)
-        bad_dir = tmp_path / "evolution" / "run_bad"
-        bad_dir.mkdir(parents=True)
-        (bad_dir / "state.json").write_text("{not-json", encoding="utf-8")
 
         assert manager.load_run("run_bad") is None
         assert [r.run_id for r in manager.list_runs("seer")] == ["run_good"]
         assert [r.run_id for r in manager.scan_active_runs()] == ["run_good"]
+        assert list((tmp_path / "evolution").glob("**/*.json")) == []
 
 
 # ===========================================================================
@@ -1219,10 +1524,24 @@ class TestLibStore:
         from engine.models import ActionType
 
         p = tmp_path / "decisions.jsonl"
-        rec = AgentDecisionRecorder(stream_path=p)
+        captured = []
+
+        class Sink:
+            def record_decision(self, decision):
+                captured.append(decision)
+
+        rec = AgentDecisionRecorder(stream_path=p, sink=Sink())
         dr = DecisionRecord(action_type=ActionType.SPEAK)
         rec.record(dr)
+
         assert len(rec.records) == 1
+        assert captured == [dr]
+        assert not p.exists()
+
+        exported = rec.export_jsonl(p)
+        assert exported == p
+        assert p.exists()
+        assert "speak" in p.read_text(encoding="utf-8")
 
     def test_game_run_config(self):
         from app.lib.store import GameRunConfig
@@ -1231,21 +1550,39 @@ class TestLibStore:
         assert cfg.player_count == 12
         assert cfg.max_days == 15
 
-    def test_game_run_service_creates_persistence_session(self, tmp_path):
+    def test_game_run_service_creates_persistence_session(self):
         from app.lib.store import GameRunConfig, GameRunService
 
-        svc = GameRunService(db_path=tmp_path / "wolf.db")
-        handle = svc.create_run(GameRunConfig(run_id="run_001", run_type="ordinary_game", seed=7))
+        class FakeConn:
+            def __init__(self):
+                self.committed = False
+                self.closed = False
+
+            def commit(self):
+                self.committed = True
+
+            def close(self):
+                self.closed = True
+
+        conn = FakeConn()
+        svc = GameRunService()
+        handle = svc.create_run_with_connection(
+            GameRunConfig(run_id="run_001", run_type="ordinary_game", seed=7),
+            conn,
+        )
 
         try:
             assert handle.run_id == "run_001"
             assert handle.game_id == "run_001"
             assert handle.policy.run_type.value == "ordinary_game"
             assert handle.persistence.has_db
+            assert handle.persistence.conn is conn
         finally:
             handle.close()
+        assert conn.committed is True
+        assert conn.closed is False
 
-    def test_agent_trace_recorder_flushes_archive(self, tmp_path):
+    def test_agent_trace_recorder_flush_builds_in_memory_archive(self, tmp_path):
         from app.lib.store import AgentTraceRecorder
         from engine.models import ActionRequest, ActionResponse, ActionType, Observation, Phase, Role
 
@@ -1284,7 +1621,14 @@ class TestLibStore:
 
         assert recorder.count == 1
         assert archive.game_id == "g1"
+        assert not (tmp_path / "archive.json").exists()
+        assert not (tmp_path / "manifest.json").exists()
+
+        exported = recorder.export_archive("g1", tmp_path, seed=9, player_roles={1: "villager"})
+
+        assert exported.game_id == "g1"
         assert (tmp_path / "archive.json").exists()
+        assert (tmp_path / "manifest.json").exists()
 
     def test_agent_trace_recorder_rejects_missing_player_id(self):
         from app.lib.store import AgentTraceRecorder
@@ -1338,6 +1682,53 @@ class TestLibGame:
             action_type=ActionType.SPEAK,
             phase=Phase.DAY_SPEECH,
             observation=observation,
+        )
+
+    @staticmethod
+    def _sheriff_run_request():
+        from engine.models import ActionRequest, ActionType, GameEvent, Observation, Phase, Role
+
+        observation = Observation(
+            player_id=1,
+            self_role=Role.VILLAGER,
+            phase=Phase.SHERIFF_ELECTION,
+            day=1,
+            alive_players=(1, 2, 3),
+            dead_players=(),
+            sheriff_id=None,
+            visible_events=(
+                GameEvent(type="sheriff_election", day=1, phase=Phase.SHERIFF_ELECTION, message="election"),
+            ),
+        )
+        return ActionRequest(
+            player_id=1,
+            action_type=ActionType.SHERIFF_RUN,
+            phase=Phase.SHERIFF_ELECTION,
+            observation=observation,
+        )
+
+    @staticmethod
+    def _seer_check_request():
+        from engine.models import ActionRequest, ActionType, GameEvent, Observation, Phase, Role
+
+        observation = Observation(
+            player_id=1,
+            self_role=Role.SEER,
+            phase=Phase.NIGHT,
+            day=1,
+            alive_players=(1, 2, 3),
+            dead_players=(),
+            sheriff_id=None,
+            visible_events=(
+                GameEvent(type="night", day=1, phase=Phase.NIGHT, message="night"),
+            ),
+        )
+        return ActionRequest(
+            player_id=1,
+            action_type=ActionType.SEER_CHECK,
+            phase=Phase.NIGHT,
+            observation=observation,
+            candidates=(2, 3),
         )
 
     @staticmethod
@@ -1603,6 +1994,236 @@ class TestLibGame:
         assert diagnostics[0]["exception_type"] == "RuntimeError"
         assert diagnostics[0]["exception_message"] == "skill loader down"
 
+    def test_agent_runtime_records_model_success_diagnostics(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.models import Role
+
+        class FakeModel:
+            async def ainvoke(self, messages):
+                return type("Result", (), {"content": '{"public_text":"ok","confidence":1}'})()
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            trace_recorder = self._CaptureTraceRecorder()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=FakeModel(),
+                recorder=recorder,
+                trace_recorder=trace_recorder,
+            )
+            response = await agent.act(self._speech_request())
+            return response, recorder, trace_recorder
+
+        response, recorder, trace_recorder = asyncio.run(_run())
+        assert response.text == "ok"
+        assert recorder.records[0].source == "llm"
+        diagnostics = self._diagnostic_entries(trace_recorder.contexts[0], "model_call", "model.decision_chain")
+        assert diagnostics[0]["elapsed_ms"] >= 0
+        assert diagnostics[0]["action_type"] == "speak"
+        assert diagnostics[0]["player_id"] == 1
+
+    def test_agent_runtime_default_mode_does_not_skip_low_value_actions(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.models import Role
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                return type("Result", (), {"content": '{"choice":"run","confidence":1}'})()
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            model = FakeModel()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=model,
+                recorder=recorder,
+            )
+            response = await agent.act(self._sheriff_run_request())
+            return response, recorder, model
+
+        response, recorder, model = asyncio.run(_run())
+        assert model.calls == 1
+        assert response.choice == "run"
+        assert recorder.records[0].source == "llm"
+
+    def test_agent_runtime_fast_smoke_skips_low_value_actions(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.models import Role
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                raise AssertionError("fast smoke policy skip should not call the LLM")
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            trace_recorder = self._CaptureTraceRecorder()
+            model = FakeModel()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=model,
+                recorder=recorder,
+                trace_recorder=trace_recorder,
+                agent_runtime_config={"agent_fast_smoke": True},
+            )
+            response = await agent.act(self._sheriff_run_request())
+            return response, recorder, trace_recorder, model
+
+        response, recorder, trace_recorder, model = asyncio.run(_run())
+        assert model.calls == 0
+        assert response.choice == "pass"
+        assert recorder.records[0].source == "policy_skipped"
+        diagnostics = self._diagnostic_entries(trace_recorder.contexts[0], "policy_skip", "agent.policy_skip_llm")
+        assert diagnostics[0]["action_type"] == "sheriff_run"
+        assert diagnostics[0]["player_id"] == 1
+
+    def test_agent_runtime_fast_smoke_skips_speech_actions(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.models import Role
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                raise AssertionError("fast smoke speech skip should not call the LLM")
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            trace_recorder = self._CaptureTraceRecorder()
+            model = FakeModel()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=model,
+                recorder=recorder,
+                trace_recorder=trace_recorder,
+                agent_runtime_config={"agent_fast_smoke": True},
+            )
+            response = await agent.act(self._speech_request())
+            return response, recorder, trace_recorder, model
+
+        response, recorder, trace_recorder, model = asyncio.run(_run())
+        assert model.calls == 0
+        assert "先过" in response.text
+        assert recorder.records[0].source == "policy_skipped"
+        diagnostics = self._diagnostic_entries(trace_recorder.contexts[0], "policy_skip", "agent.policy_skip_llm")
+        assert diagnostics[0]["action_type"] == "speak"
+        assert diagnostics[0]["player_id"] == 1
+
+    def test_agent_runtime_fast_smoke_does_not_skip_required_target_actions(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.models import Role
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                return type("Result", (), {"content": '{"target":2,"confidence":1}'})()
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            model = FakeModel()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.SEER,
+                model=model,
+                recorder=recorder,
+                agent_runtime_config={"agent_fast_smoke": True},
+            )
+            response = await agent.act(self._seer_check_request())
+            return response, recorder, model
+
+        response, recorder, model = asyncio.run(_run())
+        assert model.calls == 1
+        assert response.target == 2
+        assert recorder.records[0].source == "llm"
+
+    def test_agent_runtime_skips_memory_compression_when_configured(self):
+        import asyncio
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from app.services.memory import AgentMemory, Segment, SegmentEvent
+        from engine.models import Role
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                return type("Result", (), {"content": '{"public_text":"ok","confidence":1}'})()
+
+        def memory_with_closed_segments():
+            memory = AgentMemory(player_id=1, role=Role.VILLAGER)
+            for index in range(5):
+                segment = Segment(
+                    segment_key=f"night:{index + 1}",
+                    day=index + 1,
+                    phase_group="night",
+                    closed=True,
+                )
+                segment.add_event(
+                    SegmentEvent(
+                        day=index + 1,
+                        phase="night",
+                        event_type="speech",
+                        actor=2,
+                        target=None,
+                        content=f"event {index + 1}",
+                    )
+                )
+                memory.segments.append(segment)
+            return memory
+
+        async def _run():
+            recorder = AgentDecisionRecorder()
+            model = FakeModel()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.VILLAGER,
+                model=model,
+                memory=memory_with_closed_segments(),
+                recorder=recorder,
+                agent_runtime_config={"agent_memory_compression_enabled": False},
+            )
+            response = await agent.act(self._speech_request())
+            return response, recorder, model
+
+        response, recorder, model = asyncio.run(_run())
+        assert response.text == "ok"
+        assert model.calls == 1
+        assert recorder.records[0].source == "llm"
+
     def test_agent_runtime_records_model_failure_diagnostics(self):
         import asyncio
 
@@ -1633,6 +2254,9 @@ class TestLibGame:
         diagnostics = self._diagnostic_entries(trace_recorder.contexts[0], "model_error", "model.decision_chain")
         assert diagnostics[0]["exception_type"] == "RuntimeError"
         assert diagnostics[0]["exception_message"] == "llm down"
+        assert diagnostics[0]["elapsed_ms"] >= 0
+        assert diagnostics[0]["action_type"] == "speak"
+        assert diagnostics[0]["player_id"] == 1
 
     def test_agent_runtime_records_parse_failure_diagnostics(self):
         import asyncio
@@ -1897,12 +2521,153 @@ class TestLibGame:
             observation=observation,
             candidates=(2, 3),
         )
+        kill_state = {"policy_adjustments": []}
         kill_response = _repair_or_fallback(
             kill_request,
             ActionResponse(ActionType.WEREWOLF_KILL, target=99),
-            {"policy_adjustments": []},
+            kill_state,
         )
         assert kill_response.target == 2
+        assert kill_state["source"] == "policy_adjusted"
+        assert kill_state["policy_adjustments"] == [
+            "target not in candidates; repaired invalid target 99 to candidate 2."
+        ]
+
+        guard_state = {"policy_adjustments": []}
+        guard_response = _repair_or_fallback(
+            ActionRequest(
+                player_id=1,
+                action_type=ActionType.GUARD_PROTECT,
+                phase=Phase.NIGHT,
+                observation=observation,
+                candidates=(2, 3),
+            ),
+            ActionResponse(ActionType.GUARD_PROTECT),
+            guard_state,
+        )
+        assert guard_response.target == 2
+        assert guard_state["policy_adjustments"] == [
+            "required target missing; repaired to candidate 2."
+        ]
+
+        withdraw_state = {"policy_adjustments": []}
+        withdraw_response = _repair_or_fallback(
+            ActionRequest(
+                player_id=1,
+                action_type=ActionType.SHERIFF_WITHDRAW,
+                phase=Phase.SHERIFF_ELECTION,
+                observation=observation,
+                candidates=(1, 2),
+                metadata={"remaining_runners": [1, 2]},
+            ),
+            ActionResponse(ActionType.SHERIFF_WITHDRAW, choice="stay", target=2),
+            withdraw_state,
+        )
+        assert withdraw_response.choice == "stay"
+        assert withdraw_response.target is None
+        assert withdraw_state["policy_adjustments"] == [
+            "sheriff withdraw does not accept a target; cleared target."
+        ]
+
+    def test_agent_fallback_only_fills_required_targets(self):
+        from app.graphs.subgraphs.agent.nodes import _fallback_response
+        from engine.models import ActionRequest, ActionType, GameEvent, Observation, Phase, Role
+
+        observation = Observation(
+            player_id=1,
+            self_role=Role.SEER,
+            phase=Phase.NIGHT,
+            day=1,
+            alive_players=(1, 2, 3),
+            dead_players=(),
+            sheriff_id=None,
+            visible_events=(
+                GameEvent(type="night", day=1, phase=Phase.NIGHT, message="night"),
+            ),
+        )
+
+        check_response = _fallback_response(
+            ActionRequest(
+                player_id=1,
+                action_type=ActionType.SEER_CHECK,
+                phase=Phase.NIGHT,
+                observation=observation,
+                candidates=(2, 3),
+            )
+        )
+        assert check_response.target == 2
+
+        vote_response = _fallback_response(
+            ActionRequest(
+                player_id=1,
+                action_type=ActionType.EXILE_VOTE,
+                phase=Phase.EXILE_VOTE,
+                observation=observation,
+                candidates=(2, 3),
+            )
+        )
+        assert vote_response.target is None
+
+    def test_agent_deferred_recording_only_records_engine_accepted_response(self):
+        import asyncio
+        from collections import Counter
+        from collections import deque
+
+        from app.graphs.subgraphs.agent.nodes import AgentRuntimeAdapter
+        from app.lib.store import AgentDecisionRecorder
+        from engine.config import GameConfig
+        from engine.engine import GameEngine
+        from engine.models import ActionResponse, ActionType, Phase, Role
+        from engine.players import ScriptedAgent
+
+        class FakeModel:
+            def __init__(self):
+                self.outputs = deque([
+                    '{"target": 99, "public_text": "bad target", "confidence": 1}',
+                    '{"target": 2, "public_text": "check 2", "confidence": 1}',
+                ])
+
+            async def ainvoke(self, messages):
+                return type("Result", (), {"content": self.outputs.popleft()})()
+
+        async def _run():
+            roles = {1: Role.SEER, 2: Role.WEREWOLF, 3: Role.VILLAGER}
+            recorder = AgentDecisionRecorder()
+            trace_recorder = self._CaptureTraceRecorder()
+            agent = AgentRuntimeAdapter(
+                player_id=1,
+                role=Role.SEER,
+                model=FakeModel(),
+                recorder=recorder,
+                trace_recorder=trace_recorder,
+            )
+            engine = GameEngine(
+                roles,
+                {1: agent, 2: ScriptedAgent(), 3: ScriptedAgent()},
+                config=GameConfig(name="deferred_recording_test", role_counts=Counter(roles.values())),
+            )
+            engine.state.day = 1
+            engine.state.phase = Phase.NIGHT
+            response = await engine._ask(
+                1,
+                ActionType.SEER_CHECK,
+                candidates=(2, 3),
+                validator=lambda res: res.target in (2, 3),
+                default=ActionResponse(ActionType.SEER_CHECK, target=2),
+            )
+            return response, recorder, trace_recorder, engine
+
+        response, recorder, trace_recorder, engine = asyncio.run(_run())
+
+        assert response.target == 2
+        assert [record.selected_target for record in recorder.records] == [2]
+        assert [ctx.response.target for ctx in trace_recorder.contexts] == [2]
+        assert [ctx.parsed_decision.get("target") for ctx in trace_recorder.contexts] == [99]
+        assert trace_recorder.contexts[0].source == "policy_adjusted"
+        assert trace_recorder.contexts[0].policy_adjustments == [
+            "target not in candidates; repaired invalid target 99 to candidate 2."
+        ]
+        assert [event.target for event in engine.logger.entries if event.type == "invalid_response"] == []
 
     def test_game_graph_uses_injected_model(self):
         import asyncio
@@ -1911,20 +2676,27 @@ class TestLibGame:
         from app.graphs.subgraphs.game.builder import build_game_subgraph
 
         class FakeModel:
+            def __init__(self):
+                self.calls = 0
+
             async def ainvoke(self, messages):
+                self.calls += 1
                 return type("Result", (), {"content": '{"public_text":"ok","confidence":1}'})()
 
         async def _run():
+            model = FakeModel()
             graph = build_game_subgraph(agent_subgraph=build_agent_subgraph())
-            return await graph.ainvoke({"seed": 2, "max_days": 5, "model": FakeModel()})
+            result = await graph.ainvoke({"seed": 2, "max_days": 5, "model": model})
+            return result, model
 
-        result = asyncio.run(_run())
+        result, model = asyncio.run(_run())
         assert result["finished"]
         assert result["winner"] == "werewolves"
         assert result.get("error") is None
-        assert len(result["decisions"]) == 98
+        assert model.calls > 0
+        assert len(result["decisions"]) > 0
 
-    def test_game_persist_node_writes_empty_artifact_files(self, tmp_path):
+    def test_game_persist_node_does_not_write_empty_artifact_files(self, tmp_path):
         import asyncio
 
         from app.graphs.subgraphs.game.nodes import persist_node
@@ -1941,11 +2713,83 @@ class TestLibGame:
         }
         asyncio.run(persist_node(state))
 
-        assert (tmp_path / "game_events.jsonl").exists()
-        assert (tmp_path / "game_events.jsonl").read_text(encoding="utf-8") == ""
-        assert (tmp_path / "agent_decisions.jsonl").exists()
-        assert (tmp_path / "agent_decisions.jsonl").read_text(encoding="utf-8") == ""
-        assert (tmp_path / "meta.json").exists()
+        assert not (tmp_path / "game_events.jsonl").exists()
+        assert not (tmp_path / "agent_decisions.jsonl").exists()
+        assert not (tmp_path / "meta.json").exists()
+
+    def test_game_persist_node_writes_pg_persistence_when_available(self):
+        import asyncio
+
+        from app.graphs.subgraphs.game.nodes import persist_node
+
+        class FakePersistence:
+            def __init__(self):
+                self.calls = []
+
+            def save_game_result(self, **kwargs):
+                self.calls.append(kwargs)
+
+        persistence = FakePersistence()
+        state = {
+            "game_id": "pg_persist",
+            "persistence": persistence,
+            "game_events": [
+                {"event_type": "night_end", "day": 1, "phase": "night", "public": True},
+                {"event_type": "seer_result", "day": 1, "phase": "night", "public": False},
+            ],
+            "winner": "villagers",
+            "seed": 3,
+            "roles": {"1": "seer", 2: "werewolf"},
+            "finished": True,
+            "started_at": "2026-01-01T00:00:00+08:00",
+            "finished_at": "2026-01-01T00:10:00+08:00",
+        }
+
+        asyncio.run(persist_node(state))
+
+        assert len(persistence.calls) == 1
+        call = persistence.calls[0]
+        assert call["seed"] == 3
+        assert call["player_roles"] == {1: "seer", 2: "werewolf"}
+        assert call["winner"] == "villagers"
+        assert call["started_at"] == "2026-01-01T00:00:00+08:00"
+        assert call["finished_at"] == "2026-01-01T00:10:00+08:00"
+        assert call["total_rounds"] == 1
+        assert call["public_events"] == [
+            {"event_type": "night_end", "day": 1, "phase": "night", "public": True}
+        ]
+        assert call["final_state"]["status"] == "completed"
+
+    def test_game_persist_node_replaces_empty_started_at(self):
+        import asyncio
+
+        from app.graphs.subgraphs.game.nodes import persist_node
+
+        class FakePersistence:
+            def __init__(self):
+                self.calls = []
+
+            def save_game_result(self, **kwargs):
+                self.calls.append(kwargs)
+
+        persistence = FakePersistence()
+        state = {
+            "game_id": "pg_empty_started_at",
+            "persistence": persistence,
+            "game_events": [],
+            "winner": "villagers",
+            "seed": 4,
+            "roles": {1: "seer"},
+            "finished": True,
+            "started_at": "",
+        }
+
+        out = asyncio.run(persist_node(state))
+
+        assert len(persistence.calls) == 1
+        assert persistence.calls[0]["started_at"]
+        assert out["started_at"] == persistence.calls[0]["started_at"]
+        assert persistence.calls[0]["final_state"]["started_at"] == out["started_at"]
 
     def test_root_play_graph_returns_result(self):
         import asyncio
@@ -1983,6 +2827,154 @@ class TestRun:
         assert asyncio.iscoroutinefunction(run_game)
         assert asyncio.iscoroutinefunction(run_evaluation)
         assert asyncio.iscoroutinefunction(run_evolution)
+
+    def test_run_entrypoints_route_judge_config_to_expected_pipelines(self, monkeypatch):
+        from app.run import run_evaluation, run_evolution, run_game
+        import asyncio
+
+        captured = []
+
+        class FakeGraph:
+            async def ainvoke(self, state):
+                captured.append(dict(state))
+                return {"result": {"status": "captured"}}
+
+        monkeypatch.setattr(
+            "app.graphs.main.builder.build_root_graph",
+            lambda **_kwargs: FakeGraph(),
+        )
+
+        async def _run():
+            model = object()
+            judge_fn = object()
+            await run_game(
+                game_id="judge_play",
+                model=model,
+                enable_llm_judge=True,
+                judge_max_decisions=1,
+                decision_judge_fn=judge_fn,
+            )
+            await run_evaluation(
+                batch_config={"batch_id": "judge_eval"},
+                model=model,
+                enable_llm_judge=True,
+                review_judge_max_decisions=2,
+                training_llm_judge=True,
+                evolve_judge_concurrency=5,
+            )
+            await run_evolution(
+                role="seer",
+                model=model,
+                training_llm_judge=True,
+                evolve_decision_judge=True,
+                training_judge_max_decisions=3,
+                evolve_judge_concurrency=4,
+            )
+
+        asyncio.run(_run())
+
+        play_config = captured[0]["config"]
+        eval_config = captured[1]["batch_config"]
+        evolve_config = captured[2]["config"]
+        assert play_config["enable_llm_judge"] is True
+        assert play_config["judge_max_decisions"] == 1
+        assert captured[0]["decision_judge_fn"] is not None
+        assert eval_config["enable_llm_judge"] is True
+        assert eval_config["review_judge_max_decisions"] == 2
+        assert "training_llm_judge" not in eval_config
+        assert "evolve_judge_concurrency" not in eval_config
+        assert evolve_config["training_llm_judge"] is True
+        assert evolve_config["evolve_decision_judge"] is True
+        assert evolve_config["training_judge_max_decisions"] == 3
+        assert evolve_config["evolve_judge_concurrency"] == 4
+
+    def test_judge_policy_defaults_are_applied_at_run_entrypoints(self, monkeypatch):
+        from app.run import run_evaluation, run_evolution, run_game
+        import asyncio
+
+        captured = []
+
+        class FakeGraph:
+            async def ainvoke(self, state):
+                captured.append(dict(state))
+                return {"result": {"status": "captured"}}
+
+        monkeypatch.setattr(
+            "app.graphs.main.builder.build_root_graph",
+            lambda **_kwargs: FakeGraph(),
+        )
+
+        async def _run():
+            model = object()
+            await run_game(game_id="judge_policy_play", model=model)
+            await run_evaluation(batch_config={"batch_id": "judge_policy_eval"}, model=model)
+            await run_evolution(role="seer", model=model)
+
+        asyncio.run(_run())
+
+        play_config = captured[0]["config"]
+        eval_config = captured[1]["batch_config"]
+        evolve_config = captured[2]["config"]
+        assert play_config["enable_llm_judge"] is True
+        assert play_config["review_decision_judge"] is True
+        assert play_config["judge_max_decisions"] == 3
+        assert play_config["review_judge_max_decisions"] == 3
+        assert play_config["judge_concurrency"] == 1
+        assert play_config["judge_timeout_seconds"] == 20.0
+        assert play_config["review_judge_timeout_seconds"] == 20.0
+        assert eval_config["enable_llm_judge"] is True
+        assert eval_config["eval_decision_judge"] is True
+        assert eval_config["eval_judge_max_decisions"] == 1
+        assert eval_config["eval_judge_concurrency"] == 1
+        assert eval_config["eval_judge_timeout_seconds"] == 20.0
+        assert evolve_config["enable_llm_judge"] is True
+        assert evolve_config["training_decision_judge"] is True
+        assert evolve_config["evolve_decision_judge"] is True
+        assert evolve_config["training_judge_max_decisions"] == 1
+        assert evolve_config["training_judge_concurrency"] == 1
+        assert evolve_config["training_judge_timeout_seconds"] == 20.0
+        assert evolve_config["evolve_judge_timeout_seconds"] == 20.0
+
+    def test_judge_policy_keeps_explicit_run_entrypoint_config(self, monkeypatch):
+        from app.run import run_evaluation, run_game
+        import asyncio
+
+        captured = []
+
+        class FakeGraph:
+            async def ainvoke(self, state):
+                captured.append(dict(state))
+                return {"result": {"status": "captured"}}
+
+        monkeypatch.setattr(
+            "app.graphs.main.builder.build_root_graph",
+            lambda **_kwargs: FakeGraph(),
+        )
+
+        async def _run():
+            model = object()
+            await run_game(
+                game_id="judge_policy_play_explicit",
+                model=model,
+                enable_llm_judge=False,
+                judge_max_decisions=7,
+            )
+            await run_evaluation(
+                batch_config={"batch_id": "judge_policy_eval_explicit", "eval_decision_judge": False},
+                model=model,
+                eval_judge_max_decisions=4,
+            )
+
+        asyncio.run(_run())
+
+        play_config = captured[0]["config"]
+        eval_config = captured[1]["batch_config"]
+        assert play_config["enable_llm_judge"] is False
+        assert play_config["judge_max_decisions"] == 7
+        assert "review_decision_judge" not in play_config
+        assert eval_config["eval_decision_judge"] is False
+        assert eval_config["eval_judge_max_decisions"] == 4
+        assert "enable_llm_judge" not in eval_config
 
     def test_run_game_entrypoint_runs_graph(self):
         from app.run import run_game
@@ -2028,6 +3020,40 @@ class TestRun:
         assert all("sheriff" not in str(event.get("event_type") or event.get("type")) for event in result["events"])
         assert all("sheriff" not in str(event.get("phase")) for event in result["events"])
 
+    def test_run_game_entrypoint_propagates_agent_fast_smoke_to_game_graph(self):
+        from app.run import run_game
+        import asyncio
+
+        class FakeModel:
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, messages):
+                self.calls += 1
+                return type("Result", (), {"content": '{"public_text":"ok","choice":"pass","confidence":1}'})()
+
+        async def _run():
+            model = FakeModel()
+            result = await run_game(
+                game_id="entry_game_fast_smoke",
+                seed=2,
+                max_days=1,
+                enable_sheriff=True,
+                enable_llm_judge=False,
+                enable_decision_judge=False,
+                model=model,
+                agent_fast_smoke=True,
+            )
+            return result, model
+
+        result, model = asyncio.run(_run())
+        sheriff_runs = [d for d in result["decisions"] if d.get("action_type") == "sheriff_run"]
+        skipped = [d for d in result["decisions"] if d.get("source") == "policy_skipped"]
+        assert sheriff_runs
+        assert all(decision["source"] == "policy_skipped" for decision in sheriff_runs)
+        assert skipped
+        assert model.calls < len(result["decisions"])
+
     def test_run_evaluation_entrypoint_runs_graph(self):
         from app.run import run_evaluation
         import asyncio
@@ -2038,7 +3064,7 @@ class TestRun:
 
         async def _run():
             return await run_evaluation(
-                batch_config={"batch_id": "test_batch", "game_count": 1, "max_days": 5},
+                batch_config={"batch_id": "test_batch", "game_count": 1, "max_days": 5, "seed_start": 1},
                 model=FakeModel(),
             )
 

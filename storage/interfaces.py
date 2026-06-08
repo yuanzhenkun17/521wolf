@@ -184,6 +184,9 @@ class EvolutionRunData:
     errors: list[str] = field(default_factory=list)
     training_run_id: str | None = None
     training_output_dir: str | None = None
+    runtime_state: dict[str, Any] | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 @dataclass(slots=True)

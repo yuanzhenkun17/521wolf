@@ -1,0 +1,112 @@
+name: Nightly
+
+on:
+  schedule:
+    # 02:30 Asia/Shanghai.
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  POSTGRES_DATABASE_URL: postgresql://wolf_app:wolf_password@127.0.0.1:5432/wolf_app
+  DATABASE_URL: postgresql://wolf_app:wolf_password@127.0.0.1:5432/wolf_app
+  POSTGRES_ADMIN_DATABASE_URL: postgresql://wolf_app:wolf_password@127.0.0.1:5432/wolf_app
+  POSTGRES_DISABLE_DOTENV: "1"
+  UI_BACKEND_USE_FAKE_LLM: "true"
+  WEREWOLF_LLM_API_KEY: ci-fake-key
+  WEREWOLF_LLM_BASE_URL: https://example.invalid/v1
+  WEREWOLF_LLM_MODEL: ci-fake-model
+  LANGFUSE_TRACING_ENABLED: "false"
+  OTEL_SDK_DISABLED: "true"
+
+jobs:
+  integration-smoke:
+    name: PostgreSQL and fake LLM integration smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: wolf_app
+          POSTGRES_USER: wolf_app
+          POSTGRES_PASSWORD: wolf_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U wolf_app -d wolf_app"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --frozen --dev
+
+      - name: Apply empty PostgreSQL migrations
+        run: uv run alembic upgrade head
+
+      - name: Seed default baselines
+        run: uv run python -m app.tools.seed_default_baseline
+
+      - name: Run PostgreSQL integration tests
+        run: uv run pytest -q -m postgres
+
+      - name: Run fake LLM API evolution smoke
+        run: uv run pytest -q tests/test_ui_backend_app.py::test_fake_model_game_review_evolution_benchmark_smoke
+
+      - name: Check API health with fake LLM
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run uvicorn ui.backend.main:app --host 127.0.0.1 --port 8000 > /tmp/521wolf-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for _ in {1..60}; do
+            if curl -fsS http://127.0.0.1:8000/api/health >/tmp/521wolf-health.json; then
+              cat /tmp/521wolf-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/521wolf-api.log
+          exit 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui/frontend
+
+      - name: Install Playwright Chromium
+        working-directory: ui/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run frontend-backend browser smoke
+        env:
+          RUN_FRONTEND_BACKEND_SMOKE: "1"
+        run: node --test ui/frontend/tests/frontend-backend-smoke.test.js

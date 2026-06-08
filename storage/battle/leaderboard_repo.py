@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import Any
 
+from storage.shared.database import StorageConnection
 from storage.shared.interfaces import storage_timestamp, TimestampProvider
 
 _log = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ class BattleLeaderboardStore:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -39,11 +39,21 @@ class BattleLeaderboardStore:
     ) -> None:
         now = updated_at or self._timestamp()
         self._conn.execute(
-            "INSERT OR REPLACE INTO leaderboard "
+            "INSERT INTO leaderboard "
             "(role, version_id, games_played, wins, win_rate, "
             "avg_speech_score, avg_vote_score, avg_skill_score, "
             "avg_information_score, avg_cooperation_score, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(role, version_id) DO UPDATE SET "
+            "games_played = excluded.games_played, "
+            "wins = excluded.wins, "
+            "win_rate = excluded.win_rate, "
+            "avg_speech_score = excluded.avg_speech_score, "
+            "avg_vote_score = excluded.avg_vote_score, "
+            "avg_skill_score = excluded.avg_skill_score, "
+            "avg_information_score = excluded.avg_information_score, "
+            "avg_cooperation_score = excluded.avg_cooperation_score, "
+            "updated_at = excluded.updated_at",
             (
                 role,
                 version_id,

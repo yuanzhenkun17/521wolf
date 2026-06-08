@@ -33,6 +33,47 @@ const roleGroups = computed(() => {
     .sort((a, b) => b.count - a.count)
 })
 const recentRows = computed(() => visibleRows.value.slice(0, 6))
+const judgeSummary = computed(() => {
+  let judged = 0
+  let scoreWeight = 0
+  let scoreTotal = 0
+  let badWeight = 0
+  let badTotal = 0
+  const tagCounts = new Map()
+  for (const run of rows.value) {
+    const aggregate = run.judgeAggregate
+    if (!aggregate) continue
+    const count = Number(aggregate.judged_decisions || 0)
+    const weight = count || 1
+    const score = aggregate.avg_score == null ? NaN : Number(aggregate.avg_score)
+    const badRate = aggregate.bad_rate == null ? NaN : Number(aggregate.bad_rate)
+    judged += count
+    if (Number.isFinite(score)) {
+      scoreWeight += score * weight
+      scoreTotal += weight
+    }
+    if (Number.isFinite(badRate) && count > 0) {
+      badWeight += badRate * count
+      badTotal += count
+    }
+    for (const item of aggregate.top_mistake_tags || []) {
+      const tag = String(item?.tag || '')
+      if (!tag) continue
+      tagCounts.set(tag, (tagCounts.get(tag) || 0) + Number(item?.count || 0))
+    }
+  }
+  const topTags = [...tagCounts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+    .slice(0, 5)
+  return {
+    hasData: scoreTotal > 0 || judged > 0 || topTags.length > 0,
+    judged,
+    avgScoreLabel: scoreTotal ? (scoreWeight / scoreTotal).toFixed(1) : '—',
+    badRatePct: badTotal ? Math.round((badWeight / badTotal) * 100) : null,
+    topTags
+  }
+})
 const statusRows = computed(() => [
   { label: '排队', count: statusCounts.value.queued },
   { label: '运行', count: statusCounts.value.running },
@@ -46,6 +87,10 @@ const statusRows = computed(() => [
 
 function runLabel(index) {
   return `批次${index + 1}`
+}
+
+function formatPercent(value) {
+  return value == null ? '—' : `${value}%`
 }
 </script>
 
@@ -72,6 +117,11 @@ function runLabel(index) {
         <b>{{ statusCounts.failed }}</b>
         <em>失败</em>
       </span>
+      <span>
+        <small>Judge</small>
+        <b>{{ judgeSummary.avgScoreLabel }}</b>
+        <em>{{ judgeSummary.judged }} 条决策</em>
+      </span>
     </section>
     <section v-else class="bench-run-empty">
       <strong>暂无评测批次</strong>
@@ -94,6 +144,9 @@ function runLabel(index) {
             <span>批次</span>
             <span>角色</span>
             <span>状态</span>
+            <span>Judge</span>
+            <span>坏率</span>
+            <span>主要标签</span>
             <span>操作</span>
           </div>
           <div
@@ -104,6 +157,17 @@ function runLabel(index) {
             <span class="bench-id">{{ runLabel(index) }}</span>
             <span>{{ benchmark.selectedRoleLabel.value }}</span>
             <span>{{ run.statusLabel }}</span>
+            <span class="bench-judge-score">
+              <b>{{ run.judgeScoreLabel }}</b>
+              <small>{{ run.judgeDecisionCount }} 条</small>
+            </span>
+            <span>{{ formatPercent(run.judgeBadRatePct) }}</span>
+            <span class="bench-judge-tags-cell">
+              <b v-for="tag in run.judgeTags" :key="'judge-tag-' + run.id + '-' + tag.tag">
+                {{ tag.tag }}
+              </b>
+              <em v-if="!run.judgeTags?.length">—</em>
+            </span>
             <span>
               <button
                 v-if="['queued', 'running'].includes(run.status)"
@@ -179,6 +243,19 @@ function runLabel(index) {
             </div>
           </div>
         </div>
+        <div v-if="judgeSummary.hasData" class="bench-role-run-list">
+          <div class="bench-side-title">
+            <span>Judge 标签</span>
+            <small>{{ formatPercent(judgeSummary.badRatePct) }} 坏率</small>
+          </div>
+          <div class="bench-run-role-rows">
+            <div v-for="item in judgeSummary.topTags" :key="'judge-side-' + item.tag" class="bench-run-role-row">
+              <span>{{ item.tag }}</span>
+              <i aria-hidden="true"><b :style="{ width: Math.max(8, Math.round(item.count / Math.max(1, judgeSummary.topTags[0]?.count || 1) * 100)) + '%' }"></b></i>
+              <em>{{ item.count }}</em>
+            </div>
+          </div>
+        </div>
       </template>
     </aside>
     </div>
@@ -195,7 +272,7 @@ function runLabel(index) {
 
 .bench-run-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -354,10 +431,17 @@ function runLabel(index) {
 
 .bench-row {
   display: grid;
-  grid-template-columns: minmax(140px, 0.9fr) minmax(180px, 1.2fr) minmax(84px, 0.55fr) minmax(86px, 0.45fr);
+  grid-template-columns:
+    minmax(112px, 0.75fr)
+    minmax(120px, 0.8fr)
+    minmax(76px, 0.5fr)
+    minmax(80px, 0.5fr)
+    minmax(64px, 0.42fr)
+    minmax(150px, 1fr)
+    minmax(76px, 0.42fr);
   gap: 10px;
   align-items: center;
-  min-width: 660px;
+  min-width: 840px;
   padding: 9px 10px;
   border-radius: 6px;
   border-bottom: 1px solid rgba(139, 94, 52, 0.08);
@@ -403,6 +487,57 @@ function runLabel(index) {
   font-size: 12px !important;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bench-judge-score {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+}
+
+.bench-judge-score b {
+  color: var(--bench-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.bench-judge-score small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bench-text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-judge-tags-cell {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.bench-judge-tags-cell b {
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: 1px solid rgba(122, 76, 38, 0.14);
+  border-radius: 5px;
+  background: rgba(255, 246, 225, 0.68);
+  color: var(--bench-accent);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-judge-tags-cell em {
+  color: var(--bench-text-secondary);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .bench-action {

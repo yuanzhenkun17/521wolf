@@ -9,8 +9,19 @@ from fastapi.responses import StreamingResponse
 
 from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
-from ui.backend.evolution_actions import _promote_evolution_run, _reject_evolution_run
-from ui.backend.schemas import EvolutionActionRequest, EvolutionStartRequest
+from ui.backend.evolution_actions import (
+    _promote_evolution_run,
+    _reject_evolution_run,
+    accept_evolution_proposal,
+    apply_accepted_evolution_proposals,
+    reject_evolution_proposal,
+)
+from ui.backend.schemas import (
+    EvolutionActionRequest,
+    EvolutionProposalRejectRequest,
+    EvolutionStartRequest,
+    automatic_evolution_request,
+)
 from ui.backend.serializers import (
     _evolution_batch_summary,
     _evolution_games_for_query,
@@ -20,7 +31,7 @@ from ui.backend.serializers import (
     _normalize_event,
     _sample_game_archive_payload,
 )
-from ui.backend.sse import _sse, stream_task_event_log_sse
+from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import (
     _background_source,
     _filter_values,
@@ -36,9 +47,63 @@ _TERMINAL_SSE_STATUSES = {"reviewing", "promoted", "rejected", "failed", "comple
 _TERMINAL_TASK_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
 
 
+def _proposal_run(store: Any, run_id: str) -> dict[str, Any]:
+    run = store.evolution_runs.get(run_id)
+    if run is not None:
+        return run
+    if run_id in store.evolution_batches:
+        raise HTTPException(status_code=400, detail="batch does not support proposals; select a child run")
+    raise HTTPException(status_code=404, detail="run not found")
+
+
+def _proposal_pairs(run: dict[str, Any]) -> list[dict[str, Any]]:
+    battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
+    for value in (
+        run.get("paired_seed_pairs"),
+        run.get("paired_seed_battle_table"),
+        run.get("battle_pairs"),
+        battle.get("paired_seed_pairs"),
+        battle.get("paired_seed_battle_table"),
+        battle.get("battle_pairs"),
+    ):
+        if isinstance(value, list):
+            return [dict(item) for item in value if isinstance(item, dict)]
+    return []
+
+
+def _proposal_payload(run: dict[str, Any], *, action: dict[str, Any] | None = None) -> dict[str, Any]:
+    summary = _evolution_run_summary(run)
+    pairs = _proposal_pairs(run)
+    payload: dict[str, Any] = {
+        "kind": "role_evolution_proposals",
+        "schema_version": 1,
+        "run_id": run.get("run_id"),
+        "role": run.get("role"),
+        "proposals": [dict(item) for item in run.get("proposals", []) or [] if isinstance(item, dict)],
+        "proposal_review": summary.get("proposal_review", {}),
+        "gate_report": summary.get("gate_report", {}),
+        "promotion_gate": summary.get("promotion_gate", {}),
+        "paired_seed_summary": summary.get("paired_seed_summary", {}),
+        "paired_seed_pairs": pairs,
+        "paired_seed_battle_table": pairs,
+        "paired_seeds": pairs,
+        "battle_pairs": pairs,
+        "run": summary,
+    }
+    if action is not None:
+        payload["action"] = action
+    return payload
+
+
+def _persist_proposal_mutation(store: Any, run: dict[str, Any]) -> None:
+    store._touch_background_task(run)
+    store._persist_background_tasks()
+
+
 def register_evolution_routes(api: FastAPI, store: Any) -> None:
     @api.post("/api/evolution-runs")
     async def start_evolution(request: EvolutionStartRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+        request = automatic_evolution_request(request)
         queued = store.queue_evolution(request)
         if queued.get("batch_id"):
             background_tasks.add_task(store.run_queued_evolution_batch, queued["batch_id"], request)
@@ -143,6 +208,42 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         store._persist_background_tasks()
         return entity
 
+    @api.get("/api/evolution-runs/{run_id}/proposals")
+    def evolution_proposals(run_id: str) -> dict[str, Any]:
+        run = _proposal_run(store, run_id)
+        return _proposal_payload(run)
+
+    @api.post("/api/evolution-runs/{run_id}/proposals/{proposal_id}/accept")
+    def accept_evolution_run_proposal(run_id: str, proposal_id: str) -> dict[str, Any]:
+        run = _proposal_run(store, run_id)
+        action = accept_evolution_proposal(store, run, proposal_id)
+        _persist_proposal_mutation(store, run)
+        return _proposal_payload(run, action=action)
+
+    @api.post("/api/evolution-runs/{run_id}/proposals/{proposal_id}/reject")
+    def reject_evolution_run_proposal(
+        run_id: str,
+        proposal_id: str,
+        request: EvolutionProposalRejectRequest,
+    ) -> dict[str, Any]:
+        run = _proposal_run(store, run_id)
+        action = reject_evolution_proposal(
+            store,
+            run,
+            proposal_id,
+            reason=request.reason,
+            tags=request.tags,
+        )
+        _persist_proposal_mutation(store, run)
+        return _proposal_payload(run, action=action)
+
+    @api.post("/api/evolution-runs/{run_id}/proposals/apply-accepted")
+    def apply_accepted_evolution_run_proposals(run_id: str) -> dict[str, Any]:
+        run = _proposal_run(store, run_id)
+        action = apply_accepted_evolution_proposals(store, run)
+        _persist_proposal_mutation(store, run)
+        return _proposal_payload(run, action=action)
+
     @api.get("/api/evolution-runs/{run_id}/diff")
     def evolution_diff(run_id: str) -> dict[str, Any]:
         run = store.evolution_runs.get(run_id)
@@ -226,7 +327,12 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         last_event_id = _last_event_id_from_request(request)
 
         async def stream() -> AsyncIterator[str]:
-            if store.task_event_log.has_events(run_id):
+            if task_event_log_matches_entity(
+                store.task_event_log,
+                run_id,
+                entity,
+                terminal_statuses=_TERMINAL_SSE_STATUSES,
+            ):
                 async for frame in stream_task_event_log_sse(
                     store.task_event_log,
                     run_id,

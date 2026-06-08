@@ -16,21 +16,24 @@ class NightResult:
     killed_target: int | None
     saved: bool
     poisoned_target: int | None
-    deaths: list[tuple[int, DeathCause]]
+    deaths: list[tuple[int, tuple[DeathCause, ...]]]
 
     @property
     def death_ids(self) -> list[int]:
-        return [player_id for player_id, _cause in self.deaths]
+        return [player_id for player_id, _causes in self.deaths]
 
-    def payload(self, *, include_deaths: bool = True) -> dict:
-        payload = {
+    def payload(self, *, include_deaths: bool = True, public: bool = False) -> dict:
+        payload = {} if public else {
             "protected_target": self.protected_target,
             "killed_target": self.killed_target,
             "saved": self.saved,
             "poisoned_target": self.poisoned_target,
         }
         if include_deaths:
-            payload["deaths"] = self.death_ids
+            payload["deaths"] = self.death_ids if public else [
+                {"player_id": player_id, "causes": [cause.value for cause in causes]}
+                for player_id, causes in self.deaths
+            ]
         return payload
 
 
@@ -44,7 +47,13 @@ async def run_night_without_death_reveal(engine: GameEngine) -> NightResult:
     engine._record(
         "night_end",
         message=f"第 {engine.state.day} 夜结束，死亡结果将在警长竞选后公布",
-        payload={**result.payload(include_deaths=False), "deferred_death_reveal": True},
+        payload={"deferred_death_reveal": True},
+    )
+    engine._record(
+        "night_result",
+        message=f"第 {engine.state.day} 夜晚结算完成",
+        payload={**result.payload(include_deaths=True), "deferred_death_reveal": True},
+        public=False,
     )
     return result
 
@@ -70,22 +79,28 @@ async def resolve_night_actions(engine: GameEngine) -> NightResult:
         else:
             await rule_for(role).night_action(engine)
 
-    deaths: list[tuple[int, DeathCause]] = []
+    death_causes: dict[int, list[DeathCause]] = {}
     if killed_target is not None:
         protected = protected_target == killed_target
         if protected and saved:
-            deaths.append((killed_target, DeathCause.WEREWOLF))
+            death_causes.setdefault(killed_target, []).append(DeathCause.WEREWOLF)
         elif not protected and not saved:
-            deaths.append((killed_target, DeathCause.WEREWOLF))
-    if poisoned_target is not None and poisoned_target not in {player_id for player_id, _cause in deaths}:
-        deaths.append((poisoned_target, DeathCause.WITCH_POISON))
+            death_causes.setdefault(killed_target, []).append(DeathCause.WEREWOLF)
+    if poisoned_target is not None:
+        death_causes.setdefault(poisoned_target, []).append(DeathCause.WITCH_POISON)
+
+    ordered_deaths: list[tuple[int, tuple[DeathCause, ...]]] = []
+    if killed_target in death_causes:
+        ordered_deaths.append((killed_target, tuple(death_causes[killed_target])))
+    if poisoned_target is not None and poisoned_target in death_causes and poisoned_target != killed_target:
+        ordered_deaths.append((poisoned_target, tuple(death_causes[poisoned_target])))
 
     return NightResult(
         protected_target=protected_target,
         killed_target=killed_target,
         saved=saved,
         poisoned_target=poisoned_target,
-        deaths=deaths,
+        deaths=ordered_deaths,
     )
 
 
@@ -97,14 +112,20 @@ async def reveal_night_deaths(
     message: str | None = None,
 ) -> list[int]:
     night_death_start = len(engine.state.deaths)
-    for player_id, cause in result.deaths:
-        engine.kill_player(player_id, cause)
+    for player_id, causes in result.deaths:
+        engine.kill_player(player_id, causes[0], causes=causes, announce=False)
 
-    night_deaths = [death.player_id for death in engine.state.deaths[night_death_start:]]
-    await engine.resolve_death_triggers(night_deaths)
+    night_deaths = list(result.death_ids)
     engine._record(
         event_type,
         message=message or f"第 {engine.state.day} 夜结束，死亡玩家：{night_deaths or '无'}",
-        payload={**result.payload(include_deaths=False), "deaths": night_deaths},
+        payload={"deaths": night_deaths},
     )
+    engine._record(
+        "night_death_detail",
+        message=f"第 {engine.state.day} 夜死亡详情",
+        payload=result.payload(include_deaths=True),
+        public=False,
+    )
+    await engine.resolve_death_triggers(night_deaths, delay_night_hunter=False)
     return night_deaths

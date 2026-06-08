@@ -7,6 +7,9 @@ They should fail when frontend-facing field names or basic types drift.
 from __future__ import annotations
 
 import json
+import tempfile
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +17,149 @@ from fastapi.testclient import TestClient
 
 from app.config import PathConfig
 import ui.backend.app as ui_backend_app
+
+
+@dataclass
+class _FakeVersionSummary:
+    version_id: str
+    role: str
+    source: str = ""
+    created_at: str = "2026-01-01T00:00:00+08:00"
+    is_baseline: bool = False
+    status: str = "active"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version_id": self.version_id,
+            "role": self.role,
+            "source": self.source,
+            "created_at": self.created_at,
+            "is_baseline": self.is_baseline,
+            "status": self.status,
+        }
+
+
+class FakeVersionRegistry:
+    def __init__(self, root: Path) -> None:
+        self._registry_dir = root / "registry"
+        self._registry_dir.mkdir(parents=True, exist_ok=True)
+        self._versions: dict[str, dict[str, dict[str, Any]]] = {}
+        self._baselines: dict[str, str] = {}
+        self._rejected: dict[str, list[dict[str, Any]]] = {}
+        self._scratch: list[Path] = []
+
+    @property
+    def registry_dir(self) -> Path:
+        return self._registry_dir
+
+    def close(self) -> None:
+        return None
+
+    def publish_skills(
+        self,
+        role: str,
+        skill_contents: dict[str, str],
+        *,
+        parent_id: str | None = None,
+        source: str = "manual",
+        run_id: str | None = None,
+        proposal_ids: list[str] | None = None,
+        version_id: str | None = None,
+        set_as_baseline: bool = False,
+        expected_current: str | None = None,
+    ) -> str:
+        del parent_id, run_id, proposal_ids
+        role_versions = self._versions.setdefault(role, {})
+        version_id = version_id or f"{role}_v{len(role_versions) + 1}"
+        role_versions[version_id] = {
+            "summary": _FakeVersionSummary(
+                version_id=version_id,
+                role=role,
+                source=source,
+                is_baseline=False,
+            ),
+            "contents": dict(skill_contents),
+        }
+        if set_as_baseline and not self.set_baseline(role, version_id, expected_current=expected_current):
+            raise RuntimeError(f"Failed to set baseline for {role}")
+        return version_id
+
+    def get_baseline(self, role: str) -> str | None:
+        return self._baselines.get(role)
+
+    def set_baseline(
+        self,
+        role: str,
+        version_id: str,
+        expected_current: str | None = None,
+    ) -> bool:
+        if version_id not in self._versions.get(role, {}):
+            return False
+        if self._baselines.get(role) != expected_current:
+            return False
+        previous = self._baselines.get(role)
+        if previous in self._versions.get(role, {}):
+            self._versions[role][previous]["summary"].is_baseline = False
+        self._baselines[role] = version_id
+        self._versions[role][version_id]["summary"].is_baseline = True
+        self._versions[role][version_id]["summary"].status = "promoted"
+        return True
+
+    def reject(self, role: str, version_id: str, reason: str = "") -> None:
+        del reason
+        if version_id not in self._versions.get(role, {}):
+            raise FileNotFoundError(f"Version {role}/{version_id} not found")
+        self._versions[role][version_id]["summary"].status = "rejected"
+
+    def read_skill_contents(self, role: str, version_id: str) -> dict[str, str]:
+        try:
+            return dict(self._versions[role][version_id]["contents"])
+        except KeyError as exc:
+            raise FileNotFoundError(f"Version {role}/{version_id} not found") from exc
+
+    def get_skill_dir(self, role: str, version_id: str) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="api_contract_skills_"))
+        self._scratch.append(root)
+        for rel_path, content in self.read_skill_contents(role, version_id).items():
+            output = root / rel_path
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(content, encoding="utf-8")
+        return root
+
+    def build_skill_dir(self, role_versions: dict[str, str]) -> Path:
+        root = Path(tempfile.mkdtemp(prefix="api_contract_skillset_"))
+        self._scratch.append(root)
+        for role, version_id in role_versions.items():
+            for rel_path, content in self.read_skill_contents(role, version_id).items():
+                output = root / role / rel_path
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(content, encoding="utf-8")
+        return root
+
+    def list_versions(self, role: str) -> list[_FakeVersionSummary]:
+        return [
+            item["summary"]
+            for item in self._versions.get(role, {}).values()
+        ]
+
+    def list_roles(self) -> list[str]:
+        return sorted(self._versions)
+
+    def save_rejected(
+        self,
+        role: str,
+        proposals: list[dict[str, Any]],
+        battle_result: dict[str, Any] | None = None,
+    ) -> None:
+        rows = self._rejected.setdefault(role, [])
+        for proposal in proposals:
+            row = dict(proposal)
+            row["battle_result"] = battle_result
+            row["rejected_at"] = "2026-01-01T00:00:00+08:00"
+            rows.append(row)
+
+    def load_rejected(self, role: str) -> list[dict[str, Any]]:
+        return list(self._rejected.get(role, []))
 
 
 class FakeModel:
@@ -33,6 +179,27 @@ class FakeModel:
 
 def _client(tmp_path: Path) -> TestClient:
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=FakeModel())
+    store = app.state.backend_store
+    store._registry = FakeVersionRegistry(tmp_path)
+    store._postgres_history_fingerprint = lambda: {
+        "total": 0,
+        "max_finished_at": None,
+        "max_started_at": None,
+    }
+    store._load_game_from_pg = lambda game_id: store.games.get(game_id)
+    store._list_games_from_pg = lambda: [
+        store._game_list_row(game)
+        for game in store.games.values()
+        if str(game.get("status") or "").lower() in {"completed", "cancelled", "interrupted", "failed"}
+    ]
+
+    persisted_snapshots: list[dict[str, Any]] = []
+
+    def persist_snapshot(snapshot: dict[str, Any], **_kwargs: Any) -> None:
+        persisted_snapshots.append(dict(snapshot))
+
+    store._persisted_snapshots_for_test = persisted_snapshots
+    store._persist_snapshot_to_pg = persist_snapshot
     return TestClient(app)
 
 
@@ -127,6 +294,194 @@ def _sse_frames(text: str) -> list[dict[str, Any]]:
                 frame["data"] = json.loads(line.removeprefix("data: "))
         frames.append(frame)
     return frames
+
+
+_FORBIDDEN_CONTRACT_KEYS = {
+    "belief_snapshot",
+    "god_view",
+    "god_view_after_game",
+    "memory_refs",
+    "private_payload",
+    "private_reasoning",
+    "role_map",
+    "roles",
+    "roles_by_player",
+    "player_roles",
+}
+_PRIVATE_NIGHT_PAYLOAD_KEYS = {
+    "checked_role",
+    "checked_team",
+    "check_result",
+    "guarded_target",
+    "killed_target",
+    "poisoned",
+    "poisoned_target",
+    "protected_target",
+    "saved",
+    "target_role",
+    "target_team",
+}
+_PRIVATE_ACTION_TYPES = {
+    "debug_roles",
+    "god_debug",
+    "guard_protect",
+    "guard_result",
+    "seer_check",
+    "seer_result",
+    "werewolf_kill",
+    "werewolf_result",
+    "witch_act",
+    "witch_result",
+}
+_REDACTED_ROLE_VALUES = {"", None, "unknown", "未知"}
+
+
+def _walk_json(value: Any, path: str = "$") -> list[tuple[str, Any]]:
+    items = [(path, value)]
+    if isinstance(value, dict):
+        for key, child in value.items():
+            items.extend(_walk_json(child, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            items.extend(_walk_json(child, f"{path}[{index}]"))
+    return items
+
+
+def _is_allowed_forbidden_key_path(path: str, key: str) -> bool:
+    if key == "roles":
+        return path.endswith(".config.roles")
+    return False
+
+
+def _assert_no_forbidden_contract_fields(payload: Any) -> None:
+    leaked_paths: list[str] = []
+    for path, value in _walk_json(payload):
+        if not isinstance(value, dict):
+            continue
+        for key in value:
+            key_text = str(key)
+            key_path = f"{path}.{key_text}"
+            if key_text in _FORBIDDEN_CONTRACT_KEYS and not _is_allowed_forbidden_key_path(key_path, key_text):
+                leaked_paths.append(key_path)
+    assert leaked_paths == []
+
+
+def _assert_no_private_night_payload(payload: Any) -> None:
+    leaked_paths: list[str] = []
+    leaked_events: list[str] = []
+    for path, value in _walk_json(payload):
+        if not isinstance(value, dict):
+            continue
+        for key in value:
+            key_text = str(key)
+            if key_text in _PRIVATE_NIGHT_PAYLOAD_KEYS:
+                leaked_paths.append(f"{path}.{key_text}")
+        event_type = str(
+            value.get("event_type")
+            or value.get("type")
+            or value.get("action_type")
+            or value.get("action")
+            or ""
+        )
+        if event_type in _PRIVATE_ACTION_TYPES:
+            leaked_events.append(f"{path}:{event_type}")
+    assert leaked_paths == []
+    assert leaked_events == []
+
+
+def _assert_hidden_roles_redacted(
+    payload: dict[str, Any],
+    *,
+    visible_player_ids: set[int],
+) -> None:
+    players = payload.get("players")
+    if not isinstance(players, list):
+        return
+    for player in players:
+        if not isinstance(player, dict):
+            continue
+        player_id = player.get("id")
+        if player_id in visible_player_ids:
+            continue
+        assert player.get("role") in _REDACTED_ROLE_VALUES
+        assert player.get("role_hint") in _REDACTED_ROLE_VALUES
+        assert player.get("team") in _REDACTED_ROLE_VALUES
+        assert player.get("role_state") in ({}, None)
+
+
+def _assert_decision_roles_redacted(
+    payload: dict[str, Any],
+    *,
+    visible_player_ids: set[int],
+) -> None:
+    decisions = payload.get("decisions")
+    if not isinstance(decisions, list):
+        return
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            continue
+        actor_id = decision.get("actor_id", decision.get("player_id"))
+        if actor_id in visible_player_ids:
+            continue
+        assert decision.get("role") in _REDACTED_ROLE_VALUES
+
+
+def _assert_review_redacted(payload: Any) -> None:
+    leaked_paths = [
+        path
+        for path, value in _walk_json(payload)
+        if path.endswith(".agent_scores")
+        or path.endswith(".player_evaluations")
+        or path.endswith(".player_scores")
+        or path.endswith(".player_roles")
+        or (path.endswith(".review") and isinstance(value, dict) and value)
+    ]
+    assert leaked_paths == []
+
+
+def _assert_player_view_contract(
+    payload: dict[str, Any],
+    *,
+    visible_player_ids: set[int],
+    expect_review_redacted: bool = True,
+) -> None:
+    _assert_no_forbidden_contract_fields(payload)
+    _assert_no_private_night_payload(payload)
+    _assert_hidden_roles_redacted(payload, visible_player_ids=visible_player_ids)
+    _assert_decision_roles_redacted(payload, visible_player_ids=visible_player_ids)
+    if expect_review_redacted:
+        _assert_review_redacted(payload)
+
+
+def _assert_public_archive_contract(
+    payload: dict[str, Any],
+    *,
+    visible_player_ids: set[int],
+) -> None:
+    _assert_no_forbidden_contract_fields(payload)
+    _assert_no_private_night_payload(payload)
+    _assert_decision_roles_redacted(payload, visible_player_ids=visible_player_ids)
+    _assert_review_redacted(payload)
+    assert all(event.get("visibility") != "god" for event in payload.get("events", []) if isinstance(event, dict))
+
+
+def _assert_sse_replay_contract(
+    frames: list[dict[str, Any]],
+    *,
+    visible_player_ids: set[int],
+) -> None:
+    assert frames
+    for frame in frames:
+        data = frame.get("data")
+        assert data is not None
+        _assert_no_forbidden_contract_fields(data)
+        _assert_no_private_night_payload(data)
+        if frame.get("event") == "done":
+            _assert_player_view_contract(data, visible_player_ids=visible_player_ids)
+        elif frame.get("event") == "decision":
+            _assert_decision_roles_redacted({"decisions": [data]}, visible_player_ids=visible_player_ids)
+        elif frame.get("event") == "log":
+            assert data.get("visibility") != "god"
 
 
 def _valid_seer_skill() -> str:
@@ -356,24 +711,46 @@ def _seed_in_progress_player_game(store: ui_backend_app.BackendStore) -> str:
         "role_skill_dirs": {},
         "config": {"seed": 17, "max_days": 2, "player_count": 3},
     }
-    game_dir = store.paths.games_dir / game_id
-    game_dir.mkdir(parents=True, exist_ok=True)
-    (game_dir / "archive.json").write_text(
-        json.dumps(
-            {
-                "title": "stored archive",
-                "review": {"game_id": game_id, "agent_scores": {"2": {"role": "seer"}}},
-                "events": [{"event_type": "debug_roles", "payload": {"roles": {"2": "seer"}}}],
-            }
-        ),
-        encoding="utf-8",
+    return game_id
+
+
+def _seed_abnormal_terminal_player_game(store: ui_backend_app.BackendStore, status: str = "failed") -> str:
+    source_game_id = _seed_in_progress_player_game(store)
+    game = json.loads(json.dumps(store.games.pop(source_game_id), ensure_ascii=False))
+    game_id = f"ui_contract_abnormal_{status}"
+    game.update(
+        {
+            "game_id": game_id,
+            "log_name": game_id,
+            "status": status,
+            "stop_requested": status in {"cancelled", "interrupted"},
+            "cancelled": status == "cancelled",
+            "interrupted": status == "interrupted",
+            "failed": status == "failed",
+            "finished_at": "2026-01-01T00:00:20+08:00",
+            "error": status,
+            "winner": "werewolves",
+            "review": {
+                "game_id": game_id,
+                "winner": "werewolves",
+                "agent_scores": {
+                    "2": {
+                        "role": "seer",
+                        "mistakes": ["checked wolf"],
+                    }
+                },
+                "player_roles": {"1": "villager", "2": "seer", "3": "werewolf"},
+            },
+        }
     )
+    store.games[game_id] = game
     return game_id
 
 
 def _seed_evolution(store: ui_backend_app.BackendStore) -> tuple[str, str]:
-    run_id = "evolve_contract"
-    batch_id = "bench_contract"
+    suffix = uuid.uuid4().hex[:8]
+    run_id = f"evolve_contract_{suffix}"
+    batch_id = f"bench_contract_{suffix}"
     training_game_dir = store.paths.evolution_dir / run_id / "training" / "training_001"
     store.evolution_runs[run_id] = {
         "kind": "role_evolution_run",
@@ -524,6 +901,34 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 [("run_id", "path", True)],
             ),
         },
+        "/api/evolution-runs/{run_id}/proposals": {
+            "get": (
+                "evolution_proposals_api_evolution_runs__run_id__proposals_get",
+                None,
+                [("run_id", "path", True)],
+            ),
+        },
+        "/api/evolution-runs/{run_id}/proposals/apply-accepted": {
+            "post": (
+                "apply_accepted_evolution_run_proposals_api_evolution_runs__run_id__proposals_apply_accepted_post",
+                None,
+                [("run_id", "path", True)],
+            ),
+        },
+        "/api/evolution-runs/{run_id}/proposals/{proposal_id}/accept": {
+            "post": (
+                "accept_evolution_run_proposal_api_evolution_runs__run_id__proposals__proposal_id__accept_post",
+                None,
+                [("run_id", "path", True), ("proposal_id", "path", True)],
+            ),
+        },
+        "/api/evolution-runs/{run_id}/proposals/{proposal_id}/reject": {
+            "post": (
+                "reject_evolution_run_proposal_api_evolution_runs__run_id__proposals__proposal_id__reject_post",
+                "EvolutionProposalRejectRequest",
+                [("run_id", "path", True), ("proposal_id", "path", True)],
+            ),
+        },
         "/api/evolution-runs/{run_id}/diff": {
             "get": ("evolution_diff_api_evolution_runs__run_id__diff_get", None, [("run_id", "path", True)]),
         },
@@ -647,6 +1052,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
     assert set(doc["components"]["schemas"]) == {
         "BenchmarkRequest",
         "EvolutionActionRequest",
+        "EvolutionProposalRejectRequest",
         "EvolutionStartRequest",
         "GameStartRequest",
         "HTTPValidationError",
@@ -675,14 +1081,14 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
 
     evolution_start = _schema_properties(doc, "EvolutionStartRequest")
     assert evolution_start["roles"]["items"] == {"type": "string"}
-    assert evolution_start["training_games"]["default"] == 20
+    assert evolution_start["training_games"]["default"] == 5
     assert evolution_start["training_games"]["minimum"] == 0
     assert evolution_start["training_games"]["maximum"] == 200
-    assert evolution_start["battle_games"]["default"] == 10
+    assert evolution_start["battle_games"]["default"] == 4
     assert evolution_start["battle_games"]["minimum"] == 0
     assert evolution_start["battle_games"]["maximum"] == 200
     assert evolution_start["max_days"]["default"] == 5
-    assert evolution_start["auto_promote"]["default"] is False
+    assert evolution_start["auto_promote"]["default"] is True
 
     benchmark = _schema_properties(doc, "BenchmarkRequest")
     assert benchmark["roles"]["items"] == {"type": "string"}
@@ -695,6 +1101,10 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
 
     evolution_action = _schema_properties(doc, "EvolutionActionRequest")
     assert evolution_action["action"]["default"] == ""
+
+    proposal_reject = _schema_properties(doc, "EvolutionProposalRejectRequest")
+    assert proposal_reject["reason"]["default"] == ""
+    assert proposal_reject["tags"]["items"] == {"type": "string"}
 
     tts = _schema_properties(doc, "TtsSpeechRequest")
     assert tts["text"]["default"] == ""
@@ -846,6 +1256,7 @@ def test_in_progress_player_game_responses_hide_private_information(tmp_path: Pa
 
     assert read_response.status_code == 200
     payload = read_response.json()
+    _assert_player_view_contract(payload, visible_player_ids={1})
     players = {player["id"]: player for player in payload["players"]}
     assert players[1]["role"] == "villager"
     assert players[1]["role_hint"] == "平民"
@@ -873,11 +1284,14 @@ def test_in_progress_player_game_responses_hide_private_information(tmp_path: Pa
 
     assert human_action_response.status_code == 200
     human_action = human_action_response.json()
+    _assert_no_forbidden_contract_fields(human_action)
+    _assert_no_private_night_payload(human_action)
     assert human_action["player_id"] == 1
     assert human_action["observation"]["role_state"]["private_note"] == "human only"
 
     assert events_response.status_code == 200
     frames = _sse_frames(events_response.text)
+    _assert_sse_replay_contract(frames, visible_player_ids={1})
     assert [frame["event"] for frame in frames] == ["log", "log", "log", "log", "decision", "decision", "done"]
     assert all(frame["data"] is not None for frame in frames)
     assert "2号私密视角" not in events_response.text
@@ -888,6 +1302,7 @@ def test_in_progress_player_game_responses_hide_private_information(tmp_path: Pa
 
     assert archive_response.status_code == 200
     archive = archive_response.json()
+    _assert_public_archive_contract(archive, visible_player_ids={1})
     assert archive["review"] is None
     assert archive["decision_count"] == 2
     assert all(event.get("visibility") != "god" for event in archive["events"])
@@ -896,6 +1311,43 @@ def test_in_progress_player_game_responses_hide_private_information(tmp_path: Pa
 
     assert review_response.status_code == 200
     review = review_response.json()
+    _assert_no_forbidden_contract_fields(review)
+    _assert_no_private_night_payload(review)
+    assert review["review_status"] == "暂无复盘报告"
+
+
+def test_abnormal_terminal_player_contract_redacts_archive_sse_and_review(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        game_id = _seed_abnormal_terminal_player_game(store, status="failed")
+
+        read_response = client.get(f"/api/games/{game_id}")
+        archive_response = client.get(f"/api/games/{game_id}/archive")
+        events_response = client.get(f"/api/games/{game_id}/events")
+        review_response = client.get(f"/api/games/{game_id}/review")
+
+    assert read_response.status_code == 200
+    payload = read_response.json()
+    assert payload["status"] == "failed"
+    assert payload["review"] is None
+    _assert_player_view_contract(payload, visible_player_ids={1})
+
+    assert archive_response.status_code == 200
+    archive = archive_response.json()
+    assert archive["review"] is None
+    _assert_public_archive_contract(archive, visible_player_ids={1})
+
+    assert events_response.status_code == 200
+    frames = _sse_frames(events_response.text)
+    assert frames[-1]["event"] == "done"
+    assert frames[-1]["data"]["status"] == "failed"
+    _assert_sse_replay_contract(frames, visible_player_ids={1})
+
+    assert review_response.status_code == 200
+    review = review_response.json()
+    _assert_no_forbidden_contract_fields(review)
+    _assert_no_private_night_payload(review)
+    _assert_review_redacted(review)
     assert review["review_status"] == "暂无复盘报告"
 
 
@@ -1056,7 +1508,7 @@ def test_evolution_run_list_diff_games_and_manifest_api_contract(tmp_path: Path)
         store = client.app.state.backend_store
         run_id, batch_id = _seed_evolution(store)
 
-        list_response = client.get("/api/evolution-runs?limit=20&offset=0")
+        list_response = client.get("/api/evolution-runs?limit=1000&offset=0")
         detail_response = client.get(f"/api/evolution-runs/{run_id}")
         diff_response = client.get(f"/api/evolution-runs/{run_id}/diff")
         games_response = client.get(f"/api/evolution-runs/{run_id}/games?phase=training&limit=10&offset=0")
@@ -1138,6 +1590,123 @@ def test_evolution_run_list_diff_games_and_manifest_api_contract(tmp_path: Path)
         },
     )
     assert game["history_game_id"] == f"evolution:{run_id}:training:training_001"
+
+
+def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        run_id, batch_id = _seed_evolution(store)
+        run = store.evolution_runs[run_id]
+        run["proposals"] = [
+            {
+                "proposal_id": "p1",
+                "target_file": "seer.md",
+                "action_type": "append_rule",
+                "content": "Prefer decisive checks.",
+                "rationale": "Candidate improved paired seed score.",
+            },
+            {
+                "proposal_id": "p2",
+                "target_file": "seer.md",
+                "action_type": "append_rule",
+                "content": "Always check seat 3 on seed 101.",
+                "rationale": "Overfit to one sample.",
+            },
+        ]
+        run["diff"] = [
+            {
+                "proposal_ref": "p1",
+                "target_file": "seer.md",
+                "action": "append_rule",
+                "before": "",
+                "after": "Prefer decisive checks.",
+            },
+            {
+                "proposal_ref": "p2",
+                "target_file": "seer.md",
+                "action": "append_rule",
+                "before": "",
+                "after": "Always check seat 3 on seed 101.",
+            },
+        ]
+        run["gate_report"] = {
+            "schema_version": "trust_loop_gate_v1",
+            "decision": "review_required",
+            "promote_allowed": False,
+            "review_reasons": ["proposal_overfit_risk_high"],
+            "metrics": {"paired_valid_count": 1, "role_score_delta": 0.5},
+        }
+        run["paired_seed_pairs"] = [
+            {
+                "seed": 101,
+                "baseline_game_id": "baseline_101",
+                "candidate_game_id": "candidate_101",
+                "baseline_score": 4.0,
+                "candidate_score": 4.5,
+                "score_delta": 0.5,
+                "winner_side": "candidate",
+            }
+        ]
+
+        read_response = client.get(f"/api/evolution-runs/{run_id}/proposals")
+        accept_response = client.post(f"/api/evolution-runs/{run_id}/proposals/p1/accept")
+        reject_response = client.post(
+            f"/api/evolution-runs/{run_id}/proposals/p2/reject",
+            json={"reason": "overfit", "tags": ["seed_specific"]},
+        )
+        apply_response = client.post(f"/api/evolution-runs/{run_id}/proposals/apply-accepted")
+        batch_response = client.get(f"/api/evolution-runs/{batch_id}/proposals")
+        missing_response = client.get("/api/evolution-runs/missing_contract/proposals")
+        rejected = store.registry.load_rejected("seer")
+
+    assert read_response.status_code == 200
+    read_payload = read_response.json()
+    _assert_shape(
+        read_payload,
+        {
+            "kind": str,
+            "schema_version": int,
+            "run_id": str,
+            "role": str,
+            "proposals": list,
+            "proposal_review": dict,
+            "gate_report": dict,
+            "paired_seed_pairs": list,
+            "paired_seeds": list,
+            "run": dict,
+        },
+    )
+    assert read_payload["run_id"] == run_id
+    assert [item["proposal_id"] for item in read_payload["proposals"]] == ["p1", "p2"]
+    assert read_payload["proposal_review"]["pending_count"] == 2
+    assert read_payload["gate_report"]["decision"] == "review_required"
+    assert read_payload["paired_seeds"][0]["winner_side"] == "candidate"
+
+    assert accept_response.status_code == 200
+    accepted = accept_response.json()
+    assert accepted["proposal_review"]["accepted_proposal_ids"] == ["p1"]
+    assert accepted["action"]["proposal"]["status"] == "accepted"
+    assert accepted["run"]["proposal_review"]["accepted_count"] == 1
+
+    assert reject_response.status_code == 200
+    rejected_payload = reject_response.json()
+    assert rejected_payload["proposal_review"]["rejected_proposal_ids"] == ["p2"]
+    assert rejected_payload["action"]["proposal"]["status"] == "rejected"
+    assert rejected_payload["action"]["proposal"]["rejection_reason"] == "overfit"
+    assert rejected_payload["action"]["proposal"]["reject_buffer"]["saved"] is True
+    assert rejected[-1]["proposal_id"] == "p2"
+    assert rejected[-1]["dedupe_key"]
+    assert rejected[-1]["rejection_tags"] == ["seed_specific"]
+
+    assert apply_response.status_code == 200
+    applied = apply_response.json()
+    assert applied["proposal_review"]["status"] == "applied"
+    assert applied["proposal_review"]["applied_proposal_ids"] == ["p1"]
+    assert applied["action"]["accepted_proposal_ids"] == ["p1"]
+    assert applied["run"]["proposal_review"]["applied_proposal_ids"] == ["p1"]
+
+    _assert_error_detail(batch_response, 400, "batch does not support proposals; select a child run")
+    _assert_error_detail(missing_response, 404, "run not found")
 
 
 def test_evolution_actions_promote_reject_stop_api_contract(tmp_path: Path) -> None:

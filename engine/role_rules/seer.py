@@ -50,7 +50,10 @@ class SeerRule(BaseRoleRule):
             ActionType.SEER_CHECK,
             candidates=candidates,
             validator=lambda res: res.target in candidates,
-            default=ActionResponse(ActionType.SEER_CHECK),
+            default=ActionResponse(
+                ActionType.SEER_CHECK,
+                target=candidates[(engine.state.day + seer_id) % len(candidates)] if candidates else None,
+            ),
         )
         if response.target is not None:
             result = seer_check_result(engine.state.players[response.target].role)

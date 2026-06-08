@@ -43,6 +43,24 @@ _STRESS_NAME_TOKENS = (
 )
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    for marker in (
+        "unit: fast tests for helpers, pure functions, and narrow module behavior",
+        "contract: API, persistence, compatibility, and UI-backend response contracts",
+        "integration: cross-module graph, pipeline, storage, or batch behavior",
+        "smoke: quick import-surface or minimal end-to-end health checks",
+        "stress: concurrency, atomicity, contention, CAS, retention, or similar cases",
+        "postgres: tests that require an isolated PostgreSQL database",
+    ):
+        config.addinivalue_line("markers", marker)
+
+
+@pytest.fixture(autouse=True)
+def _disable_real_langfuse_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep local .env Langfuse credentials from making pytest hit the network."""
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")
+
+
 def _item_filename(item: pytest.Item) -> str:
     try:
         return Path(str(item.path)).name

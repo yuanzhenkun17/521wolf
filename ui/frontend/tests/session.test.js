@@ -295,9 +295,112 @@ test('pending human vote actions normalize aliases and candidate objects', () =>
   assert.equal(snapshot.waiting_for, 'vote')
   assert.equal(snapshot.pending_action.type, 'exile_vote')
   assert.deepEqual(snapshot.pending_action.candidate_ids, [2, 3])
+  assert.equal(snapshot.pending_action.target_required, false)
+  assert.equal(snapshot.pending_action.allow_no_target, true)
   assert.equal(snapshot.pending_human_action.action_type, 'exile_vote')
   assert.deepEqual(snapshot.pending_human_action.candidate_ids, [2, 3])
+  assert.equal(snapshot.pending_human_action.target_required, false)
+  assert.equal(snapshot.pending_human_action.allow_no_target, true)
 })
+
+test('pending target contract treats votes and hunter as optional target actions', () => {
+  const players = [
+    { id: 1, seat: 1, name: '1号', role_hint: '猎人', alive: true },
+    { id: 2, seat: 2, name: '2号', role_hint: '狼人', alive: true },
+    { id: 3, seat: 3, name: '3号', role_hint: '女巫', alive: true }
+  ]
+  const state = useGameState()
+
+  state.liveGame.value = normalizeGameSnapshot(game('pending-hunter', {
+    mode: 'play',
+    human_player_id: 1,
+    players,
+    pending_human_action: {
+      action_type: 'hunter_shoot',
+      player_id: 1,
+      candidate_ids: [2, 3]
+    }
+  }), { mode: 'play' })
+
+  assert.equal(state.pendingActionType.value, 'hunter_shoot')
+  assert.equal(state.pendingAction.value.target_required, false)
+  assert.equal(state.pendingAction.value.allow_no_target, true)
+  assert.equal(state.needsTarget.value, false)
+  assert.deepEqual(state.actionCandidates.value.map((player) => player.id), [2, 3])
+
+  state.liveGame.value = normalizeGameSnapshot(game('pending-guard', {
+    mode: 'play',
+    human_player_id: 1,
+    players,
+    pending_human_action: {
+      action_type: 'guard_protect',
+      player_id: 1,
+      candidate_ids: [2, 3]
+    }
+  }), { mode: 'play' })
+
+  assert.equal(state.pendingActionType.value, 'guard_protect')
+  assert.equal(state.pendingAction.value.target_required, true)
+  assert.equal(state.pendingAction.value.allow_no_target, false)
+  assert.equal(state.needsTarget.value, true)
+})
+
+test('vote action can submit abstention with null target', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const initial = normalizeGameSnapshot(game('vote-pending', {
+    mode: 'play',
+    human_player_id: 1,
+    phase: 'vote',
+    players: [
+      { id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true },
+      { id: 2, seat: 2, name: '2号', role_hint: '狼人', alive: true },
+      { id: 3, seat: 3, name: '3号', role_hint: '女巫', alive: true }
+    ],
+    pending_human_action: {
+      action_type: 'exile_vote',
+      player_id: 1,
+      candidate_ids: [2, 3]
+    }
+  }), { mode: 'play' })
+  state.liveGame.value = initial
+  state.actionTarget.value = null
+  state.voteTarget.value = 2
+
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path, options = {}) => {
+      requests.push({
+        path,
+        body: options.body ? JSON.parse(options.body) : null
+      })
+      if (path === '/games/vote-pending/action') {
+        return game('vote-pending', {
+          mode: 'play',
+          human_player_id: 1,
+          phase: 'vote',
+          players: initial.players,
+          pending_human_action: null,
+          waiting_for: 'none'
+        })
+      }
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  assert.equal(state.needsTarget.value, false)
+  await actions.submitVote()
+
+  assert.deepEqual(requests.slice(0, 1), [{
+    path: '/games/vote-pending/action',
+    body: {
+      action_type: 'exile_vote',
+      target: null,
+      choice: null,
+      text: ''
+    }
+  }])
+}))
 
 test('loadCurrentGame uses pending_human_action from snapshot without extra pending fetch', () => withWindow(async () => {
   const state = useGameState()
@@ -630,6 +733,40 @@ test('startMode in watch mode starts god view without skipping the model intro',
   assert.equal(timers.intervalCount(), 1)
 }))
 
+test('startMode does not send enable_sheriff from the frontend start request', () => withWindow(async () => {
+  const state = useGameState()
+  let startBody = null
+  const watchGame = game('watch-game', {
+    mode: 'watch',
+    human_player_id: null,
+    player_count: 12,
+    players: Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      seat: index + 1,
+      name: `${index + 1}号`,
+      role_hint: '未知',
+      alive: true
+    }))
+  })
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path, options = {}) => {
+      if (path === '/games') {
+        startBody = JSON.parse(options.body)
+        return watchGame
+      }
+      if (path === '/games/watch-game?advance=1') return watchGame
+      if (path === '/health') return { mode: 'mock', external: { supports_human: true } }
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  await actions.startMode({ mode: 'watch', options: { max_days: 7, enable_sheriff: false } })
+
+  assert.equal(startBody.max_days, 7)
+  assert.equal(Object.hasOwn(startBody, 'enable_sheriff'), false)
+}))
+
 test('player mode hides other identities for villagers and reveals wolf teammates for wolves', () => {
   const state = useGameState()
   state.backendMode.value = 'api'
@@ -923,7 +1060,7 @@ test('scene effects include public skill kills and witch action aliases', () => 
       { action: 'antidote', actor_id: 3, target_id: 4, day: 1, phase: 'night', sequence: 2 },
       { action: 'poison', actor_id: 3, target_id: 2, day: 2, phase: 'night', sequence: 1 },
       { action: 'hunter_shoot', actor_id: 1, target_id: 5, day: 2, phase: 'speech', sequence: 2 },
-      { action: 'white_wolf_explode', actor_id: 5, target_id: 4, day: 3, phase: 'speech', sequence: 1 }
+      { action: 'white_wolf_explode', actor_id: 5, target_id: 4, day: 3, phase: 'speech', sequence: 1, choice: 'explode' }
     ]
   }), { mode: 'watch' })
 
@@ -940,6 +1077,48 @@ test('scene effects include public skill kills and witch action aliases', () => 
   })
   assert.deepEqual(playerEffects.map((effect) => effect.type), ['night_death', 'night_death'])
 })
+
+test('white wolf pass does not create replay deaths or scene effects', () => withWindow(() => {
+  const players = [
+    { id: 1, seat: 1, name: '1号', role_hint: '白狼王', alive: true },
+    { id: 2, seat: 2, name: '2号', role_hint: '村民', alive: true }
+  ]
+  const passGame = game('white-wolf-pass-replay', {
+    players,
+    logs: [
+      { type: 'setup', day: 1, phase: 'setup', message: 'start', speaker: '法官' },
+      {
+        type: 'white_wolf_explode',
+        day: 1,
+        phase: 'speech',
+        actor_id: 1,
+        target_id: 2,
+        message: '1号选择暂不自爆',
+        payload: { choice: 'pass' }
+      }
+    ],
+    decisions: [
+      {
+        action: 'white_wolf_explode',
+        actor_id: 1,
+        target_id: 2,
+        day: 1,
+        phase: 'speech',
+        choice: 'pass'
+      }
+    ]
+  })
+  const state = useGameState()
+  const history = useGameHistory(state, { installLifecycle: false, apiFetch: async () => ({}) })
+  const frame = history.buildReplaySnapshotByCursor(passGame, 2)
+
+  assert.equal(frame.players.find((player) => player.id === 1).alive, true)
+  assert.equal(frame.players.find((player) => player.id === 2).alive, true)
+  assert.deepEqual(
+    buildSceneEffects(passGame, { isReplayMode: true }).filter((effect) => effect.type === 'night_death'),
+    []
+  )
+}))
 
 test('werewolf choice decisions wait for the final night outcome effect', () => {
   const players = [
@@ -1442,7 +1621,7 @@ test('evolution batch selection keeps batch detail separate from run samples and
     status: 'completed',
     started_at: '2026-06-07T12:00:00',
     progress: { percent: 0.5, completed_roles: 1, total_roles: 2 },
-    config: { training_games: 20, battle_games: 10 },
+    config: { training_games: 5, battle_games: 4 },
     runs: [
       { run_id: 'evo-run-seer', role: 'seer', status: 'completed', progress: { percent: 1 } },
       { run_id: 'evo-run-witch', role: 'witch', status: 'training', progress: { percent: 0.25 } }
@@ -1473,8 +1652,8 @@ test('evolution batch selection keeps batch detail separate from run samples and
   assert.equal(workbench.selectedRun.value.roleCount, 2)
   assert.equal(workbench.selectedRun.value.completedRoleCount, 1)
   assert.equal(workbench.selectedRun.value.overallProgressPercent, 50)
-  assert.equal(workbench.selectedRun.value.trainingProgressLabel, '0 / 40')
-  assert.equal(workbench.selectedRun.value.battleProgressLabel, '0 / 20')
+  assert.equal(workbench.selectedRun.value.trainingProgressLabel, '0 / 10')
+  assert.equal(workbench.selectedRun.value.battleProgressLabel, '0 / 16')
   assert.deepEqual(workbench.selectedDiff.value, [])
   assert.deepEqual(workbench.selectedGames.value, { training: [], baseline: [], candidate: [] })
   assert.equal(workbench.selectedSampleState.value.unsupported, true)
@@ -1754,6 +1933,55 @@ test('benchmark SSE reconnect resumes from the last event id and closes on termi
   assert.equal(timers.timeoutCount(), 0)
 }))
 
+test('evaluation workbench normalizes benchmark decision judge aggregate', async () => {
+  const apiFetch = async (path) => {
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') {
+      return {
+        runs: [],
+        batches: [
+          {
+            kind: 'benchmark_batch',
+            batch_id: 'bench-judge',
+            roles: ['seer'],
+            status: 'completed',
+            started_at: '2026-06-07T10:00:00',
+            result: {
+              score_summary: {
+                decision_judge_aggregate: {
+                  avg_score: 6.75,
+                  bad_rate: 0.25,
+                  judged_decisions: 4,
+                  top_mistake_tags: [
+                    { tag: 'low_information_gain', count: 2 },
+                    { tag: 'vote_alignment', count: 1 }
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  const row = workbench.batchRunRows.value[0]
+  assert.equal(row.id, 'bench-judge')
+  assert.equal(row.judgeScoreLabel, '6.8')
+  assert.equal(row.judgeBadRatePct, 25)
+  assert.equal(row.judgeDecisionCount, 4)
+  assert.deepEqual(row.judgeTags, [
+    { tag: 'low_information_gain', count: 2 },
+    { tag: 'vote_alignment', count: 1 }
+  ])
+})
+
 test('evolution SSE reconnect resumes from the last event id per run and clears stale retry timers', () => withWindow(async ({ timers }) => {
   const instances = []
   const requests = []
@@ -1912,7 +2140,7 @@ test('replay reconstruction removes revealed night kill targets', () => withWind
 
   const sheriffFrame = history.buildReplaySnapshotByCursor(killedGame, 3)
   assert.equal(sheriffFrame.players.find((player) => player.id === 1).alive, true)
-  assert.equal(sheriffFrame.current_speaker_id, 1)
+  assert.equal(sheriffFrame.current_speaker_id, null)
 
   const revealFrame = history.buildReplaySnapshotByCursor(killedGame, 4)
   assert.equal(revealFrame.players.find((player) => player.id === 1).alive, false)
@@ -1951,6 +2179,24 @@ test('replay reconstruction removes revealed night kill targets', () => withWind
   assert.equal(immediateFrame.players.find((player) => player.id === 1).alive, false)
 }))
 
+test('replay current speaker highlights speak logs and ignores sheriff run choices', () => withWindow(() => {
+  const state = useGameState()
+  const history = useGameHistory(state, { installLifecycle: false, apiFetch: async () => ({}) })
+  const source = game('history-current-speaker', {
+    logs: [
+      { type: 'setup', day: 1, phase: 'setup', message: 'start', speaker: '法官' },
+      { type: 'sheriff_run', day: 1, phase: 'sheriff_election', actor_id: 1, message: '1号上警', speaker: '1号' },
+      { type: 'speak', day: 1, phase: 'speech', actor_id: 2, message: '2号发言', speaker: '2号' }
+    ]
+  })
+
+  const runFrame = history.buildReplaySnapshotByCursor(source, 2)
+  assert.equal(runFrame.current_speaker_id, null)
+
+  const speakFrame = history.buildReplaySnapshotByCursor(source, 3)
+  assert.equal(speakFrame.current_speaker_id, 2)
+}))
+
 test('replay snapshots rebuild vote tally from replay progress', () => withWindow(() => {
   const state = useGameState()
   state.selectedHistoryGame.value = game('history-vote-tally', {
@@ -1978,4 +2224,99 @@ test('replay snapshots rebuild vote tally from replay progress', () => withWindo
 
   const nightFrame = history.buildReplaySnapshotByCursor(state.selectedHistoryGame.value, 6)
   assert.deepEqual(nightFrame.vote_tally, [])
+}))
+
+test('replay cursor waits for vote result logs before showing decision tally', () => withWindow(() => {
+  const state = useGameState()
+  const history = useGameHistory(state, { installLifecycle: false, apiFetch: async () => ({}) })
+  const source = game('history-vote-result-gate', {
+    logs: [
+      { type: 'setup', day: 1, phase: 'setup', message: 'start', speaker: '法官' },
+      { type: 'exile_vote_start', day: 1, phase: 'vote', message: '开始投票', speaker: '法官' },
+      { type: 'exile_vote_end', day: 1, phase: 'vote', target_id: 2, message: '2号出局', speaker: '法官' }
+    ],
+    decisions: [
+      { action: 'exile_vote', actor_id: 1, target_id: 2, day: 1, phase: 'vote' },
+      { action: 'exile_vote', actor_id: 2, target_id: 1, day: 1, phase: 'vote' },
+      { action: 'exile_vote', actor_id: 3, target_id: 2, day: 1, phase: 'vote' },
+      { action: 'exile_vote', actor_id: 4, target_id: 2, day: 1, phase: 'vote' }
+    ]
+  })
+
+  const startFrame = history.buildReplaySnapshotByCursor(source, 2)
+  assert.deepEqual(startFrame.decisions, [])
+  assert.deepEqual(startFrame.vote_tally, [])
+
+  const endFrame = history.buildReplaySnapshotByCursor(source, 3)
+  assert.deepEqual(endFrame.vote_tally, [
+    { target_id: 2, count: 3, voter_ids: [1, 3, 4] },
+    { target_id: 1, count: 1, voter_ids: [2] }
+  ])
+}))
+
+test('replay/history separates legacy exile and PK votes that share phase vote', () => withWindow(() => {
+  const state = useGameState()
+  const history = useGameHistory(state, { installLifecycle: false, apiFetch: async () => ({}) })
+  const players = Array.from({ length: 6 }, (_, index) => ({
+    id: index + 1,
+    seat: index + 1,
+    name: `${index + 1}号`,
+    role_hint: '村民',
+    alive: true
+  }))
+  const source = game('history-legacy-exile-pk-votes', {
+    players,
+    logs: [
+      { type: 'setup', day: 1, phase: 'setup', message: 'start', speaker: '法官' },
+      { type: 'exile_vote_start', day: 1, phase: 'vote', message: '开始放逐投票', speaker: '法官' },
+      { type: 'exile_vote_end', day: 1, phase: 'vote', target_id: 4, message: '4号进入对决', speaker: '法官' },
+      { type: 'pk_vote_start', day: 1, phase: 'vote', message: '开始对决投票', speaker: '法官' },
+      { type: 'pk_vote_end', day: 1, phase: 'vote', target_id: 6, message: '6号出局', speaker: '法官' }
+    ],
+    decisions: [
+      { action: 'exile_vote', actor_id: 1, target_id: 4, day: 1, phase: 'vote' },
+      { action: 'exile_vote', actor_id: 2, target_id: 4, day: 1, phase: 'vote' },
+      { action: 'exile_vote', actor_id: 3, target_id: 5, day: 1, phase: 'vote' },
+      { action: 'pk_vote', actor_id: 1, target_id: 6, day: 1, phase: 'vote' },
+      { action: 'pk_vote', actor_id: 2, target_id: 6, day: 1, phase: 'vote' },
+      { action: 'pk_vote', actor_id: 3, target_id: 5, day: 1, phase: 'vote' }
+    ]
+  })
+
+  const exileStartFrame = history.buildReplaySnapshotByCursor(source, 2)
+  assert.equal(exileStartFrame.phase, 'exile_vote')
+  assert.deepEqual(exileStartFrame.vote_tally, [])
+
+  const exileEndFrame = history.buildReplaySnapshotByCursor(source, 3)
+  assert.equal(exileEndFrame.phase, 'exile_vote')
+  assert.deepEqual(exileEndFrame.vote_tally, [
+    { target_id: 4, count: 2, voter_ids: [1, 2] },
+    { target_id: 5, count: 1, voter_ids: [3] }
+  ])
+
+  const pkStartFrame = history.buildReplaySnapshotByCursor(source, 4)
+  assert.equal(pkStartFrame.phase, 'pk_vote')
+  assert.deepEqual(pkStartFrame.vote_tally, [])
+
+  const pkEndFrame = history.buildReplaySnapshotByCursor(source, 5)
+  assert.equal(pkEndFrame.phase, 'pk_vote')
+  assert.deepEqual(pkEndFrame.vote_tally, [
+    { target_id: 6, count: 2, voter_ids: [1, 2] },
+    { target_id: 5, count: 1, voter_ids: [3] }
+  ])
+
+  state.selectedHistoryGame.value = source
+  state.selectedHistoryPageKey.value = 'day-1-exile_vote'
+  assert.deepEqual(state.voteDecisions.value.map((decision) => decision.action), ['exile_vote', 'exile_vote', 'exile_vote'])
+  assert.deepEqual(state.currentVoteTally.value, [
+    { target: '4号', targetName: '4号', count: 2, voters: ['1号', '2号'] },
+    { target: '5号', targetName: '5号', count: 1, voters: ['3号'] }
+  ])
+
+  state.selectedHistoryPageKey.value = 'day-1-pk_vote'
+  assert.deepEqual(state.voteDecisions.value.map((decision) => decision.action), ['pk_vote', 'pk_vote', 'pk_vote'])
+  assert.deepEqual(state.currentVoteTally.value, [
+    { target: '6号', targetName: '6号', count: 2, voters: ['1号', '2号'] },
+    { target: '5号', targetName: '5号', count: 1, voters: ['3号'] }
+  ])
 }))

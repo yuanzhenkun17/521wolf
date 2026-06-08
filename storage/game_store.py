@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
 from engine.models import Role, Team
+from storage.interfaces import storage_timestamp
+from storage.public_events import public_events_only
+from storage.shared.database import StorageConnection
 
 
 def _role_team(role_str: str) -> str:
@@ -17,7 +19,7 @@ def _role_team(role_str: str) -> str:
 
 
 class GameStore:
-    def __init__(self, conn: sqlite3.Connection, *, autocommit: bool = True) -> None:
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
         self._conn = conn
         self._autocommit = autocommit
 
@@ -47,22 +49,42 @@ class GameStore:
         ruleset_version: str | None = None,
         run_metadata: dict[str, Any] | None = None,
     ) -> str:
+        safe_public_events = public_events_only(public_events)
+        safe_started_at = started_at or storage_timestamp()
+        safe_finished_at = finished_at or None
         self._conn.execute(
-            "INSERT OR REPLACE INTO games "
+            "INSERT INTO games "
             "(id, seed, config, winner, started_at, finished_at, total_rounds, "
             "public_events, final_state, "
             "run_type, mode, learning_eligible, leaderboard_scope, promote_eligible, "
             "model_id, model_config_hash, ruleset_version) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "seed = excluded.seed, "
+            "config = excluded.config, "
+            "winner = excluded.winner, "
+            "started_at = excluded.started_at, "
+            "finished_at = excluded.finished_at, "
+            "total_rounds = excluded.total_rounds, "
+            "public_events = excluded.public_events, "
+            "final_state = excluded.final_state, "
+            "run_type = excluded.run_type, "
+            "mode = excluded.mode, "
+            "learning_eligible = excluded.learning_eligible, "
+            "leaderboard_scope = excluded.leaderboard_scope, "
+            "promote_eligible = excluded.promote_eligible, "
+            "model_id = excluded.model_id, "
+            "model_config_hash = excluded.model_config_hash, "
+            "ruleset_version = excluded.ruleset_version",
             (
                 game_id,
                 seed,
                 json.dumps(config, ensure_ascii=False) if config else None,
                 winner,
-                started_at,
-                finished_at,
+                safe_started_at,
+                safe_finished_at,
                 total_rounds,
-                json.dumps(public_events, ensure_ascii=False) if public_events else None,
+                json.dumps(safe_public_events, ensure_ascii=False) if safe_public_events else None,
                 json.dumps(final_state, ensure_ascii=False) if final_state else None,
                 run_type or "ordinary_game",
                 mode or "dev",

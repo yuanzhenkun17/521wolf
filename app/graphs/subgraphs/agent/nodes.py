@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +15,7 @@ from engine import ActionRequest, ActionResponse, ActionType, Phase, Role
 
 from app.services.memory import AgentMemory
 from app.services.prompt import (
+    PromptBudget,
     build_decision_prompt_template,
     format_memory_messages,
     format_skill_context,
@@ -21,8 +24,33 @@ from app.services.prompt import (
 )
 from app.services.chain import run_compress_chain, run_decision_chain
 from app.util.text import extract_json
+from app.util.targets import first_candidate_target, target_in_candidates, target_required_for_action
 
 _log = logging.getLogger(__name__)
+
+
+_SMOKE_FAST_POLICY_SKIP_ACTIONS: frozenset[str] = frozenset({
+    ActionType.SHERIFF_RUN.value,
+    ActionType.SHERIFF_WITHDRAW.value,
+    ActionType.SHERIFF_SPEAK.value,
+    ActionType.SPEECH_ORDER.value,
+    ActionType.SHERIFF_BADGE.value,
+    ActionType.SPEAK.value,
+    ActionType.WHITE_WOLF_EXPLODE.value,
+    ActionType.LAST_WORD.value,
+    ActionType.PK_SPEAK.value,
+})
+
+_POLICY_SKIP_PROTECTED_ACTIONS: frozenset[str] = frozenset({
+    ActionType.GUARD_PROTECT.value,
+    ActionType.WEREWOLF_KILL.value,
+    ActionType.SEER_CHECK.value,
+    ActionType.WITCH_ACT.value,
+    ActionType.EXILE_VOTE.value,
+    ActionType.PK_VOTE.value,
+    ActionType.SHERIFF_VOTE.value,
+    ActionType.HUNTER_SHOOT.value,
+})
 
 
 def _issue_message(prefix: str, exc: BaseException) -> str:
@@ -36,6 +64,7 @@ def _diagnostic_record(
     message: str,
     exc: BaseException | None = None,
     level: str = "error",
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     record = {
         "kind": kind,
@@ -43,6 +72,8 @@ def _diagnostic_record(
         "level": level,
         "message": message,
     }
+    if extra:
+        record.update(extra)
     if exc is not None:
         diagnostic = getattr(exc, "diagnostic", None)
         if isinstance(diagnostic, dict):
@@ -63,6 +94,7 @@ def _record_diagnostic(
     message: str,
     exc: BaseException | None = None,
     level: str = "error",
+    extra: dict[str, Any] | None = None,
 ) -> None:
     state.setdefault("diagnostics", []).append(
         _diagnostic_record(
@@ -71,6 +103,7 @@ def _record_diagnostic(
             message=message,
             exc=exc,
             level=level,
+            extra=extra,
         )
     )
 
@@ -82,10 +115,18 @@ def _append_error(
     kind: str | None = None,
     stage: str | None = None,
     exc: BaseException | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     state.setdefault("errors", []).append(message)
     if kind is not None:
-        _record_diagnostic(state, kind=kind, stage=stage or "unknown", message=message, exc=exc)
+        _record_diagnostic(
+            state,
+            kind=kind,
+            stage=stage or "unknown",
+            message=message,
+            exc=exc,
+            extra=extra,
+        )
 
 
 def _append_warning(
@@ -95,6 +136,7 @@ def _append_warning(
     kind: str | None = None,
     stage: str | None = None,
     exc: BaseException | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     state.setdefault("warnings", []).append(message)
     if kind is not None:
@@ -105,6 +147,7 @@ def _append_warning(
             message=message,
             exc=exc,
             level="warning",
+            extra=extra,
         )
 
 
@@ -141,11 +184,14 @@ def _remember_node(state: dict, memory: AgentMemory) -> dict:
             )
         state["memory_context"] = _empty_memory_context(request, state.get("role", ""))
         state["memory_context"]["errors"] = list(state.get("errors", []))[-3:]
+    _trim_memory_context_for_agent_config(state)
     return state
 
 
 async def _compress_node(state: dict, memory: AgentMemory, model: Any) -> dict:
     """Compress old memory segments if needed."""
+    if _as_bool(state.get("agent_memory_compression_enabled"), default=True) is False:
+        return state
     closed = [s for s in memory.segments if s.closed]
     if len(closed) <= 4:
         return state
@@ -299,19 +345,34 @@ def _build_prompt_node(state: dict) -> dict:
 
 async def _call_model_node(state: dict, model: Any) -> dict:
     """Call the LLM and capture raw output."""
+    request = _request_from_state(state)
+    started = time.perf_counter()
     try:
         state["raw_output"] = await run_decision_chain(
             model,
             messages=state.get("messages", []),
+            prompt_budget=state.get("prompt_budget") or _prompt_budget_from_config(state),
+            metadata=_decision_langfuse_metadata(state, request),
         )
+        elapsed_ms = int(round((time.perf_counter() - started) * 1000))
         state["source"] = "llm"
+        _record_diagnostic(
+            state,
+            kind="model_call",
+            stage="model.decision_chain",
+            level="info",
+            message="LLM decision call completed.",
+            extra=_model_call_extra(request, elapsed_ms=elapsed_ms),
+        )
     except Exception as exc:
+        elapsed_ms = int(round((time.perf_counter() - started) * 1000))
         _append_error(
             state,
             f"LLM call failed: {exc}",
             kind="model_error",
             stage="model.decision_chain",
             exc=exc,
+            extra=_model_call_extra(request, elapsed_ms=elapsed_ms),
         )
         state["llm_error"] = str(exc)
         state["source"] = "llm_error"
@@ -455,6 +516,7 @@ class AgentRuntimeAdapter:
         game_id: str | None = None,
         skill_dir: Path | str | None = None,
         paths: Any = None,
+        agent_runtime_config: dict[str, Any] | None = None,
     ) -> None:
         self.player_id = player_id
         self.role = role
@@ -465,9 +527,35 @@ class AgentRuntimeAdapter:
         self.game_id = game_id
         self.skill_dir = Path(skill_dir) if skill_dir else None
         self.paths = paths
+        self.agent_runtime_config = _normalize_agent_runtime_config(agent_runtime_config or {})
         self._graph = graph
 
     async def act(self, request: ActionRequest) -> ActionResponse:
+        if _should_policy_skip_llm(request, self.agent_runtime_config):
+            state = _build_initial_state(
+                request,
+                self.player_id,
+                self.role.value,
+                **self.agent_runtime_config,
+            )
+            state = _remember_node(state, self.memory)
+            _trim_memory_context_for_agent_config(state)
+            state["source"] = "policy_skipped"
+            state["response"] = _response_to_dict(_fallback_response(request))
+            _record_diagnostic(
+                state,
+                kind="policy_skip",
+                stage="agent.policy_skip_llm",
+                level="info",
+                message=f"Skipped LLM for {request.action_type.value} via agent policy skip.",
+                extra={
+                    "player_id": request.player_id,
+                    "action_type": request.action_type.value,
+                    "preset": self.agent_runtime_config.get("agent_policy_skip_llm_preset") or "",
+                },
+            )
+            return self._finalize_decision(request, state)
+
         graph_diagnostics: list[dict[str, str]] = []
         if self._graph is not None:
             try:
@@ -493,11 +581,17 @@ class AgentRuntimeAdapter:
                     )
                 )
 
-        state = _build_initial_state(request, self.player_id, self.role.value)
+        state = _build_initial_state(
+            request,
+            self.player_id,
+            self.role.value,
+            **self.agent_runtime_config,
+        )
         for diagnostic in graph_diagnostics:
             state["errors"].append(diagnostic["message"])
             state["diagnostics"].append(diagnostic)
         state = _remember_node(state, self.memory)
+        _trim_memory_context_for_agent_config(state)
         state = await _compress_node(state, self.memory, self.model)
         state = _select_skills_node(state, skill_root=self.skill_dir)
         state = _build_prompt_node(state)
@@ -520,6 +614,7 @@ class AgentRuntimeAdapter:
                 memory=self.memory,
                 skill_dir=str(self.skill_dir) if self.skill_dir else None,
                 game_id=self.game_id,
+                **self.agent_runtime_config,
             )
         )
         return result if isinstance(result, dict) else None
@@ -532,7 +627,31 @@ class AgentRuntimeAdapter:
         decision_record = _build_decision_record(request, response, state, self.role.value)
         state["decision_record"] = decision_record
         response.decision_id = decision_record.decision_id
+        if request.defer_decision_recording:
+            self._record_decision_trace(request, response, state, decision_record)
+            response.on_accepted = lambda accepted_response: self._record_accepted_decision(
+                request,
+                accepted_response,
+                state,
+                decision_record,
+            )
+            return response
 
+        self._record_accepted_decision(request, response, state, decision_record, record_trace=True)
+        return response
+
+    def _record_accepted_decision(
+        self,
+        request: ActionRequest,
+        response: ActionResponse,
+        state: dict,
+        decision_record: Any,
+        *,
+        record_trace: bool = False,
+    ) -> None:
+        decision_record.selected_target = response.target
+        decision_record.selected_choice = response.choice
+        decision_record.public_text = response.text
         try:
             self.memory.remember_action(request, response, decision_record)
         except Exception as exc:
@@ -562,6 +681,16 @@ class AgentRuntimeAdapter:
                 )
                 decision_record.errors.append(message)
 
+        if record_trace:
+            self._record_decision_trace(request, response, state, decision_record)
+
+    def _record_decision_trace(
+        self,
+        request: ActionRequest,
+        response: ActionResponse,
+        state: dict,
+        decision_record: Any,
+    ) -> None:
         if self.trace_recorder is not None:
             try:
                 self.trace_recorder.record(_trace_context(request, response, state, decision_record, self.role.value))
@@ -576,8 +705,6 @@ class AgentRuntimeAdapter:
                     exc=exc,
                 )
                 decision_record.errors.append(message)
-
-        return response
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +724,301 @@ def _request_from_state(state: dict) -> ActionRequest:
         retry_count=int(raw.get("retry_count", 0) or 0),
         metadata=dict(raw.get("metadata", {}) or {}),
     )
+
+
+def _normalize_agent_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize opt-in fast-smoke agent controls.
+
+    Defaults keep normal games unchanged. ``agent_fast_smoke`` enables a
+    conservative preset that reduces LLM calls and prompt size for connectivity
+    smoke tests only.
+    """
+    raw = dict(config or {})
+    fast_smoke = _config_bool(
+        raw,
+        "agent_fast_smoke",
+        env_name="WEREWOLF_AGENT_FAST_SMOKE",
+        default=False,
+    )
+    normalized: dict[str, Any] = {"agent_fast_smoke": fast_smoke}
+
+    skip_enabled = _config_bool(
+        raw,
+        "agent_policy_skip_llm_enabled",
+        env_name="WEREWOLF_AGENT_POLICY_SKIP_LLM_ENABLED",
+        default=fast_smoke,
+    )
+    preset = str(
+        raw.get("agent_policy_skip_llm_preset")
+        or os.environ.get("WEREWOLF_AGENT_POLICY_SKIP_LLM_PRESET")
+        or ("smoke_fast" if fast_smoke else "")
+    ).strip()
+    skip_actions = _action_set(
+        raw.get("agent_policy_skip_llm_actions")
+        or os.environ.get("WEREWOLF_AGENT_POLICY_SKIP_LLM_ACTIONS")
+    )
+    if not skip_actions and (preset == "smoke_fast" or fast_smoke):
+        skip_actions = set(_SMOKE_FAST_POLICY_SKIP_ACTIONS)
+    normalized.update({
+        "agent_policy_skip_llm_enabled": skip_enabled,
+        "agent_policy_skip_llm_preset": preset,
+        "agent_policy_skip_llm_actions": sorted(skip_actions),
+    })
+
+    compression_default = False if fast_smoke else True
+    normalized["agent_memory_compression_enabled"] = _config_bool(
+        raw,
+        "agent_memory_compression_enabled",
+        env_name="WEREWOLF_AGENT_MEMORY_COMPRESSION_ENABLED",
+        default=compression_default,
+    )
+
+    prompt_max_total = _config_int(
+        raw,
+        "agent_prompt_max_total_chars",
+        env_name="WEREWOLF_AGENT_PROMPT_MAX_TOTAL_CHARS",
+        default=9000 if fast_smoke else None,
+    )
+    prompt_max_message = _config_int(
+        raw,
+        "agent_prompt_max_message_chars",
+        env_name="WEREWOLF_AGENT_PROMPT_MAX_MESSAGE_CHARS",
+        default=3500 if fast_smoke else None,
+    )
+    prompt_min_message = _config_int(
+        raw,
+        "agent_prompt_min_message_chars",
+        env_name="WEREWOLF_AGENT_PROMPT_MIN_MESSAGE_CHARS",
+        default=300 if fast_smoke else None,
+    )
+    if prompt_max_total is not None:
+        normalized["agent_prompt_max_total_chars"] = prompt_max_total
+    if prompt_max_message is not None:
+        normalized["agent_prompt_max_message_chars"] = prompt_max_message
+    if prompt_min_message is not None:
+        normalized["agent_prompt_min_message_chars"] = prompt_min_message
+    memory_recent = _config_int(
+        raw,
+        "agent_memory_recent_closed_segments",
+        env_name="WEREWOLF_AGENT_MEMORY_RECENT_CLOSED_SEGMENTS",
+        default=1 if fast_smoke else None,
+    )
+    memory_max_events = _config_int(
+        raw,
+        "agent_memory_max_events_per_segment",
+        env_name="WEREWOLF_AGENT_MEMORY_MAX_EVENTS_PER_SEGMENT",
+        default=12 if fast_smoke else None,
+    )
+    memory_event_chars = _config_int(
+        raw,
+        "agent_memory_event_max_chars",
+        env_name="WEREWOLF_AGENT_MEMORY_EVENT_MAX_CHARS",
+        default=180 if fast_smoke else None,
+    )
+    if memory_recent is not None:
+        normalized["agent_memory_recent_closed_segments"] = memory_recent
+    if memory_max_events is not None:
+        normalized["agent_memory_max_events_per_segment"] = memory_max_events
+    if memory_event_chars is not None:
+        normalized["agent_memory_event_max_chars"] = memory_event_chars
+    return normalized
+
+
+def _should_policy_skip_llm(request: ActionRequest, config: dict[str, Any]) -> bool:
+    if not _as_bool(config.get("agent_policy_skip_llm_enabled"), default=False):
+        return False
+    if request.action_type.value in _POLICY_SKIP_PROTECTED_ACTIONS:
+        return False
+    actions = _action_set(config.get("agent_policy_skip_llm_actions"))
+    return request.action_type.value in actions
+
+
+def _trim_memory_context_for_agent_config(state: dict) -> None:
+    context = state.get("memory_context")
+    if not isinstance(context, dict):
+        return
+    recent_limit = _positive_int_or_none(state.get("agent_memory_recent_closed_segments"))
+    event_limit = _positive_int_or_none(state.get("agent_memory_max_events_per_segment"))
+    event_chars = _positive_int_or_none(state.get("agent_memory_event_max_chars"))
+    if recent_limit is None and event_limit is None and event_chars is None:
+        return
+
+    recent = context.get("recent_closed_segments")
+    if isinstance(recent, list):
+        trimmed_recent = recent[-recent_limit:] if recent_limit is not None else list(recent)
+        context["recent_closed_segments"] = [
+            _trim_segment_prompt_dict(segment, event_limit=event_limit, event_chars=event_chars)
+            for segment in trimmed_recent
+        ]
+
+    open_segment = context.get("open_segment")
+    if isinstance(open_segment, list):
+        context["open_segment"] = _trim_event_list(
+            open_segment,
+            event_limit=event_limit,
+            event_chars=event_chars,
+        )
+
+
+def _trim_segment_prompt_dict(
+    segment: Any,
+    *,
+    event_limit: int | None,
+    event_chars: int | None,
+) -> Any:
+    if not isinstance(segment, dict):
+        return segment
+    row = dict(segment)
+    events = row.get("events")
+    if isinstance(events, list):
+        row["events"] = _trim_event_list(events, event_limit=event_limit, event_chars=event_chars)
+    return row
+
+
+def _trim_event_list(
+    events: list[Any],
+    *,
+    event_limit: int | None,
+    event_chars: int | None,
+) -> list[Any]:
+    selected = events[-event_limit:] if event_limit is not None else list(events)
+    if event_chars is None:
+        return selected
+    return [_trim_event_prompt_dict(event, event_chars=event_chars) for event in selected]
+
+
+def _trim_event_prompt_dict(event: Any, *, event_chars: int) -> Any:
+    if not isinstance(event, dict):
+        text = str(event)
+        return text if len(text) <= event_chars else text[:event_chars] + "..."
+    row = dict(event)
+    for key in ("text", "content", "message"):
+        value = row.get(key)
+        if isinstance(value, str) and len(value) > event_chars:
+            row[key] = value[:event_chars] + "..."
+    return row
+
+
+def _prompt_budget_from_config(config: dict[str, Any]) -> PromptBudget | None:
+    total = _positive_int_or_none(config.get("agent_prompt_max_total_chars"))
+    message = _positive_int_or_none(config.get("agent_prompt_max_message_chars"))
+    minimum = _positive_int_or_none(config.get("agent_prompt_min_message_chars"))
+    if total is None and message is None and minimum is None:
+        return None
+    return PromptBudget(
+        max_total_chars=total if total is not None else 24000,
+        max_message_chars=message if message is not None else 8000,
+        min_message_chars=minimum if minimum is not None else 400,
+    )
+
+
+def _model_call_extra(request: ActionRequest, *, elapsed_ms: int) -> dict[str, Any]:
+    return {
+        "player_id": request.player_id,
+        "action_type": request.action_type.value,
+        "phase": request.phase.value,
+        "retry_count": request.retry_count,
+        "candidate_count": len(request.candidates),
+        "elapsed_ms": elapsed_ms,
+    }
+
+
+def _decision_langfuse_metadata(state: dict, request: ActionRequest) -> dict[str, Any]:
+    """Business dimensions for per-decision Langfuse generation observations."""
+    current = state.get("memory_context", {}).get("current_visible_state", {})
+    day = getattr(request.observation, "day", None)
+    if day is None and isinstance(current, dict):
+        day = current.get("day")
+
+    selected_skills = [str(skill) for skill in state.get("selected_skills", []) if skill is not None]
+    metadata: dict[str, Any] = {
+        "game_id": state.get("game_id"),
+        "source_run_id": state.get("source_run_id"),
+        "player_id": request.player_id,
+        "role": state.get("role"),
+        "action_type": request.action_type.value,
+        "phase": request.phase.value,
+        "day": _int_or_default(day, 0),
+        "candidate_count": len(request.candidates),
+        "retry_count": request.retry_count,
+        "selected_skills": selected_skills,
+        "skill_count": len(selected_skills),
+        "source": state.get("source") or "llm",
+    }
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _config_bool(
+    config: dict[str, Any],
+    key: str,
+    *,
+    env_name: str,
+    default: bool,
+) -> bool:
+    value = config.get(key)
+    if value is None:
+        value = os.environ.get(env_name)
+    return _as_bool(value, default=default)
+
+
+def _config_int(
+    config: dict[str, Any],
+    key: str,
+    *,
+    env_name: str,
+    default: int | None,
+) -> int | None:
+    value = config.get(key)
+    if value is None:
+        value = os.environ.get(env_name)
+    if value is None:
+        return default
+    parsed = _positive_int_or_none(value)
+    return parsed if parsed is not None else default
+
+
+def _as_bool(value: Any, *, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disabled"}:
+        return False
+    return default
+
+
+def _positive_int_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _action_set(value: Any) -> set[str]:
+    if value is None or value == "":
+        return set()
+    if isinstance(value, str):
+        raw_items = [item.strip() for item in value.split(",")]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        raw_items = [str(item).strip() for item in value]
+    else:
+        raw_items = [str(value).strip()]
+    return {item for item in raw_items if item}
 
 
 def _empty_memory_context(request: ActionRequest, role: str) -> dict[str, Any]:
@@ -642,10 +1064,9 @@ _TARGET_ACTIONS: frozenset[ActionType] = frozenset({
     ActionType.HUNTER_SHOOT,
 })
 
-_REQUIRED_TARGET_ACTIONS: frozenset[ActionType] = frozenset({
-    ActionType.WEREWOLF_KILL,
-    ActionType.SEER_CHECK,
-})
+_REQUIRED_TARGET_ACTIONS: frozenset[ActionType] = frozenset(
+    action_type for action_type in _TARGET_ACTIONS if target_required_for_action(action_type)
+)
 
 _VALID_CHOICES: dict[ActionType, set[str | None]] = {
     ActionType.SHERIFF_RUN: {"run", "pass"},
@@ -688,8 +1109,6 @@ def _fallback_response(request: ActionRequest) -> ActionResponse:
     if request.action_type == ActionType.SHERIFF_WITHDRAW:
         return ActionResponse(request.action_type, choice="stay")
     if request.action_type == ActionType.SHERIFF_BADGE:
-        if request.candidates:
-            return ActionResponse(request.action_type, choice="transfer", target=request.candidates[0])
         return ActionResponse(request.action_type, choice="destroy")
     if request.action_type == ActionType.SPEECH_ORDER:
         return ActionResponse(request.action_type, choice="forward")
@@ -697,9 +1116,31 @@ def _fallback_response(request: ActionRequest) -> ActionResponse:
         return ActionResponse(request.action_type, choice="none")
     if request.action_type == ActionType.WHITE_WOLF_EXPLODE:
         return ActionResponse(request.action_type, choice="pass")
+    if request.action_type in _REQUIRED_TARGET_ACTIONS:
+        return ActionResponse(request.action_type, target=first_candidate_target(list(request.candidates)))
     if request.action_type in _TARGET_ACTIONS:
-        return ActionResponse(request.action_type, target=request.candidates[0] if request.candidates else None)
+        return ActionResponse(request.action_type)
     return ActionResponse(request.action_type)
+
+
+_RESPONSE_UNSET = object()
+
+
+def _replace_response(
+    response: ActionResponse,
+    *,
+    target: Any = _RESPONSE_UNSET,
+    choice: Any = _RESPONSE_UNSET,
+    text: Any = _RESPONSE_UNSET,
+) -> ActionResponse:
+    return ActionResponse(
+        response.action_type,
+        target=response.target if target is _RESPONSE_UNSET else target,
+        choice=response.choice if choice is _RESPONSE_UNSET else choice,
+        text=response.text if text is _RESPONSE_UNSET else text,
+        decision_id=response.decision_id,
+        on_accepted=response.on_accepted,
+    )
 
 
 _PLAYER_ID_PLACEHOLDER_RE = re.compile(r"\{\s*player_id\s*\}")
@@ -736,95 +1177,151 @@ def _repair_or_fallback(request: ActionRequest, response: ActionResponse, state:
     valid_choices = _VALID_CHOICES.get(request.action_type)
     if valid_choices is not None and response.choice not in valid_choices:
         old_choice = response.choice
-        response = ActionResponse(
-            request.action_type,
-            target=response.target,
-            choice=_default_choice(request.action_type),
-            text=response.text,
-        )
+        response = _replace_response(response, choice=_default_choice(request.action_type))
         adjustments.append(
             f"Invalid choice {old_choice!r} for {request.action_type.value}; "
             f"repaired to {response.choice!r}."
         )
 
-    if response.target is not None and (
-        not request.candidates or response.target not in request.candidates
-    ):
-        old_target = response.target
-        if request.action_type in _REQUIRED_TARGET_ACTIONS and request.candidates:
-            response = ActionResponse(
-                request.action_type,
-                target=request.candidates[0],
-                choice=response.choice,
-                text=response.text,
-            )
-            adjustments.append(f"target not in candidates; repaired target from {old_target} to {response.target}.")
-        elif request.action_type == ActionType.SHERIFF_BADGE:
-            response = _fallback_response(request)
-            adjustments.append(f"target not in candidates; fallback for invalid target {old_target}.")
-        else:
-            response = ActionResponse(
-                request.action_type,
-                target=None,
-                choice=response.choice,
-                text=response.text,
-            )
-            adjustments.append(f"target not in candidates; cleared invalid target {old_target}.")
-
-    if (
-        response.target is None
-        and request.action_type in _REQUIRED_TARGET_ACTIONS
-        and request.candidates
-    ):
-        response = ActionResponse(
-            request.action_type,
-            target=request.candidates[0],
-            choice=response.choice,
-            text=response.text,
-        )
-        adjustments.append(f"{request.action_type.value} requires a target; repaired to {response.target}.")
-
     if request.action_type == ActionType.WITCH_ACT:
-        if response.choice == "save" and not request.metadata.get("can_save", False):
-            adjustments.append("save not available this round; falling back.")
-            response = _fallback_response(request)
-        elif response.choice == "poison":
-            if not request.metadata.get("can_poison", False) or response.target is None:
-                adjustments.append("poison unavailable or missing target; falling back.")
-                response = _fallback_response(request)
-
-    if request.action_type == ActionType.SHERIFF_BADGE and response.choice == "transfer":
-        if response.target is None:
-            adjustments.append("transfer requires a target; falling back.")
-            response = _fallback_response(request)
-
-    if request.action_type == ActionType.WHITE_WOLF_EXPLODE:
-        if response.choice in {"pass", None} and response.target is not None:
-            adjustments.append("pass cannot include an explode target; cleared target.")
-            response = ActionResponse(request.action_type, choice="pass", text=response.text)
-        valid_explode = (
-            (
-                response.choice == "explode"
-                and response.target is not None
-                and response.target in request.candidates
-            )
-            or (response.target is None and response.choice in {"pass", None})
-        )
-        if not valid_explode:
-            adjustments.append("invalid explode state; falling back.")
-            response = _fallback_response(request)
-
-    if request.action_type == ActionType.SHERIFF_WITHDRAW and response.choice == "withdraw":
-        remaining = request.metadata.get("remaining_runners") or request.metadata.get("runners")
-        if remaining is None:
-            remaining = list(request.candidates)
-        if remaining == [request.player_id]:
-            response = ActionResponse(request.action_type, choice="stay", text=response.text)
-            adjustments.append("Last sheriff runner attempted to withdraw; forced stay.")
+        response = _repair_witch_response(request, response, adjustments)
+    elif request.action_type == ActionType.SHERIFF_BADGE:
+        response = _repair_sheriff_badge_response(request, response, adjustments)
+    elif request.action_type == ActionType.WHITE_WOLF_EXPLODE:
+        response = _repair_white_wolf_explode_response(request, response, adjustments)
+    elif request.action_type == ActionType.SHERIFF_WITHDRAW:
+        response = _repair_sheriff_withdraw_response(request, response, adjustments)
+    else:
+        response = _repair_target_response(request, response, adjustments)
 
     if adjustments:
         state["source"] = "policy_adjusted"
         state.setdefault("policy_adjustments", []).extend(adjustments)
+    return response
+
+
+def _repair_witch_response(
+    request: ActionRequest,
+    response: ActionResponse,
+    adjustments: list[str],
+) -> ActionResponse:
+    if response.choice == "save":
+        if not request.metadata.get("can_save", False):
+            adjustments.append("save not available this round; falling back.")
+            return _fallback_response(request)
+        if response.target is not None:
+            adjustments.append("save does not accept an explicit target; cleared target.")
+            return _replace_response(response, target=None)
+        return response
+
+    if response.choice == "poison":
+        if not request.metadata.get("can_poison", False):
+            adjustments.append("poison unavailable; falling back.")
+            return _fallback_response(request)
+        if not target_in_candidates(response.target, request.candidates):
+            if response.target is None:
+                adjustments.append("poison requires a valid target; falling back.")
+            else:
+                adjustments.append(f"poison target {response.target} not in candidates; falling back.")
+            return _fallback_response(request)
+        return response
+
+    if response.target is not None:
+        adjustments.append("witch non-poison choice cannot include a target; cleared target.")
+        return _replace_response(response, target=None)
+    return response
+
+
+def _repair_sheriff_badge_response(
+    request: ActionRequest,
+    response: ActionResponse,
+    adjustments: list[str],
+) -> ActionResponse:
+    if response.choice == "transfer":
+        if target_in_candidates(response.target, request.candidates):
+            return response
+        if response.target is None:
+            adjustments.append("transfer requires a valid target; repaired to destroy.")
+        else:
+            adjustments.append(f"transfer target {response.target} not in candidates; repaired to destroy.")
+        return _replace_response(response, target=None, choice="destroy")
+
+    if response.target is not None:
+        adjustments.append("destroy cannot include a transfer target; cleared target.")
+        return _replace_response(response, target=None)
+    return response
+
+
+def _repair_white_wolf_explode_response(
+    request: ActionRequest,
+    response: ActionResponse,
+    adjustments: list[str],
+) -> ActionResponse:
+    if response.choice == "explode":
+        if target_in_candidates(response.target, request.candidates):
+            return response
+        if response.target is None:
+            adjustments.append("explode requires a valid target; repaired to pass.")
+        else:
+            adjustments.append(f"explode target {response.target} not in candidates; repaired to pass.")
+        return _replace_response(response, target=None, choice="pass")
+
+    if response.target is not None:
+        adjustments.append("pass cannot include an explode target; cleared target.")
+        return _replace_response(response, target=None, choice="pass")
+    return response
+
+
+def _repair_sheriff_withdraw_response(
+    request: ActionRequest,
+    response: ActionResponse,
+    adjustments: list[str],
+) -> ActionResponse:
+    if response.target is not None:
+        response = _replace_response(response, target=None)
+        adjustments.append("sheriff withdraw does not accept a target; cleared target.")
+
+    if response.choice == "withdraw":
+        remaining = request.metadata.get("remaining_runners") or request.metadata.get("runners")
+        if remaining is None:
+            remaining = list(request.candidates)
+        if remaining == [request.player_id]:
+            response = _replace_response(response, choice="stay")
+            adjustments.append("Last sheriff runner attempted to withdraw; forced stay.")
+    return response
+
+
+def _repair_target_response(
+    request: ActionRequest,
+    response: ActionResponse,
+    adjustments: list[str],
+) -> ActionResponse:
+    if request.action_type in _REQUIRED_TARGET_ACTIONS and not target_in_candidates(response.target, request.candidates):
+        repair_target = first_candidate_target(list(request.candidates))
+        if repair_target is not None:
+            old_target = response.target
+            response = _replace_response(response, target=repair_target)
+            if old_target is None:
+                adjustments.append(f"required target missing; repaired to candidate {repair_target}.")
+            else:
+                adjustments.append(
+                    f"target not in candidates; repaired invalid target {old_target} "
+                    f"to candidate {repair_target}."
+                )
+            return response
+        if response.target is not None:
+            old_target = response.target
+            response = _replace_response(response, target=None)
+            adjustments.append(
+                f"required target {old_target} invalid but no legal candidate available; "
+                "cleared target for engine safety net."
+            )
+        return response
+
+    if response.target is not None and not target_in_candidates(response.target, request.candidates):
+        old_target = response.target
+        response = _replace_response(response, target=None)
+        adjustments.append(f"target not in candidates; cleared invalid target {old_target}.")
     return response
 
 

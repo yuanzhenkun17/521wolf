@@ -23,12 +23,24 @@ class GuardRule(BaseRoleRule):
         guard_id = guards[0]
         guard_ps = engine.state.players[guard_id]
         candidates = tuple(player_id for player_id in engine.alive_ids() if player_id != guard_ps.role_state.get("last_target"))
+        if not candidates:
+            guard_ps.role_state["last_target"] = None
+            guard_ps.role_state["protect_history"].append(
+                {"day": engine.state.day, "target": None}
+            )
+            engine._record(
+                "guard_result",
+                message=f"守卫 {guard_id} 号未守护",
+                public=False,
+                actor=guard_id,
+            )
+            return None
         response = await engine._ask(
             guard_id,
             ActionType.GUARD_PROTECT,
             candidates=candidates,
-            validator=lambda res: res.target is None or res.target in candidates,
-            default=ActionResponse(ActionType.GUARD_PROTECT),
+            validator=lambda res: res.target in candidates,
+            default=ActionResponse(ActionType.GUARD_PROTECT, target=candidates[(engine.state.day + guard_id) % len(candidates)]),
         )
         guard_ps.role_state["last_target"] = response.target
         guard_ps.role_state["protect_history"].append(

@@ -11,10 +11,10 @@ if TYPE_CHECKING:
 
 async def run_day_speeches(engine: GameEngine) -> str:
     engine.state.phase = Phase.DAY_SPEECH
-    engine._record("day_speech_start", message=f"第 {engine.state.day} 天白天发言开始", payload={"alive": engine.alive_ids()})
     await engine.resolve_pending_daybreak_actions()
     if engine.check_winner() is not None:
         return "finished"
+    engine._record("day_speech_start", message=f"第 {engine.state.day} 天白天发言开始", payload={"alive": engine.alive_ids()})
     speech_order = await determine_speech_order(engine)
     for player_id in speech_order:
         player = engine.state.players[player_id]

@@ -44,6 +44,7 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
                 ),
                 "llm": store.llm_status(),
                 "tts": store.tts_status(),
+                "startup_checks": store.startup_checks,
             },
         }
 

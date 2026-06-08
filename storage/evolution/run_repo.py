@@ -3,23 +3,39 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
+from storage.shared.database import StorageConnection, StorageRow, ensure_columns
 from storage.shared.interfaces import EvolutionRunData, SkillProposalData, storage_timestamp
 
 
 class EvolutionStore:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: StorageConnection) -> None:
         self._conn = conn
 
     def save_run(self, run: EvolutionRunData) -> None:
         now = storage_timestamp()
+        started_at = run.started_at or _runtime_state_timestamp(run.runtime_state, "started_at") or now
+        finished_at = run.finished_at or _runtime_state_timestamp(run.runtime_state, "finished_at")
+        self._ensure_runtime_state_column()
         self._conn.execute(
-            "INSERT OR REPLACE INTO evolution_runs "
+            "INSERT INTO evolution_runs "
             "(id, role, parent_hash, status, training_games, battle_games, "
-            "config, candidate_hash, battle_result, errors, started_at, finished_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "config, candidate_hash, battle_result, runtime_state, errors, started_at, finished_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "role = excluded.role, "
+            "parent_hash = excluded.parent_hash, "
+            "status = excluded.status, "
+            "training_games = excluded.training_games, "
+            "battle_games = excluded.battle_games, "
+            "config = excluded.config, "
+            "candidate_hash = excluded.candidate_hash, "
+            "battle_result = excluded.battle_result, "
+            "runtime_state = excluded.runtime_state, "
+            "errors = excluded.errors, "
+            "started_at = COALESCE(evolution_runs.started_at, excluded.started_at), "
+            "finished_at = COALESCE(excluded.finished_at, evolution_runs.finished_at)",
             (
                 run.run_id,
                 run.role,
@@ -31,9 +47,10 @@ class EvolutionStore:
                 if run.baseline_config else None,
                 run.candidate_hash,
                 json.dumps(run.battle_result, ensure_ascii=False) if run.battle_result else None,
+                json.dumps(run.runtime_state, ensure_ascii=False) if run.runtime_state else None,
                 json.dumps(run.errors, ensure_ascii=False),
-                now,
-                None,
+                started_at,
+                finished_at,
             ),
         )
         self._conn.commit()
@@ -45,6 +62,7 @@ class EvolutionStore:
             "battle_games",
             "candidate_hash",
             "battle_result",
+            "runtime_state",
             "errors",
             "finished_at",
         }
@@ -52,10 +70,12 @@ class EvolutionStore:
         if not updates:
             return
 
+        if "runtime_state" in updates:
+            self._ensure_runtime_state_column()
         set_parts = []
         params: list[Any] = []
         for key, value in updates.items():
-            if key in ("battle_result", "errors") and value is not None:
+            if key in ("battle_result", "runtime_state", "errors") and value is not None:
                 value = json.dumps(value, ensure_ascii=False)
             set_parts.append(f"{key} = ?")
             params.append(value)
@@ -66,6 +86,41 @@ class EvolutionStore:
             params,
         )
         self._conn.commit()
+
+    def save_runtime_state(
+        self,
+        run_id: str,
+        *,
+        role: str,
+        parent_hash: str,
+        status: str,
+        training_games: int = 0,
+        battle_games: int = 0,
+        baseline_config: Any = None,
+        candidate_hash: str | None = None,
+        battle_result: dict[str, Any] | None = None,
+        errors: list[str] | None = None,
+        runtime_state: dict[str, Any] | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        self.save_run(
+            EvolutionRunData(
+                run_id=run_id,
+                role=role,
+                parent_hash=parent_hash,
+                status=status,
+                training_games=training_games,
+                battle_games=battle_games,
+                baseline_config=baseline_config,
+                candidate_hash=candidate_hash,
+                battle_result=battle_result,
+                errors=list(errors or []),
+                runtime_state=runtime_state,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+        )
 
     def get_run(self, run_id: str) -> EvolutionRunData | None:
         row = self._conn.execute(
@@ -100,6 +155,25 @@ class EvolutionStore:
         ).fetchall()
         return [self._row_to_run(row) for row in rows]
 
+    def list_runtime_states(
+        self,
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        self._ensure_runtime_state_column()
+        rows = self._conn.execute(
+            "SELECT runtime_state FROM evolution_runs "
+            "WHERE runtime_state IS NOT NULL "
+            "ORDER BY started_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        states: list[dict[str, Any]] = []
+        for row in rows:
+            value = _json_value(row["runtime_state"])
+            if isinstance(value, dict):
+                states.append(value)
+        return states
+
     def list_battle_summaries(
         self,
         role: str | None = None,
@@ -123,7 +197,7 @@ class EvolutionStore:
         summaries: list[dict[str, Any]] = []
         for row in rows:
             try:
-                value = json.loads(row["battle_result"])
+                value = _json_value(row["battle_result"])
             except (TypeError, json.JSONDecodeError):
                 continue
             if isinstance(value, dict):
@@ -140,10 +214,23 @@ class EvolutionStore:
         with self._conn:
             for proposal in proposals:
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO skill_proposals "
+                    "INSERT INTO skill_proposals "
                     "(id, source_version_id, target_file, action_type, content, rationale, "
                     "confidence, risk, expected_metric, expected_direction, evidence, status, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "source_version_id = excluded.source_version_id, "
+                    "target_file = excluded.target_file, "
+                    "action_type = excluded.action_type, "
+                    "content = excluded.content, "
+                    "rationale = excluded.rationale, "
+                    "confidence = excluded.confidence, "
+                    "risk = excluded.risk, "
+                    "expected_metric = excluded.expected_metric, "
+                    "expected_direction = excluded.expected_direction, "
+                    "evidence = excluded.evidence, "
+                    "status = excluded.status, "
+                    "created_at = excluded.created_at",
                     (
                         proposal.proposal_id,
                         source_version_id,
@@ -183,10 +270,11 @@ class EvolutionStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def _row_to_run(self, row: sqlite3.Row) -> EvolutionRunData:
-        config_raw = json.loads(row["config"]) if row["config"] else None
-        battle_raw = json.loads(row["battle_result"]) if row["battle_result"] else None
-        errors_raw = json.loads(row["errors"]) if row["errors"] else []
+    def _row_to_run(self, row: StorageRow) -> EvolutionRunData:
+        config_raw = _json_value(row["config"]) if row["config"] else None
+        battle_raw = _json_value(row["battle_result"]) if row["battle_result"] else None
+        errors_raw = _json_value(row["errors"]) if row["errors"] else []
+        runtime_raw = _json_value(row["runtime_state"]) if _has_key(row, "runtime_state") and row["runtime_state"] else None
 
         from storage.shared.interfaces import SkillVersionConfigData
 
@@ -205,4 +293,39 @@ class EvolutionStore:
             candidate_hash=row["candidate_hash"],
             battle_result=battle_raw,
             errors=errors_raw,
+            runtime_state=runtime_raw if isinstance(runtime_raw, dict) else None,
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
         )
+
+    def _ensure_runtime_state_column(self) -> None:
+        try:
+            ensure_columns(
+                self._conn,
+                "evolution_runs",
+                [("runtime_state", "jsonb")],
+                allowed_tables={"evolution_runs"},
+            )
+            self._conn.commit()
+        except RuntimeError:
+            return
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _runtime_state_timestamp(runtime_state: dict[str, Any] | None, key: str) -> str | None:
+    if not isinstance(runtime_state, dict):
+        return None
+    value = runtime_state.get(key)
+    return str(value) if value else None
+
+
+def _has_key(row: StorageRow, key: str) -> bool:
+    try:
+        return key in set(row.keys())
+    except Exception:
+        return False

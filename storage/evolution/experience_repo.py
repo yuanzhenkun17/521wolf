@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
+from storage.shared.database import StorageConnection, StorageRow
 from storage.shared.interfaces import storage_timestamp, TimestampProvider
 
 
 class ExperienceCandidateStore:
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -44,14 +44,44 @@ class ExperienceCandidateStore:
                 candidate_id = str(data.get("candidate_id") or f"{game_id}_candidate_{index:03d}")
                 data["candidate_id"] = candidate_id
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO experience_candidates "
+                    "INSERT INTO experience_candidates "
                     "(game_id, candidate_id, role, faction, candidate_type, topic, sample_source, "
                     "evidence_decision_ids, scenario, conditions, recommendation, anti_pattern, "
                     "risk_boundaries, counter_conditions, supporting_evidence, opposing_evidence, "
                     "confidence, validation_need, misleading_risk, raw_json, created_at, "
                     "run_type, source_run_id, source_game_id, artifact_game_id, learning_eligible, "
                     "mode, applicable_phase, applicable_action, llm_rationale, validator_status) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(game_id, candidate_id) DO UPDATE SET "
+                    "role = excluded.role, "
+                    "faction = excluded.faction, "
+                    "candidate_type = excluded.candidate_type, "
+                    "topic = excluded.topic, "
+                    "sample_source = excluded.sample_source, "
+                    "evidence_decision_ids = excluded.evidence_decision_ids, "
+                    "scenario = excluded.scenario, "
+                    "conditions = excluded.conditions, "
+                    "recommendation = excluded.recommendation, "
+                    "anti_pattern = excluded.anti_pattern, "
+                    "risk_boundaries = excluded.risk_boundaries, "
+                    "counter_conditions = excluded.counter_conditions, "
+                    "supporting_evidence = excluded.supporting_evidence, "
+                    "opposing_evidence = excluded.opposing_evidence, "
+                    "confidence = excluded.confidence, "
+                    "validation_need = excluded.validation_need, "
+                    "misleading_risk = excluded.misleading_risk, "
+                    "raw_json = excluded.raw_json, "
+                    "created_at = excluded.created_at, "
+                    "run_type = excluded.run_type, "
+                    "source_run_id = excluded.source_run_id, "
+                    "source_game_id = excluded.source_game_id, "
+                    "artifact_game_id = excluded.artifact_game_id, "
+                    "learning_eligible = excluded.learning_eligible, "
+                    "mode = excluded.mode, "
+                    "applicable_phase = excluded.applicable_phase, "
+                    "applicable_action = excluded.applicable_action, "
+                    "llm_rationale = excluded.llm_rationale, "
+                    "validator_status = excluded.validator_status",
                     (
                         game_id,
                         candidate_id,
@@ -161,7 +191,7 @@ def _load(value: str | None, fallback: Any) -> Any:
     except json.JSONDecodeError:
         return fallback
 
-def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_dict(row: StorageRow) -> dict[str, Any]:
     data = dict(row)
     for field in (
         "evidence_decision_ids",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
@@ -27,14 +29,28 @@ from ui.backend.store import BackendStore, _FakeModel
 _log = logging.getLogger(__name__)
 
 
-def create_app(*, paths: PathConfig | None = None, model: Any | None = None) -> FastAPI:
+def create_app(
+    *,
+    paths: PathConfig | None = None,
+    model: Any | None = None,
+    restore_background: bool = True,
+) -> FastAPI:
     store = BackendStore(paths=paths or _paths_from_env(), model=model)
     store.paths.runs_dir.mkdir(parents=True, exist_ok=True)
     store.paths.games_dir.mkdir(parents=True, exist_ok=True)
     store.paths.registry_dir.mkdir(parents=True, exist_ok=True)
-    store.restore_background_tasks()
+    if restore_background:
+        store.restore_background_tasks()
 
-    api = FastAPI(title="521wolf UI Backend")
+    @asynccontextmanager
+    async def _lifespan(_api: FastAPI) -> AsyncIterator[None]:
+        store.refresh_startup_checks()
+        try:
+            yield
+        finally:
+            store.close()
+
+    api = FastAPI(title="521wolf UI Backend", lifespan=_lifespan)
     api.state.backend_store = store
     _register_error_handlers(api)
     api.add_middleware(
@@ -53,6 +69,7 @@ def create_app(*, paths: PathConfig | None = None, model: Any | None = None) -> 
     register_role_routes(api, store)
     register_evolution_routes(api, store)
     register_benchmark_routes(api, store)
+
     return api
 
 
@@ -151,4 +168,4 @@ def _detail_message(detail: Any, *, fallback: str) -> str:
     return fallback
 
 
-app = create_app()
+app = create_app(restore_background=False)

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
+
+from storage.shared.database import StorageConnection, StorageRow
 
 
 class LeaderboardStore:
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: StorageConnection) -> None:
         self._conn = conn
 
     def list_entries(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -20,7 +21,7 @@ class LeaderboardStore:
         return [_row_to_entry(row) for row in rows]
 
 
-def _row_to_entry(row: sqlite3.Row) -> dict[str, Any]:
+def _row_to_entry(row: StorageRow) -> dict[str, Any]:
     version_id = str(row["version_id"])
     return {
         "version_id": version_id,

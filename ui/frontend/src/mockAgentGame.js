@@ -108,11 +108,11 @@ const mockEvolutionRuns = [
     started_at: '2026-06-05T08:20:00',
     parent_hash: 'base-seer-20260604',
     candidate_hash: 'cand-seer-review-a4',
-    config: { roles: ['seer'], training_games: 20, battle_games: 10, max_days: 5, auto_promote: false },
-    training_games: 20,
-    battle_games: 10,
-    training_completed: 20,
-    battle_completed: 10,
+    config: { roles: ['seer'], training_games: 5, battle_games: 4, max_days: 5, auto_promote: true },
+    training_games: 5,
+    battle_games: 4,
+    training_completed: 5,
+    battle_completed: 8,
     battle_result: {
       target_team: 'villagers',
       candidate: { target_win_rate: 0.64 },
@@ -145,10 +145,10 @@ const mockEvolutionRuns = [
     started_at: '2026-06-05T07:35:00',
     parent_hash: 'base-witch-20260604',
     candidate_hash: 'cand-witch-review-a5',
-    config: { roles: ['witch'], training_games: 20, battle_games: 10, max_days: 5, auto_promote: false },
-    training_games: 20,
-    battle_games: 10,
-    training_completed: 20,
+    config: { roles: ['witch'], training_games: 5, battle_games: 4, max_days: 5, auto_promote: true },
+    training_games: 5,
+    battle_games: 4,
+    training_completed: 5,
     battle_completed: 4,
     battle_result: {
       candidate: { avg_role_weighted_score: 0.61, target_side_win_rate: 0.59 },
@@ -168,11 +168,11 @@ const mockEvolutionBatches = [
     stage: 'combined_battling',
     current_stage: 'combined_battling',
     started_at: '2026-06-05T06:10:00',
-    config: { roles: MOCK_EVOLUTION_ROLES, training_games: 20, battle_games: 10, max_days: 5, auto_promote: false },
-    training_games: 20,
-    battle_games: 10,
-    training_completed: 140,
-    battle_completed: 42,
+    config: { roles: MOCK_EVOLUTION_ROLES, training_games: 5, battle_games: 4, max_days: 5, auto_promote: true },
+    training_games: 5,
+    battle_games: 4,
+    training_completed: 35,
+    battle_completed: 28,
     runs: ['mock-evo-seer-review', 'mock-evo-witch-active']
   }
 ]
@@ -194,7 +194,27 @@ const mockBenchmarkBatches = [
       game_count: 10,
       completed: 10,
       errored: 0,
-      score_summary: { game_count: 10 },
+      score_summary: {
+        game_count: 10,
+        decision_judge_aggregate: {
+          status: 'ok',
+          game_count: 10,
+          reported_games: 10,
+          judged_decisions: 10,
+          failed_decisions: 0,
+          avg_score: 7.4,
+          bad_rate: 0.2,
+          unknown_rate: 0.1,
+          quality_counts: { good: 5, ok: 3, bad: 2 },
+          top_mistake_tags: [
+            { tag: 'low_information_gain', count: 2 },
+            { tag: 'vote_alignment', count: 1 }
+          ],
+          by_role: { villager: { count: 10, avg_score: 7.4, bad_rate: 0.2, unknown_rate: 0.1 } },
+          by_action_type: { exile_vote: { count: 6, avg_score: 7.0, bad_rate: 0.17, unknown_rate: 0 } },
+          lowest_decisions: []
+        }
+      },
       fairness: { is_fair: true, reason: 'mock' },
       rankable: true,
       rankable_reason: ''
@@ -2508,13 +2528,13 @@ function createMockEvolutionRun(body = {}) {
     candidate_hash: candidate,
     config: {
       roles: [role],
-      training_games: Number(body.training_games || 20),
-      battle_games: Number(body.battle_games || 10),
+      training_games: Number(body.training_games ?? 5),
+      battle_games: Number(body.battle_games ?? 4),
       max_days: Number(body.max_days || 5),
-      auto_promote: Boolean(body.auto_promote)
+      auto_promote: true
     },
-    training_games: Number(body.training_games || 20),
-    battle_games: Number(body.battle_games || 10),
+    training_games: Number(body.training_games ?? 5),
+    battle_games: Number(body.battle_games ?? 4),
     training_completed: 0,
     battle_completed: 0,
     battle_result: {
@@ -2541,13 +2561,13 @@ function createMockEvolutionBatch(body = {}) {
     started_at: new Date().toISOString(),
     config: {
       roles,
-      training_games: Number(body.training_games || 20),
-      battle_games: Number(body.battle_games || 10),
+      training_games: Number(body.training_games ?? 5),
+      battle_games: Number(body.battle_games ?? 4),
       max_days: Number(body.max_days || 5),
-      auto_promote: Boolean(body.auto_promote)
+      auto_promote: true
     },
-    training_games: Number(body.training_games || 20),
-    battle_games: Number(body.battle_games || 10),
+    training_games: Number(body.training_games ?? 5),
+    battle_games: Number(body.battle_games ?? 4),
     training_completed: 0,
     battle_completed: 0,
     runs: []
@@ -2580,7 +2600,24 @@ function createMockBenchmarkBatch(body = {}) {
       game_count: battleGames,
       completed: battleGames,
       errored: 0,
-      score_summary: { game_count: battleGames },
+      score_summary: {
+        game_count: battleGames,
+        decision_judge_aggregate: {
+          status: battleGames > 0 ? 'ok' : 'skipped',
+          game_count: battleGames,
+          reported_games: battleGames,
+          judged_decisions: battleGames,
+          failed_decisions: 0,
+          avg_score: battleGames > 0 ? 7.1 : null,
+          bad_rate: battleGames > 0 ? 0.1 : null,
+          unknown_rate: battleGames > 0 ? 0 : null,
+          quality_counts: battleGames > 0 ? { good: Math.max(0, battleGames - 2), ok: 1, bad: 1 } : {},
+          top_mistake_tags: battleGames > 0 ? [{ tag: 'target_priority', count: 1 }] : [],
+          by_role: {},
+          by_action_type: {},
+          lowest_decisions: []
+        }
+      },
       fairness: { is_fair: true, reason: 'mock' },
       rankable: battleGames > 0,
       rankable_reason: battleGames > 0 ? '' : 'No games in batch'
@@ -3162,6 +3199,105 @@ export async function mockApiFetch(path, options = {}) {
       return {
         title: 'Mock 复盘报告',
         verdict: game.winner || '测试剧本未结束',
+        game_summary: {
+          winner: game.winner || 'villagers',
+          total_days: game.day || 1,
+          event_count: game.logs?.length || game.events?.length || 0,
+          decision_count: game.decisions?.length || 0
+        },
+        player_evaluations: [
+          {
+            player_seat: 1,
+            role: 'witch',
+            speech_score: 0.62,
+            vote_score: 0.58,
+            skill_score: 0.48,
+            information_score: 0.55,
+            team_score: 0.61,
+            overall_score: 0.57
+          },
+          {
+            player_seat: 2,
+            role: 'white_wolf_king',
+            speech_score: 0.54,
+            vote_score: 0.64,
+            skill_score: 0.42,
+            information_score: 0.49,
+            team_score: 0.52,
+            overall_score: 0.51
+          }
+        ],
+        decision_judge: {
+          status: 'ok',
+          selection: {
+            method: 'app.lib.evidence.select_key_decisions',
+            total_decisions: game.decisions?.length || 44,
+            key_decisions: 44,
+            selected_for_judge: 3,
+            max_decisions: 3
+          },
+          metrics: {
+            total_decisions: game.decisions?.length || 44,
+            key_decisions: 44,
+            judged: 3,
+            failed: 0
+          },
+          summary: {
+            judged: 3,
+            average_score: 4.3,
+            quality_counts: {
+              bad: 1,
+              unknown: 1,
+              ok: 1
+            },
+            lowest_decisions: [
+              {
+                decision_id: 'mock-wolf-kill',
+                player_id: 2,
+                role: 'white_wolf_king',
+                action_type: 'werewolf_kill',
+                score: 3,
+                reason: '首夜未提交有效刀人目标，实际行动依赖系统策略修正，不能视为稳定的自主决策。',
+                suggestion: '狼人阵营夜刀应明确目标和理由，优先围绕神职威胁、保护可能性和队友暴露风险做选择。'
+              }
+            ]
+          },
+          judgments: [
+            {
+              decision_id: 'mock-wolf-kill',
+              player_id: 2,
+              role: 'white_wolf_king',
+              action_type: 'werewolf_kill',
+              score: 3,
+              quality: 'bad',
+              reason: '首夜未提交有效刀人目标，实际行动依赖系统策略修正，不能视为稳定的自主决策。',
+              suggestion: '狼人阵营夜刀应明确目标和理由，优先围绕神职威胁、保护可能性和队友暴露风险做选择。',
+              mistake_tags: ['未提交有效刀人目标', '决策被系统策略修正']
+            },
+            {
+              decision_id: 'mock-exile-vote',
+              player_id: 1,
+              role: 'witch',
+              action_type: 'exile_vote',
+              score: 5,
+              quality: 'unknown',
+              reason: '当前公开信息不足，弃票质量无法稳定判断。',
+              suggestion: '投票前应结合当天发言、身份跳明和票型压力形成明确站边。',
+              mistake_tags: []
+            },
+            {
+              decision_id: 'mock-witch-act',
+              player_id: 1,
+              role: 'witch',
+              action_type: 'witch_act',
+              score: 5,
+              quality: 'ok',
+              reason: '首夜信息有限时不开药可以接受，但操作选择需要避免无效提交。',
+              suggestion: '提交技能前确认候选项和药剂状态，确保系统执行的是原始意图。',
+              mistake_tags: ['提交无效操作']
+            }
+          ]
+        },
         notes: [
           '角色按 4平民、3普狼、1白狼王、守卫、女巫、预言家、猎人各1 随机分配。',
           '预言家、金水、狼坑和投票焦点会随随机身份动态变化。',

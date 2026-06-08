@@ -12,6 +12,21 @@ from langgraph.graph import END, START, StateGraph
 from app.graphs.shared.state import PlayState
 
 
+_AGENT_RUNTIME_CONFIG_KEYS: tuple[str, ...] = (
+    "agent_fast_smoke",
+    "agent_policy_skip_llm_enabled",
+    "agent_policy_skip_llm_preset",
+    "agent_policy_skip_llm_actions",
+    "agent_memory_compression_enabled",
+    "agent_prompt_max_total_chars",
+    "agent_prompt_max_message_chars",
+    "agent_prompt_min_message_chars",
+    "agent_memory_recent_closed_segments",
+    "agent_memory_max_events_per_segment",
+    "agent_memory_event_max_chars",
+)
+
+
 def build_play_graph(
     game_subgraph: Any = None,
     review_node: Any = None,
@@ -67,7 +82,15 @@ def build_play_graph(
             "skill_dir": state.get("skill_dir") or cfg.get("skill_dir"),
             "paths": state.get("paths"),
             "game_dir": state.get("game_dir") or cfg.get("game_dir"),
+            "storage_provider": state.get("storage_provider"),
+            "storage_run_type": "ordinary_game",
+            "mode": cfg.get("mode", state.get("mode", "dev")),
+            "source_run_id": state.get("game_id"),
+            "source_game_id": state.get("game_id"),
+            "model_id": cfg.get("model_id"),
+            "model_config_hash": cfg.get("model_config_hash"),
         }
+        _copy_runner_config(cfg, game_state)
         game_result = await game_subgraph.ainvoke(game_state)
         merged = dict(state)
         for key in (
@@ -127,3 +150,15 @@ def build_play_graph(
     workflow.add_edge("persist_result", END)
 
     return workflow.compile()
+
+
+def _copy_runner_config(source: dict[str, Any], target: dict[str, Any]) -> None:
+    for key in (
+        "runner_max_retries",
+        "runner_retry_delay",
+        "runner_action_timeout",
+        "runner_game_timeout",
+        "game_timeout",
+    ) + _AGENT_RUNTIME_CONFIG_KEYS:
+        if source.get(key) is not None:
+            target[key] = source[key]

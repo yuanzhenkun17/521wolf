@@ -113,10 +113,12 @@ class TestFullImportChain:
             select_skills, format_skill_context, load_markdown_skills,
             action_instruction,
             build_apply_chain, build_compress_chain, build_consolidate_chain,
-            build_decision_chain, build_evidence_chain, build_raw_message_chain,
+            build_decision_chain, build_decision_judge_chain, build_evidence_chain,
+            build_raw_message_chain,
             create_apply_chain, create_consolidate_chain, create_decision_chain,
-            create_evidence_chain, run_apply_chain, run_compress_chain,
-            run_consolidate_chain, run_decision_chain, run_evidence_chain,
+            create_decision_judge_chain, create_evidence_chain, run_apply_chain,
+            run_compress_chain, run_consolidate_chain, run_decision_chain,
+            run_decision_judge_chain, run_evidence_chain,
             tool,
         )
 
@@ -134,6 +136,7 @@ class TestFullImportChain:
             compute_role_score, compute_rankable,
             DecisionRecord, AgentDecisionRecorder, GameRunConfig, GameRunHandle, GameRunService,
             DecisionEvidenceInput, KeyDecision, GameEvidence, GameEvidenceBundle, EvidenceRunResult,
+            DecisionJudgment, GameJudgmentReport, judge_key_decisions,
             SkillProposal, SkillConsolidation, SkillDiff, EvolutionRun,
             EvolutionConfig, EvolutionStateManager, deduplicate_proposals,
             SkillVersionConfig, VersionRegistry, VersionSummary,
@@ -246,7 +249,7 @@ class TestAppEntrySurface:
         assert asyncio.iscoroutinefunction(run_evaluation)
         assert asyncio.iscoroutinefunction(run_evolution)
 
-    def test_fake_model_game_eval_evolve_smoke(self, tmp_path):
+    def test_fake_model_game_eval_evolve_smoke(self, tmp_path, monkeypatch):
         import asyncio
 
         from app.config import PathConfig
@@ -255,6 +258,52 @@ class TestAppEntrySurface:
         class FakeModel:
             async def ainvoke(self, messages):
                 return type("Result", (), {"content": '{"public_text":"ok","confidence":1}'})()
+
+        class FakeConnection:
+            def execute(self, sql, parameters=()):
+                return type(
+                    "Cursor",
+                    (),
+                    {
+                        "fetchone": lambda self: None,
+                        "fetchall": lambda self: [],
+                    },
+                )()
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                return None
+
+            def close(self):
+                return None
+
+        class FakeStorageProvider:
+            def open_wolf_connection(self):
+                return FakeConnection()
+
+            def open_registry_connection(self):
+                return FakeConnection()
+
+            def open_evolution_connection(self):
+                return FakeConnection()
+
+        class FakeVersionRegistry:
+            def list_roles(self):
+                return []
+
+            def load_rejected(self, role):
+                return []
+
+            def close(self):
+                return None
+
+        import app.lib.version as version_mod
+        import storage.provider as provider_mod
+
+        monkeypatch.setattr(provider_mod, "storage_provider_from_env", lambda *, paths=None: FakeStorageProvider())
+        monkeypatch.setattr(version_mod, "version_registry_from_env", lambda *, paths=None: FakeVersionRegistry())
 
         async def _run():
             paths = PathConfig(root=tmp_path)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -12,6 +11,7 @@ from app.graphs.shared.nodes.game_batch import (
     normalize_game_result,
     per_game_dir,
     run_game_batch,
+    valid_completed_games,
     winner_counts,
 )
 
@@ -34,9 +34,48 @@ def test_normalize_game_result_shape():
     assert rec["error"] is None
 
 
+def test_normalize_game_result_preserves_no_winner_terminal_metadata():
+    rec = normalize_game_result(
+        game_id="g_no_winner",
+        seed=9,
+        result={
+            "winner": None,
+            "outcome": "no_winner",
+            "terminal_reason": "max_days_reached",
+            "roles": {},
+            "game_events": [{"day": 1}],
+        },
+    )
+
+    assert rec["winner"] is None
+    assert rec["outcome"] == "no_winner"
+    assert rec["terminal_reason"] == "max_days_reached"
+    assert rec["error"] is None
+
+
 def test_winner_counts_tallies_unknown():
-    games = [{"winner": "villagers"}, {"winner": "werewolves"}, {"winner": None}, {"winner": "villagers"}]
-    assert winner_counts(games) == {"villagers": 2, "werewolves": 1, "unknown": 1}
+    games = [
+        {"winner": "villagers"},
+        {"winner": "werewolves"},
+        {"winner": None},
+        {"winner": "error"},
+        {"winner": "good"},
+        {"winner": "villagers"},
+    ]
+    assert winner_counts(games) == {"villagers": 2, "werewolves": 1, "unknown": 3}
+
+
+def test_valid_completed_games_requires_real_winning_side():
+    games = [
+        {"winner": "villagers", "error": None},
+        {"winner": "werewolves", "error": None},
+        {"winner": None, "error": None, "terminal_reason": "max_days_reached"},
+        {"winner": "error", "error": "boom"},
+        {"winner": "good", "error": None},
+        {"winner": None, "error": "timeout"},
+    ]
+
+    assert valid_completed_games(games) == games[:2]
 
 
 def test_per_game_dir():
@@ -135,6 +174,78 @@ def test_run_game_batch_fail_fast_disabled():
     assert all(g.get("error") for g in games)
 
 
+def test_run_game_batch_times_out_game_and_cleans_partial_rows():
+    class FakePersistence:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+            self.commits = 0
+            self.rollbacks = 0
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, tuple(params)))
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def close(self):
+            self.closed = True
+
+    class FakeProvider:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def open_wolf_connection(self):
+            return self.conn
+
+    class SlowGame:
+        async def ainvoke(self, state):
+            state["game_persistence"] = persistence
+            await asyncio.Event().wait()
+
+    persistence = FakePersistence()
+    conn = FakeConn()
+    provider = FakeProvider(conn)
+
+    games = asyncio.run(
+        run_game_batch(
+            SlowGame(),
+            1,
+            lambda i: {
+                "game_id": "g_timeout",
+                "seed": 7,
+                "batch_game_timeout": 0.01,
+                "storage_provider": provider,
+            },
+            concurrency=1,
+            label="t",
+            fail_fast=False,
+        )
+    )
+
+    assert games[0]["game_id"] == "g_timeout"
+    assert games[0]["winner"] == "error"
+    assert games[0]["error"] == "game timed out after 0.01s"
+    assert persistence.closed is True
+    assert conn.commits == 1
+    assert conn.closed is True
+    deleted_tables = [sql.split()[2] for sql, _ in conn.calls]
+    assert "decisions" in deleted_tables
+    assert "game_events" in deleted_tables
+    assert "games" in deleted_tables
+    assert all(params == ("g_timeout",) for _, params in conn.calls)
+
+
 def test_run_game_batch_empty():
     class Never:
         async def ainvoke(self, state):
@@ -143,13 +254,69 @@ def test_run_game_batch_empty():
     assert asyncio.run(run_game_batch(Never(), 0, lambda i: {}, label="t")) == []
 
 
-def test_game_persist_node_finalizes_new_artifact_dir_atomically(tmp_path):
+def test_game_loop_node_records_timeout_and_returns_failed_state():
+    from app.graphs.subgraphs.game.nodes import game_loop_node
+
+    class SlowEngine:
+        def __init__(self):
+            self.records = []
+
+        async def run_until_finished(self):
+            await asyncio.Event().wait()
+
+        def _record(self, event_type, **kwargs):
+            self.records.append({"event_type": event_type, **kwargs})
+
+    engine = SlowEngine()
+
+    result = asyncio.run(game_loop_node({"engine": engine, "game_timeout": 0.01}))
+
+    assert result["finished"] is True
+    assert result["winner"] == "timeout"
+    assert result["outcome"] == "timeout"
+    assert result["terminal_reason"] == "game_timeout"
+    assert "0.01" in result["error"]
+    assert engine.records[0]["event_type"] == "game_timeout"
+    assert engine.records[0]["payload"] == {"timeout_s": 0.01}
+
+
+def test_runner_action_timeout_uses_llm_timeout_env(monkeypatch):
+    from app.graphs.subgraphs.game.nodes import _runner_action_timeout
+
+    monkeypatch.setenv("WEREWOLF_LLM_TIMEOUT", "7")
+    monkeypatch.setenv("WEREWOLF_LLM_RUNTIME_TIMEOUT", "8")
+
+    assert _runner_action_timeout({}) == 7.0
+    assert _runner_action_timeout({"runner_action_timeout": 3}) == 3.0
+    assert _runner_action_timeout({"config": {"runner_action_timeout": 4}}) == 4.0
+
+
+def test_runner_max_retries_default_is_single_attempt(monkeypatch):
+    from app.graphs.subgraphs.game.nodes import _runner_max_retries
+
+    monkeypatch.delenv("WEREWOLF_RUNNER_MAX_RETRIES", raising=False)
+
+    assert _runner_max_retries({}) == 1
+    assert _runner_max_retries({"runner_max_retries": 3}) == 3
+    assert _runner_max_retries({"config": {"runner_max_retries": 2}}) == 2
+
+
+def test_game_persist_node_uses_persistence_without_artifacts(tmp_path):
     from app.graphs.subgraphs.game.nodes import persist_node
 
+    class FakePersistence:
+        def __init__(self):
+            self.saved = None
+
+        def save_game_result(self, **kwargs):
+            self.saved = kwargs
+
     game_dir = tmp_path / "runs" / "game_001"
+    persistence = FakePersistence()
     state = {
         "game_id": "game_001",
         "game_dir": str(game_dir),
+        "persistence": persistence,
         "seed": 7,
         "max_days": 4,
         "roles": {1: "seer"},
@@ -162,44 +329,31 @@ def test_game_persist_node_finalizes_new_artifact_dir_atomically(tmp_path):
 
     out = asyncio.run(persist_node(state))
 
-    assert game_dir.exists()
-    assert (game_dir / "meta.json").exists()
-    assert (game_dir / "game_events.jsonl").read_text(encoding="utf-8").strip()
-    assert (game_dir / "agent_decisions.jsonl").read_text(encoding="utf-8").strip()
-    manifest = json.loads((game_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 1
-    assert manifest["run_type"] == "game"
-    assert manifest["game_id"] == "game_001"
-    assert manifest["seed"] == 7
-    assert manifest["status"] == "completed"
-    assert manifest["paths"]["game_dir"] == str(game_dir)
-    assert out["manifest"] == manifest
-    assert not list(game_dir.parent.glob(".game_001.*.tmp"))
+    assert not game_dir.exists()
+    assert persistence.saved is not None
+    assert persistence.saved["seed"] == 7
+    assert persistence.saved["player_roles"] == {1: "seer"}
+    assert persistence.saved["winner"] == "villagers"
+    assert persistence.saved["final_state"]["status"] == "completed"
+    assert out["finished_at"]
 
 
-def test_game_persist_node_failure_does_not_expose_final_dir(tmp_path, monkeypatch):
+def test_game_persist_node_without_persistence_does_not_create_artifacts(tmp_path):
     from app.graphs.subgraphs.game.nodes import persist_node
-    from app.util import json as json_util
 
-    game_dir = tmp_path / "runs" / "game_broken"
+    game_dir = tmp_path / "runs" / "game_no_pg"
 
-    def fail_write_json(path, data):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(json_util, "write_json", fail_write_json)
-
-    with pytest.raises(OSError, match="disk full"):
-        asyncio.run(
-            persist_node({
-                "game_id": "game_broken",
-                "game_dir": str(game_dir),
-                "seed": 1,
-                "roles": {},
-                "finished": True,
-                "game_events": [{"day": 1}],
-                "decisions": [],
-            })
-        )
+    out = asyncio.run(
+        persist_node({
+            "game_id": "game_no_pg",
+            "game_dir": str(game_dir),
+            "seed": 1,
+            "roles": {},
+            "finished": True,
+            "game_events": [{"day": 1}],
+            "decisions": [],
+        })
+    )
 
     assert not game_dir.exists()
-    assert not list(game_dir.parent.glob(".game_broken.*.tmp"))
+    assert out["finished_at"]

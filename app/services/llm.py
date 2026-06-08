@@ -83,7 +83,7 @@ def default_runtime_policy() -> LLMRuntimePolicy:
     """Build the default runtime policy without requiring an API key."""
     return LLMRuntimePolicy(
         max_attempts=_env_int("WEREWOLF_LLM_RUNTIME_MAX_ATTEMPTS", DEFAULT_RUNTIME_MAX_ATTEMPTS),
-        timeout=_env_float_or_none("WEREWOLF_LLM_RUNTIME_TIMEOUT", DEFAULT_RUNTIME_TIMEOUT),
+        timeout=_env_float_or_none("WEREWOLF_LLM_TIMEOUT", DEFAULT_RUNTIME_TIMEOUT),
         retry_initial_delay=_env_float(
             "WEREWOLF_LLM_RUNTIME_RETRY_INITIAL_DELAY",
             DEFAULT_RUNTIME_RETRY_INITIAL_DELAY,
@@ -167,6 +167,7 @@ def create_llm(
     model: str | None = None,
     temperature: float | None = None,
     timeout: float | None = None,
+    runtime_timeout: float | None = None,
     max_retries: int | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -181,10 +182,19 @@ def create_llm(
 
     from langchain_openai import ChatOpenAI
 
+    request_timeout = float(timeout if timeout is not None else cfg["timeout"])
+    policy_timeout = float(
+        runtime_timeout
+        if runtime_timeout is not None
+        else timeout
+        if timeout is not None
+        else cfg["runtime_timeout"]
+    )
+
     llm = ChatOpenAI(
         model=model or cfg["model"],
         temperature=float(temperature if temperature is not None else cfg["temperature"]),
-        timeout=float(timeout if timeout is not None else cfg["timeout"]),
+        timeout=request_timeout,
         max_retries=int(max_retries if max_retries is not None else cfg["max_retries"]),
         base_url=base_url or cfg["base_url"],
         api_key=cfg["api_key"],
@@ -193,7 +203,7 @@ def create_llm(
         llm,
         LLMRuntimePolicy(
             max_attempts=int(cfg["runtime_max_attempts"]),
-            timeout=float(cfg["runtime_timeout"]),
+            timeout=policy_timeout,
             retry_initial_delay=float(cfg["runtime_retry_initial_delay"]),
             retry_max_delay=float(cfg["runtime_retry_max_delay"]),
             circuit_failure_threshold=int(cfg["runtime_circuit_failures"]),

@@ -130,6 +130,7 @@ const ACTION_LABELS = {
   game_end: '游戏结束',
   finished: '结束',
   ended: '终局',
+  policy_skipped: '快测跳过',
   policy_adjusted: '策略修正',
   llm_error: '模型错误',
   fallback: '规则回退'
@@ -156,6 +157,7 @@ const CHOICE_LABELS = {
 }
 
 const SOURCE_LABELS = {
+  policy_skipped: '快测跳过',
   policy_adjusted: '策略修正',
   llm_error: '模型错误',
   fallback: '规则回退',
@@ -200,6 +202,7 @@ export function displayChoiceLabel(choice) {
 export function displaySourceLabel(source) {
   const key = String(source || '').trim().toLowerCase()
   if (SOURCE_LABELS[key]) return SOURCE_LABELS[key]
+  if (key.includes('skip')) return '快测跳过'
   if (key.includes('policy')) return '策略修正'
   if (key.includes('fallback')) return '规则回退'
   if (key.includes('error')) return '错误'

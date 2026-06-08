@@ -13,6 +13,7 @@ from app.util.json import (
 from app.util.action_types import (
     AGENT_ACTION_TYPES,
     CHOICE_ACTION_TYPES,
+    DAY_INTERRUPT_ACTION_TYPES,
     EVENT_TYPE_SPEECH,
     EVENT_TYPE_VOTE,
     NIGHT_SKILL_ACTION_TYPES,
@@ -30,7 +31,7 @@ from app.util.time import (
     beijing_now_iso,
     beijing_now_str,
 )
-from app.util.winner import is_werewolf_win
+from app.util.winner import VALID_WINNERS, has_valid_winner, is_werewolf_win, normalize_winner
 from app.config import DEFAULT_PATHS as DEFAULT, PathConfig
 from app.util.callbacks import notify, observe, propagate_attributes, tracing_enabled
 
@@ -47,6 +48,7 @@ __all__ = [
     # action_types
     "AGENT_ACTION_TYPES",
     "CHOICE_ACTION_TYPES",
+    "DAY_INTERRUPT_ACTION_TYPES",
     "EVENT_TYPE_SPEECH",
     "EVENT_TYPE_VOTE",
     "NIGHT_SKILL_ACTION_TYPES",
@@ -63,7 +65,10 @@ __all__ = [
     "beijing_now_iso",
     "beijing_now_str",
     # winner
+    "VALID_WINNERS",
+    "has_valid_winner",
     "is_werewolf_win",
+    "normalize_winner",
     # paths
     "DEFAULT",
     "PathConfig",

@@ -36,15 +36,16 @@ class WhiteWolfKingRule(WerewolfRule):
             return None
         ww_ps = engine.state.players[player_id]
         ww_ps.role_state["has_exploded"] = True
-        engine.kill_player(player_id, DeathCause.SELF_EXPLODE)
-        engine.kill_player(response.target, DeathCause.WHITE_WOLF)
-        await engine.resolve_death_triggers([player_id, response.target])
         engine._record(
             "white_wolf_explosion",
             message=f"白狼王 {player_id} 号自爆并带走 {response.target} 号",
             actor=player_id,
             target=response.target,
+            payload={"target": response.target},
         )
+        engine.kill_player(player_id, DeathCause.SELF_EXPLODE)
+        engine.kill_player(response.target, DeathCause.WHITE_WOLF)
+        await engine.resolve_death_triggers([player_id, response.target])
         await engine.resolve_last_word(player_id)
         engine.state.phase = Phase.NIGHT
         return "white_wolf_exploded"

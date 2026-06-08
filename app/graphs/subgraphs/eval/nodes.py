@@ -5,14 +5,32 @@ Nodes: init_batch → run_games → aggregate → fairness → persist_batch
 
 from __future__ import annotations
 
+import importlib
 import logging
+import sys
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
-from app.graphs.shared.nodes.game_batch import BatchAbortedError, DEFAULT_CONCURRENCY
+from app.graphs.shared.nodes.game_batch import BatchAbortedError, DEFAULT_CONCURRENCY, valid_completed_games
 from app.graphs.shared.state import EvalBatchState
+from app.util.winner import has_valid_winner, normalize_winner
 
 _log = logging.getLogger(__name__)
+
+_AGENT_RUNTIME_CONFIG_KEYS: tuple[str, ...] = (
+    "agent_fast_smoke",
+    "agent_policy_skip_llm_enabled",
+    "agent_policy_skip_llm_preset",
+    "agent_policy_skip_llm_actions",
+    "agent_memory_compression_enabled",
+    "agent_prompt_max_total_chars",
+    "agent_prompt_max_message_chars",
+    "agent_prompt_min_message_chars",
+    "agent_memory_recent_closed_segments",
+    "agent_memory_max_events_per_segment",
+    "agent_memory_event_max_chars",
+)
 
 
 def _exception_message(prefix: str, exc: BaseException) -> str:
@@ -150,29 +168,53 @@ async def run_games_node(state: EvalBatchState) -> dict:
             "model": state.get("model"),
             "skill_dir": base_skill_dir,
             "paths": paths,
+            "storage_provider": state.get("storage_provider"),
             "game_dir": per_game_dir(batch_base, "game", index),
+            "storage_run_type": "evaluation_batch",
+            "mode": cfg.get("mode", "dev"),
+            "source_run_id": batch_id,
+            "source_game_id": f"{batch_id}_game_{index + 1:03d}",
+            "model_id": cfg.get("model_id"),
+            "model_config_hash": cfg.get("model_config_hash"),
+            "comparison_group_id": cfg.get("comparison_group_id"),
+            "comparison_type": cfg.get("comparison_type"),
+            "target_role": cfg.get("target_role"),
+            "target_version_id": cfg.get("target_version_id"),
+            "seed_set_id": cfg.get("seed_set_id"),
+            "evaluation_set_id": cfg.get("evaluation_set_id"),
+            "paired_seed": cfg.get("paired_seed"),
         }
         if role_skill_dirs:
             game_state["role_skill_dirs"] = role_skill_dirs
+        _copy_runner_config(cfg, game_state)
         return game_state
 
-    try:
-        games = await run_game_batch(
-            game_subgraph, game_count, _build, concurrency=concurrency, label="eval",
-        )
-    except BatchAbortedError as exc:
-        # Systemic failure — record cleanly and let downstream nodes mark the
-        # batch unrankable instead of crashing the graph.
-        _log.error("run_games_node: batch %s aborted: %s", batch_id, exc)
-        state["games"] = []
-        state["player_scores"] = []
-        state.setdefault("errors", []).append(str(exc))
-        return state
+    with _langfuse_eval_context(
+        state,
+        stage="run_games",
+        input={
+            "batch_id": batch_id,
+            "game_count": game_count,
+            "max_days": max_days,
+            "seed_start": seed_start,
+        },
+    ):
+        try:
+            games = await run_game_batch(
+                game_subgraph, game_count, _build, concurrency=concurrency, label="eval",
+            )
+        except BatchAbortedError as exc:
+            # Systemic failure — record cleanly and let downstream nodes mark the
+            # batch unrankable instead of crashing the graph.
+            _log.error("run_games_node: batch %s aborted: %s", batch_id, exc)
+            state["games"] = []
+            state["player_scores"] = []
+            state.setdefault("errors", []).append(str(exc))
+            return state
 
     scores: list[dict[str, Any]] = []
-    for game in games:
-        if not game.get("error"):
-            scores.extend(_score_game(game))
+    for game in valid_completed_games(games):
+        scores.extend(_score_game(game))
 
     _log.info("run_games_node: completed %d/%d games", len(games), game_count)
     state["games"] = games
@@ -190,6 +232,18 @@ def _role_version_specs(cfg: dict[str, Any]) -> dict[str, str]:
     if target_role and target_version:
         role_versions[str(target_role)] = str(target_version)
     return role_versions
+
+
+def _copy_runner_config(source: dict[str, Any], target: dict[str, Any]) -> None:
+    for key in (
+        "runner_max_retries",
+        "runner_retry_delay",
+        "runner_action_timeout",
+        "runner_game_timeout",
+        "game_timeout",
+    ) + _AGENT_RUNTIME_CONFIG_KEYS:
+        if source.get(key) is not None:
+            target[key] = source[key]
 
 
 def _resolve_role_version_dirs(
@@ -210,11 +264,9 @@ def _resolve_role_version_dirs(
         return {}
 
     try:
-        from app.config import DEFAULT_PATHS
-        from app.lib.version import VersionRegistry
+        from app.lib.version import version_registry_from_env
 
-        registry_dir = getattr(paths, "registry_dir", DEFAULT_PATHS.registry_dir)
-        registry = VersionRegistry(registry_dir)
+        registry = version_registry_from_env(paths=paths)
     except Exception as exc:  # noqa: BLE001 — degrade to baseline skills
         message = _exception_message("failed to initialize role version registry", exc)
         _log.warning(message, exc_info=True)
@@ -232,33 +284,39 @@ def _resolve_role_version_dirs(
         return {}
 
     resolved: dict[str, str] = {}
-    for role, version_id in role_versions.items():
-        try:
-            resolved[role] = str(registry.get_skill_dir(role, version_id))
-        except Exception as exc:  # noqa: BLE001 — degrade this role to baseline skills
-            message = _exception_message(f"failed to resolve role version {role}/{version_id}", exc)
-            _log.warning(message, exc_info=True)
-            if warnings is not None:
-                warnings.append(message)
-            if diagnostics is not None:
-                diagnostics.append({
-                    "kind": "role_version_error",
-                    "stage": "role_version.resolve",
-                    "level": "warning",
-                    "message": message,
-                    "exception_type": type(exc).__name__,
-                    "exception_message": str(exc),
-                })
+    try:
+        for role, version_id in role_versions.items():
+            try:
+                resolved[role] = str(registry.get_skill_dir(role, version_id))
+            except Exception as exc:  # noqa: BLE001 — degrade this role to baseline skills
+                message = _exception_message(f"failed to resolve role version {role}/{version_id}", exc)
+                _log.warning(message, exc_info=True)
+                if warnings is not None:
+                    warnings.append(message)
+                if diagnostics is not None:
+                    diagnostics.append({
+                        "kind": "role_version_error",
+                        "stage": "role_version.resolve",
+                        "level": "warning",
+                        "message": message,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
+                    })
+    finally:
+        registry.close()
     return resolved
 
 
 async def aggregate_node(state: EvalBatchState) -> dict:
     """Aggregate scores across all games."""
-    from app.lib.score import aggregate_batch_scores, PlayerScore
+    from app.lib.score import aggregate_batch_scores, compute_decision_quality_metrics, PlayerScore
 
     scores = state.get("player_scores", [])
     player_scores = [PlayerScore(**s) if isinstance(s, dict) else s for s in scores]
-    completed_games = sum(1 for game in state.get("games", []) if not game.get("error"))
+    judge_aggregate = await _attach_eval_decision_judge_reports(state)
+    decision_quality = compute_decision_quality_metrics(state.get("games", []))
+    terminal_stats = _terminal_stats(state.get("games", []))
+    completed_games = len(valid_completed_games(state.get("games", [])))
     summary = aggregate_batch_scores(
         player_scores,
         batch_id=state.get("batch_id", ""),
@@ -277,8 +335,699 @@ async def aggregate_node(state: EvalBatchState) -> dict:
         "avg_team_score": round(summary.avg_team_score, 4),
         "avg_risk_penalty": round(summary.avg_risk_penalty, 4),
         "strength_score": round(summary.strength_score, 4),
+        "decision_quality": decision_quality,
+        "terminal_stats": terminal_stats,
+        "fallback_rate": decision_quality["fallback_rate"],
+        "llm_error_rate": decision_quality["llm_error_rate"],
+        "policy_adjusted_rate": decision_quality["policy_adjusted_rate"],
     }
+    if judge_aggregate is not None:
+        state["score_summary"]["decision_judge_aggregate"] = judge_aggregate
+        state["decision_judge_aggregate"] = judge_aggregate
     return state
+
+
+async def _attach_eval_decision_judge_reports(state: EvalBatchState) -> dict[str, Any] | None:
+    """Attach lightweight judge reports to completed eval games and aggregate them."""
+    cfg = state.get("batch_config", {})
+    if not _eval_judge_configured(state, cfg):
+        return None
+
+    from app.lib.decision_judge import judge_key_decisions
+    from app.lib.judge_policy import resolve_judge_policy
+
+    policy = resolve_judge_policy("eval", cfg, state)
+    games = valid_completed_games(state.get("games", []))
+    if not policy.enabled:
+        return _aggregate_decision_judge_reports([], game_count=len(games), skipped_reason="disabled")
+
+    reports: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for game in games:
+        try:
+            report = await judge_key_decisions(
+                state.get("model"),
+                game_id=str(game.get("game_id") or ""),
+                winner=game.get("winner"),
+                roles=game.get("player_roles") or game.get("roles"),
+                events=game.get("events") or game.get("game_events"),
+                decisions=game.get("decisions"),
+                review=game.get("review"),
+                max_decisions=policy.max_decisions,
+                concurrency=policy.concurrency,
+                timeout_seconds=policy.timeout_seconds,
+                judge_fn=state.get("decision_judge_fn"),
+            )
+            for judgment in report.get("judgments", []) if isinstance(report, dict) else []:
+                if isinstance(judgment, dict):
+                    judgment.setdefault("game_id", game.get("game_id"))
+            game.setdefault("review", {})["decision_judge"] = report
+            reports.append(report)
+            for warning in report.get("warnings", []) if isinstance(report, dict) else []:
+                text = str(warning)
+                if text:
+                    warnings.append(text)
+        except Exception as exc:  # noqa: BLE001 - eval judge is advisory
+            message = f"eval decision judge failed for game={game.get('game_id')}: {type(exc).__name__}: {exc}"
+            warnings.append(message)
+            game.setdefault("review", {})["decision_judge"] = {
+                "status": "failed",
+                "error": str(exc),
+                "warnings": [message],
+            }
+
+    aggregate = _aggregate_decision_judge_reports(reports, game_count=len(games), warnings=warnings)
+    if warnings:
+        state.setdefault("warnings", []).extend(warning for warning in warnings if warning not in state.get("warnings", []))
+        for warning in warnings:
+            _append_warning_diagnostic(
+                state,
+                warning,
+                kind="decision_judge_warning",
+                stage="aggregate.decision_judge",
+            )
+    return aggregate
+
+
+def _aggregate_decision_judge_reports(
+    reports: list[dict[str, Any]],
+    *,
+    game_count: int,
+    warnings: list[str] | None = None,
+    skipped_reason: str | None = None,
+) -> dict[str, Any]:
+    warnings = [str(item) for item in (warnings or []) if str(item)]
+    judgments = [
+        item
+        for report in reports
+        if isinstance(report, dict)
+        for item in report.get("judgments", []) or []
+        if isinstance(item, dict)
+    ]
+    scores = [_safe_float(item.get("score")) for item in judgments]
+    scores = [score for score in scores if score is not None]
+    report_reasons = _unique_text(
+        report.get("reason")
+        for report in reports
+        if isinstance(report, dict) and report.get("reason")
+    )
+    degraded_reasons = _unique_text(
+        reason
+        for report in reports
+        if isinstance(report, dict)
+        for reason in report.get("degraded_reasons", []) or []
+    )
+    diagnostics = [
+        dict(diagnostic)
+        for report in reports
+        if isinstance(report, dict)
+        for diagnostic in report.get("diagnostics", []) or []
+        if isinstance(diagnostic, dict)
+    ]
+    quality_counts: dict[str, int] = {}
+    tag_counts: dict[str, int] = {}
+    recommended_skill_counts: dict[str, int] = {}
+    by_role: dict[str, dict[str, Any]] = {}
+    by_action_type: dict[str, dict[str, Any]] = {}
+
+    for item in judgments:
+        quality = str(item.get("quality") or "unknown")
+        quality_counts[quality] = quality_counts.get(quality, 0) + 1
+        for tag in item.get("mistake_tags", []) or []:
+            text = str(tag)
+            if text:
+                tag_counts[text] = tag_counts.get(text, 0) + 1
+        for path in item.get("recommended_skill_files", []) or item.get("related_skills", []) or []:
+            text = str(path)
+            if text:
+                recommended_skill_counts[text] = recommended_skill_counts.get(text, 0) + 1
+        _add_judge_group(by_role, str(item.get("role") or "unknown"), item)
+        _add_judge_group(by_action_type, str(item.get("action_type") or "unknown"), item)
+
+    judged = len(judgments)
+    failed = sum(int((report.get("metrics") or {}).get("failed") or 0) for report in reports if isinstance(report, dict))
+    skipped_games = sum(1 for report in reports if isinstance(report, dict) and report.get("status") == "skipped")
+    if judged and not failed and not warnings:
+        status = "ok"
+    elif judged:
+        status = "degraded"
+    elif skipped_reason or skipped_games:
+        status = "skipped"
+    else:
+        status = "failed" if warnings else "skipped"
+
+    lowest = sorted(
+        judgments,
+        key=lambda item: (_safe_float(item.get("score")) if _safe_float(item.get("score")) is not None else 99, str(item.get("decision_id") or "")),
+    )[:5]
+    average = round(sum(scores) / len(scores), 4) if scores else None
+    reason = skipped_reason
+    if reason is None and report_reasons:
+        reason = report_reasons[0] if len(report_reasons) == 1 else "mixed"
+    return {
+        "status": status,
+        "reason": reason,
+        "report_reasons": report_reasons,
+        "degraded_reasons": degraded_reasons,
+        "diagnostics": diagnostics,
+        "game_count": game_count,
+        "reported_games": len(reports),
+        "skipped_games": skipped_games,
+        "judged_decisions": judged,
+        "failed_decisions": failed,
+        "avg_score": average,
+        "bad_rate": round(quality_counts.get("bad", 0) / judged, 4) if judged else None,
+        "unknown_rate": round(quality_counts.get("unknown", 0) / judged, 4) if judged else None,
+        "quality_counts": quality_counts,
+        "top_mistake_tags": [
+            {"tag": tag, "count": count}
+            for tag, count in sorted(tag_counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+        ],
+        "recommended_skill_files": [
+            {"path": path, "count": count}
+            for path, count in sorted(recommended_skill_counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+        ],
+        "by_role": _finalize_judge_groups(by_role),
+        "by_action_type": _finalize_judge_groups(by_action_type),
+        "lowest_decisions": [
+            {
+                "game_id": item.get("game_id"),
+                "decision_id": item.get("decision_id"),
+                "player_id": item.get("player_id"),
+                "role": item.get("role"),
+                "action_type": item.get("action_type"),
+                "score": item.get("score"),
+                "quality": item.get("quality"),
+                "reason": item.get("reason"),
+                "evidence": item.get("evidence") or item.get("evidence_refs") or [],
+                "counterfactual": item.get("counterfactual", ""),
+                "related_skills": item.get("related_skills", []),
+                "recommended_skill_files": item.get("recommended_skill_files", []),
+                "suggestion": item.get("suggestion"),
+            }
+            for item in lowest
+        ],
+        "warnings": warnings,
+    }
+
+
+def _eval_judge_configured(state: dict[str, Any], cfg: dict[str, Any]) -> bool:
+    keys = {
+        "enable_llm_judge",
+        "enable_decision_judge",
+        "eval_llm_judge",
+        "eval_decision_judge",
+        "review_llm_judge",
+        "review_decision_judge",
+        "judge_max_decisions",
+        "eval_judge_max_decisions",
+        "review_judge_max_decisions",
+        "decision_judge_max_decisions",
+        "judge_timeout_seconds",
+        "eval_judge_timeout_seconds",
+        "review_judge_timeout_seconds",
+    }
+    return any(key in cfg for key in keys) or any(key in state for key in keys)
+
+
+def _unique_text(values: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def _add_judge_group(groups: dict[str, dict[str, Any]], key: str, item: dict[str, Any]) -> None:
+    score = _safe_float(item.get("score"))
+    row = groups.setdefault(key or "unknown", {"count": 0, "score_sum": 0.0, "bad": 0, "unknown": 0})
+    row["count"] += 1
+    if score is not None:
+        row["score_sum"] += score
+    quality = str(item.get("quality") or "")
+    if quality == "bad":
+        row["bad"] += 1
+    if quality == "unknown":
+        row["unknown"] += 1
+
+
+def _finalize_judge_groups(groups: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for key, row in groups.items():
+        count = int(row.get("count") or 0)
+        result[key] = {
+            "count": count,
+            "avg_score": round(float(row.get("score_sum") or 0.0) / count, 4) if count else None,
+            "bad_rate": round(float(row.get("bad") or 0) / count, 4) if count else None,
+            "unknown_rate": round(float(row.get("unknown") or 0) / count, 4) if count else None,
+        }
+    return result
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _terminal_stats(games: list[dict[str, Any]]) -> dict[str, Any]:
+    stats: dict[str, Any] = {
+        "attempted": len(games),
+        "completed": 0,
+        "invalid": 0,
+        "timeout": 0,
+        "abnormal": 0,
+        "errored": 0,
+        "winner_counts": {"villagers": 0, "werewolves": 0},
+        "terminal_reason_counts": {},
+        "excluded_from_win_rate": 0,
+    }
+    for game in games:
+        if not isinstance(game, dict):
+            stats["invalid"] += 1
+            continue
+        reason = str(game.get("terminal_reason") or game.get("outcome") or "").strip()
+        if reason:
+            counts = stats["terminal_reason_counts"]
+            counts[reason] = counts.get(reason, 0) + 1
+
+        winner = normalize_winner(game.get("winner"))
+        if has_valid_winner(game):
+            stats["completed"] += 1
+            stats["winner_counts"][winner] += 1
+        elif _is_timeout_game(game):
+            stats["timeout"] += 1
+        elif game.get("error"):
+            stats["errored"] += 1
+        elif _is_abnormal_terminal(game):
+            stats["abnormal"] += 1
+        else:
+            stats["invalid"] += 1
+
+    stats["excluded_from_win_rate"] = (
+        stats["attempted"]
+        - stats["completed"]
+    )
+    completed = int(stats["completed"])
+    stats["win_rate_denominator"] = completed
+    stats["villagers_win_rate"] = round(stats["winner_counts"]["villagers"] / completed, 6) if completed else None
+    stats["werewolves_win_rate"] = round(stats["winner_counts"]["werewolves"] / completed, 6) if completed else None
+    return stats
+
+
+def _is_timeout_game(game: dict[str, Any]) -> bool:
+    values = (
+        game.get("winner"),
+        game.get("outcome"),
+        game.get("terminal_reason"),
+        game.get("error"),
+    )
+    text = " ".join(str(value or "").lower() for value in values)
+    return "timeout" in text
+
+
+def _is_abnormal_terminal(game: dict[str, Any]) -> bool:
+    status = str(game.get("status") or "").strip().lower()
+    reason = str(game.get("terminal_reason") or game.get("outcome") or "").strip().lower()
+    winner = str(game.get("winner") or "").strip().lower()
+    return status in {"failed", "cancelled", "interrupted"} or reason in {
+        "cancelled",
+        "interrupted",
+        "aborted",
+        "failed",
+        "max_days_reached",
+    } or winner in {"error", "timeout", "cancelled", "aborted", "unknown"}
+
+
+def _compute_data_sufficient(
+    cfg: dict[str, Any],
+    *,
+    completed: int,
+    requested: int,
+    valid_game_rate: float,
+) -> tuple[bool, str]:
+    min_games = int(
+        cfg.get("leaderboard_min_games")
+        or cfg.get("data_sufficient_min_games")
+        or cfg.get("min_rankable_games")
+        or 1
+    )
+    min_valid_rate = _safe_float(
+        cfg.get("leaderboard_min_valid_game_rate")
+        or cfg.get("data_sufficient_min_valid_game_rate")
+    )
+    if min_valid_rate is None:
+        min_valid_rate = 0.8 if str(cfg.get("mode", "dev")) == "prod" else 0.0
+    if completed < min_games:
+        return False, f"completed_games {completed} < required {min_games}"
+    if requested and valid_game_rate < min_valid_rate:
+        return False, f"valid_game_rate {valid_game_rate:.1%} < required {min_valid_rate:.1%}"
+    return True, "ok"
+
+
+def _low_error_rates_ok(cfg: dict[str, Any], summary: dict[str, Any]) -> tuple[bool, str]:
+    ceiling = _safe_float(
+        cfg.get("leaderboard_error_rate_ceiling")
+        or cfg.get("leaderboard_llm_error_rate_ceiling")
+        or cfg.get("rankable_error_rate_ceiling")
+    )
+    if ceiling is None:
+        ceiling = 0.30
+    rate_fields = (
+        ("llm_error_rate", summary.get("llm_error_rate")),
+        ("fallback_rate", summary.get("fallback_rate")),
+        ("policy_adjusted_rate", summary.get("policy_adjusted_rate")),
+    )
+    decision_quality = summary.get("decision_quality") if isinstance(summary.get("decision_quality"), dict) else {}
+    for name, value in (
+        *rate_fields,
+        ("invalid_response_rate", decision_quality.get("invalid_response_rate")),
+        ("default_action_rate", decision_quality.get("default_action_rate")),
+    ):
+        rate = _safe_float(value)
+        if rate is not None and rate > ceiling:
+            return False, f"{name} {rate:.1%} > ceiling {ceiling:.1%}"
+    return True, "ok"
+
+
+def _leaderboard_acceptance_gate(
+    state: EvalBatchState,
+    result: dict[str, Any],
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    del entry
+    rankable = bool(result.get("rankable"))
+    data_sufficient = bool(result.get("data_sufficient"))
+    low_error_rate = bool(result.get("low_error_rate"))
+    reasons = []
+    if not rankable:
+        reasons.append(str(result.get("rankable_reason") or "not_rankable"))
+    if not data_sufficient:
+        reasons.append(str(result.get("data_sufficient_reason") or "data_insufficient"))
+    if not low_error_rate:
+        reasons.append(str(result.get("low_error_rate_reason") or "error_rate_too_high"))
+    unique_reasons = _unique_text(reasons)
+    terminal_stats = result.get("terminal_stats") if isinstance(result.get("terminal_stats"), dict) else {}
+    accepted = not unique_reasons
+    return {
+        "accepted": accepted,
+        "reason": "ok" if accepted else "; ".join(unique_reasons),
+        "rankable": rankable,
+        "data_sufficient": data_sufficient,
+        "low_error_rate": low_error_rate,
+        "completed_games": result.get("game_count", 0),
+        "attempted_games": result.get("attempted_game_count", 0),
+        "excluded_from_win_rate": terminal_stats.get("excluded_from_win_rate", 0),
+        "valid_game_rate": state.get("valid_game_rate", 0.0),
+    }
+
+
+def _observability() -> Any | None:
+    try:
+        return importlib.import_module("app.services.observability")
+    except Exception:  # noqa: BLE001 - observability must not affect eval
+        _log.debug("Langfuse observability import failed", exc_info=True)
+        return None
+
+
+def _ensure_langfuse_eval_trace_id(state: EvalBatchState, observability: Any | None) -> str | None:
+    trace_id = state.get("langfuse_trace_id")
+    if trace_id:
+        return str(trace_id)
+    if observability is None:
+        return None
+    create_trace_id = getattr(observability, "create_trace_id", None)
+    if not callable(create_trace_id):
+        return None
+    try:
+        batch_id = str(state.get("batch_id") or "")
+        trace_id = create_trace_id(seed=batch_id) if batch_id else create_trace_id()
+    except Exception:  # noqa: BLE001 - tracing is advisory
+        _log.debug("Langfuse eval trace id creation failed", exc_info=True)
+        return None
+    if trace_id:
+        state["langfuse_trace_id"] = str(trace_id)
+        return str(trace_id)
+    return None
+
+
+def _langfuse_eval_context(
+    state: EvalBatchState,
+    *,
+    stage: str,
+    result: dict[str, Any] | None = None,
+    input: Any | None = None,
+    observability: Any | None = None,
+) -> Any:
+    observability = observability or _observability()
+    if observability is None:
+        return nullcontext(None)
+    context_fn = getattr(observability, "langfuse_context", None)
+    if not callable(context_fn):
+        return nullcontext(None)
+
+    trace_id = _ensure_langfuse_eval_trace_id(state, observability)
+    metadata = _langfuse_eval_metadata(state, result=result)
+    metadata["stage"] = stage
+    try:
+        return _fail_open_langfuse_context(context_fn(
+            trace_name="eval.batch",
+            trace_id=trace_id,
+            session_id=str(state.get("batch_id") or "") or None,
+            metadata={key: value for key, value in metadata.items() if value is not None},
+            tags=_langfuse_eval_tags(state, result=result),
+            input=input,
+        ))
+    except Exception:  # noqa: BLE001 - tracing is advisory
+        _log.debug("Langfuse eval context creation failed", exc_info=True)
+        return nullcontext(None)
+
+
+def _langfuse_eval_metadata(
+    state: EvalBatchState,
+    *,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cfg = dict(state.get("batch_config", {}) or {})
+    games = state.get("games", [])
+    result = result if isinstance(result, dict) else {}
+    metadata: dict[str, Any] = {
+        "run_type": "eval",
+        "batch_id": state.get("batch_id") or result.get("batch_id"),
+        "mode": cfg.get("mode", "dev"),
+        "configured_game_count": cfg.get("game_count"),
+        "attempted_game_count": result.get("attempted_game_count") if result else len(games),
+        "completed_game_count": result.get("game_count"),
+        "rankable": result.get("rankable", state.get("rankable")),
+        "valid_game_rate": _first_present(result.get("valid_game_rate"), state.get("valid_game_rate")),
+        "data_sufficient": result.get("data_sufficient", state.get("data_sufficient")),
+        "low_error_rate": result.get("low_error_rate", state.get("low_error_rate")),
+    }
+    for key in (
+        "model_id",
+        "model_config_hash",
+        "comparison_group_id",
+        "comparison_type",
+        "target_role",
+        "target_version_id",
+        "seed_set_id",
+        "evaluation_set_id",
+    ):
+        if cfg.get(key) is not None:
+            metadata[key] = cfg[key]
+    if cfg.get("paired_seed") is not None:
+        metadata["paired_seed"] = bool(cfg.get("paired_seed"))
+    gate = result.get("leaderboard_gate")
+    if isinstance(gate, dict):
+        metadata["leaderboard_accepted"] = gate.get("accepted")
+        metadata["leaderboard_gate_reason"] = gate.get("reason")
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _langfuse_eval_tags(
+    state: EvalBatchState,
+    *,
+    result: dict[str, Any] | None = None,
+) -> list[str]:
+    cfg = dict(state.get("batch_config", {}) or {})
+    tags = ["werewolf", "eval"]
+    mode = cfg.get("mode")
+    if mode:
+        tags.append(str(mode))
+    comparison_type = cfg.get("comparison_type")
+    if comparison_type:
+        tags.append(f"comparison:{comparison_type}")
+    target_role = cfg.get("target_role")
+    if target_role:
+        tags.append(f"role:{target_role}")
+    result = result if isinstance(result, dict) else {}
+    if result.get("rankable") is True:
+        tags.append("rankable")
+    return tags
+
+
+def _score_langfuse_eval_batch_trace(state: EvalBatchState, result: dict[str, Any]) -> None:
+    observability = _observability()
+    if observability is None:
+        return
+    try:
+        with _langfuse_eval_context(
+            state,
+            stage="persist_batch",
+            result=result,
+            input={
+                "batch_id": result.get("batch_id"),
+                "game_count": result.get("game_count"),
+                "attempted_game_count": result.get("attempted_game_count"),
+            },
+            observability=observability,
+        ):
+            _write_langfuse_eval_scores(observability, state, result)
+    except Exception:  # noqa: BLE001 - observability must not affect eval
+        _log.debug("Langfuse eval scoring failed", exc_info=True)
+    finally:
+        _flush_langfuse(observability)
+
+
+def _write_langfuse_eval_scores(
+    observability: Any,
+    state: EvalBatchState,
+    result: dict[str, Any],
+) -> None:
+    summary = result.get("score_summary") if isinstance(result.get("score_summary"), dict) else {}
+    terminal_stats = result.get("terminal_stats") if isinstance(result.get("terminal_stats"), dict) else {}
+    decision_quality = summary.get("decision_quality") if isinstance(summary.get("decision_quality"), dict) else {}
+    metadata = _langfuse_eval_score_metadata(state, result)
+
+    numeric_scores = {
+        "eval.avg_role_score": summary.get("avg_role_score"),
+        "eval.strength_score": summary.get("strength_score"),
+        "eval.valid_game_rate": _first_present(result.get("valid_game_rate"), state.get("valid_game_rate")),
+        "eval.fallback_rate": _first_present(summary.get("fallback_rate"), decision_quality.get("fallback_rate")),
+        "eval.llm_error_rate": _first_present(summary.get("llm_error_rate"), decision_quality.get("llm_error_rate")),
+        "eval.policy_adjusted_rate": _first_present(
+            summary.get("policy_adjusted_rate"),
+            decision_quality.get("policy_adjusted_rate"),
+        ),
+        "eval.villagers_win_rate": terminal_stats.get("villagers_win_rate"),
+        "eval.werewolves_win_rate": terminal_stats.get("werewolves_win_rate"),
+    }
+    for name, value in numeric_scores.items():
+        number = _safe_float(value)
+        if number is not None:
+            _score_langfuse_metric(
+                observability,
+                name,
+                number,
+                data_type="NUMERIC",
+                metadata=metadata,
+            )
+
+    if "rankable" in result or "rankable" in state:
+        _score_langfuse_metric(
+            observability,
+            "eval.rankable",
+            bool(_first_present(result.get("rankable"), state.get("rankable"))),
+            data_type="BOOLEAN",
+            metadata=metadata,
+        )
+
+    judge = summary.get("decision_judge_aggregate")
+    if not isinstance(judge, dict):
+        judge = state.get("decision_judge_aggregate") if isinstance(state.get("decision_judge_aggregate"), dict) else {}
+    if isinstance(judge, dict):
+        for name, value in (
+            ("eval.decision_judge_avg_score", judge.get("avg_score")),
+            ("eval.decision_judge_bad_rate", judge.get("bad_rate")),
+        ):
+            number = _safe_float(value)
+            if number is not None:
+                _score_langfuse_metric(
+                    observability,
+                    name,
+                    number,
+                    data_type="NUMERIC",
+                    metadata=metadata,
+                )
+
+
+def _langfuse_eval_score_metadata(state: EvalBatchState, result: dict[str, Any]) -> dict[str, Any]:
+    gate = result.get("leaderboard_gate") if isinstance(result.get("leaderboard_gate"), dict) else {}
+    metadata = {
+        "metric_family": "eval",
+        "batch_id": result.get("batch_id") or state.get("batch_id"),
+        "game_count": result.get("game_count"),
+        "attempted_game_count": result.get("attempted_game_count"),
+        "rankable": result.get("rankable"),
+        "leaderboard_accepted": gate.get("accepted"),
+    }
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _score_langfuse_metric(
+    observability: Any,
+    name: str,
+    value: float | bool | str,
+    *,
+    data_type: str,
+    metadata: dict[str, Any],
+) -> None:
+    score_current_trace = getattr(observability, "score_current_trace", None)
+    if not callable(score_current_trace):
+        return
+    try:
+        score_current_trace(name, value, data_type=data_type, metadata=metadata)
+    except Exception:  # noqa: BLE001 - scoring is advisory
+        _log.debug("Langfuse eval score failed for %s", name, exc_info=True)
+
+
+def _flush_langfuse(observability: Any) -> None:
+    flush = getattr(observability, "flush_langfuse", None)
+    if not callable(flush):
+        return
+    try:
+        flush()
+    except Exception:  # noqa: BLE001 - flushing is advisory
+        _log.debug("Langfuse eval flush failed", exc_info=True)
+
+
+@contextmanager
+def _fail_open_langfuse_context(context: Any) -> Any:
+    try:
+        value = context.__enter__()
+    except Exception:  # noqa: BLE001 - tracing is advisory
+        _log.debug("Langfuse eval context enter failed", exc_info=True)
+        yield None
+        return
+
+    try:
+        yield value
+    except BaseException:
+        exc_info = sys.exc_info()
+        try:
+            suppress = bool(context.__exit__(*exc_info))
+        except Exception:  # noqa: BLE001 - tracing cleanup is advisory
+            _log.debug("Langfuse eval context exception cleanup failed", exc_info=True)
+            suppress = False
+        if not suppress:
+            raise
+    else:
+        try:
+            context.__exit__(None, None, None)
+        except Exception:  # noqa: BLE001 - tracing cleanup is advisory
+            _log.debug("Langfuse eval context cleanup failed", exc_info=True)
+
+
+def _first_present(*values: Any) -> Any | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
 
 async def fairness_node(state: EvalBatchState) -> dict:
@@ -287,9 +1036,9 @@ async def fairness_node(state: EvalBatchState) -> dict:
 
     cfg = state.get("batch_config", {})
     games = state.get("games", [])
-    completed = sum(1 for g in games if not g.get("error"))
-    game_count = int(cfg.get("game_count", len(games)) or 0)
-    valid_rate = completed / game_count if game_count else 0.0
+    requested_game_count = int(cfg.get("game_count", len(games)) or 0)
+    completed = len(valid_completed_games(games))
+    valid_rate = completed / requested_game_count if requested_game_count else 0.0
 
     comparison_group_id = cfg.get("comparison_group_id")
     comparison_type = cfg.get("comparison_type")
@@ -297,7 +1046,7 @@ async def fairness_node(state: EvalBatchState) -> dict:
 
     # Standalone batch (no group) is trivially fair; grouped batches load siblings.
     if not comparison_group_id:
-        is_fair = game_count > 0
+        is_fair = completed > 0
         reason = "standalone batch" if is_fair else "No games in batch"
     else:
         current_batch = {
@@ -365,15 +1114,32 @@ async def fairness_node(state: EvalBatchState) -> dict:
     rankable, rankable_reason = compute_rankable(
         mode=str(cfg.get("mode", "dev")),
         paired_seed=bool(cfg.get("paired_seed", False)),
-        game_count=game_count,
+        game_count=completed,
         valid_game_rate=valid_rate,
         is_fair=is_fair,
     )
+    data_sufficient, data_sufficient_reason = _compute_data_sufficient(
+        cfg,
+        completed=completed,
+        requested=requested_game_count,
+        valid_game_rate=valid_rate,
+    )
+    low_error_rate, low_error_rate_reason = _low_error_rates_ok(cfg, state.get("score_summary") or {})
     if state.get("role_version_resolution_failed"):
         rankable = False
         rankable_reason = "role version resolution failed"
+    elif rankable and not data_sufficient:
+        rankable = False
+        rankable_reason = data_sufficient_reason
+    elif rankable and not low_error_rate:
+        rankable = False
+        rankable_reason = low_error_rate_reason
     state["fairness"] = {"is_fair": is_fair, "reason": reason}
     state["valid_game_rate"] = valid_rate
+    state["data_sufficient"] = data_sufficient
+    state["data_sufficient_reason"] = data_sufficient_reason
+    state["low_error_rate"] = low_error_rate
+    state["low_error_rate_reason"] = low_error_rate_reason
     state["rankable"] = rankable
     state["rankable_reason"] = rankable_reason
     return state
@@ -382,12 +1148,11 @@ async def fairness_node(state: EvalBatchState) -> dict:
 async def persist_batch_node(state: EvalBatchState) -> dict:
     """Finalize the batch result and persist the batch row + leaderboard entry.
 
-    Writes to wolf.db: an evaluation_batches row and a benchmark_leaderboard
-    entry (scope = role_version when a target role/version is set, else model).
+    Writes to PostgreSQL: an evaluation_batches row and a benchmark_leaderboard
+    entry in the wolf schema (scope = role_version when a target role/version is
+    set, else model).
     Persistence is best-effort and never fails the pipeline.
     """
-    from app.config import DEFAULT_PATHS
-    from app.util.manifest import build_run_manifest, write_manifest
     from app.util.time import beijing_now_iso
 
     state["finished_at"] = beijing_now_iso()
@@ -396,19 +1161,64 @@ async def persist_batch_node(state: EvalBatchState) -> dict:
     games = state.get("games", [])
     cfg = dict(state.get("batch_config", {}))
     summary = state.get("score_summary")
-    completed = sum(1 for g in games if not g.get("error"))
+    terminal_stats = _terminal_stats(games)
+    completed = terminal_stats["completed"]
+    requested_game_count = int(cfg.get("game_count", len(games)) or 0)
+    valid_game_rate = state.get("valid_game_rate")
+    if valid_game_rate is None:
+        valid_game_rate = completed / requested_game_count if requested_game_count else 0.0
+    data_sufficient, data_sufficient_reason = (
+        (state["data_sufficient"], state.get("data_sufficient_reason", "ok"))
+        if "data_sufficient" in state
+        else _compute_data_sufficient(
+            cfg,
+            completed=completed,
+            requested=requested_game_count,
+            valid_game_rate=float(valid_game_rate or 0.0),
+        )
+    )
+    low_error_rate, low_error_rate_reason = (
+        (state["low_error_rate"], state.get("low_error_rate_reason", "ok"))
+        if "low_error_rate" in state
+        else _low_error_rates_ok(cfg, summary or {})
+    )
+    rankable = bool(state.get("rankable", False))
+    rankable_reason = str(state.get("rankable_reason", ""))
+    if rankable and not data_sufficient:
+        rankable = False
+        rankable_reason = data_sufficient_reason
+    elif rankable and not low_error_rate:
+        rankable = False
+        rankable_reason = low_error_rate_reason
+    state["data_sufficient"] = data_sufficient
+    state["data_sufficient_reason"] = data_sufficient_reason
+    state["low_error_rate"] = low_error_rate
+    state["low_error_rate_reason"] = low_error_rate_reason
+    state["valid_game_rate"] = float(valid_game_rate or 0.0)
+    state["rankable"] = rankable
+    state["rankable_reason"] = rankable_reason
 
     result = {
         "batch_id": batch_id,
         "config": cfg,
-        "game_count": len(games),
+        "game_count": completed,
+        "attempted_game_count": len(games),
         "completed": completed,
-        "errored": sum(1 for g in games if g.get("error")),
+        "invalid": terminal_stats["invalid"],
+        "timeout": terminal_stats["timeout"],
+        "abnormal": terminal_stats["abnormal"],
+        "errored": terminal_stats["errored"],
+        "terminal_stats": terminal_stats,
         "games": games,
         "score_summary": summary,
         "fairness": state.get("fairness"),
-        "rankable": state.get("rankable", False),
-        "rankable_reason": state.get("rankable_reason", ""),
+        "valid_game_rate": float(valid_game_rate or 0.0),
+        "data_sufficient": data_sufficient,
+        "data_sufficient_reason": data_sufficient_reason,
+        "low_error_rate": low_error_rate,
+        "low_error_rate_reason": low_error_rate_reason,
+        "rankable": rankable,
+        "rankable_reason": rankable_reason,
         "started_at": state.get("started_at", ""),
         "finished_at": state.get("finished_at", ""),
         "warnings": list(state.get("warnings", [])),
@@ -420,59 +1230,13 @@ async def persist_batch_node(state: EvalBatchState) -> dict:
         state.setdefault("warnings", []).extend(warnings)
         result["warnings"] = list(state.get("warnings", []))
     result["diagnostics"] = [dict(item) for item in state.get("diagnostics", []) if isinstance(item, dict)]
-    paths = state.get("paths")
-    batch_dir = Path(getattr(paths, "runs_dir", DEFAULT_PATHS.runs_dir)) / "evaluation_batches" / str(batch_id)
-    manifest_path = batch_dir / "manifest.json"
-    result["metadata"] = {
-        "artifact_dir": str(batch_dir),
-        "manifest_path": str(manifest_path),
-    }
-    manifest = build_run_manifest(
-        run_type="eval",
-        run_id=str(batch_id),
-        batch_id=str(batch_id),
-        model_config_hash=str(cfg.get("model_config_hash") or ""),
-        seed=cfg.get("seed_start"),
-        config=cfg,
-        started_at=result.get("started_at"),
-        finished_at=result.get("finished_at"),
-        status="failed" if state.get("errors") else "completed",
-        error_summary="; ".join(str(item) for item in state.get("errors", [])),
-        paths={
-            "batch_dir": str(batch_dir),
-            "games_dir": str(batch_dir / "games"),
-            "manifest": "manifest.json",
-        },
-        metadata={
-            "completed": completed,
-            "errored": result["errored"],
-            "rankable": result.get("rankable", False),
-            "rankable_reason": result.get("rankable_reason", ""),
-            "warnings": result.get("warnings", []),
-            "diagnostics": result.get("diagnostics", []),
-        },
-    )
-    result["manifest"] = manifest
-    try:
-        write_manifest(manifest_path, manifest)
-    except Exception as exc:  # noqa: BLE001 — artifact manifest should not crash evaluation
-        warning = _exception_message("persist_batch manifest write failed", exc)
-        state.setdefault("warnings", []).append(warning)
-        result["warnings"] = list(state.get("warnings", []))
-        _record_diagnostic(
-            state,
-            kind="persistence_error",
-            stage="persist_batch.manifest",
-            level="warning",
-            message=warning,
-            exc=exc,
-        )
-        result["diagnostics"] = [dict(item) for item in state.get("diagnostics", []) if isinstance(item, dict)]
+    result["metadata"] = {"storage": "postgresql"}
+    _score_langfuse_eval_batch_trace(state, result)
     return state
 
 
 def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
-    """Save the batch row and a leaderboard entry to wolf.db (best-effort)."""
+    """Save the batch row and a leaderboard entry to PostgreSQL (best-effort)."""
     from app.lib.score import open_eval_connection, persist_leaderboard_entry, save_evaluation_batch
 
     warnings: list[str] = []
@@ -532,8 +1296,17 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
             "avg_team_score": summary.get("avg_team_score", 0.0),
             "strength_score": summary.get("strength_score", 0.0),
             "risk_penalty": summary.get("avg_risk_penalty", 0.0),
+            "fallback_rate": summary.get("fallback_rate", 0.0),
+            "llm_error_rate": summary.get("llm_error_rate", 0.0),
+            "policy_adjusted_rate": summary.get("policy_adjusted_rate", 0.0),
             "summary": summary,
         }
+        gate = _leaderboard_acceptance_gate(state, result, entry)
+        result["leaderboard_gate"] = gate
+        if not gate["accepted"]:
+            result["leaderboard_skipped_reason"] = gate["reason"]
+            return warnings
+        entry["data_sufficient"] = gate["data_sufficient"]
         if target_role and target_version:
             entry["scope"] = "role_version"
             entry["target_role"] = target_role

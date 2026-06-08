@@ -6,10 +6,9 @@ import asyncio
 import json
 import logging
 import threading
-from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from app.util.json import to_jsonable, write_jsonl
+from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 
 _log = logging.getLogger(__name__)
@@ -20,16 +19,14 @@ class TaskEventLog:
 
     def __init__(
         self,
-        path: Path,
         *,
+        connection_factory: Callable[[], Any],
         max_backlog: int = 2048,
         compact_every: int = 512,
-        compact_max_bytes: int = 4 * 1024 * 1024,
     ) -> None:
-        self.path = path
+        self._connection_factory = connection_factory
         self.max_backlog = max_backlog
         self.compact_every = compact_every
-        self.compact_max_bytes = compact_max_bytes
         self._lock = threading.Lock()
         self._events: list[dict[str, Any]] = []
         self._next_event_id = 1
@@ -38,32 +35,30 @@ class TaskEventLog:
         self._compact_pending = False
 
     def load(self) -> None:
-        if not self.path.exists():
-            return
-        events: list[dict[str, Any]] = []
+        conn = None
         try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            _log.warning("failed to load task event log %s", self.path, exc_info=True)
+            conn = self._connection_factory()
+            _ensure_task_event_tables(conn)
+            rows = conn.execute(
+                "SELECT id, entity_id, entity_kind, event, status, payload, created_at "
+                "FROM ui_task_events ORDER BY id DESC LIMIT ?",
+                (self.max_backlog,),
+            ).fetchall()
+        except Exception:  # noqa: BLE001 - event replay is best-effort UI metadata
+            _log.warning("failed to load task events from PostgreSQL", exc_info=True)
             return
-        skipped = 0
-        for line in lines:
-            try:
-                if not line.strip():
-                    continue
-                item = json.loads(line)
-                if isinstance(item, dict):
-                    events.append(item)
-            except (json.JSONDecodeError, ValueError):
-                skipped += 1
-                continue
-        if skipped:
-            _log.warning("skipped %s corrupt task event log rows from %s", skipped, self.path)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - cleanup is best-effort
+                    pass
+        events = [_event_from_row(row) for row in reversed(rows)]
         with self._lock:
             self._events = events[-self.max_backlog :]
             self._next_event_id = max([_event_id(item) for item in self._events] or [0]) + 1
             self._events_since_compact = 0
-            self._compact_pending = bool(skipped) or len(events) > len(self._events) or self._file_exceeds_compact_size_locked()
+            self._compact_pending = False
 
     def publish(self, entity: dict[str, Any], event: str | None = None) -> dict[str, Any]:
         payload = _task_event_payload(entity)
@@ -85,7 +80,7 @@ class TaskEventLog:
             try:
                 self._append_event_locked(item)
             except Exception:  # noqa: BLE001 - task event replay is best-effort UI metadata
-                _log.warning("failed to append task event log %s", self.path, exc_info=True)
+                _log.warning("failed to append task event to PostgreSQL", exc_info=True)
             else:
                 self._events_since_compact += 1
             if self._should_compact_locked():
@@ -93,7 +88,7 @@ class TaskEventLog:
                     self._compact_locked()
                 except Exception:  # noqa: BLE001 - replay compaction should not block live UI updates
                     self._compact_pending = True
-                    _log.warning("failed to compact task event log %s", self.path, exc_info=True)
+                    _log.warning("failed to compact PostgreSQL task event backlog", exc_info=True)
             entity_id = str(item["entity_id"])
             subscribers = self._live_subscribers_locked(entity_id)
         for loop, queue in subscribers:
@@ -164,28 +159,51 @@ class TaskEventLog:
                 self._subscribers.pop(entity_id, None)
 
     def _append_event_locked(self, item: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(item, ensure_ascii=False, default=str))
-            handle.write("\n")
+        conn = self._connection_factory()
+        try:
+            _ensure_task_event_tables(conn)
+            conn.execute(
+                "INSERT INTO ui_task_events "
+                "(id, entity_id, entity_kind, event, status, payload, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "entity_id = excluded.entity_id, "
+                "entity_kind = excluded.entity_kind, "
+                "event = excluded.event, "
+                "status = excluded.status, "
+                "payload = excluded.payload, "
+                "created_at = excluded.created_at",
+                (
+                    int(item["id"]),
+                    item.get("entity_id"),
+                    item.get("entity_kind"),
+                    item.get("event"),
+                    item.get("status"),
+                    json.dumps(item.get("payload", {}), ensure_ascii=False),
+                    item.get("created_at"),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
     def _should_compact_locked(self) -> bool:
         if self._compact_pending:
             return True
         if self.compact_every > 0 and self._events_since_compact >= self.compact_every:
             return True
-        return self._file_exceeds_compact_size_locked()
-
-    def _file_exceeds_compact_size_locked(self) -> bool:
-        if self.compact_max_bytes <= 0:
-            return False
-        try:
-            return self.path.exists() and self.path.stat().st_size > self.compact_max_bytes
-        except OSError:
-            return False
+        return False
 
     def _compact_locked(self) -> None:
-        write_jsonl(self.path, list(self._events))
+        if len(self._events) >= self.max_backlog:
+            cutoff = _event_id(self._events[0])
+            conn = self._connection_factory()
+            try:
+                _ensure_task_event_tables(conn)
+                conn.execute("DELETE FROM ui_task_events WHERE id < ?", (cutoff,))
+                conn.commit()
+            finally:
+                conn.close()
         self._events_since_compact = 0
         self._compact_pending = False
 
@@ -267,3 +285,41 @@ def _put_queue_nowait(queue: asyncio.Queue, item: dict[str, Any]) -> None:
             queue.put_nowait(item)
         except asyncio.QueueFull:
             pass
+
+
+def _ensure_task_event_tables(conn: Any) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ui_task_events (
+            id bigint PRIMARY KEY,
+            entity_id text NOT NULL,
+            entity_kind text,
+            event text,
+            status text,
+            payload jsonb NOT NULL,
+            created_at timestamptz NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ui_task_events_entity_id "
+        "ON ui_task_events(entity_id, id)"
+    )
+    conn.commit()
+
+
+def _event_from_row(row: Any) -> dict[str, Any]:
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return to_jsonable(
+        {
+            "id": int(row["id"]),
+            "event": row["event"],
+            "entity_id": row["entity_id"],
+            "entity_kind": row["entity_kind"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "payload": payload if isinstance(payload, dict) else {},
+        }
+    )

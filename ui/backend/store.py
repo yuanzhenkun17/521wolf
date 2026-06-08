@@ -10,16 +10,14 @@ import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
 
 from app.config import PathConfig, load_llm_config, load_tts_config
-from app.lib.version import VersionRegistry
+from app.lib.version import VersionRegistryProtocol, version_registry_from_env
 from app.run import run_evaluation, run_evolution
 from app.services.llm import create_llm
-from app.util.json import write_json
 from app.util.time import beijing_now_iso
 from ui.backend.background_store import BackgroundTaskStoreMixin
 from ui.backend.constants import (
@@ -30,12 +28,14 @@ from ui.backend.game_store import GameStoreMixin
 from ui.backend.schemas import (
     BenchmarkRequest,
     EvolutionStartRequest,
+    automatic_evolution_request,
 )
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
 from ui.backend.task_events import TaskEventLog
 from ui.backend.task_state import (
     _set_task_contract,
 )
+from ui.backend.startup_checks import default_startup_checks, log_startup_checks, run_startup_checks
 
 _log = logging.getLogger(__name__)
 
@@ -68,13 +68,29 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     _background_state_fingerprint: str | None = field(default=None, init=False, repr=False)
     _task_event_fingerprints: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _task_event_log: TaskEventLog | None = field(default=None, init=False, repr=False)
+    _registry: VersionRegistryProtocol | None = field(default=None, init=False, repr=False)
+    startup_checks: dict[str, Any] = field(default_factory=default_startup_checks)
 
     @property
-    def registry(self) -> VersionRegistry:
-        return VersionRegistry(self.paths.registry_dir)
+    def registry(self) -> VersionRegistryProtocol:
+        if self._registry is None:
+            self._registry = version_registry_from_env(paths=self.paths)
+        return self._registry
 
-    def _write_background_json(self, path: Path, payload: dict[str, Any]) -> None:
-        write_json(path, payload)
+    def close(self) -> None:
+        if self._registry is not None:
+            self._registry.close()
+            self._registry = None
+
+    def refresh_startup_checks(self) -> dict[str, Any]:
+        self.startup_checks = run_startup_checks(self)
+        log_startup_checks(self.startup_checks)
+        return self.startup_checks
+
+    def _open_ui_task_connection(self) -> Any:
+        from storage.provider import storage_provider_from_env
+
+        return storage_provider_from_env(paths=self.paths).open_wolf_connection()
 
     def leaderboard_scores_for_role(self, role: str) -> dict[str, dict[str, Any]]:
         """Load persisted benchmark scores for a role, keyed by version id.
@@ -138,6 +154,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         return "configured"
 
     def queue_evolution(self, request: EvolutionStartRequest) -> dict[str, Any]:
+        request = automatic_evolution_request(request)
         roles = request.roles or ["villager"]
         if len(roles) == 1:
             return self._create_evolution_run(roles[0], request)
@@ -415,6 +432,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         run = self.evolution_runs.get(run_id)
         if run is None:
             return
+        request = automatic_evolution_request(request)
         if self._evolution_cancel_check(run_id):
             self._mark_evolution_stopped(run)
             self._persist_background_tasks()
@@ -482,6 +500,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         self._persist_background_tasks()
 
     async def run_queued_evolution_batch(self, batch_id: str, request: EvolutionStartRequest) -> None:
+        request = automatic_evolution_request(request)
         batch = self.evolution_batches.get(batch_id)
         if batch is None:
             return
@@ -530,6 +549,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             self._persist_background_tasks()
 
     async def _run_single_evolution(self, role: str, request: EvolutionStartRequest) -> dict[str, Any]:
+        request = automatic_evolution_request(request)
         run = self._create_evolution_run(role, request)
         run_id = run["run_id"]
         result = await run_evolution(

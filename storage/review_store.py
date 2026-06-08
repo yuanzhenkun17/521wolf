@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
+from storage.shared.database import StorageConnection
 from storage.shared.interfaces import TimestampProvider, storage_timestamp
 
 
@@ -13,7 +13,7 @@ class DecisionReviewStore:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -36,10 +36,21 @@ class DecisionReviewStore:
     ) -> str:
         now = created_at or self._timestamp()
         self._conn.execute(
-            "INSERT OR REPLACE INTO decision_reviews "
+            "INSERT INTO decision_reviews "
             "(id, game_id, decision_id, player_seat, day, phase, action_type, "
             "quality, reason, alternative_action, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "game_id = excluded.game_id, "
+            "decision_id = excluded.decision_id, "
+            "player_seat = excluded.player_seat, "
+            "day = excluded.day, "
+            "phase = excluded.phase, "
+            "action_type = excluded.action_type, "
+            "quality = excluded.quality, "
+            "reason = excluded.reason, "
+            "alternative_action = excluded.alternative_action, "
+            "created_at = excluded.created_at",
             (
                 review_id,
                 game_id,
@@ -65,10 +76,21 @@ class DecisionReviewStore:
             for rev in reviews:
                 rid = str(rev["id"])
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO decision_reviews "
+                    "INSERT INTO decision_reviews "
                     "(id, game_id, decision_id, player_seat, day, phase, action_type, "
                     "quality, reason, alternative_action, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "game_id = excluded.game_id, "
+                    "decision_id = excluded.decision_id, "
+                    "player_seat = excluded.player_seat, "
+                    "day = excluded.day, "
+                    "phase = excluded.phase, "
+                    "action_type = excluded.action_type, "
+                    "quality = excluded.quality, "
+                    "reason = excluded.reason, "
+                    "alternative_action = excluded.alternative_action, "
+                    "created_at = excluded.created_at",
                     (
                         rid,
                         str(rev["game_id"]),
@@ -164,7 +186,7 @@ class CounterfactualStore:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: StorageConnection,
         timestamp_provider: TimestampProvider | None = None,
     ) -> None:
         self._conn = conn
@@ -183,9 +205,16 @@ class CounterfactualStore:
     ) -> str:
         now = created_at or self._timestamp()
         self._conn.execute(
-            "INSERT OR REPLACE INTO counterfactuals "
+            "INSERT INTO counterfactuals "
             "(id, game_id, decision_id, what_if, likely_outcome, confidence, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "game_id = excluded.game_id, "
+            "decision_id = excluded.decision_id, "
+            "what_if = excluded.what_if, "
+            "likely_outcome = excluded.likely_outcome, "
+            "confidence = excluded.confidence, "
+            "created_at = excluded.created_at",
             (cf_id, game_id, decision_id, what_if, likely_outcome, confidence, now),
         )
         self._conn.commit()
@@ -199,9 +228,16 @@ class CounterfactualStore:
             for cf in counterfactuals:
                 cid = str(cf["id"])
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO counterfactuals "
+                    "INSERT INTO counterfactuals "
                     "(id, game_id, decision_id, what_if, likely_outcome, confidence, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "game_id = excluded.game_id, "
+                    "decision_id = excluded.decision_id, "
+                    "what_if = excluded.what_if, "
+                    "likely_outcome = excluded.likely_outcome, "
+                    "confidence = excluded.confidence, "
+                    "created_at = excluded.created_at",
                     (
                         cid,
                         str(cf["game_id"]),

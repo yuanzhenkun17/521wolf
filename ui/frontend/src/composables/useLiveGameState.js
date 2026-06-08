@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { displayActionLabel, displayPhaseLabel, displayWinnerLabel } from '../components/history/historyDisplay.js'
 import { decisionActionText, phaseLabel, phaseText, roleIconSpecs, roleMatches, seatHash } from './gameStateShared.js'
-import { choiceOptionsForAction } from './gameSnapshot.js'
+import { choiceOptionsForAction, targetRequiredForAction } from './gameSnapshot.js'
 import { buildSceneEffects } from './sceneEffects.js'
 
 const chatSpeechTypes = new Set([
@@ -21,7 +21,18 @@ const chatSpeechTypes = new Set([
   'last_word'
 ])
 const chatVoteTypes = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
-const sceneVotePhases = new Set(['vote', 'sheriff_vote'])
+const sceneVotePhases = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'])
+const votePhaseByType = {
+  vote: 'exile_vote',
+  exile_vote: 'exile_vote',
+  exile_vote_start: 'exile_vote',
+  exile_vote_end: 'exile_vote',
+  exile_vote_tie: 'exile_vote',
+  pk_vote: 'pk_vote',
+  pk_vote_start: 'pk_vote',
+  pk_vote_end: 'pk_vote',
+  sheriff_vote: 'sheriff_vote'
+}
 const chatActionTypes = new Set([
   'guard_protect',
   'werewolf_kill',
@@ -114,9 +125,7 @@ function rowTargetId(row = {}) {
 
 function voteActionPhase(action = '') {
   const value = String(action || '').trim()
-  if (value === 'sheriff_vote') return 'sheriff_vote'
-  if (chatVoteTypes.has(value)) return 'vote'
-  return ''
+  return votePhaseByType[value] || ''
 }
 
 function voteAction(row = {}) {
@@ -128,15 +137,24 @@ function canonicalVoteAction(action = '') {
   return value === 'vote' ? 'exile_vote' : value
 }
 
+function voteRowMatchesPhase(row = {}, activePhase = '') {
+  const actionPhase = voteActionPhase(voteAction(row))
+  if (!actionPhase) return false
+  const rowPhase = String(row?.phase || activePhase).trim()
+  if (activePhase === 'vote') {
+    return actionPhase !== 'sheriff_vote' && (!sceneVotePhases.has(rowPhase) || rowPhase === 'vote')
+  }
+  if (actionPhase !== activePhase) return false
+  return !sceneVotePhases.has(rowPhase) || rowPhase === activePhase || rowPhase === 'vote'
+}
+
 function latestVoteActionForScope(rows = [], activePhase = '', currentDay = null) {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index]
     const action = voteAction(row)
-    if (!action || voteActionPhase(action) !== activePhase) continue
+    if (!action || !voteRowMatchesPhase(row, activePhase)) continue
     const rowDay = numericId(row?.day)
     if (currentDay && rowDay !== currentDay) continue
-    const rowPhase = String(row?.phase || activePhase).trim()
-    if (sceneVotePhases.has(rowPhase) && rowPhase !== activePhase) continue
     return canonicalVoteAction(action)
   }
   return ''
@@ -514,7 +532,12 @@ export function createLiveGameState(refs, helpers) {
     const selectedChoiceOption = computedState.pendingChoiceOptions.value.find((option) => option.value === selectedChoice)
     if (selectedChoiceOption?.requiresTarget) return true
     if (computedState.pendingChoiceOptions.value.length) return false
-    return Boolean(computedState.pendingActionType.value)
+    const pending = computedState.pendingAction.value || {}
+    return targetRequiredForAction(computedState.pendingActionType.value, {
+      ...(pending.options || {}),
+      target_required: pending.target_required ?? pending.options?.target_required,
+      allow_no_target: pending.allow_no_target ?? pending.options?.allow_no_target
+    })
   })
   computedState.actionInstruction = computed(() => {
     if (computedState.pendingActionType.value === 'witch_act' && witchChoice.value === 'poison') return '法官提醒：点击一名玩家模型使用毒药。'
@@ -540,13 +563,16 @@ export function createLiveGameState(refs, helpers) {
     if (!currentGame) return []
     const phase = String(currentGame.phase || '').trim()
     const pendingAction = String(currentGame.pending_action?.type || currentGame.pending_human_action?.action_type || '').trim()
-    const activePhase = sceneVotePhases.has(phase)
+    const pendingPhase = voteActionPhase(pendingAction)
+    const activePhase = pendingPhase || (sceneVotePhases.has(phase)
       ? phase
-      : (currentGame.waiting_for === 'vote' ? voteActionPhase(pendingAction) || 'vote' : '')
+      : (currentGame.waiting_for === 'vote' ? 'exile_vote' : ''))
     if (!activePhase) return []
     const currentDay = numericId(currentGame.day)
     const canonicalPendingAction = canonicalVoteAction(pendingAction)
-    const exactAction = ['exile_vote', 'pk_vote', 'sheriff_vote'].includes(canonicalPendingAction) ? canonicalPendingAction : ''
+    const exactAction = ['exile_vote', 'pk_vote', 'sheriff_vote'].includes(canonicalPendingAction)
+      ? canonicalPendingAction
+      : (['exile_vote', 'pk_vote', 'sheriff_vote'].includes(activePhase) ? activePhase : '')
 
     const rows = new Map()
     const ensureVoteRow = (targetId, patch = {}) => {
@@ -593,12 +619,10 @@ export function createLiveGameState(refs, helpers) {
     const activeAction = exactAction || latestVoteActionForScope(collectRows, activePhase, currentDay)
     collectRows.forEach((row) => {
       const action = voteAction(row)
-      if (voteActionPhase(action) !== activePhase) return
+      if (!voteRowMatchesPhase(row, activePhase)) return
       if (activeAction && canonicalVoteAction(action) !== activeAction) return
       const rowDay = numericId(row?.day)
       if (currentDay && rowDay !== currentDay) return
-      const rowPhase = String(row?.phase || activePhase).trim()
-      if (sceneVotePhases.has(rowPhase) && rowPhase !== activePhase) return
       upsertVote(rowTargetId(row), logActorId(row))
     })
 
