@@ -1,0 +1,232 @@
+  .scene-player-callout.night-speaking .scene-speech-paper::after {
+    background:
+      radial-gradient(circle at 42% 32%, rgba(255, 252, 232, 0.38), transparent 48%),
+      radial-gradient(circle at 78% 10%, rgba(143, 184, 238, 0.26), transparent 34%),
+      repeating-radial-gradient(circle at 42% 42%, rgba(45, 76, 118, 0.018) 0 1px, transparent 1px 8px),
+      linear-gradient(180deg, var(--paper-top) 0%, var(--paper-mid) 58%, var(--paper-bottom) 100%);
+    box-shadow:
+      inset 0 0 0 1px rgba(250, 246, 222, 0.24),
+      inset 0 -10px 20px rgba(45, 76, 118, 0.11);
+  }
+
+  .scene-player-callout.night-speaking .scene-speech-paper p {
+    color: #10243d;
+    text-shadow: 0 1px 0 rgba(235, 246, 255, 0.42);
+  }
+
+.scene-speech-paper p {
+  position: relative;
+  z-index: 1;
+  display: block;
+  margin: 0;
+  overflow: visible;
+  color: var(--paper-text);
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-box-orient: unset;
+  -webkit-line-clamp: unset;
+}
+
+@media (max-width: 1260px) {
+  .battle-log-page {
+    top: 72px;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: auto;
+    margin: 0;
+  }
+}
+
+.scene-speech-scroll {
+  position: relative;
+  z-index: 1;
+  max-height: 112px;
+  overflow: hidden auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.scene-speech-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.scene-player-callout.typing .scene-speech-paper p::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 3px;
+  border-radius: 1px;
+  background: currentColor;
+  vertical-align: -0.16em;
+  animation: speechCaretBlink 760ms steps(1, end) infinite;
+}
+
+@keyframes speechCaretBlink {
+  0%, 48% {
+    opacity: 0.9;
+  }
+  49%, 100% {
+    opacity: 0;
+  }
+}
+
+.player-role-rail article {
+  grid-template-columns: 18px 18px 40px auto;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+}
+
+.player-role-rail article::before {
+  display: none;
+}
+
+.player-role-rail img:not(.sheriff-badge) {
+  width: 40px;
+  height: 40px;
+  filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.74));
+}
+
+.player-role-rail b {
+  color: #ffe69a;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.88), 0 0 10px rgba(255, 212, 112, 0.28);
+}
+
+.player-role-rail span:last-child {
+  color: #ffe6ad;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9), 0 0 10px rgba(255, 212, 112, 0.28);
+}
+
+.player-role-rail article.speaking {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.player-role-rail article.dead {
+  background: transparent !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-role-rail article.speaking img:not(.sheriff-badge) {
+    animation: none;
+  }
+
+  .history-back-button,
+  .history-phase-tabs button,
+  .history-games-list button,
+  .icon-button,
+  .strip-text-enter-active,
+  .strip-text-leave-active {
+    transition: none;
+  }
+}
+
+/* Log Group Styles */
+.log-group {
+  margin-bottom: 16px;
+  border-left: 3px solid rgba(91, 47, 18, 0.3);
+  padding-left: 12px;
+}
+
+.log-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: rgba(91, 47, 18, 0.08);
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.log-day {
+  color: #5a2d14;
+  font-weight: 900;
+}
+
+.log-phase {
+  color: #8b5e3c;
+  font-size: 12px;
+}
+
+.log-phase-icon {
+  font-size: 14px;
+  margin-left: auto;
+}
+
+.log-entry {
+  margin-bottom: 6px;
+  padding: 4px 0;
+}
+
+.log-speaker {
+  display: inline-block;
+  min-width: 50px;
+  color: #5a2d14;
+  font-weight: 700;
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+.log-message {
+  display: inline;
+  color: #3a1a08;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Source badges for agent decisions */
+.source-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+
+.source-llm { background: #2d7a3a; color: #fff; }
+.source-tot { background: #2563eb; color: #fff; }
+.source-got { background: #7c3aed; color: #fff; }
+.source-fallback { background: #d97706; color: #fff; }
+.source-policy_adjusted { background: #ea580c; color: #fff; }
+
+/* Confidence bar */
+.confidence-bar {
+  display: inline-block;
+  width: 60px;
+  height: 8px;
+  background: rgba(91, 47, 18, 0.15);
+  border-radius: 4px;
+  vertical-align: middle;
+  margin: 0 4px;
+  overflow: hidden;
+}
+
+.confidence-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #d97706, #2d7a3a);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* ── Player status section ── */
+.history-player-status {
+  margin-bottom: 14px;
+}

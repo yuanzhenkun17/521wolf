@@ -1,0 +1,211 @@
+
+.ma-tabs {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ma-tabs::-webkit-scrollbar { display: none; }
+
+.ma-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 14px;
+  border: 1px solid rgba(91, 47, 18, 0.15);
+  border-radius: 15px;
+  color: #5a3319;
+  background: rgba(255, 252, 245, 0.6);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.ma-tab:hover {
+  background: rgba(91, 47, 18, 0.06);
+  border-color: rgba(91, 47, 18, 0.25);
+}
+
+.ma-tab.active {
+  background: #5a3319;
+  color: #fff;
+  border-color: #5a3319;
+}
+
+/* --- Vertical bar chart (legacy, hidden in compact mode) --- */
+.ma-chart-area {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  align-items: flex-end;
+  padding: 14px 4px 4px 12px;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.12);
+  overflow-x: hidden;
+}
+
+.ma-chart-area::-webkit-scrollbar { height: 5px; }
+.ma-chart-area::-webkit-scrollbar-thumb { background: rgba(91, 47, 18, 0.25); border-radius: 2px; }
+
+.ma-bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 3px;
+}
+
+.ma-score-num {
+  font-size: 11px;
+  font-weight: 800;
+  color: #5a3319;
+  line-height: 1;
+  min-height: 14px;
+  text-align: center;
+}
+
+.ma-score-num.ma-zero {
+  color: rgba(91, 47, 18, 0.28);
+  font-weight: 600;
+}
+
+.ma-bar-track {
+  width: clamp(12px, 4vw, 22px);
+  height: 96px;
+  background: rgba(91, 47, 18, 0.05);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(91, 47, 18, 0.1);
+}
+
+.ma-bar-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-radius: 3px 3px 0 0;
+  transition: height 0.5s cubic-bezier(0.22, 0.61, 0.36, 1);
+  min-height: 0;
+}
+
+.ma-bar-fill.ma-dim-speech { background: linear-gradient(180deg, #d9a84c, #a06820); }
+.ma-bar-fill.ma-dim-vote { background: linear-gradient(180deg, #c46a40, #8a3818); }
+.ma-bar-fill.ma-dim-skill { background: linear-gradient(180deg, #6a9e48, #3e6424); }
+
+.ma-player-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 4px;
+}
+
+.ma-player-foot img {
+  width: clamp(16px, 4vw, 22px);
+  height: clamp(16px, 4vw, 22px);
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid rgba(91, 47, 18, 0.22);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.ma-player-foot span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  color: #6b3518;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Horizontal bar chart --- */
+.ma-chart-horizontal {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: none !important;
+  align-items: stretch !important;
+  padding: 4px 6px !important;
+  gap: 2px !important;
+  overflow: hidden !important;
+  border-bottom: none !important;
+  min-width: 0 !important;
+}
+
+.ma-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ma-bar-label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 36px;
+  flex-shrink: 0;
+}
+
+.ma-bar-label img {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(91, 47, 18, 0.2);
+}
+
+.ma-bar-label span {
+  font-size: 9px;
+  font-weight: 700;
+  color: #6b3518;
+  white-space: nowrap;
+}
+
+.ma-bar-track-h {
+  flex: 0 1 240px;
+  height: 12px;
+  background: rgba(91, 47, 18, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid rgba(91, 47, 18, 0.08);
+}
+
+.ma-bar-fill-h {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.ma-bar-fill-h.ma-dim-speech { background: linear-gradient(90deg, #d9a84c, #a06820); }
+.ma-bar-fill-h.ma-dim-vote { background: linear-gradient(90deg, #c46a40, #8a3818); }
+.ma-bar-fill-h.ma-dim-skill { background: linear-gradient(90deg, #6a9e48, #3e6424); }
+.ma-bar-fill-h.ma-dim-logic { background: linear-gradient(90deg, #5a8ec4, #2e5a8a); }
+.ma-bar-fill-h.ma-dim-team { background: linear-gradient(90deg, #9a6abf, #6a3a8f); }
+.ma-bar-fill-h.ma-dim-role_score { background: linear-gradient(90deg, #d4af37, #b8960f); }
+
+.ma-chart-horizontal .ma-score-num {
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 800;
+  color: #5a3319;
+  line-height: 1;
+  min-height: unset;
+  padding-left: 2px;
+}
