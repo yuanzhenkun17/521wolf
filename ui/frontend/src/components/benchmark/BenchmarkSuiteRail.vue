@@ -22,6 +22,23 @@ const costTierLabels = {
   high: '高成本'
 }
 
+const seedTierLabels = {
+  smoke: '冒烟',
+  quick: '快速',
+  standard: '标准',
+  release: '发布',
+  audit: '审计'
+}
+
+const usageBoundaryLabels = {
+  smoke: '冒烟验证',
+  quick_check: '快速验证',
+  formal_benchmark: '正式评测',
+  leaderboard: '榜单口径',
+  release_gate: '发布门禁',
+  audit: '审计回放'
+}
+
 const statusLabels = {
   enabled: '启用',
   active: '启用',
@@ -154,6 +171,12 @@ const selectedSeedRows = computed(() => {
   const seedHash = String(suite.seedSet?.config_hash || '').trim()
   return [
     { key: 'seed-set', label: '种子集', value: suite.seedSetId || '临时' },
+    { key: 'seed-version', label: '版本', value: suite.seedSetVersionLabel || '未标记' },
+    { key: 'seed-tier', label: '层级', value: suite.seedTierLabel || '未标记' },
+    { key: 'seed-target', label: '对象类型', value: suite.seedTargetTypeLabel || '未标记' },
+    { key: 'usage-boundary', label: '使用边界', value: suite.usageBoundaryLabel || '未标记' },
+    { key: 'non-overlap', label: '非重叠组', value: suite.nonOverlapGroup || '未标记' },
+    { key: 'immutable', label: '不可变', value: suite.seedImmutable == null ? '未标记' : (suite.seedImmutable ? '是' : '否') },
     { key: 'seed-count', label: '种子数', value: suite.seedCount == null ? '未上报' : `${suite.seedCount} 个` },
     { key: 'seed-preview', label: '种子预览', value: suite.seedPreviewLabel || '未上报' },
     { key: 'paired', label: '配对种子', value: suite.pairedSeed ? '启用' : '未启用' },
@@ -161,6 +184,7 @@ const selectedSeedRows = computed(() => {
     { key: 'seed-hash', label: '种子 Hash', value: shortHash(seedHash) || '未上报', title: seedHash }
   ]
 })
+const selectedSeedWarnings = computed(() => selectedSuite.value?.seedWarnings || [])
 const selectedMetricRows = computed(() => {
   const suite = selectedSuite.value
   if (!suite) return []
@@ -202,10 +226,18 @@ function normalizeSuite(raw) {
   const status = normalizeStatus(raw)
   const gameCount = numberOrNull(raw?.game_count ?? raw?.battle_games ?? raw?.games)
   const maxDays = numberOrNull(raw?.max_days)
-  const seedCount = numberOrNull(raw?.seed_count)
+  const seedSet = objectOrEmpty(raw?.seed_set)
+  const seedSetId = String(raw?.seed_set_id || seedSet.seed_set_id || seedSet.id || '').trim()
+  const hasSeedSetBoundary = Boolean(seedSetId || Object.keys(seedSet).length)
+  const seedCount = numberOrNull(raw?.seed_count ?? seedSet.seed_count ?? seedSet.count)
   const version = raw?.version == null || raw.version === '' ? '' : `v${raw.version}`
   const configHash = String(raw?.config_hash || raw?.benchmark_config_hash || '').trim()
   const seedPreview = normalizeSeedPreview(raw)
+  const seedTier = String(seedSet.tier || '').trim().toLowerCase()
+  const seedTargetType = seedSet.target_type ? normalizeTargetType(seedSet.target_type) : (hasSeedSetBoundary ? targetType : '')
+  const usageBoundary = String(seedSet.usage_boundary || '').trim()
+  const nonOverlapGroup = String(seedSet.non_overlap_group || '').trim()
+  const seedWarnings = normalizeOverlapWarnings(seedSet, seedSetId)
   const launchable = raw?.launchable == null
     ? !['deprecated', 'disabled', 'archived', 'draft'].includes(status)
     : raw.launchable !== false && !['deprecated', 'disabled', 'archived', 'draft'].includes(status)
@@ -222,7 +254,7 @@ function normalizeSuite(raw) {
     status,
     statusLabel: statusLabels[status] || titleCase(status),
     evaluationSetId: String(raw?.evaluation_set_id || ''),
-    seedSetId: String(raw?.seed_set_id || ''),
+    seedSetId,
     gameCount,
     maxDays,
     seedCount,
@@ -231,7 +263,18 @@ function normalizeSuite(raw) {
     pairedSeed: Boolean(raw?.paired_seed),
     configHash,
     shortConfigHash: shortHash(configHash),
-    seedSet: objectOrEmpty(raw?.seed_set),
+    seedSet,
+    seedSetVersionLabel: formatSeedSetVersion(seedSet.version),
+    seedTier,
+    seedTierLabel: seedTierLabels[seedTier] || (seedTier ? titleCase(seedTier) : ''),
+    seedTargetType,
+    seedTargetTypeLabel: targetTypeLabels[seedTargetType] || seedTargetType,
+    usageBoundary,
+    usageBoundaryLabel: usageBoundaryLabels[usageBoundary] || usageBoundary,
+    nonOverlapGroup,
+    seedImmutable: hasSeedSetBoundary ? seedSet.immutable !== false : null,
+    seedWarnings,
+    seedWarningCount: seedWarnings.length,
     metrics: objectOrEmpty(raw?.metrics),
     gates: objectOrEmpty(raw?.gates),
     judge: objectOrEmpty(raw?.judge),
@@ -253,6 +296,41 @@ function normalizeSeedPreview(raw) {
   const arrayValue = candidates.find((value) => Array.isArray(value))
   if (arrayValue) return arrayValue.map((seed) => String(seed ?? '').trim()).filter(Boolean).slice(0, 6)
   return []
+}
+
+function normalizeOverlapWarnings(seedSet, seedSetId) {
+  const warnings = Array.isArray(seedSet?.overlap_warnings)
+    ? seedSet.overlap_warnings
+    : (Array.isArray(seedSet?.overlapWarnings) ? seedSet.overlapWarnings : [])
+  return warnings
+    .map((warning) => formatOverlapWarning(warning, seedSetId))
+    .filter(Boolean)
+}
+
+function formatOverlapWarning(warning, seedSetId) {
+  if (!warning || typeof warning !== 'object') return ''
+  const currentId = String(seedSetId || '').trim()
+  const otherIds = [
+    warning.left_seed_set_id,
+    warning.right_seed_set_id,
+    ...(Array.isArray(warning.seed_set_ids) ? warning.seed_set_ids : [])
+  ]
+    .map((id) => String(id || '').trim())
+    .filter((id, index, items) => id && id !== currentId && items.indexOf(id) === index)
+  const count = numberOrNull(warning.overlap_count ?? warning.seed_overlap_count ?? warning.count)
+  const ratio = numberOrNull(warning.overlap_ratio ?? warning.ratio)
+  const parts = []
+  if (otherIds.length) parts.push(`与 ${otherIds.join('、')} 重叠`)
+  if (count != null) parts.push(`${count} 个种子`)
+  if (ratio != null) parts.push(`${Math.round(ratio * 100)}%`)
+  const message = String(warning.message || warning.reason || '').trim()
+  return parts.length ? parts.join('，') : (message || '存在种子重叠')
+}
+
+function formatSeedSetVersion(value) {
+  if (value == null || value === '') return ''
+  const text = String(value).trim()
+  return text.startsWith('v') ? text : `v${text}`
 }
 
 function objectOrEmpty(value) {
@@ -509,6 +587,7 @@ function selectLegacyScope(targetType) {
             <b>{{ suite.targetTypeLabel }}</b>
             <b>{{ suite.costTierLabel }}</b>
             <b>{{ suite.statusLabel }}</b>
+            <b v-if="suite.seedWarningCount">重叠警告 {{ suite.seedWarningCount }}</b>
           </span>
           <span class="suite-row-meta">
             <small>{{ suite.evaluationSetId || '临时评测集' }}</small>
@@ -565,12 +644,16 @@ function selectLegacyScope(targetType) {
       <section class="suite-selected-section" aria-label="种子集">
         <div class="suite-selected-subtitle">
           <b>种子集</b>
-          <small>{{ selectedSuite.seedSet?.enabled === false ? '停用' : '固定边界' }}</small>
+          <small>{{ selectedSeedWarnings.length ? `${selectedSeedWarnings.length} 条重叠警告` : (selectedSuite.seedSet?.enabled === false ? '停用' : '固定边界') }}</small>
         </div>
         <span v-for="item in selectedSeedRows" :key="item.key" :title="item.title || String(item.value || '')">
           <small>{{ item.label }}</small>
           <b>{{ item.value }}</b>
         </span>
+        <div v-if="selectedSeedWarnings.length" class="suite-selected-warning suite-selected-warning--seed">
+          <strong>重叠警告</strong>
+          <span v-for="warning in selectedSeedWarnings" :key="warning">{{ warning }}</span>
+        </div>
       </section>
 
       <section class="suite-selected-section" aria-label="指标和门禁">
@@ -1101,6 +1184,24 @@ function selectLegacyScope(targetType) {
   background: var(--rail-danger-bg);
   color: var(--rail-danger);
   font-weight: 850;
+}
+
+.suite-selected-warning--seed {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+}
+
+.suite-selected-warning--seed strong,
+.suite-selected-warning--seed span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suite-selected-warning--seed strong {
+  font-size: 11px;
+  font-weight: 950;
 }
 
 .suite-selected-grid,

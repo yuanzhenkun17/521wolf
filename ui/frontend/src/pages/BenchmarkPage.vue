@@ -44,7 +44,12 @@ const plan = computed(() => benchmark.benchmarkPlan.value || null)
 const planBudget = computed(() => plan.value?.budget || {})
 const planEstimates = computed(() => plan.value?.estimates || {})
 const planJudge = computed(() => plan.value?.judge || {})
+const planConcurrencyPolicy = computed(() => plan.value?.concurrency_policy || {})
 const planWarnings = computed(() => Array.isArray(plan.value?.warnings) ? plan.value.warnings : [])
+const planBudgetExceededDetail = computed(() => {
+  const exceeded = planBudget.value?.exceeded
+  return exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded) ? exceeded : {}
+})
 const activeRuns = computed(() => benchmark.filteredBatchRunRows.value.filter((run) => run.isActive).slice(0, 4))
 const recentRuns = computed(() => benchmark.visibleBatchRunRows.value.slice(0, 5))
 const selectedSuite = computed(() => benchmark.selectedBenchmarkSuite.value || null)
@@ -77,7 +82,18 @@ const estimatedUnitsLabel = computed(() => {
 const estimatedUnits = computed(() =>
   numberOrNull(planBudget.value.estimated_units ?? planEstimates.value.estimated_llm_call_units)
 )
+const planCurrency = computed(() => String(planBudget.value.currency || planEstimates.value.currency || plan.value?.currency || '').trim())
+const estimatedCost = computed(() =>
+  numberOrNull(planBudget.value.estimated_cost ?? planEstimates.value.estimated_cost ?? plan.value?.estimated_cost)
+)
+const estimatedCostLabel = computed(() => formatCost(estimatedCost.value, planCurrency.value))
+const estimatedTokens = computed(() =>
+  numberOrNull(planBudget.value.estimated_tokens ?? planEstimates.value.estimated_tokens ?? plan.value?.estimated_tokens)
+)
+const estimatedTokensLabel = computed(() => formatNumber(estimatedTokens.value))
 const budgetLimitUnits = computed(() => numberOrNull(planBudget.value.limit_units))
+const budgetLimitCost = computed(() => numberOrNull(planBudget.value.limit_cost))
+const budgetLimitCostLabel = computed(() => formatCost(budgetLimitCost.value, planCurrency.value, '未设置'))
 const budgetDeltaUnits = computed(() => {
   if (estimatedUnits.value == null || budgetLimitUnits.value == null) return null
   return budgetLimitUnits.value - estimatedUnits.value
@@ -114,6 +130,7 @@ const currentScopeLabel = computed(() => {
 })
 const expectedDurationLabel = computed(() => {
   const explicitSeconds = numberOrNull(
+    planConcurrencyPolicy.value.expected_duration_seconds ??
     planEstimates.value.expected_duration_seconds ??
     planEstimates.value.duration_seconds ??
     plan.value?.expected_duration_seconds
@@ -125,10 +142,51 @@ const expectedDurationLabel = computed(() => {
   return '计划待生成'
 })
 const concurrencyLabel = computed(() => {
-  const value = numberOrNull(planJudge.value.concurrency ?? plan.value?.concurrency)
-  return value == null ? '后端默认' : `${formatNumber(value)} 个 Judge 并发任务`
+  const roleConcurrency = numberOrNull(planConcurrencyPolicy.value.role_batch_concurrency)
+  const gameConcurrency = numberOrNull(planConcurrencyPolicy.value.game_concurrency)
+  const judgeConcurrency = numberOrNull(planConcurrencyPolicy.value.judge_concurrency ?? planJudge.value.concurrency ?? plan.value?.concurrency)
+  const parts = []
+  if (roleConcurrency != null && roleConcurrency > 0) parts.push(`批次 ${formatNumber(roleConcurrency)}`)
+  if (gameConcurrency != null && gameConcurrency > 0) parts.push(`对局 ${formatNumber(gameConcurrency)}`)
+  if (judgeConcurrency != null && judgeConcurrency > 0) parts.push(`Judge ${formatNumber(judgeConcurrency)}`)
+  return parts.length ? parts.join(' / ') : '后端默认'
+})
+const concurrencyCaption = computed(() => {
+  const policy = planConcurrencyPolicy.value
+  const waves = [
+    numberOrNull(policy.game_waves_per_eval_batch) == null ? '' : `对局 ${formatNumber(policy.game_waves_per_eval_batch)} 波/批次`,
+    numberOrNull(policy.judge_waves) == null ? '' : `Judge ${formatNumber(policy.judge_waves)} 波`
+  ].filter(Boolean)
+  if (waves.length) return waves.join('，')
+  return planJudge.value.timeout_seconds ? `${formatNumber(planJudge.value.timeout_seconds)} 秒 Judge 超时` : '运行策略'
+})
+const dryRunBlocked = computed(() =>
+  Boolean(plan.value && (benchmark.benchmarkPlanBudgetExceeded.value || plan.value.launchable === false || launchDisabledReason.value))
+)
+const dryRunResultLabel = computed(() => {
+  if (!plan.value) return '计划待生成'
+  if (plan.value.dry_run === false) return '正式请求'
+  return dryRunBlocked.value ? 'dry-run 未通过' : 'dry-run 通过'
+})
+const dryRunResultCaption = computed(() => {
+  if (!plan.value) return '等待计划接口'
+  if (benchmark.benchmarkPlanBudgetExceeded.value) return '预算门禁已拦截'
+  if (launchDisabledReason.value) return launchDisabledReason.value
+  return plan.value.dry_run === false ? '后端返回非预演结果' : '启动前预演校验'
 })
 const planCostRows = computed(() => [
+  {
+    key: 'estimated_cost',
+    label: '预计成本',
+    value: estimatedCostLabel.value,
+    caption: planCurrency.value ? `按 ${planCurrency.value} 成本模型估算` : '后端成本模型估算'
+  },
+  {
+    key: 'estimated_tokens',
+    label: '预计 token',
+    value: estimatedTokensLabel.value,
+    caption: '由对局与 Judge 调用折算'
+  },
   {
     key: 'game',
     label: '对局调用单位',
@@ -145,7 +203,7 @@ const planCostRows = computed(() => [
     key: 'limit',
     label: '预算上限',
     value: budgetLimitUnits.value == null ? '未设置' : `${formatNumber(budgetLimitUnits.value)} 单位`,
-    caption: '启动前校验'
+    caption: budgetLimitCost.value == null ? '启动前校验' : `成本上限 ${budgetLimitCostLabel.value}`
   },
   {
     key: 'remaining',
@@ -166,7 +224,14 @@ const planPolicyRows = computed(() => [
     key: 'concurrency',
     label: '并发策略',
     value: concurrencyLabel.value,
-    caption: planJudge.value.timeout_seconds ? `${formatNumber(planJudge.value.timeout_seconds)} 秒 Judge 超时` : '运行策略'
+    caption: concurrencyCaption.value
+  },
+  {
+    key: 'dry-run',
+    label: 'dry-run 结果',
+    value: dryRunResultLabel.value,
+    caption: dryRunResultCaption.value,
+    danger: dryRunBlocked.value
   },
   {
     key: 'formality',
@@ -181,6 +246,39 @@ const planPolicyRows = computed(() => [
     caption: launchDisabledReason.value || (requiresLaunchConfirmation.value ? 'standard/release 正式门禁' : 'quick 快速套件或临时评测')
   }
 ])
+const budgetReasonRows = computed(() => {
+  const rows = []
+  const reasons = Array.isArray(planBudgetExceededDetail.value.reasons) ? planBudgetExceededDetail.value.reasons : []
+  const evidence = Array.isArray(planBudgetExceededDetail.value.evidence) ? planBudgetExceededDetail.value.evidence : []
+  reasons.forEach((reason) => {
+    rows.push({
+      key: `reason:${reason}`,
+      label: '超预算原因',
+      value: budgetReasonLabel(reason),
+      caption: '后端预算门禁'
+    })
+  })
+  evidence.forEach((item, index) => {
+    const row = budgetEvidenceRow(item, index)
+    if (row) rows.push(row)
+  })
+  if (!rows.length && benchmark.benchmarkPlanBudgetExceeded.value) {
+    rows.push({
+      key: 'budget:fallback',
+      label: '超预算原因',
+      value: '预计调用单位超过预算上限',
+      caption: `预计 ${estimatedUnitsLabel.value} / 上限 ${budgetLimitUnits.value == null ? '未设置' : formatNumber(budgetLimitUnits.value)}`
+    })
+  }
+  return rows
+})
+const planWarningRows = computed(() =>
+  planWarnings.value.map((warning, index) => ({
+    key: warning.kind || warning.message || `warning-${index}`,
+    label: displayPlanWarningKind(warning.kind),
+    message: displayPlanWarningMessage(warning)
+  }))
+)
 const launchSubjectLabel = computed(() => {
   if (benchmark.selectedBenchmarkIsModelSuite.value) {
     return benchmark.form.value.model_config_hash || benchmark.form.value.model_id || '当前后端模型'
@@ -226,10 +324,26 @@ const viewDensityLabels = {
 }
 const planWarningLabels = {
   budget_exceeded: '预算超限',
+  stop_after_budget_will_trigger: '预算停止阈值',
+  ad_hoc_benchmark: '临时评测',
   missing_seed_set: '缺少种子集',
   small_sample: '样本偏少',
   no_judge: '裁判未启用',
   warning: '警告'
+}
+const planWarningMessages = {
+  budget_exceeded: '预计评测成本超过预算上限',
+  stop_after_budget_will_trigger: '预计调用单位会触发预算停止阈值',
+  ad_hoc_benchmark: '临时评测不会写入版本化套件证据边界'
+}
+const budgetReasonLabels = {
+  estimated_units_exceed_limit_units: '预计调用单位超过预算上限',
+  estimated_cost_exceed_limit_cost: '预计成本超过成本上限'
+}
+const budgetMetricLabels = {
+  estimated_units: '预计调用单位',
+  estimated_cost: '预计成本',
+  estimated_tokens: '预计 token'
 }
 const contextDiagnosticRows = computed(() => {
   const rows = countSummaryRows(contextDiagnosticSummary.value.by_kind, displayDiagnosticKind).slice(0, 4)
@@ -331,6 +445,13 @@ function formatNumber(value, fallback = '--') {
   return Number.isFinite(number) ? number.toLocaleString('zh-CN') : fallback
 }
 
+function formatCost(value, currency = '', fallback = '--') {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return fallback
+  const suffix = currency ? ` ${currency}` : ''
+  return `${number.toLocaleString('zh-CN', { maximumFractionDigits: 6 })}${suffix}`
+}
+
 function costTierDisplayLabel(value) {
   const tier = String(value || '').trim().toLowerCase()
   const labels = {
@@ -368,6 +489,44 @@ function densityDisplayLabel(value) {
 
 function displayPlanWarningKind(value) {
   return displayMappedLabel(value, planWarningLabels, '警告')
+}
+
+function displayPlanWarningMessage(warning) {
+  const message = String(warning?.message || '').trim()
+  if (message && /[\u4e00-\u9fff]/.test(message)) return message
+  const kind = String(warning?.kind || '').trim().toLowerCase()
+  if (planWarningMessages[kind]) return planWarningMessages[kind]
+  return message || '计划警告'
+}
+
+function budgetReasonLabel(value) {
+  const key = String(value || '').trim()
+  return budgetReasonLabels[key] || key || '预算门禁触发'
+}
+
+function budgetMetricLabel(value) {
+  const key = String(value || '').trim()
+  return budgetMetricLabels[key] || key || '预算指标'
+}
+
+function budgetEvidenceValue(value, metric) {
+  return String(metric || '').includes('cost')
+    ? formatCost(value, planCurrency.value)
+    : formatNumber(value)
+}
+
+function budgetEvidenceRow(item, index) {
+  if (!item || typeof item !== 'object') return null
+  const metric = String(item.metric || '').trim()
+  const estimated = budgetEvidenceValue(item.estimated, metric)
+  const limit = budgetEvidenceValue(item.limit, metric)
+  const delta = item.delta == null ? '' : `，超出 ${budgetEvidenceValue(item.delta, metric)}`
+  return {
+    key: `evidence:${metric || index}`,
+    label: '预算证据',
+    value: budgetMetricLabel(metric),
+    caption: `预计 ${estimated} / 上限 ${limit}${delta}`
+  }
 }
 
 function countSummaryRows(source, labeler = (value) => String(value || '诊断')) {

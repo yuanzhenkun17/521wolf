@@ -20,6 +20,15 @@ const BENCHMARK_TARGET_BLOCKED_RELEASE_STAGES = new Set(['shadow'])
 const BENCHMARK_FORMAL_BLOCKED_RELEASE_STAGES = new Set(['shadow', 'canary'])
 const BENCHMARK_VIEW_STORAGE_PREFIX = 'benchmark-comparison-view'
 const BENCHMARK_SUITE_LAUNCHABLE_STATUSES = new Set(['enabled', 'active'])
+const BENCHMARK_BUDGET_REASON_LABELS = {
+  estimated_units_exceed_limit_units: '预计调用单位超过预算上限',
+  estimated_cost_exceed_limit_cost: '预计成本超过成本上限'
+}
+const BENCHMARK_BUDGET_METRIC_LABELS = {
+  estimated_units: '预计调用单位',
+  estimated_cost: '预计成本',
+  estimated_tokens: '预计 token'
+}
 
 const BENCHMARK_SUITE_STATUS_LABELS = {
   enabled: '启用',
@@ -99,6 +108,65 @@ function normalizeSeedCount(raw, seedPreview) {
   return Array.isArray(seedPreview) && seedPreview.length ? seedPreview.length : null
 }
 
+function normalizeBenchmarkSeedSet(raw) {
+  const id = String(raw?.id || raw?.seed_set_id || '').trim()
+  if (!id) return null
+  const seedPreview = normalizeSeedPreview(raw)
+  const seedCount = normalizeSeedCount(raw, seedPreview)
+  return {
+    ...raw,
+    id,
+    seed_set_id: id,
+    purpose: String(raw?.purpose || '').trim(),
+    version: raw?.version == null || raw.version === '' ? null : Number(raw.version),
+    description: String(raw?.description || ''),
+    target_type: raw?.target_type ? normalizeBenchmarkTargetType(raw.target_type) : '',
+    tier: String(raw?.tier || '').trim().toLowerCase(),
+    created_at: String(raw?.created_at || '').trim(),
+    usage_boundary: String(raw?.usage_boundary || '').trim(),
+    non_overlap_group: String(raw?.non_overlap_group || '').trim(),
+    immutable: raw?.immutable !== false,
+    seed_count: seedCount,
+    seed_preview: seedPreview,
+    config_hash: String(raw?.config_hash || '').trim(),
+    enabled: raw?.enabled !== false,
+    overlap_warnings: Array.isArray(raw?.overlap_warnings) ? raw.overlap_warnings : []
+  }
+}
+
+function normalizeBenchmarkSeedRegistry(data) {
+  const items = Array.isArray(data) ? data : (data?.items || data?.seed_sets || [])
+  const summary = objectOrEmpty(data?.summary)
+  const warnings = Array.isArray(summary.overlap_warnings) ? summary.overlap_warnings : []
+  const warningsById = new Map()
+  for (const warning of warnings) {
+    if (!warning || typeof warning !== 'object') continue
+    const ids = [
+      warning.left_seed_set_id,
+      warning.right_seed_set_id,
+      ...(Array.isArray(warning.seed_set_ids) ? warning.seed_set_ids : [])
+    ].map((item) => String(item || '').trim()).filter(Boolean)
+    for (const id of ids) {
+      const rows = warningsById.get(id) || []
+      rows.push(warning)
+      warningsById.set(id, rows)
+    }
+  }
+  return {
+    items: items
+      .map(normalizeBenchmarkSeedSet)
+      .filter(Boolean)
+      .map((item) => ({
+        ...item,
+        overlap_warnings: [
+          ...(Array.isArray(item.overlap_warnings) ? item.overlap_warnings : []),
+          ...(warningsById.get(item.id) || [])
+        ]
+      })),
+    summary
+  }
+}
+
 function normalizeCostTier(raw) {
   return String(
     raw?.cost_tier ??
@@ -125,7 +193,7 @@ function benchmarkSuiteLaunchDisabledReason(raw, status, launchable) {
   return BENCHMARK_SUITE_DISABLED_REASONS[status] || '该评测套件当前不可启动。'
 }
 
-function normalizeBenchmarkSuite(raw) {
+function normalizeBenchmarkSuite(raw, seedRegistryById = new Map()) {
   const id = String(raw?.id || raw?.benchmark_id || '').trim()
   if (!id) return null
   const version = raw?.version == null ? null : Number(raw.version)
@@ -137,14 +205,21 @@ function normalizeBenchmarkSuite(raw) {
   const maxDays = raw?.max_days ?? null
   const name = String(raw?.name || raw?.label || id)
   const evaluationSetId = String(raw?.evaluation_set_id || (versionIsValid ? `${id}@v${version}` : ''))
-  const seedPreview = normalizeSeedPreview(raw)
-  const seedCount = normalizeSeedCount(raw, seedPreview)
   const status = normalizeBenchmarkSuiteStatus(raw)
   const serverLaunchable = raw?.launchable == null ? null : raw.launchable !== false
   const launchable = serverLaunchable == null
     ? BENCHMARK_SUITE_LAUNCHABLE_STATUSES.has(status)
     : serverLaunchable && BENCHMARK_SUITE_LAUNCHABLE_STATUSES.has(status)
-  const seedSet = objectOrEmpty(raw?.seed_set)
+  const rawSeedSet = objectOrEmpty(raw?.seed_set)
+  const seedSetId = String(raw?.seed_set_id || rawSeedSet.id || rawSeedSet.seed_set_id || '').trim()
+  const registrySeedSet = seedRegistryById?.get?.(seedSetId) || null
+  const seedSet = {
+    ...objectOrEmpty(registrySeedSet),
+    ...rawSeedSet
+  }
+  const seedSource = { ...raw, seed_set_id: seedSetId, seed_set: seedSet }
+  const seedPreview = normalizeSeedPreview(seedSource)
+  const seedCount = normalizeSeedCount(seedSource, seedPreview)
   const metrics = objectOrEmpty(raw?.metrics)
   const gates = objectOrEmpty(raw?.gates)
   const judge = objectOrEmpty(raw?.judge)
@@ -160,7 +235,7 @@ function normalizeBenchmarkSuite(raw) {
     roles,
     game_count: gameCount == null ? null : Number(gameCount),
     max_days: maxDays == null ? null : Number(maxDays),
-    seed_set_id: String(raw?.seed_set_id || ''),
+    seed_set_id: seedSetId,
     seed_count: seedCount,
     seed_preview: seedPreview,
     seed_set: seedSet,
@@ -184,6 +259,8 @@ function benchmarkErrorMessage(err, fallback) {
   const raw = String(err?.message || err || '').trim()
   const text = raw.toLowerCase()
   if (!raw) return fallback
+  const budgetError = benchmarkBudgetExceededError(err)
+  if (budgetError) return benchmarkBudgetExceededErrorMessage(budgetError)
   if (err?.code === 'benchmark_suite_not_launchable' || text.includes('benchmark suite cannot be launched')) {
     const detail = String(err?.detail || raw || '').toLowerCase()
     if (detail.includes('deprecated')) return BENCHMARK_SUITE_DISABLED_REASONS.deprecated
@@ -198,6 +275,124 @@ function benchmarkErrorMessage(err, fallback) {
   if (text.includes('role not found')) return '角色不存在，请刷新后重试。'
   if (text.includes('rate limit') || text.includes('rate_limited')) return '评测请求被限流，请稍后重试。'
   return raw || fallback
+}
+
+function benchmarkBudgetExceededValue(exceeded) {
+  if (exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded)) {
+    return Boolean(exceeded.value)
+  }
+  return Boolean(exceeded)
+}
+
+function firstObject(...values) {
+  return values.find((value) => value && typeof value === 'object' && !Array.isArray(value)) || {}
+}
+
+function firstArray(...values) {
+  return values.find((value) => Array.isArray(value) && value.length) ||
+    values.find((value) => Array.isArray(value)) ||
+    []
+}
+
+function benchmarkBudgetExceededError(err) {
+  const detail = firstObject(err?.detail)
+  const payload = firstObject(err?.payload)
+  const payloadDetail = firstObject(payload.detail)
+  const detailBody = firstObject(detail.detail, payloadDetail.detail)
+  const budget = firstObject(detailBody.budget, detail.budget, payloadDetail.budget)
+  const diagnostics = firstArray(err?.diagnostics, detail.diagnostics, payloadDetail.diagnostics)
+  const firstDiagnostic = firstObject(diagnostics[0])
+  const exceeded = firstObject(budget.exceeded, detailBody.exceeded, firstDiagnostic.exceeded)
+  const code = String(
+    err?.code ||
+    detail.code ||
+    payload.code ||
+    payloadDetail.code ||
+    detailBody.code ||
+    ''
+  ).toLowerCase()
+  const rawText = String(
+    err?.message ||
+    detail.message ||
+    payloadDetail.message ||
+    detailBody.message ||
+    ''
+  ).toLowerCase()
+  const hasBudgetCode =
+    code === 'benchmark_budget_exceeded' ||
+    rawText.includes('benchmark budget exceeded') ||
+    rawText.includes('benchmark_budget_exceeded') ||
+    diagnostics.some((item) => String(item?.kind || '').toLowerCase() === 'budget_exceeded')
+  if (!hasBudgetCode) return null
+
+  const estimated = firstObject(detailBody.estimated)
+  const limit = firstObject(detailBody.limit)
+  return {
+    budget,
+    estimated,
+    limit,
+    diagnostics,
+    reasons: firstArray(exceeded.reasons, firstDiagnostic.reasons),
+    evidence: firstArray(exceeded.evidence, detailBody.evidence, firstDiagnostic.evidence),
+    currency: budget.currency || estimated.currency || limit.currency || firstDiagnostic.currency || ''
+  }
+}
+
+function formatBudgetEvidenceNumber(value, { metric = '', currency = '' } = {}) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return value == null || value === '' ? '未上报' : String(value)
+  if (String(metric).includes('cost')) {
+    const suffix = currency ? ` ${currency}` : ''
+    return `${number.toLocaleString('zh-CN', { maximumFractionDigits: 6 })}${suffix}`
+  }
+  return number.toLocaleString('zh-CN')
+}
+
+function benchmarkBudgetEvidenceText(evidence, fallbackCurrency = '') {
+  if (!evidence || typeof evidence !== 'object') return ''
+  const metric = String(evidence.metric || '').trim()
+  const label = BENCHMARK_BUDGET_METRIC_LABELS[metric] || metric || '预算指标'
+  const currency = String(evidence.unit || fallbackCurrency || '').trim()
+  const estimated = formatBudgetEvidenceNumber(evidence.estimated, { metric, currency })
+  const limit = formatBudgetEvidenceNumber(evidence.limit, { metric, currency })
+  const delta = evidence.delta == null
+    ? ''
+    : `，超出 ${formatBudgetEvidenceNumber(evidence.delta, { metric, currency })}`
+  return `${label} ${estimated} > 上限 ${limit}${delta}`
+}
+
+function benchmarkBudgetFallbackEvidence(error) {
+  const rows = []
+  const currency = error.currency
+  const unitsEstimated = error.estimated.units ?? error.budget.estimated_units
+  const unitsLimit = error.limit.units ?? error.budget.limit_units
+  if (unitsEstimated != null || unitsLimit != null) {
+    rows.push(`预计调用单位 ${formatBudgetEvidenceNumber(unitsEstimated)} / 上限 ${formatBudgetEvidenceNumber(unitsLimit)}`)
+  }
+  const costEstimated = error.estimated.cost ?? error.budget.estimated_cost
+  const costLimit = error.limit.cost ?? error.budget.limit_cost
+  if (costEstimated != null || costLimit != null) {
+    rows.push(
+      `预计成本 ${formatBudgetEvidenceNumber(costEstimated, { metric: 'estimated_cost', currency })} / 上限 ${formatBudgetEvidenceNumber(costLimit, { metric: 'estimated_cost', currency })}`
+    )
+  }
+  const estimatedTokens = error.estimated.tokens ?? error.budget.estimated_tokens
+  if (estimatedTokens != null) {
+    rows.push(`预计 token ${formatBudgetEvidenceNumber(estimatedTokens)}`)
+  }
+  return rows
+}
+
+function benchmarkBudgetExceededErrorMessage(error) {
+  const evidenceRows = error.evidence
+    .map((item) => benchmarkBudgetEvidenceText(item, error.currency))
+    .filter(Boolean)
+  const detailRows = evidenceRows.length ? evidenceRows : benchmarkBudgetFallbackEvidence(error)
+  const reasonRows = error.reasons
+    .map((reason) => BENCHMARK_BUDGET_REASON_LABELS[String(reason)] || String(reason || '').trim())
+    .filter(Boolean)
+  const suffix = [...detailRows, ...reasonRows].slice(0, 5).join('；')
+  return suffix ? `评测预算超过上限：${suffix}。` : '评测预算超过上限，请提高预算或选择更小的套件。'
 }
 
 function normalizeModelLeaderboardEntry(entry) {
@@ -857,6 +1052,7 @@ function useEvaluationWorkbench(options = {}) {
     : createGameApi(options.apiBase)
 
   const benchmarkSuites = ref([])
+  const benchmarkSeedSets = ref([])
   const roles = ref([])
   const modelLeaderboard = ref({})
   const roleLeaderboard = ref({})
@@ -932,6 +1128,7 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkViewDirty = ref(false)
   const selectedBenchmarkViewKey = ref('')
   const suiteRequests = createLatestOnlyTracker()
+  const seedSetRequests = createLatestOnlyTracker()
   const roleRequests = createLatestOnlyTracker()
   const roleBoardRequests = createLatestOnlyMap()
   const planRequests = createLatestOnlyTracker()
@@ -958,6 +1155,8 @@ function useEvaluationWorkbench(options = {}) {
     battle_games: 10,
     max_days: 5,
     budget_limit_units: '',
+    budget_limit_cost: '',
+    stop_after_budget_units: '',
     target_version_id: '',
     model_id: '',
     model_config_hash: ''
@@ -970,7 +1169,7 @@ function useEvaluationWorkbench(options = {}) {
     selectedBenchmarkSuite.value?.target_type || legacyBenchmarkTargetType.value || 'role_version'
   )
   const selectedBenchmarkIsModelSuite = computed(() => selectedBenchmarkTargetType.value === 'model')
-  const benchmarkPlanBudgetExceeded = computed(() => Boolean(benchmarkPlan.value?.budget?.exceeded))
+  const benchmarkPlanBudgetExceeded = computed(() => benchmarkBudgetExceededValue(benchmarkPlan.value?.budget?.exceeded))
   const selectedBenchmarkEvaluationSetId = computed(() => selectedBenchmarkSuite.value?.evaluation_set_id || '')
   const selectedBenchmarkSuiteLabel = computed(() => {
     if (selectedBenchmarkSuite.value?.label) return selectedBenchmarkSuite.value.label
@@ -1142,8 +1341,22 @@ function useEvaluationWorkbench(options = {}) {
     return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null
   }
 
+  function budgetLimitCost() {
+    if (form.value.budget_limit_cost === '' || form.value.budget_limit_cost == null) return null
+    const value = Number(form.value.budget_limit_cost)
+    return Number.isFinite(value) && value >= 0 ? value : null
+  }
+
+  function stopAfterBudgetUnits() {
+    if (form.value.stop_after_budget_units === '' || form.value.stop_after_budget_units == null) return null
+    const value = Number(form.value.stop_after_budget_units)
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null
+  }
+
   function benchmarkRequestPayload() {
     const budgetLimit = budgetLimitUnits()
+    const costLimit = budgetLimitCost()
+    const stopAfterUnits = stopAfterBudgetUnits()
     const targetVersionId = normalizeTargetVersionId(form.value.target_version_id)
     const modelId = String(form.value.model_id || '').trim()
     const modelConfigHash = String(form.value.model_config_hash || '').trim()
@@ -1161,7 +1374,9 @@ function useEvaluationWorkbench(options = {}) {
           }),
       battle_games: launchBattleGames.value,
       max_days: launchMaxDays.value,
-      ...(budgetLimit == null ? {} : { budget_limit_units: budgetLimit })
+      ...(budgetLimit == null ? {} : { budget_limit_units: budgetLimit }),
+      ...(costLimit == null ? {} : { budget_limit_cost: costLimit }),
+      ...(stopAfterUnits == null ? {} : { stop_after_budget_units: stopAfterUnits })
     }
   }
 
@@ -1677,6 +1892,17 @@ function useEvaluationWorkbench(options = {}) {
     if (!selectedBenchmarkIsModelSuite.value && selectedRole.value) {
       query.set('target_role', selectedRole.value)
     }
+    const filters = [
+      ['kind', benchmarkDiagnosticKindFilter.value],
+      ['level', benchmarkDiagnosticLevelFilter.value],
+      ['status', benchmarkDiagnosticStatusFilter.value],
+      ['stage', benchmarkDiagnosticStageFilter.value],
+      ['seed', benchmarkDiagnosticSeedFilter.value]
+    ]
+    for (const [key, value] of filters) {
+      const text = String(value || '').trim()
+      if (text) query.set(key, text)
+    }
     query.set('limit', String(limit))
     query.set('offset', '0')
     return `/benchmark/diagnostics?${query.toString()}`
@@ -1716,14 +1942,38 @@ function useEvaluationWorkbench(options = {}) {
     }
   }
 
+  function benchmarkSeedRegistryById() {
+    return new Map(
+      benchmarkSeedSets.value
+        .map((seedSet) => [String(seedSet?.id || seedSet?.seed_set_id || '').trim(), seedSet])
+        .filter(([id]) => id)
+    )
+  }
+
+  async function loadBenchmarkSeedSets() {
+    const token = seedSetRequests.next()
+    try {
+      const registry = normalizeBenchmarkSeedRegistry(await apiFetch('/benchmark/seed-sets'))
+      if (!token.isLatest()) return false
+      benchmarkSeedSets.value = registry.items
+      return true
+    } catch {
+      if (token.isLatest()) benchmarkSeedSets.value = []
+      return false
+    }
+  }
+
   async function loadBenchmarkSuites() {
     const token = suiteRequests.next()
     benchmarkSuiteError.value = ''
     try {
+      await loadBenchmarkSeedSets()
+      if (!token.isLatest()) return false
+      const seedRegistryById = benchmarkSeedRegistryById()
       const data = await apiFetch('/benchmarks')
       if (!token.isLatest()) return false
       const items = Array.isArray(data) ? data : (data?.items || data?.benchmarks || [])
-      benchmarkSuites.value = items.map(normalizeBenchmarkSuite).filter(Boolean)
+      benchmarkSuites.value = items.map((item) => normalizeBenchmarkSuite(item, seedRegistryById)).filter(Boolean)
       if (
         selectedBenchmarkId.value &&
         !benchmarkSuites.value.some((suite) => suite.id === selectedBenchmarkId.value)
@@ -2041,9 +2291,10 @@ function useEvaluationWorkbench(options = {}) {
     if (!id) {
       selectedBenchmarkBatchId.value = ''
       clearBenchmarkBatchDetail()
-      return
+      void loadBenchmarkDiagnosticsAggregate({ silent: true })
+      return false
     }
-    void loadBenchmarkBatchDetail(id)
+    return loadBenchmarkBatchDetail(id)
   }
 
   function setBenchmarkGameStatusFilter(status) {
@@ -2069,6 +2320,8 @@ function useEvaluationWorkbench(options = {}) {
     if (name === 'seed') benchmarkDiagnosticSeedFilter.value = text
     if (selectedBenchmarkBatchId.value) {
       void loadBenchmarkBatchDiagnostics(selectedBenchmarkBatchId.value)
+    } else {
+      void loadBenchmarkDiagnosticsAggregate({ silent: true })
     }
   }
 
@@ -2080,6 +2333,8 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkDiagnosticSeedFilter.value = ''
     if (selectedBenchmarkBatchId.value) {
       void loadBenchmarkBatchDiagnostics(selectedBenchmarkBatchId.value)
+    } else {
+      void loadBenchmarkDiagnosticsAggregate({ silent: true })
     }
   }
 
@@ -2618,6 +2873,8 @@ function useEvaluationWorkbench(options = {}) {
       form.value.battle_games,
       form.value.max_days,
       form.value.budget_limit_units,
+      form.value.budget_limit_cost,
+      form.value.stop_after_budget_units,
       form.value.target_version_id,
       form.value.model_id,
       form.value.model_config_hash
@@ -2629,6 +2886,7 @@ function useEvaluationWorkbench(options = {}) {
 
   return {
     benchmarkSuites,
+    benchmarkSeedSets,
     benchmarkSuiteError,
     benchmarkPlan,
     benchmarkPlanError,
@@ -2679,6 +2937,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkLeaderboardCompareLoading,
     benchmarkLeaderboardCompareError,
     loadBenchmarkLeaderboardCompare,
+    loadBenchmarkSeedSets,
     benchmarkSavedViews,
     benchmarkSavedViewsLoading,
     benchmarkSavedViewsError,

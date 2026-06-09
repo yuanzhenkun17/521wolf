@@ -229,6 +229,45 @@ test('useEvaluationWorkbench reloads and appends filtered run evidence pages', a
   )
 })
 
+test('useEvaluationWorkbench sends diagnostic filters to aggregate diagnostics', async () => {
+  const requests = []
+  const apiFetch = async (path) => {
+    requests.push(String(path))
+    if (String(path).startsWith('/benchmark/diagnostics?')) {
+      return {
+        kind: 'benchmark_diagnostics',
+        diagnostics: [],
+        affected_runs: [],
+        affected_games: [],
+        summary: {},
+        pagination: { total: 0, offset: 0, limit: 200, returned: 0, has_more: false }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  workbench.setBenchmarkDiagnosticFilter('kind', 'game_failure')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('level', 'warning')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('status', 'timeout')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('stage', 'game.run')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('seed', '260902')
+  await flushPromises()
+
+  assert.equal(
+    requests.some((path) => path.includes('kind=game_failure')
+      && path.includes('level=warning')
+      && path.includes('status=timeout')
+      && path.includes('stage=game.run')
+      && path.includes('seed=260902')),
+    true
+  )
+})
+
 test('run evidence SFCs compile after contract assertions', () => {
   assertSfcCompiles('../src/components/benchmark/BenchmarkBatchRunsTable.vue', 'benchmark-run-table-evidence-test')
   assertSfcCompiles('../src/components/benchmark/BenchmarkDiagnosticsExplorer.vue', 'benchmark-diagnostics-evidence-test')
