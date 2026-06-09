@@ -107,6 +107,7 @@ test('EvolutionPage has a low-risk LabWorkbenchShell bridge around the existing 
 
 test('Lab shell and EvolutionPage keep the warm logbook palette bridge', () => {
   const shell = readSource('../src/components/lab/LabWorkbenchShell.vue')
+  const workbenches = readSource('../src/styles/workbenches.css')
   const evolution = readSource('../src/pages/EvolutionPage.vue')
   const diff = readSource('../src/components/evolution/EvolutionDiffViewer.vue')
   const leaderboard = readSource('../src/components/evolution/EvolutionLeaderboardPanel.vue')
@@ -120,7 +121,8 @@ test('Lab shell and EvolutionPage keep the warm logbook palette bridge', () => {
   assert.match(shell, /--lab-border:\s*var\(--bench-border,\s*var\(--evo-border,\s*var\(--logbook-border,\s*rgba\(93, 48, 17, 0\.18\)\)\)\)/)
   assert.match(shell, /--lab-active-bg:\s*var\(--bench-active-bg,\s*var\(--evo-active-bg,\s*var\(--logbook-active-bg,\s*rgba\(139, 94, 52, 0\.1\)\)\)\)/)
 
-  assert.match(evolution, /--logbook-bg:\s*#f2dfae/)
+  assert.match(workbenches, /--workbench-logbook-bg:\s*#f2dfae/)
+  assert.match(evolution, /--logbook-bg:\s*var\(--workbench-logbook-bg,\s*#f2dfae\)/)
   assert.match(evolution, /--logbook-bg-texture:[\s\S]*repeating-linear-gradient\(90deg,\s*rgba\(118, 71, 27, 0\.024\)[\s\S]*var\(--logbook-bg\)/)
   assert.match(evolution, /--evo-bg:\s*var\(--logbook-bg\)/)
   assert.match(evolution, /--evo-bg-texture:\s*var\(--logbook-bg-texture\)/)

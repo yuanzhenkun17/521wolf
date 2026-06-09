@@ -145,6 +145,7 @@ test('Benchmark target selector keeps overview focused on editable inputs', () =
 test('Benchmark boundary and page keep the warm logbook palette', () => {
   const boundary = boundarySource()
   const page = pageSource()
+  const workbenches = readSource('../src/styles/workbenches.css')
   const combined = `${boundary}\n${page}`
 
   assert.match(boundary, /--boundary-bg:\s*var\(--bench-bg-texture,\s*var\(--logbook-bg-texture,\s*#f2dfae\)\)/)
@@ -159,7 +160,8 @@ test('Benchmark boundary and page keep the warm logbook palette', () => {
   assert.match(boundary, /\.boundary-cell small,[\s\S]*\.boundary-cell em\s*\{[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/)
   assert.doesNotMatch(boundary, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
 
-  assert.match(page, /--logbook-bg:\s*#f2dfae/)
+  assert.match(workbenches, /--workbench-logbook-bg:\s*#f2dfae/)
+  assert.match(page, /--logbook-bg:\s*var\(--workbench-logbook-bg,\s*#f2dfae\)/)
   assert.match(page, /--logbook-bg-texture:[\s\S]*repeating-linear-gradient\(90deg,\s*rgba\(118, 71, 27, 0\.024\)[\s\S]*var\(--logbook-bg\)/)
   assert.match(page, /--bench-bg:\s*var\(--logbook-bg\)/)
   assert.match(page, /--bench-bg-texture:\s*var\(--logbook-bg-texture\)/)
