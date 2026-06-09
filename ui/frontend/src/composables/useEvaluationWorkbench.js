@@ -721,6 +721,7 @@ function normalizeBenchmarkDiagnostic(entry) {
   const targetRole = entry?.target_role || ''
   const kind = String(entry?.kind || 'diagnostic')
   const level = String(entry?.level || 'info').toLowerCase()
+  const historyGameId = String(entry?.history_game_id || entry?.historyGameId || entry?.game_id || '')
   return {
     ...entry,
     id: [
@@ -742,7 +743,9 @@ function normalizeBenchmarkDiagnostic(entry) {
     targetRoleLabel: targetRole ? roleMeta(targetRole).label : '全部角色',
     result_batch_id: String(entry?.result_batch_id || ''),
     game_id: String(entry?.game_id || ''),
-    seedLabel: entry?.seed == null ? '' : String(entry.seed)
+    history_game_id: historyGameId,
+    seedLabel: entry?.seed == null ? '' : String(entry.seed),
+    replayHash: historyGameId ? `#logs?workspace=archive&game_id=${encodeURIComponent(historyGameId)}` : ''
   }
 }
 
@@ -1677,6 +1680,17 @@ function useEvaluationWorkbench(options = {}) {
     if (!selectedBenchmarkIsModelSuite.value && selectedRole.value) {
       query.set('target_role', selectedRole.value)
     }
+    const filters = [
+      ['kind', benchmarkDiagnosticKindFilter.value],
+      ['level', benchmarkDiagnosticLevelFilter.value],
+      ['status', benchmarkDiagnosticStatusFilter.value],
+      ['stage', benchmarkDiagnosticStageFilter.value],
+      ['seed', benchmarkDiagnosticSeedFilter.value]
+    ]
+    for (const [key, value] of filters) {
+      const text = String(value || '').trim()
+      if (text) query.set(key, text)
+    }
     query.set('limit', String(limit))
     query.set('offset', '0')
     return `/benchmark/diagnostics?${query.toString()}`
@@ -2041,9 +2055,10 @@ function useEvaluationWorkbench(options = {}) {
     if (!id) {
       selectedBenchmarkBatchId.value = ''
       clearBenchmarkBatchDetail()
-      return
+      void loadBenchmarkDiagnosticsAggregate({ silent: true })
+      return false
     }
-    void loadBenchmarkBatchDetail(id)
+    return loadBenchmarkBatchDetail(id)
   }
 
   function setBenchmarkGameStatusFilter(status) {
@@ -2069,6 +2084,8 @@ function useEvaluationWorkbench(options = {}) {
     if (name === 'seed') benchmarkDiagnosticSeedFilter.value = text
     if (selectedBenchmarkBatchId.value) {
       void loadBenchmarkBatchDiagnostics(selectedBenchmarkBatchId.value)
+    } else {
+      void loadBenchmarkDiagnosticsAggregate({ silent: true })
     }
   }
 
@@ -2080,6 +2097,8 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkDiagnosticSeedFilter.value = ''
     if (selectedBenchmarkBatchId.value) {
       void loadBenchmarkBatchDiagnostics(selectedBenchmarkBatchId.value)
+    } else {
+      void loadBenchmarkDiagnosticsAggregate({ silent: true })
     }
   }
 

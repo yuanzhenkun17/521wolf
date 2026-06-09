@@ -1463,8 +1463,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 continue
             if normalized_model_config_hash and meta["model_config_hash"] != normalized_model_config_hash:
                 continue
-            if status_filter is not None and not _match_filter(meta["status"], status_filter):
-                continue
 
             diagnostics = [
                 _benchmark_annotated_diagnostic(item, meta)
@@ -2741,6 +2739,7 @@ def _benchmark_game_diagnostics(
                     batch_id=batch_id,
                     result_batch_id=result_batch_id,
                     target_role=target_role,
+                    history_game_id=game.get("history_game_id") or game_id,
                     origin="game",
                 )
             )

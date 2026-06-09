@@ -85,6 +85,41 @@ const emptyStateMessage = computed(() =>
 const emptyStateTitle = computed(() =>
   aggregateLoading.value ? '正在加载诊断' : '暂无诊断'
 )
+const hasDiagnosticFilters = computed(() => Boolean(
+  props.benchmark.benchmarkDiagnosticKindFilter?.value ||
+  props.benchmark.benchmarkDiagnosticLevelFilter?.value ||
+  props.benchmark.benchmarkDiagnosticStatusFilter?.value ||
+  props.benchmark.benchmarkDiagnosticStageFilter?.value ||
+  props.benchmark.benchmarkDiagnosticSeedFilter?.value
+))
+
+const diagnosticKindOptions = [
+  { value: '', label: '全部类型' },
+  { value: 'rankable_failed', label: '入榜失败' },
+  { value: 'leaderboard_gate_failed', label: '门禁失败' },
+  { value: 'decision_judge_degraded', label: 'Judge 降级' },
+  { value: 'game_failure', label: '失败局' },
+  { value: 'game_error', label: '对局错误' },
+  { value: 'result_warning', label: '结果警告' },
+  { value: 'result_error', label: '结果错误' },
+  { value: 'benchmark_error', label: '批次错误' },
+  { value: 'llm_error', label: 'LLM 错误' },
+  { value: 'fallback', label: '回退' }
+]
+const diagnosticLevelOptions = [
+  { value: '', label: '全部等级' },
+  { value: 'error', label: '错误' },
+  { value: 'warning', label: '警告' },
+  { value: 'info', label: '信息' }
+]
+const diagnosticStatusOptions = [
+  { value: '', label: '全部状态' },
+  { value: 'failed', label: '失败' },
+  { value: 'timeout', label: '超时' },
+  { value: 'abnormal', label: '异常' },
+  { value: 'degraded', label: '降级' },
+  { value: 'completed', label: '完成' }
+]
 
 const summaryRows = computed(() => {
   const summary = diagnosticSummary.value
@@ -162,6 +197,8 @@ const problemGames = computed(() => {
     const game = byGame.get(id) || {
       game_id: id,
       id,
+      history_game_id: item?.history_game_id || id,
+      replayHash: diagnosticReplayHash(item),
       statusLabel: '未加载',
       seedLabel: item?.seedLabel || '—',
       targetRoleLabel: item?.targetRoleLabel || '全部角色',
@@ -170,6 +207,8 @@ const problemGames = computed(() => {
       diagnosticKinds: new Set()
     }
     game.diagnosticMatches += 1
+    if (!game.replayHash && diagnosticReplayHash(item)) game.replayHash = diagnosticReplayHash(item)
+    if (!game.history_game_id && item?.history_game_id) game.history_game_id = item.history_game_id
     if (item.kindLabel || item.kind) game.diagnosticKinds.add(displayDiagnosticKind(item))
     byGame.set(id, game)
   }
@@ -186,35 +225,34 @@ const problemGames = computed(() => {
 const selectedDiagnosticGames = computed(() => {
   const diagnostic = selectedDiagnostic.value
   if (!diagnostic) return problemGames.value
-  const ids = new Set()
-  if (diagnostic.game_id) ids.add(String(diagnostic.game_id))
-  for (const item of visibleDiagnostics.value) {
-    if (
-      diagnostic.kind &&
-      item.kind === diagnostic.kind &&
-      item.game_id
-    ) {
-      ids.add(String(item.game_id))
+  const diagnosticGameId = String(diagnostic.game_id || '')
+  const diagnosticSeed = String(diagnostic.seed ?? diagnostic.seedLabel ?? '')
+  const diagnosticReplay = diagnosticReplayHash(diagnostic)
+  if (!diagnosticGameId) return problemGames.value.slice(0, 4)
+  const byGame = new Map()
+  for (const game of problemGames.value) {
+    if (selectedDiagnosticGameMatches(game, diagnosticGameId, diagnosticSeed, diagnosticReplay)) {
+      byGame.set(selectedDiagnosticGameKey(game), game)
     }
   }
-  if (!ids.size) return problemGames.value.slice(0, 4)
-  const byGame = new Map(problemGames.value.map((game) => [String(game.game_id || game.id), game]))
   for (const game of games.value) {
-    const id = String(game?.game_id || game?.id || '')
-    if (id && ids.has(id) && !byGame.has(id)) byGame.set(id, game)
-  }
-  for (const id of ids) {
-    if (!byGame.has(id)) {
-      byGame.set(id, {
-        game_id: id,
-        id,
-        statusLabel: '未加载',
-        seedLabel: diagnostic.seedLabel || '',
-        targetRoleLabel: diagnostic.targetRoleLabel || '',
-        diagnosticMatches: 1,
-        diagnostic_count: 1
-      })
+    if (selectedDiagnosticGameMatches(game, diagnosticGameId, diagnosticSeed, diagnosticReplay)) {
+      byGame.set(selectedDiagnosticGameKey(game), game)
     }
+  }
+  if (!byGame.size) {
+    const fallback = {
+      game_id: diagnosticGameId,
+      id: diagnosticGameId,
+      history_game_id: diagnostic.history_game_id || diagnosticGameId,
+      replayHash: diagnosticReplay,
+      statusLabel: '未加载',
+      seedLabel: diagnostic.seedLabel || '',
+      targetRoleLabel: diagnostic.targetRoleLabel || '',
+      diagnosticMatches: 1,
+      diagnostic_count: 1
+    }
+    byGame.set(selectedDiagnosticGameKey(fallback), fallback)
   }
   return [...byGame.values()].slice(0, 6)
 })
@@ -398,6 +436,48 @@ function setProblemGamesFilter() {
   props.benchmark.setBenchmarkGameStatusFilter('problem')
 }
 
+function setDiagnosticFilter(name, event) {
+  props.benchmark.setBenchmarkDiagnosticFilter(name, event?.target?.value || '')
+}
+
+function clearDiagnosticFilters() {
+  props.benchmark.clearBenchmarkDiagnosticFilters()
+}
+
+function diagnosticReplayHash(item) {
+  if (!item) return ''
+  if (item.replayHash) return archiveDiagnosticReplayHash(item.replayHash)
+  const historyGameId = String(item.history_game_id || item.historyGameId || item.game_id || '')
+  return historyGameId ? `#logs?workspace=archive&game_id=${encodeURIComponent(historyGameId)}` : ''
+}
+
+function archiveDiagnosticReplayHash(hash) {
+  const text = String(hash || '').trim()
+  if (!text.startsWith('#logs?')) return text
+  const params = new URLSearchParams(text.slice('#logs?'.length))
+  if (!params.has('game_id')) return text
+  params.set('workspace', 'archive')
+  return `#logs?${params.toString()}`
+}
+
+function selectedDiagnosticGameKey(game) {
+  return [
+    String(game?.game_id || game?.id || ''),
+    String(game?.seed ?? game?.seedLabel ?? ''),
+    diagnosticReplayHash(game)
+  ].join(':')
+}
+
+function selectedDiagnosticGameMatches(game, diagnosticGameId, diagnosticSeed = '', diagnosticReplay = '') {
+  const gameId = String(game?.game_id || game?.id || '')
+  if (!diagnosticGameId || gameId !== diagnosticGameId) return false
+  const gameSeed = String(game?.seed ?? game?.seedLabel ?? '')
+  if (diagnosticSeed && gameSeed && gameSeed !== diagnosticSeed) return false
+  const gameReplay = diagnosticReplayHash(game)
+  if (diagnosticReplay && gameReplay && gameReplay !== diagnosticReplay) return false
+  return true
+}
+
 function inspectSelectedGames() {
   const diagnostic = selectedDiagnostic.value
   if (
@@ -470,6 +550,61 @@ function suggestedActionsForDiagnostic(item) {
       </button>
     </header>
 
+    <div class="diagnostics-filter-row" aria-label="诊断筛选">
+      <select
+        :value="benchmark.benchmarkDiagnosticKindFilter.value"
+        aria-label="诊断类型筛选"
+        @change="setDiagnosticFilter('kind', $event)"
+      >
+        <option v-for="item in diagnosticKindOptions" :key="item.value || 'all-kind'" :value="item.value">
+          {{ item.label }}
+        </option>
+      </select>
+      <select
+        :value="benchmark.benchmarkDiagnosticLevelFilter.value"
+        aria-label="诊断等级筛选"
+        @change="setDiagnosticFilter('level', $event)"
+      >
+        <option v-for="item in diagnosticLevelOptions" :key="item.value || 'all-level'" :value="item.value">
+          {{ item.label }}
+        </option>
+      </select>
+      <select
+        :value="benchmark.benchmarkDiagnosticStatusFilter.value"
+        aria-label="诊断状态筛选"
+        @change="setDiagnosticFilter('status', $event)"
+      >
+        <option v-for="item in diagnosticStatusOptions" :key="item.value || 'all-status'" :value="item.value">
+          {{ item.label }}
+        </option>
+      </select>
+      <input
+        type="search"
+        placeholder="阶段"
+        :value="benchmark.benchmarkDiagnosticStageFilter.value"
+        aria-label="诊断阶段筛选"
+        @change="setDiagnosticFilter('stage', $event)"
+        @keydown.enter.prevent="setDiagnosticFilter('stage', $event)"
+      >
+      <input
+        type="search"
+        inputmode="numeric"
+        placeholder="种子"
+        :value="benchmark.benchmarkDiagnosticSeedFilter.value"
+        aria-label="诊断种子筛选"
+        @change="setDiagnosticFilter('seed', $event)"
+        @keydown.enter.prevent="setDiagnosticFilter('seed', $event)"
+      >
+      <button
+        v-if="hasDiagnosticFilters"
+        type="button"
+        class="diagnostics-filter-clear"
+        @click="clearDiagnosticFilters"
+      >
+        清除
+      </button>
+    </div>
+
     <div class="diagnostics-summary-grid">
       <article v-for="row in summaryRows" :key="row.key" class="diagnostics-summary-card">
         <small>{{ row.label }}</small>
@@ -525,6 +660,14 @@ function suggestedActionsForDiagnostic(item) {
                 <b>{{ item.message || '无诊断信息' }}</b>
               </span>
               <em>{{ displayDiagnosticLevel(item) }}</em>
+              <a
+                v-if="diagnosticReplayHash(item)"
+                class="diagnostic-replay-link inline"
+                :href="diagnosticReplayHash(item)"
+                @click.stop
+              >
+                回放
+              </a>
             </header>
             <dl>
               <div>
@@ -561,7 +704,15 @@ function suggestedActionsForDiagnostic(item) {
           <article v-if="selectedDiagnostic" class="selected-diagnostic-card">
             <strong>{{ selectedDiagnostic.message || '无诊断信息' }}</strong>
             <span>{{ selectedDiagnostic.stage || '无阶段' }} / {{ originLabel(selectedDiagnostic.origin) }}</span>
+            <span>对局 {{ selectedDiagnostic.game_id || '—' }} / 种子 {{ selectedDiagnostic.seedLabel || '—' }}</span>
             <em>{{ displayDiagnosticLevel(selectedDiagnostic) }}</em>
+            <a
+              v-if="diagnosticReplayHash(selectedDiagnostic)"
+              class="diagnostic-replay-link"
+              :href="diagnosticReplayHash(selectedDiagnostic)"
+            >
+              回放
+            </a>
           </article>
           <div class="suggested-action-list">
             <article v-for="action in selectedSuggestedActions" :key="action.label" class="suggested-action-card">
@@ -715,6 +866,50 @@ function suggestedActionsForDiagnostic(item) {
 
 .problem-filter-button:hover {
   background: var(--diag-accent);
+}
+
+.diagnostics-filter-row {
+  display: grid;
+  grid-template-columns: minmax(108px, 1fr) minmax(92px, 0.82fr) minmax(96px, 0.82fr) minmax(90px, 0.9fr) minmax(74px, 0.72fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--diag-line);
+  border-radius: 8px;
+  background: var(--diag-panel);
+}
+
+.diagnostics-filter-row select,
+.diagnostics-filter-row input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid rgba(139, 94, 52, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 250, 0.8);
+  color: var(--diag-ink);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.diagnostics-filter-row input {
+  padding: 0 8px;
+}
+
+.diagnostics-filter-clear {
+  height: 30px;
+  border: 1px solid var(--diag-accent-strong);
+  border-radius: 6px;
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--diag-accent-strong);
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.diagnostics-filter-clear:hover {
+  background: rgba(139, 94, 52, 0.14);
 }
 
 .diagnostics-summary-grid {
@@ -918,7 +1113,7 @@ function suggestedActionsForDiagnostic(item) {
 
 .diagnostic-entry header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: start;
   min-width: 0;
@@ -1002,6 +1197,7 @@ function suggestedActionsForDiagnostic(item) {
 .selected-diagnostic-card strong,
 .selected-diagnostic-card span,
 .selected-diagnostic-card em,
+.selected-diagnostic-card a,
 .suggested-action-card b,
 .suggested-action-card span {
   min-width: 0;
@@ -1107,6 +1303,13 @@ function suggestedActionsForDiagnostic(item) {
   font-size: 11px;
   font-weight: 900;
   text-decoration: none;
+}
+
+.diagnostic-replay-link.inline {
+  justify-self: end;
+  min-height: 22px;
+  padding: 0 7px;
+  color: var(--diag-accent-strong);
 }
 
 .affected-run-button {

@@ -360,7 +360,7 @@ const problemGames = computed(() =>
       diagnostics: numberOrZero(game?.diagnostic_count),
       seed: game?.seedLabel || valueOrDash(game?.seed),
       target: game?.targetRoleLabel || valueOrDash(game?.target_role),
-      replayHash: game?.replayHash || (game?.history_game_id ? `#logs?game_id=${encodeURIComponent(game.history_game_id)}` : ''),
+      replayHash: archiveReplayHash(game),
       replayUnavailableReason: displayPhrase(game?.replay_unavailable_reason || '')
     }))
     .filter((game) => game.id)
@@ -1177,6 +1177,22 @@ function problemStatusWeight(status) {
   if (text === 'cancelled' || text === 'interrupted') return 2
   if (text === 'completed') return 0
   return 1
+}
+
+function archiveReplayHash(game) {
+  const replayHash = String(game?.replayHash || game?.replay_hash || '').trim()
+  if (replayHash) return withArchiveWorkspace(replayHash)
+  const historyGameId = String(game?.history_game_id || game?.historyGameId || '').trim()
+  return historyGameId ? `#logs?workspace=archive&game_id=${encodeURIComponent(historyGameId)}` : ''
+}
+
+function withArchiveWorkspace(hash) {
+  const text = String(hash || '').trim()
+  if (!text.startsWith('#logs?')) return text
+  const params = new URLSearchParams(text.slice('#logs?'.length))
+  if (!params.has('game_id')) return text
+  params.set('workspace', 'archive')
+  return `#logs?${params.toString()}`
 }
 
 function markdownValue(value) {

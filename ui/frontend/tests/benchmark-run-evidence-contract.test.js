@@ -61,14 +61,31 @@ test('BenchmarkDiagnosticsExplorer links selected diagnostics to affected game i
   assert.match(source, /const id = String\(game\?\.game_id \|\| game\?\.id \|\| ''\)/)
   assert.match(source, /game\.diagnosticMatches \+= 1/)
   assert.match(source, /const selectedDiagnosticGames = computed\(\(\) => \{/)
-  assert.match(source, /if \(diagnostic\.game_id\) ids\.add\(String\(diagnostic\.game_id\)\)/)
-  assert.match(source, /diagnostic\.kind &&\s*item\.kind === diagnostic\.kind &&\s*item\.game_id/s)
+  assert.match(source, /const diagnosticGameId = String\(diagnostic\.game_id \|\| ''\)/)
+  assert.match(source, /const diagnosticSeed = String\(diagnostic\.seed \?\? diagnostic\.seedLabel \?\? ''\)/)
+  assert.match(source, /const diagnosticReplay = diagnosticReplayHash\(diagnostic\)/)
+  assert.match(source, /selectedDiagnosticGameMatches\(game, diagnosticGameId, diagnosticSeed, diagnosticReplay\)/)
+  assert.match(source, /function selectedDiagnosticGameMatches\(game, diagnosticGameId, diagnosticSeed = '', diagnosticReplay = ''\) \{/)
+  assert.match(source, /if \(diagnosticSeed && gameSeed && gameSeed !== diagnosticSeed\) return false/)
+  assert.match(source, /if \(diagnosticReplay && gameReplay && gameReplay !== diagnosticReplay\) return false/)
+  assert.doesNotMatch(source, /diagnostic\.kind &&\s*item\.kind === diagnostic\.kind &&\s*item\.game_id/s)
   assert.match(source, /statusLabel: '未加载'/)
   assert.match(source, /function inspectSelectedGames\(\) \{/)
   assert.match(source, /props\.benchmark\.selectBenchmarkBatch\(diagnostic\.batch_id\)/)
   assert.match(source, /props\.benchmark\.setBenchmarkGameStatusFilter\('problem'\)/)
   assert.match(source, /props\.benchmark\.setBenchmarkGameSeedFilter\(seed\)/)
   assert.match(source, /<a v-if="game\.replayHash" class="diagnostic-replay-link" :href="game\.replayHash">/)
+})
+
+test('BenchmarkRunReportPanel uses archive workspace replay links for problem games', () => {
+  const source = readSource('../src/components/benchmark/BenchmarkRunReportPanel.vue')
+
+  assert.match(source, /replayHash: archiveReplayHash\(game\)/)
+  assert.match(source, /const replayHash = String\(game\?\.replayHash \|\| game\?\.replay_hash \|\| ''\)\.trim\(\)/)
+  assert.match(source, /#logs\?workspace=archive&game_id=\$\{encodeURIComponent\(historyGameId\)\}/)
+  assert.match(source, /params\.set\('workspace', 'archive'\)/)
+  assert.match(source, /if \(!params\.has\('game_id'\)\) return text/)
+  assert.match(source, /<a v-if="game\.replayHash" class="report-replay-link" :href="game\.replayHash">/)
 })
 
 test('useEvaluationWorkbench requests filtered batch games and diagnostics pages', () => {
@@ -229,7 +246,47 @@ test('useEvaluationWorkbench reloads and appends filtered run evidence pages', a
   )
 })
 
+test('useEvaluationWorkbench sends diagnostic filters to aggregate diagnostics', async () => {
+  const requests = []
+  const apiFetch = async (path) => {
+    requests.push(String(path))
+    if (String(path).startsWith('/benchmark/diagnostics?')) {
+      return {
+        kind: 'benchmark_diagnostics',
+        diagnostics: [],
+        affected_runs: [],
+        affected_games: [],
+        summary: {},
+        pagination: { total: 0, offset: 0, limit: 200, returned: 0, has_more: false }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  workbench.setBenchmarkDiagnosticFilter('kind', 'game_failure')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('level', 'warning')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('status', 'timeout')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('stage', 'game.run')
+  await flushPromises()
+  workbench.setBenchmarkDiagnosticFilter('seed', '260902')
+  await flushPromises()
+
+  assert.equal(
+    requests.some((path) => path.includes('kind=game_failure')
+      && path.includes('level=warning')
+      && path.includes('status=timeout')
+      && path.includes('stage=game.run')
+      && path.includes('seed=260902')),
+    true
+  )
+})
+
 test('run evidence SFCs compile after contract assertions', () => {
   assertSfcCompiles('../src/components/benchmark/BenchmarkBatchRunsTable.vue', 'benchmark-run-table-evidence-test')
   assertSfcCompiles('../src/components/benchmark/BenchmarkDiagnosticsExplorer.vue', 'benchmark-diagnostics-evidence-test')
+  assertSfcCompiles('../src/components/benchmark/BenchmarkRunReportPanel.vue', 'benchmark-run-report-evidence-test')
 })
