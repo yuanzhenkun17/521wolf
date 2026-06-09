@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // @ts-nocheck
 import { computed, defineAsyncComponent, isRef, watchEffect } from 'vue'
+import { useRoute } from 'vue-router'
 import TopNav from './components/TopNav.vue'
 import { useGameState } from './composables/useGameState.ts'
 import { useMatchUtils } from './composables/useMatchUtils.ts'
@@ -8,6 +9,7 @@ import { useGameActions } from './composables/useGameActions.ts'
 import { useGameAudio } from './composables/useGameAudio.ts'
 import { useGameHistory } from './composables/useGameHistory.ts'
 import { isReturnableGame } from './composables/gameSession.ts'
+import { appViewFromRoute } from './router/legacyHashRedirect'
 import {
   hydrateStoresFromRuntime,
   useGameStore,
@@ -24,6 +26,7 @@ const LobbyPage = defineAsyncComponent(() => import('./pages/LobbyPage.vue'))
 const MatchPage = defineAsyncComponent(() => import('./pages/MatchPage.vue'))
 
 const state = useGameState()
+const route = useRoute()
 const utils = useMatchUtils(state)
 state.setGameStateUtils?.(utils)
 const actions = useGameActions(state)
@@ -202,14 +205,28 @@ const activeSession = computed(() => readRuntime('activeSession'))
 const audioEnabled = computed(() => readRuntime('audioEnabled'))
 const ttsEnabled = computed(() => readRuntime('ttsEnabled'))
 const ttsAvailable = computed(() => readRuntime('ttsAvailable'))
-const topNavActiveView = computed(() => readRuntime('isReplayMode') ? 'logs' : readRuntime('currentView'))
+const runtimeCurrentView = computed(() => {
+  const view = String(readRuntime('currentView') || '')
+  return ['lobby', 'match', 'logs', 'benchmark', 'evolution'].includes(view) ? view : 'lobby'
+})
+const routeAppView = computed(() => appViewFromRoute(route))
+const activeAppView = computed(() => {
+  if (route.path === '/' && runtimeCurrentView.value !== 'lobby') return runtimeCurrentView.value
+  return routeAppView.value || runtimeCurrentView.value
+})
+const inLobby = computed(() => activeAppView.value === 'lobby')
+const inMatch = computed(() => activeAppView.value === 'match')
+const inLogs = computed(() => activeAppView.value === 'logs')
+const inBenchmark = computed(() => activeAppView.value === 'benchmark')
+const inEvolution = computed(() => activeAppView.value === 'evolution')
+const topNavActiveView = computed(() => readRuntime('isReplayMode') ? 'logs' : activeAppView.value)
 const showActiveGamePill = computed(() => {
   if (readRuntime('isReplayMode')) return false
-  if (readRuntime('currentView') === 'match') return false
+  if (activeAppView.value === 'match') return false
   return isReturnableGame(readRuntime('liveGame'))
 })
 const showMatchBoot = computed(() => {
-  return readRuntime('currentView') === 'match'
+  return activeAppView.value === 'match'
     && !readRuntime('isReplayMode')
     && (
       !readRuntime('game')
@@ -225,7 +242,7 @@ const matchBootStatus = computed(() => {
   return '进入议事厅'
 })
 const showTopbarExitGame = computed(() => {
-  return readRuntime('currentView') === 'match' && !readRuntime('isReplayMode') && Boolean(readRuntime('game'))
+  return activeAppView.value === 'match' && !readRuntime('isReplayMode') && Boolean(readRuntime('game'))
 })
 const topbarExitDisabled = computed(() => false)
 
@@ -241,11 +258,6 @@ const {
   exitGame,
   exitReplayMode,
   goLobby,
-  inBenchmark,
-  inEvolution,
-  inLobby,
-  inLogs,
-  inMatch,
   isNight,
   openBenchmarkPage,
   openEvolutionPage,
