@@ -8,7 +8,14 @@ import { useGameActions } from './composables/useGameActions.ts'
 import { useGameAudio } from './composables/useGameAudio.ts'
 import { useGameHistory } from './composables/useGameHistory.ts'
 import { isReturnableGame } from './composables/gameSession.ts'
-import { useGameStore, useHistoryStore, useReplayStore, useSessionStore, useUiStore } from './stores'
+import {
+  hydrateStoresFromRuntime,
+  useGameStore,
+  useHistoryStore,
+  useReplayStore,
+  useSessionStore,
+  useUiStore
+} from './stores'
 
 const LogsPage = defineAsyncComponent(() => import('./pages/LogsPage.vue'))
 const BenchmarkPage = defineAsyncComponent(() => import('./pages/BenchmarkPage.vue'))
@@ -49,39 +56,13 @@ function pickRuntime(keys) {
 }
 
 watchEffect(() => {
-  sessionStore.hydrateFromRuntime(pickRuntime([
-    'currentView',
-    'backendMode',
-    'activeSession',
-    'returnToMatchAvailable'
-  ]))
-  gameStore.hydrateFromRuntime(pickRuntime([
-    'liveGame',
-    'game',
-    'loading',
-    'error',
-    'watchRunning'
-  ]))
-  historyStore.hydrateFromRuntime(pickRuntime([
-    'gameHistory',
-    'selectedHistoryGameId',
-    'selectedHistoryGame',
-    'historyWorkspaceTab',
-    'historyLoading',
-    'historyNotice'
-  ]))
-  replayStore.hydrateFromRuntime(pickRuntime([
-    'replayGame',
-    'isReplayMode',
-    'replayCursor',
-    'replayPlaying',
-    'replaySpeed'
-  ]))
-  uiStore.hydrateFromRuntime(pickRuntime([
-    'error',
-    'matchNotice',
-    'historyNotice'
-  ]))
+  hydrateStoresFromRuntime(runtime, {
+    session: sessionStore,
+    game: gameStore,
+    history: historyStore,
+    replay: replayStore,
+    ui: uiStore
+  })
 })
 
 const logsPropKeys = [

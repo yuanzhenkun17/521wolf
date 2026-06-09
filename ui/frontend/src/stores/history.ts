@@ -1,6 +1,16 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { HistoryGame, HistoryWorkspaceTab } from '../types/history'
+import type { NoticeState } from '../types/ui'
+
+export interface HistoryRuntimeHydration {
+  gameHistory?: HistoryGame[] | null
+  selectedHistoryGameId?: string | number | null
+  selectedHistoryGame?: HistoryGame | null
+  historyWorkspaceTab?: HistoryWorkspaceTab | null
+  historyLoading?: boolean | null
+  historyNotice?: Pick<NoticeState, 'message'> | null
+}
 
 export const useHistoryStore = defineStore('history', () => {
   const games = ref<HistoryGame[]>([])
@@ -21,20 +31,13 @@ export const useHistoryStore = defineStore('history', () => {
     selectedHistoryGameId.value = game?.game_id || null
   }
 
-  function hydrateFromRuntime(runtime: {
-    gameHistory?: HistoryGame[]
-    selectedHistoryGameId?: string | number | null
-    selectedHistoryGame?: HistoryGame | null
-    historyWorkspaceTab?: HistoryWorkspaceTab
-    historyLoading?: boolean
-    historyNotice?: { message?: string } | null
-  }): void {
-    games.value = runtime.gameHistory || []
-    selectedHistoryGameId.value = runtime.selectedHistoryGameId || null
-    selectedHistoryGame.value = runtime.selectedHistoryGame || null
-    historyWorkspaceTab.value = runtime.historyWorkspaceTab || 'phase'
+  function hydrateFromRuntime(runtime: HistoryRuntimeHydration): void {
+    games.value = runtime.gameHistory ?? []
+    selectedHistoryGameId.value = runtime.selectedHistoryGameId ?? null
+    selectedHistoryGame.value = runtime.selectedHistoryGame ?? null
+    historyWorkspaceTab.value = runtime.historyWorkspaceTab ?? 'phase'
     loading.value = Boolean(runtime.historyLoading)
-    error.value = runtime.historyNotice?.message || ''
+    error.value = runtime.historyNotice?.message ?? ''
   }
 
   return {

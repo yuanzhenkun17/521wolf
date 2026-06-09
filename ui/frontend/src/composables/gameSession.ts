@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { syncRouterToLegacyView } from '../router/legacyViewNavigation'
+
 const TERMINAL_GAME_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 const ACTIVE_GAME_STORAGE_KEY = 'night-council.active-game.v1'
 const VIEW_HASHES = {
@@ -100,7 +102,9 @@ function hashForView(view = 'lobby') {
 function writeViewHash(view = 'lobby') {
   if (typeof window === 'undefined') return
   const hash = hashForView(view)
-  window.location.hash = hash ? `#${hash}` : ''
+  const nextHash = hash ? `#${hash}` : ''
+  window.location.hash = nextHash
+  syncRouterToLegacyView(view, nextHash)
 }
 
 export {

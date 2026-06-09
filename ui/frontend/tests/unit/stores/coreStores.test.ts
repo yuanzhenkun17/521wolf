@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { ref } from 'vue'
 import { useGameStore } from '../../../src/stores/game'
 import { useHistoryStore } from '../../../src/stores/history'
 import { useReplayStore } from '../../../src/stores/replay'
+import {
+  createStoreRuntimeHydration,
+  hydrateStoresFromRuntime,
+  runtimeHydrationKeys
+} from '../../../src/stores/runtimeHydration'
 import { useSessionStore } from '../../../src/stores/session'
 import { useUiStore } from '../../../src/stores/ui'
 import type { Game } from '../../../src/types/game'
@@ -78,6 +84,10 @@ test('session store hydrates runtime state and updates view/session actions', ()
   assert.equal(store.inLogs, true)
   assert.equal(store.activeSession.gameId, 'game-2')
   assert.equal(store.activeSession.mode, 'play')
+
+  store.hydrateFromRuntime({ currentView: 'unknown-view' })
+
+  assert.equal(store.currentView, 'logs')
 })
 
 test('game store hydrates snapshots and clears live watch state', () => {
@@ -178,6 +188,14 @@ test('replay store hydrates replay state and toggles replay actions', () => {
   assert.equal(store.isReplayMode, true)
   assert.equal(store.replayCursor, 7)
   assert.equal(store.hasReplay, true)
+
+  store.hydrateFromRuntime({
+    replayCursor: 0,
+    replaySpeed: 0
+  })
+
+  assert.equal(store.replayCursor, 0)
+  assert.equal(store.replaySpeed, 0)
 })
 
 test('ui store hydrates notices and manages deterministic toast actions', () => {
@@ -217,4 +235,84 @@ test('ui store hydrates notices and manages deterministic toast actions', () => 
   store.removeToast(toastId)
 
   assert.deepEqual(store.toasts, [])
+})
+
+test('runtime hydration helper unwraps runtime refs and applies core store payloads', () => {
+  setActivePinia(createPinia())
+  const sessionStore = useSessionStore()
+  const gameStore = useGameStore()
+  const historyStore = useHistoryStore()
+  const replayStore = useReplayStore()
+  const uiStore = useUiStore()
+  const liveGame = gameFixture('runtime-game', { mode: 'play', phase: 'speech' })
+  const historyGame = historyGameFixture('runtime-history')
+  const replayGame = replaySnapshotFixture('runtime-replay', { cursor: 3 })
+
+  const runtime = {
+    currentView: ref('match'),
+    backendMode: ref('api'),
+    activeSession: ref({ gameId: 'runtime-game', mode: 'play', running: true, sseConnected: false }),
+    returnToMatchAvailable: ref(true),
+    liveGame: ref(liveGame),
+    game: ref(replayGame),
+    loading: ref(false),
+    error: ref(''),
+    watchRunning: ref(false),
+    gameHistory: ref([historyGame]),
+    selectedHistoryGameId: ref('runtime-history'),
+    selectedHistoryGame: ref(historyGame),
+    historyWorkspaceTab: ref('archive'),
+    historyLoading: ref(true),
+    historyNotice: ref({ type: 'warning', message: 'history warning' }),
+    replayGame: ref(replayGame),
+    isReplayMode: ref(true),
+    replayCursor: ref(3),
+    replayPlaying: ref(false),
+    replaySpeed: ref(1.5),
+    matchNotice: ref({ type: 'success', message: 'match hydrated' })
+  }
+
+  const payloads = hydrateStoresFromRuntime(runtime, {
+    session: sessionStore,
+    game: gameStore,
+    history: historyStore,
+    replay: replayStore,
+    ui: uiStore
+  })
+
+  assert.deepEqual(runtimeHydrationKeys.session, [
+    'currentView',
+    'backendMode',
+    'activeSession',
+    'returnToMatchAvailable'
+  ])
+  assert.equal(payloads.game.liveGame?.game_id, 'runtime-game')
+  assert.equal(payloads.game.game?.game_id, 'runtime-replay')
+  assert.equal(sessionStore.currentView, 'match')
+  assert.equal(sessionStore.activeSession.gameId, 'runtime-game')
+  assert.equal(gameStore.liveGame?.game_id, 'runtime-game')
+  assert.equal(historyStore.games[0].game_id, 'runtime-history')
+  assert.equal(historyStore.historyWorkspaceTab, 'archive')
+  assert.equal(replayStore.replayGame?.game_id, 'runtime-replay')
+  assert.equal(replayStore.replaySpeed, 1.5)
+  assert.deepEqual(uiStore.notice, { type: 'success', message: 'match hydrated' })
+})
+
+test('runtime hydration helper creates typed payloads without mutating stores', () => {
+  setActivePinia(createPinia())
+  const store = useGameStore()
+  const liveGame = gameFixture('payload-game')
+
+  const payloads = createStoreRuntimeHydration({
+    currentView: ref('logs'),
+    liveGame: ref(liveGame),
+    replayCursor: ref(0),
+    replaySpeed: ref(0)
+  })
+
+  assert.equal(payloads.session.currentView, 'logs')
+  assert.equal(payloads.game.liveGame?.game_id, 'payload-game')
+  assert.equal(payloads.replay.replayCursor, 0)
+  assert.equal(payloads.replay.replaySpeed, 0)
+  assert.equal(store.liveGame, null)
 })

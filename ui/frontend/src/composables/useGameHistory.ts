@@ -9,6 +9,7 @@ import {
   displayPhaseLabel,
   normalizeHistoryDisplayText
 } from '../components/history/historyDisplay.ts'
+import { syncRouterToLegacyView } from '../router/legacyViewNavigation'
 import { isReturnableGame, writeViewHash } from './gameSession.ts'
 import {
   AUTHORITATIVE_DEATH_EVENTS,
@@ -138,7 +139,9 @@ function logsHash({ gameId = '', workspace = '' } = {}) {
 
 function writeLogsHash(options = {}) {
   if (typeof window === 'undefined') return
-  window.location.hash = logsHash(options)
+  const hash = logsHash(options)
+  window.location.hash = hash
+  syncRouterToLegacyView('logs', hash)
 }
 
 function normalizeHistoryPhase(phase = 'setup') {
@@ -1364,7 +1367,10 @@ function useGameHistory(state, options = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'evolution'
     const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
-    if (hash.split('?')[0] === '#evolution') return
+    if (hash.split('?')[0] === '#evolution') {
+      syncRouterToLegacyView('evolution', hash)
+      return
+    }
     writeViewHash('evolution')
   }
 
@@ -1372,7 +1378,10 @@ function useGameHistory(state, options = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'benchmark'
     const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
-    if (hash.split('?')[0] === '#benchmark') return
+    if (hash.split('?')[0] === '#benchmark') {
+      syncRouterToLegacyView('benchmark', hash)
+      return
+    }
     writeViewHash('benchmark')
   }
 

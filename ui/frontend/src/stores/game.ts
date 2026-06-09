@@ -2,6 +2,14 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { Game } from '../types/game'
 
+export interface GameRuntimeHydration {
+  liveGame?: Game | null
+  game?: Game | null
+  loading?: boolean | null
+  error?: string | null
+  watchRunning?: boolean | null
+}
+
 export const useGameStore = defineStore('game', () => {
   const liveGame = ref<Game | null>(null)
   const loading = ref(false)
@@ -20,16 +28,10 @@ export const useGameStore = defineStore('game', () => {
     watchRunning.value = false
   }
 
-  function hydrateFromRuntime(runtime: {
-    liveGame?: Game | null
-    game?: Game | null
-    loading?: boolean
-    error?: string
-    watchRunning?: boolean
-  }): void {
-    liveGame.value = runtime.liveGame || runtime.game || null
+  function hydrateFromRuntime(runtime: GameRuntimeHydration): void {
+    liveGame.value = runtime.liveGame ?? runtime.game ?? null
     loading.value = Boolean(runtime.loading)
-    error.value = runtime.error || ''
+    error.value = runtime.error ?? ''
     watchRunning.value = Boolean(runtime.watchRunning)
   }
 

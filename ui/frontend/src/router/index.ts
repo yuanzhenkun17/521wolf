@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { installLegacyHashBridge, syncInitialRouteToLegacyHash } from './legacyHashRedirect'
+import { registerLegacyViewRouter } from './legacyViewNavigation'
 
 const LobbyPage = () => import('../pages/LobbyPage.vue')
 const MatchPage = () => import('../pages/MatchPage.vue')
@@ -24,4 +25,5 @@ export const router = createRouter({
   routes
 })
 
+registerLegacyViewRouter(router)
 installLegacyHashBridge(router)
