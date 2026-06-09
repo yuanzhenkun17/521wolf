@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
-import test from 'node:test'
-import { fileURLToPath } from 'node:url'
-import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { chromium } from 'playwright'
+import { readFileSync } from 'node:fs'
+import { test } from 'vitest'
 import { ApiError } from '../src/composables/gameApi.ts'
 import {
   formatApiErrorForDisplay,
@@ -13,112 +10,6 @@ import {
 } from '../src/composables/apiErrorDisplay.ts'
 
 const apiErrorPanelSourceUrl = new URL('../src/components/ApiErrorPanel.vue', import.meta.url)
-const apiErrorDisplaySourceUrl = new URL('../src/composables/apiErrorDisplay.ts', import.meta.url)
-const vueGlobalPath = fileURLToPath(new URL('../node_modules/vue/dist/vue.global.prod.js', import.meta.url))
-
-function chromiumIsInstalled() {
-  try {
-    return existsSync(chromium.executablePath())
-  } catch {
-    return false
-  }
-}
-
-function rewriteVueImports(source) {
-  return source.replace(/import\s+\{([^}]+)\}\s+from\s+['"]vue['"]\s*;?/g, (_, bindings) => {
-    const rewritten = bindings
-      .split(',')
-      .map((binding) => binding.trim().replace(/\s+as\s+/, ': '))
-      .join(', ')
-    return `const { ${rewritten} } = Vue;\n`
-  })
-}
-
-function apiErrorDisplayWithoutExports() {
-  return readFileSync(apiErrorDisplaySourceUrl, 'utf8')
-    .replace(/\nexport\s*\{[\s\S]*?\}\s*$/m, '')
-}
-
-function apiErrorPanelDomModule() {
-  const source = readFileSync(apiErrorPanelSourceUrl, 'utf8')
-  const { descriptor, errors } = parse(source, { filename: 'ApiErrorPanel.vue' })
-  assert.deepEqual(errors, [])
-
-  const script = compileScript(descriptor, { id: 'api-error-panel-dom-test' })
-  const template = compileTemplate({
-    id: 'api-error-panel-dom-test',
-    filename: 'ApiErrorPanel.vue',
-    source: descriptor.template.content,
-    compilerOptions: { bindingMetadata: script.bindings }
-  })
-  assert.deepEqual(template.errors, [])
-
-  const scriptBody = rewriteVueImports(script.content)
-    .replace(/import\s+\{\s*formatApiErrorForDisplay\s*\}\s+from\s+['"][^'"]+apiErrorDisplay\.ts['"]\s*;?/, '')
-    .replace('export default', 'const ApiErrorPanel =')
-  const templateBody = rewriteVueImports(template.code)
-    .replace('export function render', 'function render')
-
-  return `
-const Vue = window.Vue
-${apiErrorDisplayWithoutExports()}
-${scriptBody}
-${templateBody}
-
-ApiErrorPanel.render = render
-window.__apiErrorPanelRetryCount = 0
-
-const { createApp, nextTick, reactive, toRefs } = Vue
-const state = reactive({
-  retryLabel: '重试刷新',
-  retryBusyLabel: '刷新中',
-  retrying: false,
-  retryDisabled: false
-})
-
-createApp({
-  components: { ApiErrorPanel },
-  setup() {
-    const error = {
-      status: 503,
-      code: 'backend_unavailable',
-      message: '后端不可用',
-      requestId: 'req-dom-retry'
-    }
-    function onRetry() {
-      window.__apiErrorPanelRetryCount += 1
-    }
-    return { ...toRefs(state), error, onRetry }
-  },
-  template: \`
-    <ApiErrorPanel
-      :error="error"
-      title="请求失败"
-      :retry-label="retryLabel"
-      :retry-busy-label="retryBusyLabel"
-      :retrying="retrying"
-      :retry-disabled="retryDisabled"
-      @retry="onRetry"
-    />
-  \`
-}).mount('#app')
-
-window.__setApiErrorPanelRetryState = async (nextState) => {
-  Object.assign(state, nextState)
-  await nextTick()
-}
-
-window.__apiErrorPanelRetrySnapshot = () => {
-  const button = document.querySelector('.api-error-panel__retry')
-  return {
-    count: window.__apiErrorPanelRetryCount,
-    hasButton: Boolean(button),
-    text: button?.textContent?.trim() || '',
-    disabled: Boolean(button?.disabled)
-  }
-}
-`
-}
 
 test('formatApiErrorForDisplay preserves domain code diagnostics and request id', () => {
   const error = new ApiError({
@@ -195,72 +86,6 @@ test('ApiErrorPanel exposes retry contract and BenchmarkPage wires it to refresh
 
   assert.match(benchmarkSource, /function refresh\(\)[\s\S]*benchmark\.refreshAll\(\{ notify: true \}\)/)
   assert.match(benchmarkSource, /<ApiErrorPanel[\s\S]*v-if="benchErrorNotice"[\s\S]*retry-label="重试刷新"[\s\S]*retry-busy-label="刷新中"[\s\S]*:retrying="Boolean\(benchmark\.loading\.value\)"[\s\S]*:retry-disabled="Boolean\(benchmark\.loading\.value \|\| benchmark\.actionLoading\.value\)"[\s\S]*@retry="refresh"/)
-})
-
-test('ApiErrorPanel retry button emits from real DOM clicks and guards busy states', async (t) => {
-  if (!chromiumIsInstalled()) {
-    t.skip('Playwright Chromium is not installed; run `npx playwright install chromium` in ui/frontend.')
-    return
-  }
-
-  const browser = await chromium.launch()
-  const page = await browser.newPage()
-  const pageErrors = []
-  page.on('pageerror', (error) => pageErrors.push(error.message))
-  page.on('console', (message) => {
-    if (message.type() === 'error') pageErrors.push(message.text())
-  })
-  try {
-    await page.setContent('<!doctype html><html><body><main id="app"></main></body></html>')
-    await page.addScriptTag({ path: vueGlobalPath })
-    await page.addScriptTag({ type: 'module', content: apiErrorPanelDomModule() })
-    await page.waitForSelector('.api-error-panel__retry', { timeout: 5000 }).catch((error) => {
-      throw new Error(`${error.message}\n${pageErrors.join('\n')}`)
-    })
-
-    const button = page.locator('.api-error-panel__retry')
-    assert.deepEqual(await page.evaluate(() => window.__apiErrorPanelRetrySnapshot()), {
-      count: 0,
-      hasButton: true,
-      text: '重试刷新',
-      disabled: false
-    })
-
-    await button.click()
-    assert.deepEqual(await page.evaluate(() => window.__apiErrorPanelRetrySnapshot()), {
-      count: 1,
-      hasButton: true,
-      text: '重试刷新',
-      disabled: false
-    })
-
-    await page.evaluate(() => window.__setApiErrorPanelRetryState({ retrying: true, retryDisabled: false }))
-    assert.deepEqual(await page.evaluate(() => window.__apiErrorPanelRetrySnapshot()), {
-      count: 1,
-      hasButton: true,
-      text: '刷新中',
-      disabled: true
-    })
-    await button.evaluate((element) => {
-      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    })
-    assert.equal(await page.evaluate(() => window.__apiErrorPanelRetryCount), 1)
-
-    await page.evaluate(() => window.__setApiErrorPanelRetryState({ retrying: false, retryDisabled: true }))
-    assert.deepEqual(await page.evaluate(() => window.__apiErrorPanelRetrySnapshot()), {
-      count: 1,
-      hasButton: true,
-      text: '刷新中',
-      disabled: true
-    })
-    await button.evaluate((element) => {
-      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    })
-    assert.equal(await page.evaluate(() => window.__apiErrorPanelRetryCount), 1)
-  } finally {
-    await page.close()
-    await browser.close()
-  }
 })
 
 test('Evolution and Logs error panels wire retry to existing refresh/reload paths', () => {

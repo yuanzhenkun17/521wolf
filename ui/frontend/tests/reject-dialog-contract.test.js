@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import test from 'node:test'
+import { test } from 'vitest'
 
 const rejectDialog = readFileSync(
   new URL('../src/components/evolution/RejectDialog.vue', import.meta.url),

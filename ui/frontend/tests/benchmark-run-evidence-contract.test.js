@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import test from 'node:test'
+import { test } from 'vitest'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { useEvaluationWorkbench } from '../src/composables/useEvaluationWorkbench.ts'
 

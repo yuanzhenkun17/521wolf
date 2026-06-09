@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import test from 'node:test'
+import { test } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { inflateSync } from 'node:zlib'
 import { chromium } from 'playwright'
@@ -510,7 +510,7 @@ test('mobile viewport Match error panel fixture renders non-empty when Chromium 
     assert.equal(stats.height, summary.viewport.height)
     assert.ok(stats.litSamples >= 5)
     assert.ok(stats.distinctColorBuckets >= 3)
-    t.diagnostic(`mobile screenshot ${stats.width}x${stats.height}; colors=${stats.distinctColorBuckets}; alertTop=${summary.topPx}`)
+    console.info(`mobile screenshot ${stats.width}x${stats.height}; colors=${stats.distinctColorBuckets}; alertTop=${summary.topPx}`)
   } finally {
     await browser?.close()
   }
@@ -1031,7 +1031,7 @@ test('mobile viewport TrustBundleDrawer fixture renders authority and evidence l
     assert.equal(stats.height, summary.viewport.height)
     assert.ok(stats.litSamples >= 5)
     assert.ok(stats.distinctColorBuckets >= 3)
-    t.diagnostic(`trust drawer mobile screenshot ${stats.width}x${stats.height}; colors=${stats.distinctColorBuckets}; links=${hrefs.length}`)
+    console.info(`trust drawer mobile screenshot ${stats.width}x${stats.height}; colors=${stats.distinctColorBuckets}; links=${hrefs.length}`)
   } finally {
     await browser?.close()
   }

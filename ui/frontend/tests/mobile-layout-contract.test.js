@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
-import test from 'node:test'
+import { test } from 'vitest'
 import { chromium } from 'playwright'
 
 function readSource(relativePath) {
@@ -437,7 +437,7 @@ test('390px mobile fixture keeps review evidence and Lab tables from widening th
       'Lab table should keep wide columns inside its own horizontal scroller',
     )
 
-    t.diagnostic(`mobile layout fixture viewport=${summary.viewport.width}x${summary.viewport.height}; labTable=${summary.labTable.clientWidth}/${summary.labTable.scrollWidth}`)
+    console.info(`mobile layout fixture viewport=${summary.viewport.width}x${summary.viewport.height}; labTable=${summary.labTable.clientWidth}/${summary.labTable.scrollWidth}`)
   } finally {
     await browser?.close()
   }

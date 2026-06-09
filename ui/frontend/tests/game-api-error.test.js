@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { ApiError, createGameApi, normalizeApiError } from '../src/composables/gameApi.ts'
 
 async function withFetch(fetchImpl, callback) {

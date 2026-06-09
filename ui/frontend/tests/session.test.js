@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { test } from 'vitest'
 import { createRenderer, nextTick, ref } from 'vue'
 import { useGameState } from '../src/composables/useGameState.ts'
 import { useGameActions } from '../src/composables/useGameActions.ts'

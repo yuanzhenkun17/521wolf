@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import test from 'node:test'
+import { test } from 'vitest'
 
 function reviewSource() {
   return readFileSync(new URL('../src/components/history/ReviewReportPanel.vue', import.meta.url), 'utf8')
