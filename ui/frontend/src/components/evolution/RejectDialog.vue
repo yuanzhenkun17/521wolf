@@ -32,8 +32,8 @@ const summaryItems = computed(() => {
   const items = []
   if (buffer.value.savedLabel) items.push({ key: 'saved', label: '保存', value: buffer.value.savedLabel })
   if (buffer.value.duplicateLabel) items.push({ key: 'duplicate', label: '去重', value: buffer.value.duplicateLabel })
-  if (buffer.value.dedupeKey) items.push({ key: 'dedupe', label: 'Dedupe Key', value: buffer.value.dedupeKey, code: true })
-  if (buffer.value.scope) items.push({ key: 'scope', label: 'Scope', value: buffer.value.scope })
+  if (buffer.value.dedupeKey) items.push({ key: 'dedupe', label: '去重键', value: buffer.value.dedupeKey, code: true })
+  if (buffer.value.scope) items.push({ key: 'scope', label: '范围', value: buffer.value.scope })
   if (buffer.value.similarityScore != null) items.push({ key: 'similarity', label: '相似度', value: scoreLabel(buffer.value.similarityScore) })
   if (buffer.value.overfitScore != null) items.push({ key: 'overfit', label: '过拟合', value: scoreLabel(buffer.value.overfitScore) })
   return items
@@ -80,8 +80,8 @@ function normalizeTags(tags) {
 
 function matchedLabel() {
   const parts = [
-    matched.value.proposalId ? `proposal ${matched.value.proposalId}` : '',
-    matched.value.sourceRunId ? `run ${matched.value.sourceRunId}` : ''
+    matched.value.proposalId ? `提案 ${matched.value.proposalId}` : '',
+    matched.value.sourceRunId ? `运行 ${matched.value.sourceRunId}` : ''
   ].filter(Boolean)
   return parts.join(' · ')
 }
@@ -148,7 +148,7 @@ function confirm() {
       >
         <header class="evo-reject-dialog-head">
           <span>
-            <small>Proposal Reject</small>
+            <small>审计动作</small>
             <h2 id="evo-reject-dialog-title">拒绝提案</h2>
           </span>
           <button type="button" class="evo-ghost-action" :disabled="busy" @click="cancel">取消</button>
@@ -168,7 +168,7 @@ function confirm() {
           data-reject-buffer-summary
         >
           <header>
-            <small>Reject Buffer</small>
+            <small>拒绝缓冲</small>
             <b>{{ bufferStatusLabel() }}</b>
           </header>
           <div v-if="summaryItems.length" class="evo-reject-dialog-buffer-grid">
@@ -183,7 +183,7 @@ function confirm() {
             <span v-for="tag in bufferTags" :key="`buffer-${tag}`">{{ tag }}</span>
           </div>
           <div v-if="hasMatched" class="evo-reject-dialog-match">
-            <small>Matched Rejection</small>
+            <small>命中拒绝记录</small>
             <b v-if="matchedLabel()">{{ matchedLabel() }}</b>
             <p v-if="matched.reason">{{ matched.reason }}</p>
           </div>
@@ -210,8 +210,8 @@ function confirm() {
 
         <section class="evo-reject-dialog-field" data-review-metadata-tags>
           <span>
-            <small>Review Tags</small>
-            <b>Reject metadata</b>
+            <small>审核标签</small>
+            <b>拒绝元数据</b>
           </span>
           <div class="evo-reject-dialog-tag-editor">
             <input
@@ -237,7 +237,7 @@ function confirm() {
               {{ tag }} ×
             </button>
           </div>
-          <p>Tags 会随拒绝原因写入后端 reject buffer，用于去重和过拟合审计。</p>
+          <p>标签会随拒绝原因写入后端拒绝缓冲，用于去重和过拟合审计。</p>
         </section>
 
         <footer class="evo-reject-dialog-actions">

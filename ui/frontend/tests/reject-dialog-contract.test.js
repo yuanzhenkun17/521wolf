@@ -58,7 +58,7 @@ test('RejectDialog submits tags through the rejectProposal API and keeps local r
 
   assert.match(rejectDialog, /const emit = defineEmits\(\['cancel', 'confirm'\]\)/)
   assert.match(rejectDialog, /metadata:\s*\{\s*\n\s*tags: \[\.\.\.tagDrafts\.value\],\s*\n\s*rejectBuffer: buffer\.value/)
-  assert.match(rejectDialog, /Tags 会随拒绝原因写入后端 reject buffer，用于去重和过拟合审计。/)
+  assert.match(rejectDialog, /标签会随拒绝原因写入后端拒绝缓冲，用于去重和过拟合审计。/)
   assert.match(rejectDialog, /data-review-metadata-tags/)
   assert.match(rejectDialog, /function normalizeTags\(tags\)/)
   assert.match(rejectDialog, /function handleTagKeydown\(event\)[\s\S]*event\.key !== 'Enter' && event\.key !== ','/)
@@ -87,7 +87,7 @@ test('RejectDialog summarizes reject buffer duplicate similarity and overfit ris
   assert.match(rejectDialog, /buffer\.value\.similarityScore != null/)
   assert.match(rejectDialog, /buffer\.value\.overfitScore != null/)
   assert.match(rejectDialog, /const hasMatched = computed\(\(\) => Boolean\(matched\.value\.proposalId \|\| matched\.value\.sourceRunId \|\| matched\.value\.reason\)\)/)
-  assert.match(rejectDialog, /Matched Rejection/)
+  assert.match(rejectDialog, /命中拒绝记录/)
   assert.match(rejectDialog, /buffer\.value\.overfitEvidence/)
 })
 

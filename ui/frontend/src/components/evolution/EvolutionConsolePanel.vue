@@ -242,7 +242,7 @@ function childRunKey(run, index) {
         <div class="evo-policy-note">
           <small>发布策略</small>
           <b>评审门禁</b>
-          <span>晋升必须经过 proposal review、gate 与 trust bundle。</span>
+          <span>晋升必须经过提案审核、门禁与信任包。</span>
         </div>
       </div>
 
@@ -439,7 +439,7 @@ function childRunKey(run, index) {
                 <span v-if="battleSideMeta(battleResult(evo.selectedRun.value), 'candidate')">
                   ({{ battleSideMeta(battleResult(evo.selectedRun.value), 'candidate') }})
                 </span>
-                · delta {{ signedRateLabel(battleDelta(battleResult(evo.selectedRun.value))) }}
+                · 差值 {{ signedRateLabel(battleDelta(battleResult(evo.selectedRun.value))) }}
               </p>
               <p>
                 跳过 {{ battleSkippedLabel(battleResult(evo.selectedRun.value)) }}

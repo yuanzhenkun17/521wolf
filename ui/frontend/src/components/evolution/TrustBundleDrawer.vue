@@ -41,10 +41,10 @@ const consistencySummary = computed(() => {
   const mismatches = rows.filter((row) => row.status === 'mismatch').length
   const missing = rows.filter((row) => row.status === 'missing').length
   const unknown = rows.filter((row) => row.status === 'unknown').length
-  if (mismatches) return `${mismatches} mismatch`
-  if (missing) return `${missing} missing`
-  if (unknown) return `${unknown} unknown`
-  return rows.length ? 'ok' : '—'
+  if (mismatches) return `${mismatches} 项不一致`
+  if (missing) return `${missing} 项缺失`
+  if (unknown) return `${unknown} 项未知`
+  return rows.length ? '通过' : '—'
 })
 
 function display(value, fallback = '—') {
@@ -135,7 +135,7 @@ function seedAuditBadges(seed) {
   if (rankable) {
     badges.push({
       key: 'rankable',
-      label: 'rankable',
+      label: '入榜',
       value: rankable,
       tone: rankable === '未入榜' ? 'warn' : 'ok'
     })
@@ -143,7 +143,7 @@ function seedAuditBadges(seed) {
   if (status && status !== rankable) {
     badges.push({
       key: 'status',
-      label: 'status',
+      label: '状态',
       value: status,
       tone: ['失败', '超时', '未入榜'].includes(status) ? 'warn' : 'neutral'
     })
@@ -151,7 +151,7 @@ function seedAuditBadges(seed) {
   if (failure) {
     badges.push({
       key: 'failure',
-      label: 'failure',
+      label: '失败',
       value: failure,
       tone: 'danger'
     })
@@ -218,12 +218,12 @@ async function refresh() {
         class="evo-trust-drawer"
         role="dialog"
         aria-modal="true"
-        aria-label="Trust Bundle 审计"
+        aria-label="信任包审计"
       >
         <header class="evo-trust-drawer-head">
           <span>
-            <small>{{ audit.sourceLabel || 'Trust Bundle' }}</small>
-            <h2>Trust Bundle</h2>
+            <small>{{ audit.sourceLabel || '信任包' }}</small>
+            <h2>信任包</h2>
           </span>
           <div class="evo-trust-drawer-actions">
             <button type="button" class="evo-ghost-action" :disabled="loading" @click="refresh">
@@ -235,13 +235,13 @@ async function refresh() {
 
         <div :class="['evo-trust-authority', authorityClass]">
           <b>{{ authorityLabel }}</b>
-          <span>{{ authorityMessage || '当前展示页面缓存中的 Trust Bundle。' }}</span>
+          <span>{{ authorityMessage || '当前展示页面缓存中的信任包。' }}</span>
           <em v-if="mismatchLabels.length">{{ mismatchLabels.join(' / ') }}</em>
         </div>
 
         <section v-if="consistencyChecks.length" class="evo-trust-section evo-trust-consistency">
           <header>
-            <h3>Consistency Checks</h3>
+            <h3>一致性检查</h3>
             <b>{{ consistencySummary }}</b>
           </header>
           <div class="evo-trust-check-list">
@@ -262,19 +262,19 @@ async function refresh() {
                 class="evo-trust-check-values"
               >
                 <span v-if="check.cached_value">
-                  <small>cached</small>
+                  <small>缓存</small>
                   <code>{{ check.cached_value }}</code>
                 </span>
                 <span v-if="check.registry_value">
-                  <small>registry</small>
+                  <small>版本库</small>
                   <code>{{ check.registry_value }}</code>
                 </span>
                 <span v-if="check.source_run_value">
-                  <small>source</small>
+                  <small>来源运行</small>
                   <code>{{ check.source_run_value }}</code>
                 </span>
                 <span v-if="check.authority_value">
-                  <small>authority</small>
+                  <small>权威包</small>
                   <code>{{ check.authority_value }}</code>
                 </span>
               </div>
@@ -283,7 +283,7 @@ async function refresh() {
         </section>
 
         <div v-if="!audit.hasTrustBundle" class="evo-trust-empty">
-          <strong>缺少 Trust Bundle</strong>
+          <strong>缺少信任包</strong>
           <span>{{ audit.emptyMessage || '未收到 trust_bundle_id 或 bundle_hash。' }}</span>
         </div>
 
@@ -319,15 +319,15 @@ async function refresh() {
 
         <section class="evo-trust-completeness" :data-status="completeness.status || 'unknown'">
           <span>
-            <small>Completeness</small>
+            <small>完整度</small>
             <b>{{ completeness.statusLabel || '未上报' }}</b>
           </span>
           <span>
-            <small>Score</small>
+            <small>分数</small>
             <b>{{ scoreLabel(completeness.score) }}</b>
           </span>
           <div>
-            <small>Missing</small>
+            <small>缺失项</small>
             <div v-if="missingLabels.length" class="evo-trust-chip-row">
               <span v-for="label in missingLabels" :key="label">{{ label }}</span>
             </div>
@@ -337,7 +337,7 @@ async function refresh() {
 
         <section class="evo-trust-section">
           <header>
-            <h3>Training Evidence</h3>
+            <h3>训练证据</h3>
             <b>{{ trainingGameIds.length }}</b>
           </header>
           <div v-if="trainingRows.length" class="evo-trust-id-grid">
@@ -352,7 +352,7 @@ async function refresh() {
 
         <section class="evo-trust-section">
           <header>
-            <h3>Proposal Evidence</h3>
+            <h3>提案证据</h3>
             <b>{{ proposalIds.length }}</b>
           </header>
           <div v-if="proposalRows.length" class="evo-trust-id-grid">
@@ -367,11 +367,11 @@ async function refresh() {
 
         <section class="evo-trust-section">
           <header>
-            <h3>Paired Seeds</h3>
+            <h3>配对种子</h3>
             <b>{{ pairedSeeds.length }}</b>
           </header>
           <div v-if="seedRows.length" class="evo-trust-seed-table">
-            <span>Seed</span>
+            <span>种子</span>
             <span>基线</span>
             <span>候选</span>
             <span>差值</span>

@@ -71,10 +71,10 @@ const gateDeepLinkLabel = computed(() => deepLinkStateLabel(gateDeepLinkState.va
 const deepLinkInlineMessages = computed(() => {
   const messages = []
   if (deepLinkProposalId.value && !proposalDeepLinkMatch.value) {
-    messages.push(`Proposal ${deepLinkStateLabel(proposalDeepLinkState.value)}: ${deepLinkProposalId.value}`)
+    messages.push(`提案 ${deepLinkStateLabel(proposalDeepLinkState.value)}: ${deepLinkProposalId.value}`)
   }
   if (deepLinkGateReportId.value && !gateDeepLinkMatched.value) {
-    messages.push(`Gate ${deepLinkStateLabel(gateDeepLinkState.value)}: ${deepLinkGateReportId.value}`)
+    messages.push(`门禁 ${deepLinkStateLabel(gateDeepLinkState.value)}: ${deepLinkGateReportId.value}`)
   }
   return messages
 })
@@ -100,7 +100,13 @@ const rejectableCount = computed(() => rejectableProposals.value.length)
 const isBulkAccepting = computed(() => bulkReviewAction.value === 'accept')
 const isBulkRejecting = computed(() => bulkReviewAction.value === 'reject')
 const canBulkAccept = computed(() => acceptableCount.value > 0 && !isProposalActionBusy.value)
-const canBulkReject = computed(() => rejectableCount.value > 0 && !isProposalActionBusy.value)
+const bulkRejectReasonText = computed(() => textValue(bulkRejectReason.value))
+const bulkRejectDisabledReason = computed(() => (
+  bulkRejectReasonText.value ? '' : '批量拒绝必须填写原因。'
+))
+const canBulkReject = computed(() => (
+  rejectableCount.value > 0 && !isProposalActionBusy.value && !bulkRejectDisabledReason.value
+))
 const canOpenTrustBundle = computed(() => hasRun.value && !isBatch.value)
 const gateJudgeEvidence = computed(() => normalizeJudgeEvidence(gate.value, gate.value.releaseGate))
 const attributionJudgeEvidence = computed(() => normalizeJudgeEvidence(
@@ -111,8 +117,8 @@ const hasGateJudgeEvidence = computed(() => hasJudgeEvidence(gateJudgeEvidence.v
 const hasAttributionJudgeEvidence = computed(() => hasJudgeEvidence(attributionJudgeEvidence.value))
 const trustAuditButtonLabel = computed(() => {
   return trustBundle.value.trust_bundle_id || trustBundle.value.trustBundleId || trustBundle.value.bundle_hash || trustBundle.value.bundleHash
-    ? 'Trust 审计'
-    : 'Trust 缺失'
+    ? '信任包审计'
+    : '信任包缺失'
 })
 
 const JUDGE_EVIDENCE_FIELD_ALIASES = {
@@ -185,8 +191,8 @@ function rejectBufferStatusLabel(buffer = {}) {
 
 function rejectBufferMatchedLabel(matched = {}) {
   const parts = [
-    matched.proposalId ? `proposal ${matched.proposalId}` : '',
-    matched.sourceRunId ? `run ${matched.sourceRunId}` : ''
+    matched.proposalId ? `提案 ${matched.proposalId}` : '',
+    matched.sourceRunId ? `运行 ${matched.sourceRunId}` : ''
   ].filter(Boolean)
   return parts.join(' · ')
 }
@@ -307,7 +313,7 @@ function proposalGameEvidenceTargets(proposal, ids = [], counter = false) {
     const gameId = textValue(id)
     return {
       key: `${counter ? 'counter' : 'support'}-${proposalKey(proposal, 0)}-${gameId}`,
-      label: counter ? 'Counter' : 'Game',
+      label: counter ? '反证局' : '样本局',
       className: counter ? 'counter' : '',
       target: {
         history_game_id: gameId,
@@ -322,7 +328,7 @@ function proposalGameEvidenceTargets(proposal, ids = [], counter = false) {
 function proposalFallbackEvidenceTarget(proposal) {
   return {
     key: `proposal-${proposalKey(proposal, 0)}`,
-    label: 'Proposal',
+    label: '提案',
     className: 'proposal',
     kind: 'proposal',
     target: {
@@ -495,6 +501,7 @@ async function confirmRejectDialog(payload) {
 
 async function runBulkReview(action, items) {
   if (isProposalActionBusy.value || !items.length) return
+  if (action === 'reject' && !bulkRejectReasonText.value) return
   bulkReviewAction.value = action
   try {
     const runId = props.evo.selectedRunId.value
@@ -502,7 +509,7 @@ async function runBulkReview(action, items) {
       if (action === 'accept') {
         await props.evo.acceptProposal(proposal, runId)
       } else {
-        await props.evo.rejectProposal(proposal, runId, bulkRejectReason.value)
+        await props.evo.rejectProposal(proposal, runId, bulkRejectReasonText.value)
       }
       if (hasBlockingReviewError()) break
     }
@@ -581,6 +588,7 @@ function openTrustBundleAudit() {
             placeholder="批量拒绝原因"
             :disabled="isProposalActionBusy"
           />
+          <em v-if="bulkRejectDisabledReason">{{ bulkRejectDisabledReason }}</em>
         </label>
         <div class="evo-proposal-bulk-actions">
           <button
@@ -609,22 +617,22 @@ function openTrustBundleAudit() {
         :data-deep-link-gate-id="deepLinkGateReportId || null"
         :data-deep-link-state="gateDeepLinkState || null"
       >
-        <span><small>Gate</small><b>{{ gate.decisionLabel || '—' }}</b></span>
-        <span><small>Release</small><b>{{ gate.releaseLabel || '—' }}</b></span>
+        <span><small>门禁</small><b>{{ gate.decisionLabel || '—' }}</b></span>
+        <span><small>发布</small><b>{{ gate.releaseLabel || '—' }}</b></span>
         <span><small>胜率差</small><b>{{ percentLabel(gate.winRateDelta) }}</b></span>
         <span><small>角色分差</small><b>{{ formatNumber(gate.roleScoreDelta) }}</b></span>
-        <span><small>Paired Seeds</small><b>{{ summary.pairedSeedCount || gate.pairedValidCount || pairedSeeds.length || 0 }}</b></span>
-        <span><small>Scenario</small><b>{{ summary.scenarioCount || gate.scenarioCount || scenarioReplay.scenario_count || 0 }}</b></span>
-        <span><small>Policy</small><b>{{ summary.scenarioPolicyViolationCount || gate.scenarioPolicyViolationCount || scenarioReplay.policy_violation_count || 0 }}</b></span>
-        <span><small>Attribution</small><b>{{ attributionLabel() }}</b></span>
-        <span><small>Trust</small><b>{{ formatNumber(summary.trustCompletenessScore ?? trustBundle.completeness?.score ?? gate.trustCompletenessScore) }}</b></span>
+        <span><small>配对种子</small><b>{{ summary.pairedSeedCount || gate.pairedValidCount || pairedSeeds.length || 0 }}</b></span>
+        <span><small>场景复盘</small><b>{{ summary.scenarioCount || gate.scenarioCount || scenarioReplay.scenario_count || 0 }}</b></span>
+        <span><small>策略违规</small><b>{{ summary.scenarioPolicyViolationCount || gate.scenarioPolicyViolationCount || scenarioReplay.policy_violation_count || 0 }}</b></span>
+        <span><small>归因</small><b>{{ attributionLabel() }}</b></span>
+        <span><small>信任包</small><b>{{ formatNumber(summary.trustCompletenessScore ?? trustBundle.completeness?.score ?? gate.trustCompletenessScore) }}</b></span>
         <span
           v-if="gateDeepLinkLabel"
           class="evo-deep-link-badge evo-gate-deep-link-marker"
           data-deep-link-marker="gate"
           :data-deep-link-state="gateDeepLinkState"
         >
-          <small>Deep Link</small>
+          <small>定位链接</small>
           <b>{{ gateDeepLinkLabel }}</b>
         </span>
       </div>
@@ -648,8 +656,8 @@ function openTrustBundleAudit() {
           data-evolution-gate-judge-evidence
         >
           <header>
-            <small>Gate Evidence</small>
-            <b>{{ gateReportId || gate.decisionLabel || 'Gate' }}</b>
+            <small>门禁证据</small>
+            <b>{{ gateReportId || gate.decisionLabel || '门禁' }}</b>
           </header>
           <JudgeEvidencePanel
             :evidence="gateJudgeEvidence"
@@ -662,7 +670,7 @@ function openTrustBundleAudit() {
           data-evolution-attribution-judge-evidence
         >
           <header>
-            <small>Attribution Evidence</small>
+            <small>归因证据</small>
             <b>{{ proposalAttribution.statusLabel || attributionLabel() }}</b>
           </header>
           <JudgeEvidencePanel
@@ -716,19 +724,19 @@ function openTrustBundleAudit() {
             </p>
             <div v-if="hasHypothesisDetails(proposal)" class="evo-hypothesis-grid">
               <div v-if="proposal.hypothesis" class="wide">
-                <small>Hypothesis</small>
+                <small>假设</small>
                 <p>{{ proposal.hypothesis }}</p>
               </div>
               <div v-if="proposal.triggerCondition">
-                <small>Trigger</small>
+                <small>触发条件</small>
                 <p>{{ proposal.triggerCondition }}</p>
               </div>
               <div v-if="proposal.expectedEffect">
-                <small>Expected</small>
+                <small>预期效果</small>
                 <p>{{ proposal.expectedEffect }}</p>
               </div>
               <div v-if="proposal.metricTargetRows.length">
-                <small>Metrics</small>
+                <small>指标目标</small>
                 <dl>
                   <template v-for="metric in proposal.metricTargetRows" :key="metric.name">
                     <dt>{{ metric.name }}</dt>
@@ -737,7 +745,7 @@ function openTrustBundleAudit() {
                 </dl>
               </div>
               <div v-if="hasProposalEvidenceTargets(proposal)">
-                <small>Evidence</small>
+                <small>证据</small>
                 <div class="evo-id-list evo-evidence-link-list">
                   <EvidenceLink
                     v-for="target in proposalEvidenceTargets(proposal)"
@@ -752,7 +760,7 @@ function openTrustBundleAudit() {
                 </div>
               </div>
               <div v-if="proposal.preflightReasons.length" class="wide">
-                <small>Preflight</small>
+                <small>预检</small>
                 <div class="evo-proposal-tags compact">
                   <span v-for="reason in proposal.preflightReasons" :key="`preflight-${proposal.id}-${reason}`">{{ reason }}</span>
                 </div>
@@ -775,7 +783,7 @@ function openTrustBundleAudit() {
               data-reject-buffer-panel
             >
               <header>
-                <small>Reject Buffer</small>
+                <small>拒绝缓冲</small>
                 <b>{{ rejectBufferStatusLabel(proposal.rejectBuffer) }}</b>
               </header>
               <div class="evo-reject-buffer-grid">
@@ -786,10 +794,10 @@ function openTrustBundleAudit() {
                   <small>去重</small><b>{{ proposal.rejectBuffer.duplicateLabel }}</b>
                 </span>
                 <span v-if="proposal.rejectBuffer.dedupeKey">
-                  <small>Dedupe Key</small><code>{{ proposal.rejectBuffer.dedupeKey }}</code>
+                  <small>去重键</small><code>{{ proposal.rejectBuffer.dedupeKey }}</code>
                 </span>
                 <span v-if="proposal.rejectBuffer.scope">
-                  <small>Scope</small><b>{{ proposal.rejectBuffer.scope }}</b>
+                  <small>范围</small><b>{{ proposal.rejectBuffer.scope }}</b>
                 </span>
                 <span v-if="proposal.rejectBuffer.similarityScore != null">
                   <small>相似度</small><b>{{ scoreLabel(proposal.rejectBuffer.similarityScore) }}</b>
@@ -810,7 +818,7 @@ function openTrustBundleAudit() {
                 v-if="proposal.rejectBuffer.matched.proposalId || proposal.rejectBuffer.matched.sourceRunId || proposal.rejectBuffer.matched.reason"
                 class="evo-reject-buffer-match"
               >
-                <small>Matched Rejection</small>
+                <small>命中拒绝记录</small>
                 <b v-if="rejectBufferMatchedLabel(proposal.rejectBuffer.matched)">
                   {{ rejectBufferMatchedLabel(proposal.rejectBuffer.matched) }}
                 </b>
@@ -834,7 +842,7 @@ function openTrustBundleAudit() {
               class="evo-reject-metadata-preview"
               data-review-metadata-preview
             >
-              <small>Review Tags</small>
+              <small>审核标签</small>
               <span v-for="tag in rejectMetadataTags(proposal, index)" :key="`review-tag-${proposalKey(proposal, index)}-${tag}`">
                 {{ tag }}
               </span>
@@ -854,9 +862,9 @@ function openTrustBundleAudit() {
       </div>
 
       <div v-if="pairedSeeds.length" class="evo-paired-seeds">
-        <h3>Paired Seed 明细</h3>
+        <h3>配对种子明细</h3>
         <div class="evo-paired-table">
-          <span>Seed</span>
+          <span>种子</span>
           <span>基线</span>
           <span>候选</span>
           <span>差值</span>
@@ -945,6 +953,13 @@ function openTrustBundleAudit() {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.evo-proposal-bulk-reason em {
+  color: var(--evo-danger);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .evo-proposal-bulk-counts b {

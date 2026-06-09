@@ -54,10 +54,10 @@ const versionAuditFields = computed(() => {
   const data = versionDetail.value || {}
   const provenance = data.provenance || {}
   return [
-    { key: 'trust', label: 'Trust', value: data.trust_bundle_id || data.trustBundleId || provenance.trust_bundle_id || provenance.trustBundleId },
+    { key: 'trust', label: '信任包', value: data.trust_bundle_id || data.trustBundleId || provenance.trust_bundle_id || provenance.trustBundleId },
     { key: 'hash', label: 'Hash', value: data.bundle_hash || data.bundleHash || provenance.bundle_hash || provenance.bundleHash },
-    { key: 'gate', label: 'Gate', value: data.gate_report_id || data.gateReportId || provenance.gate_report_id || provenance.gateReportId },
-    { key: 'source', label: 'Source Run', value: data.source_run_id || data.sourceRunId || provenance.source_run_id || provenance.sourceRunId }
+    { key: 'gate', label: '门禁报告', value: data.gate_report_id || data.gateReportId || provenance.gate_report_id || provenance.gateReportId },
+    { key: 'source', label: '来源运行', value: data.source_run_id || data.sourceRunId || provenance.source_run_id || provenance.sourceRunId }
   ].filter((field) => String(field.value || '').trim())
 })
 
@@ -170,6 +170,9 @@ function openVersionTrustAudit() {
           <span>
             <strong>{{ version.short }}</strong>
             <small>{{ versionSourceLabel(version) }} · {{ version.createdLabel }}</small>
+            <small v-if="version.rollbackDisabledReason" class="evo-version-blocked-reason">
+              回滚不可用：{{ version.rollbackDisabledReason }}
+            </small>
           </span>
           <div class="evo-version-actions">
             <button
@@ -220,7 +223,7 @@ function openVersionTrustAudit() {
               <small>{{ field.label }}</small>
               <code>{{ auditFieldText(field.value) }}</code>
             </span>
-            <button type="button" class="evo-ghost-action" @click="openVersionTrustAudit">Trust 审计</button>
+            <button type="button" class="evo-ghost-action" @click="openVersionTrustAudit">信任包审计</button>
           </div>
 
           <ul v-if="evo.selectedVersionDetail.value.data.skills?.length" class="evo-version-skill-list">

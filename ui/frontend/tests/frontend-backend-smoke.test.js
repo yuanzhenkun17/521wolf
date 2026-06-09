@@ -338,7 +338,7 @@ test('History phase summary and Evolution publish policy avoid misleading eviden
   assert.match(logsPage, /class="phase-evidence-title">阶段摘要<\/span>/)
   assert.doesNotMatch(logsPage, /class="phase-evidence-title">关键证据<\/span>/)
 
-  assert.match(consolePanel, /class="evo-policy-note"[\s\S]*<small>发布策略<\/small>[\s\S]*<b>评审门禁<\/b>[\s\S]*proposal review、gate 与 trust bundle/)
+  assert.match(consolePanel, /class="evo-policy-note"[\s\S]*<small>发布策略<\/small>[\s\S]*<b>评审门禁<\/b>[\s\S]*提案审核、门禁与信任包/)
   assert.match(consolePanel, /<small>发布策略<\/small><b>\{\{ evo\.selectedRun\.value\.config\?\.auto_promote \? '评审门禁' : '仅训练记录' \}\}<\/b>/)
   assert.doesNotMatch(consolePanel, /<select v-model="evo\.form\.value\.auto_promote">/)
   assert.match(workbench, /function autoPromoteField\(\)[\s\S]*return Boolean\(form\.value\.auto_promote\)/)
@@ -543,8 +543,8 @@ test('EvolutionProposalReviewPanel source contract highlights proposal and gate 
   assert.match(panel, /:data-deep-link-proposal-id="proposalDeepLinkMatched\(proposal\) \? deepLinkProposalId : null"/)
   assert.match(panel, /data-deep-link-marker="proposal"/)
   assert.match(panel, /class="evo-deep-link-inline"/)
-  assert.match(panel, /Proposal \$\{deepLinkStateLabel\(proposalDeepLinkState\.value\)\}: \$\{deepLinkProposalId\.value\}/)
-  assert.match(panel, /Gate \$\{deepLinkStateLabel\(gateDeepLinkState\.value\)\}: \$\{deepLinkGateReportId\.value\}/)
+  assert.match(panel, /提案 \$\{deepLinkStateLabel\(proposalDeepLinkState\.value\)\}: \$\{deepLinkProposalId\.value\}/)
+  assert.match(panel, /门禁 \$\{deepLinkStateLabel\(gateDeepLinkState\.value\)\}: \$\{deepLinkGateReportId\.value\}/)
 
   assert.match(gateTargetBlock, /border:\s*1px solid rgba\(139,\s*108,\s*50,\s*0\.26\)/)
   assert.match(gateTargetBlock, /background:\s*rgba\(139,\s*108,\s*50,\s*0\.045\)/)
@@ -570,14 +570,16 @@ test('EvolutionProposalReviewPanel source contract supports bulk proposal review
   assert.match(panel, /const acceptableProposals = computed\(\(\) => pendingReviewProposals\.value\.filter\(canBulkAcceptProposal\)\)/)
   assert.match(panel, /const rejectableProposals = computed\(\(\) => pendingReviewProposals\.value\.filter\(canBulkRejectProposal\)\)/)
   assert.match(panel, /const canBulkAccept = computed\(\(\) => acceptableCount\.value > 0 && !isProposalActionBusy\.value\)/)
-  assert.match(panel, /const canBulkReject = computed\(\(\) => rejectableCount\.value > 0 && !isProposalActionBusy\.value\)/)
+  assert.match(panel, /const bulkRejectReasonText = computed\(\(\) => textValue\(bulkRejectReason\.value\)\)/)
+  assert.match(panel, /const bulkRejectDisabledReason = computed\(\(\) =>/)
+  assert.match(panel, /const canBulkReject = computed\(\(\) => \([\s\S]*rejectableCount\.value > 0 && !isProposalActionBusy\.value && !bulkRejectDisabledReason\.value/)
 
   assert.match(panel, /function isPendingReviewProposal\(proposal\)[\s\S]*!isAccepted\(proposal\) && !isRejected\(proposal\)/)
   assert.match(panel, /function rowActionDisabled\(proposal, action\)[\s\S]*if \(isBulkReviewing\.value\) return true[\s\S]*if \(actionLoading\.value && !rowActionLoading\(proposal, action\)\) return true/)
   assert.match(panel, /function rejectDialogActionDisabled\(proposal\)[\s\S]*if \(actionLoading\.value && !rowActionLoading\(proposal, 'reject'\)\) return true/)
-  assert.match(panel, /function confirmRejectDialog\(payload\)[\s\S]*const reason = textValue\(payload\?\.reason\)[\s\S]*await props\.evo\.rejectProposal\(proposal, props\.evo\.selectedRunId\.value, reason\)/)
+  assert.match(panel, /function confirmRejectDialog\(payload\)[\s\S]*const reason = textValue\(payload\?\.reason\)[\s\S]*await props\.evo\.rejectProposal\(proposal, props\.evo\.selectedRunId\.value, reason, \{ tags \}\)/)
   assert.match(panel, /function hasBlockingReviewError\(\)[\s\S]*notice\.type === 'error' \|\| Boolean\(props\.evo\.error\?\.value\)/)
-  assert.match(panel, /async function runBulkReview\(action, items\)[\s\S]*for \(const proposal of items\)[\s\S]*await props\.evo\.acceptProposal\(proposal, runId\)[\s\S]*await props\.evo\.rejectProposal\(proposal, runId, bulkRejectReason\.value\)[\s\S]*if \(hasBlockingReviewError\(\)\) break/)
+  assert.match(panel, /async function runBulkReview\(action, items\)[\s\S]*if \(action === 'reject' && !bulkRejectReasonText\.value\) return[\s\S]*for \(const proposal of items\)[\s\S]*await props\.evo\.acceptProposal\(proposal, runId\)[\s\S]*await props\.evo\.rejectProposal\(proposal, runId, bulkRejectReasonText\.value\)[\s\S]*if \(hasBlockingReviewError\(\)\) break/)
   assert.match(panel, /async function bulkAcceptProposals\(\)[\s\S]*runBulkReview\('accept', \[\.\.\.acceptableProposals\.value\]\)/)
   assert.match(panel, /async function bulkRejectProposals\(\)[\s\S]*runBulkReview\('reject', \[\.\.\.rejectableProposals\.value\]\)/)
   assert.doesNotMatch(panel, /\/proposals\/bulk|bulkProposal|acceptProposals|rejectProposals/)
@@ -608,7 +610,7 @@ test('TrustBundleDrawer mobile source contract keeps authority and evidence deep
   const authorityBlock = firstCssBlock(drawer, '.evo-trust-authority')
 
   assert.match(drawer, /<Teleport to="body">/)
-  assert.match(drawer, /class="evo-trust-drawer"[\s\S]*role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-label="Trust Bundle 审计"/)
+  assert.match(drawer, /class="evo-trust-drawer"[\s\S]*role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-label="信任包审计"/)
   assert.match(drawer, /const authorityClass = computed\(\(\) => `status-\$\{audit\.value\.authorityStatus \|\| 'cached'\}`\)/)
   assert.match(drawer, /cached:\s*'缓存'/)
   assert.match(drawer, /loading:\s*'读取中'/)
@@ -623,9 +625,9 @@ test('TrustBundleDrawer mobile source contract keeps authority and evidence deep
     assert.match(drawer, new RegExp(`<a v-if="audit\\.${hrefField}" :href="audit\\.${hrefField}">`))
   }
   assert.equal((drawer.match(/<a v-if="row\.href" :href="row\.href">\{\{ row\.id \}\}<\/a>/g) || []).length, 2)
-  assert.match(drawer, /Training Evidence/)
-  assert.match(drawer, /Proposal Evidence/)
-  assert.match(drawer, /Paired Seeds/)
+  assert.match(drawer, /训练证据/)
+  assert.match(drawer, /提案证据/)
+  assert.match(drawer, /配对种子/)
 
   assert.match(drawerBlock, /width:\s*min\(540px,\s*100vw\)/)
   assert.match(drawerBlock, /max-height:\s*100vh/)
@@ -881,11 +883,11 @@ test('mobile viewport TrustBundleDrawer fixture renders authority and evidence l
         </head>
         <body>
           <div class="evo-trust-drawer-backdrop">
-            <aside class="evo-trust-drawer" role="dialog" aria-modal="true" aria-label="Trust Bundle 审计">
+            <aside class="evo-trust-drawer" role="dialog" aria-modal="true" aria-label="信任包审计">
               <header class="evo-trust-drawer-head">
                 <span>
-                  <small>Authority Bundle</small>
-                  <h2>Trust Bundle</h2>
+                  <small>权威信任包</small>
+                  <h2>信任包</h2>
                 </span>
                 <div class="evo-trust-drawer-actions">
                   <button type="button" class="evo-ghost-action">刷新</button>
@@ -894,7 +896,7 @@ test('mobile viewport TrustBundleDrawer fixture renders authority and evidence l
               </header>
               <div class="evo-trust-authority status-mismatch">
                 <b>不一致</b>
-                <span>Authority Bundle 与页面缓存不一致。</span>
+                <span>权威信任包与页面缓存不一致。</span>
                 <em>trust_bundle_id / bundle_hash / gate_report_id</em>
               </div>
               <section class="evo-trust-field-grid">
@@ -906,28 +908,28 @@ test('mobile viewport TrustBundleDrawer fixture renders authority and evidence l
                 <span><small>version_id</small><a href="#evolution?role=seer&version_id=version_mobile">version_mobile</a></span>
               </section>
               <section class="evo-trust-completeness" data-status="complete">
-                <span><small>Completeness</small><b>完整</b></span>
-                <span><small>Score</small><b>98%</b></span>
-                <div><small>Missing</small><b>—</b></div>
+                <span><small>完整度</small><b>完整</b></span>
+                <span><small>分数</small><b>98%</b></span>
+                <div><small>缺失项</small><b>—</b></div>
               </section>
               <section class="evo-trust-section">
-                <header><h3>Training Evidence</h3><b>2</b></header>
+                <header><h3>训练证据</h3><b>2</b></header>
                 <div class="evo-trust-id-grid">
                   <a href="#logs?game_id=train_mobile_a&workspace=archive">train_mobile_a</a>
                   <a href="#logs?game_id=train_mobile_b&workspace=archive">train_mobile_b</a>
                 </div>
               </section>
               <section class="evo-trust-section">
-                <header><h3>Proposal Evidence</h3><b>2</b></header>
+                <header><h3>提案证据</h3><b>2</b></header>
                 <div class="evo-trust-id-grid">
                   <a href="#evolution?run_id=evo_mobile&proposal_id=proposal_mobile_a">proposal_mobile_a</a>
                   <a href="#evolution?run_id=evo_mobile&proposal_id=proposal_mobile_b">proposal_mobile_b</a>
                 </div>
               </section>
               <section class="evo-trust-section">
-                <header><h3>Paired Seeds</h3><b>1</b></header>
+                <header><h3>配对种子</h3><b>1</b></header>
                 <div class="evo-trust-seed-table">
-                  <span>Seed</span><span>基线</span><span>候选</span><span>差值</span><span>胜方</span>
+                  <span>种子</span><span>基线</span><span>候选</span><span>差值</span><span>胜方</span>
                   <code>260607</code><span>0.48</span><span>0.57</span><b>0.09</b><span>candidate</span>
                 </div>
               </section>
@@ -992,7 +994,7 @@ test('mobile viewport TrustBundleDrawer fixture renders authority and evidence l
     const hrefs = [...summary.fieldLinks, ...summary.evidenceLinks].map((link) => link.href)
     assert.equal(summary.role, 'dialog')
     assert.equal(summary.modal, 'true')
-    assert.equal(summary.label, 'Trust Bundle 审计')
+    assert.equal(summary.label, '信任包审计')
     assert.match(summary.authorityText, /不一致/)
     assert.match(summary.authorityText, /trust_bundle_id \/ bundle_hash \/ gate_report_id/)
     assert.ok(summary.bodyTextLength > 260)

@@ -8,8 +8,19 @@ const props = defineProps({
   tabs: { type: Array, default: () => [] },
   activeTab: { type: String, required: true },
   roles: { type: Array, default: () => [] },
+  runRows: { type: Array, default: () => [] },
   selectedRole: { type: String, default: '' },
+  selectedRun: { type: Object, default: null },
   selectedRunSummary: { type: Object, default: null },
+  selectedProposalReview: { type: Object, default: null },
+  selectedGames: { type: Object, default: null },
+  selectedCanPromote: { type: Boolean, default: false },
+  selectedPromoteDisabledReason: { type: String, default: '' },
+  selectedCanReject: { type: Boolean, default: false },
+  selectedRejectDisabledReason: { type: String, default: '' },
+  selectedCanTerminate: { type: Boolean, default: false },
+  selectedTerminateDisabledReason: { type: String, default: '' },
+  selectedRollbackDisabledReason: { type: String, default: '' },
   error: { type: [String, Object, Error], default: '' },
   notice: { type: Object, default: null }
 })
@@ -25,6 +36,10 @@ const activeTabLabel = computed(() =>
 )
 
 const runSummary = computed(() => props.selectedRunSummary || {})
+const selectedRun = computed(() => props.selectedRun || {})
+const selectedReview = computed(() => props.selectedProposalReview || {})
+const selectedGate = computed(() => selectedReview.value.gate || {})
+const selectedTrustBundle = computed(() => selectedReview.value.trustBundle || selectedReview.value.trust_bundle || {})
 const refreshRetrying = computed(() => Boolean(runSummary.value.loading))
 const refreshRetryDisabled = computed(() => Boolean(runSummary.value.loading || runSummary.value.actionLoading))
 const pageNotice = computed(() => {
@@ -34,11 +49,120 @@ const pageNotice = computed(() => {
 })
 const inlineNotice = computed(() => inlineNoticeForDisplay(pageNotice.value))
 const errorNotice = computed(() => noticeErrorForPanel(pageNotice.value))
+const railCounts = computed(() => {
+  const rows = props.runRows || []
+  return {
+    active: rows.filter((run) => Boolean(run?.isActive)).length,
+    reviewing: rows.filter((run) => run?.status === 'reviewing').length,
+    warning: rows.filter((run) => Number(run?.warningCount || 0) > 0 || Number(run?.errorCount || 0) > 0 || run?.status === 'failed').length
+  }
+})
+const contextKpis = computed(() => [
+  { key: 'role', label: '角色', value: runSummary.value.displayRole || selectedRoleRow.value?.label || '—' },
+  { key: 'type', label: '类型', value: runSummary.value.entityLabel || '—' },
+  { key: 'training', label: '训练', value: runSummary.value.trainingProgressLabel || '等待' },
+  { key: 'battle', label: '对战', value: runSummary.value.battleProgressLabel || '等待' },
+  { key: 'baseline', label: '基线', value: runSummary.value.parentShort || selectedRoleRow.value?.baselineShort || '—', code: true },
+  { key: 'candidate', label: '候选', value: runSummary.value.candidateShort || '—', code: true }
+])
+const contextGateLabel = computed(() =>
+  selectedGate.value.decisionLabel ||
+  selectedGate.value.releaseLabel ||
+  selectedRun.value.gateDecisionLabel ||
+  selectedRun.value.gate_decision ||
+  '—'
+)
+const contextTrustLabel = computed(() => {
+  const score = selectedReview.value.summary?.trustCompletenessScore ??
+    selectedTrustBundle.value.completeness?.score ??
+    selectedGate.value.trustCompletenessScore
+  if (score != null && score !== '') return scoreLabel(score)
+  if (selectedTrustBundle.value.trust_bundle_id || selectedTrustBundle.value.trustBundleId) return '已关联'
+  return '—'
+})
+const contextEvidenceLabel = computed(() => {
+  const games = props.selectedGames || {}
+  const total = sampleCount(games.training) + sampleCount(games.baseline) + sampleCount(games.candidate)
+  const proposals = selectedReview.value.summary?.accepted || selectedReview.value.summary?.accepted_count || 0
+  return `${total} 样本 · ${proposals} 已接受`
+})
+const contextDiagnostics = computed(() => {
+  const diagnostics = Array.isArray(selectedRun.value.diagnostics) ? selectedRun.value.diagnostics : []
+  return diagnostics.slice(0, 4)
+})
+const riskActionRows = computed(() => [
+  {
+    key: 'promote',
+    label: '晋升',
+    available: props.selectedCanPromote,
+    reason: props.selectedPromoteDisabledReason || (props.selectedCanPromote ? '门禁与信任包满足当前晋升条件。' : '等待运行进入可晋升状态。')
+  },
+  {
+    key: 'reject',
+    label: '拒绝运行',
+    available: props.selectedCanReject,
+    reason: props.selectedRejectDisabledReason || (props.selectedCanReject ? '当前运行可执行拒绝，相关提案会进入拒绝记录。' : '等待运行进入待评审状态。')
+  },
+  {
+    key: 'terminate',
+    label: '终止',
+    available: props.selectedCanTerminate,
+    reason: props.selectedTerminateDisabledReason || (props.selectedCanTerminate ? `将终止当前${runSummary.value.currentStageLabel || '阶段'}。` : '运行不可终止。')
+  },
+  {
+    key: 'rollback',
+    label: '回滚',
+    available: !props.selectedRollbackDisabledReason,
+    reason: props.selectedRollbackDisabledReason || '选中版本可回滚时会在版本页执行。'
+  }
+])
 
 function progressPercent(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
   return Math.max(0, Math.min(100, Math.round(number)))
+}
+
+function displayText(value, fallback = '—') {
+  const text = String(value ?? '').trim()
+  return text || fallback
+}
+
+function shortRunId(value) {
+  const text = String(value || '').trim()
+  return text ? text.slice(0, 12) : '—'
+}
+
+function sampleCount(rows) {
+  return Array.isArray(rows) ? rows.length : 0
+}
+
+function scoreLabel(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  const pct = Math.abs(number) <= 1 ? number * 100 : number
+  return `${Math.round(pct)}%`
+}
+
+function signedDelta(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  return `${number > 0 ? '+' : ''}${Math.round(number)}%`
+}
+
+function roleRunCounts(role) {
+  const rows = (props.runRows || []).filter((run) => run?.role === role || run?.displayRole === role)
+  const active = rows.filter((run) => Boolean(run?.isActive)).length
+  const reviewing = rows.filter((run) => run?.status === 'reviewing').length
+  return { active, reviewing }
+}
+
+function diagnosticKey(diagnostic, index) {
+  return diagnostic?.id || diagnostic?.kind || diagnostic?.type || diagnostic?.message || index
+}
+
+function diagnosticText(diagnostic) {
+  return displayText(diagnostic?.message || diagnostic?.summary || diagnostic?.reason || diagnostic?.type, '暂无诊断内容')
 }
 
 function retryRefresh() {
@@ -63,6 +187,14 @@ function retryRefresh() {
           <small>基线</small>
           <b>{{ selectedRoleRow?.baselineShort || '—' }}</b>
         </span>
+        <span>
+          <small>运行中</small>
+          <b>{{ railCounts.active }}</b>
+        </span>
+        <span>
+          <small>待审核</small>
+          <b>{{ railCounts.reviewing }}</b>
+        </span>
       </div>
 
       <div class="evo-role-panel" aria-label="知识库角色上下文">
@@ -76,7 +208,12 @@ function retryRefresh() {
             @click="emit('select-role', role.key)"
           >
             <img :src="role.image" alt="" aria-hidden="true" />
-            <span class="evo-role-name">{{ role.label }}</span>
+            <span class="evo-role-name">
+              <b>{{ role.label }}</b>
+              <small>
+                运行 {{ roleRunCounts(role.key).active }} · 待审 {{ roleRunCounts(role.key).reviewing }}
+              </small>
+            </span>
           </button>
         </div>
       </div>
@@ -86,6 +223,32 @@ function retryRefresh() {
       <header class="evo-command-bar">
         <div class="evo-command-title">
           <h2>{{ title }}工作台</h2>
+        </div>
+        <div class="evo-command-metrics" aria-label="自进化工具状态条">
+          <span>
+            <small>当前角色</small>
+            <b>{{ selectedRoleRow?.label || '—' }}</b>
+          </span>
+          <span>
+            <small>当前运行</small>
+            <b>{{ shortRunId(runSummary.id) }}</b>
+          </span>
+          <span>
+            <small>阶段</small>
+            <b>{{ runSummary.currentStageLabel || '—' }}</b>
+          </span>
+          <span>
+            <small>门禁</small>
+            <b>{{ contextGateLabel }}</b>
+          </span>
+          <span>
+            <small>信任包</small>
+            <b>{{ contextTrustLabel }}</b>
+          </span>
+          <span>
+            <small>进度</small>
+            <b>{{ progressPercent(runSummary.overallProgressPercent) }}%</b>
+          </span>
         </div>
         <div class="evo-command-actions">
           <button type="button" class="evo-refresh-button" @click="emit('refresh')">
@@ -127,5 +290,109 @@ function retryRefresh() {
         </div>
       </section>
     </main>
+
+    <aside class="evo-context-rail" aria-label="当前上下文" data-evolution-context-rail>
+      <div class="evo-context-scroll">
+        <header class="evo-context-head">
+          <span>
+            <small>当前上下文</small>
+            <strong>{{ activeTabLabel }}</strong>
+          </span>
+          <b>{{ runSummary.statusLabel || '—' }}</b>
+        </header>
+
+        <section class="evo-context-section">
+          <h3>运行摘要</h3>
+          <div class="evo-context-run-id">
+            <small>run_id</small>
+            <code>{{ displayText(runSummary.id) }}</code>
+          </div>
+          <div class="evo-context-progress">
+            <span>
+              <b>{{ progressPercent(runSummary.overallProgressPercent) }}%</b>
+              <small>{{ runSummary.overallProgressLabel || '等待' }}</small>
+            </span>
+            <i aria-hidden="true">
+              <em :style="{ width: `${progressPercent(runSummary.overallProgressPercent)}%` }"></em>
+            </i>
+          </div>
+          <div class="evo-context-kpis">
+            <span v-for="item in contextKpis" :key="item.key">
+              <small>{{ item.label }}</small>
+              <code v-if="item.code">{{ item.value }}</code>
+              <b v-else>{{ item.value }}</b>
+            </span>
+          </div>
+        </section>
+
+        <section class="evo-context-section">
+          <h3>发布审计</h3>
+          <div class="evo-context-kpis two">
+            <span>
+              <small>推荐结论</small>
+              <b>{{ runSummary.recommendationLabel || '—' }}</b>
+            </span>
+            <span>
+              <small>胜率差</small>
+              <b>{{ signedDelta(runSummary.winRateDeltaPct) }}</b>
+            </span>
+            <span>
+              <small>门禁</small>
+              <b>{{ contextGateLabel }}</b>
+            </span>
+            <span>
+              <small>信任包</small>
+              <b>{{ contextTrustLabel }}</b>
+            </span>
+            <span class="wide">
+              <small>证据强度</small>
+              <b>{{ contextEvidenceLabel }}</b>
+            </span>
+          </div>
+        </section>
+
+        <section class="evo-context-section">
+          <h3>高风险动作</h3>
+          <div class="evo-context-action-list">
+            <span
+              v-for="item in riskActionRows"
+              :key="item.key"
+              :data-available="item.available ? 'true' : 'false'"
+            >
+              <small>{{ item.label }}</small>
+              <b>{{ item.available ? '可执行' : '不可执行' }}</b>
+              <em>{{ item.reason }}</em>
+            </span>
+          </div>
+        </section>
+
+        <section class="evo-context-section">
+          <h3>诊断</h3>
+          <div class="evo-context-kpis three">
+            <span>
+              <small>诊断</small>
+              <b>{{ runSummary.diagnosticCount || 0 }}</b>
+            </span>
+            <span>
+              <small>警告</small>
+              <b>{{ runSummary.warningCount || 0 }}</b>
+            </span>
+            <span>
+              <small>错误</small>
+              <b>{{ runSummary.errorCount || 0 }}</b>
+            </span>
+          </div>
+          <ol v-if="contextDiagnostics.length" class="evo-context-diagnostics">
+            <li
+              v-for="(diagnostic, index) in contextDiagnostics"
+              :key="diagnosticKey(diagnostic, index)"
+            >
+              {{ diagnosticText(diagnostic) }}
+            </li>
+          </ol>
+          <p v-else class="evo-context-empty">暂无诊断。</p>
+        </section>
+      </div>
+    </aside>
   </section>
 </template>

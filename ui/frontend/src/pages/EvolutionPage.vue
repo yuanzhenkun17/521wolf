@@ -26,22 +26,20 @@ const evo = useEvolutionWorkbench()
 const activeTab = ref('console')
 
 const navTabs = [
-  { key: 'console', label: '控制台', icon: '⚙' },
-  { key: 'review', label: '审核', icon: '✓' },
-  { key: 'runs', label: '运行', icon: '▶' },
-  { key: 'leaderboard', label: '排行榜', icon: '📊' },
-  { key: 'versions', label: '版本', icon: '📋' },
-  { key: 'events', label: '事件', icon: '⚡' },
-  { key: 'samples', label: '样本局', icon: '🎲' }
+  { key: 'console', label: '控制台' },
+  { key: 'review', label: '审核' },
+  { key: 'runs', label: '运行' },
+  { key: 'leaderboard', label: '排行榜' },
+  { key: 'versions', label: '版本' },
+  { key: 'events', label: '事件' },
+  { key: 'samples', label: '样本局' }
 ]
 
 const selectedIsBatch = computed(() => evo.selectedIsBatch.value)
-const selectedCanReview = computed(() => evo.selectedIsRun.value && evo.selectedRun.value?.status === 'reviewing')
+const selectedCanReview = computed(() => evo.selectedCanReject.value)
 const selectedCanPromote = computed(() => evo.selectedCanPromote.value)
 const selectedPromoteDisabledReason = computed(() => evo.selectedPromoteDisabledReason.value)
-const selectedCanTerminate = computed(() => {
-  return Boolean(evo.selectedRun.value) && !evo.selectedRun.value.isTerminal
-})
+const selectedCanTerminate = computed(() => evo.selectedCanTerminate.value)
 
 watch(
   () => evo.evolutionDeepLinkTarget.value?.panel || '',
@@ -71,8 +69,19 @@ onMounted(() => evo.refreshAll())
         title="自进化"
         :tabs="navTabs"
         :roles="evo.roleRows.value"
+        :run-rows="evo.runRows.value"
         :selected-role="evo.selectedRole.value"
+        :selected-run="evo.selectedRun.value"
         :selected-run-summary="evo.selectedRunSummary.value"
+        :selected-proposal-review="evo.selectedProposalReview.value"
+        :selected-games="evo.selectedGames.value"
+        :selected-can-promote="selectedCanPromote"
+        :selected-promote-disabled-reason="selectedPromoteDisabledReason"
+        :selected-can-reject="selectedCanReview"
+        :selected-reject-disabled-reason="evo.selectedRejectDisabledReason.value"
+        :selected-can-terminate="selectedCanTerminate"
+        :selected-terminate-disabled-reason="evo.selectedTerminateDisabledReason.value"
+        :selected-rollback-disabled-reason="evo.selectedRollbackDisabledReason.value"
         :error="evo.error.value"
         :notice="evo.notice.value"
         @refresh="evo.refreshAll()"
@@ -202,13 +211,13 @@ onMounted(() => evo.refreshAll())
 
 .evo-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr) 292px;
   grid-template-rows: auto auto minmax(0, 1fr);
   grid-template-areas:
-    "rail command"
-    "rail topbar"
-    "rail pane";
-  column-gap: 24px;
+    "rail command context"
+    "rail topbar context"
+    "rail pane context";
+  column-gap: 18px;
   row-gap: 0;
   padding: 26px;
   height: 100%;
@@ -217,7 +226,7 @@ onMounted(() => evo.refreshAll())
 }
 
 .evo-shell.parchment-logbook {
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr) 292px;
 }
 
 .evo-detail-panel {
@@ -230,9 +239,9 @@ onMounted(() => evo.refreshAll())
 .evo-command-bar {
   grid-area: command;
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(300px, 1.2fr) minmax(220px, 0.8fr) auto;
+  grid-template-columns: minmax(128px, 0.45fr) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
   flex: 0 0 auto;
   margin: 0;
@@ -277,17 +286,18 @@ onMounted(() => evo.refreshAll())
 
 .evo-command-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(68px, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
 .evo-command-metrics span {
   display: grid;
   gap: 4px;
-  min-height: 48px;
-  padding: 8px 10px;
+  min-height: 42px;
+  min-width: 0;
+  padding: 7px 8px;
   border: 1px solid rgba(232, 196, 132, 0.18);
   border-radius: 7px;
   background: rgba(255, 246, 218, 0.08);
@@ -304,7 +314,7 @@ onMounted(() => evo.refreshAll())
   min-width: 0;
   overflow: hidden;
   color: #fff4d9;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 800;
   line-height: 1.15;
   text-overflow: ellipsis;
@@ -571,12 +581,14 @@ onMounted(() => evo.refreshAll())
 }
 
 .evo-role-chip {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   justify-content: flex-start;
   gap: 6px;
   width: 100%;
-  height: 31px;
+  min-height: 36px;
+  height: auto;
   padding: 0 10px;
   border: 1px solid var(--evo-input-border);
   border-radius: 7px;
@@ -602,8 +614,29 @@ onMounted(() => evo.refreshAll())
 }
 
 .evo-role-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.evo-role-name b,
+.evo-role-name small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-role-name b {
   font-size: 12px;
   font-weight: 800;
+}
+
+.evo-role-name small {
+  color: currentColor;
+  font-size: 10px;
+  font-weight: 650;
+  opacity: 0.72;
 }
 
 .evo-role-chip.selected {
@@ -615,6 +648,11 @@ onMounted(() => evo.refreshAll())
 
 .evo-role-chip.selected .evo-role-name {
   color: #fff;
+}
+
+.evo-role-chip.selected .evo-role-name small {
+  color: #fff;
+  opacity: 0.78;
 }
 
 .evo-role-chip.selected img {
@@ -635,6 +673,215 @@ onMounted(() => evo.refreshAll())
   border-radius: 0 0 8px 8px;
   background: rgba(255, 252, 245, 0.24);
   overflow: hidden;
+}
+
+/* ========================================
+   Context Rail
+   ======================================== */
+.evo-context-rail {
+  grid-area: context;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid rgba(93, 48, 17, 0.2);
+  padding-left: 16px;
+}
+
+.evo-context-scroll {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.3) transparent;
+}
+
+.evo-context-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.evo-context-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(139, 94, 52, 0.18);
+}
+
+.evo-context-head,
+.evo-context-section {
+  min-width: 0;
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.46);
+}
+
+.evo-context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 11px;
+}
+
+.evo-context-head span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.evo-context-head small,
+.evo-context-section h3,
+.evo-context-kpis small,
+.evo-context-run-id small,
+.evo-context-progress small,
+.evo-context-action-list small {
+  color: var(--evo-text-secondary);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.evo-context-head strong,
+.evo-context-head b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--evo-text);
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-context-section {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.evo-context-section h3 {
+  margin: 0;
+  color: var(--evo-accent-strong);
+}
+
+.evo-context-run-id,
+.evo-context-kpis span,
+.evo-context-action-list span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 250, 0.5);
+}
+
+.evo-context-run-id code,
+.evo-context-kpis code,
+.evo-context-kpis b,
+.evo-context-action-list b,
+.evo-context-action-list em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--evo-text);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-context-run-id code,
+.evo-context-kpis code {
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.evo-context-progress {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.evo-context-progress span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.evo-context-progress b {
+  color: var(--evo-text);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.evo-context-progress i {
+  display: block;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(139, 94, 52, 0.12);
+}
+
+.evo-context-progress em {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--evo-accent);
+}
+
+.evo-context-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.evo-context-kpis.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.evo-context-kpis .wide {
+  grid-column: 1 / -1;
+}
+
+.evo-context-action-list {
+  display: grid;
+  gap: 6px;
+}
+
+.evo-context-action-list span[data-available="false"] {
+  border-color: rgba(153, 48, 38, 0.2);
+  background: rgba(153, 48, 38, 0.045);
+}
+
+.evo-context-action-list span[data-available="false"] b {
+  color: var(--evo-danger);
+}
+
+.evo-context-action-list em {
+  color: var(--evo-text-secondary);
+  font-style: normal;
+  white-space: normal;
+}
+
+.evo-context-diagnostics {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.evo-context-diagnostics li,
+.evo-context-empty {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--evo-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 /* ========================================
@@ -1606,6 +1853,12 @@ onMounted(() => evo.refreshAll())
   opacity: 0.7;
 }
 
+.evo-version-row .evo-version-blocked-reason {
+  color: var(--evo-danger);
+  font-weight: 800;
+  opacity: 0.92;
+}
+
 .evo-version-actions {
   display: flex;
   gap: 6px;
@@ -2437,7 +2690,7 @@ onMounted(() => evo.refreshAll())
 
 @media (max-width: 1120px) {
   .evo-command-bar {
-    grid-template-columns: minmax(0, 1fr) minmax(220px, 0.8fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     margin: 0 12px 10px;
   }
 
@@ -2447,7 +2700,8 @@ onMounted(() => evo.refreshAll())
   }
 
   .evo-command-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .evo-command-run {
@@ -2456,7 +2710,8 @@ onMounted(() => evo.refreshAll())
 
   .evo-shell,
   .evo-shell.parchment-logbook {
-    grid-template-columns: 224px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr) 260px;
+    column-gap: 14px;
   }
 
   .evo-detail-topbar {
@@ -2476,12 +2731,13 @@ onMounted(() => evo.refreshAll())
   .evo-shell,
   .evo-shell.parchment-logbook {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
     grid-template-areas:
       "command"
       "topbar"
       "rail"
-      "pane";
+      "pane"
+      "context";
     gap: 8px;
     padding: 16px;
     overflow-x: hidden;
@@ -2571,6 +2827,17 @@ onMounted(() => evo.refreshAll())
 
   .evo-main-pane {
     overflow: visible;
+  }
+
+  .evo-context-rail {
+    padding: 8px 0 0;
+    border-left: none;
+    border-top: 1px solid var(--evo-border);
+  }
+
+  .evo-context-scroll {
+    max-height: 320px;
+    overflow-y: auto;
   }
 }
 
@@ -2741,8 +3008,8 @@ onMounted(() => evo.refreshAll())
 @media (min-width: 961px) {
   .evo-shell,
   .evo-shell.parchment-logbook {
-    grid-template-columns: 260px minmax(0, 1fr);
-    column-gap: 24px;
+    grid-template-columns: 260px minmax(0, 1fr) 300px;
+    column-gap: 18px;
     padding: 22px 26px;
   }
 
@@ -2789,7 +3056,7 @@ onMounted(() => evo.refreshAll())
   }
 
   .evo-command-bar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(128px, 0.42fr) minmax(0, 1fr) auto;
     gap: 18px;
     padding: 0 0 12px;
     border: 0;
@@ -2816,7 +3083,8 @@ onMounted(() => evo.refreshAll())
   }
 
   .evo-command-metrics {
-    gap: 16px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 6px;
   }
 
   .evo-command-metrics span,

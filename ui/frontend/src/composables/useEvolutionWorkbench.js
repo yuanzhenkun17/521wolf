@@ -1425,11 +1425,11 @@ function rollbackTargetFrom(...values) {
 
 function trustAuditSourceText(value) {
   return {
-    authority: 'Authority Bundle',
-    review: 'Proposal Review',
-    run: 'Evolution Run',
-    version: 'Version Detail'
-  }[String(value || '').toLowerCase()] || shortText(value, 'Trust Bundle')
+    authority: '权威信任包',
+    review: '提案审核',
+    run: '自进化运行',
+    version: '版本详情'
+  }[String(value || '').toLowerCase()] || shortText(value, '信任包')
 }
 
 function hashHref(view, params = {}) {
@@ -1484,7 +1484,7 @@ function evolutionDeepLinkFromHash(value = globalThis.window?.location?.hash || 
     query: params.toString(),
     status: 'pending',
     pending: [],
-    message: panel ? '等待恢复 deep link 目标。' : '等待恢复 Evolution deep link。'
+    message: panel ? '等待恢复定位链接目标。' : '等待恢复自进化定位链接。'
   }
 }
 
@@ -1534,21 +1534,21 @@ function trustConsistencyMessage(field, status, values = [], hasAuthority = fals
   const sourceRun = auditText(values.find((item) => item.source === 'source_run')?.value)
   if (status === 'match') {
     return hasAuthority
-      ? '缓存、registry/source 已知值与 authority bundle 一致。'
-      : 'registry/source 已知值一致。'
+      ? '缓存、版本库/来源运行与权威包一致。'
+      : '版本库/来源运行已知值一致。'
   }
   if (status === 'mismatch') {
     if (hasAuthority) {
-      return `缓存 ${cached || '—'}，registry metadata ${registry || '—'}，source run ${sourceRun || '—'}，authority bundle ${authority || '—'}。`
+      return `缓存 ${cached || '—'}，版本库 ${registry || '—'}，来源运行 ${sourceRun || '—'}，权威包 ${authority || '—'}。`
     }
-    return `registry metadata ${registry || '—'}，source run ${sourceRun || '—'}。`
+    return `版本库 ${registry || '—'}，来源运行 ${sourceRun || '—'}。`
   }
   if (status === 'missing') {
-    if (hasAuthority && !authority) return 'authority bundle 缺少该字段。'
-    if (hasAuthority && !cached) return '缓存或 registry/source run 缺少该字段。'
+    if (hasAuthority && !authority) return '权威包缺少该字段。'
+    if (hasAuthority && !cached) return '缓存或版本库/来源运行缺少该字段。'
     return `${field} 缺少可校验值。`
   }
-  return '等待 authority bundle 校验。'
+  return '等待权威包校验。'
 }
 
 function trustAuditConsistencyChecks(cached = {}, authority = null) {
@@ -1822,7 +1822,7 @@ function normalizeTrustBundleAudit(input = {}) {
     authorityMessage: shortText(input.authorityMessage || input.authority_message || '', ''),
     mismatchLabels: textItems(input.mismatchLabels, input.mismatch_labels),
     hasTrustBundle,
-    emptyMessage: hasTrustBundle ? '' : '缺少 Trust Bundle：未收到 trust_bundle_id 或 bundle_hash。',
+    emptyMessage: hasTrustBundle ? '' : '缺少信任包：未收到 trust_bundle_id 或 bundle_hash。',
     trust_bundle_id: trustBundleId,
     bundle_hash: bundleHash,
     gate_report_id: gateReportId,
@@ -2066,7 +2066,21 @@ function useEvolutionWorkbench(options = {}) {
         stageProgressPercent: 0,
         stageProgressLabel: '等待',
         trainingProgressLabel: '等待',
-        battleProgressLabel: '等待'
+        battleProgressLabel: '等待',
+        recommendationLabel: '—',
+        parentShort: '—',
+        candidateShort: '—',
+        publishedReleaseStageLabel: '—',
+        trainingGameCompleted: 0,
+        trainingGameRequested: 0,
+        battleGameCompleted: 0,
+        battleGameRequested: 0,
+        winRateDeltaPct: 0,
+        proposalCount: 0,
+        diffCount: 0,
+        diagnosticCount: 0,
+        warningCount: 0,
+        errorCount: 0
       }
     }
     return {
@@ -2080,7 +2094,21 @@ function useEvolutionWorkbench(options = {}) {
       stageProgressPercent: run.stageProgressPercent,
       stageProgressLabel: run.stageProgressLabel,
       trainingProgressLabel: run.trainingProgressLabel,
-      battleProgressLabel: run.battleProgressLabel
+      battleProgressLabel: run.battleProgressLabel,
+      recommendationLabel: run.recommendationLabel || recommendationText(run.recommendation),
+      parentShort: run.parentShort,
+      candidateShort: run.candidateShort,
+      publishedReleaseStageLabel: run.publishedReleaseStageLabel,
+      trainingGameCompleted: run.trainingGameCompleted,
+      trainingGameRequested: run.trainingGameRequested,
+      battleGameCompleted: run.battleGameCompleted,
+      battleGameRequested: run.battleGameRequested,
+      winRateDeltaPct: run.winRateDeltaPct,
+      proposalCount: run.proposalCount,
+      diffCount: run.diffCount,
+      diagnosticCount: run.diagnosticCount,
+      warningCount: run.warningCount,
+      errorCount: run.errorCount
     }
   })
   const sampleBuckets = computed(() => [
@@ -2156,6 +2184,24 @@ function useEvolutionWorkbench(options = {}) {
     return ''
   })
   const selectedCanPromote = computed(() => !selectedPromoteDisabledReason.value)
+  const selectedRejectDisabledReason = computed(() => {
+    if (!selectedRun.value) return '请选择一个运行。'
+    if (selectedIsBatch.value) return '批量任务不能直接拒绝，请选择子运行。'
+    if (!selectedIsRun.value) return '请选择单角色运行。'
+    if (selectedRun.value.status !== 'reviewing') return '只有待评审运行可以拒绝。'
+    return ''
+  })
+  const selectedCanReject = computed(() => !selectedRejectDisabledReason.value)
+  const selectedTerminateDisabledReason = computed(() => {
+    if (!selectedRun.value) return '请选择一个运行。'
+    if (selectedRun.value.isTerminal) return '运行已结束，不能终止。'
+    return ''
+  })
+  const selectedCanTerminate = computed(() => !selectedTerminateDisabledReason.value)
+  const selectedRollbackDisabledReason = computed(() => {
+    if (!selectedVersion.value) return '请选择一个版本。'
+    return selectedVersion.value.rollbackDisabledReason || ''
+  })
 
   function setError(message) {
     error.value = message || ''
@@ -2209,7 +2255,7 @@ function useEvolutionWorkbench(options = {}) {
     const baseAudit = payload.baseAudit || currentTrustBundleAudit(source, payload)
     const runId = trustBundleAuthorityRunId(baseAudit, payload)
     if (!runId) {
-      trustBundleAuditError.value = '缺少 source run，无法读取权威 Trust Bundle。'
+      trustBundleAuditError.value = '缺少来源运行，无法读取权威信任包。'
       trustBundleAudit.value = {
         ...baseAudit,
         authorityStatus: 'unavailable',
@@ -2224,7 +2270,7 @@ function useEvolutionWorkbench(options = {}) {
     trustBundleAudit.value = {
       ...baseAudit,
       authorityStatus: 'loading',
-      authorityMessage: '正在读取权威 Trust Bundle。'
+      authorityMessage: '正在读取权威信任包。'
     }
     try {
       const data = await apiFetch(`/evolution-runs/${encodeURIComponent(runId)}/trust-bundle`)
@@ -2243,15 +2289,15 @@ function useEvolutionWorkbench(options = {}) {
         cachedAudit: baseAudit,
         authorityStatus: mismatchLabels.length ? 'mismatch' : 'verified',
         authorityMessage: mismatchLabels.length
-          ? '权威 Trust Bundle 与当前页面缓存不一致。'
-          : '已读取权威 Trust Bundle。',
+          ? '权威信任包与当前页面缓存不一致。'
+          : '已读取权威信任包。',
         mismatchLabels,
         consistency_checks: consistencyChecks
       }
       return trustBundleAudit.value
     } catch (err) {
       if (!token.isLatest()) return trustBundleAudit.value
-      trustBundleAuditError.value = err?.message || '权威 Trust Bundle 读取失败'
+      trustBundleAuditError.value = err?.message || '权威信任包读取失败'
       trustBundleAudit.value = {
         ...baseAudit,
         authorityStatus: 'unavailable',
@@ -2346,7 +2392,7 @@ function useEvolutionWorkbench(options = {}) {
       pending: [],
       selected_run_id: selectedRunId.value,
       selected_version_id: selectedVersionId.value,
-      message: '正在恢复 Evolution deep link。'
+      message: '正在恢复自进化定位链接。'
     })
     try {
       if (runId && (selectedRunId.value !== runId || !selectedRun.value)) {
@@ -2360,7 +2406,7 @@ function useEvolutionWorkbench(options = {}) {
         error: err?.message || '运行详情读取失败',
         selected_run_id: selectedRunId.value,
         selected_version_id: selectedVersionId.value,
-        message: '运行目标未能恢复，已保留 deep link 待重试。'
+        message: '运行目标未能恢复，已保留定位链接待重试。'
       })
       return true
     }
@@ -2402,8 +2448,8 @@ function useEvolutionWorkbench(options = {}) {
       selected_version_id: selectedVersionId.value,
       trust_drawer_open: trustBundleDrawerOpen.value,
       message: status === 'applied'
-        ? 'Evolution deep link 已恢复。'
-        : 'Evolution deep link 已部分恢复，剩余目标保留为待恢复状态。'
+        ? '自进化定位链接已恢复。'
+        : '自进化定位链接已部分恢复，剩余目标保留为待恢复状态。'
     })
     return true
   }
@@ -3316,6 +3362,11 @@ function useEvolutionWorkbench(options = {}) {
     selectedProposalRows,
     selectedCanPromote,
     selectedPromoteDisabledReason,
+    selectedCanReject,
+    selectedRejectDisabledReason,
+    selectedCanTerminate,
+    selectedTerminateDisabledReason,
+    selectedRollbackDisabledReason,
     baselinePromoteTrustDisabledReason: selectedBaselinePromoteTrustDisabledReason,
     selectedGames,
     sampleBuckets,
