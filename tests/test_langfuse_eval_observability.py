@@ -65,12 +65,32 @@ def _install_fake_observability(monkeypatch) -> list[dict[str, Any]]:
             "metadata": metadata,
         })
 
+    def score_dataset_run(
+        dataset_run_id: str,
+        name: str,
+        value: Any,
+        *,
+        data_type: str | None = None,
+        comment: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        captured.append({
+            "name": "score_dataset_run",
+            "dataset_run_id": dataset_run_id,
+            "score_name": name,
+            "value": value,
+            "data_type": data_type,
+            "comment": comment,
+            "metadata": metadata,
+        })
+
     def flush_langfuse() -> None:
         captured.append({"name": "flush_langfuse"})
 
     fake.create_trace_id = create_trace_id
     fake.langfuse_context = langfuse_context
     fake.score_current_trace = score_current_trace
+    fake.score_dataset_run = score_dataset_run
     fake.flush_langfuse = flush_langfuse
     monkeypatch.setitem(sys.modules, "app.services.observability", fake)
     return captured
@@ -116,6 +136,12 @@ def test_persist_batch_node_writes_eval_langfuse_scores(monkeypatch):
             "mode": "dev",
             "target_role": "seer",
             "target_version_id": "seer_v1",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "langfuse_dataset_name": "dataset-a",
+            "langfuse_dataset_item_id": "role-baseline-v1@v1:role-baseline-quick-202606:270600",
+            "langfuse_experiment_name": "experiment-a",
+            "langfuse_run_name": "run-a",
         },
         "games": [
             {"winner": "villagers", "error": None},
@@ -145,6 +171,16 @@ def test_persist_batch_node_writes_eval_langfuse_scores(monkeypatch):
     assert context["metadata"]["stage"] == "persist_batch"
     assert context["metadata"]["batch_id"] == "eval_obs_1"
     assert context["metadata"]["target_role"] == "seer"
+    assert context["metadata"]["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert context["metadata"]["seed_set_id"] == "role-baseline-quick-202606"
+    assert context["metadata"]["langfuse_dataset_name"] == "dataset-a"
+    assert context["metadata"]["langfuse_dataset_item_id"] == (
+        "role-baseline-v1@v1:role-baseline-quick-202606:270600"
+    )
+    assert context["metadata"]["langfuse_experiment_name"] == "experiment-a"
+    assert context["metadata"]["experiment_name"] == "experiment-a"
+    assert context["metadata"]["langfuse_run_name"] == "run-a"
+    assert context["metadata"]["run_name"] == "run-a"
     assert {"werewolf", "eval", "dev", "role:seer", "rankable"}.issubset(set(context["tags"]))
 
     score_calls = [call for call in captured if call["name"] == "score_current_trace"]
@@ -166,6 +202,16 @@ def test_persist_batch_node_writes_eval_langfuse_scores(monkeypatch):
         assert by_name[name]["data_type"] == "NUMERIC"
         assert by_name[name]["metadata"]["metric_family"] == "eval"
         assert by_name[name]["metadata"]["batch_id"] == "eval_obs_1"
+        assert by_name[name]["metadata"]["evaluation_set_id"] == "role-baseline-v1@v1"
+        assert by_name[name]["metadata"]["seed_set_id"] == "role-baseline-quick-202606"
+        assert by_name[name]["metadata"]["langfuse_dataset_name"] == "dataset-a"
+        assert by_name[name]["metadata"]["langfuse_dataset_item_id"] == (
+            "role-baseline-v1@v1:role-baseline-quick-202606:270600"
+        )
+        assert by_name[name]["metadata"]["langfuse_experiment_name"] == "experiment-a"
+        assert by_name[name]["metadata"]["experiment_name"] == "experiment-a"
+        assert by_name[name]["metadata"]["langfuse_run_name"] == "run-a"
+        assert by_name[name]["metadata"]["run_name"] == "run-a"
 
     assert by_name["eval.rankable"]["value"] is True
     assert by_name["eval.rankable"]["data_type"] == "BOOLEAN"
@@ -234,6 +280,159 @@ def test_run_games_node_creates_eval_batch_langfuse_context(monkeypatch):
         "seed_count": 1,
         "seed_preview": [],
     }
+
+
+def test_run_games_node_links_langfuse_dataset_metadata_to_games(monkeypatch):
+    captured = _install_fake_observability(monkeypatch)
+    monkeypatch.setattr(eval_nodes, "_score_game", lambda game: [])
+
+    class _GameSubgraph:
+        def __init__(self) -> None:
+            self.invocations: list[dict[str, Any]] = []
+
+        async def ainvoke(self, game_state: dict[str, Any]) -> dict[str, Any]:
+            self.invocations.append(dict(game_state))
+            return {
+                "winner": "villagers",
+                "roles": {"1": "seer"},
+                "game_events": [{"day": 1}],
+                "decisions": [],
+            }
+
+    game_subgraph = _GameSubgraph()
+    state = {
+        "batch_id": "eval_dataset_obs",
+        "batch_config": {
+            "game_count": 1,
+            "max_days": 3,
+            "mode": "dev",
+            "model_id": "model-a",
+            "model_config_hash": "sha256:model-a",
+            "target_role": "seer",
+            "target_version_id": "seer_v2",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "seeds": [270600],
+            "langfuse_dataset_name": "role-baseline-v1@v1",
+            "langfuse_experiment_name": "seer-canary",
+            "langfuse_run_name": "eval_dataset_obs:seer",
+        },
+        "game_subgraph": game_subgraph,
+        "warnings": [],
+        "diagnostics": [],
+    }
+
+    out = asyncio.run(eval_nodes.run_games_node(state))
+
+    assert out["langfuse_trace_id"] == "trace-eval_dataset_obs"
+    invocation = game_subgraph.invocations[0]
+    assert invocation["batch_id"] == "eval_dataset_obs"
+    assert invocation["source_run_id"] == "eval_dataset_obs"
+    assert invocation["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert invocation["seed_set_id"] == "role-baseline-quick-202606"
+    assert invocation["langfuse_dataset_name"] == "role-baseline-v1@v1"
+    assert invocation["langfuse_dataset_item_id"] == (
+        "role-baseline-v1@v1:role-baseline-quick-202606:270600"
+    )
+    assert invocation["langfuse_experiment_name"] == "seer-canary"
+    assert invocation["experiment_name"] == "seer-canary"
+    assert invocation["langfuse_run_name"] == "eval_dataset_obs:seer"
+    assert invocation["run_name"] == "eval_dataset_obs:seer"
+
+    context = next(call["kwargs"] for call in captured if call["name"] == "langfuse_context")
+    assert context["metadata"]["batch_id"] == "eval_dataset_obs"
+    assert context["metadata"]["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert context["metadata"]["seed_set_id"] == "role-baseline-quick-202606"
+    assert context["metadata"]["langfuse_dataset_name"] == "role-baseline-v1@v1"
+    assert context["metadata"]["langfuse_dataset_item_id"] == (
+        "role-baseline-v1@v1:role-baseline-quick-202606:270600"
+    )
+    assert context["metadata"]["langfuse_experiment_name"] == "seer-canary"
+    assert context["metadata"]["experiment_name"] == "seer-canary"
+    assert context["metadata"]["langfuse_run_name"] == "eval_dataset_obs:seer"
+    assert context["metadata"]["run_name"] == "eval_dataset_obs:seer"
+
+
+def test_run_games_node_sets_langfuse_dataset_item_id_for_each_seed(monkeypatch):
+    _install_fake_observability(monkeypatch)
+    monkeypatch.setattr(eval_nodes, "_score_game", lambda game: [])
+
+    class _GameSubgraph:
+        def __init__(self) -> None:
+            self.invocations: list[dict[str, Any]] = []
+
+        async def ainvoke(self, game_state: dict[str, Any]) -> dict[str, Any]:
+            self.invocations.append(dict(game_state))
+            return {
+                "winner": "villagers",
+                "roles": {"1": "seer"},
+                "game_events": [{"day": 1}],
+                "decisions": [],
+            }
+
+    game_subgraph = _GameSubgraph()
+    state = {
+        "batch_id": "eval_dataset_items",
+        "batch_config": {
+            "game_count": 2,
+            "max_days": 3,
+            "evaluation_set_id": "eval-set-a",
+            "seed_set_id": "seed-set-a",
+            "seeds": [101, 202],
+        },
+        "game_subgraph": game_subgraph,
+        "warnings": [],
+        "diagnostics": [],
+    }
+
+    out = asyncio.run(eval_nodes.run_games_node(state))
+
+    assert len(out["games"]) == 2
+    assert [item["langfuse_dataset_item_id"] for item in game_subgraph.invocations] == [
+        "eval-set-a:seed-set-a:101",
+        "eval-set-a:seed-set-a:202",
+    ]
+
+
+def test_persist_batch_node_scores_langfuse_dataset_run(monkeypatch):
+    captured = _install_fake_observability(monkeypatch)
+    _patch_eval_persistence(monkeypatch)
+
+    state = {
+        "batch_id": "eval_dataset_run_score",
+        "batch_config": {
+            "game_count": 2,
+            "mode": "dev",
+            "evaluation_set_id": "eval-set-a",
+            "seed_set_id": "seed-set-a",
+            "langfuse_dataset_name": "eval-set-a",
+            "langfuse_experiment_name": "experiment-a",
+            "langfuse_run_name": "run-a",
+        },
+        "games": [
+            {"winner": "villagers", "error": None, "langfuse_dataset_run_id": "dataset-run-1"},
+            {"winner": "werewolves", "error": None, "langfuse_dataset_run_id": "dataset-run-1"},
+        ],
+        "score_summary": _score_summary(),
+        "rankable": True,
+        "rankable_reason": "ok",
+        "valid_game_rate": 1.0,
+        "warnings": [],
+        "diagnostics": [],
+    }
+
+    out = asyncio.run(eval_nodes.persist_batch_node(state))
+
+    assert out["result"]["batch_id"] == "eval_dataset_run_score"
+    dataset_scores = [call for call in captured if call["name"] == "score_dataset_run"]
+    by_name = {call["score_name"]: call for call in dataset_scores}
+    assert by_name["eval.avg_role_score"]["dataset_run_id"] == "dataset-run-1"
+    assert by_name["eval.avg_role_score"]["value"] == 6.2
+    assert by_name["eval.avg_role_score"]["data_type"] == "NUMERIC"
+    assert by_name["eval.avg_role_score"]["metadata"]["batch_id"] == "eval_dataset_run_score"
+    assert by_name["eval.avg_role_score"]["metadata"]["langfuse_dataset_run_id"] == "dataset-run-1"
+    assert by_name["eval.rankable"]["value"] is True
+    assert by_name["eval.rankable"]["data_type"] == "BOOLEAN"
 
 
 def test_eval_langfuse_observability_is_best_effort(monkeypatch):

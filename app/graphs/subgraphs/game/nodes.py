@@ -10,6 +10,8 @@ import logging
 import os
 import asyncio
 import importlib
+import sys
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -157,16 +159,20 @@ async def game_loop_node(state: dict) -> dict:
     trace_id = _ensure_langfuse_trace_id(state, observability=observability)
     if trace_id:
         state["langfuse_trace_id"] = trace_id
+        metadata = _langfuse_game_metadata(state)
     session_id = str(state.get("langfuse_session_id") or metadata.get("source_run_id") or metadata.get("game_id") or "")
 
-    with observability.langfuse_context(
+    with _langfuse_game_context(
+        observability,
         trace_name=f"game.{metadata.get('run_type', 'ordinary_game')}",
         trace_id=trace_id,
         session_id=session_id or None,
         metadata=metadata,
         tags=_langfuse_game_tags(state),
         input={"game_id": metadata.get("game_id"), "seed": metadata.get("seed")},
-    ):
+    ) as observation:
+        _link_langfuse_game_dataset_run_item(state, observability, observation)
+        _update_langfuse_game_observation_metadata(observability, observation, state)
         try:
             timeout = _game_timeout(state)
             run = engine.run_until_finished()
@@ -267,8 +273,12 @@ def _persistence_handle(state: dict) -> Any | None:
     return state.get("persistence") or state.get("game_persistence")
 
 
-def _observability() -> Any:
-    return importlib.import_module("app.services.observability")
+def _observability() -> Any | None:
+    try:
+        return importlib.import_module("app.services.observability")
+    except Exception:  # noqa: BLE001 - observability must not affect game execution
+        _log.debug("Langfuse observability import failed", exc_info=True)
+        return None
 
 
 def _ensure_langfuse_trace_id(state: dict, *, observability: Any | None = None) -> str | None:
@@ -277,6 +287,8 @@ def _ensure_langfuse_trace_id(state: dict, *, observability: Any | None = None) 
         return str(existing)
     try:
         obs = observability or _observability()
+        if obs is None:
+            return None
         create_trace_id = getattr(obs, "create_trace_id", None)
         if not callable(create_trace_id):
             return None
@@ -305,6 +317,7 @@ def _attach_langfuse_trace_id(agent: Any, state: dict) -> None:
 def _langfuse_game_metadata(state: dict) -> dict[str, Any]:
     metadata = {
         "game_id": state.get("game_id"),
+        "batch_id": state.get("batch_id") or state.get("source_run_id"),
         "seed": state.get("seed"),
         "run_type": _storage_run_type(state),
         "mode": state.get("mode") or "dev",
@@ -322,9 +335,14 @@ def _langfuse_game_metadata(state: dict) -> dict[str, Any]:
         "target_version_id",
         "seed_set_id",
         "evaluation_set_id",
+        "benchmark_id",
+        "benchmark_version",
+        "benchmark_config_hash",
+        "target_type",
     ):
         if state.get(key) is not None:
             metadata[key] = state[key]
+    metadata.update(_langfuse_game_linkage_metadata(state))
     if state.get("paired_seed") is not None:
         metadata["paired_seed"] = bool(state.get("paired_seed"))
     return {key: value for key, value in metadata.items() if value is not None}
@@ -343,10 +361,23 @@ def _langfuse_game_tags(state: dict) -> list[str]:
 
 def _score_langfuse_game_trace(state: dict) -> None:
     observability = _observability()
+    metadata = _langfuse_game_score_metadata(state)
     winner = state.get("winner")
     if winner is not None:
-        _score_langfuse_value(observability, "winner", str(winner), data_type="CATEGORICAL")
-    _score_langfuse_value(observability, "finished", bool(state.get("finished")), data_type="BOOLEAN")
+        _score_langfuse_value(
+            observability,
+            "winner",
+            str(winner),
+            data_type="CATEGORICAL",
+            metadata=metadata,
+        )
+    _score_langfuse_value(
+        observability,
+        "finished",
+        bool(state.get("finished")),
+        data_type="BOOLEAN",
+        metadata=metadata,
+    )
     if state.get("error"):
         _score_langfuse_value(
             observability,
@@ -354,9 +385,16 @@ def _score_langfuse_game_trace(state: dict) -> None:
             "error",
             data_type="CATEGORICAL",
             comment=str(state.get("error")),
+            metadata=metadata,
         )
     else:
-        _score_langfuse_value(observability, "terminal_status", "completed", data_type="CATEGORICAL")
+        _score_langfuse_value(
+            observability,
+            "terminal_status",
+            "completed",
+            data_type="CATEGORICAL",
+            metadata=metadata,
+        )
     _score_langfuse_decision_quality(observability, state)
 
 
@@ -376,6 +414,8 @@ def _score_langfuse_decision_quality(observability: Any, state: dict) -> None:
         "decision_count": metrics.get("decision_count", 0),
         "event_count": metrics.get("event_count", 0),
     }
+    metadata.update(_langfuse_game_score_metadata(state))
+    metadata["metric_family"] = "decision_quality"
     score_names = (
         "decision_count",
         "fallback_rate",
@@ -419,6 +459,201 @@ def _score_langfuse_value(
             _log.debug("Langfuse game score failed for %s", name, exc_info=True)
     except Exception:  # noqa: BLE001
         _log.debug("Langfuse game score failed for %s", name, exc_info=True)
+
+
+def _langfuse_game_score_metadata(state: dict) -> dict[str, Any]:
+    metadata = {
+        "metric_family": "game",
+        "game_id": state.get("game_id"),
+        "batch_id": state.get("batch_id") or state.get("source_run_id"),
+        "seed": state.get("seed"),
+        "run_type": _storage_run_type(state),
+        "winner": state.get("winner"),
+        "terminal_reason": state.get("terminal_reason"),
+    }
+    metadata.update(_langfuse_game_linkage_metadata(state))
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _langfuse_game_linkage_metadata(state: dict) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in (
+        "evaluation_set_id",
+        "seed_set_id",
+        "benchmark_id",
+        "benchmark_version",
+        "benchmark_config_hash",
+        "model_id",
+        "model_config_hash",
+        "comparison_group_id",
+        "comparison_type",
+        "target_role",
+        "target_version_id",
+        "target_type",
+        "langfuse_dataset_run_id",
+        "langfuse_dataset_run_item_id",
+        "langfuse_trace_id",
+        "langfuse_trace_url",
+        "langfuse_experiment_url",
+    ):
+        if state.get(key) is not None:
+            metadata[key] = state[key]
+
+    dataset_name = _first_present(state.get("langfuse_dataset_name"), state.get("evaluation_set_id"))
+    if dataset_name is not None:
+        metadata["langfuse_dataset_name"] = dataset_name
+
+    dataset_item_id = _first_present(state.get("langfuse_dataset_item_id"), _langfuse_game_dataset_item_id(state))
+    if dataset_item_id is not None:
+        metadata["langfuse_dataset_item_id"] = dataset_item_id
+
+    experiment_name = _first_present(state.get("langfuse_experiment_name"), state.get("experiment_name"))
+    if experiment_name is not None:
+        metadata["langfuse_experiment_name"] = experiment_name
+        metadata["experiment_name"] = experiment_name
+
+    run_name = _first_present(state.get("langfuse_run_name"), state.get("run_name"))
+    if run_name is not None:
+        metadata["langfuse_run_name"] = run_name
+        metadata["run_name"] = run_name
+
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _link_langfuse_game_dataset_run_item(state: dict, observability: Any | None, observation: Any | None) -> None:
+    link_fn = getattr(observability, "link_langfuse_dataset_run_item", None)
+    if not callable(link_fn):
+        return
+
+    linkage = _langfuse_game_linkage_metadata(state)
+    dataset_name = linkage.get("langfuse_dataset_name")
+    dataset_item_id = linkage.get("langfuse_dataset_item_id")
+    run_name = linkage.get("langfuse_run_name")
+    if not dataset_item_id or not run_name:
+        return
+
+    try:
+        link = link_fn(
+            dataset_name=str(dataset_name) if dataset_name is not None else None,
+            dataset_item_id=str(dataset_item_id),
+            experiment_name=_optional_string(linkage.get("langfuse_experiment_name")),
+            run_name=str(run_name),
+            trace_id=_optional_string(state.get("langfuse_trace_id")),
+            observation_id=_langfuse_observation_id(observation),
+            metadata=_langfuse_game_metadata(state),
+        )
+    except Exception:  # noqa: BLE001 - Langfuse linkage must not affect game execution
+        _log.debug("Langfuse game dataset run item link failed", exc_info=True)
+        return
+
+    _apply_langfuse_game_link(state, link)
+
+
+def _apply_langfuse_game_link(state: dict, link: Any) -> None:
+    if link is None:
+        return
+    for source_key, target_key in (
+        ("dataset_name", "langfuse_dataset_name"),
+        ("dataset_item_id", "langfuse_dataset_item_id"),
+        ("experiment_name", "langfuse_experiment_name"),
+        ("run_name", "langfuse_run_name"),
+        ("dataset_run_id", "langfuse_dataset_run_id"),
+        ("dataset_run_item_id", "langfuse_dataset_run_item_id"),
+        ("trace_id", "langfuse_trace_id"),
+        ("trace_url", "langfuse_trace_url"),
+        ("experiment_url", "langfuse_experiment_url"),
+    ):
+        value = _link_value(link, source_key)
+        if value is not None:
+            state[target_key] = value
+
+
+def _link_value(link: Any, key: str) -> Any | None:
+    if isinstance(link, dict):
+        return link.get(key)
+    return getattr(link, key, None)
+
+
+def _langfuse_observation_id(observation: Any | None) -> str | None:
+    for key in ("id", "observation_id", "observationId"):
+        value = _link_value(observation, key)
+        if value is not None and value != "":
+            return str(value)
+    return None
+
+
+def _update_langfuse_game_observation_metadata(
+    observability: Any | None,
+    observation: Any | None,
+    state: dict,
+) -> None:
+    update_fn = getattr(observability, "update_observation", None)
+    if not callable(update_fn):
+        return
+    try:
+        update_fn(observation, metadata=_langfuse_game_metadata(state))
+    except Exception:  # noqa: BLE001 - metadata enrichment is advisory
+        _log.debug("Langfuse game observation metadata update failed", exc_info=True)
+
+
+def _langfuse_game_dataset_item_id(state: dict) -> str | None:
+    evaluation_set_id = state.get("evaluation_set_id")
+    seed_set_id = state.get("seed_set_id")
+    seed = state.get("seed")
+    if evaluation_set_id is None or seed_set_id is None or seed is None:
+        return None
+    return f"{evaluation_set_id}:{seed_set_id}:{seed}"
+
+
+def _first_present(*values: Any) -> Any | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _langfuse_game_context(observability: Any | None, **kwargs: Any) -> Any:
+    context_fn = getattr(observability, "langfuse_context", None)
+    if not callable(context_fn):
+        return nullcontext(None)
+    try:
+        return _fail_open_langfuse_context(context_fn(**kwargs))
+    except Exception:  # noqa: BLE001 - tracing is advisory
+        _log.debug("Langfuse game context creation failed", exc_info=True)
+        return nullcontext(None)
+
+
+@contextmanager
+def _fail_open_langfuse_context(context: Any) -> Any:
+    try:
+        value = context.__enter__()
+    except Exception:  # noqa: BLE001 - tracing is advisory
+        _log.debug("Langfuse game context enter failed", exc_info=True)
+        yield None
+        return
+
+    try:
+        yield value
+    except BaseException:
+        exc_info = sys.exc_info()
+        try:
+            suppress = bool(context.__exit__(*exc_info))
+        except Exception:  # noqa: BLE001 - tracing cleanup is advisory
+            _log.debug("Langfuse game context exception cleanup failed", exc_info=True)
+            suppress = False
+        if not suppress:
+            raise
+    else:
+        try:
+            context.__exit__(None, None, None)
+        except Exception:  # noqa: BLE001 - tracing cleanup is advisory
+            _log.debug("Langfuse game context cleanup failed", exc_info=True)
 
 
 def _flush_langfuse(observability: Any) -> None:

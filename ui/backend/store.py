@@ -36,7 +36,7 @@ from app.lib.benchmark_spec import (
     seed_set_config_hash,
 )
 from app.lib.version import VersionRegistryProtocol, registry_version_release_stage, version_registry_from_env
-from app.run import run_evaluation, run_evolution
+from app.run import LANGFUSE_EVAL_CONFIG_KEYS, run_evaluation, run_evolution
 from app.services.llm import create_llm
 from app.util.time import beijing_now_iso
 from ui.backend.background_store import BackgroundTaskStoreMixin
@@ -1685,6 +1685,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                     }
                 )
         games = _benchmark_games_for_batch(batch)
+        langfuse = _benchmark_batch_langfuse_summary(batch, games=games)
         return {
             "kind": "benchmark_batch_detail",
             "schema_version": 1,
@@ -1700,6 +1701,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "results": result_summaries,
             "game_summary": _benchmark_game_summary(games),
             "diagnostic_summary": _benchmark_diagnostic_summary(_benchmark_diagnostic_entries(batch)),
+            "langfuse": langfuse,
         }
 
     def benchmark_batch_games(
@@ -2808,7 +2810,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             judge = {}
 
         cfg: dict[str, Any] = {
-            "batch_id": f"{batch_id}_{role}" if role else batch_id,
+            "batch_id": _benchmark_eval_batch_id(batch_id, role),
             "comparison_group_id": batch_id,
             "comparison_type": target_type,
             "scope": target_type,
@@ -2850,6 +2852,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         ):
             if value is not None:
                 cfg[key] = value
+        _apply_benchmark_langfuse_config_defaults(cfg, frozen_config=frozen_config, request=request)
         if seed_start is not None:
             cfg["seed_start"] = seed_start
         if seed_sequence:
@@ -2980,6 +2983,35 @@ def _benchmark_result_game_count(result: dict[str, Any]) -> int:
     return len([item for item in games if isinstance(item, dict)]) if isinstance(games, list) else 0
 
 
+def _benchmark_eval_batch_id(batch_id: str, role: str | None) -> str:
+    return f"{batch_id}_{role}" if role else batch_id
+
+
+def _apply_benchmark_langfuse_config_defaults(
+    cfg: dict[str, Any],
+    *,
+    frozen_config: dict[str, Any],
+    request: BenchmarkRequest,
+) -> None:
+    for key in LANGFUSE_EVAL_CONFIG_KEYS:
+        value = _optional_text(frozen_config.get(key)) or _optional_text(getattr(request, key, None))
+        if value is not None:
+            cfg[key] = value
+
+    evaluation_set_id = _optional_text(cfg.get("evaluation_set_id"))
+    benchmark_id = _optional_text(cfg.get("benchmark_id"))
+    if _optional_text(cfg.get("langfuse_dataset_name")) is None and evaluation_set_id is not None:
+        cfg["langfuse_dataset_name"] = evaluation_set_id
+    if _optional_text(cfg.get("langfuse_experiment_name")) is None:
+        experiment_name = benchmark_id or evaluation_set_id
+        if experiment_name is not None:
+            cfg["langfuse_experiment_name"] = experiment_name
+    if _optional_text(cfg.get("langfuse_run_name")) is None:
+        run_name = _optional_text(cfg.get("batch_id"))
+        if run_name is not None:
+            cfg["langfuse_run_name"] = run_name
+
+
 def _benchmark_games_for_batch(batch: dict[str, Any]) -> list[dict[str, Any]]:
     parent_batch_id = str(batch.get("batch_id") or "")
     games_out: list[dict[str, Any]] = []
@@ -2998,6 +3030,7 @@ def _benchmark_games_for_batch(batch: dict[str, Any]) -> list[dict[str, Any]]:
                     result_batch_id=result_batch_id,
                     target_role=target_role,
                     target_type=str(batch.get("target_type") or ""),
+                    result=result,
                     game=game,
                     index=index,
                 )
@@ -3011,6 +3044,7 @@ def _benchmark_game_item(
     result_batch_id: str,
     target_role: str | None,
     target_type: str,
+    result: dict[str, Any],
     game: dict[str, Any],
     index: int,
 ) -> dict[str, Any]:
@@ -3071,7 +3105,181 @@ def _benchmark_game_item(
     ):
         if key in game:
             item[key] = game.get(key)
+    langfuse = _benchmark_game_langfuse_block(
+        game=game,
+        result=result,
+        result_batch_id=result_batch_id,
+        index=index,
+    )
+    if langfuse:
+        item["langfuse"] = langfuse
+        item["observability"] = {"langfuse": _json_clone(langfuse)}
     return item
+
+
+def _benchmark_game_langfuse_block(
+    *,
+    game: dict[str, Any],
+    result: dict[str, Any],
+    result_batch_id: str,
+    index: int,
+) -> dict[str, Any]:
+    result_config = result.get("config") if isinstance(result.get("config"), dict) else {}
+    score_summary = result.get("score_summary") if isinstance(result.get("score_summary"), dict) else {}
+    game_sources = _langfuse_sources(game)
+    batch_sources = [result_config, result, score_summary]
+    seed = game.get("seed")
+    dataset_item_id = (
+        _langfuse_text(game_sources, "dataset_item_id")
+        or _benchmark_langfuse_dataset_item_id_from_config(result_config, seed=seed, index=index)
+        or _langfuse_text(batch_sources, "dataset_item_id")
+    )
+    dataset_run_url = _langfuse_text(game_sources, "dataset_run_url")
+    experiment_url = _langfuse_text(game_sources, "experiment_url")
+    if dataset_run_url is None:
+        dataset_run_url = experiment_url
+    if experiment_url is None:
+        experiment_url = dataset_run_url
+
+    block = {
+        "trace_id": _langfuse_text(game_sources, "trace_id"),
+        "trace_url": _langfuse_text(game_sources, "trace_url"),
+        "dataset_name": _langfuse_text(game_sources, "dataset_name")
+        or _langfuse_text(batch_sources, "dataset_name")
+        or _optional_text(result_config.get("evaluation_set_id")),
+        "dataset_id": _langfuse_text(game_sources, "dataset_id"),
+        "dataset_item_id": dataset_item_id,
+        "dataset_item_url": _langfuse_text(game_sources, "dataset_item_url"),
+        "dataset_run_id": _langfuse_text(game_sources, "dataset_run_id")
+        or _langfuse_text(batch_sources, "dataset_run_id"),
+        "dataset_run_item_id": _langfuse_text(game_sources, "dataset_run_item_id"),
+        "dataset_run_url": dataset_run_url,
+        "experiment_name": _langfuse_text(game_sources, "experiment_name")
+        or _langfuse_text(batch_sources, "experiment_name")
+        or _optional_text(result_config.get("benchmark_id"))
+        or _optional_text(result_config.get("evaluation_set_id")),
+        "run_name": _langfuse_text(game_sources, "run_name")
+        or _langfuse_text(batch_sources, "run_name")
+        or _optional_text(result_config.get("batch_id"))
+        or _optional_text(result_batch_id),
+        "experiment_url": experiment_url,
+    }
+    return {key: value for key, value in block.items() if value is not None}
+
+
+_LANGFUSE_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "trace_id": ("trace_id", "langfuse_trace_id"),
+    "trace_url": ("trace_url", "langfuse_trace_url"),
+    "dataset_name": ("dataset_name", "langfuse_dataset_name"),
+    "dataset_id": ("dataset_id", "langfuse_dataset_id"),
+    "dataset_item_id": ("dataset_item_id", "langfuse_dataset_item_id"),
+    "dataset_item_url": ("dataset_item_url", "langfuse_dataset_item_url"),
+    "dataset_run_id": ("dataset_run_id", "langfuse_dataset_run_id"),
+    "dataset_run_item_id": ("dataset_run_item_id", "langfuse_dataset_run_item_id"),
+    "dataset_run_url": ("dataset_run_url", "langfuse_dataset_run_url"),
+    "experiment_name": ("experiment_name", "langfuse_experiment_name"),
+    "run_name": ("run_name", "langfuse_run_name"),
+    "experiment_url": ("experiment_url", "langfuse_experiment_url"),
+}
+
+
+def _langfuse_sources(value: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    langfuse = value.get("langfuse")
+    if isinstance(langfuse, dict):
+        sources.append(langfuse)
+    observability = value.get("observability")
+    if isinstance(observability, dict):
+        observed_langfuse = observability.get("langfuse")
+        if isinstance(observed_langfuse, dict):
+            sources.append(observed_langfuse)
+    sources.append(value)
+    return sources
+
+
+def _langfuse_text(sources: list[dict[str, Any]], field: str) -> str | None:
+    for source in sources:
+        for key in _LANGFUSE_FIELD_ALIASES.get(field, (field,)):
+            text = _optional_text(source.get(key))
+            if text is not None:
+                return text
+    return None
+
+
+def _benchmark_langfuse_dataset_item_id_from_config(
+    cfg: dict[str, Any],
+    *,
+    seed: Any,
+    index: int,
+) -> str | None:
+    configured = cfg.get("langfuse_dataset_item_id")
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    zero_index = max(0, int(index or 1) - 1)
+    if isinstance(configured, list):
+        for candidate_index in (zero_index, index):
+            if 0 <= candidate_index < len(configured):
+                value = _optional_text(configured[candidate_index])
+                if value is not None:
+                    return value
+    if isinstance(configured, dict):
+        for key in (seed, str(seed) if seed is not None else None, zero_index, str(zero_index), index, str(index)):
+            if key is not None and key in configured:
+                value = _optional_text(configured[key])
+                if value is not None:
+                    return value
+
+    evaluation_set_id = _optional_text(cfg.get("evaluation_set_id"))
+    seed_set_id = _optional_text(cfg.get("seed_set_id"))
+    seed_text = _optional_text(seed)
+    if evaluation_set_id is None or seed_set_id is None or seed_text is None:
+        return None
+    return f"{evaluation_set_id}:{seed_set_id}:{seed_text}"
+
+
+def _benchmark_batch_langfuse_summary(batch: dict[str, Any], *, games: list[dict[str, Any]]) -> dict[str, Any]:
+    config = batch.get("config") if isinstance(batch.get("config"), dict) else {}
+    results = _benchmark_results(batch)
+    result_configs = [
+        result.get("config")
+        for result in results
+        if isinstance(result.get("config"), dict)
+    ]
+    config_sources = [source for source in [config, *result_configs] if isinstance(source, dict)]
+    game_blocks = [game.get("langfuse") for game in games if isinstance(game.get("langfuse"), dict)]
+    return {
+        "dataset_names": _unique_texts(
+            *[_langfuse_text(config_sources, "dataset_name")],
+            *[block.get("dataset_name") for block in game_blocks if isinstance(block, dict)],
+        ),
+        "experiment_names": _unique_texts(
+            *[_langfuse_text(config_sources, "experiment_name")],
+            *[block.get("experiment_name") for block in game_blocks if isinstance(block, dict)],
+        ),
+        "run_names": _unique_texts(
+            *[_langfuse_text(config_sources, "run_name")],
+            *[block.get("run_name") for block in game_blocks if isinstance(block, dict)],
+        ),
+        "trace_count": len(_unique_texts(*[block.get("trace_id") for block in game_blocks if isinstance(block, dict)])),
+        "dataset_run_count": len(
+            _unique_texts(*[block.get("dataset_run_id") for block in game_blocks if isinstance(block, dict)])
+        ),
+        "dataset_run_item_count": len(
+            _unique_texts(*[block.get("dataset_run_item_id") for block in game_blocks if isinstance(block, dict)])
+        ),
+        "dataset_item_count": len(
+            _unique_texts(*[block.get("dataset_item_id") for block in game_blocks if isinstance(block, dict)])
+        ),
+        "links": {
+            "trace_urls": _unique_texts(*[block.get("trace_url") for block in game_blocks if isinstance(block, dict)]),
+            "dataset_run_urls": _unique_texts(
+                *[block.get("dataset_run_url") for block in game_blocks if isinstance(block, dict)]
+            ),
+            "experiment_urls": _unique_texts(
+                *[block.get("experiment_url") for block in game_blocks if isinstance(block, dict)]
+            ),
+        },
+    }
 
 
 def _benchmark_game_matches_status_filter(game: dict[str, Any], statuses: set[str]) -> bool:
@@ -3568,6 +3776,7 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
             "target_role": subject.get("target_role"),
         },
     }
+    payload["langfuse"] = _benchmark_batch_langfuse_summary(batch, games=games)
     payload["content_hash"] = _benchmark_report_content_hash(payload)
     payload["artifacts"] = {
         "schema_version": 1,
@@ -4214,12 +4423,47 @@ def _text_items(value: Any) -> list[str]:
     return [str(item) for item in value if str(item)]
 
 
+def _optional_text(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
 def _first_text(*values: Any) -> str:
     for value in values:
         text = str(value or "").strip()
         if text:
             return text
     return ""
+
+
+def _first_non_empty(*values: Any) -> Any | None:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+            continue
+        if value != "":
+            return value
+    return None
+
+
+def _unique_non_empty(values: Any) -> list[str]:
+    seen: set[str] = set()
+    items: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        items.append(text)
+    return items
+
+
+def _unique_texts(*values: Any) -> list[str]:
+    return _unique_non_empty(values)
 
 
 def _benchmark_spec_snapshot(batch: dict[str, Any]) -> dict[str, Any]:

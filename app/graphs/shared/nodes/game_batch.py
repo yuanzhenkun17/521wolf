@@ -25,6 +25,29 @@ DEFAULT_CONCURRENCY = 3
 # (bad model, bad skill path) rather than the occasional unlucky game.
 CONSECUTIVE_FAILURE_LIMIT = 5
 
+_GAME_RESULT_METADATA_KEYS: tuple[str, ...] = (
+    "source_run_id",
+    "source_game_id",
+    "evaluation_set_id",
+    "seed_set_id",
+    "benchmark_id",
+    "benchmark_version",
+    "benchmark_config_hash",
+    "target_role",
+    "target_version_id",
+    "model_id",
+    "model_config_hash",
+    "langfuse_trace_id",
+    "langfuse_trace_url",
+    "langfuse_dataset_name",
+    "langfuse_dataset_item_id",
+    "langfuse_experiment_name",
+    "langfuse_run_name",
+    "langfuse_dataset_run_id",
+    "langfuse_dataset_run_item_id",
+    "langfuse_experiment_url",
+)
+
 
 class BatchAbortedError(RuntimeError):
     """Raised when a batch hits too many consecutive game failures."""
@@ -37,7 +60,7 @@ def normalize_game_result(*, game_id: str, seed: int, result: dict[str, Any]) ->
     """
     events = result.get("game_events", [])
     days = [int(e.get("day", 0) or 0) for e in events if isinstance(e, dict)]
-    return {
+    record = {
         "game_id": game_id,
         "seed": seed,
         "winner": result.get("winner"),
@@ -49,6 +72,10 @@ def normalize_game_result(*, game_id: str, seed: int, result: dict[str, Any]) ->
         "decisions": list(result.get("decisions", [])),
         "error": result.get("error"),
     }
+    for key in _GAME_RESULT_METADATA_KEYS:
+        if key in result:
+            record[key] = result.get(key)
+    return record
 
 
 def winner_counts(games: list[dict[str, Any]]) -> dict[str, int]:

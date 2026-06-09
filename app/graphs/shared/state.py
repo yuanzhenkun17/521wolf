@@ -116,6 +116,15 @@ class GameState(TypedDict, total=False):
     storage_run_type: str
     source_run_id: str
     source_game_id: str
+    langfuse_dataset_name: str
+    langfuse_dataset_item_id: str
+    langfuse_experiment_name: str
+    langfuse_run_name: str
+    langfuse_dataset_run_id: str
+    langfuse_dataset_run_item_id: str
+    langfuse_trace_id: str
+    langfuse_trace_url: str
+    langfuse_experiment_url: str
     mode: str
     model_id: str
     model_config_hash: str
@@ -186,6 +195,9 @@ class EvalBatchState(TypedDict, total=False):
     run_type: str  # "eval"
     batch_config: dict[str, Any]    # EvaluationBatchConfig
     batch_id: str
+    langfuse_dataset_name: str
+    langfuse_experiment_name: str
+    langfuse_run_name: str
     game_subgraph: Any
     model: Any
     skill_dir: str
@@ -267,6 +279,9 @@ class RootState(TypedDict, total=False):
     config: dict[str, Any]
     batch_config: dict[str, Any]
     batch_id: str
+    langfuse_dataset_name: str
+    langfuse_experiment_name: str
+    langfuse_run_name: str
     game_id: str
     seed: int
     max_days: int

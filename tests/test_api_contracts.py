@@ -1636,6 +1636,8 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
     )
     assert stop_after_integer["minimum"] == 0
     assert stop_after_integer["maximum"] == 1_000_000
+    for key in ("langfuse_dataset_name", "langfuse_experiment_name", "langfuse_run_name"):
+        assert benchmark[key]["anyOf"] == [{"type": "string", "maxLength": 240}, {"type": "null"}]
 
     benchmark_lifecycle = _schema_properties(doc, "BenchmarkLifecycleRequest")
     assert benchmark_lifecycle["status"]["default"] == "enabled"

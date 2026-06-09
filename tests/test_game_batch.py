@@ -53,6 +53,45 @@ def test_normalize_game_result_preserves_no_winner_terminal_metadata():
     assert rec["error"] is None
 
 
+def test_normalize_game_result_preserves_benchmark_langfuse_metadata():
+    metadata = {
+        "source_run_id": "batch-a",
+        "source_game_id": "batch-a_game_001",
+        "evaluation_set_id": "eval-set-a",
+        "seed_set_id": "seed-set-a",
+        "benchmark_id": "bench-a",
+        "benchmark_version": "v1",
+        "benchmark_config_hash": "sha256:bench",
+        "target_role": "seer",
+        "target_version_id": "seer-v1",
+        "model_id": "model-a",
+        "model_config_hash": "sha256:model",
+        "langfuse_trace_id": "trace-a",
+        "langfuse_trace_url": "http://langfuse/traces/trace-a",
+        "langfuse_dataset_name": "eval-set-a",
+        "langfuse_dataset_item_id": "eval-set-a:seed-set-a:7",
+        "langfuse_experiment_name": "experiment-a",
+        "langfuse_run_name": "run-a",
+        "langfuse_dataset_run_id": "dataset-run-a",
+        "langfuse_dataset_run_item_id": "dataset-run-item-a",
+        "langfuse_experiment_url": "http://langfuse/datasets/eval-set-a/runs/dataset-run-a",
+    }
+
+    rec = normalize_game_result(
+        game_id="g_meta",
+        seed=7,
+        result={
+            "winner": "villagers",
+            "roles": {},
+            "game_events": [{"day": 1}],
+            **metadata,
+        },
+    )
+
+    for key, value in metadata.items():
+        assert rec[key] == value
+
+
 def test_winner_counts_tallies_unknown():
     games = [
         {"winner": "villagers"},

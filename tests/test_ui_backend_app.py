@@ -1943,6 +1943,19 @@ def test_benchmark_request_accepts_suite_and_target_versions() -> None:
     assert request.stop_after_budget_units == 400
 
 
+def test_benchmark_request_normalizes_blank_langfuse_fields() -> None:
+    request = BenchmarkRequest(
+        roles=["seer"],
+        langfuse_dataset_name="  ",
+        langfuse_experiment_name="\t",
+        langfuse_run_name="",
+    )
+
+    assert request.langfuse_dataset_name is None
+    assert request.langfuse_experiment_name is None
+    assert request.langfuse_run_name is None
+
+
 def test_spec_benchmark_queue_saves_snapshot_and_eval_config(tmp_path: Path, monkeypatch) -> None:
     captured: dict[str, Any] = {}
     _write_benchmark_spec(tmp_path)
@@ -2020,6 +2033,9 @@ def test_spec_benchmark_queue_saves_snapshot_and_eval_config(tmp_path: Path, mon
     assert captured["benchmark_id"] == "role-baseline-v1"
     assert captured["benchmark_version"] == 1
     assert captured["benchmark_config_hash"] == benchmark["config_hash"]
+    assert captured["langfuse_dataset_name"] == benchmark["evaluation_set_id"]
+    assert captured["langfuse_experiment_name"] == "role-baseline-v1"
+    assert captured["langfuse_run_name"] == f"{batch['batch_id']}_seer"
     assert set(captured) >= {
         "data_sufficient_min_games",
         "leaderboard_min_games",
@@ -2201,6 +2217,11 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
                     "status": "completed",
                     "seed": batch_config["seeds"][1],
                     "winner": "evil",
+                    "langfuse_trace_id": "trace-game-002",
+                    "langfuse_trace_url": "http://langfuse.local/project/p/traces/trace-game-002",
+                    "langfuse_dataset_run_id": "dataset-run-002",
+                    "langfuse_dataset_run_item_id": "dataset-run-item-002",
+                    "langfuse_experiment_url": "http://langfuse.local/project/p/datasets/dataset/runs/dataset-run-002",
                     "events": [{"event_type": "night_action", "message": "fallback"}],
                     "decisions": [{"decision_id": "d2", "action_type": "seer_check"}],
                     "errors": ["transient LLM timeout"],
@@ -2304,6 +2325,16 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
     assert detail["game_summary"]["total"] == 3
     assert detail["game_summary"]["by_status"] == {"completed": 2, "failed": 1}
     assert detail["diagnostic_summary"]["by_kind"]["rankable_failed"] == 1
+    assert detail["langfuse"]["dataset_names"] == ["role-baseline-v1@v1"]
+    assert detail["langfuse"]["experiment_names"] == ["role-baseline-v1"]
+    assert detail["langfuse"]["run_names"] == [f"{batch_id}_seer"]
+    assert detail["langfuse"]["trace_count"] == 1
+    assert detail["langfuse"]["dataset_run_count"] == 1
+    assert detail["langfuse"]["dataset_run_item_count"] == 1
+    assert detail["langfuse"]["links"]["trace_urls"] == ["http://langfuse.local/project/p/traces/trace-game-002"]
+    assert detail["langfuse"]["links"]["experiment_urls"] == [
+        "http://langfuse.local/project/p/datasets/dataset/runs/dataset-run-002"
+    ]
 
     assert games_response.status_code == 200
     games = games_response.json()
@@ -2326,6 +2357,19 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
     assert problem_games["games"][0]["diagnostic_count"] == 1
     assert problem_games["games"][0]["error_count"] == 1
     assert problem_games["games"][0]["fallback_count"] == 1
+    assert problem_games["games"][0]["langfuse"] == {
+        "trace_id": "trace-game-002",
+        "trace_url": "http://langfuse.local/project/p/traces/trace-game-002",
+        "dataset_name": "role-baseline-v1@v1",
+        "dataset_item_id": "role-baseline-v1@v1:role-baseline-quick-202606:260607",
+        "dataset_run_id": "dataset-run-002",
+        "dataset_run_item_id": "dataset-run-item-002",
+        "dataset_run_url": "http://langfuse.local/project/p/datasets/dataset/runs/dataset-run-002",
+        "experiment_name": "role-baseline-v1",
+        "run_name": f"{batch_id}_seer",
+        "experiment_url": "http://langfuse.local/project/p/datasets/dataset/runs/dataset-run-002",
+    }
+    assert problem_games["games"][0]["observability"]["langfuse"] == problem_games["games"][0]["langfuse"]
 
     assert seed_games_response.status_code == 200
     seed_games = seed_games_response.json()
@@ -3155,6 +3199,50 @@ def test_legacy_benchmark_queue_stays_ad_hoc_compatible(tmp_path: Path, monkeypa
     assert stored_batch["benchmark"] is None
     listed = next(item for item in listed_response.json()["batches"] if item["batch_id"] == batch["batch_id"])
     assert listed["config"] == {"roles": ["seer"], "battle_games": 0, "max_days": 1}
+
+
+def test_benchmark_queue_passes_langfuse_config_to_eval_launcher(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_run_evaluation(*, batch_config: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        captured.update(batch_config)
+        return {
+            "batch_id": batch_config["batch_id"],
+            "config": batch_config,
+            "game_count": batch_config["game_count"],
+            "completed": batch_config["game_count"],
+            "errored": 0,
+            "games": [],
+            "score_summary": {"game_count": batch_config["game_count"]},
+            "fairness": {"is_fair": True},
+            "rankable": True,
+            "rankable_reason": "ok",
+        }
+
+    monkeypatch.setattr(ui_backend_store, "run_evaluation", fake_run_evaluation)
+
+    with _test_client(tmp_path) as client:
+        response = client.post(
+            "/api/benchmark",
+            json={
+                "roles": ["seer"],
+                "battle_games": 0,
+                "max_days": 1,
+                "langfuse_dataset_name": "dataset-a",
+                "langfuse_experiment_name": "experiment-a",
+                "langfuse_run_name": "run-a",
+            },
+        )
+        batch = response.json()
+
+    assert response.status_code == 200
+    assert batch["config"]["langfuse_dataset_name"] == "dataset-a"
+    assert batch["config"]["langfuse_experiment_name"] == "experiment-a"
+    assert batch["config"]["langfuse_run_name"] == "run-a"
+    assert captured["langfuse_dataset_name"] == "dataset-a"
+    assert captured["langfuse_experiment_name"] == "experiment-a"
+    assert captured["langfuse_run_name"] == "run-a"
 
 
 def test_stopped_benchmark_is_not_overwritten_by_background_result(tmp_path: Path, monkeypatch) -> None:

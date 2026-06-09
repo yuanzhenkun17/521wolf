@@ -137,6 +137,9 @@ class BenchmarkRequest(BaseModel):
     budget_limit_units: int | None = Field(default=None, ge=0, le=1_000_000)
     budget_limit_cost: float | None = Field(default=None, ge=0.0, le=1_000_000.0)
     stop_after_budget_units: int | None = Field(default=None, ge=0, le=1_000_000)
+    langfuse_dataset_name: str | None = Field(default=None, max_length=240)
+    langfuse_experiment_name: str | None = Field(default=None, max_length=240)
+    langfuse_run_name: str | None = Field(default=None, max_length=240)
 
     @field_validator("roles", mode="before")
     @classmethod
@@ -169,6 +172,12 @@ class BenchmarkRequest(BaseModel):
                 raise ValueError(f"unsupported role: {role}")
             normalized[role] = version
         return normalized
+
+    @field_validator("langfuse_dataset_name", "langfuse_experiment_name", "langfuse_run_name", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
 
 
 class BenchmarkLifecycleRequest(BaseModel):

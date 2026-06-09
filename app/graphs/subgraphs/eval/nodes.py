@@ -179,6 +179,7 @@ async def run_games_node(state: EvalBatchState) -> dict:
         seed = explicit_seeds[index] if explicit_seeds else seed_start + index
         game_state: dict[str, Any] = {
             "game_id": f"{batch_id}_game_{index + 1:03d}",
+            "batch_id": batch_id,
             "seed": seed,
             "max_days": max_days,
             "model": state.get("model"),
@@ -200,6 +201,7 @@ async def run_games_node(state: EvalBatchState) -> dict:
             "evaluation_set_id": cfg.get("evaluation_set_id"),
             "paired_seed": cfg.get("paired_seed"),
         }
+        game_state.update(_langfuse_game_metadata_from_eval_config(cfg, state, seed=seed, index=index))
         if role_skill_dirs:
             game_state["role_skill_dirs"] = role_skill_dirs
         _copy_runner_config(cfg, game_state)
@@ -945,6 +947,7 @@ def _langfuse_eval_metadata(
         "data_sufficient": result.get("data_sufficient", state.get("data_sufficient")),
         "low_error_rate": result.get("low_error_rate", state.get("low_error_rate")),
     }
+    metadata.update(_langfuse_eval_linkage_metadata(state, result=result))
     for key in (
         "model_id",
         "model_config_hash",
@@ -955,8 +958,9 @@ def _langfuse_eval_metadata(
         "seed_set_id",
         "evaluation_set_id",
     ):
-        if cfg.get(key) is not None:
-            metadata[key] = cfg[key]
+        value = _first_present(cfg.get(key), state.get(key))
+        if value is not None:
+            metadata[key] = value
     if cfg.get("paired_seed") is not None:
         metadata["paired_seed"] = bool(cfg.get("paired_seed"))
     gate = result.get("leaderboard_gate")
@@ -1036,6 +1040,7 @@ def _write_langfuse_eval_scores(
     terminal_stats = result.get("terminal_stats") if isinstance(result.get("terminal_stats"), dict) else {}
     decision_quality = summary.get("decision_quality") if isinstance(summary.get("decision_quality"), dict) else {}
     metadata = _langfuse_eval_score_metadata(state, result)
+    dataset_run_ids = _langfuse_dataset_run_ids(result.get("games") or state.get("games"))
 
     numeric_scores = {
         "eval.avg_role_score": summary.get("avg_role_score"),
@@ -1059,6 +1064,7 @@ def _write_langfuse_eval_scores(
                 number,
                 data_type="NUMERIC",
                 metadata=metadata,
+                dataset_run_ids=dataset_run_ids,
             )
 
     if "rankable" in result or "rankable" in state:
@@ -1068,6 +1074,7 @@ def _write_langfuse_eval_scores(
             bool(_first_present(result.get("rankable"), state.get("rankable"))),
             data_type="BOOLEAN",
             metadata=metadata,
+            dataset_run_ids=dataset_run_ids,
         )
 
     boolean_scores = {
@@ -1083,6 +1090,7 @@ def _write_langfuse_eval_scores(
                 bool(value),
                 data_type="BOOLEAN",
                 metadata=metadata,
+                dataset_run_ids=dataset_run_ids,
             )
 
     judge = summary.get("decision_judge_aggregate")
@@ -1101,11 +1109,13 @@ def _write_langfuse_eval_scores(
                     number,
                     data_type="NUMERIC",
                     metadata=metadata,
+                    dataset_run_ids=dataset_run_ids,
                 )
 
 
 def _langfuse_eval_score_metadata(state: EvalBatchState, result: dict[str, Any]) -> dict[str, Any]:
     gate = result.get("leaderboard_gate") if isinstance(result.get("leaderboard_gate"), dict) else {}
+    cfg = dict(state.get("batch_config", {}) or {})
     metadata = {
         "metric_family": "eval",
         "batch_id": result.get("batch_id") or state.get("batch_id"),
@@ -1120,7 +1130,168 @@ def _langfuse_eval_score_metadata(state: EvalBatchState, result: dict[str, Any])
         "leaderboard_accepted": gate.get("accepted"),
         "leaderboard_gate_reason": gate.get("reason"),
     }
+    metadata.update(_langfuse_eval_linkage_metadata(state, result=result))
     return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _langfuse_eval_linkage_metadata(
+    state: EvalBatchState,
+    *,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    cfg = dict(state.get("batch_config", {}) or {})
+    result = result if isinstance(result, dict) else {}
+    result_cfg = result.get("config") if isinstance(result.get("config"), dict) else {}
+    summary = result.get("score_summary") if isinstance(result.get("score_summary"), dict) else {}
+    metadata: dict[str, Any] = {}
+
+    for key in (
+        "batch_id",
+        "evaluation_set_id",
+        "seed_set_id",
+        "benchmark_id",
+        "benchmark_version",
+        "benchmark_config_hash",
+        "model_id",
+        "model_config_hash",
+        "comparison_group_id",
+        "comparison_type",
+        "target_role",
+        "target_version_id",
+        "target_type",
+    ):
+        value = _first_present(
+            result.get(key),
+            cfg.get(key),
+            result_cfg.get(key),
+            summary.get(key),
+            state.get(key),
+        )
+        if value is not None:
+            metadata[key] = value
+
+    dataset_name = _first_present(
+        cfg.get("langfuse_dataset_name"),
+        result_cfg.get("langfuse_dataset_name"),
+        state.get("langfuse_dataset_name"),
+        metadata.get("evaluation_set_id"),
+    )
+    if dataset_name is not None:
+        metadata["langfuse_dataset_name"] = dataset_name
+
+    dataset_item_id = _first_present(
+        cfg.get("langfuse_dataset_item_id"),
+        result_cfg.get("langfuse_dataset_item_id"),
+        state.get("langfuse_dataset_item_id"),
+        _langfuse_dataset_item_id_from_config(cfg),
+    )
+    if dataset_item_id is not None:
+        metadata["langfuse_dataset_item_id"] = dataset_item_id
+
+    experiment_name = _first_present(
+        cfg.get("langfuse_experiment_name"),
+        result_cfg.get("langfuse_experiment_name"),
+        state.get("langfuse_experiment_name"),
+        cfg.get("experiment_name"),
+        result_cfg.get("experiment_name"),
+        state.get("experiment_name"),
+    )
+    if experiment_name is not None:
+        metadata["langfuse_experiment_name"] = experiment_name
+        metadata["experiment_name"] = experiment_name
+
+    run_name = _first_present(
+        cfg.get("langfuse_run_name"),
+        result_cfg.get("langfuse_run_name"),
+        state.get("langfuse_run_name"),
+        cfg.get("run_name"),
+        result_cfg.get("run_name"),
+        state.get("run_name"),
+    )
+    if run_name is not None:
+        metadata["langfuse_run_name"] = run_name
+        metadata["run_name"] = run_name
+
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _langfuse_game_metadata_from_eval_config(
+    cfg: dict[str, Any],
+    state: EvalBatchState,
+    *,
+    seed: int,
+    index: int,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    dataset_name = _first_present(
+        cfg.get("langfuse_dataset_name"),
+        state.get("langfuse_dataset_name"),
+        cfg.get("evaluation_set_id"),
+    )
+    if dataset_name is not None:
+        metadata["langfuse_dataset_name"] = dataset_name
+
+    dataset_item_id = _langfuse_dataset_item_id_from_config(cfg, seed=seed, index=index)
+    if dataset_item_id is None:
+        dataset_item_id = state.get("langfuse_dataset_item_id")
+    if dataset_item_id is not None:
+        metadata["langfuse_dataset_item_id"] = dataset_item_id
+
+    experiment_name = _first_present(
+        cfg.get("langfuse_experiment_name"),
+        state.get("langfuse_experiment_name"),
+        cfg.get("experiment_name"),
+        state.get("experiment_name"),
+    )
+    if experiment_name is not None:
+        metadata["langfuse_experiment_name"] = experiment_name
+        metadata["experiment_name"] = experiment_name
+
+    run_name = _first_present(
+        cfg.get("langfuse_run_name"),
+        state.get("langfuse_run_name"),
+        cfg.get("run_name"),
+        state.get("run_name"),
+    )
+    if run_name is not None:
+        metadata["langfuse_run_name"] = run_name
+        metadata["run_name"] = run_name
+    return metadata
+
+
+def _langfuse_dataset_item_id_from_config(
+    cfg: dict[str, Any],
+    *,
+    seed: int | None = None,
+    index: int | None = None,
+) -> str | None:
+    configured = cfg.get("langfuse_dataset_item_id")
+    if isinstance(configured, str) and configured.strip():
+        return configured
+    if isinstance(configured, list) and index is not None and 0 <= index < len(configured):
+        item = configured[index]
+        if item is not None:
+            return str(item)
+    if isinstance(configured, dict):
+        for key in (seed, str(seed) if seed is not None else None, index, str(index) if index is not None else None):
+            if key is not None and key in configured and configured[key] is not None:
+                return str(configured[key])
+
+    if seed is None:
+        game_count = cfg.get("game_count")
+        try:
+            if int(game_count or 0) != 1:
+                return None
+            seeds = _explicit_batch_seeds(cfg.get("seeds"))
+            seed = seeds[0] if seeds else int(cfg.get("seed_start", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+
+    evaluation_set_id = cfg.get("evaluation_set_id")
+    seed_set_id = cfg.get("seed_set_id")
+    if evaluation_set_id is None or seed_set_id is None:
+        return None
+    return f"{evaluation_set_id}:{seed_set_id}:{seed}"
 
 
 def _leaderboard_accepted(result: dict[str, Any]) -> bool | None:
@@ -1139,14 +1310,68 @@ def _score_langfuse_metric(
     *,
     data_type: str,
     metadata: dict[str, Any],
+    dataset_run_ids: tuple[str, ...] = (),
 ) -> None:
     score_current_trace = getattr(observability, "score_current_trace", None)
-    if not callable(score_current_trace):
+    if callable(score_current_trace):
+        try:
+            score_current_trace(name, value, data_type=data_type, metadata=metadata)
+        except Exception:  # noqa: BLE001 - scoring is advisory
+            _log.debug("Langfuse eval score failed for %s", name, exc_info=True)
+    _score_langfuse_dataset_runs(
+        observability,
+        dataset_run_ids,
+        name,
+        value,
+        data_type=data_type,
+        metadata=metadata,
+    )
+
+
+def _score_langfuse_dataset_runs(
+    observability: Any,
+    dataset_run_ids: tuple[str, ...],
+    name: str,
+    value: float | bool | str,
+    *,
+    data_type: str,
+    metadata: dict[str, Any],
+) -> None:
+    if not dataset_run_ids:
         return
-    try:
-        score_current_trace(name, value, data_type=data_type, metadata=metadata)
-    except Exception:  # noqa: BLE001 - scoring is advisory
-        _log.debug("Langfuse eval score failed for %s", name, exc_info=True)
+    score_dataset_run = getattr(observability, "score_dataset_run", None)
+    if not callable(score_dataset_run):
+        return
+    for dataset_run_id in dataset_run_ids:
+        try:
+            score_dataset_run(
+                dataset_run_id,
+                name,
+                value,
+                data_type=data_type,
+                metadata={**metadata, "langfuse_dataset_run_id": dataset_run_id},
+            )
+        except Exception:  # noqa: BLE001 - dataset-run scoring is advisory
+            _log.debug("Langfuse eval dataset run score failed for %s on %s", name, dataset_run_id, exc_info=True)
+
+
+def _langfuse_dataset_run_ids(games: Any) -> tuple[str, ...]:
+    if not isinstance(games, list):
+        return ()
+    seen: set[str] = set()
+    dataset_run_ids: list[str] = []
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        value = game.get("langfuse_dataset_run_id")
+        if value is None or value == "":
+            continue
+        dataset_run_id = str(value)
+        if dataset_run_id in seen:
+            continue
+        seen.add(dataset_run_id)
+        dataset_run_ids.append(dataset_run_id)
+    return tuple(dataset_run_ids)
 
 
 def _flush_langfuse(observability: Any) -> None:

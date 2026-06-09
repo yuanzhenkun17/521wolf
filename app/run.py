@@ -22,6 +22,12 @@ _AGENT_RUNTIME_CONFIG_KEYS: tuple[str, ...] = (
     "agent_memory_event_max_chars",
 )
 
+LANGFUSE_EVAL_CONFIG_KEYS: tuple[str, ...] = (
+    "langfuse_dataset_name",
+    "langfuse_experiment_name",
+    "langfuse_run_name",
+)
+
 
 async def run_game(
     *,
@@ -103,6 +109,9 @@ async def run_game(
 async def run_evaluation(
     *,
     batch_config: dict[str, Any],
+    langfuse_dataset_name: str | None = None,
+    langfuse_experiment_name: str | None = None,
+    langfuse_run_name: str | None = None,
     **kwargs,
 ) -> dict[str, Any]:
     """Run an evaluation batch.
@@ -116,6 +125,13 @@ async def run_evaluation(
     from app.graphs.main.builder import build_root_graph
 
     config = dict(batch_config)
+    for key, value in (
+        ("langfuse_dataset_name", langfuse_dataset_name),
+        ("langfuse_experiment_name", langfuse_experiment_name),
+        ("langfuse_run_name", langfuse_run_name),
+    ):
+        if value is not None:
+            config.setdefault(key, value)
     for key in (
         "game_count",
         "max_days",
@@ -139,7 +155,7 @@ async def run_evaluation(
         "judge_timeout_seconds",
         "eval_judge_timeout_seconds",
         "review_judge_timeout_seconds",
-    ) + _AGENT_RUNTIME_CONFIG_KEYS:
+    ) + _AGENT_RUNTIME_CONFIG_KEYS + LANGFUSE_EVAL_CONFIG_KEYS:
         if key in kwargs and kwargs[key] is not None:
             config.setdefault(key, kwargs[key])
     config = apply_judge_policy("eval", config)
@@ -148,6 +164,7 @@ async def run_evaluation(
         "run_type": "eval",
         "batch_config": config,
     }
+    _copy_config_keys(state, config, *LANGFUSE_EVAL_CONFIG_KEYS)
     _copy_optional(state, kwargs, "model", "skill_dir", "paths", "storage_provider", "decision_judge_fn")
     _ensure_model(state)
 
@@ -252,6 +269,13 @@ def _copy_optional(target: dict[str, Any], source: dict[str, Any], *keys: str) -
     """Copy explicitly provided runtime dependencies into graph input state."""
     for key in keys:
         if key in source and source[key] is not None:
+            target[key] = source[key]
+
+
+def _copy_config_keys(target: dict[str, Any], source: dict[str, Any], *keys: str) -> None:
+    """Expose selected config values at the graph input state top level."""
+    for key in keys:
+        if source.get(key) is not None:
             target[key] = source[key]
 
 

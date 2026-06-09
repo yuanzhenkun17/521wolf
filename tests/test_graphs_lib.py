@@ -3087,6 +3087,45 @@ class TestRun:
         assert eval_config["eval_judge_max_decisions"] == 4
         assert "enable_llm_judge" not in eval_config
 
+    def test_run_evaluation_entrypoint_propagates_langfuse_config_to_graph(self, monkeypatch):
+        from app.run import run_evaluation
+        import asyncio
+
+        captured = []
+
+        class FakeGraph:
+            async def ainvoke(self, state):
+                captured.append(dict(state))
+                return {"result": {"status": "captured"}}
+
+        monkeypatch.setattr(
+            "app.graphs.main.builder.build_root_graph",
+            lambda **_kwargs: FakeGraph(),
+        )
+
+        async def _run():
+            await run_evaluation(
+                batch_config={
+                    "batch_id": "eval_langfuse",
+                    "langfuse_dataset_name": "dataset-from-config",
+                },
+                model=object(),
+                langfuse_dataset_name="dataset-from-kwargs",
+                langfuse_experiment_name="experiment-a",
+                langfuse_run_name="run-a",
+            )
+
+        asyncio.run(_run())
+
+        state = captured[0]
+        eval_config = state["batch_config"]
+        assert eval_config["langfuse_dataset_name"] == "dataset-from-config"
+        assert eval_config["langfuse_experiment_name"] == "experiment-a"
+        assert eval_config["langfuse_run_name"] == "run-a"
+        assert state["langfuse_dataset_name"] == "dataset-from-config"
+        assert state["langfuse_experiment_name"] == "experiment-a"
+        assert state["langfuse_run_name"] == "run-a"
+
     def test_run_game_entrypoint_runs_graph(self):
         from app.run import run_game
         import asyncio
