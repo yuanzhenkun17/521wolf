@@ -7,3 +7,27 @@
 @import "./part-26.css";
 @import "./part-27.css";
 @import "./part-28.css";
+
+:root {
+  --workbench-logbook-bg: #f2dfae;
+  --workbench-logbook-bg-texture:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    var(--workbench-logbook-bg);
+  --workbench-logbook-surface: rgba(255, 252, 245, 0.7);
+  --workbench-logbook-panel: rgba(255, 252, 245, 0.86);
+  --workbench-logbook-panel-solid: rgba(255, 250, 240, 0.92);
+  --workbench-logbook-panel-soft: rgba(255, 242, 210, 0.58);
+  --workbench-logbook-border: rgba(139, 94, 52, 0.15);
+  --workbench-logbook-border-strong: rgba(90, 51, 25, 0.34);
+  --workbench-logbook-text: #3a2a18;
+  --workbench-logbook-muted: #8b6b4a;
+  --workbench-logbook-accent: #8b5e34;
+  --workbench-logbook-accent-strong: #5a3319;
+  --workbench-logbook-input-bg: rgba(255, 255, 250, 0.8);
+  --workbench-logbook-input-border: rgba(139, 94, 52, 0.2);
+  --workbench-logbook-hover: rgba(139, 94, 52, 0.06);
+  --workbench-logbook-active-bg: rgba(139, 94, 52, 0.1);
+  --workbench-logbook-danger: #993026;
+  --workbench-logbook-warning: #76510e;
+  --workbench-logbook-warning-benchmark: #8b5e34;
+}

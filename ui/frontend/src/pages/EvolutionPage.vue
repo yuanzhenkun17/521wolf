@@ -118,26 +118,28 @@ onMounted(() => evo.refreshAll())
    Design Tokens
    ======================================== */
 .evo-page {
-  --logbook-bg: #f2dfae;
-  --logbook-bg-texture:
+  --logbook-bg: var(--workbench-logbook-bg, #f2dfae);
+  --logbook-bg-texture: var(
+    --workbench-logbook-bg-texture,
     repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
-    var(--logbook-bg);
-  --logbook-surface: rgba(255, 252, 245, 0.7);
-  --logbook-panel: rgba(255, 252, 245, 0.86);
-  --logbook-panel-solid: rgba(255, 250, 240, 0.92);
-  --logbook-panel-soft: rgba(255, 242, 210, 0.58);
-  --logbook-border: rgba(139, 94, 52, 0.15);
-  --logbook-border-strong: rgba(90, 51, 25, 0.34);
-  --logbook-text: #3a2a18;
-  --logbook-muted: #8b6b4a;
-  --logbook-accent: #8b5e34;
-  --logbook-accent-strong: #5a3319;
-  --logbook-input-bg: rgba(255, 255, 250, 0.8);
-  --logbook-input-border: rgba(139, 94, 52, 0.2);
-  --logbook-hover: rgba(139, 94, 52, 0.06);
-  --logbook-active-bg: rgba(139, 94, 52, 0.1);
-  --logbook-danger: #993026;
-  --logbook-warning: #76510e;
+    var(--logbook-bg)
+  );
+  --logbook-surface: var(--workbench-logbook-surface, rgba(255, 252, 245, 0.7));
+  --logbook-panel: var(--workbench-logbook-panel, rgba(255, 252, 245, 0.86));
+  --logbook-panel-solid: var(--workbench-logbook-panel-solid, rgba(255, 250, 240, 0.92));
+  --logbook-panel-soft: var(--workbench-logbook-panel-soft, rgba(255, 242, 210, 0.58));
+  --logbook-border: var(--workbench-logbook-border, rgba(139, 94, 52, 0.15));
+  --logbook-border-strong: var(--workbench-logbook-border-strong, rgba(90, 51, 25, 0.34));
+  --logbook-text: var(--workbench-logbook-text, #3a2a18);
+  --logbook-muted: var(--workbench-logbook-muted, #8b6b4a);
+  --logbook-accent: var(--workbench-logbook-accent, #8b5e34);
+  --logbook-accent-strong: var(--workbench-logbook-accent-strong, #5a3319);
+  --logbook-input-bg: var(--workbench-logbook-input-bg, rgba(255, 255, 250, 0.8));
+  --logbook-input-border: var(--workbench-logbook-input-border, rgba(139, 94, 52, 0.2));
+  --logbook-hover: var(--workbench-logbook-hover, rgba(139, 94, 52, 0.06));
+  --logbook-active-bg: var(--workbench-logbook-active-bg, rgba(139, 94, 52, 0.1));
+  --logbook-danger: var(--workbench-logbook-danger, #993026);
+  --logbook-warning: var(--workbench-logbook-warning, #76510e);
   --evo-bg: var(--logbook-bg);
   --evo-bg-texture: var(--logbook-bg-texture);
   --evo-surface: var(--logbook-surface);
