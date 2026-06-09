@@ -1,17 +1,51 @@
-// @ts-nocheck
+import type { ActiveGameSession, GameMode, GameStatus } from '../types/game'
 
-const TERMINAL_GAME_STATUSES = new Set(['completed', 'failed', 'cancelled'])
-const ACTIVE_GAME_STORAGE_KEY = 'night-council.active-game.v1'
-
-function isTerminalGame(game) {
-  return Boolean(game?.winner) || TERMINAL_GAME_STATUSES.has(game?.status)
+interface GameSessionGame {
+  game_id?: string | null
+  mode?: GameMode | null
+  status?: GameStatus | null
+  winner?: unknown
 }
 
-function isReturnableGame(game) {
+interface ActiveSessionOptions {
+  mode?: GameMode | ''
+  sseConnected?: boolean
+}
+
+interface StoredSessionOptions {
+  mode?: GameMode | ''
+}
+
+interface StoredGameSession {
+  gameId: string
+  mode: string
+  updatedAt: number
+}
+
+interface GameSessionStorageAdapter {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+  removeItem(key: string): void
+}
+
+type StorageCandidate = Partial<GameSessionStorageAdapter> | null | undefined
+type ReadableStorageAdapter = Partial<GameSessionStorageAdapter> & Pick<GameSessionStorageAdapter, 'getItem'>
+
+const TERMINAL_GAME_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled'])
+const ACTIVE_GAME_STORAGE_KEY = 'night-council.active-game.v1'
+
+function isTerminalGame(game: Pick<GameSessionGame, 'winner' | 'status'> | null | undefined): boolean {
+  return Boolean(game?.winner) || TERMINAL_GAME_STATUSES.has(game?.status as string)
+}
+
+function isReturnableGame(game: Pick<GameSessionGame, 'game_id' | 'winner' | 'status'> | null | undefined): boolean {
   return Boolean(game?.game_id) && !isTerminalGame(game)
 }
 
-function activeSessionFromGame(game, { mode = '', sseConnected = false } = {}) {
+function activeSessionFromGame(
+  game: GameSessionGame | null | undefined,
+  { mode = '', sseConnected = false }: ActiveSessionOptions = {}
+): ActiveGameSession {
   const running = isReturnableGame(game)
   return {
     gameId: game?.game_id || null,
@@ -21,26 +55,27 @@ function activeSessionFromGame(game, { mode = '', sseConnected = false } = {}) {
   }
 }
 
-function emptyActiveSession() {
+function emptyActiveSession(): ActiveGameSession {
   return { gameId: null, mode: '', running: false, sseConnected: false }
 }
 
-function normalizeStoredSession(value) {
+function normalizeStoredSession(value: unknown): StoredGameSession | null {
   if (!value || typeof value !== 'object') return null
-  const gameId = value.gameId || value.game_id
+  const source = value as Record<string, unknown>
+  const gameId = source.gameId || source.game_id
   if (!gameId) return null
   return {
     gameId: String(gameId),
-    mode: value.mode ? String(value.mode) : '',
-    updatedAt: Number(value.updatedAt) || Date.now()
+    mode: source.mode ? String(source.mode) : '',
+    updatedAt: Number(source.updatedAt) || Date.now()
   }
 }
 
-function storageApi(storage = globalThis.window?.localStorage) {
-  return storage && typeof storage.getItem === 'function' ? storage : null
+function storageApi(storage: StorageCandidate = globalThis.window?.localStorage): ReadableStorageAdapter | null {
+  return storage && typeof storage.getItem === 'function' ? storage as ReadableStorageAdapter : null
 }
 
-function readStoredGameSession(storage) {
+function readStoredGameSession(storage?: StorageCandidate): StoredGameSession | null {
   const target = storageApi(storage)
   if (!target) return null
   try {
@@ -50,7 +85,11 @@ function readStoredGameSession(storage) {
   }
 }
 
-function writeStoredGameSession(game, { mode = '' } = {}, storage) {
+function writeStoredGameSession(
+  game: GameSessionGame | null | undefined,
+  { mode = '' }: StoredSessionOptions = {},
+  storage?: StorageCandidate
+): StoredGameSession | null {
   const target = storageApi(storage)
   if (!target) return null
   if (!isReturnableGame(game)) {
@@ -63,6 +102,7 @@ function writeStoredGameSession(game, { mode = '' } = {}, storage) {
     updatedAt: Date.now()
   })
   try {
+    if (typeof target.setItem !== 'function') throw new TypeError('storage.setItem is not a function')
     target.setItem(ACTIVE_GAME_STORAGE_KEY, JSON.stringify(session))
   } catch {
     return null
@@ -70,10 +110,11 @@ function writeStoredGameSession(game, { mode = '' } = {}, storage) {
   return session
 }
 
-function clearStoredGameSession(storage) {
+function clearStoredGameSession(storage?: StorageCandidate): void {
   const target = storageApi(storage)
   if (!target) return
   try {
+    if (typeof target.removeItem !== 'function') throw new TypeError('storage.removeItem is not a function')
     target.removeItem(ACTIVE_GAME_STORAGE_KEY)
   } catch {}
 }

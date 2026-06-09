@@ -1,4 +1,11 @@
-// @ts-nocheck
+type TimelineRecord = Record<string, unknown>
+
+interface TimelinePlayer extends TimelineRecord {
+  id?: unknown
+  alive?: boolean
+  is_sheriff?: boolean
+}
+
 const AUTHORITATIVE_DEATH_EVENTS = new Set([
   'death',
   'exile',
@@ -14,46 +21,59 @@ const SHERIFF_RESULT_EVENTS = new Set(['sheriff_election_end', 'sheriff_result']
 const SHERIFF_TRANSFER_EVENTS = new Set(['sheriff_badge_transfer', 'sheriff_transfer'])
 const SHERIFF_DESTROY_EVENTS = new Set(['sheriff_badge_destroy', 'sheriff_destroy'])
 
-function numericId(value) {
+function isRecord(value: unknown): value is TimelineRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function recordOf(value: unknown): TimelineRecord {
+  return isRecord(value) ? value : {}
+}
+
+function numericId(value: unknown): number | null {
   const id = Number(value)
   return Number.isFinite(id) && id > 0 ? id : null
 }
 
-function logType(row = {}) {
-  return String(row.type || row.event_type || row.action || row.action_type || row.kind || '')
+function logType(row: unknown = {}): string {
+  const data = recordOf(row)
+  return String(data.type || data.event_type || data.action || data.action_type || data.kind || '')
 }
 
-function payloadOf(row = {}) {
-  return row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : {}
+function payloadOf(row: unknown = {}): TimelineRecord {
+  const payload = recordOf(row).payload
+  return isRecord(payload) ? payload : {}
 }
 
-function rowChoice(row = {}) {
+function rowChoice(row: unknown = {}): string {
+  const data = recordOf(row)
   const payload = payloadOf(row)
   return String(
     payload.choice
     ?? payload.selected_choice
     ?? payload.selected_skill
-    ?? row.choice
-    ?? row.selected_choice
-    ?? row.selected_skill
-    ?? row.action_choice
+    ?? data.choice
+    ?? data.selected_choice
+    ?? data.selected_skill
+    ?? data.action_choice
     ?? ''
   ).trim().toLowerCase()
 }
 
-function truthyFlag(value) {
+function truthyFlag(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true'
 }
 
-function payloadIdList(row = {}, keys = []) {
+function payloadIdList(row: unknown = {}, keys: string[] = []): number[] {
+  const data = recordOf(row)
   const payload = payloadOf(row)
-  const ids = []
-  const seen = new Set()
+  const ids: number[] = []
+  const seen = new Set<number>()
   keys.forEach((key) => {
-    const raw = payload[key] ?? row[key]
+    const raw = payload[key] ?? data[key]
     const values = Array.isArray(raw) ? raw : (raw == null ? [] : [raw])
     values.forEach((value) => {
-      const id = numericId(typeof value === 'object' && value !== null ? (value.id ?? value.player_id ?? value.seat) : value)
+      const candidate = isRecord(value) ? (value.id ?? value.player_id ?? value.seat) : value
+      const id = numericId(candidate)
       if (!id || seen.has(id)) return
       seen.add(id)
       ids.push(id)
@@ -62,54 +82,57 @@ function payloadIdList(row = {}, keys = []) {
   return ids
 }
 
-function eventTargetId(row = {}) {
+function eventTargetId(row: unknown = {}): number | null {
+  const data = recordOf(row)
+  const payload = payloadOf(row)
   return numericId(
-    row.target_id
-    ?? row.target
-    ?? row.selected_target
-    ?? row.payload?.target_id
-    ?? row.payload?.target
-    ?? row.payload?.player_id
+    data.target_id
+    ?? data.target
+    ?? data.selected_target
+    ?? payload.target_id
+    ?? payload.target
+    ?? payload.player_id
   )
 }
 
-function isLegacyWhiteWolfExplodeKill(log = {}) {
+function isLegacyWhiteWolfExplodeKill(log: unknown = {}): boolean {
   if (logType(log) !== 'white_wolf_explode') return false
   return ['explode', 'burst'].includes(rowChoice(log)) && Boolean(eventTargetId(log))
 }
 
-function eventKillsPlayer(log = {}, hasAuthoritativeDeathEvents = true) {
+function eventKillsPlayer(log: unknown = {}, hasAuthoritativeDeathEvents = true): boolean {
   const type = logType(log)
   if (isLegacyWhiteWolfExplodeKill(log)) return true
   if (AUTHORITATIVE_DEATH_EVENTS.has(type)) return true
   return !hasAuthoritativeDeathEvents && FALLBACK_DEATH_EVENTS.has(type)
 }
 
-function nightOutcomeDeathIds(log = {}) {
+function nightOutcomeDeathIds(log: unknown = {}): number[] {
+  const data = recordOf(log)
   const type = logType(log)
   if (!NIGHT_OUTCOME_EVENTS.has(type)) return []
   const payload = payloadOf(log)
-  const deferredDeathReveal = truthyFlag(payload.deferred_death_reveal ?? log.deferred_death_reveal)
+  const deferredDeathReveal = truthyFlag(payload.deferred_death_reveal ?? data.deferred_death_reveal)
   if (type === 'night_end' && deferredDeathReveal) return []
 
   if (
     Array.isArray(payload.deaths)
-    || Array.isArray(log.deaths)
+    || Array.isArray(data.deaths)
     || Array.isArray(payload.death_ids)
-    || Array.isArray(log.death_ids)
+    || Array.isArray(data.death_ids)
     || Array.isArray(payload.dead_players)
-    || Array.isArray(log.dead_players)
+    || Array.isArray(data.dead_players)
   ) {
     return payloadIdList(log, ['deaths', 'death_ids', 'dead_players'])
   }
 
-  const ids = []
-  const killed = numericId(payload.killed_target ?? payload.killedTarget ?? log.killed_target ?? log.killedTarget)
-  const protectedTarget = numericId(payload.protected_target ?? payload.protectedTarget ?? log.protected_target ?? log.protectedTarget)
-  const saved = truthyFlag(payload.saved ?? payload.used_antidote ?? payload.antidote_used ?? log.saved)
+  const ids: number[] = []
+  const killed = numericId(payload.killed_target ?? payload.killedTarget ?? data.killed_target ?? data.killedTarget)
+  const protectedTarget = numericId(payload.protected_target ?? payload.protectedTarget ?? data.protected_target ?? data.protectedTarget)
+  const saved = truthyFlag(payload.saved ?? payload.used_antidote ?? payload.antidote_used ?? data.saved)
   if (killed && !saved && killed !== protectedTarget) ids.push(killed)
 
-  const poisoned = numericId(payload.poisoned_target ?? payload.poisonedTarget ?? payload.poison_target ?? payload.poisonTarget ?? log.poisoned_target)
+  const poisoned = numericId(payload.poisoned_target ?? payload.poisonedTarget ?? payload.poison_target ?? payload.poisonTarget ?? data.poisoned_target)
   if (poisoned && !ids.includes(poisoned)) ids.push(poisoned)
 
   const target = eventTargetId(log)
@@ -117,36 +140,38 @@ function nightOutcomeDeathIds(log = {}) {
   return ids
 }
 
-function deathTargetIds(log = {}, hasAuthoritativeDeathEvents = true) {
+function deathTargetIds(log: unknown = {}, hasAuthoritativeDeathEvents = true): number[] {
+  const data = recordOf(log)
   const ids = nightOutcomeDeathIds(log)
   if (eventKillsPlayer(log, hasAuthoritativeDeathEvents)) {
-    const target = eventTargetId(log) || numericId(log.actor_id)
+    const target = eventTargetId(log) || numericId(data.actor_id)
     if (target && !ids.includes(target)) ids.push(target)
   }
   return ids
 }
 
-function isSheriffLog(log = {}) {
+function isSheriffLog(log: unknown = {}): boolean {
   const type = logType(log)
   return SHERIFF_RESULT_EVENTS.has(type) || SHERIFF_TRANSFER_EVENTS.has(type) || SHERIFF_DESTROY_EVENTS.has(type)
 }
 
-function sheriffIdAfterLog(log = {}, currentSheriffId = null) {
+function sheriffIdAfterLog(log: unknown = {}, currentSheriffId: unknown = null): number | null {
+  const data = recordOf(log)
   const type = logType(log)
   const payload = payloadOf(log)
   if (SHERIFF_RESULT_EVENTS.has(type)) {
-    return numericId(payload.winner ?? log.target_id ?? log.actor_id) ?? currentSheriffId
+    return numericId(payload.winner ?? data.target_id ?? data.actor_id) ?? numericId(currentSheriffId)
   }
   if (SHERIFF_TRANSFER_EVENTS.has(type)) {
-    return eventTargetId(log) ?? currentSheriffId
+    return eventTargetId(log) ?? numericId(currentSheriffId)
   }
   if (SHERIFF_DESTROY_EVENTS.has(type)) {
     return null
   }
-  return currentSheriffId
+  return numericId(currentSheriffId)
 }
 
-function applySheriffToPlayers(players = [], sheriffId = null) {
+function applySheriffToPlayers<TPlayer extends TimelinePlayer>(players: TPlayer[] = [], sheriffId: unknown = null): TPlayer[] {
   const nextSheriffId = numericId(sheriffId)
   return (players || []).map((player) => ({
     ...player,
@@ -154,7 +179,11 @@ function applySheriffToPlayers(players = [], sheriffId = null) {
   }))
 }
 
-function applyLogToPlayers(players, log, hasAuthoritativeDeathEvents = true) {
+function applyLogToPlayers<TPlayer extends TimelinePlayer>(
+  players: TPlayer[] = [],
+  log: unknown,
+  hasAuthoritativeDeathEvents = true
+): TPlayer[] {
   let next = (players || []).map((player) => ({ ...player }))
   for (const targetId of deathTargetIds(log, hasAuthoritativeDeathEvents)) {
     const dead = next.find((player) => Number(player.id) === targetId)
@@ -167,8 +196,12 @@ function applyLogToPlayers(players, log, hasAuthoritativeDeathEvents = true) {
   return next
 }
 
-function applyLogsToPlayers(players, logs = [], hasAuthoritativeDeathEvents = true) {
-  return (logs || []).reduce(
+function applyLogsToPlayers<TPlayer extends TimelinePlayer>(
+  players: TPlayer[] = [],
+  logs: unknown[] = [],
+  hasAuthoritativeDeathEvents = true
+): TPlayer[] {
+  return (logs || []).reduce<TPlayer[]>(
     (nextPlayers, log) => applyLogToPlayers(nextPlayers, log, hasAuthoritativeDeathEvents),
     players || []
   )
