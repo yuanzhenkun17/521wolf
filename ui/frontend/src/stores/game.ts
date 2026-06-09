@@ -23,6 +23,18 @@ export const useGameStore = defineStore('game', () => {
     liveGame.value = game
   }
 
+  function setLoading(isLoading: boolean): void {
+    loading.value = isLoading
+  }
+
+  function setError(message: string | null): void {
+    error.value = message ?? ''
+  }
+
+  function setWatchRunning(running: boolean): void {
+    watchRunning.value = running
+  }
+
   function clearGame(): void {
     liveGame.value = null
     watchRunning.value = false
@@ -43,6 +55,9 @@ export const useGameStore = defineStore('game', () => {
     isNight,
     isWatch,
     setGame,
+    setLoading,
+    setError,
+    setWatchRunning,
     clearGame,
     hydrateFromRuntime
   }

@@ -35,8 +35,20 @@ export const useSessionStore = defineStore('session', () => {
     currentView.value = view
   }
 
+  function setBackendMode(mode: string): void {
+    backendMode.value = mode
+  }
+
   function setActiveSession(session: ActiveGameSession): void {
     activeSession.value = session
+  }
+
+  function patchActiveSession(session: Partial<ActiveGameSession>): void {
+    activeSession.value = { ...activeSession.value, ...session }
+  }
+
+  function setReturnToMatchAvailable(available: boolean): void {
+    returnToMatchAvailable.value = available
   }
 
   function hydrateFromRuntime(runtime: SessionRuntimeHydration): void {
@@ -58,7 +70,10 @@ export const useSessionStore = defineStore('session', () => {
     inBenchmark,
     inEvolution,
     setView,
+    setBackendMode,
     setActiveSession,
+    patchActiveSession,
+    setReturnToMatchAvailable,
     hydrateFromRuntime
   }
 })

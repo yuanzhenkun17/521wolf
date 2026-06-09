@@ -12,7 +12,7 @@
     "test": "npm run test:unit && npm run test:component",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:component": "vitest run --config vitest.component.config.ts",
-    "test:e2e:smoke": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:smoke": "playwright test tests/e2e/smoke",
     "test:watch": "vitest --config vitest.config.ts",
     "preview": "vite preview --host 127.0.0.1",
     "serve": "python serve_static.py"

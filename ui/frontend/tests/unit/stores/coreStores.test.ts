@@ -86,9 +86,30 @@ test('session store hydrates runtime state and updates view/session actions', ()
   assert.equal(store.activeSession.gameId, 'game-2')
   assert.equal(store.activeSession.mode, 'play')
 
+  store.setBackendMode('api')
+  store.patchActiveSession({ running: true, sseConnected: true })
+  store.setReturnToMatchAvailable(false)
+
+  assert.equal(store.backendMode, 'api')
+  assert.equal(store.activeSession.gameId, 'game-2')
+  assert.equal(store.activeSession.running, true)
+  assert.equal(store.activeSession.sseConnected, true)
+  assert.equal(store.returnToMatchAvailable, false)
+
+  store.setView('benchmark')
+
+  assert.equal(store.inLogs, false)
+  assert.equal(store.inBenchmark, true)
+
   store.hydrateFromRuntime({ currentView: 'unknown-view' })
 
-  assert.equal(store.currentView, 'logs')
+  assert.equal(store.currentView, 'benchmark')
+
+  store.hydrateFromRuntime({ backendMode: null, activeSession: null, returnToMatchAvailable: null })
+
+  assert.equal(store.backendMode, 'mock')
+  assert.deepEqual(store.activeSession, { gameId: null, mode: '', running: false, sseConnected: false })
+  assert.equal(store.returnToMatchAvailable, false)
 })
 
 test('game store hydrates snapshots and clears live watch state', () => {
@@ -115,6 +136,18 @@ test('game store hydrates snapshots and clears live watch state', () => {
   assert.equal(store.liveGame?.game_id, 'game-2')
   assert.equal(store.isNight, false)
   assert.equal(store.isWatch, false)
+
+  store.setLoading(false)
+  store.setError(null)
+  store.setWatchRunning(true)
+
+  assert.equal(store.loading, false)
+  assert.equal(store.error, '')
+  assert.equal(store.watchRunning, true)
+
+  store.setError('manual failure')
+
+  assert.equal(store.error, 'manual failure')
 
   store.clearGame()
 
