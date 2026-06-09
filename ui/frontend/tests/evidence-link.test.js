@@ -144,7 +144,9 @@ test('BenchmarkPage consumes benchmark run deep links after the router preserves
   assert.match(helper, /export function benchmarkBatchIdFromRoute/)
   assert.match(component, /activeView\.value = 'runs'/)
   assert.match(component, /benchmark\.selectBenchmarkBatch\(batchId\)/)
-  assert.match(component, /addEventListener\('hashchange', handleBenchmarkHashChange\)/)
+  assert.match(component, /addLegacyHashChangeListener\(handleBenchmarkHashChange\)/)
+  assert.doesNotMatch(component, /window\.addEventListener\('hashchange'/)
+  assert.doesNotMatch(component, /window\.removeEventListener\('hashchange'/)
 })
 
 test('EvidenceContextBar keeps benchmark and evolution evidence visually aligned with normal games', () => {

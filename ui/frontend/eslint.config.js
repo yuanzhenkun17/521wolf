@@ -31,6 +31,18 @@ const nodeGlobals = {
   process: 'readonly'
 }
 
+const testGlobals = {
+  afterAll: 'readonly',
+  afterEach: 'readonly',
+  beforeAll: 'readonly',
+  beforeEach: 'readonly',
+  describe: 'readonly',
+  expect: 'readonly',
+  it: 'readonly',
+  test: 'readonly',
+  vi: 'readonly'
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -51,15 +63,18 @@ export default tseslint.config(
   {
     files: [
       'eslint.config.js',
+      'playwright.config.ts',
       'vite.config.ts',
-      'src/**/*.ts'
+      'src/**/*.ts',
+      'tests/**/*.ts'
     ],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: {
         ...browserGlobals,
-        ...nodeGlobals
+        ...nodeGlobals,
+        ...testGlobals
       }
     },
     rules: {

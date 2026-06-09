@@ -11,6 +11,7 @@ import {
 } from '../components/history/historyDisplay.ts'
 import { normalizeHistoryWorkspaceTab } from '../domain/history/normalizers'
 import {
+  addLegacyHashChangeListener,
   currentLegacyHash,
   syncCurrentLegacyHashForView,
   writeLegacyHashForView,
@@ -1852,6 +1853,7 @@ function useGameHistory(state, options = {}) {
 
   if (options.installLifecycle !== false) {
     const handleHashChange = () => syncHashRoute({ rememberOrigin: false })
+    let removeHashChangeListener = () => {}
     onMounted(() => {
       const hash = currentLegacyHash()
       if (['#logs', '#evolution', '#benchmark', '#match'].includes(String(hash || '').split('?')[0])) {
@@ -1859,12 +1861,13 @@ function useGameHistory(state, options = {}) {
       } else if (options.prefetchHistoryOnMount === true) {
         refreshHistoryList({ silent: true })
       }
-      if (typeof window !== 'undefined') window.addEventListener('hashchange', handleHashChange)
+      removeHashChangeListener = addLegacyHashChangeListener(handleHashChange)
     })
     onBeforeUnmount(() => {
       stopReplayTimer()
       noticeAutoDismiss.dispose()
-      if (typeof window !== 'undefined') window.removeEventListener('hashchange', handleHashChange)
+      removeHashChangeListener()
+      removeHashChangeListener = () => {}
     })
   }
 

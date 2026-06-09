@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'vitest'
 import {
+  addLegacyHashChangeListener,
   currentLegacyHash,
   currentLegacyView,
   hashForView,
@@ -26,6 +27,22 @@ afterEach(() => {
 
 function locationLike(hash = ''): Pick<Location, 'hash'> {
   return { hash }
+}
+
+function eventWindowLike(hash = '') {
+  const listeners = new Map<string, EventListener[]>()
+  return {
+    location: locationLike(hash),
+    addEventListener(type: string, listener: EventListener) {
+      listeners.set(type, [...(listeners.get(type) || []), listener])
+    },
+    removeEventListener(type: string, listener: EventListener) {
+      listeners.set(type, (listeners.get(type) || []).filter((item) => item !== listener))
+    },
+    listeners(type: string) {
+      return listeners.get(type) || []
+    }
+  }
 }
 
 test('maps legacy app views to router paths', () => {
@@ -125,6 +142,23 @@ test('reads the current legacy view with a server-side fallback', () => {
 
   globalThis.window = { location: locationLike('#evolution?run_id=run-1') } as Window & typeof globalThis
   assert.equal(currentLegacyView(), 'evolution')
+})
+
+test('registers legacy hashchange listeners and returns cleanup callbacks', () => {
+  const target = eventWindowLike('#logs')
+  globalThis.window = target as unknown as Window & typeof globalThis
+  const events: string[] = []
+  const remove = addLegacyHashChangeListener((event) => {
+    events.push(event.newURL)
+  })
+
+  assert.equal(target.listeners('hashchange').length, 1)
+  target.listeners('hashchange')[0]({ newURL: '#logs?game_id=game-1' } as HashChangeEvent)
+  assert.deepEqual(events, ['#logs?game_id=game-1'])
+
+  remove()
+
+  assert.equal(target.listeners('hashchange').length, 0)
 })
 
 test('syncs the current legacy hash only when it matches the target view', () => {

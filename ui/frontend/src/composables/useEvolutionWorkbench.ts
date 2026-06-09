@@ -4,7 +4,7 @@ import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
 import { createResumableEventSource } from './resumableEventSource.ts'
-import { currentLegacyHash } from '../router/legacyViewNavigation'
+import { addLegacyHashChangeListener, currentLegacyHash } from '../router/legacyViewNavigation'
 import {
   evolutionDeepLinkFromHash as routeEvolutionDeepLinkFromHash,
   evolutionDeepLinkFromRoute as routeEvolutionDeepLinkFromRoute,
@@ -3296,14 +3296,16 @@ function useEvolutionWorkbench(options = {}) {
   }
 
   if (options.installLifecycle !== false) {
+    let removeEvolutionHashChangeListener = () => {}
     onMounted(() => {
       consumeEvolutionDeepLink()
-      if (typeof window !== 'undefined') window.addEventListener('hashchange', handleEvolutionHashChange)
+      removeEvolutionHashChangeListener = addLegacyHashChangeListener(handleEvolutionHashChange)
     })
     onBeforeUnmount(() => {
       closeEventStream()
       noticeAutoDismiss.dispose()
-      if (typeof window !== 'undefined') window.removeEventListener('hashchange', handleEvolutionHashChange)
+      removeEvolutionHashChangeListener()
+      removeEvolutionHashChangeListener = () => {}
     })
   }
 

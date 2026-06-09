@@ -48,6 +48,12 @@ export function currentLegacyView(fallback: AppView = 'lobby'): AppView {
   return viewFromHash(currentLegacyHash())
 }
 
+export function addLegacyHashChangeListener(handler: (event: HashChangeEvent) => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener('hashchange', handler)
+  return () => window.removeEventListener('hashchange', handler)
+}
+
 export function routeHashFromLegacyHash(hash = ''): string {
   return String(hash || '').split('?')[0]
 }

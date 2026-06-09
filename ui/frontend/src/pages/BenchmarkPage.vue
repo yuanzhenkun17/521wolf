@@ -13,7 +13,7 @@ import BenchmarkSnapshotReleasePanel from '../components/benchmark/BenchmarkSnap
 import BenchmarkSuiteRail from '../components/benchmark/BenchmarkSuiteRail.vue'
 import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSelector.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
-import { currentLegacyHash } from '../router/legacyViewNavigation.ts'
+import { addLegacyHashChangeListener, currentLegacyHash } from '../router/legacyViewNavigation.ts'
 import { benchmarkBatchIdFromHash, benchmarkBatchIdFromRoute } from '../router/workbenchDeepLinks.ts'
 
 defineOptions({
@@ -699,6 +699,8 @@ function handleBenchmarkHashChange(event) {
   applyBenchmarkDeepLink(event?.newURL || currentLegacyHash())
 }
 
+let removeBenchmarkHashChangeListener = () => {}
+
 watch(
   () => route.fullPath,
   () => {
@@ -707,14 +709,15 @@ watch(
 )
 
 onMounted(() => {
-  if (typeof window !== 'undefined') window.addEventListener('hashchange', handleBenchmarkHashChange)
+  removeBenchmarkHashChangeListener = addLegacyHashChangeListener(handleBenchmarkHashChange)
   void benchmark.refreshAll().finally(() => {
     applyBenchmarkDeepLink(route)
   })
 })
 
 onBeforeUnmount(() => {
-  if (typeof window !== 'undefined') window.removeEventListener('hashchange', handleBenchmarkHashChange)
+  removeBenchmarkHashChangeListener()
+  removeBenchmarkHashChangeListener = () => {}
 })
 </script>
 
