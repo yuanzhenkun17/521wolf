@@ -5,7 +5,7 @@ import {
   gameStartRoleVersionState,
   latestGameStartRoleVersion,
   roleVersionReleaseStage
-} from '../src/composables/gameStartRoleVersions.js'
+} from '../src/composables/gameStartRoleVersions.ts'
 
 const baseline = {
   version_id: 'seer-baseline',

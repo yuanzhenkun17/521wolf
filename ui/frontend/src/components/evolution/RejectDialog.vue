@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, nextTick, ref, watch } from 'vue'
 
 const props = defineProps({

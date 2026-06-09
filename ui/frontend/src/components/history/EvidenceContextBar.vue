@@ -1,7 +1,8 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
-import { buildEvidenceLink } from './evidenceLinks.js'
-import { displayRoleLabel, normalizeHistoryDisplayText } from './historyDisplay.js'
+import { buildEvidenceLink } from './evidenceLinks.ts'
+import { displayRoleLabel, normalizeHistoryDisplayText } from './historyDisplay.ts'
 
 const props = defineProps({
   game: { type: Object, default: null }

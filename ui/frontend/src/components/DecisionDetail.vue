@@ -1,9 +1,10 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import {
   displayChoiceLabel,
   displayRoleLabel,
   normalizeHistoryDisplayText
-} from './history/historyDisplay.js'
+} from './history/historyDisplay.ts'
 
 const props = defineProps({
   decision: Object,

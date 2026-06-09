@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, onMounted, ref, watch } from 'vue'
-import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.js'
+import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.ts'
 import EvolutionConsolePanel from '../components/evolution/EvolutionConsolePanel.vue'
 import EvolutionEventsPanel from '../components/evolution/EvolutionEventsPanel.vue'
 import EvolutionLeaderboardPanel from '../components/evolution/EvolutionLeaderboardPanel.vue'

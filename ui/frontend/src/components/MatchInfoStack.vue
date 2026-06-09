@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import RoleStats from './RoleStats.vue'
 
 const props = defineProps({

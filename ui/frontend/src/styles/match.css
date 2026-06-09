@@ -1,0 +1,15 @@
+/*
+ * Match table, player commands, role rail, speech, chat, and HUD base styles.
+ * Legacy imports stay ordered to preserve the current visual cascade.
+ */
+
+@import "./part-06.css";
+@import "./part-07.css";
+@import "./part-08.css";
+@import "./part-09.css";
+@import "./part-10.css";
+@import "./part-11.css";
+@import "./part-12.css";
+@import "./part-13.css";
+@import "./part-14.css";
+@import "./part-15.css";

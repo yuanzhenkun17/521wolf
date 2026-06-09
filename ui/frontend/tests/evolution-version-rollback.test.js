@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { useEvolutionWorkbench } from '../src/composables/useEvolutionWorkbench.js'
+import { useEvolutionWorkbench } from '../src/composables/useEvolutionWorkbench.ts'
 
 test('evolution versions disable rollback for baseline shadow and canary stages', async () => {
   const apiFetch = async (path) => {

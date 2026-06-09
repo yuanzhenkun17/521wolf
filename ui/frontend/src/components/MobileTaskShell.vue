@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 defineProps({
   mode: { type: String, default: 'match' },
   hasTask: Boolean,

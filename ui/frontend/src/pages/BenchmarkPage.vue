@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.js'
+import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.ts'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
 import BenchmarkBatchRunsTable from '../components/benchmark/BenchmarkBatchRunsTable.vue'
@@ -10,7 +11,7 @@ import BenchmarkRunReportPanel from '../components/benchmark/BenchmarkRunReportP
 import BenchmarkSnapshotReleasePanel from '../components/benchmark/BenchmarkSnapshotReleasePanel.vue'
 import BenchmarkSuiteRail from '../components/benchmark/BenchmarkSuiteRail.vue'
 import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSelector.vue'
-import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 
 defineOptions({
   inheritAttrs: false

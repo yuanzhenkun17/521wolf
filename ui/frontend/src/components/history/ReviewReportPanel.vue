@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
-import { buildAssessmentScores } from '../../composables/assessmentScores.js'
+import { buildAssessmentScores } from '../../composables/assessmentScores.ts'
 import JudgeEvidencePanel from './JudgeEvidencePanel.vue'
 import {
   displayActionLabel,
@@ -9,7 +10,7 @@ import {
   displayRoleLabel,
   displayWinnerLabel,
   normalizeHistoryDisplayText
-} from './historyDisplay.js'
+} from './historyDisplay.ts'
 
 const VoteFlowSankey = defineAsyncComponent({
   loader: () => import('./VoteFlowSankey.vue'),

@@ -4,16 +4,16 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { chromium } from 'playwright'
-import { ApiError } from '../src/composables/gameApi.js'
+import { ApiError } from '../src/composables/gameApi.ts'
 import {
   formatApiErrorForDisplay,
   inlineNoticeForDisplay,
   normalizeDiagnostics,
   noticeErrorForPanel
-} from '../src/composables/apiErrorDisplay.js'
+} from '../src/composables/apiErrorDisplay.ts'
 
 const apiErrorPanelSourceUrl = new URL('../src/components/ApiErrorPanel.vue', import.meta.url)
-const apiErrorDisplaySourceUrl = new URL('../src/composables/apiErrorDisplay.js', import.meta.url)
+const apiErrorDisplaySourceUrl = new URL('../src/composables/apiErrorDisplay.ts', import.meta.url)
 const vueGlobalPath = fileURLToPath(new URL('../node_modules/vue/dist/vue.global.prod.js', import.meta.url))
 
 function chromiumIsInstalled() {
@@ -54,7 +54,7 @@ function apiErrorPanelDomModule() {
   assert.deepEqual(template.errors, [])
 
   const scriptBody = rewriteVueImports(script.content)
-    .replace(/import\s+\{\s*formatApiErrorForDisplay\s*\}\s+from\s+['"][^'"]+apiErrorDisplay\.js['"]\s*;?/, '')
+    .replace(/import\s+\{\s*formatApiErrorForDisplay\s*\}\s+from\s+['"][^'"]+apiErrorDisplay\.ts['"]\s*;?/, '')
     .replace('export default', 'const ApiErrorPanel =')
   const templateBody = rewriteVueImports(template.code)
     .replace('export function render', 'function render')
@@ -344,7 +344,7 @@ test('MatchPage source wires error notices to ApiErrorPanel without reusing the 
   const source = readFileSync(new URL('../src/pages/MatchPage.vue', import.meta.url), 'utf8')
 
   assert.match(source, /import ApiErrorPanel from '\.\.\/components\/ApiErrorPanel\.vue'/)
-  assert.match(source, /import \{ inlineNoticeForDisplay, noticeErrorForPanel \} from '\.\.\/composables\/apiErrorDisplay\.js'/)
+  assert.match(source, /import \{ inlineNoticeForDisplay, noticeErrorForPanel \} from '\.\.\/composables\/apiErrorDisplay\.ts'/)
   assert.match(source, /inlineMatchNotice = computed\(\(\) => inlineNoticeForDisplay\(props\.matchNotice\)\)/)
   assert.match(source, /matchErrorNotice = computed\(\(\) => matchPanelErrorForNotice\(props\.matchNotice\)\)/)
   assert.match(source, /<ApiErrorPanel[\s\S]*v-if="matchErrorNotice"[\s\S]*class="match-error-notice"[\s\S]*title="对局操作失败"/)

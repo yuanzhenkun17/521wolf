@@ -16,7 +16,7 @@ function leaderboardSource() {
 }
 
 function workbenchSource() {
-  return readSource('../src/composables/useEvaluationWorkbench.js')
+  return readSource('../src/composables/useEvaluationWorkbench.ts')
 }
 
 test('BenchmarkComparisonView keeps unrankable evidence separate from formal ranking rows', () => {

@@ -1,0 +1,27 @@
+/*
+ * Shared motion tokens for new styles.
+ *
+ * Legacy transitions remain in place. These variables provide a stable target
+ * for future cleanup and respect reduced-motion preferences at token level.
+ */
+
+:root {
+  --duration-instant: 0ms;
+  --duration-fast: 150ms;
+  --duration-standard: 220ms;
+  --duration-slow: 360ms;
+  --duration-scene: 1100ms;
+
+  --ease-standard: ease;
+  --ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-productive: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-standard: 0ms;
+    --duration-slow: 0ms;
+    --duration-scene: 0ms;
+  }
+}

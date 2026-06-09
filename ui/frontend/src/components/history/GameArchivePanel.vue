@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, ref } from 'vue'
 import {
   displayActionLabel,
@@ -10,7 +11,7 @@ import {
   displaySourceLabel,
   displayWinnerLabel,
   normalizeHistoryDisplayText
-} from './historyDisplay.js'
+} from './historyDisplay.ts'
 
 const props = defineProps({
   archive: { type: Object, default: null },

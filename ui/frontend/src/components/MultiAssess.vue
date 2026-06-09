@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, ref } from 'vue'
-import { displayRoleLabel } from './history/historyDisplay.js'
+import { displayRoleLabel } from './history/historyDisplay.ts'
 
 const props = defineProps({
   scores: { type: Array, default: () => [] },

@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { buildEvidenceLink } from '../src/components/history/evidenceLinks.js'
+import { buildEvidenceLink } from '../src/components/history/evidenceLinks.ts'
 
 const proposalPanel = readFileSync(
   new URL('../src/components/evolution/EvolutionProposalReviewPanel.vue', import.meta.url),
   'utf8'
 )
 const evolutionWorkbench = readFileSync(
-  new URL('../src/composables/useEvolutionWorkbench.js', import.meta.url),
+  new URL('../src/composables/useEvolutionWorkbench.ts', import.meta.url),
   'utf8'
 )
 

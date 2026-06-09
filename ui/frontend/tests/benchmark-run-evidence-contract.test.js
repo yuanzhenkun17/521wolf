@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { useEvaluationWorkbench } from '../src/composables/useEvaluationWorkbench.js'
+import { useEvaluationWorkbench } from '../src/composables/useEvaluationWorkbench.ts'
 
 function readSource(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
@@ -89,7 +89,7 @@ test('BenchmarkRunReportPanel uses archive workspace replay links for problem ga
 })
 
 test('useEvaluationWorkbench requests filtered batch games and diagnostics pages', () => {
-  const source = readSource('../src/composables/useEvaluationWorkbench.js')
+  const source = readSource('../src/composables/useEvaluationWorkbench.ts')
 
   assert.match(source, /const benchmarkBatchGamePagination = ref\(\{ total: 0, offset: 0, limit: 20, returned: 0, has_more: false \}\)/)
   assert.match(source, /const benchmarkBatchDiagnosticsLoading = ref\(false\)/)

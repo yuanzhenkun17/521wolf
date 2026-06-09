@@ -1,0 +1,42 @@
+/*
+ * Foundation design tokens.
+ *
+ * These aliases document the intended semantic vocabulary for new CSS.
+ * Legacy part files still define and consume the original variables; keep
+ * aliases behavior-neutral until each area is migrated off the old cascade.
+ */
+
+:root {
+  --color-bg-app: var(--bg, #16130b);
+  --color-surface-default: var(--surface, rgba(31, 27, 19, 0.64));
+  --color-surface-strong: var(--surface-strong, rgba(17, 14, 7, 0.82));
+  --color-surface-soft: var(--surface-soft, rgba(45, 42, 33, 0.48));
+  --color-text-primary: var(--text, #eae1d4);
+  --color-text-muted: var(--muted, #d0c5af);
+  --color-border-default: var(--outline, rgba(242, 202, 80, 0.16));
+  --color-accent-primary: var(--primary, #f2ca50);
+  --color-accent-primary-strong: var(--primary-deep, #d4af37);
+  --color-status-danger: var(--danger, #ffb4ab);
+  --color-status-info: var(--blue, #bfcdff);
+
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --shadow-panel: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-floating: 0 18px 48px rgba(0, 0, 0, 0.42);
+  --shadow-focus: 0 0 0 2px color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
+
+  --layout-side-panel-width: var(--panel-width, 320px);
+}

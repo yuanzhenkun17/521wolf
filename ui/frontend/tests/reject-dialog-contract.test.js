@@ -11,7 +11,7 @@ const proposalPanel = readFileSync(
   'utf8'
 )
 const evolutionWorkbench = readFileSync(
-  new URL('../src/composables/useEvolutionWorkbench.js', import.meta.url),
+  new URL('../src/composables/useEvolutionWorkbench.ts', import.meta.url),
   'utf8'
 )
 

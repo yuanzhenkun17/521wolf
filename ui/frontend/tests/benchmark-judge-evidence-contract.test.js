@@ -105,7 +105,7 @@ test('BenchmarkRunReportPanel surfaces reproducibility manifest and artifact has
 })
 
 test('Workbench preserves benchmark report export artifact hashes', () => {
-  const source = readSource('../src/composables/useEvaluationWorkbench.js')
+  const source = readSource('../src/composables/useEvaluationWorkbench.ts')
 
   assert.match(source, /function normalizeBenchmarkBatchReportExport\(data, format = 'markdown'\)/)
   assert.match(source, /data\.kind !== 'benchmark_run_report_export'/)

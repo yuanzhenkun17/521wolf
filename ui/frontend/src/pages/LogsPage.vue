@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import HistoryGameList from '../components/HistoryGameList.vue'
@@ -9,14 +10,14 @@ import SeatLedger from '../components/SeatLedger.vue'
 import SpeechSection from '../components/SpeechSection.vue'
 import VoteSection from '../components/VoteSection.vue'
 import EvidenceContextBar from '../components/history/EvidenceContextBar.vue'
-import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 import {
   displayActionLabel,
   displayPhaseLabel,
   displayRoleLabel,
   displayWinnerLabel,
   normalizeHistoryDisplayText
-} from '../components/history/historyDisplay.js'
+} from '../components/history/historyDisplay.ts'
 
 const GameArchivePanel = defineAsyncComponent(() => import('../components/history/GameArchivePanel.vue'))
 const ReviewReportPanel = defineAsyncComponent(() => import('../components/history/ReviewReportPanel.vue'))

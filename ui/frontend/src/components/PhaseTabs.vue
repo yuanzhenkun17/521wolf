@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 const props = defineProps({
   pages: { type: Array, default: () => [] },
   selectedPageKey: { type: String, default: '' },

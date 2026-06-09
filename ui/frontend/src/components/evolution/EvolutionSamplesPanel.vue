@@ -1,5 +1,6 @@
-<script setup>
-import { sourceText } from '../../composables/workbenchShared.js'
+<script setup lang="ts">
+// @ts-nocheck
+import { sourceText } from '../../composables/workbenchShared.ts'
 
 defineProps({
   evo: { type: Object, required: true }

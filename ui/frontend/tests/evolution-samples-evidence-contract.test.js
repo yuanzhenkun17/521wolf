@@ -7,7 +7,7 @@ function readSource(relativePath) {
 }
 
 const samplesPanel = readSource('../src/components/evolution/EvolutionSamplesPanel.vue')
-const workbench = readSource('../src/composables/useEvolutionWorkbench.js')
+const workbench = readSource('../src/composables/useEvolutionWorkbench.ts')
 
 test('Evolution samples workspace keeps the three review-evidence buckets', () => {
   assert.match(workbench, /const SAMPLE_GAME_BUCKETS = \['training', 'baseline', 'candidate'\]/)

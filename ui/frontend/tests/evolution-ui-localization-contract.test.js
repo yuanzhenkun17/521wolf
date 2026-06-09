@@ -11,7 +11,7 @@ const proposalPanel = readSource('../src/components/evolution/EvolutionProposalR
 const rejectDialog = readSource('../src/components/evolution/RejectDialog.vue')
 const trustDrawer = readSource('../src/components/evolution/TrustBundleDrawer.vue')
 const versionsPanel = readSource('../src/components/evolution/EvolutionVersionsPanel.vue')
-const workbench = readSource('../src/composables/useEvolutionWorkbench.js')
+const workbench = readSource('../src/composables/useEvolutionWorkbench.ts')
 
 test('Evolution review, reject, trust, and version panels use Chinese-first visible labels', () => {
   const combined = [proposalPanel, rejectDialog, trustDrawer, versionsPanel].join('\n')

@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 defineProps({
   stats: { type: Array, default: () => [] },
   livingCount: { type: Number, default: 0 },

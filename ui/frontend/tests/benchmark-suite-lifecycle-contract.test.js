@@ -22,7 +22,7 @@ function assertSfcCompiles(relativePath, id) {
 }
 
 test('Benchmark suite lifecycle is normalized in the workbench composable', () => {
-  const source = readSource('../src/composables/useEvaluationWorkbench.js')
+  const source = readSource('../src/composables/useEvaluationWorkbench.ts')
 
   assert.match(source, /const BENCHMARK_SUITE_LAUNCHABLE_STATUSES = new Set\(\['enabled', 'active'\]\)/)
   assert.match(source, /const benchmarkSeedSets = ref\(\[\]\)/)

@@ -10,7 +10,7 @@ import {
   proposalEvidenceId,
   runEvidenceId,
   sourceEvidenceKey
-} from '../src/components/history/evidenceLinks.js'
+} from '../src/components/history/evidenceLinks.ts'
 
 test('evidence hash links use stable logs archive and evolution routes', () => {
   assert.equal(buildHashLink('logs', { game_id: 'game/1' }), '#logs?game_id=game%2F1')
@@ -123,7 +123,7 @@ test('EvidenceLink component renders hrefs and visible unavailable reasons', () 
 test('EvidenceContextBar keeps Archive and Run in the summary row as links', () => {
   const component = readFileSync(new URL('../src/components/history/EvidenceContextBar.vue', import.meta.url), 'utf8')
 
-  assert.match(component, /import \{ buildEvidenceLink \} from '\.\/evidenceLinks\.js'/)
+  assert.match(component, /import \{ buildEvidenceLink \} from '\.\/evidenceLinks\.ts'/)
   assert.match(component, /const archiveLink = computed\(\(\) => buildEvidenceLink\(props\.game \|\| \{\}, \{ kind: 'game', label: 'Archive' \}\)\)/)
   assert.match(component, /const runLink = computed\(\(\) =>[\s\S]*buildEvidenceLink\(\{ \.\.\.\(props\.game \|\| \{\}\), source_run_id: sourceRunId\.value \}, \{ kind: 'run', label: 'Run' \}\)/)
   assert.match(component, /class="evidence-context-item evidence-context-item--archive"[\s\S]*v-if="!archiveLink\.disabled"[\s\S]*:href="archiveLink\.href"/)

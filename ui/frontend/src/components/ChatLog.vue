@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { displayPhaseLabel } from './history/historyDisplay.js'
+import { displayPhaseLabel } from './history/historyDisplay.ts'
 
 const props = defineProps({
   logs: { type: Array, default: () => [] },

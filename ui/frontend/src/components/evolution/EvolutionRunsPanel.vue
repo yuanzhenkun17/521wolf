@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 defineProps({
   evo: { type: Object, required: true }
 })

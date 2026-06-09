@@ -14,9 +14,9 @@ function assertSourceContract(source, contracts) {
 
 test('EvidencePage is removed as a first-class route and TopNav entry', () => {
   const app = readSource('../src/App.vue')
-  const gameSession = readSource('../src/composables/gameSession.js')
-  const liveState = readSource('../src/composables/useLiveGameState.js')
-  const history = readSource('../src/composables/useGameHistory.js')
+  const gameSession = readSource('../src/composables/gameSession.ts')
+  const liveState = readSource('../src/composables/useLiveGameState.ts')
+  const history = readSource('../src/composables/useGameHistory.ts')
   const topNav = readSource('../src/components/TopNav.vue')
 
   assert.doesNotMatch(app, /EvidencePage/)
@@ -31,8 +31,8 @@ test('EvidencePage is removed as a first-class route and TopNav entry', () => {
 })
 
 test('legacy #evidence links are not routed or recognized', () => {
-  const gameSession = readSource('../src/composables/gameSession.js')
-  const history = readSource('../src/composables/useGameHistory.js')
+  const gameSession = readSource('../src/composables/gameSession.ts')
+  const history = readSource('../src/composables/useGameHistory.ts')
 
   assertSourceContract(history, [
     ['logs hashes can carry game id and workspace', /function logsHash\(\{ gameId = '', workspace = '' \} = \{\}\)[\s\S]*query\.set\('game_id', String\(gameId\)\)[\s\S]*query\.set\('workspace', tab\)/],
@@ -51,7 +51,7 @@ test('legacy #evidence links are not routed or recognized', () => {
 
 test('LogsPage owns archive and review workspaces for evidence details', () => {
   const app = readSource('../src/App.vue')
-  const refs = readSource('../src/composables/gameStateShared.js')
+  const refs = readSource('../src/composables/gameStateShared.ts')
   const logs = readSource('../src/pages/LogsPage.vue')
 
   assertSourceContract(app, [
@@ -71,7 +71,7 @@ test('LogsPage owns archive and review workspaces for evidence details', () => {
 })
 
 test('EvidenceLink game targets point to Logs archive workspace', () => {
-  const links = readSource('../src/components/history/evidenceLinks.js')
+  const links = readSource('../src/components/history/evidenceLinks.ts')
 
   assert.match(links, /buildHashLink\('logs', \{ game_id: gameId, workspace: 'archive' \}\)/)
   assert.match(links, /params:\s*\{ game_id: gameId, workspace: 'archive' \}/)

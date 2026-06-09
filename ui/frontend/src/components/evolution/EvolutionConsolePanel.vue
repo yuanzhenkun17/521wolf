@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import EvolutionDiffViewer from './EvolutionDiffViewer.vue'
 
 defineProps({

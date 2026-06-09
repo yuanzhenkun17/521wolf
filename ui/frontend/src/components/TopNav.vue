@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps({

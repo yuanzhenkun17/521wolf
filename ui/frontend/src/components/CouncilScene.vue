@@ -1,7 +1,8 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createCouncilHallScene } from '../CouncilHallScene.js'
-import { displayActionLabel } from './history/historyDisplay.js'
+import { createCouncilHallScene } from '../CouncilHallScene.ts'
+import { displayActionLabel } from './history/historyDisplay.ts'
 
 const SPEECH_EVENT_TYPES = new Set([
   'speech',

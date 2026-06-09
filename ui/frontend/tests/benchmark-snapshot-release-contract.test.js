@@ -115,7 +115,7 @@ test('BenchmarkSnapshotReleasePanel SFC compiles after release gate wiring', () 
 })
 
 test('Workbench loads benchmark snapshot export artifacts with hashes', () => {
-  const source = readSource('../src/composables/useEvaluationWorkbench.js')
+  const source = readSource('../src/composables/useEvaluationWorkbench.ts')
 
   assert.match(source, /function normalizeBenchmarkSnapshotExport\(data\)/)
   assert.match(source, /data\.kind !== 'benchmark_leaderboard_snapshot_export'/)

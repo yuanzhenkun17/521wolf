@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, ref, watch } from 'vue'
 
 const MIN_CONFIDENT_GAMES = 30

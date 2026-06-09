@@ -8,7 +8,7 @@ function readSource(relativePath) {
 
 const shell = readSource('../src/components/evolution/EvolutionWorkbenchShell.vue')
 const page = readSource('../src/pages/EvolutionPage.vue')
-const workbench = readSource('../src/composables/useEvolutionWorkbench.js')
+const workbench = readSource('../src/composables/useEvolutionWorkbench.ts')
 
 test('Evolution workbench shell exposes the persistent right context rail', () => {
   assert.match(shell, /runRows:\s*\{\s*type:\s*Array,\s*default:\s*\(\) => \[\]\s*\}/)

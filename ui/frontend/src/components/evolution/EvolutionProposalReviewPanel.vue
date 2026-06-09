@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, reactive, ref } from 'vue'
 import EvidenceLink from '../history/EvidenceLink.vue'
 import JudgeEvidencePanel from '../history/JudgeEvidencePanel.vue'

@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 const props = defineProps({
   players: { type: Array, default: () => [] },
   activeSeat: { type: [String, Number], default: '' },

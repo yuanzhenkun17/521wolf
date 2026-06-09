@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
-import { buildEvidenceLink } from './evidenceLinks.js'
+import { buildEvidenceLink } from './evidenceLinks.ts'
 
 const props = defineProps({
   target: { type: Object, default: () => ({}) },

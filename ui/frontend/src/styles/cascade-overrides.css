@@ -1,0 +1,9 @@
+/*
+ * Final legacy overrides.
+ *
+ * This file intentionally imports the previous last cascade segment. It
+ * contains late fixes for match HUD, archive/review panels, and workbench
+ * visuals; keep it last until those rules are split by feature.
+ */
+
+@import "./part-29.css";

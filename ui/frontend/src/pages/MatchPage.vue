@@ -1,8 +1,10 @@
-<script>
+<script lang="ts">
+// @ts-nocheck
 const settledIntroGameIds = new Set()
 </script>
 
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ActionPanel from '../components/ActionPanel.vue'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
@@ -14,8 +16,8 @@ import MobileTaskShell from '../components/MobileTaskShell.vue'
 import PlayerCarousel from '../components/PlayerCarousel.vue'
 import PlayerIdentityBoard from '../components/PlayerIdentityBoard.vue'
 import ReplayControls from '../components/ReplayControls.vue'
-import { displayPhaseLabel } from '../components/history/historyDisplay.js'
-import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
+import { displayPhaseLabel } from '../components/history/historyDisplay.ts'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 
 const props = defineProps({
   game: Object,

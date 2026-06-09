@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
-import { displayWinnerLabel } from './history/historyDisplay.js'
+import { displayWinnerLabel } from './history/historyDisplay.ts'
 
 const props = defineProps({
   game: Object,

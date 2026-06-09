@@ -1,7 +1,8 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
 import ApiErrorPanel from '../ApiErrorPanel.vue'
-import { inlineNoticeForDisplay, noticeErrorForPanel } from '../../composables/apiErrorDisplay.js'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../../composables/apiErrorDisplay.ts'
 
 const props = defineProps({
   title: { type: String, required: true },

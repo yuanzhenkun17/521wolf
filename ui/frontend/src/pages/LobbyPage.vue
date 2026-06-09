@@ -1,7 +1,8 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, onMounted, ref, watch } from 'vue'
-import { gameStartRoleVersionState } from '../composables/gameStartRoleVersions.js'
-import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.js'
+import { gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
+import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
 
 const props = defineProps({
   backendMode: { type: String, default: 'mock' },

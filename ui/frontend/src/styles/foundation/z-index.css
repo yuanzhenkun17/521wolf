@@ -1,0 +1,20 @@
+/*
+ * Shared stacking scale for new styles.
+ *
+ * Existing files still contain hard-coded z-index values. New or migrated
+ * selectors should use this scale so overlay ordering becomes explicit.
+ */
+
+:root {
+  --z-background: 0;
+  --z-base: 1;
+  --z-scene: 5;
+  --z-panel: 10;
+  --z-hud: 30;
+  --z-topbar: 50;
+  --z-dropdown: 60;
+  --z-overlay: 70;
+  --z-toast: 80;
+  --z-modal: 90;
+  --z-debug: 100;
+}

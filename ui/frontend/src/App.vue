@@ -1,12 +1,14 @@
-<script setup>
-import { computed, defineAsyncComponent, isRef } from 'vue'
+<script setup lang="ts">
+// @ts-nocheck
+import { computed, defineAsyncComponent, isRef, watchEffect } from 'vue'
 import TopNav from './components/TopNav.vue'
-import { useGameState } from './composables/useGameState.js'
-import { useMatchUtils } from './composables/useMatchUtils.js'
-import { useGameActions } from './composables/useGameActions.js'
-import { useGameAudio } from './composables/useGameAudio.js'
-import { useGameHistory } from './composables/useGameHistory.js'
-import { isReturnableGame } from './composables/gameSession.js'
+import { useGameState } from './composables/useGameState.ts'
+import { useMatchUtils } from './composables/useMatchUtils.ts'
+import { useGameActions } from './composables/useGameActions.ts'
+import { useGameAudio } from './composables/useGameAudio.ts'
+import { useGameHistory } from './composables/useGameHistory.ts'
+import { isReturnableGame } from './composables/gameSession.ts'
+import { useGameStore, useHistoryStore, useReplayStore, useSessionStore, useUiStore } from './stores'
 
 const LogsPage = defineAsyncComponent(() => import('./pages/LogsPage.vue'))
 const BenchmarkPage = defineAsyncComponent(() => import('./pages/BenchmarkPage.vue'))
@@ -23,6 +25,11 @@ actions.setHistoryApi?.(history)
 history.setActionApi?.(actions)
 const audio = useGameAudio({ ...state, apiBase: actions.apiBase })
 const runtime = { ...state, ...utils, ...actions, ...history, ...audio }
+const sessionStore = useSessionStore()
+const gameStore = useGameStore()
+const historyStore = useHistoryStore()
+const replayStore = useReplayStore()
+const uiStore = useUiStore()
 
 function registerCouncilScene(sceneApi) {
   actions.setSceneApi?.(sceneApi)
@@ -40,6 +47,42 @@ function readRuntime(key) {
 function pickRuntime(keys) {
   return Object.fromEntries(keys.map((key) => [key, readRuntime(key)]))
 }
+
+watchEffect(() => {
+  sessionStore.hydrateFromRuntime(pickRuntime([
+    'currentView',
+    'backendMode',
+    'activeSession',
+    'returnToMatchAvailable'
+  ]))
+  gameStore.hydrateFromRuntime(pickRuntime([
+    'liveGame',
+    'game',
+    'loading',
+    'error',
+    'watchRunning'
+  ]))
+  historyStore.hydrateFromRuntime(pickRuntime([
+    'gameHistory',
+    'selectedHistoryGameId',
+    'selectedHistoryGame',
+    'historyWorkspaceTab',
+    'historyLoading',
+    'historyNotice'
+  ]))
+  replayStore.hydrateFromRuntime(pickRuntime([
+    'replayGame',
+    'isReplayMode',
+    'replayCursor',
+    'replayPlaying',
+    'replaySpeed'
+  ]))
+  uiStore.hydrateFromRuntime(pickRuntime([
+    'error',
+    'matchNotice',
+    'historyNotice'
+  ]))
+})
 
 const logsPropKeys = [
   'returnToMatchAvailable',

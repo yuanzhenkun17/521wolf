@@ -18,7 +18,7 @@ const apiErrorPanelSourceUrl = new URL('../src/components/ApiErrorPanel.vue', im
 const trustBundleDrawerSourceUrl = new URL('../src/components/evolution/TrustBundleDrawer.vue', import.meta.url)
 const evolutionConsolePanelSourceUrl = new URL('../src/components/evolution/EvolutionConsolePanel.vue', import.meta.url)
 const evolutionProposalReviewPanelSourceUrl = new URL('../src/components/evolution/EvolutionProposalReviewPanel.vue', import.meta.url)
-const evolutionWorkbenchSourceUrl = new URL('../src/composables/useEvolutionWorkbench.js', import.meta.url)
+const evolutionWorkbenchSourceUrl = new URL('../src/composables/useEvolutionWorkbench.ts', import.meta.url)
 const reviewReportPanelSourceUrl = new URL('../src/components/history/ReviewReportPanel.vue', import.meta.url)
 const logsPageSourceUrl = new URL('../src/pages/LogsPage.vue', import.meta.url)
 
@@ -286,7 +286,7 @@ test('MatchPage mobile safe-area source contract keeps errors on ApiErrorPanel',
 
   assert.match(matchPage, /import ApiErrorPanel from '\.\.\/components\/ApiErrorPanel\.vue'/)
   assert.match(matchPage, /import MobileTaskShell from '\.\.\/components\/MobileTaskShell\.vue'/)
-  assert.match(matchPage, /import \{ inlineNoticeForDisplay, noticeErrorForPanel \} from '\.\.\/composables\/apiErrorDisplay\.js'/)
+  assert.match(matchPage, /import \{ inlineNoticeForDisplay, noticeErrorForPanel \} from '\.\.\/composables\/apiErrorDisplay\.ts'/)
   assert.match(matchPage, /<MobileTaskShell\s+mode="match"\s+:has-task="hasMobileTask"\s+:replay="isReplayMode">/)
   assert.match(matchPage, /inlineMatchNotice = computed\(\(\) => inlineNoticeForDisplay\(props\.matchNotice\)\)/)
   assert.match(matchPage, /matchErrorNotice = computed\(\(\) => matchPanelErrorForNotice\(props\.matchNotice\)\)/)

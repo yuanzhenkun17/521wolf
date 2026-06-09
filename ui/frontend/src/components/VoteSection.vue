@@ -1,4 +1,5 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
 import DecisionDetail from './DecisionDetail.vue'
 import NightActionCard from './NightActionCard.vue'

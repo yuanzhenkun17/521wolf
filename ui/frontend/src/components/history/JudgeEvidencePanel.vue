@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
-import { normalizeHistoryDisplayText } from './historyDisplay.js'
+import { normalizeHistoryDisplayText } from './historyDisplay.ts'
 
 const props = defineProps({
   evidence: { type: Object, default: null },

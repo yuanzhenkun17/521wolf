@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed, reactive, ref } from 'vue'
-import { roleLabel, sourceText } from '../../composables/workbenchShared.js'
+import { roleLabel, sourceText } from '../../composables/workbenchShared.ts'
 import TrustBundleDrawer from './TrustBundleDrawer.vue'
 
 const props = defineProps({

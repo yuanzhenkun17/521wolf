@@ -1,6 +1,7 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
-import { sourceText, statusText } from '../../composables/workbenchShared.js'
+import { sourceText, statusText } from '../../composables/workbenchShared.ts'
 
 const props = defineProps({
   evo: { type: Object, required: true }

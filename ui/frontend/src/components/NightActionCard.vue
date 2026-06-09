@@ -1,9 +1,10 @@
-<script setup>
+<script setup lang="ts">
+// @ts-nocheck
 import { computed } from 'vue'
 import {
   displayRoleLabel,
   normalizeHistoryDisplayText
-} from './history/historyDisplay.js'
+} from './history/historyDisplay.ts'
 
 const props = defineProps({
   action: { type: Object, required: true },

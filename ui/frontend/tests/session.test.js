@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRenderer, nextTick, ref } from 'vue'
-import { useGameState } from '../src/composables/useGameState.js'
-import { useGameActions } from '../src/composables/useGameActions.js'
-import { useGameHistory } from '../src/composables/useGameHistory.js'
-import { useGameAudio } from '../src/composables/useGameAudio.js'
-import { useEvolutionWorkbench } from '../src/composables/useEvolutionWorkbench.js'
-import { useEvaluationWorkbench } from '../src/composables/useEvaluationWorkbench.js'
-import { createNoticeAutoDismiss } from '../src/composables/noticeAutoDismiss.js'
-import { normalizeGameSnapshot } from '../src/composables/gameSnapshot.js'
-import { buildSceneEffects } from '../src/composables/sceneEffects.js'
+import { useGameState } from '../src/composables/useGameState.ts'
+import { useGameActions } from '../src/composables/useGameActions.ts'
+import { useGameHistory } from '../src/composables/useGameHistory.ts'
+import { useGameAudio } from '../src/composables/useGameAudio.ts'
+import { useEvolutionWorkbench } from '../src/composables/useEvolutionWorkbench.ts'
+import { useEvaluationWorkbench } from '../src/composables/useEvaluationWorkbench.ts'
+import { createNoticeAutoDismiss } from '../src/composables/noticeAutoDismiss.ts'
+import { normalizeGameSnapshot } from '../src/composables/gameSnapshot.ts'
+import { buildSceneEffects } from '../src/composables/sceneEffects.ts'
 import {
   ACTIVE_GAME_STORAGE_KEY,
   activeSessionFromGame,
@@ -20,7 +20,7 @@ import {
   readStoredGameSession,
   viewFromHash,
   writeStoredGameSession
-} from '../src/composables/gameSession.js'
+} from '../src/composables/gameSession.ts'
 
 function createMemoryStorage() {
   const values = new Map()
