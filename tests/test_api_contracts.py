@@ -233,12 +233,41 @@ def _install_sqlite_eval_storage(monkeypatch: Any, tmp_path: Path) -> None:
 
     db_path = tmp_path / "benchmark_eval.sqlite3"
 
-    def open_conn(paths: Any = None) -> sqlite3.Connection:
+    class _SqliteEvalConnection:
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self._conn = conn
+
+        def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+            return self._conn.execute(sql, parameters)
+
+        def begin_write(self) -> None:
+            self._conn.execute("BEGIN")
+
+        def commit(self) -> None:
+            self._conn.commit()
+
+        def rollback(self) -> None:
+            self._conn.rollback()
+
+        def close(self) -> None:
+            self._conn.close()
+
+        def __enter__(self) -> "_SqliteEvalConnection":
+            return self
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+            if exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+            return False
+
+    def open_conn(paths: Any = None) -> _SqliteEvalConnection:
         del paths
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         _initialize_sqlite_benchmark_eval_schema(conn)
-        return conn
+        return _SqliteEvalConnection(conn)
 
     monkeypatch.setattr(score_lib, "open_eval_connection", open_conn)
 

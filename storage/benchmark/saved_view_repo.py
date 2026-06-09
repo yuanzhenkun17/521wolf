@@ -15,8 +15,9 @@ class BenchmarkSavedViewRepository:
     and writes runtime data.
     """
 
-    def __init__(self, conn: StorageConnection) -> None:
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
         self._conn = conn
+        self._autocommit = autocommit
 
     def save(self, view: dict[str, Any]) -> None:
         self._conn.execute(
@@ -44,7 +45,8 @@ class BenchmarkSavedViewRepository:
                 view.get("updated_at"),
             ),
         )
-        self._conn.commit()
+        if self._autocommit:
+            self._conn.commit()
 
     def list(
         self,
@@ -98,7 +100,8 @@ class BenchmarkSavedViewRepository:
             "DELETE FROM benchmark_saved_views WHERE view_key = ?",
             (view_key,),
         )
-        self._conn.commit()
+        if self._autocommit:
+            self._conn.commit()
         return int(getattr(cursor, "rowcount", 0) or 0) > 0
 
 

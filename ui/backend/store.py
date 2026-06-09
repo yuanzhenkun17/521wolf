@@ -41,6 +41,7 @@ from app.services.llm import create_llm
 from app.util.time import beijing_now_iso
 from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
 from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
+from storage.postgres.unit_of_work import from_connection_factory
 from ui.backend.background_store import BackgroundTaskStoreMixin
 from ui.backend.constants import (
     MANUAL_STOP_REASON,
@@ -1251,15 +1252,11 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         }
 
     def _persist_benchmark_leaderboard_snapshot(self, snapshot: dict[str, Any]) -> None:
-        conn = None
-        try:
-            from app.lib.score import open_eval_connection
+        from app.lib.score import open_eval_connection
 
-            conn = open_eval_connection(self.paths)
-            BenchmarkSnapshotRepository(conn).save(snapshot)
-        finally:
-            if conn is not None:
-                conn.close()
+        with from_connection_factory(lambda: open_eval_connection(self.paths)) as tx:
+            BenchmarkSnapshotRepository(tx.connection, autocommit=False).save(snapshot)
+            tx.commit()
 
     def _load_benchmark_snapshot_summaries(
         self,
@@ -1321,15 +1318,11 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 conn.close()
 
     def _persist_benchmark_saved_view(self, view: dict[str, Any]) -> None:
-        conn = None
-        try:
-            from app.lib.score import open_eval_connection
+        from app.lib.score import open_eval_connection
 
-            conn = open_eval_connection(self.paths)
-            BenchmarkSavedViewRepository(conn).save(view)
-        finally:
-            if conn is not None:
-                conn.close()
+        with from_connection_factory(lambda: open_eval_connection(self.paths)) as tx:
+            BenchmarkSavedViewRepository(tx.connection, autocommit=False).save(view)
+            tx.commit()
 
     def _load_benchmark_saved_views(
         self,
@@ -1377,15 +1370,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         return rows
 
     def _delete_benchmark_saved_view(self, view_key: str) -> bool:
-        conn = None
-        try:
-            from app.lib.score import open_eval_connection
+        from app.lib.score import open_eval_connection
 
-            conn = open_eval_connection(self.paths)
-            return BenchmarkSavedViewRepository(conn).delete(view_key)
-        finally:
-            if conn is not None:
-                conn.close()
+        with from_connection_factory(lambda: open_eval_connection(self.paths)) as tx:
+            deleted = BenchmarkSavedViewRepository(tx.connection, autocommit=False).delete(view_key)
+            tx.commit()
+            return deleted
 
     @staticmethod
     def _leaderboard_row_payload(row: Any) -> dict[str, Any]:

@@ -22,8 +22,9 @@ class BenchmarkSnapshotRepository:
     and writes runtime data.
     """
 
-    def __init__(self, conn: StorageConnection) -> None:
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
         self._conn = conn
+        self._autocommit = autocommit
 
     def save(self, snapshot: dict[str, Any]) -> None:
         self._conn.execute(
@@ -52,7 +53,8 @@ class BenchmarkSnapshotRepository:
                 snapshot.get("created_at"),
             ),
         )
-        self._conn.commit()
+        if self._autocommit:
+            self._conn.commit()
 
     def list(
         self,
