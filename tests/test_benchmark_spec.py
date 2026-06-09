@@ -137,6 +137,27 @@ def test_disabled_local_benchmark_spec_blocks_builtin_with_same_id(tmp_path: Pat
     assert {"role-baseline-standard-v1", "model-baseline-standard-v1"} <= ids
 
 
+def test_list_benchmark_specs_can_include_inactive_for_management_views(tmp_path: Path) -> None:
+    spec_mod = _benchmark_spec_module()
+    _write_spec(
+        tmp_path,
+        "role-baseline-v1.yaml",
+        VALID_ROLE_BASELINE_SPEC + "\nstatus: deprecated\n",
+    )
+
+    launchable_specs = spec_mod.list_benchmark_specs(paths=PathConfig(root=tmp_path))
+    management_specs = spec_mod.list_benchmark_specs(paths=PathConfig(root=tmp_path), include_inactive=True)
+    management = {spec.id: spec for spec in management_specs}
+    summary = spec_mod.benchmark_spec_summary(management["role-baseline-v1"])
+
+    assert "role-baseline-v1" not in {spec.id for spec in launchable_specs}
+    assert management["role-baseline-v1"].lifecycle_status == "deprecated"
+    assert management["role-baseline-v1"].launchable is False
+    assert summary["status"] == "deprecated"
+    assert summary["launchable"] is False
+    assert "deprecated" in summary["launch_disabled_reason"]
+
+
 def test_builtin_benchmark_resources_are_available_without_runtime_data(tmp_path: Path) -> None:
     spec_mod = _benchmark_spec_module()
 

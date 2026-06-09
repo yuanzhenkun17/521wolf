@@ -76,13 +76,14 @@ const configHash = computed(() =>
 
 <style scoped>
 .benchmark-boundary-bar {
-  --boundary-bg: #f8f0e0;
-  --boundary-surface: rgba(255, 252, 245, 0.7);
-  --boundary-border: rgba(139, 94, 52, 0.15);
-  --boundary-text: #3a2a18;
-  --boundary-muted: #8b6b4a;
-  --boundary-accent: #5a3319;
-  --boundary-soft: rgba(90, 51, 25, 0.12);
+  --boundary-bg: var(--bench-bg-texture, var(--logbook-bg-texture, #f2dfae));
+  --boundary-surface: var(--bench-surface, var(--logbook-surface, rgba(255, 252, 245, 0.7)));
+  --boundary-border: var(--bench-border, var(--logbook-border, rgba(139, 94, 52, 0.15)));
+  --boundary-text: var(--bench-text, var(--logbook-text, #3a2a18));
+  --boundary-muted: var(--bench-text-secondary, var(--logbook-muted, #8b6b4a));
+  --boundary-accent: var(--bench-accent, var(--logbook-accent, #8b5e34));
+  --boundary-accent-strong: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
+  --boundary-soft: var(--bench-active-bg, var(--logbook-active-bg, rgba(139, 94, 52, 0.1)));
   display: grid;
   grid-template-columns: minmax(190px, 1.05fr) minmax(190px, 1fr) minmax(220px, 1.15fr) minmax(220px, 1.2fr) minmax(150px, 0.8fr);
   gap: 8px;
@@ -91,6 +92,7 @@ const configHash = computed(() =>
   border: 1px solid var(--boundary-border);
   border-radius: 8px;
   background: var(--boundary-bg);
+  box-shadow: 0 1px 3px rgba(91, 47, 18, 0.04);
 }
 
 .boundary-cell {
@@ -105,7 +107,7 @@ const configHash = computed(() =>
 }
 
 .boundary-cell--suite {
-  border-left: 4px solid var(--boundary-accent);
+  border-left: 4px solid var(--boundary-accent-strong);
 }
 
 .boundary-cell--budget {
@@ -113,7 +115,7 @@ const configHash = computed(() =>
 }
 
 .boundary-cell--budget.danger {
-  border-left-color: var(--boundary-accent);
+  border-left-color: var(--boundary-accent-strong);
   background: var(--boundary-soft);
 }
 

@@ -20,6 +20,7 @@ const compareAgainstSnapshot = computed(() =>
 )
 const compare = computed(() => props.benchmark.benchmarkSnapshotCompare.value || {})
 const currentRows = computed(() => props.benchmark.normalizedCurrentBenchmarkLeaderboardRows.value || [])
+const selectedSuite = computed(() => props.benchmark.selectedBenchmarkSuite.value || {})
 const snapshotRows = computed(() => selectedSnapshot.value?.rows || [])
 const selectedSnapshotAudit = computed(() => snapshotAudit(selectedSnapshot.value))
 const isModel = computed(() => props.benchmark.selectedBenchmarkIsModelSuite.value)
@@ -49,11 +50,198 @@ const addedSectionTitle = computed(() =>
 const removedSectionTitle = computed(() =>
   compareAgainstSnapshotId.value ? '仅存在于已选快照的行' : '仅存在于快照的行'
 )
-const canCreate = computed(() =>
-  !isLoading.value &&
-  currentRows.value.length > 0 &&
-  (isModel.value || Boolean(props.benchmark.selectedRole.value))
+const currentRankableRows = computed(() => currentRows.value.filter((row) => row.rankable !== false))
+const currentUnrankableRows = computed(() => currentRows.value.filter((row) => row.rankable === false))
+const topCurrentUnrankableRows = computed(() => currentUnrankableRows.value.slice(0, 4))
+const currentReleaseAudit = computed(() => ({
+  rowCount: currentRows.value.length,
+  rankableCount: currentRankableRows.value.length,
+  unrankableCount: currentUnrankableRows.value.length,
+  totalGames: currentRows.value.reduce((sum, row) => sum + (firstFiniteNumber(
+    row?.games,
+    row?.game_count,
+    row?.games_played,
+    row?.total_games
+  ) || 0), 0)
+}))
+const currentSourceAudit = computed(() => currentRowSourceAudit(currentRows.value))
+const currentSourceSummary = computed(() => {
+  const audit = currentSourceAudit.value
+  const parts = [
+    sourceCountText(audit.runCount, 'run'),
+    sourceCountText(audit.reportCount, 'report'),
+    sourceCountText(audit.resultBatchCount, 'batch', 'batches')
+  ].filter((label) => label !== '未上报')
+  return parts.length ? parts.join(' / ') : '来源未上报'
+})
+const boundaryWarningSummary = computed(() =>
+  boundaryWarningLabels.value.length ? `${formatNumber(boundaryWarningLabels.value.length)} 条告警` : '无边界告警'
 )
+const benchmarkConfigHash = computed(() =>
+  selectedSuite.value.config_hash ||
+  selectedSuite.value.benchmark_config_hash ||
+  props.benchmark.benchmarkPlan.value?.benchmark?.config_hash ||
+  props.benchmark.benchmarkPlan.value?.benchmark_config_hash ||
+  ''
+)
+const releaseBoundary = computed(() => {
+  const latestAudit = snapshotAudit(latestSnapshot.value)
+  const scope = props.benchmark.benchmarkSnapshotScope.value || (isModel.value ? 'model' : 'role_version')
+  return {
+    benchmarkId: props.benchmark.selectedBenchmarkId.value || '',
+    evaluationSetId: props.benchmark.selectedBenchmarkEvaluationSetId.value || selectedSuite.value.evaluation_set_id || '',
+    seedSetId: selectedSuite.value.seed_set_id || props.benchmark.benchmarkPlan.value?.seed_set_id || '',
+    configHash: benchmarkConfigHash.value,
+    scope,
+    subject: isModel.value ? '模型榜单' : props.benchmark.selectedRoleLabel.value,
+    contentHashLabel: latestAudit.contentHash ? `冻结后生成 / 上次 ${shortHash(latestAudit.contentHash)}` : '冻结后由服务端生成',
+    contentHashTitle: latestAudit.contentHash || '冻结时由服务端计算'
+  }
+})
+const releaseReadinessChecks = computed(() => {
+  const audit = currentReleaseAudit.value
+  const boundary = releaseBoundary.value
+  return [
+    {
+      key: 'loading',
+      label: '快照任务',
+      value: isLoading.value ? '处理中' : '空闲',
+      passed: !isLoading.value,
+      required: true,
+      blockedReason: '快照请求仍在处理中'
+    },
+    {
+      key: 'suite',
+      label: '评测套件',
+      value: boundary.benchmarkId ? props.benchmark.selectedBenchmarkSuiteLabel.value : '未选择正式套件',
+      passed: Boolean(boundary.benchmarkId),
+      required: true,
+      blockedReason: '需选择正式评测套件'
+    },
+    {
+      key: 'rows',
+      label: '当前行',
+      value: `${formatNumber(audit.rowCount)} 行`,
+      passed: audit.rowCount > 0,
+      required: true,
+      blockedReason: '当前排行榜没有行'
+    },
+    {
+      key: 'rankable',
+      label: '可排名行',
+      value: `${formatNumber(audit.rankableCount)} 条`,
+      passed: audit.rankableCount > 0,
+      required: true,
+      blockedReason: '没有可排名行'
+    },
+    {
+      key: 'boundary',
+      label: 'Evaluation Set',
+      value: boundary.evaluationSetId || '未绑定评测集',
+      passed: Boolean(boundary.evaluationSetId),
+      required: true,
+      blockedReason: '缺少 Evaluation Set，无法冻结正式快照'
+    },
+    {
+      key: 'scope',
+      label: 'scope',
+      value: boundary.scope,
+      passed: isModel.value || Boolean(props.benchmark.selectedRole.value),
+      required: true,
+      blockedReason: '角色版本范围需先选择角色'
+    },
+    {
+      key: 'seed',
+      label: 'Seed Set',
+      value: boundary.seedSetId || '未上报',
+      passed: Boolean(boundary.seedSetId),
+      required: true,
+      blockedReason: '缺少 Seed Set，无法证明种子边界'
+    },
+    {
+      key: 'config',
+      label: 'Config Hash',
+      value: boundary.configHash ? shortHash(boundary.configHash) : '未上报',
+      passed: Boolean(boundary.configHash),
+      required: true,
+      blockedReason: '缺少 Config Hash，无法证明配置边界'
+    },
+    {
+      key: 'source-run',
+      label: '来源 run',
+      value: sourceCountText(currentSourceAudit.value.runCount, 'run'),
+      passed: Number(currentSourceAudit.value.runCount) > 0,
+      required: true,
+      blockedReason: '缺少来源 run ID，无法追溯评测运行'
+    },
+    {
+      key: 'source-report',
+      label: '来源 report',
+      value: sourceCountText(currentSourceAudit.value.reportCount, 'report'),
+      passed: Number(currentSourceAudit.value.reportCount) > 0,
+      required: true,
+      blockedReason: '缺少来源 report ID，无法追溯评测报告'
+    },
+    {
+      key: 'source-result',
+      label: '来源 result',
+      value: sourceCountText(currentSourceAudit.value.resultBatchCount, 'batch', 'batches'),
+      passed: Number(currentSourceAudit.value.resultBatchCount) > 0,
+      required: true,
+      blockedReason: '缺少来源 result ID，无法追溯结果批次'
+    },
+    {
+      key: 'boundary-warning',
+      label: '边界告警',
+      value: boundaryWarningSummary.value,
+      passed: boundaryWarnings.value.length === 0,
+      required: true,
+      blockedReason: '存在评测边界告警，需先处理后再冻结'
+    },
+    {
+      key: 'unrankable',
+      label: '不可排名证据',
+      value: `${formatNumber(audit.unrankableCount)} 条`,
+      passed: audit.unrankableCount === 0,
+      required: false,
+      attentionReason: '不可排名证据会保留，但不进入正式排名'
+    },
+    {
+      key: 'content',
+      label: 'Content Hash',
+      value: boundary.contentHashLabel,
+      passed: true,
+      required: false
+    }
+  ]
+})
+const releaseBlockingReasons = computed(() =>
+  releaseReadinessChecks.value
+    .filter((item) => item.required && !item.passed)
+    .map((item) => item.blockedReason)
+)
+const releaseAttentionReasons = computed(() =>
+  releaseReadinessChecks.value
+    .filter((item) => !item.required && !item.passed && item.attentionReason)
+    .map((item) => item.attentionReason)
+)
+const canCreate = computed(() => releaseBlockingReasons.value.length === 0)
+const releaseGateTone = computed(() => {
+  if (isLoading.value) return 'loading'
+  return canCreate.value ? 'ready' : 'blocked'
+})
+const releaseGateLabel = computed(() => {
+  if (isLoading.value) return '检查中'
+  return canCreate.value ? '可冻结' : '不可冻结'
+})
+const releaseGateDetail = computed(() => {
+  if (!canCreate.value) return `禁用原因：${releaseBlockingReasons.value.join('；')}`
+  const audit = currentReleaseAudit.value
+  const unrankable = audit.unrankableCount > 0
+    ? `${formatNumber(audit.unrankableCount)} 条不可排名证据会随快照保留`
+    : '没有不可排名证据'
+  return `可冻结：${formatNumber(audit.rankableCount)} 条可排名行将进入正式快照，${unrankable}。`
+})
 
 const scopeLabel = computed(() =>
   isModel.value ? '模型范围' : `${props.benchmark.selectedRoleLabel.value} 角色版本`
@@ -131,6 +319,7 @@ watch(selectedSnapshotId, () => {
 })
 
 async function createSnapshot() {
+  if (!canCreate.value) return
   const created = await props.benchmark.createBenchmarkSnapshot({
     title: title.value || defaultTitle.value,
     release_notes: releaseNotes.value
@@ -293,6 +482,35 @@ function snapshotSourceCount(snapshot, ids, countKey) {
   return ids.length ? ids.length : null
 }
 
+function currentRowSourceAudit(rows) {
+  const runIds = uniqueRowIds(rows, ['source_run_id', 'run_id'])
+  const reportIds = uniqueRowIds(rows, ['source_report_id', 'report_id'])
+  const resultBatchIds = uniqueRowIds(rows, ['result_batch_id', 'source_result_batch_id'])
+  return {
+    runCount: runIds.length || null,
+    reportCount: reportIds.length || null,
+    resultBatchCount: resultBatchIds.length || null,
+    runIds,
+    reportIds,
+    resultBatchIds
+  }
+}
+
+function uniqueRowIds(rows, keys) {
+  const seen = new Set()
+  const ids = []
+  for (const row of rows || []) {
+    for (const key of keys) {
+      for (const id of normalizedIdList(row?.[key])) {
+        if (seen.has(id)) continue
+        seen.add(id)
+        ids.push(id)
+      }
+    }
+  }
+  return ids
+}
+
 function snapshotHistoryCountLabel(snapshot) {
   const audit = snapshotAudit(snapshot)
   return [
@@ -338,6 +556,32 @@ function sourceIdsTitle(ids) {
   return ids?.length ? ids.join(', ') : ''
 }
 
+function rowSubjectLabel(row) {
+  return row?.primary ||
+    row?.subject_id ||
+    row?.model_id ||
+    row?.model_config_hash ||
+    row?.target_version_id ||
+    row?.key ||
+    '未知对象'
+}
+
+function rowReasonLabel(row) {
+  return row?.rankableReason ||
+    row?.rankable_reason ||
+    row?.reason ||
+    row?.gate_reason ||
+    '未达到发布门禁'
+}
+
+function rowGamesLabel(row) {
+  const completed = firstFiniteNumber(row?.games_played, row?.completed_games, row?.completed)
+  const total = firstFiniteNumber(row?.game_count, row?.total_games, row?.games)
+  if (completed != null && total != null) return `${formatNumber(completed)}/${formatNumber(total)} 局`
+  if (total != null) return `${formatNumber(total)} 局`
+  return '局数未上报'
+}
+
 function createdLabel(value) {
   const text = String(value || '').trim()
   if (!text) return '--'
@@ -359,7 +603,7 @@ function warningLabel(value) {
 }
 
 function exportFormatLabel(format) {
-  if (format === 'delta-csv') return 'Delta CSV'
+  if (format === 'delta-csv') return '差值 CSV'
   if (format === 'json') return 'JSON'
   return 'CSV'
 }
@@ -416,14 +660,22 @@ function clearTransientState() {
         <button type="button" class="snapshot-secondary-button" @click="refreshSnapshots">
           刷新
         </button>
-        <button
-          type="button"
-          class="snapshot-primary-button"
-          :disabled="!canCreate"
-          @click="createSnapshot"
-        >
-          冻结快照
-        </button>
+        <span class="snapshot-freeze-stack">
+          <button
+            type="button"
+            class="snapshot-primary-button"
+            :disabled="!canCreate"
+            :aria-disabled="String(!canCreate)"
+            :aria-label="'冻结快照：' + releaseGateLabel"
+            :title="releaseGateDetail"
+            @click="createSnapshot"
+          >
+            冻结快照
+          </button>
+          <small :class="['snapshot-freeze-reason', 'is-' + releaseGateTone]">
+            {{ releaseGateDetail }}
+          </small>
+        </span>
       </div>
     </header>
 
@@ -443,6 +695,38 @@ function clearTransientState() {
           </span>
           <em>{{ currentRows.length }} 当前行</em>
         </div>
+        <div :class="['snapshot-release-gate', 'snapshot-release-gate--' + releaseGateTone]" aria-label="发布门禁">
+          <div class="snapshot-gate-head">
+            <span>
+              <small>发布门禁</small>
+              <b>{{ releaseGateLabel }}</b>
+            </span>
+            <em>{{ canCreate ? '冻结按钮已开放' : '冻结按钮已禁用' }}</em>
+          </div>
+          <p>{{ releaseGateDetail }}</p>
+          <div v-if="releaseBlockingReasons.length" class="snapshot-disable-reasons" aria-label="禁用原因">
+            <small>禁用原因</small>
+            <span v-for="reason in releaseBlockingReasons" :key="reason">{{ reason }}</span>
+          </div>
+          <div v-if="releaseAttentionReasons.length" class="snapshot-attention-reasons" aria-label="发布复核项">
+            <small>需复核</small>
+            <span v-for="reason in releaseAttentionReasons" :key="reason">{{ reason }}</span>
+          </div>
+          <div class="snapshot-gate-checks">
+            <span
+              v-for="item in releaseReadinessChecks"
+              :key="item.key"
+              :class="[
+                'snapshot-gate-check',
+                item.passed ? 'passed' : (item.required ? 'blocked' : 'attention')
+              ]"
+            >
+              <small>{{ item.label }}</small>
+              <b :title="item.value">{{ item.value }}</b>
+              <em>{{ item.passed ? '通过' : (item.required ? '阻止发布' : '需复核') }}</em>
+            </span>
+          </div>
+        </div>
         <label>
           <span>标题</span>
           <input v-model.trim="title" type="text" autocomplete="off" :placeholder="defaultTitle" />
@@ -456,19 +740,56 @@ function clearTransientState() {
             placeholder="记录本次变更、为什么该套件可发布，以及仍需关注的风险。"
           />
         </label>
-        <div class="snapshot-boundary">
+        <div class="snapshot-boundary snapshot-release-boundary">
           <span>
-            <small>评测集</small>
-            <b>{{ props.benchmark.selectedBenchmarkEvaluationSetId.value || '临时' }}</b>
+            <small>当前行</small>
+            <b>{{ formatNumber(currentReleaseAudit.rowCount) }} 行 / {{ formatNumber(currentReleaseAudit.rankableCount) }} 可排名</b>
           </span>
           <span>
-            <small>范围</small>
-            <b>{{ props.benchmark.benchmarkSnapshotScope.value }}</b>
+            <small>评测边界</small>
+            <b :title="releaseBoundary.evaluationSetId">{{ releaseBoundary.evaluationSetId || '未绑定评测集' }}</b>
+          </span>
+          <span>
+            <small>来源 run/report/result</small>
+            <b :title="currentSourceSummary">{{ currentSourceSummary }}</b>
+          </span>
+          <span>
+            <small>边界告警</small>
+            <b :title="boundaryWarningLabels.join(', ')">{{ boundaryWarningSummary }}</b>
+          </span>
+          <span>
+            <small>scope</small>
+            <b>{{ releaseBoundary.scope }} / {{ releaseBoundary.subject }}</b>
+          </span>
+          <span>
+            <small>Seed Set</small>
+            <b :title="releaseBoundary.seedSetId">{{ releaseBoundary.seedSetId || '未上报' }}</b>
+          </span>
+          <span>
+            <small>Config Hash</small>
+            <b :title="releaseBoundary.configHash">{{ releaseBoundary.configHash ? shortHash(releaseBoundary.configHash) : '未上报' }}</b>
           </span>
           <span>
             <small>Content Hash</small>
-            <b>{{ latestSnapshot ? shortHash(latestSnapshot.content_hash) : '尚未冻结' }}</b>
+            <b :title="releaseBoundary.contentHashTitle">{{ releaseBoundary.contentHashLabel }}</b>
           </span>
+        </div>
+        <div class="snapshot-unrankable-evidence" aria-label="不可排名证据">
+          <div class="snapshot-section-title compact">
+            <span>
+              <small>不可排名证据</small>
+              <b>{{ formatNumber(currentReleaseAudit.unrankableCount) }} 条不会进入正式排名</b>
+            </span>
+            <em>随快照保留</em>
+          </div>
+          <div v-if="topCurrentUnrankableRows.length" class="snapshot-unrankable-list">
+            <span v-for="row in topCurrentUnrankableRows" :key="'current-unrankable-' + row.key">
+              <b>{{ rowSubjectLabel(row) }}</b>
+              <small>{{ rowReasonLabel(row) }}</small>
+              <em>{{ rowGamesLabel(row) }}</em>
+            </span>
+          </div>
+          <p v-else class="snapshot-empty small">没有不可排名证据。</p>
         </div>
       </article>
 
@@ -519,7 +840,7 @@ function clearTransientState() {
           <button type="button" :disabled="!selectedSnapshot" @click="copySnapshot('csv')">复制 CSV</button>
           <button type="button" :disabled="!selectedSnapshot" @click="downloadSnapshot('json')">JSON</button>
           <button type="button" :disabled="!selectedSnapshot" @click="downloadSnapshot('csv')">CSV</button>
-          <button type="button" :disabled="!selectedSnapshot" @click="downloadSnapshot('delta-csv')">Delta CSV</button>
+          <button type="button" :disabled="!selectedSnapshot" @click="downloadSnapshot('delta-csv')">差值 CSV</button>
           <em>{{ exportState }}</em>
         </div>
         <div class="snapshot-compare-picker">
@@ -698,20 +1019,18 @@ function clearTransientState() {
 
 <style scoped>
 .benchmark-snapshot-panel {
-  --snapshot-bg: #f8f0e0;
-  --snapshot-surface: rgba(255, 252, 245, 0.7);
-  --snapshot-surface-strong: rgba(255, 252, 245, 0.92);
-  --snapshot-border: rgba(139, 94, 52, 0.15);
-  --snapshot-border-strong: rgba(139, 94, 52, 0.28);
-  --snapshot-ink: #3a2a18;
-  --snapshot-muted: #8b6b4a;
-  --snapshot-accent: #8b5e34;
-  --snapshot-strong: #5a3319;
-  --snapshot-soft: rgba(248, 240, 224, 0.66);
-  --snapshot-green: #8b5e34;
-  --snapshot-blue: #5a3319;
-  --snapshot-red: #5a3319;
-  --snapshot-amber: #8b6b4a;
+  --snapshot-bg: var(--bench-bg, var(--logbook-bg, #f2dfae));
+  --snapshot-surface: var(--bench-surface, var(--logbook-surface, rgba(255, 252, 245, 0.7)));
+  --snapshot-surface-strong: var(--bench-panel-solid, var(--logbook-panel-solid, rgba(255, 252, 245, 0.92)));
+  --snapshot-border: var(--bench-border, var(--logbook-border, rgba(139, 94, 52, 0.15)));
+  --snapshot-border-strong: var(--bench-border-strong, var(--logbook-border-strong, rgba(139, 94, 52, 0.28)));
+  --snapshot-ink: var(--bench-text, var(--logbook-text, #3a2a18));
+  --snapshot-muted: var(--bench-text-secondary, var(--logbook-muted, #8b6b4a));
+  --snapshot-accent: var(--bench-accent, var(--logbook-accent, #8b5e34));
+  --snapshot-strong: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
+  --snapshot-soft: var(--bench-panel-soft, var(--logbook-panel-soft, rgba(248, 240, 224, 0.66)));
+  --snapshot-danger: var(--bench-danger, var(--logbook-danger, #5a3319));
+  --snapshot-warning: var(--bench-warning, var(--logbook-warning, #8b6b4a));
   display: grid;
   gap: 12px;
   min-width: 0;
@@ -757,12 +1076,17 @@ function clearTransientState() {
 
 .snapshot-header small,
 .snapshot-section-title small,
+.snapshot-gate-head small,
+.snapshot-gate-check small,
+.snapshot-disable-reasons small,
+.snapshot-attention-reasons small,
 .snapshot-release-card label span,
 .snapshot-boundary small,
 .snapshot-list-row small,
 .snapshot-metrics small,
 .snapshot-audit dt,
-.snapshot-delta-row small {
+.snapshot-delta-row small,
+.snapshot-unrankable-list small {
   color: var(--snapshot-muted);
   font-size: 10px;
   font-weight: 900;
@@ -771,8 +1095,41 @@ function clearTransientState() {
 }
 
 .snapshot-header-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(220px, 280px);
+  align-items: start;
   gap: 8px;
+  min-width: 0;
+}
+
+.snapshot-freeze-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.snapshot-freeze-stack .snapshot-primary-button {
+  width: 100%;
+}
+
+.snapshot-freeze-reason {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--snapshot-muted);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-freeze-reason.is-ready {
+  color: var(--snapshot-accent);
+}
+
+.snapshot-freeze-reason.is-blocked,
+.snapshot-freeze-reason.is-loading {
+  color: var(--snapshot-strong);
 }
 
 .snapshot-primary-button,
@@ -874,7 +1231,7 @@ function clearTransientState() {
   border: 1px solid rgba(90, 51, 25, 0.25);
   border-radius: 8px;
   background: rgba(90, 51, 25, 0.08);
-  color: var(--snapshot-red);
+  color: var(--snapshot-danger);
   font-size: 12px;
   font-weight: 850;
 }
@@ -966,9 +1323,163 @@ function clearTransientState() {
   line-height: 1.45;
 }
 
+.snapshot-release-gate {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--snapshot-border-strong);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.86), rgba(248, 240, 224, 0.72)),
+    var(--snapshot-surface);
+}
+
+.snapshot-release-gate--ready {
+  border-color: rgba(139, 94, 52, 0.34);
+  box-shadow: inset 4px 0 0 var(--snapshot-accent);
+}
+
+.snapshot-release-gate--blocked,
+.snapshot-release-gate--loading {
+  border-color: rgba(90, 51, 25, 0.3);
+  box-shadow: inset 4px 0 0 var(--snapshot-strong);
+}
+
+.snapshot-gate-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.snapshot-gate-head span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.snapshot-gate-head b {
+  color: var(--snapshot-ink);
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.snapshot-gate-head em {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid rgba(139, 94, 52, 0.2);
+  border-radius: 999px;
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--snapshot-strong);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.snapshot-release-gate p {
+  margin: 0;
+  color: var(--snapshot-strong);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.snapshot-disable-reasons,
+.snapshot-attention-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(139, 94, 52, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.56);
+}
+
+.snapshot-disable-reasons small,
+.snapshot-attention-reasons small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+}
+
+.snapshot-disable-reasons span,
+.snapshot-attention-reasons span {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(90, 51, 25, 0.08);
+  color: var(--snapshot-strong);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.snapshot-attention-reasons span {
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--snapshot-accent);
+}
+
+.snapshot-gate-checks {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  min-width: 0;
+}
+
+.snapshot-gate-check {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--snapshot-border);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.56);
+}
+
+.snapshot-gate-check b,
+.snapshot-gate-check em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-gate-check b {
+  color: var(--snapshot-ink);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.snapshot-gate-check em {
+  color: var(--snapshot-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.snapshot-gate-check.passed {
+  border-color: rgba(139, 94, 52, 0.22);
+}
+
+.snapshot-gate-check.blocked {
+  border-color: rgba(90, 51, 25, 0.36);
+  background: rgba(90, 51, 25, 0.07);
+}
+
+.snapshot-gate-check.attention {
+  border-color: rgba(139, 94, 52, 0.34);
+  background: rgba(139, 94, 52, 0.07);
+}
+
 .snapshot-boundary {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.72fr) minmax(0, 0.9fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1003,6 +1514,57 @@ function clearTransientState() {
   color: var(--snapshot-ink);
   font-size: 12px;
   font-weight: 900;
+}
+
+.snapshot-unrankable-evidence {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--snapshot-border);
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.5);
+}
+
+.snapshot-unrankable-list {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.snapshot-unrankable-list span {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.72fr) minmax(0, 1fr) minmax(72px, auto);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(139, 94, 52, 0.16);
+  border-radius: 7px;
+  background: rgba(139, 94, 52, 0.06);
+}
+
+.snapshot-unrankable-list b,
+.snapshot-unrankable-list small,
+.snapshot-unrankable-list em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-unrankable-list b {
+  color: var(--snapshot-ink);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.snapshot-unrankable-list em {
+  color: var(--snapshot-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  text-align: right;
 }
 
 .snapshot-list {
@@ -1081,7 +1643,7 @@ function clearTransientState() {
 }
 
 .tone-red {
-  border-left: 4px solid var(--snapshot-red) !important;
+  border-left: 4px solid var(--snapshot-danger) !important;
 }
 
 .snapshot-audit {
@@ -1185,11 +1747,11 @@ function clearTransientState() {
 }
 
 .positive {
-  color: var(--snapshot-green);
+  color: var(--snapshot-accent);
 }
 
 .negative {
-  color: var(--snapshot-red);
+  color: var(--snapshot-danger);
 }
 
 .snapshot-chip-list {

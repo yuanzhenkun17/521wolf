@@ -20,6 +20,8 @@ from engine.models import Role
 
 VALID_BENCHMARK_TARGET_TYPES = {"role_version", "model"}
 VALID_BENCHMARK_ROLES = {role.value for role in Role}
+VALID_BENCHMARK_STATUSES = {"enabled", "active", "draft", "deprecated", "disabled", "archived"}
+LAUNCHABLE_BENCHMARK_STATUSES = {"enabled", "active"}
 _BUILTIN_RESOURCES_DIR = Path(__file__).resolve().parents[1] / "resources"
 
 
@@ -99,6 +101,7 @@ class BenchmarkSpec(BaseModel):
     gates: BenchmarkGates = Field(default_factory=BenchmarkGates)
     judge: BenchmarkJudgeConfig = Field(default_factory=BenchmarkJudgeConfig)
     enabled: bool = True
+    status: str = ""
     cost_tier: str = "standard"
 
     @field_validator("id")
@@ -127,6 +130,16 @@ class BenchmarkSpec(BaseModel):
         if not roles:
             raise ValueError("benchmark spec must include at least one role")
         return roles
+
+    @field_validator("status")
+    @classmethod
+    def normalize_status(cls, value: str) -> str:
+        status = str(value or "").strip().lower()
+        if not status:
+            return ""
+        if status not in VALID_BENCHMARK_STATUSES:
+            raise ValueError(f"unsupported benchmark status: {status}")
+        return status
 
     @field_validator("seeds")
     @classmethod
@@ -157,6 +170,18 @@ class BenchmarkSpec(BaseModel):
     def evaluation_set_id(self) -> str:
         return f"{self.id}@v{self.version}"
 
+    @property
+    def lifecycle_status(self) -> str:
+        if not self.enabled and self.status in {"", "enabled", "active"}:
+            return "disabled"
+        if self.status:
+            return self.status
+        return "enabled" if self.enabled else "disabled"
+
+    @property
+    def launchable(self) -> bool:
+        return self.lifecycle_status in LAUNCHABLE_BENCHMARK_STATUSES
+
 
 def benchmarks_dir(paths: PathConfig | None = None) -> Path:
     resolved = paths or DEFAULT_PATHS
@@ -176,7 +201,7 @@ def builtin_benchmark_seed_sets_dir() -> Path:
     return _BUILTIN_RESOURCES_DIR / "benchmark_seed_sets"
 
 
-def list_benchmark_specs(paths: PathConfig | None = None) -> list[BenchmarkSpec]:
+def list_benchmark_specs(paths: PathConfig | None = None, *, include_inactive: bool = False) -> list[BenchmarkSpec]:
     """Load every enabled benchmark spec from the configured data directory."""
     specs: list[BenchmarkSpec] = []
     seen_ids: set[str] = set()
@@ -190,7 +215,7 @@ def list_benchmark_specs(paths: PathConfig | None = None) -> list[BenchmarkSpec]
             if spec.id in seen_ids:
                 continue
             seen_ids.add(spec.id)
-            if spec.enabled:
+            if include_inactive or spec.launchable:
                 specs.append(spec)
     return specs
 
@@ -322,6 +347,8 @@ def benchmark_seed_set_summary(seed_set: BenchmarkSeedSet) -> dict[str, Any]:
 def benchmark_spec_summary(spec: BenchmarkSpec, seed_set: BenchmarkSeedSet | None = None) -> dict[str, Any]:
     """Small API-safe spec summary."""
     seeds = _spec_seeds(spec, seed_set)
+    lifecycle_status = spec.lifecycle_status
+    launchable = spec.launchable
     return {
         "id": spec.id,
         "version": spec.version,
@@ -343,8 +370,25 @@ def benchmark_spec_summary(spec: BenchmarkSpec, seed_set: BenchmarkSeedSet | Non
         "config_hash": benchmark_config_hash(spec),
         "seed_set": benchmark_seed_set_summary(seed_set) if seed_set is not None else None,
         "enabled": spec.enabled,
+        "status": lifecycle_status,
+        "launchable": launchable,
+        "launch_disabled_reason": "" if launchable else benchmark_spec_launch_disabled_reason(spec),
         "cost_tier": spec.cost_tier,
     }
+
+
+def benchmark_spec_launch_disabled_reason(spec: BenchmarkSpec) -> str:
+    """Return the product-facing reason a benchmark suite cannot be launched."""
+    status = spec.lifecycle_status
+    if status in LAUNCHABLE_BENCHMARK_STATUSES:
+        return ""
+    reasons = {
+        "draft": "benchmark suite is draft and must be enabled before launch",
+        "deprecated": "benchmark suite is deprecated and cannot be launched",
+        "disabled": "benchmark suite is disabled and cannot be launched",
+        "archived": "benchmark suite is archived and cannot be launched",
+    }
+    return reasons.get(status, f"benchmark suite status={status} cannot be launched")
 
 
 def materialize_benchmark_spec(

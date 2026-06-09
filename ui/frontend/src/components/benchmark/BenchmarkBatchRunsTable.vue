@@ -16,6 +16,69 @@ const detailResults = computed(() => selectedDetail.value?.resultRows || [])
 const detailGames = computed(() => props.benchmark.benchmarkBatchGames.value)
 const detailDiagnostics = computed(() => props.benchmark.benchmarkBatchDiagnostics.value)
 const detailPagination = computed(() => props.benchmark.benchmarkBatchGamePagination.value || {})
+const detailGamesLoading = computed(() => Boolean(props.benchmark.benchmarkBatchGamesLoading?.value))
+const detailDiagnosticsLoading = computed(() => Boolean(props.benchmark.benchmarkBatchDiagnosticsLoading?.value))
+const loadedGameCount = computed(() => detailGames.value.length)
+const totalGameCount = computed(() => Number(detailPagination.value.total ?? detailGames.value.length) || 0)
+const hasMoreGames = computed(() => Boolean(detailPagination.value.has_more))
+const hasDiagnosticFilters = computed(() => Boolean(
+  props.benchmark.benchmarkDiagnosticKindFilter?.value ||
+  props.benchmark.benchmarkDiagnosticLevelFilter?.value ||
+  props.benchmark.benchmarkDiagnosticStatusFilter?.value ||
+  props.benchmark.benchmarkDiagnosticStageFilter?.value ||
+  props.benchmark.benchmarkDiagnosticSeedFilter?.value
+))
+const gamesByDiagnosticKey = computed(() => {
+  const map = new Map()
+  for (const game of detailGames.value) {
+    const gameId = String(game?.game_id || game?.id || '')
+    if (!gameId) continue
+    const resultBatchId = String(game?.result_batch_id || '')
+    map.set(gameId, game)
+    map.set(`${resultBatchId}:${gameId}`, game)
+  }
+  return map
+})
+const statusLabels = {
+  queued: '排队',
+  running: '运行中',
+  completed: '完成',
+  failed: '失败',
+  stopped: '已停止',
+  cancelled: '已取消',
+  timeout: '超时',
+  abnormal: '异常'
+}
+const targetTypeLabels = {
+  model: '模型',
+  role_version: '角色版本',
+  role: '角色',
+  version: '版本'
+}
+const rankableLabels = {
+  rankable: '可入榜',
+  unrankable: '未入榜',
+  true: '可入榜',
+  false: '未入榜'
+}
+const diagnosticKindLabels = {
+  rankable_failed: '入榜失败',
+  gate_failed: '门禁失败',
+  llm_error: 'LLM 错误',
+  timeout: '超时',
+  abnormal: '异常',
+  fallback: '回退',
+  diagnostic: '诊断'
+}
+const stageLabels = {
+  game: '对局',
+  judge: '裁判',
+  gate: '门禁',
+  report: '报告',
+  diagnostics: '诊断',
+  evaluation: '评测',
+  backend: '后端'
+}
 
 const statusCounts = computed(() => {
   const counts = { queued: 0, running: 0, completed: 0, failed: 0, other: 0 }
@@ -100,8 +163,8 @@ const detailStatRows = computed(() => {
     { label: '对局总数', value: games.total ?? 0 },
     { label: '失败/超时', value: Number(games.failed || 0) + Number(games.timeout || 0) + Number(games.abnormal || 0) },
     { label: '诊断数', value: diagnostics.total ?? detailDiagnostics.value.length },
-    { label: '对象类型', value: detail.targetTypeLabel },
-    { label: '状态', value: detail.statusLabel }
+    { label: '对象类型', value: displayTargetType(detail.targetTypeLabel || detail.target_type) },
+    { label: '状态', value: displayStatus(detail.statusLabel || detail.status) }
   ]
 })
 const detailBenchmarkRows = computed(() => {
@@ -109,9 +172,9 @@ const detailBenchmarkRows = computed(() => {
   const benchmark = detail?.benchmark || selectedRun.value?.benchmark || {}
   return [
     { label: '套件', value: detail?.benchmarkLabel || selectedRun.value?.benchmarkLabel || '临时评测' },
-    { label: '评测集', value: benchmark.evaluation_set_id || selectedRun.value?.evaluationSetId || 'ad-hoc' },
-    { label: '种子集', value: benchmark.seed_set_id || 'ad-hoc' },
-    { label: '配置 Hash', value: benchmark.config_hash || '—' }
+    { label: '评测集', value: benchmark.evaluation_set_id || selectedRun.value?.evaluationSetId || '临时' },
+    { label: '种子集', value: benchmark.seed_set_id || '临时' },
+    { label: 'Config Hash', value: benchmark.config_hash || '—' }
   ]
 })
 const gameStatusOptions = [
@@ -122,6 +185,33 @@ const gameStatusOptions = [
   { value: 'abnormal', label: '异常' },
   { value: 'completed', label: '完成' }
 ]
+const diagnosticKindOptions = [
+  { value: '', label: '全部类型' },
+  { value: 'rankable_failed', label: '未入榜' },
+  { value: 'leaderboard_gate_failed', label: '门禁失败' },
+  { value: 'decision_judge_degraded', label: 'Judge 降级' },
+  { value: 'game_failure', label: '失败局' },
+  { value: 'game_error', label: '对局错误' },
+  { value: 'result_warning', label: '结果警告' },
+  { value: 'result_error', label: '结果错误' },
+  { value: 'benchmark_error', label: '批次错误' },
+  { value: 'llm_error', label: 'LLM 错误' },
+  { value: 'fallback', label: '回退' }
+]
+const diagnosticLevelOptions = [
+  { value: '', label: '全部等级' },
+  { value: 'error', label: '错误' },
+  { value: 'warning', label: '警告' },
+  { value: 'info', label: '信息' }
+]
+const diagnosticStatusOptions = [
+  { value: '', label: '全部状态' },
+  { value: 'failed', label: '失败' },
+  { value: 'timeout', label: '超时' },
+  { value: 'abnormal', label: '异常' },
+  { value: 'degraded', label: '降级' },
+  { value: 'completed', label: '完成' }
+]
 
 function runLabel(index) {
   return `批次${index + 1}`
@@ -129,6 +219,35 @@ function runLabel(index) {
 
 function formatPercent(value) {
   return value == null ? '—' : `${value}%`
+}
+
+function displayMappedLabel(value, labels, fallback = '未上报') {
+  const text = String(value ?? '').trim()
+  if (!text) return fallback
+  if (/[\u4e00-\u9fff]/.test(text)) return text
+  const normalized = text.toLowerCase().replace(/\s+/g, '_')
+  return labels[normalized] || text
+}
+
+function displayStatus(value) {
+  return displayMappedLabel(value, statusLabels, '未知状态')
+}
+
+function displayTargetType(value) {
+  return displayMappedLabel(value, targetTypeLabels, '未知对象')
+}
+
+function displayRankable(value, rankable) {
+  const raw = value ?? (rankable == null ? '' : String(Boolean(rankable)))
+  return displayMappedLabel(raw, rankableLabels, rankable ? '可入榜' : '未入榜')
+}
+
+function displayDiagnosticKind(value) {
+  return displayMappedLabel(value, diagnosticKindLabels, '诊断项')
+}
+
+function displayStage(value) {
+  return displayMappedLabel(value, stageLabels, '运行阶段')
 }
 
 function runProblemCount(run) {
@@ -144,6 +263,59 @@ function selectRun(run) {
 
 function isSelectedRun(run) {
   return run?.id && props.benchmark.selectedBenchmarkBatchId.value === run.id
+}
+
+function setGameSeedFilter(event) {
+  props.benchmark.setBenchmarkGameSeedFilter(event?.target?.value || '')
+}
+
+function clearGameSeedFilter() {
+  props.benchmark.setBenchmarkGameSeedFilter('')
+}
+
+function setDiagnosticFilter(name, event) {
+  props.benchmark.setBenchmarkDiagnosticFilter(name, event?.target?.value || '')
+}
+
+function clearDiagnosticFilters() {
+  props.benchmark.clearBenchmarkDiagnosticFilters()
+}
+
+function gameEvidenceLabel(game) {
+  const parts = [
+    `${game?.decision_count || 0} 决策`,
+    `${game?.diagnostic_count || 0} 诊断`
+  ]
+  const errorCount = Number(game?.error_count || 0)
+  const fallbackCount = Number(game?.fallback_count || 0)
+  const llmErrorCount = Number(game?.llm_error_count || 0)
+  const policyAdjustedCount = Number(game?.policy_adjusted_count || 0)
+  if (errorCount > 0) parts.push(`${errorCount} 错误`)
+  if (fallbackCount > 0 || game?.fallback) parts.push(`${fallbackCount || 1} 回退`)
+  if (llmErrorCount > 0 || game?.llm_error) parts.push(`${llmErrorCount || 1} LLM 错误`)
+  if (policyAdjustedCount > 0 || game?.policy_adjusted) parts.push(`${policyAdjustedCount || 1} 策略修正`)
+  return parts.join(' / ')
+}
+
+function diagnosticEvidenceLabel(item) {
+  const parts = []
+  if (item?.targetRoleLabel) parts.push(item.targetRoleLabel)
+  if (item?.result_batch_id) parts.push(item.result_batch_id)
+  if (item?.game_id) parts.push(`对局 ${item.game_id}`)
+  if (item?.seedLabel) parts.push(`种子 ${item.seedLabel}`)
+  if (item?.status) parts.push(displayStatus(item.status))
+  if (item?.stage) parts.push(displayStage(item.stage))
+  return parts.length ? parts.join(' · ') : '无定位字段'
+}
+
+function diagnosticReplayHash(item) {
+  const gameId = String(item?.game_id || '')
+  if (!gameId) return ''
+  const resultBatchId = String(item?.result_batch_id || '')
+  const matched = gamesByDiagnosticKey.value.get(`${resultBatchId}:${gameId}`) || gamesByDiagnosticKey.value.get(gameId)
+  if (matched?.replayHash) return matched.replayHash
+  const historyGameId = String(item?.history_game_id || gameId)
+  return historyGameId ? `#logs?workspace=archive&game_id=${encodeURIComponent(historyGameId)}` : ''
 }
 </script>
 
@@ -167,7 +339,7 @@ function isSelectedRun(run) {
         <b>{{ statusCounts.failed }}</b>
       </span>
       <span>
-        <small>Judge</small>
+        <small>裁判均分</small>
         <b>{{ judgeSummary.avgScoreLabel }}</b>
         <em>{{ judgeSummary.judged }} 条决策</em>
       </span>
@@ -193,7 +365,7 @@ function isSelectedRun(run) {
               <span>套件</span>
               <span>对象</span>
               <span>状态</span>
-              <span>Judge</span>
+              <span>裁判</span>
               <span>诊断</span>
               <span>操作</span>
             </div>
@@ -211,13 +383,13 @@ function isSelectedRun(run) {
               <span class="bench-id">{{ runLabel(index) }}</span>
               <span>
                 <b class="bench-cell-main">{{ run.benchmarkLabel }}</b>
-                <small>{{ run.evaluationSetId || 'ad-hoc' }}</small>
+                <small>{{ run.evaluationSetId || '临时' }}</small>
               </span>
               <span>
                 <b class="bench-cell-main">{{ run.displayRole }}</b>
-                <small>{{ run.benchmarkTargetTypeLabel }}</small>
+                <small>{{ displayTargetType(run.benchmarkTargetTypeLabel || run.benchmarkTargetType || run.target_type) }}</small>
               </span>
-              <span>{{ run.statusLabel }}</span>
+              <span>{{ displayStatus(run.statusLabel || run.status) }}</span>
               <span class="bench-judge-score">
                 <b>{{ run.judgeScoreLabel }}</b>
                 <small>{{ run.judgeDecisionCount }} 条</small>
@@ -295,7 +467,7 @@ function isSelectedRun(run) {
             </div>
             <div v-if="judgeSummary.hasData" class="bench-role-run-list">
               <div class="bench-side-title">
-                <span>Judge 标签</span>
+                <span>裁判标签</span>
                 <small>{{ formatPercent(judgeSummary.badRatePct) }} 坏率</small>
               </div>
               <div class="bench-run-role-rows">
@@ -325,7 +497,7 @@ function isSelectedRun(run) {
             <section class="bench-role-run-list">
               <div class="bench-side-title">
                 <span>隔离边界</span>
-                <small>{{ selectedDetail.targetTypeLabel }}</small>
+                <small>{{ displayTargetType(selectedDetail.targetTypeLabel || selectedDetail.target_type) }}</small>
               </div>
               <div class="bench-detail-kv-list">
                 <div v-for="item in detailBenchmarkRows" :key="item.label" class="bench-detail-kv">
@@ -346,7 +518,7 @@ function isSelectedRun(run) {
                     <strong>{{ item.targetRoleLabel }}</strong>
                     <span>{{ item.targetVersionShort }}</span>
                   </div>
-                  <b :class="{ warning: !item.rankable }">{{ item.rankableLabel }}</b>
+                  <b :class="{ warning: !item.rankable }">{{ displayRankable(item.rankableLabel, item.rankable) }}</b>
                   <em>{{ item.completed }}/{{ item.attempted_game_count || item.game_count }} 局</em>
                 </div>
               </div>
@@ -356,14 +528,36 @@ function isSelectedRun(run) {
             <section class="bench-role-run-list">
               <div class="bench-side-title">
                 <span>游戏样本</span>
+                <small>{{ loadedGameCount }} / {{ totalGameCount }} 条</small>
+              </div>
+              <div class="bench-filter-row">
                 <select
                   :value="benchmark.benchmarkGameStatusFilter.value"
+                  aria-label="游戏状态筛选"
                   @change="benchmark.setBenchmarkGameStatusFilter($event.target.value)"
                 >
                   <option v-for="item in gameStatusOptions" :key="item.value" :value="item.value">
                     {{ item.label }}
                   </option>
                 </select>
+                <input
+                  class="bench-filter-input"
+                  type="search"
+                  inputmode="numeric"
+                  placeholder="按种子筛选"
+                  :value="benchmark.benchmarkGameSeedFilter.value"
+                  aria-label="游戏种子筛选"
+                  @change="setGameSeedFilter"
+                  @keydown.enter.prevent="setGameSeedFilter"
+                >
+                <button
+                  v-if="benchmark.benchmarkGameSeedFilter.value"
+                  type="button"
+                  class="bench-filter-clear"
+                  @click="clearGameSeedFilter"
+                >
+                  清除
+                </button>
               </div>
               <div v-if="detailGames.length" class="bench-game-list">
                 <div v-for="game in detailGames" :key="game.result_batch_id + '-' + game.game_id" class="bench-game-row">
@@ -371,8 +565,8 @@ function isSelectedRun(run) {
                     <strong>{{ game.game_id }}</strong>
                     <small>{{ game.history_game_id || game.replay_unavailable_reason || '无回放 ID' }}</small>
                   </span>
-                  <span>{{ game.statusLabel }} · 种子 {{ game.seedLabel }}</span>
-                  <em>{{ game.decision_count }} 决策 / {{ game.diagnostic_count }} 诊断</em>
+                  <span>{{ displayStatus(game.statusLabel || game.status) }} · 种子 {{ game.seedLabel }}</span>
+                  <em>{{ gameEvidenceLabel(game) }}</em>
                   <a
                     v-if="game.replayHash"
                     class="bench-replay-link"
@@ -383,9 +577,19 @@ function isSelectedRun(run) {
                   <small v-else class="bench-replay-missing">{{ game.replay_unavailable_reason || '无回放' }}</small>
                 </div>
               </div>
+              <div v-else-if="detailGamesLoading" class="bench-empty compact">正在读取对局样本</div>
               <div v-else class="bench-empty compact">当前筛选下暂无游戏样本</div>
-              <div class="bench-detail-footnote">
-                {{ detailPagination.returned || detailGames.length }} / {{ detailPagination.total || 0 }} 条
+              <div class="bench-detail-footnote bench-game-footnote">
+                <span>已加载 {{ loadedGameCount }} / 共 {{ totalGameCount }} 条</span>
+                <button
+                  v-if="hasMoreGames"
+                  type="button"
+                  class="bench-load-more"
+                  :disabled="detailGamesLoading"
+                  @click="benchmark.loadNextBenchmarkBatchGamesPage()"
+                >
+                  {{ detailGamesLoading ? '加载中' : '加载更多' }}
+                </button>
               </div>
             </section>
 
@@ -394,17 +598,81 @@ function isSelectedRun(run) {
                 <span>诊断</span>
                 <small>{{ detailDiagnostics.length }} 条</small>
               </div>
+              <div class="bench-filter-row diagnostic-filters">
+                <select
+                  :value="benchmark.benchmarkDiagnosticKindFilter.value"
+                  aria-label="诊断类型筛选"
+                  @change="setDiagnosticFilter('kind', $event)"
+                >
+                  <option v-for="item in diagnosticKindOptions" :key="item.value || 'all-kind'" :value="item.value">
+                    {{ item.label }}
+                  </option>
+                </select>
+                <select
+                  :value="benchmark.benchmarkDiagnosticLevelFilter.value"
+                  aria-label="诊断等级筛选"
+                  @change="setDiagnosticFilter('level', $event)"
+                >
+                  <option v-for="item in diagnosticLevelOptions" :key="item.value || 'all-level'" :value="item.value">
+                    {{ item.label }}
+                  </option>
+                </select>
+                <select
+                  :value="benchmark.benchmarkDiagnosticStatusFilter.value"
+                  aria-label="诊断状态筛选"
+                  @change="setDiagnosticFilter('status', $event)"
+                >
+                  <option v-for="item in diagnosticStatusOptions" :key="item.value || 'all-status'" :value="item.value">
+                    {{ item.label }}
+                  </option>
+                </select>
+                <input
+                  class="bench-filter-input"
+                  type="search"
+                  placeholder="阶段"
+                  :value="benchmark.benchmarkDiagnosticStageFilter.value"
+                  aria-label="诊断阶段筛选"
+                  @change="setDiagnosticFilter('stage', $event)"
+                  @keydown.enter.prevent="setDiagnosticFilter('stage', $event)"
+                >
+                <input
+                  class="bench-filter-input seed"
+                  type="search"
+                  inputmode="numeric"
+                  placeholder="种子"
+                  :value="benchmark.benchmarkDiagnosticSeedFilter.value"
+                  aria-label="诊断种子筛选"
+                  @change="setDiagnosticFilter('seed', $event)"
+                  @keydown.enter.prevent="setDiagnosticFilter('seed', $event)"
+                >
+                <button
+                  v-if="hasDiagnosticFilters"
+                  type="button"
+                  class="bench-filter-clear"
+                  @click="clearDiagnosticFilters"
+                >
+                  清除
+                </button>
+              </div>
               <div v-if="detailDiagnostics.length" class="bench-diagnostic-list">
                 <div
                   v-for="item in detailDiagnostics.slice(0, 12)"
                   :key="item.id"
                   :class="['bench-diagnostic-row', 'level-' + item.level]"
                 >
-                  <strong>{{ item.kindLabel }}</strong>
+                  <strong>{{ displayDiagnosticKind(item.kindLabel || item.kind) }}</strong>
                   <span>{{ item.message }}</span>
-                  <em>{{ item.targetRoleLabel }} · {{ item.stage || item.origin }}</em>
+                  <em>{{ diagnosticEvidenceLabel(item) }}</em>
+                  <a
+                    v-if="diagnosticReplayHash(item)"
+                    class="bench-replay-link diagnostic"
+                    :href="diagnosticReplayHash(item)"
+                  >
+                    回放
+                  </a>
                 </div>
               </div>
+              <div v-else-if="detailDiagnosticsLoading" class="bench-empty compact">正在读取诊断</div>
               <div v-else class="bench-empty compact">暂无诊断</div>
             </section>
           </template>
@@ -416,16 +684,16 @@ function isSelectedRun(run) {
 
 <style scoped>
 .bench-tab-panel {
-  --bench-bg: #f8f0e0;
-  --bench-surface: rgba(255, 252, 245, 0.7);
-  --bench-border: rgba(139, 94, 52, 0.15);
-  --bench-text: #3a2a18;
-  --bench-text-secondary: #8b6b4a;
-  --bench-accent: #8b5e34;
-  --bench-accent-strong: #5a3319;
-  --bench-input-bg: rgba(255, 252, 245, 0.7);
-  --bench-input-border: rgba(139, 94, 52, 0.2);
-  --bench-hover: rgba(139, 94, 52, 0.06);
+  --bench-bg: var(--logbook-bg, #f2dfae);
+  --bench-surface: var(--logbook-surface, rgba(255, 252, 245, 0.7));
+  --bench-border: var(--logbook-border, rgba(139, 94, 52, 0.15));
+  --bench-text: var(--logbook-text, #3a2a18);
+  --bench-text-secondary: var(--logbook-muted, #8b6b4a);
+  --bench-accent: var(--logbook-accent, #8b5e34);
+  --bench-accent-strong: var(--logbook-accent-strong, #5a3319);
+  --bench-input-bg: var(--logbook-input-bg, rgba(255, 255, 250, 0.8));
+  --bench-input-border: var(--logbook-input-border, rgba(139, 94, 52, 0.2));
+  --bench-hover: var(--logbook-hover, rgba(139, 94, 52, 0.06));
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -803,6 +1071,54 @@ function isSelectedRun(run) {
   background: var(--bench-input-bg);
 }
 
+.bench-filter-row {
+  display: grid;
+  grid-template-columns: minmax(94px, 0.55fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.bench-filter-row select,
+.bench-filter-input {
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--bench-input-border);
+  border-radius: 6px;
+  background: var(--bench-input-bg);
+  color: var(--bench-text);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.bench-filter-input {
+  padding: 0 8px;
+}
+
+.diagnostic-filters {
+  grid-template-columns: minmax(90px, 1fr) minmax(78px, 0.82fr) minmax(82px, 0.82fr) minmax(78px, 0.9fr) minmax(68px, 0.72fr) auto;
+}
+
+.bench-filter-clear,
+.bench-load-more {
+  height: 28px;
+  border: 1px solid var(--bench-accent-strong);
+  border-radius: 6px;
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--bench-accent-strong);
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.bench-filter-clear:hover,
+.bench-load-more:hover:not(:disabled) {
+  background: rgba(139, 94, 52, 0.14);
+}
+
+.bench-load-more:disabled {
+  opacity: 0.62;
+}
+
 .bench-run-role-rows,
 .bench-detail-kv-list,
 .bench-detail-result-list,
@@ -832,7 +1148,8 @@ function isSelectedRun(run) {
 .bench-game-row a,
 .bench-diagnostic-row strong,
 .bench-diagnostic-row span,
-.bench-diagnostic-row em {
+.bench-diagnostic-row em,
+.bench-diagnostic-row a {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -999,7 +1316,23 @@ function isSelectedRun(run) {
 }
 
 .bench-diagnostic-row {
+  grid-template-columns: minmax(84px, 0.36fr) minmax(0, 1fr) auto;
+  align-items: center;
   border-left: 3px solid rgba(139, 94, 52, 0.28);
+}
+
+.bench-diagnostic-row strong {
+  grid-row: 1 / 3;
+}
+
+.bench-diagnostic-row span,
+.bench-diagnostic-row em {
+  grid-column: 2 / 3;
+}
+
+.bench-diagnostic-row .bench-replay-link {
+  grid-column: 3 / 4;
+  grid-row: 1 / 3;
 }
 
 .bench-diagnostic-row.level-error {
@@ -1015,6 +1348,14 @@ function isSelectedRun(run) {
   font-size: 11px;
   font-weight: 800;
   text-align: right;
+}
+
+.bench-game-footnote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
 }
 
 @media (max-width: 960px) {

@@ -1336,6 +1336,16 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
                 kind="persistence_error",
                 stage="persist_batch.save_evaluation_batch",
             )
+        leaderboard_summary = dict(summary)
+        for key in (
+            "benchmark_id",
+            "benchmark_version",
+            "benchmark_config_hash",
+            "evaluation_set_id",
+            "seed_set_id",
+        ):
+            if cfg.get(key) is not None:
+                leaderboard_summary.setdefault(key, cfg.get(key))
         entry = {
             "batch_id": result["batch_id"],
             "comparison_group_id": cfg.get("comparison_group_id"),
@@ -1358,7 +1368,7 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
             "fallback_rate": summary.get("fallback_rate", 0.0),
             "llm_error_rate": summary.get("llm_error_rate", 0.0),
             "policy_adjusted_rate": summary.get("policy_adjusted_rate", 0.0),
-            "summary": summary,
+            "summary": leaderboard_summary,
         }
         gate = _leaderboard_acceptance_gate(state, result, entry)
         result["leaderboard_gate"] = gate

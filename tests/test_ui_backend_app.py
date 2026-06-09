@@ -6,6 +6,7 @@ import json
 import re
 import asyncio
 import ast
+import sqlite3
 import time
 import threading
 import tempfile
@@ -712,6 +713,74 @@ enabled: true
 """,
         encoding="utf-8",
     )
+
+
+def _install_sqlite_benchmark_leaderboard(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
+    import app.lib.score as score_lib
+
+    db_path = tmp_path / "benchmark_leaderboard.sqlite3"
+
+    def open_conn(paths: Any = None) -> sqlite3.Connection:
+        del paths
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    conn = open_conn()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS benchmark_leaderboard (
+                id text PRIMARY KEY,
+                scope text NOT NULL,
+                subject_id text NOT NULL,
+                model_id text,
+                model_config_hash text,
+                target_role text,
+                target_version_id text,
+                comparison_group_id text,
+                evaluation_set_id text,
+                seed_set_id text,
+                games_played integer DEFAULT 0,
+                valid_game_rate real DEFAULT 0.0,
+                strength_score real DEFAULT 0.0,
+                avg_role_score real DEFAULT 0.0,
+                by_role_category_scores text,
+                avg_speech_score real DEFAULT 0.0,
+                avg_vote_score real DEFAULT 0.0,
+                avg_skill_score real DEFAULT 0.0,
+                avg_logic_score real DEFAULT 0.0,
+                avg_team_score real DEFAULT 0.0,
+                risk_penalty real DEFAULT 0.0,
+                fallback_rate real DEFAULT 0.0,
+                llm_error_rate real DEFAULT 0.0,
+                policy_adjusted_rate real DEFAULT 0.0,
+                target_side_win_rate real DEFAULT 0.0,
+                rankable integer DEFAULT 0,
+                data_sufficient integer DEFAULT 0,
+                summary text,
+                updated_at text NOT NULL
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(score_lib, "open_eval_connection", open_conn)
+    return open_conn
+
+
+def _persist_benchmark_leaderboard_entries(open_conn: Any, *entries: dict[str, Any]) -> None:
+    from app.lib.score import persist_leaderboard_entry
+
+    conn = open_conn()
+    try:
+        for entry in entries:
+            warning = persist_leaderboard_entry(conn, entry)
+            assert warning is None
+    finally:
+        conn.close()
 
 
 def _assert_error_payload(payload: dict[str, Any], *, detail: Any, code: str, message: str) -> None:
@@ -2108,9 +2177,9 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
         return {
             "batch_id": batch_config["batch_id"],
             "config": batch_config,
-            "game_count": 1,
-            "attempted_game_count": 2,
-            "completed": 1,
+            "game_count": 2,
+            "attempted_game_count": 3,
+            "completed": 2,
             "errored": 1,
             "games": [
                 {
@@ -2123,8 +2192,26 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
                 },
                 {
                     "game_id": f"{batch_config['batch_id']}_game_002",
-                    "status": "failed",
+                    "status": "completed",
                     "seed": batch_config["seeds"][1],
+                    "winner": "evil",
+                    "events": [{"event_type": "night_action", "message": "fallback"}],
+                    "decisions": [{"decision_id": "d2", "action_type": "seer_check"}],
+                    "errors": ["transient LLM timeout"],
+                    "fallback_count": 1,
+                    "diagnostics": [
+                        {
+                            "kind": "llm_error",
+                            "stage": "llm.call",
+                            "level": "warning",
+                            "message": "transient LLM timeout",
+                        }
+                    ],
+                },
+                {
+                    "game_id": f"{batch_config['batch_id']}_game_003",
+                    "status": "failed",
+                    "seed": batch_config["seeds"][2],
                     "error": "engine aborted",
                     "events": [],
                     "decisions": [],
@@ -2181,9 +2268,21 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
             },
         )
         batch_id = response.json()["batch_id"]
+        problem_seed = 260607
         detail_response = client.get(f"/api/benchmark/batch/{batch_id}")
         games_response = client.get(f"/api/benchmark/batch/{batch_id}/games?status=failed&limit=10&offset=0")
+        problem_games_response = client.get(f"/api/benchmark/batch/{batch_id}/games?status=problem&limit=10&offset=0")
+        seed_games_response = client.get(f"/api/benchmark/batch/{batch_id}/games?seed={problem_seed}&limit=10&offset=0")
+        problem_seed_games_response = client.get(
+            f"/api/benchmark/batch/{batch_id}/games?status=problem&seed={problem_seed}&limit=10&offset=0"
+        )
         diagnostics_response = client.get(f"/api/benchmark/batch/{batch_id}/diagnostics")
+        diagnostics_seed_response = client.get(
+            f"/api/benchmark/batch/{batch_id}/diagnostics?kind=llm_error&seed={problem_seed}"
+        )
+        diagnostics_status_response = client.get(
+            f"/api/benchmark/batch/{batch_id}/diagnostics?status=completed&seed={problem_seed}"
+        )
 
     assert response.status_code == 200
 
@@ -2196,35 +2295,260 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
     assert detail["result_count"] == 1
     assert detail["results"][0]["target_role"] == "seer"
     assert detail["results"][0]["result_batch_id"] == f"{batch_id}_seer"
-    assert detail["game_summary"]["total"] == 2
-    assert detail["game_summary"]["by_status"] == {"completed": 1, "failed": 1}
+    assert detail["game_summary"]["total"] == 3
+    assert detail["game_summary"]["by_status"] == {"completed": 2, "failed": 1}
     assert detail["diagnostic_summary"]["by_kind"]["rankable_failed"] == 1
 
     assert games_response.status_code == 200
     games = games_response.json()
     assert games["kind"] == "benchmark_batch_games"
     assert games["pagination"]["total"] == 1
-    assert games["games"][0]["game_id"] == f"{batch_id}_seer_game_002"
+    assert games["games"][0]["game_id"] == f"{batch_id}_seer_game_003"
     assert games["games"][0]["target_role"] == "seer"
     assert games["games"][0]["status"] == "failed"
     assert "events" not in games["games"][0]
     assert "decisions" not in games["games"][0]
+
+    assert problem_games_response.status_code == 200
+    problem_games = problem_games_response.json()
+    assert problem_games["pagination"]["total"] == 2
+    assert [game["game_id"] for game in problem_games["games"]] == [
+        f"{batch_id}_seer_game_002",
+        f"{batch_id}_seer_game_003",
+    ]
+    assert problem_games["games"][0]["status"] == "completed"
+    assert problem_games["games"][0]["diagnostic_count"] == 1
+    assert problem_games["games"][0]["error_count"] == 1
+    assert problem_games["games"][0]["fallback_count"] == 1
+
+    assert seed_games_response.status_code == 200
+    seed_games = seed_games_response.json()
+    assert seed_games["pagination"]["total"] == 1
+    assert seed_games["games"][0]["game_id"] == f"{batch_id}_seer_game_002"
+
+    assert problem_seed_games_response.status_code == 200
+    problem_seed_games = problem_seed_games_response.json()
+    assert problem_seed_games["pagination"]["total"] == 1
+    assert problem_seed_games["games"][0]["status"] == "completed"
 
     assert diagnostics_response.status_code == 200
     diagnostics = diagnostics_response.json()
     assert diagnostics["kind"] == "benchmark_batch_diagnostics"
     assert diagnostics["summary"]["by_kind"]["decision_judge_degraded"] == 1
     assert diagnostics["summary"]["by_kind"]["game_failure"] == 1
+    assert diagnostics["summary"]["by_kind"]["llm_error"] == 1
     assert diagnostics["summary"]["by_kind"]["leaderboard_gate_failed"] == 1
     assert diagnostics["summary"]["by_origin"]["result"] >= 1
+
+    assert diagnostics_seed_response.status_code == 200
+    diagnostics_seed = diagnostics_seed_response.json()
+    assert diagnostics_seed["filters"]["kind"] == "llm_error"
+    assert diagnostics_seed["filters"]["seed"] == str(problem_seed)
+    assert diagnostics_seed["summary"]["total"] == 1
+    assert diagnostics_seed["diagnostics"][0]["game_id"] == f"{batch_id}_seer_game_002"
+    assert diagnostics_seed["diagnostics"][0]["seed"] == problem_seed
+    assert diagnostics_seed["diagnostics"][0]["status"] == "completed"
+
+    assert diagnostics_status_response.status_code == 200
+    diagnostics_status = diagnostics_status_response.json()
+    assert diagnostics_status["filters"]["status"] == "completed"
+    assert diagnostics_status["summary"]["total"] == 1
+
+
+def test_leaderboard_real_store_isolates_scope_evaluation_role_and_formal_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    open_conn = _install_sqlite_benchmark_leaderboard(monkeypatch, tmp_path)
+    _persist_benchmark_leaderboard_entries(
+        open_conn,
+        {
+            "id": "role-seer-baseline",
+            "scope": "role_version",
+            "subject_id": "seer_base_v1",
+            "target_role": "seer",
+            "target_version_id": "seer_base_v1",
+            "comparison_group_id": "bench_role_release_20260609",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "game_count": 30,
+            "valid_game_rate": 1.0,
+            "strength_score": 7.0,
+            "avg_role_score": 7.0,
+            "target_side_win_rate": 0.58,
+            "rankable": True,
+            "summary": {"is_baseline": True},
+            "updated_at": "2026-06-09T10:00:00+08:00",
+        },
+        {
+            "id": "role-seer-candidate",
+            "scope": "role_version",
+            "subject_id": "seer_candidate_v2",
+            "target_role": "seer",
+            "target_version_id": "seer_candidate_v2",
+            "comparison_group_id": "bench_role_release_20260609",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "game_count": 30,
+            "valid_game_rate": 1.0,
+            "strength_score": 7.4,
+            "avg_role_score": 7.4,
+            "target_side_win_rate": 0.63,
+            "rankable": True,
+            "updated_at": "2026-06-09T10:01:00+08:00",
+        },
+        {
+            "id": "role-seer-gate-failed",
+            "scope": "role_version",
+            "subject_id": "seer_gate_failed_v1",
+            "target_role": "seer",
+            "target_version_id": "seer_gate_failed_v1",
+            "comparison_group_id": "bench_role_release_20260609",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "game_count": 30,
+            "valid_game_rate": 0.2,
+            "strength_score": 9.9,
+            "avg_role_score": 9.9,
+            "target_side_win_rate": 0.9,
+            "rankable": False,
+            "summary": {
+                "rankable_reason": "completed_games 30 < required 40",
+                "completed_games": 30,
+                "total_games": 30,
+            },
+            "updated_at": "2026-06-09T10:02:00+08:00",
+        },
+        {
+            "id": "role-seer-other-eval",
+            "scope": "role_version",
+            "subject_id": "seer_other_eval_v1",
+            "target_role": "seer",
+            "target_version_id": "seer_other_eval_v1",
+            "comparison_group_id": "bench_role_other",
+            "evaluation_set_id": "role-baseline-v2@v1",
+            "seed_set_id": "role-baseline-other-202606",
+            "game_count": 30,
+            "valid_game_rate": 1.0,
+            "strength_score": 8.8,
+            "avg_role_score": 8.8,
+            "rankable": True,
+            "updated_at": "2026-06-09T10:03:00+08:00",
+        },
+        {
+            "id": "role-witch-same-eval",
+            "scope": "role_version",
+            "subject_id": "witch_candidate_v1",
+            "target_role": "witch",
+            "target_version_id": "witch_candidate_v1",
+            "comparison_group_id": "bench_role_release_20260609",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "game_count": 30,
+            "valid_game_rate": 1.0,
+            "strength_score": 8.1,
+            "avg_role_score": 8.1,
+            "rankable": True,
+            "updated_at": "2026-06-09T10:04:00+08:00",
+        },
+        {
+            "id": "model-same-release",
+            "scope": "model",
+            "subject_id": "runtime_hash_v1",
+            "model_id": "qwen-max",
+            "model_config_hash": "runtime_hash_v1",
+            "comparison_group_id": "bench_model_release_20260609",
+            "evaluation_set_id": "model-baseline-v1@v1",
+            "seed_set_id": "model-baseline-quick-202606",
+            "game_count": 30,
+            "valid_game_rate": 1.0,
+            "strength_score": 7.8,
+            "avg_role_score": 7.2,
+            "rankable": True,
+            "updated_at": "2026-06-09T10:05:00+08:00",
+        },
+    )
+
+    with _test_client(tmp_path) as client:
+        leaderboard_response = client.get(
+            "/api/leaderboards?"
+            "scope=role_version&evaluation_set_id=role-baseline-v1%40v1&target_role=seer&limit=20"
+        )
+        compare_response = client.get(
+            "/api/leaderboards/compare?"
+            "scope=role_version&evaluation_set_id=role-baseline-v1%40v1&"
+            "target_role=seer&baseline_subject_id=seer_base_v1&limit=20"
+        )
+        model_response = client.get("/api/models/leaderboard?evaluation_set_id=model-baseline-v1%40v1&limit=20")
+
+    assert leaderboard_response.status_code == 200
+    leaderboard = leaderboard_response.json()
+    entries = leaderboard["entries"]
+    assert {entry["scope"] for entry in entries} == {"role_version"}
+    assert {entry["evaluation_set_id"] for entry in entries} == {"role-baseline-v1@v1"}
+    assert {entry["target_role"] for entry in entries} == {"seer"}
+    assert {entry["subject_id"] for entry in entries} == {
+        "seer_base_v1",
+        "seer_candidate_v2",
+        "seer_gate_failed_v1",
+    }
+
+    assert compare_response.status_code == 200
+    compare = compare_response.json()
+    formal_subjects = {row["subject_id"] for row in compare["rows"]}
+    assert formal_subjects == {"seer_base_v1", "seer_candidate_v2"}
+    assert all(row["rankable"] is True for row in compare["rows"])
+    assert compare["baseline_subject_id"] == "seer_base_v1"
+    assert compare["summary"]["unrankable_evidence_count"] == 1
+    assert compare["summary"]["unrankable_count"] == 1
+    assert len(compare["unrankable_evidence"]) == 1
+    evidence = compare["unrankable_evidence"][0]
+    assert evidence["subject_id"] == "seer_gate_failed_v1"
+    assert evidence["target_role"] == "seer"
+    assert evidence["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert evidence["reason"] == "completed_games 30 < required 40"
+    assert evidence["completed_games"] == 30
+    assert evidence["total_games"] == 30
+
+    assert model_response.status_code == 200
+    model_entries = model_response.json()["entries"]
+    assert [entry["subject_id"] for entry in model_entries] == ["runtime_hash_v1"]
+    assert model_entries[0]["scope"] == "model"
+    assert model_entries[0]["target_role"] is None
 
 
 def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path, monkeypatch) -> None:
     calls: list[dict[str, Any]] = []
     _write_model_benchmark_spec(tmp_path)
+    open_conn = _install_sqlite_benchmark_leaderboard(monkeypatch, tmp_path)
 
     async def fake_run_evaluation(*, batch_config: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        del kwargs
         calls.append(dict(batch_config))
+        _persist_benchmark_leaderboard_entries(
+            open_conn,
+            {
+                "id": "model-runtime-hash-v1",
+                "scope": "model",
+                "subject_id": batch_config["model_config_hash"],
+                "model_id": batch_config["model_id"],
+                "model_config_hash": batch_config["model_config_hash"],
+                "comparison_group_id": batch_config["comparison_group_id"],
+                "evaluation_set_id": batch_config["evaluation_set_id"],
+                "seed_set_id": batch_config["seed_set_id"],
+                "game_count": batch_config["game_count"],
+                "valid_game_rate": 1.0,
+                "strength_score": 6.8,
+                "avg_role_score": 6.5,
+                "by_role_category_scores": {"seer": 6.4, "witch": 6.6},
+                "fallback_rate": 0.02,
+                "llm_error_rate": 0.01,
+                "policy_adjusted_rate": 0.0,
+                "rankable": True,
+                "summary": {"source_run_id": batch_config["comparison_group_id"]},
+                "updated_at": "2026-06-09T10:00:00+08:00",
+            },
+        )
         return {
             "batch_id": batch_config["batch_id"],
             "config": batch_config,
@@ -2232,10 +2556,20 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
             "completed": batch_config["game_count"],
             "errored": 0,
             "games": [],
-            "score_summary": {"strength_score": 6.5, "game_count": batch_config["game_count"]},
+            "score_summary": {
+                "strength_score": 6.8,
+                "avg_role_score": 6.5,
+                "game_count": batch_config["game_count"],
+                "by_role_category": {"seer": 6.4, "witch": 6.6},
+                "fallback_rate": 0.02,
+                "llm_error_rate": 0.01,
+                "policy_adjusted_rate": 0.0,
+            },
             "fairness": {"is_fair": True},
             "rankable": True,
             "rankable_reason": "ok",
+            "model_id": batch_config["model_id"],
+            "model_config_hash": batch_config["model_config_hash"],
             "started_at": "2026-01-01T00:00:00+08:00",
             "finished_at": "2026-01-01T00:00:00+08:00",
         }
@@ -2253,6 +2587,10 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
             },
         )
         batch = response.json()
+        batch_id = batch["batch_id"]
+        detail_response = client.get(f"/api/benchmark/batch/{batch_id}")
+        report_response = client.get(f"/api/benchmark/batch/{batch_id}/report")
+        leaderboard_response = client.get("/api/models/leaderboard?evaluation_set_id=model-baseline-v1%40v1&limit=10")
 
     assert response.status_code == 200
     assert batch["target_type"] == "model"
@@ -2273,6 +2611,45 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
     assert config["seeds"] == [270600, 270611, 270623]
     assert "target_role" not in config
     assert "target_version_id" not in config
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["kind"] == "benchmark_batch_detail"
+    assert detail["batch_id"] == batch_id
+    assert detail["target_type"] == "model"
+    assert detail["result_count"] == 1
+    assert detail["results"][0]["config"]["comparison_type"] == "model"
+    assert detail["results"][0]["config"]["model_id"] == "qwen-max"
+    assert detail["results"][0]["config"]["model_config_hash"] == "runtime_hash_v1"
+    assert detail["results"][0]["target_role"] is None
+
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["kind"] == "benchmark_run_report"
+    assert report["leaderboard"]["scope"] == "model"
+    assert report["leaderboard"]["evaluation_set_id"] == "model-baseline-v1@v1"
+    assert report["leaderboard"]["target_role"] is None
+    assert report["subject"]["model_id"] == "qwen-max"
+    assert report["subject"]["model_config_hash"] == "runtime_hash_v1"
+    assert report["summary"]["rankable_count"] == 1
+
+    assert leaderboard_response.status_code == 200
+    leaderboard = leaderboard_response.json()
+    assert leaderboard["kind"] == "model_leaderboard"
+    assert leaderboard["scope"] == "model"
+    assert leaderboard["evaluation_set_id"] == "model-baseline-v1@v1"
+    assert len(leaderboard["entries"]) == 1
+    entry = leaderboard["entries"][0]
+    assert entry["scope"] == "model"
+    assert entry["subject_id"] == "runtime_hash_v1"
+    assert entry["model_id"] == "qwen-max"
+    assert entry["model_config_hash"] == "runtime_hash_v1"
+    assert entry["evaluation_set_id"] == "model-baseline-v1@v1"
+    assert entry["seed_set_id"] == "model-baseline-quick-202606"
+    assert entry["rankable"] is True
+    assert entry["target_role"] is None
+    assert entry["target_version_id"] is None
+    assert entry["strength_score"] == 6.8
 
 
 def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: Path) -> None:

@@ -19,6 +19,23 @@ const MODEL_LEADERBOARD_KEY = '__model__'
 const BENCHMARK_TARGET_BLOCKED_RELEASE_STAGES = new Set(['shadow'])
 const BENCHMARK_FORMAL_BLOCKED_RELEASE_STAGES = new Set(['shadow', 'canary'])
 const BENCHMARK_VIEW_STORAGE_PREFIX = 'benchmark-comparison-view'
+const BENCHMARK_SUITE_LAUNCHABLE_STATUSES = new Set(['enabled', 'active'])
+
+const BENCHMARK_SUITE_STATUS_LABELS = {
+  enabled: '启用',
+  active: '启用',
+  draft: '草稿',
+  deprecated: '废弃',
+  disabled: '停用',
+  archived: '归档'
+}
+
+const BENCHMARK_SUITE_DISABLED_REASONS = {
+  draft: '该评测套件仍是草稿，启用后才能启动。',
+  deprecated: '该评测套件已废弃，只保留历史审计，不能启动。',
+  disabled: '该评测套件已停用，不能启动。',
+  archived: '该评测套件已归档，只能查看历史结果。'
+}
 
 const DIAGNOSTIC_LEVEL_LABELS = {
   error: '错误',
@@ -92,6 +109,22 @@ function normalizeCostTier(raw) {
   ).trim().toLowerCase()
 }
 
+function normalizeBenchmarkSuiteStatus(raw) {
+  const status = String(raw?.status || raw?.lifecycle_status || raw?.lifecycleStatus || '').trim().toLowerCase()
+  if (status) return status
+  if (raw?.deprecated) return 'deprecated'
+  if (raw?.archived) return 'archived'
+  if (raw?.enabled === false) return 'disabled'
+  return 'enabled'
+}
+
+function benchmarkSuiteLaunchDisabledReason(raw, status, launchable) {
+  const explicit = String(raw?.launch_disabled_reason || raw?.launchDisabledReason || '').trim()
+  if (explicit && /[\u4e00-\u9fff]/.test(explicit)) return explicit
+  if (launchable) return ''
+  return BENCHMARK_SUITE_DISABLED_REASONS[status] || '该评测套件当前不可启动。'
+}
+
 function normalizeBenchmarkSuite(raw) {
   const id = String(raw?.id || raw?.benchmark_id || '').trim()
   if (!id) return null
@@ -106,6 +139,16 @@ function normalizeBenchmarkSuite(raw) {
   const evaluationSetId = String(raw?.evaluation_set_id || (versionIsValid ? `${id}@v${version}` : ''))
   const seedPreview = normalizeSeedPreview(raw)
   const seedCount = normalizeSeedCount(raw, seedPreview)
+  const status = normalizeBenchmarkSuiteStatus(raw)
+  const serverLaunchable = raw?.launchable == null ? null : raw.launchable !== false
+  const launchable = serverLaunchable == null
+    ? BENCHMARK_SUITE_LAUNCHABLE_STATUSES.has(status)
+    : serverLaunchable && BENCHMARK_SUITE_LAUNCHABLE_STATUSES.has(status)
+  const seedSet = objectOrEmpty(raw?.seed_set)
+  const metrics = objectOrEmpty(raw?.metrics)
+  const gates = objectOrEmpty(raw?.gates)
+  const judge = objectOrEmpty(raw?.judge)
+  const configHash = String(raw?.config_hash || raw?.benchmark_config_hash || '').trim()
   return {
     ...raw,
     id,
@@ -120,8 +163,20 @@ function normalizeBenchmarkSuite(raw) {
     seed_set_id: String(raw?.seed_set_id || ''),
     seed_count: seedCount,
     seed_preview: seedPreview,
+    seed_set: seedSet,
+    paired_seed: Boolean(raw?.paired_seed),
+    seed_start: raw?.seed_start ?? null,
+    metrics,
+    gates,
+    judge,
+    config_hash: configHash,
+    benchmark_config_hash: String(raw?.benchmark_config_hash || configHash),
     cost_tier: normalizeCostTier(raw),
-    evaluation_set_id: evaluationSetId
+    evaluation_set_id: evaluationSetId,
+    status,
+    statusLabel: BENCHMARK_SUITE_STATUS_LABELS[status] || status || '未知',
+    launchable,
+    launch_disabled_reason: benchmarkSuiteLaunchDisabledReason(raw, status, launchable)
   }
 }
 
@@ -129,6 +184,14 @@ function benchmarkErrorMessage(err, fallback) {
   const raw = String(err?.message || err || '').trim()
   const text = raw.toLowerCase()
   if (!raw) return fallback
+  if (err?.code === 'benchmark_suite_not_launchable' || text.includes('benchmark suite cannot be launched')) {
+    const detail = String(err?.detail || raw || '').toLowerCase()
+    if (detail.includes('deprecated')) return BENCHMARK_SUITE_DISABLED_REASONS.deprecated
+    if (detail.includes('archived')) return BENCHMARK_SUITE_DISABLED_REASONS.archived
+    if (detail.includes('draft')) return BENCHMARK_SUITE_DISABLED_REASONS.draft
+    if (detail.includes('disabled')) return BENCHMARK_SUITE_DISABLED_REASONS.disabled
+    return '该评测套件当前不可启动。'
+  }
   if (text.includes('batch not found')) return '评测批次不存在，已刷新列表。'
   if (text.includes('benchmark failed')) return '评测执行失败，请查看评测记录。'
   if (text.includes('invalid config') || text.includes('invalid benchmark config')) return '评测配置无效，请检查局数和天数。'
@@ -161,7 +224,7 @@ function normalizeBenchmarkRoleVersionReleaseStage(version) {
 function benchmarkTargetVersionDisabledReason(version) {
   const releaseStage = normalizeBenchmarkRoleVersionReleaseStage(version)
   if (BENCHMARK_TARGET_BLOCKED_RELEASE_STAGES.has(releaseStage)) {
-    return 'Shadow 版本需先晋升 canary 后才能评测。'
+    return '影子版本需先晋升金丝雀后才能评测。'
   }
   return ''
 }
@@ -649,7 +712,7 @@ function normalizeBenchmarkGame(game) {
     decision_count: metricNumber(game?.decision_count),
     diagnostic_count: metricNumber(game?.diagnostic_count),
     replay_available: replayAvailable,
-    replayHash: replayAvailable && historyGameId ? `#logs?game_id=${encodeURIComponent(historyGameId)}` : '',
+    replayHash: replayAvailable && historyGameId ? `#logs?workspace=archive&game_id=${encodeURIComponent(historyGameId)}` : '',
     replayAvailableLabel: replayAvailable ? '可回放' : '无回放'
   }
 }
@@ -822,7 +885,9 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkDetailError = ref('')
   const benchmarkBatchDetail = ref(null)
   const benchmarkBatchGames = ref([])
+  const benchmarkBatchGamesLoading = ref(false)
   const benchmarkBatchGamePagination = ref({ total: 0, offset: 0, limit: 20, returned: 0, has_more: false })
+  const benchmarkBatchDiagnosticsLoading = ref(false)
   const benchmarkBatchDiagnostics = ref([])
   const benchmarkBatchDiagnosticSummary = ref({})
   const benchmarkBatchReport = ref(null)
@@ -842,6 +907,12 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkDiagnosticAggregateGames = ref([])
   const benchmarkDiagnosticAggregatePagination = ref({ total: 0, offset: 0, limit: 200, returned: 0, has_more: false })
   const benchmarkGameStatusFilter = ref('problem')
+  const benchmarkGameSeedFilter = ref('')
+  const benchmarkDiagnosticKindFilter = ref('')
+  const benchmarkDiagnosticLevelFilter = ref('')
+  const benchmarkDiagnosticStatusFilter = ref('')
+  const benchmarkDiagnosticStageFilter = ref('')
+  const benchmarkDiagnosticSeedFilter = ref('')
   const benchmarkSnapshots = ref([])
   const benchmarkSnapshotDetail = ref(null)
   const benchmarkSnapshotDetails = ref({})
@@ -866,6 +937,8 @@ function useEvaluationWorkbench(options = {}) {
   const planRequests = createLatestOnlyTracker()
   const runRequests = createLatestOnlyTracker()
   const detailRequests = createLatestOnlyTracker()
+  const batchGameRequests = createLatestOnlyTracker()
+  const batchDiagnosticRequests = createLatestOnlyTracker()
   const reportRequests = createLatestOnlyTracker()
   const reportExportRequests = createLatestOnlyTracker()
   const reportHistoryRequests = createLatestOnlyTracker()
@@ -902,6 +975,11 @@ function useEvaluationWorkbench(options = {}) {
   const selectedBenchmarkSuiteLabel = computed(() => {
     if (selectedBenchmarkSuite.value?.label) return selectedBenchmarkSuite.value.label
     return selectedBenchmarkIsModelSuite.value ? '临时模型评测' : '临时角色评测'
+  })
+  const selectedBenchmarkSuiteLaunchDisabledReason = computed(() => {
+    const suite = selectedBenchmarkSuite.value
+    if (!suite || suite.launchable !== false) return ''
+    return suite.launch_disabled_reason || '该评测套件当前不可启动。'
   })
   const selectedSuiteRoleKeys = computed(() => selectedBenchmarkSuite.value?.roles || [])
   const leaderboardQuery = computed(() => {
@@ -956,6 +1034,7 @@ function useEvaluationWorkbench(options = {}) {
   })
   const selectedBenchmarkCanLaunch = computed(() =>
     (selectedBenchmarkIsModelSuite.value || Boolean(selectedRole.value)) &&
+    !selectedBenchmarkSuiteLaunchDisabledReason.value &&
     !benchmarkPlanBudgetExceeded.value &&
     !selectedRoleTargetVersionBlockedReason.value
   )
@@ -1306,7 +1385,7 @@ function useEvaluationWorkbench(options = {}) {
     } catch (err) {
       if (token.isLatest()) {
         benchmarkLeaderboardCompare.value = null
-        benchmarkLeaderboardCompareError.value = benchmarkErrorMessage(err, 'Leaderboard compare API 不可用，已使用本地比较。')
+        benchmarkLeaderboardCompareError.value = benchmarkErrorMessage(err, '榜单比较 API 不可用，已使用本地比较。')
       }
       return false
     } finally {
@@ -1349,15 +1428,61 @@ function useEvaluationWorkbench(options = {}) {
   function gameStatusFilterQuery() {
     const filter = String(benchmarkGameStatusFilter.value || '').trim()
     if (!filter || filter === 'all') return ''
-    if (filter === 'problem') return 'failed,timeout,abnormal'
+    if (filter === 'problem') return 'problem'
     return filter
+  }
+
+  function defaultBenchmarkGamePagination(offset = 0, limit = 20) {
+    return { total: 0, offset, limit, returned: 0, has_more: false }
+  }
+
+  function benchmarkBatchGamesPath(batchId, { offset = 0, limit = 20 } = {}) {
+    const query = new URLSearchParams()
+    const statusFilter = gameStatusFilterQuery()
+    const seedFilter = String(benchmarkGameSeedFilter.value || '').trim()
+    if (statusFilter) query.set('status', statusFilter)
+    if (seedFilter) query.set('seed', seedFilter)
+    query.set('limit', String(limit))
+    query.set('offset', String(offset))
+    return `/benchmark/batch/${encodeURIComponent(batchId)}/games?${query.toString()}`
+  }
+
+  function benchmarkBatchDiagnosticsPath(batchId) {
+    const query = new URLSearchParams()
+    const filters = [
+      ['kind', benchmarkDiagnosticKindFilter.value],
+      ['level', benchmarkDiagnosticLevelFilter.value],
+      ['status', benchmarkDiagnosticStatusFilter.value],
+      ['stage', benchmarkDiagnosticStageFilter.value],
+      ['seed', benchmarkDiagnosticSeedFilter.value]
+    ]
+    for (const [key, value] of filters) {
+      const text = String(value || '').trim()
+      if (text) query.set(key, text)
+    }
+    const suffix = query.toString()
+    return `/benchmark/batch/${encodeURIComponent(batchId)}/diagnostics${suffix ? `?${suffix}` : ''}`
+  }
+
+  function mergeBenchmarkGames(current, next) {
+    const rows = []
+    const seen = new Set()
+    for (const game of [...current, ...next]) {
+      const key = `${game?.result_batch_id || ''}:${game?.game_id || game?.id || ''}:${game?.seedLabel || ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      rows.push(game)
+    }
+    return rows
   }
 
   function clearBenchmarkBatchDetail() {
     benchmarkDetailError.value = ''
     benchmarkBatchDetail.value = null
     benchmarkBatchGames.value = []
-    benchmarkBatchGamePagination.value = { total: 0, offset: 0, limit: 20, returned: 0, has_more: false }
+    benchmarkBatchGamesLoading.value = false
+    benchmarkBatchGamePagination.value = defaultBenchmarkGamePagination()
+    benchmarkBatchDiagnosticsLoading.value = false
     benchmarkBatchDiagnostics.value = []
     benchmarkBatchDiagnosticSummary.value = {}
     benchmarkBatchReport.value = null
@@ -1467,7 +1592,7 @@ function useEvaluationWorkbench(options = {}) {
       if (token.isLatest()) {
         benchmarkBatchReport.value = null
         benchmarkBatchReportExports.value = {}
-        benchmarkBatchReportError.value = benchmarkErrorMessage(err, 'Benchmark 报告读取失败，已使用本地报告。')
+        benchmarkBatchReportError.value = benchmarkErrorMessage(err, '评测报告读取失败，已使用本地报告。')
       }
       return false
     } finally {
@@ -1503,7 +1628,7 @@ function useEvaluationWorkbench(options = {}) {
       return content
     } catch (err) {
       if (token.isLatest()) {
-        benchmarkBatchReportError.value = benchmarkErrorMessage(err, 'Benchmark 报告导出失败，已使用本地导出。')
+        benchmarkBatchReportError.value = benchmarkErrorMessage(err, '评测报告导出失败，已使用本地导出。')
       }
       return ''
     }
@@ -1583,7 +1708,7 @@ function useEvaluationWorkbench(options = {}) {
         benchmarkDiagnosticAggregateRuns.value = []
         benchmarkDiagnosticAggregateGames.value = []
         benchmarkDiagnosticAggregatePagination.value = { total: 0, offset: 0, limit, returned: 0, has_more: false }
-        benchmarkDiagnosticAggregateError.value = benchmarkErrorMessage(err, 'Benchmark diagnostics 聚合不可用。')
+        benchmarkDiagnosticAggregateError.value = benchmarkErrorMessage(err, '评测 diagnostics 聚合不可用。')
       }
       return false
     } finally {
@@ -1711,6 +1836,11 @@ function useEvaluationWorkbench(options = {}) {
       benchmarkPlan.value = null
       return false
     }
+    if (selectedBenchmarkSuiteLaunchDisabledReason.value) {
+      benchmarkPlan.value = null
+      benchmarkPlanError.value = selectedBenchmarkSuiteLaunchDisabledReason.value
+      return false
+    }
     if (!selectedBenchmarkIsModelSuite.value && selectedRoleTargetVersionBlockedReason.value) {
       benchmarkPlan.value = null
       benchmarkPlanError.value = selectedRoleTargetVersionBlockedReason.value
@@ -1786,13 +1916,9 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkDetailLoading.value = true
     benchmarkDetailError.value = ''
     try {
-      const query = new URLSearchParams()
-      const statusFilter = gameStatusFilterQuery()
-      if (statusFilter) query.set('status', statusFilter)
-      query.set('limit', '20')
-      query.set('offset', '0')
-      const gamesPath = `/benchmark/batch/${encodeURIComponent(id)}/games?${query.toString()}`
+      const gamesPath = benchmarkBatchGamesPath(id)
       benchmarkBatchReportLoading.value = true
+      benchmarkBatchDiagnosticsLoading.value = true
       benchmarkBatchReportError.value = ''
       const reportRequest = apiFetch(benchmarkBatchReportPath(id))
         .then((report) => ({ ok: true, report: normalizeBenchmarkBatchReport(report) }))
@@ -1800,13 +1926,13 @@ function useEvaluationWorkbench(options = {}) {
       const [detail, games, diagnostics, reportResult] = await Promise.all([
         apiFetch(`/benchmark/batch/${encodeURIComponent(id)}`),
         apiFetch(gamesPath),
-        apiFetch(`/benchmark/batch/${encodeURIComponent(id)}/diagnostics`),
+        apiFetch(benchmarkBatchDiagnosticsPath(id)),
         reportRequest
       ])
       if (!token.isLatest()) return false
       benchmarkBatchDetail.value = normalizeBenchmarkBatchDetail(detail)
       benchmarkBatchGames.value = (games?.games || []).map(normalizeBenchmarkGame)
-      benchmarkBatchGamePagination.value = games?.pagination || { total: 0, offset: 0, limit: 20, returned: 0, has_more: false }
+      benchmarkBatchGamePagination.value = games?.pagination || defaultBenchmarkGamePagination()
       benchmarkBatchDiagnostics.value = (diagnostics?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
       benchmarkBatchDiagnosticSummary.value = diagnostics?.summary || {}
       if (reportResult?.ok && reportResult.report) {
@@ -1816,7 +1942,7 @@ function useEvaluationWorkbench(options = {}) {
       } else {
         benchmarkBatchReport.value = null
         benchmarkBatchReportExports.value = {}
-        benchmarkBatchReportError.value = benchmarkErrorMessage(reportResult?.err, 'Benchmark 报告读取失败，已使用本地报告。')
+        benchmarkBatchReportError.value = benchmarkErrorMessage(reportResult?.err, '评测报告读取失败，已使用本地报告。')
       }
       return true
     } catch (err) {
@@ -1824,7 +1950,8 @@ function useEvaluationWorkbench(options = {}) {
         benchmarkDetailError.value = benchmarkErrorMessage(err, '评测详情读取失败。')
         benchmarkBatchDetail.value = null
         benchmarkBatchGames.value = []
-        benchmarkBatchGamePagination.value = { total: 0, offset: 0, limit: 20, returned: 0, has_more: false }
+        benchmarkBatchGamePagination.value = defaultBenchmarkGamePagination()
+        benchmarkBatchDiagnosticsLoading.value = false
         benchmarkBatchDiagnostics.value = []
         benchmarkBatchDiagnosticSummary.value = {}
         benchmarkBatchReport.value = null
@@ -1836,8 +1963,77 @@ function useEvaluationWorkbench(options = {}) {
       if (token.isLatest()) {
         benchmarkDetailLoading.value = false
         benchmarkBatchReportLoading.value = false
+        benchmarkBatchDiagnosticsLoading.value = false
       }
     }
+  }
+
+  async function loadBenchmarkBatchDiagnostics(batchId = selectedBenchmarkBatchId.value) {
+    const id = String(batchId || '').trim()
+    if (!id) {
+      benchmarkBatchDiagnostics.value = []
+      benchmarkBatchDiagnosticSummary.value = {}
+      return false
+    }
+    const token = batchDiagnosticRequests.next()
+    benchmarkBatchDiagnosticsLoading.value = true
+    benchmarkDetailError.value = ''
+    try {
+      const data = await apiFetch(benchmarkBatchDiagnosticsPath(id))
+      if (!token.isLatest()) return false
+      benchmarkBatchDiagnostics.value = (data?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
+      benchmarkBatchDiagnosticSummary.value = data?.summary || {}
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkDetailError.value = benchmarkErrorMessage(err, '评测诊断读取失败。')
+        benchmarkBatchDiagnostics.value = []
+        benchmarkBatchDiagnosticSummary.value = {}
+      }
+      return false
+    } finally {
+      if (token.isLatest()) benchmarkBatchDiagnosticsLoading.value = false
+    }
+  }
+
+  async function loadBenchmarkBatchGamesPage({ offset = 0, limit = 20, append = false } = {}) {
+    const id = String(selectedBenchmarkBatchId.value || '').trim()
+    if (!id) {
+      benchmarkBatchGames.value = []
+      benchmarkBatchGamePagination.value = defaultBenchmarkGamePagination()
+      return false
+    }
+    const token = batchGameRequests.next()
+    benchmarkBatchGamesLoading.value = true
+    benchmarkDetailError.value = ''
+    try {
+      const data = await apiFetch(benchmarkBatchGamesPath(id, { offset, limit }))
+      if (!token.isLatest()) return false
+      const rows = (data?.games || []).map(normalizeBenchmarkGame)
+      benchmarkBatchGames.value = append ? mergeBenchmarkGames(benchmarkBatchGames.value, rows) : rows
+      benchmarkBatchGamePagination.value = data?.pagination || defaultBenchmarkGamePagination(offset, limit)
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkDetailError.value = benchmarkErrorMessage(err, '评测对局读取失败。')
+        if (!append) {
+          benchmarkBatchGames.value = []
+          benchmarkBatchGamePagination.value = defaultBenchmarkGamePagination()
+        }
+      }
+      return false
+    } finally {
+      if (token.isLatest()) benchmarkBatchGamesLoading.value = false
+    }
+  }
+
+  function loadNextBenchmarkBatchGamesPage() {
+    const pagination = benchmarkBatchGamePagination.value || {}
+    if (!pagination.has_more || benchmarkBatchGamesLoading.value) return false
+    const offset = Number(pagination.offset || 0) + Number(pagination.returned || benchmarkBatchGames.value.length || 0)
+    const limit = Number(pagination.limit || 20) || 20
+    void loadBenchmarkBatchGamesPage({ offset, limit, append: true })
+    return true
   }
 
   function selectBenchmarkBatch(batchId) {
@@ -1853,7 +2049,37 @@ function useEvaluationWorkbench(options = {}) {
   function setBenchmarkGameStatusFilter(status) {
     benchmarkGameStatusFilter.value = String(status || 'problem')
     if (selectedBenchmarkBatchId.value) {
-      void loadBenchmarkBatchDetail(selectedBenchmarkBatchId.value)
+      void loadBenchmarkBatchGamesPage({ offset: 0, append: false })
+    }
+  }
+
+  function setBenchmarkGameSeedFilter(seed) {
+    benchmarkGameSeedFilter.value = String(seed || '').trim()
+    if (selectedBenchmarkBatchId.value) {
+      void loadBenchmarkBatchGamesPage({ offset: 0, append: false })
+    }
+  }
+
+  function setBenchmarkDiagnosticFilter(name, value) {
+    const text = String(value || '').trim()
+    if (name === 'kind') benchmarkDiagnosticKindFilter.value = text
+    if (name === 'level') benchmarkDiagnosticLevelFilter.value = text
+    if (name === 'status') benchmarkDiagnosticStatusFilter.value = text
+    if (name === 'stage') benchmarkDiagnosticStageFilter.value = text
+    if (name === 'seed') benchmarkDiagnosticSeedFilter.value = text
+    if (selectedBenchmarkBatchId.value) {
+      void loadBenchmarkBatchDiagnostics(selectedBenchmarkBatchId.value)
+    }
+  }
+
+  function clearBenchmarkDiagnosticFilters() {
+    benchmarkDiagnosticKindFilter.value = ''
+    benchmarkDiagnosticLevelFilter.value = ''
+    benchmarkDiagnosticStatusFilter.value = ''
+    benchmarkDiagnosticStageFilter.value = ''
+    benchmarkDiagnosticSeedFilter.value = ''
+    if (selectedBenchmarkBatchId.value) {
+      void loadBenchmarkBatchDiagnostics(selectedBenchmarkBatchId.value)
     }
   }
 
@@ -2294,6 +2520,12 @@ function useEvaluationWorkbench(options = {}) {
       setNotice('warning', message)
       return
     }
+    if (selectedBenchmarkSuiteLaunchDisabledReason.value) {
+      const message = selectedBenchmarkSuiteLaunchDisabledReason.value
+      error.value = message
+      setNotice('warning', message)
+      return
+    }
     if (!selectedBenchmarkIsModelSuite.value && selectedRoleTargetVersionBlockedReason.value) {
       const message = selectedRoleTargetVersionBlockedReason.value
       error.value = message
@@ -2411,6 +2643,7 @@ function useEvaluationWorkbench(options = {}) {
     selectedBenchmarkTargetType,
     selectedBenchmarkIsModelSuite,
     selectedBenchmarkCanLaunch,
+    selectedBenchmarkSuiteLaunchDisabledReason,
     selectedBenchmarkSuiteLabel,
     selectedBenchmarkEvaluationSetId,
     selectBenchmarkSuite,
@@ -2482,7 +2715,9 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkDetailError,
     benchmarkBatchDetail,
     benchmarkBatchGames,
+    benchmarkBatchGamesLoading,
     benchmarkBatchGamePagination,
+    benchmarkBatchDiagnosticsLoading,
     benchmarkBatchDiagnostics,
     benchmarkBatchDiagnosticSummary,
     benchmarkBatchReport,
@@ -2503,11 +2738,23 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkDiagnosticAggregatePagination,
     loadBenchmarkDiagnosticsAggregate,
     benchmarkGameStatusFilter,
+    benchmarkGameSeedFilter,
+    benchmarkDiagnosticKindFilter,
+    benchmarkDiagnosticLevelFilter,
+    benchmarkDiagnosticStatusFilter,
+    benchmarkDiagnosticStageFilter,
+    benchmarkDiagnosticSeedFilter,
     selectBenchmarkBatch,
     loadBenchmarkBatchDetail,
+    loadBenchmarkBatchGamesPage,
+    loadNextBenchmarkBatchGamesPage,
+    loadBenchmarkBatchDiagnostics,
     loadBenchmarkBatchReport,
     loadBenchmarkBatchReportExport,
     setBenchmarkGameStatusFilter,
+    setBenchmarkGameSeedFilter,
+    setBenchmarkDiagnosticFilter,
+    clearBenchmarkDiagnosticFilters,
     form,
     error,
     notice,

@@ -492,12 +492,12 @@ function rowLabel(item) {
 }
 
 .positive {
-  color: #3a7a3a !important;
+  color: var(--bench-accent-strong, #8b5e34) !important;
   font-weight: 800 !important;
 }
 
 .negative {
-  color: #9a3a3a !important;
+  color: var(--bench-danger, var(--logbook-danger, #993026)) !important;
   font-weight: 800 !important;
 }
 

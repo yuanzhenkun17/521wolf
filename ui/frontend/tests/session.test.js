@@ -4409,14 +4409,14 @@ test('evaluation workbench allows canary target and blocks shadow target version
   workbench.form.value.target_version_id = 'witch_shadow_v3'
   await flushPromises(10)
   assert.equal(workbench.selectedRoleTargetVersion.value.version_id, 'witch_shadow_v3')
-  assert.equal(workbench.selectedRoleTargetVersionBlockedReason.value, 'Shadow 版本需先晋升 canary 后才能评测。')
+  assert.equal(workbench.selectedRoleTargetVersionBlockedReason.value, '影子版本需先晋升金丝雀后才能评测。')
   assert.equal(workbench.selectedBenchmarkCanLaunch.value, false)
   assert.equal(workbench.benchmarkPlan.value, null)
-  assert.equal(workbench.benchmarkPlanError.value, 'Shadow 版本需先晋升 canary 后才能评测。')
+  assert.equal(workbench.benchmarkPlanError.value, '影子版本需先晋升金丝雀后才能评测。')
 
   await workbench.startEvaluation()
   assert.equal(workbench.notice.value.type, 'warning')
-  assert.equal(workbench.error.value, 'Shadow 版本需先晋升 canary 后才能评测。')
+  assert.equal(workbench.error.value, '影子版本需先晋升金丝雀后才能评测。')
   assert.equal(requests.filter((item) => item.path === '/benchmark').length, 1)
 }))
 
@@ -4673,7 +4673,7 @@ test('evaluation workbench loads benchmark batch detail games and diagnostics', 
         }
       }
     }
-    if (path === '/benchmark/batch/bench-detail/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0') {
+    if (path === '/benchmark/batch/bench-detail/games?status=problem&limit=20&offset=0') {
       return {
         kind: 'benchmark_batch_games',
         batch_id: 'bench-detail',
@@ -4741,7 +4741,7 @@ test('evaluation workbench loads benchmark batch detail games and diagnostics', 
   assert.equal(workbench.benchmarkBatchGames.value[0].statusLabel, '失败')
   assert.equal(workbench.benchmarkBatchDiagnostics.value[0].kindLabel, '未入榜')
   assert.equal(
-    requests.some((item) => item.path === '/benchmark/batch/bench-detail/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0'),
+    requests.some((item) => item.path === '/benchmark/batch/bench-detail/games?status=problem&limit=20&offset=0'),
     true
   )
 
@@ -4867,7 +4867,7 @@ test('evaluation workbench loads aggregate benchmark diagnostics without selecte
   assert.equal(workbench.benchmarkDiagnosticAggregateDiagnostics.value[1].kindLabel, '失败局')
   assert.equal(workbench.benchmarkDiagnosticAggregateSummary.value.affected_run_count, 2)
   assert.deepEqual(workbench.benchmarkDiagnosticAggregateRuns.value.map((run) => run.id), ['bench-a', 'bench-b'])
-  assert.equal(workbench.benchmarkDiagnosticAggregateGames.value[0].replayHash, '#logs?game_id=bench-b-game-001')
+  assert.equal(workbench.benchmarkDiagnosticAggregateGames.value[0].replayHash, '#logs?workspace=archive&game_id=bench-b-game-001')
   assert.equal(
     requests.includes('/benchmark/diagnostics?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&benchmark_id=role-baseline-quick-v1&target_role=seer&limit=200&offset=0'),
     true
@@ -5150,7 +5150,7 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
     if (path === '/roles/witch/versions') return { versions: [] }
     if (path === '/evolution-runs') return { runs: [], batches: [batch] }
     if (path === '/benchmark/batch/bench-report') return detailResponse
-    if (path === '/benchmark/batch/bench-report/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0') {
+    if (path === '/benchmark/batch/bench-report/games?status=problem&limit=20&offset=0') {
       return {
         kind: 'benchmark_batch_games',
         batch_id: 'bench-report',
@@ -5277,7 +5277,7 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
   assert.equal(workbench.benchmarkBatchGames.value[0].diagnostic_count, 2)
   assert.equal(workbench.benchmarkBatchDiagnostics.value[1].stage, 'game.persist')
   assert.equal(
-    requests.filter((item) => item.path === '/benchmark/batch/bench-report/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0').length,
+    requests.filter((item) => item.path === '/benchmark/batch/bench-report/games?status=problem&limit=20&offset=0').length,
     2
   )
   assert.equal(
@@ -5512,7 +5512,7 @@ test('evaluation workbench loads report history and keeps canonical report selec
         }
       }
       if (path === '/benchmark/batch/bench-history') return detailResponse
-      if (path === '/benchmark/batch/bench-history/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0') {
+      if (path === '/benchmark/batch/bench-history/games?status=problem&limit=20&offset=0') {
         return {
           kind: 'benchmark_batch_games',
           schema_version: 1,

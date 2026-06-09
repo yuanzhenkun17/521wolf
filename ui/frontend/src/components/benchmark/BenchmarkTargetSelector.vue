@@ -16,15 +16,17 @@ const selectedTargetVersion = computed(() => props.benchmark.selectedRoleTargetV
 const selectedTargetBlockedReason = computed(() => props.benchmark.selectedRoleTargetVersionBlockedReason.value || '')
 const targetModeLabel = computed(() => isModel.value ? '模型评测' : '角色版本评测')
 const subjectLabel = computed(() => {
-  if (isModel.value) return props.benchmark.form.value.model_id || '当前后端模型'
+  if (isModel.value) {
+    return props.benchmark.form.value.model_config_hash || props.benchmark.form.value.model_id || '当前后端模型'
+  }
   if (!props.benchmark.form.value.target_version_id) return '当前基线版本'
   return selectedTargetVersion.value?.short || props.benchmark.form.value.target_version_id
 })
 
 const versionStageLabels = {
   baseline: '基线',
-  canary: 'Canary',
-  shadow: 'Shadow',
+  canary: '金丝雀',
+  shadow: '影子',
   draft: '草稿',
   released: '已发布',
   production: '生产',
@@ -64,7 +66,7 @@ function versionOptionText(version) {
 
     <section v-if="isModel" class="target-fields target-fields--model">
       <label>
-        <span>Model ID</span>
+        <span>模型 ID</span>
         <input
           v-model.trim="benchmark.form.value.model_id"
           type="text"
@@ -82,7 +84,7 @@ function versionOptionText(version) {
         />
       </label>
       <p class="target-note">
-        模型评测比较 model/runtime config；启动 payload 不携带 roles 或 target_versions。
+        模型评测写入 scope=model 榜单，只比较模型运行配置；启动请求只携带模型标识与 Config Hash，不携带角色列表或目标版本。
       </p>
     </section>
 
@@ -138,7 +140,7 @@ function versionOptionText(version) {
         暂无可列出的版本，启动时将使用当前基线。
       </p>
       <p class="target-note">
-        角色版本评测只比较当前角色的目标版本；baseline 与 canary 可评测，shadow 需先晋升 canary。
+        角色版本评测写入 scope=role_version，只比较当前角色的目标版本；基线与金丝雀可评测，影子需先晋升金丝雀。
       </p>
     </section>
   </article>
@@ -146,14 +148,14 @@ function versionOptionText(version) {
 
 <style scoped>
 .benchmark-target-selector {
-  --target-bg: #f8f0e0;
-  --target-surface: rgba(255, 252, 245, 0.7);
-  --target-border: rgba(139, 94, 52, 0.15);
-  --target-text: #3a2a18;
-  --target-muted: #8b6b4a;
-  --target-accent: #5a3319;
-  --target-soft: rgba(139, 94, 52, 0.08);
-  --target-soft-strong: rgba(90, 51, 25, 0.12);
+  --target-bg: var(--bench-bg-texture, var(--logbook-bg-texture, #f2dfae));
+  --target-surface: var(--bench-surface, var(--logbook-surface, rgba(255, 252, 245, 0.7)));
+  --target-border: var(--bench-border, var(--logbook-border, rgba(139, 94, 52, 0.15)));
+  --target-text: var(--bench-text, var(--logbook-text, #3a2a18));
+  --target-muted: var(--bench-text-secondary, var(--logbook-muted, #8b6b4a));
+  --target-accent: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
+  --target-soft: var(--bench-hover, var(--logbook-hover, rgba(139, 94, 52, 0.06)));
+  --target-soft-strong: var(--bench-active-bg, var(--logbook-active-bg, rgba(139, 94, 52, 0.1)));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;

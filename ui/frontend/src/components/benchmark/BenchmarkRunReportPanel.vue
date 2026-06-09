@@ -12,6 +12,87 @@ const props = defineProps({
 const copyState = ref('')
 const exportState = ref('')
 
+const STATUS_LABELS = {
+  ok: '正常',
+  pass: '通过',
+  passed: '通过',
+  accepted: '通过',
+  rejected: '拒绝',
+  running: '运行中',
+  pending: '排队中',
+  queued: '排队中',
+  completed: '已完成',
+  failed: '失败',
+  fail: '失败',
+  timeout: '超时',
+  abnormal: '异常',
+  cancelled: '已取消',
+  interrupted: '已中断',
+  skipped: '已跳过',
+  disabled: '已关闭',
+  degraded: '降级',
+  warning: '警告',
+  warn: '警告',
+  error: '错误',
+  bad: '低分',
+  good: '良好',
+  unknown: '未知',
+  info: '信息'
+}
+
+const DISPLAY_LABELS = {
+  'Benchmark ID': '评测 ID',
+  benchmark_id: '评测 ID',
+  run_id: '运行 ID',
+  batch_id: '运行 ID',
+  suite: '套件',
+  status: '状态',
+  target_type: '对象类型',
+  subject: '评测对象',
+  evaluation_set_id: '评测集',
+  seed_set_id: '种子集',
+  benchmark_config_hash: '配置 Hash',
+  config_hash: '配置 Hash',
+  content_hash: '内容 Hash',
+  model_id: '模型 ID',
+  model_config_hash: '模型配置 Hash',
+  target_role: '目标角色',
+  target_version_id: '目标版本',
+  Decision: '决策',
+  'Decision Judge': '决策 Judge',
+  decision_judge: '决策 Judge',
+  diagnostic: '诊断',
+  diagnostics: '诊断',
+  warning: '警告',
+  warnings: '警告',
+  error: '错误',
+  errors: '错误',
+  failed: '失败',
+  completed: '已完成',
+  judged: '已判定',
+  bad: '低分',
+  bad_rate: '低分率',
+  quality: '质量',
+  action_type: '行动类型',
+  evidence_ref: '证据引用',
+  evidence_refs: '证据引用',
+  counterfactual: '反事实',
+  counterfactuals: '反事实',
+  rubric_miss: '评分规则未命中',
+  rubric_misses: '评分规则未命中',
+  mistake_tag: '错误标签',
+  mistake_tags: '错误标签',
+  degraded_reason: '降级原因',
+  degraded_reasons: '降级原因',
+  failure_reason: '失败原因',
+  accepted: '通过',
+  rejected: '拒绝',
+  unknown: '未知',
+  result: '结果批次',
+  run: '运行',
+  report: '正式报告'
+}
+
 const selectedRun = computed(() => props.benchmark.selectedBenchmarkBatchRun.value || null)
 const selectedBatchId = computed(() => props.benchmark.selectedBenchmarkBatchId.value || '')
 const detail = computed(() => props.benchmark.benchmarkBatchDetail.value || null)
@@ -85,10 +166,12 @@ const suiteLabel = computed(() =>
   '临时评测'
 )
 const statusLabel = computed(() =>
-  valueOrDash(canonicalReport.value?.status) !== '--' ? valueOrDash(canonicalReport.value?.status) :
-  detail.value?.statusLabel ||
-  selectedRun.value?.statusLabel ||
-  valueOrDash(selectedRun.value?.status)
+  valueOrDash(canonicalReport.value?.status) !== '--' ? statusDisplayLabel(canonicalReport.value?.status) :
+  statusDisplayLabel(
+    detail.value?.statusLabel ||
+    selectedRun.value?.statusLabel ||
+    valueOrDash(selectedRun.value?.status)
+  )
 )
 const targetType = computed(() =>
   reportSuite.value.target_type ||
@@ -227,18 +310,18 @@ const gateRows = computed(() => {
   if (reportRows.length) {
     return reportRows.map((row, index) => ({
       key: row?.key || `report-gate-${index}`,
-      title: row?.title || `门禁 ${index + 1}`,
-      status: row?.status || '',
-      reason: row?.reason || '未返回门禁原因',
-      meta: row?.meta || '门禁',
+      title: displayPhrase(row?.title || `门禁 ${index + 1}`),
+      status: statusDisplayLabel(row?.status || ''),
+      reason: displayPhrase(row?.reason || '未返回门禁原因'),
+      meta: displayPhrase(row?.meta || '门禁'),
       blocked: Boolean(row?.blocked)
     })).slice(0, 16)
   }
   const rows = results.value.map((result, index) => ({
     key: result?.result_batch_id || result?.batch_id || `result-${index}`,
     title: result?.targetRoleLabel || result?.model_id || result?.result_batch_id || `结果 ${index + 1}`,
-    status: result?.rankableLabel || (result?.rankable === false ? '不可排名' : '可排名'),
-    reason: result?.rankableReason || result?.rankable_reason || '未返回门禁原因',
+    status: statusDisplayLabel(result?.rankableLabel || (result?.rankable === false ? '不可排名' : '可排名')),
+    reason: displayPhrase(result?.rankableReason || result?.rankable_reason || '未返回门禁原因'),
     meta: compactJoin([
       result?.targetVersionShort || result?.target_version_id,
       result?.completed == null ? '' : `${result.completed} 完成`,
@@ -249,7 +332,7 @@ const gateRows = computed(() => {
   for (const kind of detailDiagnosticKindRows.value) {
     rows.push({
       key: `kind-${kind.name}`,
-      title: kind.label || kind.name,
+      title: diagnosticDisplayLabel(kind.label || kind.name),
       status: `${kind.count} 条诊断`,
       reason: '所选运行返回的诊断类型',
       meta: '诊断类型',
@@ -273,10 +356,12 @@ const problemGames = computed(() =>
       ...game,
       id: String(game?.game_id || game?.id || ''),
       statusWeight: problemStatusWeight(game?.status),
+      statusLabel: statusDisplayLabel(game?.status_label || game?.statusLabel || game?.status),
       diagnostics: numberOrZero(game?.diagnostic_count),
       seed: game?.seedLabel || valueOrDash(game?.seed),
       target: game?.targetRoleLabel || valueOrDash(game?.target_role),
-      replayHash: game?.replayHash || (game?.history_game_id ? `#logs?game_id=${encodeURIComponent(game.history_game_id)}` : '')
+      replayHash: game?.replayHash || (game?.history_game_id ? `#logs?game_id=${encodeURIComponent(game.history_game_id)}` : ''),
+      replayUnavailableReason: displayPhrase(game?.replay_unavailable_reason || '')
     }))
     .filter((game) => game.id)
     .sort((a, b) =>
@@ -294,9 +379,9 @@ const diagnosticGroups = computed(() => {
       ...group,
       key: group?.kind || group?.label || `diagnostic-${index}`,
       kind: group?.kind || group?.label || 'diagnostic',
-      kindLabel: group?.label || group?.kind || 'diagnostic',
+      kindLabel: diagnosticDisplayLabel(group?.label || group?.kind || 'diagnostic'),
       total: numberOrZero(group?.total),
-      levelLabel: group?.level || '无等级',
+      levelLabel: levelDisplayLabel(group?.level || '无等级'),
       gameCount: numberOrZero(group?.game_count),
       stageCount: numberOrZero(group?.stage_count)
     })).slice(0, 8)
@@ -308,7 +393,7 @@ const diagnosticGroups = computed(() => {
     const current = groups.get(key) || {
       key,
       kind: key,
-      kindLabel: item?.kindLabel || key,
+      kindLabel: diagnosticDisplayLabel(item?.kindLabel || key),
       total: 0,
       levels: new Map(),
       games: new Set(),
@@ -414,7 +499,7 @@ const benchmarkJudgeEvidenceRows = computed(() => {
     const fallbackEvidence = buildBenchmarkAggregateEvidence({}, benchmarkJudgeDiagnostics.value)
     rows.push({
       key: 'benchmark-judge-diagnostics',
-      title: 'Decision Judge 诊断',
+      title: '决策 Judge 诊断',
       status: `${benchmarkJudgeDiagnostics.value.length} 条`,
       meta: '评测诊断',
       evidence: fallbackEvidence
@@ -431,18 +516,18 @@ const topTags = computed(() => {
   const reportTags = asArray(canonicalReport.value?.tags)
   if (reportTags.length) {
     return reportTags
-      .map((tag) => ({ label: String(tag?.label || tag?.tag || '').trim(), count: numberOrZero(tag?.count) }))
+      .map((tag) => ({ label: diagnosticDisplayLabel(tag?.label || tag?.tag), count: numberOrZero(tag?.count) }))
       .filter((tag) => tag.label)
       .slice(0, 8)
   }
   const tagCounts = new Map()
   for (const tag of asArray(selectedRun.value?.judgeTags)) {
-    const label = String(tag?.tag || '').trim()
+    const label = diagnosticDisplayLabel(tag?.tag)
     if (!label) continue
     tagCounts.set(label, (tagCounts.get(label) || 0) + numberOrZero(tag?.count))
   }
   for (const item of diagnostics.value) {
-    const label = String(item?.kindLabel || item?.kind || '').trim()
+    const label = diagnosticDisplayLabel(item?.kindLabel || item?.kind)
     if (!label) continue
     tagCounts.set(label, (tagCounts.get(label) || 0) + 1)
   }
@@ -454,11 +539,11 @@ const topTags = computed(() => {
 
 const reproducibilityRows = computed(() => {
   const reproducibility = objectOrEmpty(canonicalReport.value?.reproducibility)
-  const rows = Object.entries(reproducibility).map(([label, value]) => ({ label, value }))
+  const rows = Object.entries(reproducibility).map(([label, value]) => ({ label: reproducibilityLabel(label), value }))
   if (rows.length) return rows
   return [
     { label: '套件', value: suiteLabel.value },
-    { label: 'Benchmark ID', value: benchmarkMeta.value?.id || selectedRun.value?.benchmarkId || 'ad-hoc' },
+    { label: '评测 ID', value: benchmarkMeta.value?.id || selectedRun.value?.benchmarkId || 'ad-hoc' },
     { label: '评测集', value: evaluationSetId.value },
     { label: '种子集', value: seedSetId.value },
     { label: '配置 Hash', value: configHash.value || '未返回' },
@@ -487,7 +572,7 @@ const gateCaption = computed(() => {
   }
   if (!results.value.length) return '详情待加载'
   if (!unrankableRows.value.length) return '门禁通过'
-  return unrankableRows.value[0]?.rankableReason || unrankableRows.value[0]?.rankable_reason || '门禁未通过'
+  return displayPhrase(unrankableRows.value[0]?.rankableReason || unrankableRows.value[0]?.rankable_reason || '门禁未通过')
 })
 const problemGameCaption = computed(() => {
   if (canonicalReport.value) {
@@ -548,7 +633,7 @@ const csvReport = computed(() =>
             `种子 ${game.seed}`,
             game.target,
             `${game.diagnostics} 条诊断`,
-            game.history_game_id ? `history ${game.history_game_id}` : '',
+            game.history_game_id ? `日志 ${game.history_game_id}` : '',
             game.replayHash ? `回放 ${game.replayHash}` : '无回放'
           ], ' / ')
         ]),
@@ -574,7 +659,7 @@ const markdownGateRows = computed(() =>
 const markdownGameRows = computed(() =>
   problemGames.value.length
     ? problemGames.value.slice(0, 6).map((game) =>
-        `- ${markdownValue(game.id)}: ${markdownValue(game.statusLabel || game.status)} / 种子 ${markdownValue(game.seed)} / 诊断 ${game.diagnostics} / 回放 ${markdownValue(game.replayHash || game.replay_unavailable_reason || '不可用')}`
+        `- ${markdownValue(game.id)}: ${markdownValue(game.statusLabel || statusDisplayLabel(game.status))} / 种子 ${markdownValue(game.seed)} / 诊断 ${game.diagnostics} / 回放 ${markdownValue(game.replayHash || game.replayUnavailableReason || '不可用')}`
       )
     : ['- 未加载对局样本']
 )
@@ -728,7 +813,7 @@ function isSelectedReport(row) {
 function reportHistoryMeta(row) {
   return compactJoin([
     row?.subjectLabel,
-    row?.statusLabel || row?.status,
+    statusDisplayLabel(row?.statusLabel || row?.status),
     row?.content_hash ? shortHash(row.content_hash) : ''
   ], ' / ')
 }
@@ -777,7 +862,7 @@ function countRows(source) {
   return Object.entries(source)
     .map(([name, count]) => ({
       name: String(name || 'unknown'),
-      label: String(name || '未知'),
+      label: diagnosticDisplayLabel(name || '未知'),
       count: numberOrZero(count)
     }))
     .filter((row) => row.count > 0)
@@ -786,7 +871,60 @@ function countRows(source) {
 
 function topMapEntry(map) {
   const [entry] = [...map.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  return entry ? `${entry[0]}: ${entry[1]}` : '无等级'
+  return entry ? `${levelDisplayLabel(entry[0])}: ${entry[1]}` : '无等级'
+}
+
+function statusDisplayLabel(value) {
+  const text = String(value ?? '').trim()
+  if (!text || text === '--') return text || '--'
+  const normalized = text.toLowerCase()
+  return STATUS_LABELS[normalized] || displayPhrase(text)
+}
+
+function levelDisplayLabel(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return '无等级'
+  return STATUS_LABELS[text.toLowerCase()] || displayPhrase(text)
+}
+
+function diagnosticDisplayLabel(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  return DISPLAY_LABELS[text] || DISPLAY_LABELS[text.toLowerCase()] || displayPhrase(text)
+}
+
+function reproducibilityLabel(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return '审计字段'
+  return DISPLAY_LABELS[text] || DISPLAY_LABELS[text.toLowerCase()] || displayPhrase(text)
+}
+
+function sourceTypeLabel(value) {
+  const text = String(value ?? '').trim().toLowerCase()
+  return DISPLAY_LABELS[text] || displayPhrase(value || '来源')
+}
+
+function displayPhrase(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  const exact = DISPLAY_LABELS[text] || DISPLAY_LABELS[text.toLowerCase()]
+  if (exact) return exact
+  return text
+    .replace(/\bDecision Judge\b/gi, '决策 Judge')
+    .replace(/\bBenchmark ID\b/g, '评测 ID')
+    .replace(/\bdiagnostics?\b/gi, '诊断')
+    .replace(/\bjudged\b/gi, '已判定')
+    .replace(/\bbad rate\b/gi, '低分率')
+    .replace(/\bbad\b/gi, '低分')
+    .replace(/\baccepted\b/gi, '通过')
+    .replace(/\brejected\b/gi, '拒绝')
+    .replace(/\bcompleted\b/gi, '已完成')
+    .replace(/\bfailed\b/gi, '失败')
+    .replace(/\btimeout\b/gi, '超时')
+    .replace(/\bwarning\b/gi, '警告')
+    .replace(/\berror\b/gi, '错误')
+    .replace(/\bdegraded\b/gi, '降级')
+    .replace(/\bunknown\b/gi, '未知')
 }
 
 function valueRows(value) {
@@ -894,13 +1032,31 @@ function labelCountRows(rows, fields, fallbackKind) {
     const label = fields.map((field) => row[field]).find((value) => value != null && String(value).trim())
     if (!label) return row
     const count = row.count == null ? '' : ` x${row.count}`
-    return { kind: fallbackKind, message: `${label}${count}` }
+    return { kind: diagnosticDisplayLabel(fallbackKind), message: displayPhrase(`${label}${count}`) }
   })
 }
 
 function diagnosticReason(row) {
   if (!row || typeof row !== 'object') return ''
-  return String(row.reason || row.message || row.kind || '').trim()
+  return displayPhrase(row.reason || row.message || row.kind || '')
+}
+
+function displayEvidenceRow(row) {
+  if (!row || typeof row !== 'object') return displayPhrase(row)
+  return {
+    ...row,
+    kind: diagnosticDisplayLabel(row.kind),
+    stage: displayPhrase(row.stage),
+    reason: displayPhrase(row.reason),
+    message: displayPhrase(row.message),
+    exception_message: displayPhrase(row.exception_message),
+    detail: displayPhrase(row.detail),
+    summary: displayPhrase(row.summary)
+  }
+}
+
+function displayEvidenceRows(rows) {
+  return rows.map(displayEvidenceRow)
 }
 
 function isWarningDiagnostic(row) {
@@ -911,7 +1067,7 @@ function aggregateStatusReason(aggregate) {
   const status = String(aggregate?.status || '').toLowerCase()
   const reason = String(aggregate?.reason || '').trim()
   if (!reason || !status || status === 'ok' || status === 'disabled') return []
-  return [`${status}: ${reason}`]
+  return [`${statusDisplayLabel(status)}: ${displayPhrase(reason)}`]
 }
 
 function withEvidenceMeta(details) {
@@ -933,14 +1089,14 @@ function buildBenchmarkAggregateEvidence(aggregate, diagnosticsRows) {
       ...labelCountRows(aggregate?.top_rubric_misses, ['miss', 'tag', 'label'], 'rubric_miss'),
       ...labelCountRows(aggregate?.top_mistake_tags, ['tag', 'miss', 'label'], 'mistake_tag')
     ]),
-    diagnostics: uniqueRows([...fieldRows(aggregate, ['diagnostics', 'diagnostic']), ...diagnosticsRows]),
+    diagnostics: uniqueRows(displayEvidenceRows([...fieldRows(aggregate, ['diagnostics', 'diagnostic']), ...diagnosticsRows])),
     degradedReasons: uniqueRows([
       ...aggregateStatusReason(aggregate),
-      ...fieldRows(aggregate, ['degraded_reasons', 'degraded_reason', 'failure_reason', 'error']),
+      ...fieldRows(aggregate, ['degraded_reasons', 'degraded_reason', 'failure_reason', 'error']).map(displayEvidenceRow),
       ...degradedDiagnostics.map(diagnosticReason).filter(Boolean)
     ]),
     warnings: uniqueRows([
-      ...fieldRows(aggregate, ['warnings', 'warning']),
+      ...fieldRows(aggregate, ['warnings', 'warning']).map(displayEvidenceRow),
       ...warningDiagnostics.map(diagnosticReason).filter(Boolean)
     ])
   })
@@ -956,13 +1112,13 @@ function buildBenchmarkDecisionEvidence(decision, diagnosticsRows) {
       ...fieldRows(decision, ['rubric_misses', 'rubric_miss', 'mistake_tags', 'mistake_tag']),
       ...labelCountRows(decision?.top_rubric_misses, ['miss', 'tag', 'label'], 'rubric_miss')
     ]),
-    diagnostics: uniqueRows([...fieldRows(decision, ['diagnostics', 'diagnostic']), ...diagnosticsRows]),
+    diagnostics: uniqueRows(displayEvidenceRows([...fieldRows(decision, ['diagnostics', 'diagnostic']), ...diagnosticsRows])),
     degradedReasons: uniqueRows([
-      ...fieldRows(decision, ['degraded_reasons', 'degraded_reason', 'failure_reason', 'error']),
+      ...fieldRows(decision, ['degraded_reasons', 'degraded_reason', 'failure_reason', 'error']).map(displayEvidenceRow),
       ...degradedDiagnostics.map(diagnosticReason).filter(Boolean)
     ]),
     warnings: uniqueRows([
-      ...fieldRows(decision, ['warnings', 'warning']),
+      ...fieldRows(decision, ['warnings', 'warning']).map(displayEvidenceRow),
       ...warningDiagnostics.map(diagnosticReason).filter(Boolean)
     ])
   })
@@ -984,11 +1140,13 @@ function judgeAggregateStatus(aggregate) {
 
 function judgeAggregateMeta(source) {
   const aggregate = source.aggregate || {}
+  const judgedCount = aggregate.judged_decisions ?? aggregate.judged ?? aggregate.metrics?.judged
+  const badRate = Number(aggregate.bad_rate)
   return compactJoin([
-    source.type,
-    aggregate.judged_decisions ?? aggregate.judged ?? aggregate.metrics?.judged,
-    aggregate.bad_rate == null ? '' : `bad ${(Number(aggregate.bad_rate) * 100).toFixed(0)}%`
-  ].map((value, index) => index === 1 && value !== '' && value != null ? `${value} judged` : value), ' / ')
+    sourceTypeLabel(source.type),
+    judgedCount == null || judgedCount === '' ? '' : `${judgedCount} 已判定`,
+    Number.isFinite(badRate) ? `低分率 ${(badRate * 100).toFixed(0)}%` : ''
+  ], ' / ')
 }
 
 function judgeDecisionId(decision) {
@@ -1001,14 +1159,14 @@ function judgeDecisionTitle(decision, index) {
   return compactJoin([
     id ? `决策 ${id}` : `低分决策 ${index + 1}`,
     decision?.role,
-    decision?.action_type
+    displayPhrase(decision?.action_type)
   ], ' / ')
 }
 
 function judgeDecisionStatus(decision) {
   const score = decision?.score
   if (Number.isFinite(Number(score))) return `Judge ${Number(score).toFixed(1)}`
-  return String(decision?.quality || '低分决策')
+  return diagnosticDisplayLabel(decision?.quality || '低分决策')
 }
 
 function problemStatusWeight(status) {
@@ -1150,7 +1308,7 @@ function clearTransientState(stateRef) {
               </div>
               <div v-for="game in problemGames" :key="game.id" class="game-row">
                 <span class="mono">{{ game.id }}</span>
-                <span>{{ game.statusLabel || game.status || '--' }}</span>
+                <span>{{ game.statusLabel || statusDisplayLabel(game.status) || '--' }}</span>
                 <span>{{ game.seed }}</span>
                 <span>{{ game.target }}</span>
                 <span>{{ game.diagnostics }}</span>
@@ -1158,7 +1316,7 @@ function clearTransientState(stateRef) {
                   <a v-if="game.replayHash" class="report-replay-link" :href="game.replayHash">
                     打开
                   </a>
-                  <small v-else>{{ game.replay_unavailable_reason || '无回放' }}</small>
+                  <small v-else>{{ game.replayUnavailableReason || '无回放' }}</small>
                 </span>
               </div>
             </div>
@@ -1196,7 +1354,7 @@ function clearTransientState(stateRef) {
               >
                 <header class="benchmark-judge-evidence-head">
                   <span>
-                    <small>Decision Judge</small>
+                    <small>决策 Judge</small>
                     <b>{{ row.title }}</b>
                   </span>
                   <em>{{ row.status }}</em>
@@ -1236,7 +1394,7 @@ function clearTransientState(stateRef) {
               </button>
             </div>
             <p v-else class="report-empty-inline">
-              {{ reportHistoryError || '当前套件边界暂无报告历史。' }}
+              {{ displayPhrase(reportHistoryError) || '当前套件边界暂无报告历史。' }}
             </p>
           </section>
 
@@ -1276,7 +1434,7 @@ function clearTransientState(stateRef) {
                 </button>
               </div>
             </div>
-            <p v-if="reportError" class="report-export-note">{{ reportError }}</p>
+            <p v-if="reportError" class="report-export-note">{{ displayPhrase(reportError) }}</p>
             <div class="copy-row">
               <button type="button" @click="copyExport('json')">复制 JSON</button>
               <button type="button" @click="copyExport('csv')">复制 CSV</button>
@@ -1331,7 +1489,7 @@ function clearTransientState(stateRef) {
               <b>{{ run.benchmarkLabel || run.id }}</b>
               <small>{{ run.displayRole || run.benchmarkTargetTypeLabel || '评测对象' }}</small>
             </span>
-            <em>{{ run.statusLabel || run.status || '--' }}</em>
+            <em>{{ statusDisplayLabel(run.statusLabel || run.status || '--') }}</em>
           </button>
         </div>
       </div>
@@ -1342,17 +1500,16 @@ function clearTransientState(stateRef) {
 
 <style scoped>
 .benchmark-report-panel {
-  --report-bg: #f8f0e0;
-  --report-ink: #3a2a18;
-  --report-muted: #8b6b4a;
-  --report-line: rgba(139, 94, 52, 0.15);
-  --report-panel: rgba(255, 252, 245, 0.7);
-  --report-soft: rgba(255, 252, 245, 0.48);
-  --report-accent: #8b5e34;
-  --report-accent-strong: #5a3319;
-  --report-blue: #8b5e34;
-  --report-warn: #8b5e34;
-  --report-danger: #5a3319;
+  --report-bg: var(--bench-bg, var(--logbook-bg, #f2dfae));
+  --report-ink: var(--bench-text, var(--logbook-text, #3a2a18));
+  --report-muted: var(--bench-text-secondary, var(--logbook-muted, #8b6b4a));
+  --report-line: var(--bench-border, var(--logbook-border, rgba(139, 94, 52, 0.15)));
+  --report-panel: var(--bench-surface, var(--logbook-surface, rgba(255, 252, 245, 0.7)));
+  --report-soft: var(--bench-panel-soft, var(--logbook-panel-soft, rgba(255, 252, 245, 0.48)));
+  --report-accent: var(--bench-accent, var(--logbook-accent, #8b5e34));
+  --report-accent-strong: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
+  --report-caution: var(--bench-warning, var(--logbook-warning, #8b5e34));
+  --report-danger: var(--bench-danger, var(--logbook-danger, #5a3319));
   --log-text: var(--report-ink);
   --log-text-secondary: var(--report-muted);
   --log-accent: var(--report-accent);
@@ -1505,7 +1662,7 @@ function clearTransientState(stateRef) {
   min-width: 0;
   min-height: 72px;
   padding: 11px 12px;
-  border-left: 4px solid var(--report-blue);
+  border-left: 4px solid var(--report-accent);
 }
 
 .report-summary-card.summary-rankable {
@@ -1513,7 +1670,7 @@ function clearTransientState(stateRef) {
 }
 
 .report-summary-card.summary-diagnostics {
-  border-left-color: var(--report-warn);
+  border-left-color: var(--report-caution);
 }
 
 .report-summary-card b {
@@ -1859,7 +2016,7 @@ function clearTransientState(stateRef) {
 
 .report-export-note {
   margin: -2px 0 8px;
-  color: var(--report-warn);
+  color: var(--report-caution);
   font-size: 11px;
   font-weight: 850;
   line-height: 1.35;

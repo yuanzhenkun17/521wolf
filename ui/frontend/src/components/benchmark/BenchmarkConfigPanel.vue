@@ -42,7 +42,7 @@ const suiteRoleLabels = computed(() => {
   return roles.map((role) => props.benchmark.roleMeta(role).label).join('、')
 })
 const suiteModeLabel = computed(() =>
-  props.benchmark.selectedBenchmarkId.value ? '正式 suite' : '临时评测'
+  props.benchmark.selectedBenchmarkId.value ? '正式套件' : '临时评测'
 )
 const suiteTargetTypeLabel = computed(() =>
   props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型评测' : '角色版本'
@@ -51,11 +51,12 @@ const suiteCostTierLabel = computed(() => {
   const tier = props.benchmark.selectedBenchmarkSuite.value?.cost_tier || ''
   const labels = {
     smoke: '冒烟',
-    low: '低',
-    medium: '中',
-    standard: '标准',
-    release: '发布',
-    high: '高'
+    quick: 'quick 快速',
+    low: '低成本',
+    medium: '中等',
+    standard: 'standard 标准',
+    release: 'release 发布',
+    high: '高成本'
   }
   return labels[tier] || (tier ? tier : '未标注')
 })
@@ -64,9 +65,9 @@ const suiteSeedSummary = computed(() => {
   if (!suite) return '临时'
   if (suite.seed_count != null) {
     const count = Number(suite.seed_count)
-    if (Number.isFinite(count)) return `${count} 个 seed`
+    if (Number.isFinite(count)) return `${count} 个种子`
   }
-  return suite.seed_set_id || '固定 seed'
+  return suite.seed_set_id || '固定种子'
 })
 const suiteSeedPreview = computed(() => {
   const preview = props.benchmark.selectedBenchmarkSuite.value?.seed_preview || []
@@ -88,7 +89,7 @@ const modelBoardTitle = computed(() =>
   props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型配置榜' : '模型榜'
 )
 const versionBoardTitle = computed(() =>
-  props.benchmark.selectedBenchmarkIsModelSuite.value ? '角色版本榜未混入' : '角色版本榜'
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? '角色版本榜隔离' : '角色版本榜'
 )
 const runPlan = computed(() => props.benchmark.benchmarkPlan.value || null)
 const planBudget = computed(() => runPlan.value?.budget || {})
@@ -189,7 +190,7 @@ function sourceLabel(source) {
             v-if="benchmark.selectedBenchmarkIsModelSuite.value"
             class="bench-form bench-form--identity"
           >
-            <label>Model ID
+            <label>模型 ID
               <input
                 v-model.trim="benchmark.form.value.model_id"
                 type="text"
@@ -233,12 +234,12 @@ function sourceLabel(source) {
               <b>{{ benchmark.launchBattleGames.value }} 局 / {{ benchmark.launchMaxDays.value }} 天</b>
             </span>
             <span>
-              <small>Seed Set</small>
+              <small>种子集</small>
               <b>{{ benchmark.selectedBenchmarkSuite.value?.seed_set_id || '临时' }}</b>
               <em v-if="suiteSeedPreview">{{ suiteSeedPreview }}</em>
             </span>
             <span>
-              <small>Seed 摘要</small>
+              <small>种子摘要</small>
               <b>{{ suiteSeedSummary }}</b>
             </span>
             <span>
@@ -254,7 +255,7 @@ function sourceLabel(source) {
               <b>{{ launchSubjectLabel }}</b>
             </span>
             <span>
-              <small>预计调用</small>
+              <small>预计调用单位</small>
               <b>{{ estimatedUnitsLabel }}</b>
             </span>
             <span>
@@ -568,12 +569,12 @@ function sourceLabel(source) {
 }
 
 .bench-suite-summary span.bench-suite-summary--danger {
-  border-color: rgba(168, 42, 42, 0.26);
-  background: rgba(168, 42, 42, 0.08);
+  border-color: var(--bench-danger-border, rgba(153, 48, 38, 0.28));
+  background: var(--bench-danger-bg, rgba(153, 48, 38, 0.06));
 }
 
 .bench-suite-summary span.bench-suite-summary--danger b {
-  color: #8b3a3a;
+  color: var(--bench-danger, var(--logbook-danger, #993026));
 }
 
 .bench-suite-summary small {
@@ -609,10 +610,10 @@ function sourceLabel(source) {
 
 .bench-suite-note {
   padding: 8px 9px;
-  border: 1px solid rgba(173, 112, 35, 0.22);
+  border: 1px solid var(--bench-warning-border, rgba(139, 100, 31, 0.3));
   border-radius: 7px;
-  background: rgba(173, 112, 35, 0.08);
-  color: #8a5a1d;
+  background: var(--bench-warning-bg, rgba(139, 100, 31, 0.08));
+  color: var(--bench-warning, var(--logbook-warning, #8b5e34));
   font-size: 12px;
   font-weight: 800;
 }

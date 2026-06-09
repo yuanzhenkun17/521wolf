@@ -31,6 +31,26 @@ const statusLabels = {
   archived: '归档'
 }
 
+const metricLabels = {
+  avg_role_score: '角色均分',
+  strength_score: '模型强度',
+  target_side_win_rate: '目标阵营胜率',
+  villagers_win_rate: '好人胜率',
+  werewolves_win_rate: '狼人胜率',
+  fallback_rate: '回退率',
+  llm_error_rate: 'LLM 错误率',
+  policy_adjusted_rate: '策略修正率',
+  decision_judge_avg_score: '裁判均分'
+}
+
+const gateLabels = {
+  min_completed_games: '最少完成局',
+  min_valid_game_rate: '有效局率',
+  max_fallback_rate: '最大回退率',
+  max_llm_error_rate: '最大 LLM 错误率',
+  max_policy_adjusted_rate: '最大策略修正率'
+}
+
 const runStatusLabels = {
   queued: '排队中',
   running: '运行中',
@@ -115,6 +135,64 @@ const suiteGroups = computed(() => {
 const selectedSuite = computed(() =>
   suites.value.find((suite) => suite.id === selectedSuiteId.value) || null
 )
+const selectedSpecRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  return [
+    { key: 'target', label: '对象', value: suite.targetTypeLabel },
+    { key: 'games', label: '局数', value: suite.gameCount == null ? '未设置' : `${suite.gameCount} 局` },
+    { key: 'days', label: '最大天数', value: suite.maxDays == null ? '未设置' : `${suite.maxDays} 天` },
+    { key: 'roles', label: '覆盖角色', value: roleScopeLabel(suite) },
+    { key: 'evaluation', label: '评测集', value: suite.evaluationSetId || '临时' },
+    { key: 'hash', label: 'Config Hash', value: suite.shortConfigHash || '未上报', title: suite.configHash }
+  ]
+})
+const selectedSeedRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  const seedPurpose = String(suite.seedSet?.purpose || '').trim()
+  const seedHash = String(suite.seedSet?.config_hash || '').trim()
+  return [
+    { key: 'seed-set', label: '种子集', value: suite.seedSetId || '临时' },
+    { key: 'seed-count', label: '种子数', value: suite.seedCount == null ? '未上报' : `${suite.seedCount} 个` },
+    { key: 'seed-preview', label: '种子预览', value: suite.seedPreviewLabel || '未上报' },
+    { key: 'paired', label: '配对种子', value: suite.pairedSeed ? '启用' : '未启用' },
+    { key: 'purpose', label: '用途', value: seedPurpose || '未标记' },
+    { key: 'seed-hash', label: '种子 Hash', value: shortHash(seedHash) || '未上报', title: seedHash }
+  ]
+})
+const selectedMetricRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  const primary = metricLabel(suite.metrics?.primary)
+  const secondary = Array.isArray(suite.metrics?.secondary)
+    ? suite.metrics.secondary.map(metricLabel).filter(Boolean)
+    : []
+  return [
+    { key: 'primary', label: '主指标', value: primary || '未设置' },
+    { key: 'secondary', label: '辅助指标', value: secondary.length ? secondary.join('、') : '未设置' }
+  ]
+})
+const selectedGateRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  const rows = Object.entries(suite.gates || {})
+    .filter(([, value]) => value != null && value !== '')
+    .map(([key, value]) => ({ key, label: gateLabels[key] || key, value: formatGateValue(key, value) }))
+  return rows.length ? rows : [{ key: 'empty', label: '门禁', value: '未设置' }]
+})
+const selectedJudgeRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  const judge = suite.judge || {}
+  const enabled = Boolean(judge.enable_decision_judge)
+  return [
+    { key: 'enabled', label: '裁判判定', value: enabled ? '启用' : '未启用' },
+    { key: 'max', label: '每局上限', value: enabled && judge.judge_max_decisions != null ? `${judge.judge_max_decisions} 次` : '无' },
+    { key: 'concurrency', label: '并发', value: enabled && judge.judge_concurrency != null ? `${judge.judge_concurrency} 个任务` : '后端默认' },
+    { key: 'timeout', label: '超时', value: enabled && judge.judge_timeout_seconds != null ? `${judge.judge_timeout_seconds} 秒` : '后端默认' }
+  ]
+})
 
 function normalizeSuite(raw) {
   const id = String(raw?.id || raw?.benchmark_id || '').trim()
@@ -123,8 +201,14 @@ function normalizeSuite(raw) {
   const costTier = String(raw?.cost_tier || '').trim().toLowerCase()
   const status = normalizeStatus(raw)
   const gameCount = numberOrNull(raw?.game_count ?? raw?.battle_games ?? raw?.games)
+  const maxDays = numberOrNull(raw?.max_days)
   const seedCount = numberOrNull(raw?.seed_count)
   const version = raw?.version == null || raw.version === '' ? '' : `v${raw.version}`
+  const configHash = String(raw?.config_hash || raw?.benchmark_config_hash || '').trim()
+  const seedPreview = normalizeSeedPreview(raw)
+  const launchable = raw?.launchable == null
+    ? !['deprecated', 'disabled', 'archived', 'draft'].includes(status)
+    : raw.launchable !== false && !['deprecated', 'disabled', 'archived', 'draft'].includes(status)
   return {
     raw,
     id,
@@ -140,14 +224,39 @@ function normalizeSuite(raw) {
     evaluationSetId: String(raw?.evaluation_set_id || ''),
     seedSetId: String(raw?.seed_set_id || ''),
     gameCount,
+    maxDays,
     seedCount,
+    seedPreview,
+    seedPreviewLabel: seedPreview.join('、'),
+    pairedSeed: Boolean(raw?.paired_seed),
+    configHash,
+    shortConfigHash: shortHash(configHash),
+    seedSet: objectOrEmpty(raw?.seed_set),
+    metrics: objectOrEmpty(raw?.metrics),
+    gates: objectOrEmpty(raw?.gates),
+    judge: objectOrEmpty(raw?.judge),
     roles: Array.isArray(raw?.roles) ? raw.roles : [],
     lastRun: normalizeLastRun(raw?.last_run),
     latestSnapshot: normalizeLatestSnapshot(raw?.latest_snapshot),
     isQuick: isQuickSuite(raw, costTier),
     isRelease: isReleaseSuite(raw, costTier),
-    enabled: !['deprecated', 'disabled', 'archived'].includes(status)
+    enabled: launchable,
+    launchable,
+    launchDisabledReason: launchable
+      ? ''
+      : String(raw?.launch_disabled_reason || raw?.launchDisabledReason || '').trim() || defaultLaunchDisabledReason(status)
   }
+}
+
+function normalizeSeedPreview(raw) {
+  const candidates = [raw?.seed_preview, raw?.seedPreview, raw?.seed_set?.seed_preview, raw?.seed_set?.seeds]
+  const arrayValue = candidates.find((value) => Array.isArray(value))
+  if (arrayValue) return arrayValue.map((seed) => String(seed ?? '').trim()).filter(Boolean).slice(0, 6)
+  return []
+}
+
+function objectOrEmpty(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
 
 function normalizeTargetType(value) {
@@ -275,6 +384,26 @@ function suiteMetaLine(suite) {
   if (suite.seedCount != null) parts.push(`${suite.seedCount} 个种子`)
   parts.push(roleScopeLabel(suite))
   return parts.join(' / ')
+}
+
+function metricLabel(value) {
+  const key = String(value || '').trim()
+  if (!key) return ''
+  return metricLabels[key] || key
+}
+
+function formatGateValue(key, value) {
+  const number = Number(value)
+  if (Number.isFinite(number) && String(key || '').includes('rate')) return `${Math.round(number * 100)}%`
+  return String(value)
+}
+
+function defaultLaunchDisabledReason(status) {
+  if (status === 'draft') return '草稿套件启用后才能启动。'
+  if (status === 'deprecated') return '废弃套件只保留历史审计，不能启动。'
+  if (status === 'disabled') return '停用套件不能启动。'
+  if (status === 'archived') return '归档套件只能查看历史结果。'
+  return '当前套件不能启动。'
 }
 
 function selectSuite(id) {
@@ -411,26 +540,95 @@ function selectLegacyScope(targetType) {
       </section>
     </div>
 
-    <footer v-if="selectedSuite" class="suite-rail-selected">
-      <small>已选择</small>
-      <b>{{ selectedSuite.label }}</b>
-      <span>{{ selectedSuite.targetTypeLabel }} / {{ selectedSuite.costTierLabel }}</span>
+    <footer v-if="selectedSuite" class="suite-rail-selected" aria-label="选中套件详情">
+      <header>
+        <div>
+          <small>套件详情</small>
+          <b>{{ selectedSuite.label }}</b>
+        </div>
+        <span :class="['suite-selected-status', selectedSuite.launchable ? 'ok' : 'blocked']">
+          {{ selectedSuite.launchable ? '可启动' : '不可启动' }}
+        </span>
+      </header>
+      <p v-if="selectedSuite.description">{{ selectedSuite.description }}</p>
+      <div v-if="selectedSuite.launchDisabledReason" class="suite-selected-warning">
+        {{ selectedSuite.launchDisabledReason }}
+      </div>
+
+      <section class="suite-selected-grid" aria-label="协议摘要">
+        <span v-for="item in selectedSpecRows" :key="item.key" :title="item.title || String(item.value || '')">
+          <small>{{ item.label }}</small>
+          <b>{{ item.value }}</b>
+        </span>
+      </section>
+
+      <section class="suite-selected-section" aria-label="种子集">
+        <div class="suite-selected-subtitle">
+          <b>种子集</b>
+          <small>{{ selectedSuite.seedSet?.enabled === false ? '停用' : '固定边界' }}</small>
+        </div>
+        <span v-for="item in selectedSeedRows" :key="item.key" :title="item.title || String(item.value || '')">
+          <small>{{ item.label }}</small>
+          <b>{{ item.value }}</b>
+        </span>
+      </section>
+
+      <section class="suite-selected-section" aria-label="指标和门禁">
+        <div class="suite-selected-subtitle">
+          <b>指标 / 门禁</b>
+          <small>{{ selectedSuite.costTierLabel }}</small>
+        </div>
+        <span v-for="item in selectedMetricRows" :key="item.key">
+          <small>{{ item.label }}</small>
+          <b>{{ item.value }}</b>
+        </span>
+        <span v-for="item in selectedGateRows" :key="item.key">
+          <small>{{ item.label }}</small>
+          <b>{{ item.value }}</b>
+        </span>
+      </section>
+
+      <section class="suite-selected-section" aria-label="裁判配置">
+        <div class="suite-selected-subtitle">
+          <b>裁判配置</b>
+          <small>{{ selectedSuite.pairedSeed ? 'paired seed' : '非配对' }}</small>
+        </div>
+        <span v-for="item in selectedJudgeRows" :key="item.key">
+          <small>{{ item.label }}</small>
+          <b>{{ item.value }}</b>
+        </span>
+      </section>
+
+      <section class="suite-selected-activity" aria-label="最近产物">
+        <span>
+          <small>最近运行</small>
+          <b>{{ selectedSuite.lastRun?.statusLabel || '暂无运行' }}</b>
+          <em>{{ selectedSuite.lastRun?.shortId || selectedSuite.lastRun?.timeLabel || '等待启动' }}</em>
+        </span>
+        <span>
+          <small>最新快照</small>
+          <b>{{ selectedSuite.latestSnapshot ? `${selectedSuite.latestSnapshot.rowCount ?? 0} 行` : '未发布' }}</b>
+          <em>{{ selectedSuite.latestSnapshot?.shortHash || selectedSuite.latestSnapshot?.shortId || '无冻结榜单' }}</em>
+        </span>
+      </section>
     </footer>
   </aside>
 </template>
 
 <style scoped>
 .benchmark-suite-rail {
-  --rail-bg: #f8f0e0;
-  --rail-panel: rgba(255, 252, 245, 0.7);
-  --rail-line: rgba(139, 94, 52, 0.15);
-  --rail-line-strong: rgba(90, 51, 25, 0.34);
-  --rail-text: #3a2a18;
-  --rail-muted: #8b6b4a;
-  --rail-soft: rgba(139, 94, 52, 0.08);
-  --rail-soft-strong: rgba(90, 51, 25, 0.12);
-  --rail-accent: #5a3319;
-  --rail-danger: #5a3319;
+  --rail-bg: var(--bench-bg-texture, var(--logbook-bg-texture, #f2dfae));
+  --rail-panel: var(--bench-surface, var(--logbook-surface, rgba(255, 252, 245, 0.7)));
+  --rail-line: var(--bench-border, var(--logbook-border, rgba(139, 94, 52, 0.15)));
+  --rail-line-strong: var(--bench-border-strong, var(--logbook-border-strong, rgba(90, 51, 25, 0.34)));
+  --rail-text: var(--bench-text, var(--logbook-text, #3a2a18));
+  --rail-muted: var(--bench-text-secondary, var(--logbook-muted, #8b6b4a));
+  --rail-soft: var(--bench-hover, var(--logbook-hover, rgba(139, 94, 52, 0.06)));
+  --rail-soft-strong: var(--bench-active-bg, var(--logbook-active-bg, rgba(139, 94, 52, 0.1)));
+  --rail-accent: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
+  --rail-danger: var(--bench-danger, var(--logbook-danger, #993026));
+  --rail-danger-border: var(--bench-danger-border, rgba(153, 48, 38, 0.28));
+  --rail-danger-bg: var(--bench-danger-bg, rgba(153, 48, 38, 0.06));
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -707,9 +905,7 @@ function selectLegacyScope(targetType) {
 .suite-row-main strong,
 .suite-row-main em,
 .suite-row-meta small,
-.suite-row-foot small,
-.suite-rail-selected b,
-.suite-rail-selected span {
+.suite-row-foot small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -839,28 +1035,152 @@ function selectLegacyScope(targetType) {
 
 .suite-rail-selected {
   display: grid;
-  gap: 2px;
+  gap: 8px;
   min-width: 0;
-  padding: 9px 10px;
+  max-height: 44%;
+  overflow-y: auto;
+  padding: 10px;
   border: 1px solid var(--rail-line-strong);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--rail-soft-strong);
 }
 
-.suite-rail-selected small {
+.suite-rail-selected header,
+.suite-selected-subtitle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.suite-rail-selected header div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.suite-rail-selected header b {
+  color: var(--rail-text);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.suite-selected-status {
+  display: inline-grid;
+  place-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--rail-line);
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.7);
+  color: var(--rail-accent);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.suite-selected-status.blocked {
+  border-color: var(--rail-danger-border);
+  background: var(--rail-danger-bg);
+  color: var(--rail-danger);
+}
+
+.suite-rail-selected p,
+.suite-selected-warning {
+  margin: 0;
+  color: var(--rail-muted);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.suite-selected-warning {
+  padding: 7px 8px;
+  border: 1px solid var(--rail-danger-border);
+  border-radius: 6px;
+  background: var(--rail-danger-bg);
+  color: var(--rail-danger);
+  font-weight: 850;
+}
+
+.suite-selected-grid,
+.suite-selected-section,
+.suite-selected-activity {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.suite-selected-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.suite-selected-section,
+.suite-selected-activity {
+  padding-top: 8px;
+  border-top: 1px solid var(--rail-line);
+}
+
+.suite-selected-section {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.suite-selected-subtitle {
+  grid-column: 1 / -1;
+}
+
+.suite-selected-subtitle b {
+  color: var(--rail-text);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.suite-selected-grid span,
+.suite-selected-section > span,
+.suite-selected-activity span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--rail-line);
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.62);
+}
+
+.suite-selected-activity {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.suite-rail-selected small,
+.suite-selected-subtitle small,
+.suite-selected-activity small {
   color: var(--rail-muted);
   font-size: 10px;
   font-weight: 900;
-  text-transform: uppercase;
 }
 
-.suite-rail-selected b {
+.suite-selected-grid b,
+.suite-selected-section > span b,
+.suite-selected-activity b,
+.suite-selected-activity em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suite-selected-grid b,
+.suite-selected-section > span b,
+.suite-selected-activity b {
+  color: var(--rail-text);
   font-size: 12px;
+  font-weight: 900;
 }
 
-.suite-rail-selected span {
+.suite-selected-activity em {
   color: var(--rail-muted);
   font-size: 11px;
+  font-style: normal;
   font-weight: 700;
 }
 </style>

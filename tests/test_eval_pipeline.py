@@ -1203,6 +1203,7 @@ def test_persist_batch_node_carries_benchmark_evaluation_metadata(tmp_path, monk
             "comparison_type": "role_version",
             "target_role": "seer",
             "target_version_id": "seer_candidate_v2",
+            "benchmark_config_hash": "sha256:role-meta",
             "evaluation_set_id": "role-baseline-v1@v1",
             "seed_set_id": "role-baseline-quick-202606",
         },
@@ -1230,6 +1231,9 @@ def test_persist_batch_node_carries_benchmark_evaluation_metadata(tmp_path, monk
     assert saved_batches[0]["comparison_group_id"] == "bench_meta"
     assert leaderboard_entries[0]["evaluation_set_id"] == "role-baseline-v1@v1"
     assert leaderboard_entries[0]["seed_set_id"] == "role-baseline-quick-202606"
+    assert leaderboard_entries[0]["summary"]["benchmark_config_hash"] == "sha256:role-meta"
+    assert leaderboard_entries[0]["summary"]["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert leaderboard_entries[0]["summary"]["seed_set_id"] == "role-baseline-quick-202606"
     assert leaderboard_entries[0]["scope"] == "role_version"
     assert leaderboard_entries[0]["subject_id"] == "seer_candidate_v2"
 
@@ -1271,6 +1275,7 @@ def test_persist_batch_node_writes_model_scope_leaderboard_entry(tmp_path, monke
             "comparison_type": "model",
             "model_id": "qwen-max",
             "model_config_hash": "runtime_hash_v1",
+            "benchmark_config_hash": "sha256:model-meta",
             "evaluation_set_id": "model-baseline-v1@v1",
             "seed_set_id": "model-baseline-quick-202606",
         },
@@ -1308,6 +1313,9 @@ def test_persist_batch_node_writes_model_scope_leaderboard_entry(tmp_path, monke
     assert leaderboard_entries[0].get("target_version_id") is None
     assert leaderboard_entries[0]["evaluation_set_id"] == "model-baseline-v1@v1"
     assert leaderboard_entries[0]["seed_set_id"] == "model-baseline-quick-202606"
+    assert leaderboard_entries[0]["summary"]["benchmark_config_hash"] == "sha256:model-meta"
+    assert leaderboard_entries[0]["summary"]["evaluation_set_id"] == "model-baseline-v1@v1"
+    assert leaderboard_entries[0]["summary"]["seed_set_id"] == "model-baseline-quick-202606"
     assert leaderboard_entries[0]["strength_score"] == 6.8
 
 

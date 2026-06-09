@@ -35,7 +35,7 @@ test('Benchmark judge evidence maps aggregate, lowest decisions, and diagnostics
   assert.match(source, /evidenceRefs:\s*uniqueRows\(fieldRows\(aggregate, \['evidence_refs', 'evidence_ref', 'evidence'\]\)\)/)
   assert.match(source, /counterfactuals:\s*uniqueRows\(fieldRows\(aggregate, \['counterfactual', 'counterfactuals'\]\)\)/)
   assert.match(source, /rubricMisses:\s*uniqueRows\(\[[\s\S]*top_rubric_misses[\s\S]*top_mistake_tags/)
-  assert.match(source, /diagnostics:\s*uniqueRows\(\[\.\.\.fieldRows\(aggregate, \['diagnostics', 'diagnostic'\]\), \.\.\.diagnosticsRows\]\)/)
+  assert.match(source, /diagnostics:\s*uniqueRows\(displayEvidenceRows\(\[\.\.\.fieldRows\(aggregate, \['diagnostics', 'diagnostic'\]\), \.\.\.diagnosticsRows\]\)\)/)
   assert.match(source, /degradedReasons:\s*uniqueRows\(\[[\s\S]*degraded_reasons[\s\S]*degradedDiagnostics\.map\(diagnosticReason\)/)
   assert.match(source, /warnings:\s*uniqueRows\(\[[\s\S]*fieldRows\(aggregate, \['warnings', 'warning'\]\)[\s\S]*warningDiagnostics\.map\(diagnosticReason\)/)
 })
@@ -46,8 +46,28 @@ test('Benchmark judge diagnostics keep result scoping without dropping batch-lev
   assert.match(source, /function diagnosticMatchesBenchmarkJudgeSource\(row, source\)/)
   assert.match(source, /const rowResultId = String\(row\?\.result_batch_id \|\| ''\)/)
   assert.doesNotMatch(source, /const rowResultId = String\(row\?\.result_batch_id \|\| row\?\.batch_id/)
-  assert.match(source, /title: 'Decision Judge 诊断'/)
+  assert.match(source, /title: '决策 Judge 诊断'/)
   assert.match(source, /return haystack\.includes\('judge'\) \|\| hasJudgeEvidenceFields\(row\)/)
+})
+
+test('Benchmark report visible judge copy stays Chinese-first', () => {
+  const source = benchmarkReportSource()
+
+  assert.match(source, /const STATUS_LABELS = \{[\s\S]*accepted: '通过'[\s\S]*bad: '低分'/)
+  assert.match(source, /const DISPLAY_LABELS = \{[\s\S]*'Benchmark ID': '评测 ID'[\s\S]*'Decision Judge': '决策 Judge'[\s\S]*diagnostic: '诊断'/)
+  assert.match(source, /statusDisplayLabel\(canonicalReport\.value\?\.status\)/)
+  assert.match(source, /statusLabel: statusDisplayLabel\(game\?\.status_label \|\| game\?\.statusLabel \|\| game\?\.status\)/)
+  assert.match(source, /Object\.entries\(reproducibility\)\.map\(\(\[label, value\]\) => \(\{ label: reproducibilityLabel\(label\), value \}\)\)/)
+  assert.match(source, /function displayEvidenceRow\(row\)/)
+  assert.match(source, /kind: diagnosticDisplayLabel\(row\.kind\)/)
+  assert.match(source, /sourceTypeLabel\(source\.type\)/)
+  assert.match(source, /`\$\{judgedCount\} 已判定`/)
+  assert.match(source, /`低分率 \$\{\(badRate \* 100\)\.toFixed\(0\)\}%`/)
+  assert.match(source, /diagnosticDisplayLabel\(decision\?\.quality \|\| '低分决策'\)/)
+  assert.doesNotMatch(source, /`\$\{value\} judged`/)
+  assert.doesNotMatch(source, /`bad \$\{/)
+  assert.doesNotMatch(source, /<small>Decision Judge<\/small>/)
+  assert.doesNotMatch(source, /label: 'Benchmark ID'/)
 })
 
 test('Benchmark judge evidence styles are dense and mobile-safe', () => {

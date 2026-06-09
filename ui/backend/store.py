@@ -219,6 +219,156 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         """Load model-scope benchmark leaderboard rows."""
         return self.leaderboard_entries(scope="model", evaluation_set_id=evaluation_set_id, limit=limit)
 
+    def leaderboard_unrankable_evidence(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 100,
+        rows: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return non-ranking evidence rows for subjects excluded by leaderboard gates."""
+        normalized_scope = str(scope or "").strip().lower() or None
+        source_rows = rows if rows is not None else self.leaderboard_entries(
+            scope=normalized_scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role if normalized_scope != "model" else None,
+            limit=limit,
+        )
+        evidence = _filter_unrankable_evidence_for_compare(
+            source_rows,
+            scope=normalized_scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role if normalized_scope != "model" else None,
+        )
+        evidence.extend(
+            self._benchmark_batch_unrankable_evidence(
+                scope=normalized_scope,
+                evaluation_set_id=evaluation_set_id,
+                target_role=target_role if normalized_scope != "model" else None,
+                limit=limit,
+            )
+        )
+        return _dedupe_unrankable_evidence(evidence)[: max(1, min(int(limit or 100), 500))]
+
+    def _benchmark_batch_unrankable_evidence(
+        self,
+        *,
+        scope: str | None,
+        evaluation_set_id: str | None,
+        target_role: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Recover gate-failed benchmark results that never reached leaderboard rows."""
+        normalized_scope = str(scope or "").strip().lower() or None
+        requested_eval = str(evaluation_set_id or "").strip()
+        requested_role = str(target_role or "").strip().lower()
+        evidence: list[dict[str, Any]] = []
+        capped_limit = max(1, min(int(limit or 100), 500))
+        for batch in self.evolution_batches.values():
+            if not isinstance(batch, dict):
+                continue
+            meta = _benchmark_batch_boundary(batch)
+            batch_scope = str(meta.get("target_type") or "").strip().lower()
+            if normalized_scope and batch_scope and batch_scope != normalized_scope:
+                continue
+            batch_eval = str(meta.get("evaluation_set_id") or "").strip()
+            if requested_eval and batch_eval != requested_eval:
+                continue
+            for index, result in enumerate(_benchmark_results(batch), start=1):
+                if not _benchmark_result_has_unrankable_evidence(result):
+                    continue
+                result_role = _benchmark_result_role(result)
+                if requested_role and str(result_role or "").strip().lower() != requested_role:
+                    continue
+                result_config = result.get("config") if isinstance(result.get("config"), dict) else {}
+                summary = result.get("score_summary") if isinstance(result.get("score_summary"), dict) else {}
+                gate = result.get("leaderboard_gate") if isinstance(result.get("leaderboard_gate"), dict) else {}
+                gate_metrics = gate.get("metrics") if isinstance(gate.get("metrics"), dict) else {}
+                result_batch_id = _benchmark_result_batch_id(result)
+                model_id = _first_text(result.get("model_id"), result_config.get("model_id"), meta.get("model_id"))
+                model_config_hash = _first_text(
+                    result.get("model_config_hash"),
+                    result_config.get("model_config_hash"),
+                    meta.get("model_config_hash"),
+                )
+                target_version_id = _first_text(result.get("target_version_id"), result_config.get("target_version_id"))
+                subject_id = (
+                    model_config_hash or model_id or result_batch_id
+                    if batch_scope == "model"
+                    else target_version_id or result_batch_id
+                )
+                total_games = _first_int(
+                    result.get("total_games"),
+                    result.get("game_count"),
+                    result.get("attempted_game_count"),
+                    result_config.get("game_count"),
+                    summary.get("total_games"),
+                    summary.get("game_count"),
+                    default=_benchmark_result_game_count(result),
+                )
+                completed_games = _first_int(
+                    result.get("completed_games"),
+                    result.get("completed"),
+                    result.get("games_played"),
+                    summary.get("completed_games"),
+                    summary.get("games_played"),
+                    gate_metrics.get("completed_games"),
+                    default=_benchmark_result_game_count(result),
+                )
+                reason = _first_text(
+                    result.get("rankable_reason"),
+                    result.get("leaderboard_skipped_reason"),
+                    gate.get("reason"),
+                    summary.get("rankable_reason"),
+                    "rankable gate failed",
+                )
+                row_summary = dict(summary)
+                row_summary.update(
+                    {
+                        "batch_id": meta.get("batch_id"),
+                        "result_batch_id": result_batch_id,
+                        "rankable_reason": reason,
+                        "leaderboard_skipped_reason": result.get("leaderboard_skipped_reason") or gate.get("reason"),
+                        "completed_games": completed_games,
+                        "total_games": total_games,
+                    }
+                )
+                row = {
+                    "scope": batch_scope or normalized_scope,
+                    "hash": subject_id,
+                    "subject_id": subject_id,
+                    "model_id": model_id or None,
+                    "model_config_hash": model_config_hash or None,
+                    "target_role": result_role,
+                    "target_version_id": target_version_id or None,
+                    "comparison_group_id": meta.get("batch_id"),
+                    "evaluation_set_id": batch_eval or requested_eval,
+                    "seed_set_id": meta.get("seed_set_id"),
+                    "game_count": total_games,
+                    "games_played": completed_games,
+                    "completed_games": completed_games,
+                    "total_games": total_games,
+                    "valid_game_rate": _first_float(
+                        result.get("valid_game_rate"),
+                        summary.get("valid_game_rate"),
+                        gate_metrics.get("valid_game_rate"),
+                    ),
+                    "rankable": False,
+                    "rankable_reason": reason,
+                    "leaderboard_skipped_reason": result.get("leaderboard_skipped_reason") or gate.get("reason"),
+                    "summary": row_summary,
+                    "batch_id": meta.get("batch_id"),
+                    "result_batch_id": result_batch_id,
+                    "updated_at": batch.get("finished_at") or batch.get("updated_at") or batch.get("started_at"),
+                    "source": "benchmark_batch",
+                }
+                evidence.append(_leaderboard_unrankable_evidence_row(row, index=index))
+                if len(evidence) >= capped_limit:
+                    return evidence
+        return evidence
+
     def leaderboard_compare(
         self,
         *,
@@ -236,11 +386,22 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             target_role=target_role if normalized_scope != "model" else None,
             limit=limit,
         )
-        baseline = _select_leaderboard_baseline(rows, baseline_subject_id=baseline_subject_id)
+        rankable_rows = [row for row in rows if row.get("rankable") is not False]
+        unrankable_evidence = self.leaderboard_unrankable_evidence(
+            scope=normalized_scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role if normalized_scope != "model" else None,
+            limit=limit,
+            rows=rows,
+        )
+        baseline = _select_leaderboard_baseline(rankable_rows, baseline_subject_id=baseline_subject_id)
         compare_rows = [
             _leaderboard_compare_row(row, baseline, scope=normalized_scope, target_role=target_role)
-            for row in rows
+            for row in rankable_rows
         ]
+        summary = _leaderboard_compare_summary(compare_rows)
+        summary["unrankable_count"] = len(unrankable_evidence)
+        summary["unrankable_evidence_count"] = len(unrankable_evidence)
         return {
             "kind": "benchmark_leaderboard_compare",
             "schema_version": 1,
@@ -250,7 +411,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "baseline_subject_id": _leaderboard_subject_key(baseline) if baseline else None,
             "baseline": baseline,
             "rows": compare_rows,
-            "summary": _leaderboard_compare_summary(compare_rows),
+            "unrankable_evidence": unrankable_evidence,
+            "summary": summary,
         }
 
     def create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
@@ -276,6 +438,16 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
         now = beijing_now_iso()
         frozen_rows = [_json_clone(row) for row in rows]
+        release_gate_error = _benchmark_snapshot_release_gate_error(
+            frozen_rows,
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            seed_set_id=request.seed_set_id,
+            benchmark_config_hash=request.benchmark_config_hash,
+            target_role=target_role,
+        )
+        if release_gate_error:
+            raise HTTPException(status_code=422, detail=release_gate_error)
         rankable_count = sum(1 for row in frozen_rows if row.get("rankable") is not False)
         summary = {
             "row_count": len(frozen_rows),
@@ -805,6 +977,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "comparison_group_id": payload.get("comparison_group_id"),
             "evaluation_set_id": payload.get("evaluation_set_id"),
             "seed_set_id": payload.get("seed_set_id"),
+            "benchmark_config_hash": _first_text(
+                payload.get("benchmark_config_hash"),
+                payload.get("config_hash"),
+                summary.get("benchmark_config_hash") if isinstance(summary, dict) else None,
+                summary.get("config_hash") if isinstance(summary, dict) else None,
+            ) or None,
             "game_count": game_count,
             "games_played": game_count,
             "valid_game_rate": float(payload.get("valid_game_rate") or 0.0),
@@ -881,7 +1059,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         from app.lib.benchmark_spec import list_benchmark_specs
 
         summaries: list[dict[str, Any]] = []
-        for spec in list_benchmark_specs(self.paths):
+        for spec in list_benchmark_specs(self.paths, include_inactive=True):
             materialized, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
             summary = benchmark_spec_summary(materialized, seed_set)
             summary.update(self._benchmark_suite_activity(summary))
@@ -1056,6 +1234,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         result_batch_id: str | None = None,
         target_role: str | None = None,
         status: str | None = None,
+        seed: str | None = None,
         limit: int | None = None,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -1069,7 +1248,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             games = [game for game in games if str(game.get("target_role") or "").lower() == role_text]
         statuses = _filter_values(status)
         if statuses is not None:
-            games = [game for game in games if _match_filter(game.get("status", "completed"), statuses)]
+            games = [game for game in games if _benchmark_game_matches_status_filter(game, statuses)]
+        seeds = _filter_values(seed)
+        if seeds is not None:
+            games = [game for game in games if _match_filter(game.get("seed"), seeds)]
         page, pagination = _pagination(games, limit=limit, offset=offset)
         return {
             "kind": "benchmark_batch_games",
@@ -1078,14 +1260,46 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "result_batch_id": result_batch_id,
             "target_role": target_role,
             "status": status,
+            "seed": seed,
             "games": page,
             "pagination": pagination,
         }
 
-    def benchmark_batch_diagnostics(self, batch_id: str) -> dict[str, Any]:
+    def benchmark_batch_diagnostics(
+        self,
+        batch_id: str,
+        *,
+        target_role: str | None = None,
+        kind: str | None = None,
+        level: str | None = None,
+        status: str | None = None,
+        stage: str | None = None,
+        seed: str | None = None,
+    ) -> dict[str, Any]:
         """Return aggregated benchmark run diagnostics."""
         batch = self._benchmark_batch_or_404(batch_id)
         diagnostics = _benchmark_diagnostic_entries(batch)
+        meta = _benchmark_batch_boundary(batch)
+        kind_filter = _filter_values(kind)
+        level_filter = _filter_values(level)
+        status_filter = _filter_values(status)
+        stage_filter = _filter_values(stage)
+        seed_filter = _filter_values(seed)
+        normalized_target_role = str(target_role or "").strip().lower()
+        if any(value is not None for value in (kind_filter, level_filter, status_filter, stage_filter, seed_filter)) or normalized_target_role:
+            diagnostics = [
+                item for item in diagnostics
+                if _benchmark_diagnostic_matches(
+                    item,
+                    meta,
+                    target_role=normalized_target_role,
+                    kind_filter=kind_filter,
+                    level_filter=level_filter,
+                    status_filter=status_filter,
+                    stage_filter=stage_filter,
+                    seed_filter=seed_filter,
+                )
+            ]
         return {
             "kind": "benchmark_batch_diagnostics",
             "schema_version": 1,
@@ -1093,6 +1307,14 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "status": batch.get("status"),
             "benchmark": batch.get("benchmark"),
             "target_type": batch.get("target_type"),
+            "filters": {
+                "target_role": target_role,
+                "kind": kind,
+                "level": level,
+                "status": status,
+                "stage": stage,
+                "seed": seed,
+            },
             "diagnostics": diagnostics,
             "summary": _benchmark_diagnostic_summary(diagnostics),
         }
@@ -1253,6 +1475,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                     target_role=normalized_target_role,
                     kind_filter=kind_filter,
                     level_filter=level_filter,
+                    status_filter=status_filter,
                     stage_filter=stage_filter,
                     seed_filter=seed_filter,
                 )
@@ -2056,6 +2279,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "batch_id": f"{batch_id}_{role}" if role else batch_id,
             "comparison_group_id": batch_id,
             "comparison_type": target_type,
+            "scope": target_type,
             "game_count": game_count,
             "max_days": max_days,
             "paired_seed": paired_seed,
@@ -2094,7 +2318,25 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         if not request.benchmark_id:
             return None, None
         try:
-            return materialize_benchmark_spec(load_benchmark_spec(request.benchmark_id, self.paths), paths=self.paths)
+            spec, seed_set = materialize_benchmark_spec(load_benchmark_spec(request.benchmark_id, self.paths), paths=self.paths)
+            if not spec.launchable:
+                reason = benchmark_spec_summary(spec, seed_set).get("launch_disabled_reason") or (
+                    f"benchmark suite status={spec.lifecycle_status} cannot be launched"
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=domain_error_detail(
+                        code="benchmark_suite_not_launchable",
+                        message="Benchmark suite cannot be launched.",
+                        detail=reason,
+                        diagnostics=[{
+                            "kind": "benchmark_suite_not_launchable",
+                            "benchmark_id": spec.id,
+                            "status": spec.lifecycle_status,
+                        }],
+                    ),
+                )
+            return spec, seed_set
         except BenchmarkSpecError as exc:
             status = 404 if "not found" in str(exc) else 422
             detail = "benchmark not found" if status == 404 else str(exc)
@@ -2242,10 +2484,63 @@ def _benchmark_game_item(
         "source_game_id": game.get("source_game_id") or game_id,
         "diagnostic_count": len(diagnostics),
     }
-    for key in ("error", "rankable", "rankable_reason", "timeout", "abnormal"):
+    errors = _text_items(game.get("errors"))
+    if errors and "error_count" not in item:
+        item["error_count"] = len(errors)
+    fallbacks = _dict_items(game.get("fallbacks"))
+    if fallbacks and "fallback_count" not in item:
+        item["fallback_count"] = len(fallbacks)
+    llm_errors = _text_items(game.get("llm_errors"))
+    if llm_errors and "llm_error_count" not in item:
+        item["llm_error_count"] = len(llm_errors)
+    policy_adjustments = _dict_items(game.get("policy_adjustments"))
+    if policy_adjustments and "policy_adjusted_count" not in item:
+        item["policy_adjusted_count"] = len(policy_adjustments)
+    for key in (
+        "error",
+        "rankable",
+        "rankable_reason",
+        "timeout",
+        "abnormal",
+        "fallback",
+        "fallback_count",
+        "llm_error",
+        "llm_error_count",
+        "policy_adjusted",
+        "policy_adjusted_count",
+    ):
         if key in game:
             item[key] = game.get(key)
     return item
+
+
+def _benchmark_game_matches_status_filter(game: dict[str, Any], statuses: set[str]) -> bool:
+    if "problem" in statuses and _benchmark_game_is_problem(game):
+        return True
+    explicit = {status for status in statuses if status != "problem"}
+    if not explicit:
+        return False
+    return _match_filter(game.get("status", "completed"), explicit)
+
+
+def _benchmark_game_is_problem(game: dict[str, Any]) -> bool:
+    status = str(game.get("status") or "").strip().lower()
+    if status in {"failed", "timeout", "abnormal", "cancelled", "interrupted"}:
+        return True
+    if int(game.get("diagnostic_count") or 0) > 0:
+        return True
+    if game.get("error") or game.get("timeout") or game.get("abnormal"):
+        return True
+    for key in ("fallback", "llm_error", "policy_adjusted", "errors", "fallbacks", "llm_errors", "policy_adjustments"):
+        if game.get(key):
+            return True
+    for key in ("error_count", "fallback_count", "llm_error_count", "policy_adjusted_count"):
+        try:
+            if int(game.get(key) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def _benchmark_game_status(game: dict[str, Any]) -> str:
@@ -2457,6 +2752,9 @@ def _benchmark_game_diagnostics(
                     result_batch_id=result_batch_id,
                     target_role=target_role,
                     game_id=game_id,
+                    seed=game.get("seed"),
+                    status=status,
+                    history_game_id=game.get("history_game_id") or game_id,
                     origin="game",
                 )
             )
@@ -2471,6 +2769,9 @@ def _benchmark_diagnostic_entry(
     result_batch_id: str | None = None,
     target_role: str | None = None,
     game_id: str | None = None,
+    seed: Any = None,
+    status: str | None = None,
+    history_game_id: str | None = None,
 ) -> dict[str, Any]:
     item = dict(diagnostic)
     item.setdefault("kind", "diagnostic")
@@ -2484,6 +2785,12 @@ def _benchmark_diagnostic_entry(
         item["target_role"] = target_role
     if game_id:
         item["game_id"] = game_id
+    if seed is not None:
+        item.setdefault("seed", seed)
+    if status:
+        item.setdefault("status", status)
+    if history_game_id:
+        item.setdefault("history_game_id", history_game_id)
     if "message" not in item:
         item["message"] = str(item.get("kind") or "diagnostic")
     return item
@@ -2500,6 +2807,44 @@ def _benchmark_diagnostic_summary(diagnostics: list[dict[str, Any]]) -> dict[str
         "by_origin": dict(sorted(by_origin.items())),
         "has_errors": bool(by_level.get("error")),
     }
+
+
+_BENCHMARK_DIAGNOSTIC_KIND_LABELS = {
+    "diagnostic": "诊断",
+    "leaderboard_gate_failed": "门禁失败",
+    "rankable_gate_failed": "门禁失败",
+    "game_failure": "失败局",
+    "game_timeout": "超时局",
+    "timeout": "超时",
+    "llm_error": "LLM 错误",
+    "fallback": "Fallback",
+    "decision_judge_degraded": "决策 Judge 降级",
+    "decision_judge_skipped": "决策 Judge 跳过",
+    "judge_degraded": "Judge 降级",
+    "judge_skipped": "Judge 跳过",
+}
+
+_BENCHMARK_DIAGNOSTIC_LEVEL_LABELS = {
+    "info": "信息",
+    "warning": "警告",
+    "warn": "警告",
+    "error": "错误",
+    "failed": "失败",
+    "failure": "失败",
+    "timeout": "超时",
+}
+
+
+def _benchmark_report_diagnostic_kind_label(value: Any) -> str:
+    text = str(value or "diagnostic").strip()
+    return _BENCHMARK_DIAGNOSTIC_KIND_LABELS.get(text) or _BENCHMARK_DIAGNOSTIC_KIND_LABELS.get(text.lower()) or text
+
+
+def _benchmark_report_diagnostic_level_label(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "无等级"
+    return _BENCHMARK_DIAGNOSTIC_LEVEL_LABELS.get(text.lower()) or text
 
 
 def _benchmark_diagnostic_aggregate_summary(diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2556,7 +2901,7 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
                 "diagnostic_count": len(_dict_items(result.get("diagnostics"))),
                 "warning_count": len(_text_items(result.get("warnings"))),
                 "rankable": rankable,
-                "rankable_label": "Rankable" if rankable is not False else "Unrankable",
+                "rankable_label": "可入榜" if rankable is not False else "未入榜",
                 "rankable_reason": str(result.get("rankable_reason") or result.get("leaderboard_skipped_reason") or ""),
                 "completed": result.get("completed"),
                 "errored": result.get("errored"),
@@ -2612,7 +2957,7 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
         "seed_set_id": seed_set_id or "ad-hoc",
         "benchmark_config_hash": benchmark_config_hash,
         "suite": {
-            "label": str(benchmark.get("name") or benchmark.get("label") or benchmark.get("id") or meta.get("benchmark_id") or "ad-hoc benchmark"),
+            "label": str(benchmark.get("name") or benchmark.get("label") or benchmark.get("id") or meta.get("benchmark_id") or "临时评测"),
             "benchmark_id": meta.get("benchmark_id") or "",
             "benchmark_version": meta.get("benchmark_version"),
             "target_type": meta.get("target_type"),
@@ -2641,15 +2986,15 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
         "diagnostics": diagnostic_groups,
         "tags": top_tags,
         "reproducibility": {
-            "Suite": str(benchmark.get("name") or benchmark.get("id") or meta.get("benchmark_id") or "ad-hoc benchmark"),
-            "Benchmark ID": meta.get("benchmark_id") or "ad-hoc",
-            "Evaluation Set": evaluation_set_id or "ad-hoc",
-            "Seed Set": seed_set_id or "ad-hoc",
-            "Config Hash": benchmark_config_hash or "not reported",
-            "Model ID": subject.get("model_id") or "not reported",
-            "Model Config Hash": subject.get("model_config_hash") or "not reported",
-            "Target Role": subject.get("target_role") or "not reported",
-            "Target Version": subject.get("target_version_id") or "baseline version",
+            "套件": str(benchmark.get("name") or benchmark.get("id") or meta.get("benchmark_id") or "临时评测"),
+            "评测 ID": meta.get("benchmark_id") or "ad-hoc",
+            "评测集": evaluation_set_id or "ad-hoc",
+            "种子集": seed_set_id or "ad-hoc",
+            "Config Hash": benchmark_config_hash or "未上报",
+            "模型 ID": subject.get("model_id") or "未上报",
+            "模型配置 Hash": subject.get("model_config_hash") or "未上报",
+            "目标角色": subject.get("target_role") or "未上报",
+            "目标版本": subject.get("target_version_id") or "基线版本",
         },
         "leaderboard": {
             "scope": "model" if meta.get("target_type") == "model" else "role_version",
@@ -2742,9 +3087,9 @@ def _benchmark_report_subject(
         or meta.get("model_config_hash")
     )
     if meta.get("target_type") == "model":
-        label = " / ".join([value for value in (str(model_id or ""), str(model_config_hash or "")) if value]) or "current backend model"
+        label = " / ".join([value for value in (str(model_id or ""), str(model_config_hash or "")) if value]) or "当前后端模型"
     else:
-        label = " / ".join([value for value in (str(target_role or ""), str(target_version_id or "baseline version")) if value])
+        label = " / ".join([value for value in (str(target_role or ""), str(target_version_id or "基线版本")) if value])
     return {
         "label": label,
         "target_role": target_role,
@@ -2763,14 +3108,14 @@ def _benchmark_report_gate_rows(
         rows.append(
             {
                 "key": result.get("result_batch_id") or f"result-{index}",
-                "title": result.get("target_role") or result.get("model_id") or result.get("result_batch_id") or f"Result {index}",
-                "status": result.get("rankable_label") or ("Rankable" if result.get("rankable") is not False else "Unrankable"),
-                "reason": result.get("rankable_reason") or "No gate reason reported",
+                "title": result.get("target_role") or result.get("model_id") or result.get("result_batch_id") or f"结果 {index}",
+                "status": result.get("rankable_label") or ("可入榜" if result.get("rankable") is not False else "未入榜"),
+                "reason": result.get("rankable_reason") or "未上报门禁原因",
                 "meta": " / ".join(
                     str(value) for value in (
                         result.get("target_version_id"),
-                        f"{result.get('completed')} completed" if result.get("completed") is not None else "",
-                        f"{result.get('game_count')} games" if result.get("game_count") is not None else "",
+                        f"{result.get('completed')} 局完成" if result.get("completed") is not None else "",
+                        f"{result.get('game_count')} 局" if result.get("game_count") is not None else "",
                     )
                     if value
                 ),
@@ -2781,10 +3126,10 @@ def _benchmark_report_gate_rows(
         rows.append(
             {
                 "key": f"kind-{group.get('kind')}",
-                "title": group.get("label") or group.get("kind") or "diagnostic",
-                "status": f"{group.get('total', 0)} diagnostics",
-                "reason": "Diagnostic kind reported by selected run",
-                "meta": "diagnostic kind",
+                "title": group.get("label") or _benchmark_report_diagnostic_kind_label(group.get("kind")),
+                "status": f"{group.get('total', 0)} 条诊断",
+                "reason": "所选运行上报了该诊断类型",
+                "meta": "诊断类型",
                 "blocked": False,
             }
         )
@@ -2800,7 +3145,7 @@ def _benchmark_report_diagnostic_groups(diagnostics: list[dict[str, Any]]) -> li
             kind,
             {
                 "kind": kind,
-                "label": kind,
+                "label": _benchmark_report_diagnostic_kind_label(kind),
                 "total": 0,
                 "levels": Counter(),
                 "games": set(),
@@ -2815,13 +3160,16 @@ def _benchmark_report_diagnostic_groups(diagnostics: list[dict[str, Any]]) -> li
             group["stages"].add(str(item.get("stage")))
     rows: list[dict[str, Any]] = []
     for group in groups.values():
-        level_label = ", ".join(f"{level}: {count}" for level, count in group["levels"].most_common(2))
+        level_label = ", ".join(
+            f"{_benchmark_report_diagnostic_level_label(level)}: {count}"
+            for level, count in group["levels"].most_common(2)
+        )
         rows.append(
             {
                 "kind": group["kind"],
                 "label": group["label"],
                 "total": group["total"],
-                "level": level_label or "no level",
+                "level": level_label or "无等级",
                 "game_count": len(group["games"]),
                 "stage_count": len(group["stages"]),
             }
@@ -2868,30 +3216,30 @@ def _benchmark_problem_status_weight(status: Any) -> int:
 
 def _benchmark_run_report_markdown(report: dict[str, Any]) -> str:
     lines = [
-        f"# Benchmark Run Report: {_markdown_value(report.get('run_id'))}",
+        f"# 评测运行报告：{_markdown_value(report.get('run_id'))}",
         "",
-        "## Header",
-        f"- Run ID: {_markdown_value(report.get('run_id'))}",
-        f"- Suite: {_markdown_value(report.get('suite', {}).get('label'))}",
-        f"- Status: {_markdown_value(report.get('status'))}",
-        f"- Target Type: {_markdown_value(report.get('suite', {}).get('target_type'))}",
-        f"- Evaluation Set: {_markdown_value(report.get('suite', {}).get('evaluation_set_id'))}",
-        f"- Seed Set: {_markdown_value(report.get('suite', {}).get('seed_set_id'))}",
-        f"- Subject: {_markdown_value(report.get('subject', {}).get('label'))}",
+        "## 报告头",
+        f"- 运行 ID: {_markdown_value(report.get('run_id'))}",
+        f"- 套件: {_markdown_value(report.get('suite', {}).get('label'))}",
+        f"- 状态: {_markdown_value(report.get('status'))}",
+        f"- 对象类型: {_markdown_value(report.get('suite', {}).get('target_type'))}",
+        f"- 评测集: {_markdown_value(report.get('suite', {}).get('evaluation_set_id'))}",
+        f"- 种子集: {_markdown_value(report.get('suite', {}).get('seed_set_id'))}",
+        f"- 评测对象: {_markdown_value(report.get('subject', {}).get('label'))}",
         "",
-        "## Summary",
+        "## 摘要",
     ]
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     game_summary = summary.get("game_summary") if isinstance(summary.get("game_summary"), dict) else {}
     diagnostic_summary = summary.get("diagnostic_summary") if isinstance(summary.get("diagnostic_summary"), dict) else {}
     lines.extend(
         [
-            f"- Rankable: {summary.get('rankable_count', 0)}/{summary.get('result_count', 0)}",
-            f"- Results: {summary.get('result_count', 0)}",
-            f"- Games: {game_summary.get('total', 0)} ({summary.get('problem_game_count', 0)} problem samples)",
-            f"- Diagnostics: {diagnostic_summary.get('total', 0)}",
+            f"- 可入榜: {summary.get('rankable_count', 0)}/{summary.get('result_count', 0)}",
+            f"- 结果数: {summary.get('result_count', 0)}",
+            f"- 对局数: {game_summary.get('total', 0)}（{summary.get('problem_game_count', 0)} 个问题样本）",
+            f"- 诊断数: {diagnostic_summary.get('total', 0)}",
             "",
-            "## Gate Summary",
+            "## 门禁摘要",
         ]
     )
     gates = report.get("gates") if isinstance(report.get("gates"), list) else []
@@ -2900,18 +3248,18 @@ def _benchmark_run_report_markdown(report: dict[str, Any]) -> str:
             f"- {_markdown_value(row.get('title'))}: {_markdown_value(row.get('status'))} - {_markdown_value(row.get('reason'))}"
             for row in gates[:16]
             if isinstance(row, dict)
-        ] or ["- No gate rows loaded"]
+        ] or ["- 未加载门禁行"]
     )
-    lines.extend(["", "## Worst / Problem Games"])
+    lines.extend(["", "## 问题对局"])
     problem_games = report.get("problem_games") if isinstance(report.get("problem_games"), list) else []
     lines.extend(
         [
-            f"- {_markdown_value(game.get('game_id'))}: {_markdown_value(game.get('status'))} / seed {_markdown_value(game.get('seed'))} / diagnostics {game.get('diagnostic_count', 0)} / replay {_markdown_value(game.get('history_game_id') or game.get('replay_unavailable_reason') or 'unavailable')}"
+            f"- {_markdown_value(game.get('game_id'))}: {_markdown_value(game.get('status'))} / 种子 {_markdown_value(game.get('seed'))} / 诊断 {game.get('diagnostic_count', 0)} / 回放 {_markdown_value(game.get('history_game_id') or game.get('replay_unavailable_reason') or '不可用')}"
             for game in problem_games[:8]
             if isinstance(game, dict)
-        ] or ["- No loaded game samples"]
+        ] or ["- 未加载对局样本"]
     )
-    lines.extend(["", "## Top Diagnostics / Tags"])
+    lines.extend(["", "## 诊断与标签"])
     diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), list) else []
     tags = report.get("tags") if isinstance(report.get("tags"), list) else []
     if diagnostics:
@@ -2927,52 +3275,52 @@ def _benchmark_run_report_markdown(report: dict[str, Any]) -> str:
             if isinstance(tag, dict)
         )
     else:
-        lines.append("- No diagnostics loaded")
-    lines.extend(["", "## Reproducibility Bundle"])
+        lines.append("- 未加载诊断")
+    lines.extend(["", "## 复现包"])
     reproducibility = report.get("reproducibility") if isinstance(report.get("reproducibility"), dict) else {}
     lines.extend(f"- {_markdown_value(key)}: {_markdown_value(value)}" for key, value in reproducibility.items())
     return "\n".join(lines)
 
 
 def _benchmark_run_report_csv(report: dict[str, Any]) -> str:
-    rows: list[list[Any]] = [["section", "label", "value", "detail"]]
+    rows: list[list[Any]] = [["区段", "标签", "值", "详情"]]
     suite = report.get("suite") if isinstance(report.get("suite"), dict) else {}
     subject = report.get("subject") if isinstance(report.get("subject"), dict) else {}
     rows.extend(
         [
-            ["header", "Run ID", report.get("run_id"), ""],
-            ["header", "Suite", suite.get("label"), ""],
-            ["header", "Status", report.get("status"), ""],
-            ["header", "Target Type", suite.get("target_type"), ""],
-            ["header", "Evaluation Set", suite.get("evaluation_set_id"), ""],
-            ["header", "Seed Set", suite.get("seed_set_id"), ""],
-            ["header", "Subject", subject.get("label"), ""],
+            ["报告头", "运行 ID", report.get("run_id"), ""],
+            ["报告头", "套件", suite.get("label"), ""],
+            ["报告头", "状态", report.get("status"), ""],
+            ["报告头", "对象类型", suite.get("target_type"), ""],
+            ["报告头", "评测集", suite.get("evaluation_set_id"), ""],
+            ["报告头", "种子集", suite.get("seed_set_id"), ""],
+            ["报告头", "评测对象", subject.get("label"), ""],
         ]
     )
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     rows.extend(
         [
-            ["summary", "Results", summary.get("result_count", 0), ""],
-            ["summary", "Rankable", summary.get("rankable_count", 0), f"{summary.get('unrankable_count', 0)} unrankable"],
-            ["summary", "Problem Games", summary.get("problem_game_count", 0), ""],
+            ["摘要", "结果数", summary.get("result_count", 0), ""],
+            ["摘要", "可入榜", summary.get("rankable_count", 0), f"{summary.get('unrankable_count', 0)} 个未入榜"],
+            ["摘要", "问题对局", summary.get("problem_game_count", 0), ""],
         ]
     )
     for gate in report.get("gates", []) or []:
         if isinstance(gate, dict):
-            rows.append(["gate", gate.get("title"), gate.get("status"), gate.get("reason")])
+            rows.append(["门禁", gate.get("title"), gate.get("status"), gate.get("reason")])
     for game in report.get("problem_games", []) or []:
         if isinstance(game, dict):
             rows.append([
-                "game",
+                "对局",
                 game.get("game_id"),
                 game.get("status"),
-                f"seed {game.get('seed')} / diagnostics {game.get('diagnostic_count', 0)} / history {game.get('history_game_id') or ''}",
+                f"种子 {game.get('seed')} / 诊断 {game.get('diagnostic_count', 0)} / 日志 {game.get('history_game_id') or ''}",
             ])
     for group in report.get("diagnostics", []) or []:
         if isinstance(group, dict):
-            rows.append(["diagnostic", group.get("label"), group.get("total"), group.get("level")])
+            rows.append(["诊断", group.get("label"), group.get("total"), group.get("level")])
     reproducibility = report.get("reproducibility") if isinstance(report.get("reproducibility"), dict) else {}
-    rows.extend(["reproducibility", key, value, ""] for key, value in reproducibility.items())
+    rows.extend(["复现包", key, value, ""] for key, value in reproducibility.items())
     return "\n".join(",".join(_csv_value(value) for value in row) for row in rows)
 
 
@@ -3033,6 +3381,7 @@ def _benchmark_diagnostic_matches(
     target_role: str,
     kind_filter: set[str] | None,
     level_filter: set[str] | None,
+    status_filter: set[str] | None,
     stage_filter: set[str] | None,
     seed_filter: set[str] | None,
 ) -> bool:
@@ -3045,6 +3394,7 @@ def _benchmark_diagnostic_matches(
     return (
         _match_filter(item.get("kind"), kind_filter)
         and _match_filter(item.get("level"), level_filter)
+        and _match_filter(item.get("status") or meta.get("status"), status_filter)
         and _match_filter(item.get("stage"), stage_filter)
         and _match_filter(item.get("seed"), seed_filter)
     )
@@ -3191,6 +3541,133 @@ def _leaderboard_subject_key(row: dict[str, Any] | None) -> str:
         if value:
             return value
     return ""
+
+
+def _first_int(*values: Any, default: int = 0) -> int:
+    for value in values:
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            continue
+        return number
+    return default
+
+
+def _first_float(*values: Any, default: float = 0.0) -> float:
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number:
+            return number
+    return default
+
+
+def _filter_unrankable_evidence_for_compare(
+    rows: list[dict[str, Any]],
+    *,
+    scope: str | None,
+    evaluation_set_id: str | None,
+    target_role: str | None,
+) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if row.get("rankable") is not False:
+            continue
+        row_scope = str(row.get("scope") or "").strip().lower()
+        if scope and row_scope and row_scope != scope:
+            continue
+        row_eval = str(row.get("evaluation_set_id") or "").strip()
+        if evaluation_set_id and row_eval and row_eval != str(evaluation_set_id):
+            continue
+        row_role = str(row.get("target_role") or "").strip().lower()
+        if target_role and row_role and row_role != str(target_role).strip().lower():
+            continue
+        evidence.append(_leaderboard_unrankable_evidence_row(row, index=index))
+    return evidence
+
+
+def _benchmark_result_has_unrankable_evidence(result: dict[str, Any]) -> bool:
+    if result.get("rankable") is False:
+        return True
+    gate = result.get("leaderboard_gate") if isinstance(result.get("leaderboard_gate"), dict) else {}
+    if gate.get("accepted") is False:
+        return True
+    return bool(result.get("leaderboard_skipped_reason"))
+
+
+def _dedupe_unrankable_evidence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for row in rows:
+        subject = str(row.get("subject_id") or row.get("model_config_hash") or row.get("target_version_id") or "")
+        batch_id = str(row.get("batch_id") or "")
+        result_batch_id = str(row.get("result_batch_id") or "")
+        key = (
+            str(row.get("scope") or ""),
+            str(row.get("evaluation_set_id") or ""),
+            str(row.get("target_role") or ""),
+            subject,
+            batch_id,
+            result_batch_id,
+        )
+        if not any(key):
+            key = (str(row.get("evidence_key") or ""),)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _leaderboard_unrankable_evidence_row(row: dict[str, Any], *, index: int) -> dict[str, Any]:
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    completed_games = _first_int(
+        row.get("completed_games"),
+        row.get("games_played"),
+        row.get("completed"),
+        summary.get("completed_games"),
+        summary.get("games_played"),
+        row.get("game_count"),
+    )
+    total_games = _first_int(
+        row.get("total_games"),
+        row.get("game_count"),
+        summary.get("total_games"),
+        summary.get("game_count"),
+        completed_games,
+    )
+    valid_game_rate = _first_float(row.get("valid_game_rate"), summary.get("valid_game_rate"))
+    return {
+        "evidence_key": _leaderboard_subject_key(row) or f"unrankable:{index}",
+        "scope": row.get("scope"),
+        "subject_id": row.get("subject_id") or row.get("hash"),
+        "model_id": row.get("model_id"),
+        "model_config_hash": row.get("model_config_hash"),
+        "target_role": row.get("target_role"),
+        "target_version_id": row.get("target_version_id"),
+        "evaluation_set_id": row.get("evaluation_set_id"),
+        "seed_set_id": row.get("seed_set_id"),
+        "batch_id": row.get("batch_id") or summary.get("batch_id") or row.get("comparison_group_id"),
+        "result_batch_id": row.get("result_batch_id") or summary.get("result_batch_id"),
+        "status": "unrankable",
+        "rankable": False,
+        "reason": _first_text(
+            row.get("rankable_reason"),
+            row.get("leaderboard_skipped_reason"),
+            row.get("reason"),
+            summary.get("rankable_reason"),
+            summary.get("leaderboard_skipped_reason"),
+            summary.get("reason"),
+            "rankable gate failed",
+        ),
+        "completed_games": completed_games,
+        "total_games": total_games,
+        "valid_game_rate": valid_game_rate,
+        "updated_at": row.get("updated_at"),
+        "source": row.get("source") or "leaderboard",
+    }
 
 
 def _select_leaderboard_baseline(
@@ -3393,6 +3870,79 @@ def _benchmark_snapshot_source_summary(rows: list[dict[str, Any]]) -> dict[str, 
         "source_report_count": len(linked_report_ids),
         "source_result_batch_count": len(linked_result_batch_ids),
     }
+
+
+def _benchmark_snapshot_release_gate_error(
+    rows: list[dict[str, Any]],
+    *,
+    scope: str,
+    evaluation_set_id: str,
+    seed_set_id: Any,
+    benchmark_config_hash: Any,
+    target_role: str | None,
+) -> str | None:
+    requested_seed = str(seed_set_id or "").strip()
+    requested_hash = str(benchmark_config_hash or "").strip()
+    if not requested_seed:
+        return "seed_set_id is required for benchmark snapshots"
+    if not requested_hash:
+        return "benchmark_config_hash is required for benchmark snapshots"
+
+    requested_role = str(target_role or "").strip().lower()
+    requested_eval = str(evaluation_set_id or "").strip()
+    for row in rows:
+        if not isinstance(row, dict):
+            return "snapshot rows must be structured objects"
+        summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+        row_scope = str(row.get("scope") or summary.get("scope") or "").strip().lower()
+        if row_scope and row_scope != scope:
+            return "snapshot boundary mismatch: rows do not match requested scope"
+        row_eval = str(row.get("evaluation_set_id") or summary.get("evaluation_set_id") or "").strip()
+        if not row_eval or row_eval != requested_eval:
+            return "snapshot boundary mismatch: rows do not match requested evaluation_set_id"
+        row_seed = str(row.get("seed_set_id") or summary.get("seed_set_id") or "").strip()
+        if not row_seed:
+            return "snapshot rows must include seed_set_id"
+        if row_seed != requested_seed:
+            return "snapshot boundary mismatch: rows do not match requested seed_set_id"
+        if scope == "role_version":
+            row_role = str(row.get("target_role") or summary.get("target_role") or "").strip().lower()
+            if not row_role or row_role != requested_role:
+                return "snapshot boundary mismatch: rows do not match requested target_role"
+        row_hash = str(
+            row.get("benchmark_config_hash")
+            or row.get("config_hash")
+            or summary.get("benchmark_config_hash")
+            or summary.get("config_hash")
+            or ""
+        ).strip()
+        if row_hash and row_hash != requested_hash:
+            return "snapshot boundary mismatch: rows do not match requested benchmark_config_hash"
+        source_run = _first_text(
+            row.get("source_run_id"),
+            row.get("run_id"),
+            row.get("batch_id"),
+            summary.get("source_run_id"),
+            summary.get("run_id"),
+            summary.get("batch_id"),
+        )
+        result_source = _first_text(
+            row.get("result_batch_id"),
+            summary.get("result_batch_id"),
+        )
+        report_source = _first_text(
+            row.get("report_id"),
+            row.get("source_report_id"),
+            summary.get("report_id"),
+            summary.get("source_report_id"),
+        )
+        if not source_run:
+            return "snapshot rows must include source_run_id"
+        if not report_source:
+            return "snapshot rows must include report_id"
+        if not result_source:
+            return "snapshot rows must include result_batch_id"
+    return None
 
 
 def _benchmark_snapshot_string_list(value: Any) -> list[str]:

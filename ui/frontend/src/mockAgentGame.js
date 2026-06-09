@@ -424,6 +424,30 @@ const mockModelLeaderboardEntries = [
     rankable: true,
     data_sufficient: true,
     delta_vs_baseline: {}
+  },
+  {
+    scope: 'model',
+    hash: 'mock-runtime-low-sample',
+    subject_id: 'mock-runtime-low-sample',
+    model_id: 'mock/low-sample',
+    model_config_hash: 'mock-runtime-low-sample',
+    evaluation_set_id: 'model-baseline-standard-v1@v1',
+    seed_set_id: 'model-baseline-standard-202606',
+    comparison_group_id: 'bench-model-release-20260609',
+    batch_id: 'bench-model-release-20260609',
+    result_batch_id: 'result-low-sample',
+    game_count: 30,
+    games_played: 8,
+    valid_game_rate: 0.27,
+    strength_score: 0.34,
+    avg_role_score: 0.31,
+    target_side_win_rate: 0.41,
+    fallback_rate: 0.18,
+    target_role_fallback_rate: 0.18,
+    rankable: false,
+    data_sufficient: false,
+    rankable_reason: '完成局数 8 < 入榜要求 30',
+    delta_vs_baseline: {}
   }
 ]
 
@@ -2946,14 +2970,37 @@ function mockLeaderboardCompare(queryString = '') {
   const targetRole = query.get('target_role') || ''
   const baselineSubjectId = query.get('baseline_subject_id') || ''
   const rows = mockBenchmarkLeaderboardRows({ scope, evaluationSetId, targetRole })
-  const baseline = rows.find((row) =>
+  const rankableRows = rows.filter((row) => row.rankable !== false)
+  const unrankableEvidence = rows
+    .filter((row) => row.rankable === false)
+    .map((row, index) => ({
+      evidence_key: row.subject_id || row.hash || row.model_config_hash || row.target_version_id || `unrankable-${index + 1}`,
+      scope: row.scope || scope,
+      subject_id: row.subject_id || row.hash,
+      model_id: row.model_id || null,
+      model_config_hash: row.model_config_hash || null,
+      target_role: row.target_role || targetRole || null,
+      target_version_id: row.target_version_id || row.version_id || null,
+      evaluation_set_id: row.evaluation_set_id || evaluationSetId || null,
+      seed_set_id: row.seed_set_id || null,
+      batch_id: row.batch_id || row.comparison_group_id || null,
+      result_batch_id: row.result_batch_id || null,
+      status: 'unrankable',
+      rankable: false,
+      reason: row.rankable_reason || row.reason || row.gate_reason || '未达到正式入榜门禁',
+      completed_games: Number(row.games_played ?? row.completed ?? 0),
+      total_games: Number(row.game_count ?? row.total_games ?? 0),
+      valid_game_rate: Number(row.valid_game_rate ?? 0),
+      updated_at: row.updated_at || null
+    }))
+  const baseline = rankableRows.find((row) =>
     baselineSubjectId &&
     [row.subject_id, row.hash, row.model_config_hash, row.target_version_id, row.model_id].includes(baselineSubjectId)
-  ) || rows.find((row) => row.is_baseline) || rows.find((row) => row.rankable !== false) || rows[0] || null
+  ) || rankableRows.find((row) => row.is_baseline) || rankableRows[0] || null
   const baselineKey = baseline?.subject_id || baseline?.hash || baseline?.model_config_hash || baseline?.target_version_id || null
   const baselineScore = Number(baseline?.strength_score ?? baseline?.avg_role_score ?? baseline?.target_role_role_weighted_score ?? 0)
   const baselineWinRate = Number(baseline?.target_side_win_rate ?? 0)
-  const compareRows = rows.map((row) => {
+  const compareRows = rankableRows.map((row) => {
     const key = row.subject_id || row.hash || row.model_config_hash || row.target_version_id || row.model_id
     const score = Number(row.strength_score ?? row.avg_role_score ?? row.target_role_role_weighted_score ?? 0)
     const winRate = Number(row.target_side_win_rate ?? 0)
@@ -2997,10 +3044,12 @@ function mockLeaderboardCompare(queryString = '') {
     baseline_subject_id: baselineKey,
     baseline: clone(baseline),
     rows: clone(compareRows),
+    unrankable_evidence: clone(unrankableEvidence),
     summary: {
       row_count: compareRows.length,
-      rankable_count: compareRows.filter((row) => row.rankable !== false).length,
-      unrankable_count: compareRows.filter((row) => row.rankable === false).length,
+      rankable_count: compareRows.length,
+      unrankable_count: unrankableEvidence.length,
+      unrankable_evidence_count: unrankableEvidence.length,
       improvement_count: byChange.improvement || 0,
       regression_count: byChange.regression || 0,
       stable_count: byChange.stable || 0,
@@ -4063,7 +4112,7 @@ function mockBenchmarkBatchReport(batchId, queryString = '') {
 function mockBenchmarkBatchReportPayload(batchId) {
   const batch = findMockBenchmarkBatch(batchId)
   const detail = mockBenchmarkBatchDetail(batchId)
-  const problemGames = mockBenchmarkBatchGames(batchId, 'status=failed,timeout,abnormal&limit=20&offset=0')
+  const problemGames = mockBenchmarkBatchGames(batchId, 'status=problem&limit=20&offset=0')
   const diagnostics = mockBenchmarkBatchDiagnostics(batchId)
   const results = Array.isArray(detail.results) ? detail.results : []
   const firstResult = results[0] || {}
@@ -4102,12 +4151,16 @@ function mockBenchmarkBatchReportPayload(batchId) {
     seed_set_id: seedSetId,
     benchmark_config_hash: benchmarkConfigHash,
     suite: {
+      label: detail.benchmark?.name || detail.benchmark?.id || batch.config?.benchmark_id || '临时评测',
       id: detail.benchmark?.id || batch.config?.benchmark_id || null,
+      benchmark_id: detail.benchmark?.id || batch.config?.benchmark_id || null,
       version: detail.benchmark?.version || null,
+      benchmark_version: detail.benchmark?.version || null,
       target_type: targetType,
       evaluation_set_id: evaluationSetId,
       seed_set_id: seedSetId,
-      config_hash: benchmarkConfigHash
+      config_hash: benchmarkConfigHash,
+      benchmark_config_hash: benchmarkConfigHash
     },
     subject,
     summary: {
@@ -4117,25 +4170,30 @@ function mockBenchmarkBatchReportPayload(batchId) {
       problem_game_count: problemGames.pagination?.total ?? problemGames.games.length,
       diagnostic_count: diagnostics.summary?.total ?? diagnostics.diagnostics.length
     },
-    results: clone(results),
+    results: results.map((row) => ({
+      ...clone(row),
+      rankable_label: row.rankable !== false ? '可入榜' : '未入榜'
+    })),
     gates: results.map((row) => ({
-      result_batch_id: row.result_batch_id,
-      target_role: row.target_role || null,
+      key: row.result_batch_id,
+      title: row.target_role || row.model_id || row.result_batch_id || '结果',
+      status: row.rankable !== false ? '可入榜' : '未入榜',
       rankable: row.rankable !== false,
-      reason: row.rankable_reason || ''
+      reason: row.rankable_reason || '未上报门禁原因'
     })),
     problem_games: clone(problemGames.games),
     diagnostics: clone(diagnostics.diagnostics),
     tags: clone(topTags),
     reproducibility: {
-      run_id: runId,
-      batch_id: batch.batch_id,
-      benchmark_id: detail.benchmark?.id || batch.config?.benchmark_id || null,
-      evaluation_set_id: evaluationSetId,
-      seed_set_id: seedSetId,
-      benchmark_config_hash: benchmarkConfigHash,
-      roles: clone(batch.roles || []),
-      target_type: targetType
+      '套件': detail.benchmark?.name || detail.benchmark?.id || batch.config?.benchmark_id || '临时评测',
+      '评测 ID': detail.benchmark?.id || batch.config?.benchmark_id || 'ad-hoc',
+      '评测集': evaluationSetId || 'ad-hoc',
+      '种子集': seedSetId || 'ad-hoc',
+      'Config Hash': benchmarkConfigHash || '未上报',
+      '模型 ID': subject.model_id || '未上报',
+      '模型配置 Hash': subject.model_config_hash || '未上报',
+      '目标角色': subject.target_role || '未上报',
+      '目标版本': subject.target_version_id || '基线版本'
     },
     leaderboard: {
       rankable_count: results.filter((row) => row.rankable !== false).length,
@@ -4152,29 +4210,30 @@ function mockBenchmarkBatchReportPayload(batchId) {
 
 function mockBenchmarkBatchReportMarkdown(report) {
   const lines = [
-    '# Benchmark Run Report',
+    `# 评测运行报告：${report.run_id || ''}`,
     '',
-    `- Run: ${report.run_id}`,
-    `- Evaluation set: ${report.evaluation_set_id || ''}`,
-    `- Seed set: ${report.seed_set_id || ''}`,
-    `- Config hash: ${report.benchmark_config_hash || ''}`,
-    `- Status: ${report.status || ''}`,
+    '## 报告头',
+    `- 运行 ID: ${report.run_id || ''}`,
+    `- 评测集: ${report.evaluation_set_id || ''}`,
+    `- 种子集: ${report.seed_set_id || ''}`,
+    `- Config Hash: ${report.benchmark_config_hash || ''}`,
+    `- 状态: ${report.status || ''}`,
     '',
-    '## Results',
+    '## 结果',
     '',
-    '| Result batch | Target | Rankable | Reason |',
+    '| 结果批次 | 对象 | 入榜状态 | 原因 |',
     '| --- | --- | --- | --- |',
-    ...report.results.map((row) => `| ${row.result_batch_id || ''} | ${row.target_role || row.model_id || ''} | ${row.rankable !== false ? 'yes' : 'no'} | ${row.rankable_reason || ''} |`),
+    ...report.results.map((row) => `| ${row.result_batch_id || ''} | ${row.target_role || row.model_id || ''} | ${row.rankable !== false ? '可入榜' : '未入榜'} | ${row.rankable_reason || ''} |`),
     '',
-    '## Problem Games',
+    '## 问题对局',
     '',
-    '| Game | Status | Seed | Diagnostics |',
+    '| 对局 | 状态 | 种子 | 诊断 |',
     '| --- | --- | --- | --- |',
     ...report.problem_games.map((game) => `| ${game.game_id || ''} | ${game.status || ''} | ${game.seed ?? ''} | ${game.diagnostic_count ?? 0} |`),
     '',
-    '## Diagnostics',
+    '## 诊断',
     '',
-    '| Kind | Level | Stage | Message |',
+    '| 类型 | 等级 | 阶段 | 消息 |',
     '| --- | --- | --- | --- |',
     ...report.diagnostics.map((item) => `| ${item.kind || ''} | ${item.level || ''} | ${item.stage || ''} | ${item.message || ''} |`)
   ]
@@ -4183,14 +4242,14 @@ function mockBenchmarkBatchReportMarkdown(report) {
 
 function mockBenchmarkBatchReportCsv(report) {
   const rows = [
-    ['section', 'key', 'value'],
-    ['run', 'run_id', report.run_id],
-    ['run', 'evaluation_set_id', report.evaluation_set_id],
-    ['run', 'seed_set_id', report.seed_set_id],
-    ['run', 'benchmark_config_hash', report.benchmark_config_hash],
-    ...report.results.map((row) => ['result', row.result_batch_id, row.rankable !== false ? 'rankable' : row.rankable_reason || 'unrankable']),
-    ...report.problem_games.map((game) => ['problem_game', game.game_id, game.status]),
-    ...report.diagnostics.map((item) => ['diagnostic', item.kind, item.message])
+    ['区段', '标签', '值'],
+    ['运行', '运行 ID', report.run_id],
+    ['运行', '评测集', report.evaluation_set_id],
+    ['运行', '种子集', report.seed_set_id],
+    ['运行', 'Config Hash', report.benchmark_config_hash],
+    ...report.results.map((row) => ['结果', row.result_batch_id, row.rankable !== false ? '可入榜' : row.rankable_reason || '未入榜']),
+    ...report.problem_games.map((game) => ['问题对局', game.game_id, game.status]),
+    ...report.diagnostics.map((item) => ['诊断', item.kind, item.message])
   ]
   return `${rows.map((row) => row.map(mockReportCsvCell).join(',')).join('\n')}\n`
 }

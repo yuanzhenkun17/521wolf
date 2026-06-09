@@ -63,14 +63,40 @@ const selectedSavedViewKey = computed(() =>
 )
 const viewDirty = computed(() => Boolean(props.benchmark.benchmarkViewDirty?.value))
 
-const apiCompareRows = computed(() => {
+const comparePayload = computed(() => {
   const compare = props.benchmark.benchmarkLeaderboardCompare?.value
-  if (!compare || compare.scope !== mode.value || !Array.isArray(compare.rows)) return []
+  if (!compare || compare.scope !== mode.value) return null
+  return compare
+})
+const compareLoading = computed(() => Boolean(props.benchmark.benchmarkLeaderboardCompareLoading?.value))
+const compareError = computed(() => String(props.benchmark.benchmarkLeaderboardCompareError?.value || '').trim())
+const compareSourceTone = computed(() => {
+  if (compareLoading.value) return 'loading'
+  if (comparePayload.value) return 'server'
+  if (compareError.value) return 'fallback'
+  return 'local'
+})
+const compareSourceLabel = computed(() => {
+  if (compareLoading.value) return '正在加载服务端比较'
+  if (comparePayload.value) return '服务端标准比较'
+  if (compareError.value) return '本地兜底比较'
+  return '本地当前榜单'
+})
+const compareSourceDetail = computed(() => {
+  if (compareLoading.value) return '正在读取 /leaderboards/compare'
+  if (comparePayload.value) return '正式 rows 与未入榜证据已分离'
+  if (compareError.value) return compareError.value
+  return '等待服务端 compare，暂按当前榜单行计算'
+})
+
+const apiCompareRows = computed(() => {
+  const compare = comparePayload.value
+  if (!compare || !Array.isArray(compare.rows)) return []
   return compare.rows
 })
 
 const rawRows = computed(() =>
-  apiCompareRows.value.length
+  comparePayload.value
     ? apiCompareRows.value
     : (mode.value === 'model'
       ? props.benchmark.modelLeaderboardRows.value
@@ -89,6 +115,29 @@ const rankableRows = computed(() =>
 
 const unrankableRows = computed(() =>
   rows.value.filter((row) => row.rankable === false)
+)
+
+const backendUnrankableEvidenceRows = computed(() => {
+  const compare = comparePayload.value
+  return [
+    ...firstArray(compare?.unrankable_evidence),
+    ...firstArray(compare?.unrankableEvidence),
+    ...firstArray(compare?.evidence?.unrankable)
+  ].map((row, index) => normalizeUnrankableEvidence(row, index, mode.value, '后端证据'))
+})
+
+const fallbackUnrankableEvidenceRows = computed(() =>
+  unrankableRows.value.map((row, index) => normalizeUnrankableEvidence(row, index, mode.value, '榜单行兜底'))
+)
+
+const unrankableEvidenceRows = computed(() =>
+  backendUnrankableEvidenceRows.value.length
+    ? backendUnrankableEvidenceRows.value
+    : fallbackUnrankableEvidenceRows.value
+)
+
+const unrankableEvidenceSourceLabel = computed(() =>
+  backendUnrankableEvidenceRows.value.length ? '后端证据' : '榜单行兜底'
 )
 
 const baselineRow = computed(() => {
@@ -138,15 +187,15 @@ const metricColumnDefs = computed(() => {
     { key: 'score', label: '分数', width: '70px' },
     { key: 'winRate', label: '胜率', width: '76px' },
     { key: 'delta', label: '差值', width: '70px' },
-    { key: 'confidence', label: mode.value === 'model' ? '95% CI' : '置信度', width: confidenceWidth },
+    { key: 'confidence', label: mode.value === 'model' ? '95% 置信区间' : '置信度', width: confidenceWidth },
     { key: 'rankable', label: rankableLabel, width: '96px' },
     { key: 'games', label: '局数', width: '70px' }
   ]
   if (mode.value !== 'model') return baseColumns
   return [
     ...baseColumns.slice(0, 4),
-    { key: 'fallback', label: 'Fallback率', width: '78px' },
-    { key: 'llmError', label: 'LLM错误', width: '82px' },
+    { key: 'fallback', label: '回退率', width: '78px' },
+    { key: 'llmError', label: 'LLM 错误', width: '82px' },
     { key: 'policy', label: '策略修正', width: '86px' },
     ...baseColumns.slice(4)
   ]
@@ -199,6 +248,11 @@ const boundaryMismatchRows = computed(() => {
   })
 })
 
+const compareSummaryPayload = computed(() => {
+  const summary = comparePayload.value?.summary
+  return summary && typeof summary === 'object' ? summary : {}
+})
+
 const tableViewSummary = computed(() =>
   `${RANK_FILTER_LABELS[rankFilter.value] || '全部'} / ${enabledMetricColumnDefs.value.map((column) => column.label).join(', ')}`
 )
@@ -218,7 +272,7 @@ const summary = computed(() => {
     {
       label: '入榜数',
       value: ranked.length.toLocaleString('zh-CN'),
-      caption: `${unrankableRows.value.length} 条未入榜`
+      caption: `${unrankableEvidenceRows.value.length} 条未入榜证据`
     },
     {
       label: '最高分',
@@ -232,8 +286,48 @@ const summary = computed(() => {
     },
     {
       label: '置信度',
-      value: lowSampleCount ? `${lowSampleCount} 小样本` : 'CI 正常',
+      value: lowSampleCount ? `${lowSampleCount} 小样本` : '置信区间正常',
       caption: topDelta == null ? '基线待定' : `${formatSignedPct(topDelta)} 最高分差`
+    }
+  ]
+})
+
+const compareAuditRows = computed(() => {
+  const summary = compareSummaryPayload.value
+  const formalCount = comparePayload.value
+    ? numberFrom(summary.row_count, summary.rankable_count, apiCompareRows.value.length)
+    : rankableRows.value.length
+  const unrankableCount = comparePayload.value
+    ? numberFrom(summary.unrankable_evidence_count, summary.unrankable_count, unrankableEvidenceRows.value.length)
+    : unrankableEvidenceRows.value.length
+  const boundaryCount = comparePayload.value
+    ? numberFrom(summary.boundary_mismatch_count, boundaryMismatchRows.value.length)
+    : boundaryMismatchRows.value.length
+  const improvementCount = numberFrom(summary.improvement_count) ?? 0
+  const regressionCount = numberFrom(summary.regression_count) ?? 0
+  const incomparableCount = numberFrom(summary.incomparable_count, boundaryCount) ?? 0
+  return [
+    {
+      label: '正式行',
+      value: formatCount(formalCount),
+      caption: comparePayload.value ? '服务端可入榜行' : '本地可见行'
+    },
+    {
+      label: '未入榜证据',
+      value: formatCount(unrankableCount),
+      caption: '排除在正式排名外'
+    },
+    {
+      label: '边界告警',
+      value: formatCount(boundaryCount),
+      caption: Number(boundaryCount) > 0 ? '需复核边界' : '边界一致'
+    },
+    {
+      label: '变化分布',
+      value: comparePayload.value
+        ? `提升 ${formatCount(improvementCount)} / 回退 ${formatCount(regressionCount)} / 不可比 ${formatCount(incomparableCount)}`
+        : '等待服务端比较',
+      caption: comparePayload.value ? '相对固定基线' : '本地仅供预览'
     }
   ]
 })
@@ -244,7 +338,7 @@ const boundaryRows = computed(() => {
       { label: '范围', value: 'scope=model' },
       { label: '套件', value: props.benchmark.selectedBenchmarkSuiteLabel.value || '--' },
       { label: '评测集', value: props.benchmark.selectedBenchmarkEvaluationSetId.value || '--' },
-      { label: '排行单位', value: 'model_id / model_config_hash' }
+      { label: '排行单位', value: '模型标识 / Config Hash' }
     ]
   }
   return [
@@ -340,6 +434,119 @@ function normalizeRow(row, index, currentMode) {
   }
 }
 
+function normalizeUnrankableEvidence(row, index, currentMode, source) {
+  const raw = row?.raw && typeof row.raw === 'object' ? { ...row.raw, ...row } : (row || {})
+  const completedGames = numberFrom(
+    raw?.completed_games,
+    raw?.games_played,
+    raw?.completed,
+    raw?.valid_games,
+    raw?.game_count_completed,
+    raw?.games
+  )
+  const totalGames = numberFrom(
+    raw?.total_games,
+    raw?.game_count,
+    raw?.planned_games,
+    raw?.games_total,
+    raw?.games
+  )
+  const validGameRate = numberFrom(
+    percentFromFraction(raw?.valid_game_rate),
+    percentFromFraction(raw?.validGameRate),
+    totalGames ? ((completedGames || 0) / totalGames) * 100 : null
+  )
+  const subject = unrankableSubjectLabel(raw, index, currentMode)
+  const subjectId = valueOrDash(
+    raw?.subject_id ||
+    raw?.hash ||
+    raw?.model_config_hash ||
+    raw?.target_version_id ||
+    raw?.version_id ||
+    raw?.model_id
+  )
+  return {
+    raw,
+    key: String(raw?.evidence_key || raw?.key || raw?.subject_id || raw?.hash || raw?.batch_id || `${currentMode}-unrankable-${index}`),
+    subject,
+    subjectId,
+    reason: readableReason(raw),
+    status: statusLabel(raw?.status || raw?.rankable_status || raw?.gate_status || raw?.current_stage),
+    gamesLabel: gamesProgressLabel(completedGames, totalGames),
+    validGameRateLabel: validGameRate == null ? '--' : formatPct(validGameRate),
+    batchId: valueOrDash(raw?.batch_id || raw?.result_batch_id || raw?.comparison_group_id),
+    source
+  }
+}
+
+function unrankableSubjectLabel(row, index, currentMode) {
+  if (currentMode === 'model') {
+    return String(
+      row?.model_id ||
+      row?.subject_label ||
+      row?.label ||
+      row?.model_config_hash ||
+      row?.subject_id ||
+      row?.hash ||
+      `模型-${index + 1}`
+    )
+  }
+  if (row?.is_baseline) return '基线版本'
+  return String(
+    row?.subject_label ||
+    row?.label ||
+    row?.short ||
+    row?.version_id ||
+    row?.target_version_id ||
+    row?.subject_id ||
+    row?.hash ||
+    `版本-${index + 1}`
+  )
+}
+
+function statusLabel(status) {
+  const key = String(status || '').trim().toLowerCase()
+  const labels = {
+    insufficient_games: '样本不足',
+    insufficient_data: '数据不足',
+    data_sufficient: '数据充分',
+    rankable: '可入榜',
+    unrankable: '未入榜',
+    failed: '失败',
+    completed: '已完成',
+    running: '运行中',
+    pending: '等待中',
+    blocked: '阻塞'
+  }
+  return labels[key] || (key ? status : '未入榜')
+}
+
+function readableReason(row) {
+  const reasons = firstArray(row?.reasons).concat(firstArray(row?.rankable_reasons))
+  const text = String(
+    row?.rankable_reason ||
+    row?.reason ||
+    row?.gate_reason ||
+    row?.unrankable_reason ||
+    row?.message ||
+    reasons.join('，')
+  ).trim()
+  return text || '未达到正式入榜门禁'
+}
+
+function gamesProgressLabel(completed, total) {
+  const done = Number(completed)
+  const planned = Number(total)
+  if (Number.isFinite(done) && Number.isFinite(planned) && planned > 0) return `${done}/${planned} 局`
+  if (Number.isFinite(done)) return `${done} 局`
+  if (Number.isFinite(planned)) return `0/${planned} 局`
+  return '--'
+}
+
+function firstArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
 function defaultMetricColumns(currentMode) {
   const keys = currentMode === 'model'
     ? ['score', 'winRate', 'delta', 'confidence', 'fallback', 'llmError', 'policy', 'rankable', 'games']
@@ -415,7 +622,7 @@ function rowKey(row, index, currentMode) {
   const value = currentMode === 'model'
     ? row?.model_config_hash || row?.subject_id || row?.hash || row?.model_id
     : row?.version_id || row?.target_version_id || row?.hash || row?.short
-  return String(value || `${currentMode}-${index}`)
+  return String(value || `${currentMode === 'model' ? '模型' : '版本'}-${index + 1}`)
 }
 
 function modelPrimary(row, index) {
@@ -424,7 +631,7 @@ function modelPrimary(row, index) {
     row?.model_config_hash ||
     row?.subject_id ||
     row?.hash ||
-    `model-${index + 1}`
+    `模型-${index + 1}`
   )
 }
 
@@ -439,7 +646,7 @@ function modelSecondary(row) {
 
 function rolePrimary(row, index) {
   if (row?.is_baseline) return '基线版本'
-  return String(row?.short || row?.version_id || row?.target_version_id || `version-${index + 1}`)
+  return String(row?.short || row?.version_id || row?.target_version_id || `版本-${index + 1}`)
 }
 
 function roleSecondary(row) {
@@ -525,6 +732,12 @@ function formatSignedPct(value) {
   return `${number >= 0 ? '+' : ''}${Math.round(number)}%`
 }
 
+function formatCount(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return Math.max(0, Math.round(number)).toLocaleString('zh-CN')
+}
+
 function valueOrDash(value) {
   const text = String(value || '').trim()
   return text || '--'
@@ -549,9 +762,20 @@ watch(tableRows, (current) => {
         <h2 v-if="mode === 'model'">模型评测榜单</h2>
         <h2 v-else>{{ benchmark.selectedRoleLabel.value }} 角色版本榜单</h2>
       </div>
-      <span :class="['mode-badge', 'mode-badge--' + mode]">
-        {{ mode === 'model' ? 'scope=model' : 'target_role 边界' }}
-      </span>
+      <div class="comparison-header-status">
+        <span :class="['mode-badge', 'mode-badge--' + mode]">
+          {{ mode === 'model' ? 'scope=model' : '目标角色边界' }}
+        </span>
+        <span
+          :class="['compare-source-chip', 'compare-source-chip--' + compareSourceTone]"
+          aria-label="比较来源"
+          aria-live="polite"
+          :role="compareLoading ? 'status' : undefined"
+        >
+          <b>{{ compareSourceLabel }}</b>
+          <small>{{ compareSourceDetail }}</small>
+        </span>
+      </div>
     </header>
 
     <section class="boundary-strip" aria-label="比较边界">
@@ -563,6 +787,14 @@ watch(tableRows, (current) => {
 
     <section class="metric-summary" aria-label="指标汇总">
       <span v-for="item in summary" :key="item.label">
+        <small>{{ item.label }}</small>
+        <b>{{ item.value }}</b>
+        <em>{{ item.caption }}</em>
+      </span>
+    </section>
+
+    <section class="compare-audit-strip" aria-label="正式比较口径">
+      <span v-for="item in compareAuditRows" :key="item.label">
         <small>{{ item.label }}</small>
         <b>{{ item.value }}</b>
         <em>{{ item.caption }}</em>
@@ -613,16 +845,21 @@ watch(tableRows, (current) => {
       <span>{{ boundaryMismatchRows.length }} 行使用了不同 Evaluation Set，不应作为正式证据比较。</span>
     </section>
 
+    <section v-if="compareError" class="comparison-source-alert" aria-label="比较来源提示">
+      <b>服务端比较不可用</b>
+      <span>{{ compareError }}</span>
+    </section>
+
     <section v-if="confidenceRows.length" class="confidence-panel" aria-label="统计置信度">
       <div class="confidence-title">
         <span>统计置信度</span>
-        <small>基于胜率和完成局数估算 95% CI</small>
+        <small>基于胜率和完成局数估算 95% 置信区间</small>
       </div>
       <div class="confidence-list">
         <div v-for="row in confidenceRows" :key="'confidence-' + row.key" class="confidence-row">
           <span>
             <b>{{ row.primary }}</b>
-            <small>{{ row.games }} 局 / 胜率 CI {{ formatInterval(row.interval) }}</small>
+            <small>{{ row.games }} 局 / 胜率区间 {{ formatInterval(row.interval) }}</small>
           </span>
           <em :class="'confidence-chip confidence-chip--' + row.confidenceTone">
             {{ row.confidenceLabel }}
@@ -765,7 +1002,7 @@ watch(tableRows, (current) => {
           </dd>
         </div>
         <div>
-          <dt>胜率 CI</dt>
+          <dt>胜率区间</dt>
           <dd>{{ formatInterval(selectedLeaderboardRow.interval) }}</dd>
         </div>
         <div>
@@ -773,7 +1010,7 @@ watch(tableRows, (current) => {
           <dd>{{ selectedLeaderboardRow.games }}</dd>
         </div>
         <div v-if="mode === 'model'">
-          <dt>Fallback 率</dt>
+          <dt>回退率</dt>
           <dd>{{ formatPct(selectedLeaderboardRow.fallbackRateValue) }}</dd>
         </div>
         <div v-if="mode === 'model'">
@@ -790,37 +1027,62 @@ watch(tableRows, (current) => {
       </p>
     </section>
 
-    <section class="unrankable-panel" aria-label="未入榜条目">
+    <section class="unrankable-panel" aria-label="未入榜证据">
       <div class="unrankable-title">
-        <span>未入榜</span>
-        <small>{{ unrankableRows.length }} 行被排除在正式排名外</small>
+        <span>未入榜证据</span>
+        <small>{{ unrankableEvidenceRows.length }} 条 / {{ unrankableEvidenceSourceLabel }}</small>
       </div>
-      <div v-if="unrankableRows.length" class="unrankable-list">
-        <div v-for="row in unrankableRows" :key="'unrankable-' + row.key" class="unrankable-row">
-          <b>{{ row.primary }}</b>
-          <span>{{ row.rankableReason || 'rankable=false，但未返回原因' }}</span>
-          <em>{{ formatPct(row.scoreValue) }}</em>
-        </div>
+      <div v-if="unrankableEvidenceRows.length" class="unrankable-list">
+        <article v-for="row in unrankableEvidenceRows" :key="'unrankable-' + row.key" class="unrankable-row">
+          <div class="unrankable-row-main">
+            <b>{{ row.subject }}</b>
+            <span>{{ row.subjectId }}</span>
+            <em>{{ row.source }}</em>
+          </div>
+          <p>{{ row.reason }}</p>
+          <dl>
+            <div>
+              <dt>状态</dt>
+              <dd>{{ row.status }}</dd>
+            </div>
+            <div>
+              <dt>局数</dt>
+              <dd>{{ row.gamesLabel }}</dd>
+            </div>
+            <div>
+              <dt>有效局率</dt>
+              <dd>{{ row.validGameRateLabel }}</dd>
+            </div>
+            <div>
+              <dt>batch_id</dt>
+              <dd>{{ row.batchId }}</dd>
+            </div>
+          </dl>
+        </article>
       </div>
-      <div v-else class="compact-empty">当前榜单数据没有明确的未入榜行。</div>
+      <div v-else class="compact-empty">当前比较结果没有返回未入榜证据。</div>
     </section>
   </section>
 </template>
 
 <style scoped>
 .benchmark-comparison-view {
-  --comparison-bg: #f8f0e0;
-  --comparison-panel: rgba(255, 252, 245, 0.82);
-  --comparison-panel-solid: #fffaf0;
-  --comparison-panel-soft: rgba(255, 242, 210, 0.58);
-  --comparison-line: rgba(139, 94, 52, 0.18);
-  --comparison-line-strong: rgba(90, 51, 25, 0.34);
-  --comparison-text: #3a2a18;
-  --comparison-muted: #8b6b4a;
-  --comparison-green: #8b5e34;
-  --comparison-blue: #6d4a2a;
-  --comparison-red: #993026;
-  --comparison-amber: #9a6518;
+  --comparison-bg: var(--bench-bg-texture, var(--logbook-bg-texture, #f2dfae));
+  --comparison-panel: var(--bench-panel, var(--logbook-panel, rgba(255, 252, 245, 0.82)));
+  --comparison-panel-solid: var(--bench-panel-solid, var(--logbook-panel-solid, #fffaf0));
+  --comparison-panel-soft: var(--bench-panel-soft, var(--logbook-panel-soft, rgba(255, 242, 210, 0.58)));
+  --comparison-line: var(--bench-border, var(--logbook-border, rgba(139, 94, 52, 0.18)));
+  --comparison-line-strong: var(--bench-border-strong, var(--logbook-border-strong, rgba(90, 51, 25, 0.34)));
+  --comparison-text: var(--bench-text, var(--logbook-text, #3a2a18));
+  --comparison-muted: var(--bench-text-secondary, var(--logbook-muted, #8b6b4a));
+  --comparison-positive: var(--bench-accent, var(--logbook-accent, #8b5e34));
+  --comparison-model: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
+  --comparison-red: var(--bench-danger, var(--logbook-danger, #993026));
+  --comparison-amber: var(--bench-warning, var(--logbook-warning, #9a6518));
+  --comparison-danger-border: var(--bench-danger-border, rgba(153, 48, 38, 0.28));
+  --comparison-danger-bg: var(--bench-danger-bg, rgba(153, 48, 38, 0.06));
+  --comparison-warning-border: var(--bench-warning-border, rgba(139, 100, 31, 0.3));
+  --comparison-warning-bg: var(--bench-warning-bg, rgba(139, 100, 31, 0.08));
   display: grid;
   gap: 10px;
   min-width: 980px;
@@ -837,8 +1099,10 @@ watch(tableRows, (current) => {
 .comparison-header,
 .boundary-strip,
 .metric-summary,
+.compare-audit-strip,
 .comparison-controls,
 .boundary-mismatch-alert,
+.comparison-source-alert,
 .confidence-panel,
 .baseline-panel,
 .comparison-table-card,
@@ -862,6 +1126,7 @@ watch(tableRows, (current) => {
 .comparison-header small,
 .boundary-strip small,
 .metric-summary small,
+.compare-audit-strip small,
 .confidence-title small,
 .baseline-pin small,
 .delta-panel-title small,
@@ -881,6 +1146,14 @@ watch(tableRows, (current) => {
   line-height: 1.1;
 }
 
+.comparison-header-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
 .mode-badge {
   display: inline-flex;
   align-items: center;
@@ -895,11 +1168,58 @@ watch(tableRows, (current) => {
 }
 
 .mode-badge--model {
-  border-left: 4px solid var(--comparison-blue);
+  border-left: 4px solid var(--comparison-model);
 }
 
 .mode-badge--role_version {
-  border-left: 4px solid var(--comparison-green);
+  border-left: 4px solid var(--comparison-positive);
+}
+
+.compare-source-chip {
+  display: grid;
+  gap: 1px;
+  min-width: 180px;
+  max-width: 280px;
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid var(--comparison-line);
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.72);
+}
+
+.compare-source-chip b,
+.compare-source-chip small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-source-chip b {
+  color: var(--comparison-text);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.compare-source-chip small {
+  color: var(--comparison-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.compare-source-chip--server {
+  border-color: rgba(139, 94, 52, 0.28);
+  box-shadow: inset 3px 0 0 var(--comparison-positive);
+}
+
+.compare-source-chip--fallback {
+  border-color: var(--comparison-danger-border);
+  box-shadow: inset 3px 0 0 var(--comparison-red);
+}
+
+.compare-source-chip--loading {
+  border-color: var(--comparison-warning-border);
+  box-shadow: inset 3px 0 0 var(--comparison-amber);
 }
 
 .boundary-strip {
@@ -910,7 +1230,8 @@ watch(tableRows, (current) => {
 }
 
 .boundary-strip span,
-.metric-summary span {
+.metric-summary span,
+.compare-audit-strip span {
   display: grid;
   gap: 3px;
   min-width: 0;
@@ -919,19 +1240,23 @@ watch(tableRows, (current) => {
 }
 
 .boundary-strip span:last-child,
-.metric-summary span:last-child {
+.metric-summary span:last-child,
+.compare-audit-strip span:last-child {
   border-right: none;
 }
 
 .boundary-strip b,
 .metric-summary b,
 .metric-summary em,
+.compare-audit-strip b,
+.compare-audit-strip em,
 .baseline-pin strong,
 .baseline-pin span,
 .baseline-pin b,
 .comparison-row span,
-.unrankable-row b,
-.unrankable-row span {
+.unrankable-row-main b,
+.unrankable-row-main span,
+.unrankable-row dd {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -950,6 +1275,13 @@ watch(tableRows, (current) => {
   overflow: hidden;
 }
 
+.compare-audit-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  background: rgba(255, 252, 245, 0.58);
+}
+
 .metric-summary b {
   color: var(--comparison-text);
   font-size: 19px;
@@ -957,11 +1289,19 @@ watch(tableRows, (current) => {
   line-height: 1;
 }
 
-.metric-summary em {
+.metric-summary em,
+.compare-audit-strip em {
   color: var(--comparison-muted);
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
+}
+
+.compare-audit-strip b {
+  color: var(--comparison-text);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.15;
 }
 
 .comparison-controls {
@@ -1015,9 +1355,9 @@ watch(tableRows, (current) => {
 }
 
 .segmented-control button.active {
-  border-color: var(--comparison-green);
+  border-color: var(--comparison-positive);
   background: rgba(139, 94, 52, 0.12);
-  color: var(--comparison-green);
+  color: var(--comparison-positive);
 }
 
 .metric-toggle-list label {
@@ -1038,7 +1378,7 @@ watch(tableRows, (current) => {
   width: 13px;
   height: 13px;
   margin: 0;
-  accent-color: var(--comparison-green);
+  accent-color: var(--comparison-positive);
 }
 
 .saved-view-panel input,
@@ -1076,8 +1416,8 @@ watch(tableRows, (current) => {
   gap: 10px;
   align-items: center;
   padding: 9px 12px;
-  border-color: rgba(153, 48, 38, 0.26);
-  background: rgba(153, 48, 38, 0.06);
+  border-color: var(--comparison-danger-border);
+  background: var(--comparison-danger-bg);
 }
 
 .boundary-mismatch-alert b,
@@ -1090,6 +1430,27 @@ watch(tableRows, (current) => {
   overflow: hidden;
   font-size: 12px;
   font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comparison-source-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border-color: var(--comparison-danger-border);
+  background: var(--comparison-danger-bg);
+}
+
+.comparison-source-alert b,
+.comparison-source-alert span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--comparison-red);
+  font-size: 12px;
+  font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1254,7 +1615,7 @@ watch(tableRows, (current) => {
 }
 
 .delta-row i.positive b {
-  background: var(--comparison-green);
+  background: var(--comparison-positive);
 }
 
 .delta-row i.negative b {
@@ -1360,14 +1721,14 @@ watch(tableRows, (current) => {
   border: 1px solid rgba(139, 94, 52, 0.32);
   border-radius: 5px;
   background: rgba(139, 94, 52, 0.1);
-  color: var(--comparison-green);
+  color: var(--comparison-positive);
   font-size: 11px;
   font-weight: 900;
 }
 
 .rankable-chip.off {
-  border-color: rgba(153, 48, 38, 0.3);
-  background: rgba(153, 48, 38, 0.07);
+  border-color: var(--comparison-danger-border);
+  background: var(--comparison-danger-bg);
   color: var(--comparison-red);
 }
 
@@ -1386,20 +1747,20 @@ watch(tableRows, (current) => {
 }
 
 .confidence-chip--reference {
-  border-color: rgba(139, 100, 31, 0.32);
-  background: rgba(139, 100, 31, 0.08);
+  border-color: var(--comparison-warning-border);
+  background: var(--comparison-warning-bg);
   color: var(--comparison-amber);
 }
 
 .confidence-chip--strong {
   border-color: rgba(139, 94, 52, 0.32);
   background: rgba(139, 94, 52, 0.1);
-  color: var(--comparison-green);
+  color: var(--comparison-positive);
 }
 
 .confidence-chip--warning {
-  border-color: rgba(139, 100, 31, 0.32);
-  background: rgba(139, 100, 31, 0.08);
+  border-color: var(--comparison-warning-border);
+  background: var(--comparison-warning-bg);
   color: var(--comparison-amber);
 }
 
@@ -1495,8 +1856,8 @@ watch(tableRows, (current) => {
 }
 
 .baseline-chip.on {
-  border-color: rgba(139, 100, 31, 0.36);
-  background: rgba(139, 100, 31, 0.08);
+  border-color: var(--comparison-warning-border);
+  background: var(--comparison-warning-bg);
   color: var(--comparison-amber);
 }
 
@@ -1508,39 +1869,94 @@ watch(tableRows, (current) => {
 
 .unrankable-list {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .unrankable-row {
   display: grid;
-  grid-template-columns: minmax(160px, 0.8fr) minmax(0, 1fr) 54px;
-  gap: 10px;
-  align-items: center;
-  min-height: 32px;
-  padding: 7px 8px;
-  border: 1px solid rgba(153, 48, 38, 0.16);
+  grid-template-columns: minmax(180px, 0.66fr) minmax(0, 1fr) minmax(360px, 1.12fr);
+  gap: 12px;
+  align-items: stretch;
+  min-height: 76px;
+  padding: 9px 10px;
+  border: 1px solid var(--comparison-danger-border);
   border-radius: 6px;
-  background: rgba(153, 48, 38, 0.04);
+  background: var(--comparison-danger-bg);
 }
 
-.unrankable-row b {
+.unrankable-row-main {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.unrankable-row-main b {
   color: var(--comparison-text);
   font-size: 12px;
   font-weight: 900;
 }
 
-.unrankable-row span {
+.unrankable-row-main span {
   color: var(--comparison-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
-.unrankable-row em {
-  color: var(--comparison-red);
-  font-size: 12px;
+.unrankable-row-main em {
+  width: fit-content;
+  padding: 2px 6px;
+  border: 1px solid rgba(139, 94, 52, 0.2);
+  border-radius: 5px;
+  background: rgba(255, 252, 245, 0.72);
+  color: var(--comparison-positive);
+  font-size: 10px;
   font-style: normal;
   font-weight: 900;
-  text-align: right;
+}
+
+.unrankable-row p {
+  min-width: 0;
+  margin: 0;
+  align-self: center;
+  overflow: hidden;
+  color: var(--comparison-text);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
+.unrankable-row dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.unrankable-row dl div {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid var(--comparison-line);
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.68);
+}
+
+.unrankable-row dt {
+  color: var(--comparison-muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.unrankable-row dd {
+  margin: 0;
+  color: var(--comparison-red);
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .empty-state,
@@ -1574,7 +1990,7 @@ watch(tableRows, (current) => {
 }
 
 .positive {
-  color: var(--comparison-green) !important;
+  color: var(--comparison-positive) !important;
   font-weight: 900 !important;
 }
 

@@ -11,6 +11,37 @@ const props = defineProps({
 const activeGroupKey = ref('all')
 const activeDiagnosticId = ref('')
 
+const diagnosticKindLabels = {
+  diagnostic: '诊断',
+  rankable: '入榜门禁',
+  rankable_failed: '入榜失败',
+  rankable_gate: '入榜门禁',
+  gate: '门禁',
+  game: '对局',
+  game_failure: '对局失败',
+  timeout: '超时',
+  runtime: '运行时',
+  fallback: '回退',
+  llm_error: 'LLM 错误',
+  judge: 'Judge',
+  judge_decision: 'Judge 判定',
+  leaderboard: '排行榜',
+  snapshot: '快照',
+  policy_adjusted: '策略修正'
+}
+
+const diagnosticLevelLabels = {
+  info: '信息',
+  low: '低',
+  warning: '警告',
+  warn: '警告',
+  medium: '中',
+  high: '高',
+  error: '错误',
+  critical: '严重',
+  fatal: '严重'
+}
+
 const selectedBatchId = computed(() => props.benchmark.selectedBenchmarkBatchId.value || '')
 const useAggregateDiagnostics = computed(() => !selectedBatchId.value)
 const diagnostics = computed(() =>
@@ -58,9 +89,9 @@ const emptyStateTitle = computed(() =>
 const summaryRows = computed(() => {
   const summary = diagnosticSummary.value
   const total = numberOrZero(summary.total ?? diagnostics.value.length)
-  const byKind = countRows(summary.by_kind)
-  const byOrigin = countRows(summary.by_origin)
-  const severityRows = countRows(summary.severity || summary.by_severity || summary.by_level)
+  const byKind = countRows(summary.by_kind, diagnosticKindLabel)
+  const byOrigin = countRows(summary.by_origin, originLabel)
+  const severityRows = countRows(summary.severity || summary.by_severity || summary.by_level, diagnosticLevelLabel)
   const runsWithDiagnostics = runs.value.filter((run) => runDiagnosticCount(run) > 0).length
   return [
     { key: 'total', label: '总数', value: total, caption: '已加载诊断' },
@@ -74,8 +105,8 @@ const summaryRows = computed(() => {
 const diagnosticGroups = computed(() => {
   const groups = new Map()
   for (const item of diagnostics.value) {
-    addGroup(groups, 'kind', item.kind || 'diagnostic', item.kindLabel || item.kind || 'diagnostic', item)
-    addGroup(groups, 'level', item.level || 'info', item.levelLabel || item.level || 'info', item)
+    addGroup(groups, 'kind', item.kind || 'diagnostic', displayDiagnosticKind(item), item)
+    addGroup(groups, 'level', item.level || 'info', displayDiagnosticLevel(item), item)
     addGroup(groups, 'origin', item.origin || 'run', originLabel(item.origin), item)
   }
   const rows = [...groups.values()]
@@ -139,7 +170,7 @@ const problemGames = computed(() => {
       diagnosticKinds: new Set()
     }
     game.diagnosticMatches += 1
-    if (item.kindLabel || item.kind) game.diagnosticKinds.add(item.kindLabel || item.kind)
+    if (item.kindLabel || item.kind) game.diagnosticKinds.add(displayDiagnosticKind(item))
     byGame.set(id, game)
   }
   return [...byGame.values()]
@@ -241,12 +272,12 @@ function diagnosticMatchesGroup(item, group) {
   return true
 }
 
-function countRows(source) {
+function countRows(source, labelFor = null) {
   if (!source || typeof source !== 'object') return []
   return Object.entries(source)
     .map(([name, count]) => ({
       name: String(name || 'unknown'),
-      label: String(name || '未知'),
+      label: labelFor ? labelFor(name) : String(name || '未知'),
       count: numberOrZero(count)
     }))
     .filter((row) => row.count > 0)
@@ -285,6 +316,37 @@ function originLabel(value) {
     leaderboard: '排行榜'
   }
   return labels[text] || text
+}
+
+function displayDiagnosticKind(item) {
+  return item?.kindLabel || diagnosticKindLabel(item?.kind)
+}
+
+function displayDiagnosticLevel(item) {
+  return item?.levelLabel || diagnosticLevelLabel(item?.level)
+}
+
+function diagnosticKindLabel(value) {
+  const text = String(value || 'diagnostic').trim()
+  if (!text) return '诊断'
+  if (/[\u4e00-\u9fff]/.test(text)) return text
+  const key = text.toLowerCase()
+  return diagnosticKindLabels[key] || readableKeyLabel(text)
+}
+
+function diagnosticLevelLabel(value) {
+  const text = String(value || 'info').trim()
+  if (!text) return '信息'
+  if (/[\u4e00-\u9fff]/.test(text)) return text
+  const key = text.toLowerCase()
+  return diagnosticLevelLabels[key] || readableKeyLabel(text)
+}
+
+function readableKeyLabel(value) {
+  return String(value || '未知')
+    .replace(/_/g, ' ')
+    .replace(/\bllm\b/ig, 'LLM')
+    .replace(/\bjudge\b/ig, 'Judge')
 }
 
 function groupTypeLabel(type) {
@@ -337,7 +399,19 @@ function setProblemGamesFilter() {
 }
 
 function inspectSelectedGames() {
+  const diagnostic = selectedDiagnostic.value
+  if (
+    diagnostic?.batch_id &&
+    diagnostic.batch_id !== props.benchmark.selectedBenchmarkBatchId?.value &&
+    typeof props.benchmark.selectBenchmarkBatch === 'function'
+  ) {
+    props.benchmark.selectBenchmarkBatch(diagnostic.batch_id)
+  }
   setProblemGamesFilter()
+  const seed = diagnostic?.seed ?? diagnostic?.seedLabel
+  if (seed != null && seed !== '' && typeof props.benchmark.setBenchmarkGameSeedFilter === 'function') {
+    props.benchmark.setBenchmarkGameSeedFilter(seed)
+  }
 }
 
 function suggestedActionsForDiagnostic(item) {
@@ -447,10 +521,10 @@ function suggestedActionsForDiagnostic(item) {
           >
             <header>
               <span>
-                <small>{{ item.kindLabel }}</small>
+                <small>{{ displayDiagnosticKind(item) }}</small>
                 <b>{{ item.message || '无诊断信息' }}</b>
               </span>
-              <em>{{ item.levelLabel }}</em>
+              <em>{{ displayDiagnosticLevel(item) }}</em>
             </header>
             <dl>
               <div>
@@ -482,12 +556,12 @@ function suggestedActionsForDiagnostic(item) {
         <section class="side-section">
           <div class="panel-heading">
             <small>已选诊断</small>
-            <b>{{ selectedDiagnostic?.kindLabel || '未选择' }}</b>
+            <b>{{ selectedDiagnostic ? displayDiagnosticKind(selectedDiagnostic) : '未选择' }}</b>
           </div>
           <article v-if="selectedDiagnostic" class="selected-diagnostic-card">
             <strong>{{ selectedDiagnostic.message || '无诊断信息' }}</strong>
             <span>{{ selectedDiagnostic.stage || '无阶段' }} / {{ originLabel(selectedDiagnostic.origin) }}</span>
-            <em>{{ selectedDiagnostic.levelLabel }}</em>
+            <em>{{ displayDiagnosticLevel(selectedDiagnostic) }}</em>
           </article>
           <div class="suggested-action-list">
             <article v-for="action in selectedSuggestedActions" :key="action.label" class="suggested-action-card">
@@ -554,16 +628,16 @@ function suggestedActionsForDiagnostic(item) {
 
 <style scoped>
 .benchmark-diagnostics-explorer {
-  --diag-bg: #f8f0e0;
-  --diag-ink: #3a2a18;
-  --diag-muted: #8b6b4a;
-  --diag-line: rgba(139, 94, 52, 0.15);
-  --diag-panel: rgba(255, 252, 245, 0.7);
-  --diag-soft: rgba(255, 252, 245, 0.48);
-  --diag-accent: #8b5e34;
-  --diag-accent-strong: #5a3319;
-  --diag-warning: #8b5e34;
-  --diag-error: #5a3319;
+  --diag-bg: var(--bench-bg, var(--logbook-bg, #f2dfae));
+  --diag-ink: var(--bench-text, var(--logbook-text, #3a2a18));
+  --diag-muted: var(--bench-text-secondary, var(--logbook-muted, #8b6b4a));
+  --diag-line: var(--bench-border, var(--logbook-border, rgba(139, 94, 52, 0.15)));
+  --diag-panel: var(--bench-surface, var(--logbook-surface, rgba(255, 252, 245, 0.7)));
+  --diag-soft: var(--bench-panel-soft, var(--logbook-panel-soft, rgba(255, 252, 245, 0.48)));
+  --diag-accent: var(--bench-accent, var(--logbook-accent, #8b5e34));
+  --diag-accent-strong: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
+  --diag-warning: var(--bench-warning, var(--logbook-warning, #8b5e34));
+  --diag-error: var(--bench-danger, var(--logbook-danger, #5a3319));
   display: grid;
   gap: 12px;
   min-width: 0;

@@ -128,6 +128,7 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
         result_batch_id: str | None = Query(default=None),
         target_role: str | None = Query(default=None),
         status: str | None = Query(default=None),
+        seed: str | None = Query(default=None),
         limit: int | None = Query(default=None, ge=0, le=1000),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
@@ -136,13 +137,30 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
             result_batch_id=result_batch_id,
             target_role=target_role,
             status=status,
+            seed=seed,
             limit=limit,
             offset=offset,
         )
 
     @api.get("/api/benchmark/batch/{batch_id}/diagnostics")
-    def benchmark_batch_diagnostics(batch_id: str) -> dict[str, Any]:
-        return store.benchmark_batch_diagnostics(batch_id)
+    def benchmark_batch_diagnostics(
+        batch_id: str,
+        target_role: str | None = Query(default=None),
+        kind: str | None = Query(default=None),
+        level: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        stage: str | None = Query(default=None),
+        seed: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        return store.benchmark_batch_diagnostics(
+            batch_id,
+            target_role=target_role,
+            kind=kind,
+            level=level,
+            status=status,
+            stage=stage,
+            seed=seed,
+        )
 
     @api.get("/api/benchmark/batch/{batch_id}/report")
     def benchmark_batch_report(
