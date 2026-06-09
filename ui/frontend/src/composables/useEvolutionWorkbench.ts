@@ -4,6 +4,7 @@ import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
 import { createResumableEventSource } from './resumableEventSource.ts'
+import { currentLegacyHash } from '../router/legacyViewNavigation'
 import {
   evolutionDeepLinkFromHash as routeEvolutionDeepLinkFromHash,
   evolutionDeepLinkFromRoute as routeEvolutionDeepLinkFromRoute,
@@ -1461,7 +1462,7 @@ function evolutionDeepLinkPanel(target = {}) {
   return routeEvolutionDeepLinkPanel(target)
 }
 
-function evolutionDeepLinkFromHash(value = globalThis.window?.location?.hash || '') {
+function evolutionDeepLinkFromHash(value = currentLegacyHash()) {
   return routeEvolutionDeepLinkFromHash(value)
 }
 
@@ -1933,7 +1934,7 @@ function useEvolutionWorkbench(options = {}) {
   const trustBundleAuditError = ref('')
   const initialDeepLinkHash = Object.prototype.hasOwnProperty.call(options, 'initialHash')
     ? options.initialHash
-    : globalThis.window?.location?.hash
+    : currentLegacyHash()
   const initialDeepLinkTarget = Object.prototype.hasOwnProperty.call(options, 'initialRoute')
     ? evolutionDeepLinkFromRoute(options.initialRoute)
     : evolutionDeepLinkFromHash(initialDeepLinkHash || '')
@@ -2320,7 +2321,7 @@ function useEvolutionWorkbench(options = {}) {
     return next
   }
 
-  function consumeEvolutionDeepLink(value = globalThis.window?.location?.hash || '') {
+  function consumeEvolutionDeepLink(value = currentLegacyHash()) {
     const target = value && typeof value === 'object'
       ? evolutionDeepLinkFromRoute(value)
       : evolutionDeepLinkFromHash(value)
@@ -2441,7 +2442,7 @@ function useEvolutionWorkbench(options = {}) {
   }
 
   function handleEvolutionHashChange(event = {}) {
-    const target = consumeEvolutionDeepLink(event.newURL || globalThis.window?.location?.hash || '')
+    const target = consumeEvolutionDeepLink(event.newURL || currentLegacyHash())
     if (target) void applyEvolutionDeepLink(target)
   }
 
