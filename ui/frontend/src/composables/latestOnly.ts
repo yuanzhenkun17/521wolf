@@ -1,8 +1,26 @@
-// @ts-nocheck
-function createLatestOnlyTracker() {
+interface LatestOnlyToken {
+  readonly id: number
+  isLatest: () => boolean
+}
+
+interface LatestOnlyTracker {
+  next: () => LatestOnlyToken
+  invalidate: () => void
+  isLatest: (token?: LatestOnlyToken | null) => boolean
+}
+
+interface LatestOnlyMap {
+  next: (key: unknown) => LatestOnlyToken
+  invalidate: (key: unknown) => void
+  isLatest: (key: unknown, token?: LatestOnlyToken | null) => boolean
+}
+
+type MaybeLatestOnlyToken = LatestOnlyToken | null | undefined
+
+function createLatestOnlyTracker(): LatestOnlyTracker {
   let currentId = 0
 
-  function next() {
+  function next(): LatestOnlyToken {
     const id = currentId + 1
     currentId = id
     return {
@@ -11,7 +29,7 @@ function createLatestOnlyTracker() {
     }
   }
 
-  function invalidate() {
+  function invalidate(): void {
     currentId += 1
   }
 
@@ -22,13 +40,16 @@ function createLatestOnlyTracker() {
   }
 }
 
-function createLatestOnlyMap() {
-  const trackers = new Map()
+function createLatestOnlyMap(): LatestOnlyMap {
+  const trackers = new Map<string, LatestOnlyTracker>()
 
-  function trackerFor(key) {
+  function trackerFor(key: unknown): LatestOnlyTracker {
     const normalized = String(key ?? '')
-    if (!trackers.has(normalized)) trackers.set(normalized, createLatestOnlyTracker())
-    return trackers.get(normalized)
+    const existing = trackers.get(normalized)
+    if (existing) return existing
+    const tracker = createLatestOnlyTracker()
+    trackers.set(normalized, tracker)
+    return tracker
   }
 
   return {
@@ -38,12 +59,18 @@ function createLatestOnlyMap() {
   }
 }
 
-function isLatestRequest(token) {
+function isLatestRequest(token?: MaybeLatestOnlyToken): boolean {
   return !token || token.isLatest()
 }
 
-function allLatestRequests(...tokens) {
+function allLatestRequests(...tokens: MaybeLatestOnlyToken[]): boolean {
   return tokens.every(isLatestRequest)
+}
+
+export type {
+  LatestOnlyMap,
+  LatestOnlyToken,
+  LatestOnlyTracker
 }
 
 export {

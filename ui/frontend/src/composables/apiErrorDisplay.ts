@@ -1,9 +1,50 @@
-// @ts-nocheck
-function isObject(value) {
+type ObjectRecord = Record<string, unknown>
+type NoticeType = 'success' | 'warning' | 'error' | 'info'
+type InlineNoticeType = Exclude<NoticeType, 'error'>
+
+interface DiagnosticDisplayRow {
+  key: string
+  label: string
+  message: string
+  meta: string[]
+  raw: unknown
+}
+
+interface ApiErrorDisplayView {
+  title: string
+  status: number | null
+  code: string
+  message: string
+  detail: string
+  requestId: string
+  diagnostics: DiagnosticDisplayRow[]
+  hasDiagnostics: boolean
+  raw: unknown
+}
+
+interface InlineNotice extends ObjectRecord {
+  type: InlineNoticeType
+  message: string
+}
+
+const NOTICE_TYPES: readonly NoticeType[] = ['success', 'warning', 'error', 'info']
+
+function isObject(value: unknown): value is ObjectRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function firstText(...values) {
+function propertyBag(value: unknown): ObjectRecord {
+  if (value !== null && (typeof value === 'object' || typeof value === 'function')) {
+    return value as ObjectRecord
+  }
+  return {}
+}
+
+function isNoticeType(value: string): value is NoticeType {
+  return NOTICE_TYPES.includes(value as NoticeType)
+}
+
+function firstText(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim()
     if (value != null && typeof value !== 'object') {
@@ -14,7 +55,7 @@ function firstText(...values) {
   return ''
 }
 
-function detailText(value) {
+function detailText(value: unknown): string {
   if (value == null || value === '') return ''
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
@@ -33,12 +74,12 @@ function detailText(value) {
   return String(value)
 }
 
-function diagnosticLabel(row, index) {
+function diagnosticLabel(row: unknown, index: number): string {
   if (!isObject(row)) return String(row || `diagnostic-${index + 1}`)
   return firstText(row.kind, row.type, row.code, row.stage, row.field, `diagnostic-${index + 1}`)
 }
 
-function diagnosticMessage(row) {
+function diagnosticMessage(row: unknown): string {
   if (!isObject(row)) return ''
   return firstText(
     row.message,
@@ -49,7 +90,7 @@ function diagnosticMessage(row) {
   )
 }
 
-function diagnosticMeta(row) {
+function diagnosticMeta(row: unknown): string[] {
   if (!isObject(row)) return []
   return [
     row.level ? `level=${row.level}` : '',
@@ -62,7 +103,7 @@ function diagnosticMeta(row) {
   ].filter(Boolean)
 }
 
-function normalizeDiagnostics(value) {
+function normalizeDiagnostics(value: unknown): DiagnosticDisplayRow[] {
   if (!Array.isArray(value)) return []
   return value.map((row, index) => ({
     key: `${diagnosticLabel(row, index)}:${index}`,
@@ -73,64 +114,66 @@ function normalizeDiagnostics(value) {
   }))
 }
 
-function formatApiErrorForDisplay(error, fallback = '操作失败') {
-  const payload = isObject(error?.payload) ? error.payload : {}
+function formatApiErrorForDisplay(error: unknown, fallback = '操作失败'): ApiErrorDisplayView {
+  const errorData = propertyBag(error)
+  const payload = isObject(errorData.payload) ? errorData.payload : {}
   const payloadError = isObject(payload.error) ? payload.error : {}
-  const diagnostics = Array.isArray(error?.diagnostics)
-    ? error.diagnostics
+  const diagnostics = Array.isArray(errorData.diagnostics)
+    ? errorData.diagnostics
     : (Array.isArray(payloadError.diagnostics) ? payloadError.diagnostics : [])
-  const code = firstText(error?.code, payloadError.code)
+  const code = firstText(errorData.code, payloadError.code)
   const message = firstText(
-    error?.message,
+    errorData.message,
     payloadError.message,
     payload.message,
-    detailText(error?.detail),
+    detailText(errorData.detail),
     detailText(payload.detail),
     fallback
   )
-  const detail = detailText(error?.detail ?? payload.detail)
+  const detail = detailText(errorData.detail ?? payload.detail)
   return {
     title: code ? `${fallback} · ${code}` : fallback,
-    status: Number(error?.status || 0) || null,
+    status: Number(errorData.status || 0) || null,
     code,
     message,
     detail,
-    requestId: firstText(error?.requestId, payload.request_id, payload.requestId, payloadError.request_id, payloadError.requestId),
+    requestId: firstText(errorData.requestId, payload.request_id, payload.requestId, payloadError.request_id, payloadError.requestId),
     diagnostics: normalizeDiagnostics(diagnostics),
     hasDiagnostics: diagnostics.length > 0,
     raw: error
   }
 }
 
-function normalizedNoticeType(notice) {
-  const type = firstText(notice?.type).toLowerCase()
-  return ['success', 'warning', 'error', 'info'].includes(type) ? type : 'info'
+function normalizedNoticeType(notice: unknown): NoticeType {
+  const type = firstText(propertyBag(notice).type).toLowerCase()
+  return isNoticeType(type) ? type : 'info'
 }
 
-function inlineNoticeForDisplay(notice) {
-  const message = firstText(notice?.message)
+function inlineNoticeForDisplay(notice: unknown): InlineNotice | null {
+  const message = firstText(propertyBag(notice).message)
   if (!message || normalizedNoticeType(notice) === 'error') return null
   return {
     ...(isObject(notice) ? notice : {}),
-    type: normalizedNoticeType(notice),
+    type: normalizedNoticeType(notice) as InlineNoticeType,
     message
   }
 }
 
-function noticeErrorForPanel(notice) {
-  const message = firstText(notice?.message)
+function noticeErrorForPanel(notice: unknown): unknown | null {
+  const noticeData = propertyBag(notice)
+  const message = firstText(noticeData.message)
   if (!message || normalizedNoticeType(notice) !== 'error') return null
-  const source = notice?.error || notice?.apiError || notice?.cause
+  const source = noticeData.error || noticeData.apiError || noticeData.cause
   if (source instanceof Error) return source
   if (isObject(source)) {
     return {
-      ...notice,
+      ...propertyBag(notice),
       ...source,
       message: firstText(source.message, message),
-      detail: source.detail ?? notice.detail,
-      diagnostics: source.diagnostics ?? notice.diagnostics,
-      requestId: firstText(source.requestId, source.request_id, notice.requestId, notice.request_id),
-      payload: source.payload ?? notice.payload
+      detail: source.detail ?? noticeData.detail,
+      diagnostics: source.diagnostics ?? noticeData.diagnostics,
+      requestId: firstText(source.requestId, source.request_id, noticeData.requestId, noticeData.request_id),
+      payload: source.payload ?? noticeData.payload
     }
   }
   return notice
