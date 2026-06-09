@@ -22,9 +22,11 @@ from app.util.redaction import redact, redaction_summary
 
 
 SCHEMA_VERSION = "langfuse_annotation_queue_export_v1"
+LANGFUSE_ADAPTER_VERSION = "langfuse_human_annotation_adapter_v1"
 DEFAULT_LOW_JUDGE_SCORE = 5.0
 DEFAULT_UI_BASE_URL = "/"
 DEFAULT_MAX_EVIDENCE_ROWS = 5
+LANGFUSE_CLIENT_METHODS = ("create_annotation", "create_comment", "create_score", "score")
 
 PROBLEM_STATUSES = {"failed", "failure", "error", "errored", "timeout", "timed_out", "aborted"}
 SENSITIVE_KEY_PARTS = (
@@ -157,9 +159,15 @@ def build_annotation_queue(
         "item_count": len(items),
         "items": items,
         "langfuse": {
+            "adapter": None,
+            "adapter_version": LANGFUSE_ADAPTER_VERSION,
             "write_enabled": False,
-            "adapter": "fail_open_placeholder",
-            "note": "Default export writes local JSON only. Attach an adapter later to enqueue in Langfuse.",
+            "status": "local_only",
+            "fail_open": False,
+            "item_count": len(items),
+            "applied_count": 0,
+            "results": [],
+            "note": "Default export writes local JSON only. Use --apply --adapter langfuse to attempt Langfuse writes.",
         },
     }
 
@@ -185,6 +193,7 @@ def export_annotation_queue(
     )
 
     if apply:
+        report["dry_run"] = adapter is None
         report["langfuse"] = _write_langfuse_fail_open(report["items"], adapter=adapter)
 
     if output_path is not None:
@@ -517,26 +526,329 @@ def _candidate_to_queue_item(candidate: Candidate) -> dict[str, Any]:
 
 
 def _write_langfuse_fail_open(items: list[dict[str, Any]], *, adapter: Any | None) -> dict[str, Any]:
-    """Best-effort adapter placeholder for a future Langfuse annotation queue write."""
+    """Best-effort Langfuse annotation queue write.
+
+    The function is intentionally fail-open: export output remains usable even
+    when Langfuse is unconfigured, the installed SDK lacks annotation APIs, or
+    an individual write fails.
+    """
 
     if adapter is None:
         return {
+            "adapter": None,
+            "adapter_version": LANGFUSE_ADAPTER_VERSION,
             "write_enabled": False,
+            "status": "skipped",
+            "fail_open": False,
+            "item_count": len(items),
             "applied_count": 0,
-            "error": "No Langfuse annotation adapter configured; local JSON export completed.",
-            "todo": "Wire this to Langfuse Human Annotation when the project queue API is selected.",
+            "results": [],
+            "note": "No Langfuse annotation adapter configured; local JSON export completed.",
         }
+
+    if adapter == "langfuse":
+        return _write_langfuse_client_fail_open(items)
+
+    if callable(adapter):
+        return _write_callable_langfuse_adapter_fail_open(items, adapter)
+
+    if _langfuse_client_method(adapter) is not None:
+        return _write_langfuse_client_items_fail_open(items, adapter, adapter_label="langfuse_client")
+
+    message = f"Unsupported annotation adapter: {type(adapter).__name__}"
+    return _langfuse_result_report(
+        adapter_label=str(adapter),
+        write_enabled=False,
+        item_count=len(items),
+        results=_item_error_results(items, status="unsupported", error=message),
+        status="unsupported",
+        fail_open=True,
+        error=message,
+    )
+
+
+def _write_callable_langfuse_adapter_fail_open(items: list[dict[str, Any]], adapter: Any) -> dict[str, Any]:
+    """Invoke a custom callable adapter while preserving the stable report shape."""
+
     try:
         result = adapter(items)
         if isinstance(result, Mapping):
-            return {"write_enabled": True, **dict(result)}
-        return {"write_enabled": True, "applied_count": len(items), "result": str(result)}
-    except Exception as exc:  # noqa: BLE001 - annotation export must remain fail-open
+            adapter_result = dict(result)
+            fail_open = adapter_result.get("fail_open")
+            report = {
+                "adapter": "callable",
+                "adapter_version": LANGFUSE_ADAPTER_VERSION,
+                "write_enabled": True,
+                "status": "success",
+                "item_count": len(items),
+                "applied_count": len(items),
+                "results": _item_success_results(items),
+                **adapter_result,
+            }
+            if fail_open is None:
+                report["fail_open"] = report.get("status") != "success"
+            return report
         return {
+            "adapter": "callable",
+            "adapter_version": LANGFUSE_ADAPTER_VERSION,
             "write_enabled": True,
-            "applied_count": 0,
-            "error": f"{type(exc).__name__}: {exc}",
+            "status": "success",
+            "fail_open": False,
+            "item_count": len(items),
+            "applied_count": len(items),
+            "results": _item_success_results(items),
+            "result": _sanitize(result),
         }
+    except Exception as exc:  # noqa: BLE001 - annotation export must remain fail-open
+        error = f"{type(exc).__name__}: {exc}"
+        results = _item_error_results(items, status="fail_open", error=error)
+        return {
+            "adapter": "callable",
+            "adapter_version": LANGFUSE_ADAPTER_VERSION,
+            "write_enabled": True,
+            "status": "fail_open",
+            "fail_open": True,
+            "item_count": len(items),
+            "applied_count": 0,
+            "results": results,
+            "error": error,
+        }
+
+
+def _write_langfuse_client_fail_open(items: list[dict[str, Any]]) -> dict[str, Any]:
+    try:
+        client = _get_langfuse_client()
+    except Exception as exc:  # noqa: BLE001 - optional SDK/client resolution must not break export
+        error = f"{type(exc).__name__}: {exc}"
+        return _langfuse_result_report(
+            adapter_label="langfuse",
+            write_enabled=True,
+            item_count=len(items),
+            results=_item_error_results(items, status="fail_open", error=error),
+            status="fail_open",
+            fail_open=True,
+            error=error,
+        )
+
+    if client is None:
+        error = "Langfuse client unavailable; local JSON export completed."
+        return _langfuse_result_report(
+            adapter_label="langfuse",
+            write_enabled=True,
+            item_count=len(items),
+            results=_item_error_results(items, status="client_unavailable", error=error),
+            status="client_unavailable",
+            fail_open=True,
+            error=error,
+        )
+
+    return _write_langfuse_client_items_fail_open(items, client, adapter_label="langfuse")
+
+
+def _get_langfuse_client() -> Any | None:
+    from app.services.observability import get_langfuse_client
+
+    return get_langfuse_client()
+
+
+def _write_langfuse_client_items_fail_open(
+    items: list[dict[str, Any]],
+    client: Any,
+    *,
+    adapter_label: str,
+) -> dict[str, Any]:
+    method_info = _langfuse_client_method(client)
+    if method_info is None:
+        error = "Langfuse client does not expose a supported annotation method."
+        return _langfuse_result_report(
+            adapter_label=adapter_label,
+            write_enabled=True,
+            item_count=len(items),
+            results=_item_error_results(items, status="unsupported", error=error),
+            status="unsupported",
+            fail_open=True,
+            error=error,
+        )
+
+    method_name, method = method_info
+    results: list[dict[str, Any]] = []
+    for item in items:
+        queue_item_id = _queue_item_id(item)
+        try:
+            remote = _invoke_langfuse_annotation_method(method_name, method, item)
+            result: dict[str, Any] = {
+                "queue_item_id": queue_item_id,
+                "status": "success",
+                "method": method_name,
+                "remote_id": _remote_id(remote),
+            }
+            results.append(result)
+        except Exception as exc:  # noqa: BLE001 - each queue item must fail open independently
+            results.append(
+                {
+                    "queue_item_id": queue_item_id,
+                    "status": "fail_open",
+                    "method": method_name,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return _langfuse_result_report(
+        adapter_label=adapter_label,
+        write_enabled=True,
+        item_count=len(items),
+        results=results,
+        method=method_name,
+    )
+
+
+def _langfuse_client_method(client: Any) -> tuple[str, Any] | None:
+    for method_name in LANGFUSE_CLIENT_METHODS:
+        method = getattr(client, method_name, None)
+        if callable(method):
+            return method_name, method
+    return None
+
+
+def _invoke_langfuse_annotation_method(method_name: str, method: Any, item: dict[str, Any]) -> Any:
+    payload = _langfuse_annotation_payload(item)
+    kwargs = _langfuse_method_kwargs(method_name, item, payload)
+    try:
+        return method(**kwargs)
+    except TypeError as first_exc:
+        try:
+            return method(payload)
+        except Exception as second_exc:  # noqa: BLE001
+            raise second_exc from first_exc
+
+
+def _langfuse_method_kwargs(
+    method_name: str,
+    item: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = _as_mapping(item.get("metadata"))
+    kwargs: dict[str, Any] = {
+        "name": "human_annotation_queue",
+        "metadata": payload,
+    }
+    trace_id = _first_text(metadata.get("trace_id"))
+    dataset_run_id = _first_text(metadata.get("langfuse_dataset_run_id"))
+    dataset_run_item_id = _first_text(metadata.get("langfuse_dataset_run_item_id"))
+    if trace_id:
+        kwargs["trace_id"] = trace_id
+    if dataset_run_id:
+        kwargs["dataset_run_id"] = dataset_run_id
+    if dataset_run_item_id:
+        kwargs["dataset_run_item_id"] = dataset_run_item_id
+
+    if method_name in {"create_score", "score"}:
+        kwargs.update(
+            {
+                "value": 1,
+                "data_type": "NUMERIC",
+                "comment": "queued_for_human_annotation",
+            }
+        )
+    elif method_name == "create_comment":
+        kwargs["comment"] = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    else:
+        kwargs.update(
+            {
+                "input": payload.get("input"),
+                "task": payload.get("annotation_task"),
+            }
+        )
+    return kwargs
+
+
+def _langfuse_annotation_payload(item: dict[str, Any]) -> dict[str, Any]:
+    metadata = _as_mapping(item.get("metadata"))
+    return {
+        "queue_item_id": _queue_item_id(item),
+        "priority_score": item.get("priority_score"),
+        "priority_label": item.get("priority_label"),
+        "reason_codes": _list_value(item.get("reason_codes")),
+        "annotation_task": item.get("annotation_task"),
+        "input": item.get("input"),
+        "metadata": metadata,
+        "privacy": item.get("privacy"),
+    }
+
+
+def _langfuse_result_report(
+    *,
+    adapter_label: str | None,
+    write_enabled: bool,
+    item_count: int,
+    results: list[dict[str, Any]],
+    status: str | None = None,
+    fail_open: bool | None = None,
+    error: str | None = None,
+    method: str | None = None,
+) -> dict[str, Any]:
+    applied_count = sum(1 for result in results if result.get("status") == "success")
+    resolved_status = status or _langfuse_status(results)
+    report: dict[str, Any] = {
+        "adapter": adapter_label,
+        "adapter_version": LANGFUSE_ADAPTER_VERSION,
+        "write_enabled": write_enabled,
+        "status": resolved_status,
+        "fail_open": resolved_status != "success" if fail_open is None else fail_open,
+        "item_count": item_count,
+        "applied_count": applied_count,
+        "results": results,
+    }
+    if method:
+        report["method"] = method
+    if error:
+        report["error"] = error
+    return report
+
+
+def _langfuse_status(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return "success"
+    statuses = {str(result.get("status")) for result in results}
+    if statuses == {"success"}:
+        return "success"
+    if "success" in statuses:
+        return "partial_success"
+    if statuses == {"unsupported"}:
+        return "unsupported"
+    if statuses == {"client_unavailable"}:
+        return "client_unavailable"
+    return "fail_open"
+
+
+def _item_success_results(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{"queue_item_id": _queue_item_id(item), "status": "success", "remote_id": None} for item in items]
+
+
+def _item_error_results(items: list[dict[str, Any]], *, status: str, error: str) -> list[dict[str, Any]]:
+    return [{"queue_item_id": _queue_item_id(item), "status": status, "error": error} for item in items]
+
+
+def _queue_item_id(item: Mapping[str, Any]) -> str:
+    return _first_text(item.get("queue_item_id"), item.get("id"))
+
+
+def _remote_id(result: Any) -> str | None:
+    if result in (None, ""):
+        return None
+    if isinstance(result, str):
+        return result
+    if isinstance(result, Mapping):
+        for key in ("remote_id", "id", "annotation_id", "comment_id", "score_id"):
+            value = result.get(key)
+            if value not in (None, ""):
+                return str(value)
+        return None
+    for attr in ("remote_id", "id", "annotation_id", "comment_id", "score_id"):
+        value = getattr(result, attr, None)
+        if value not in (None, ""):
+            return str(value)
+    return None
 
 
 def _merge_candidate(candidates: dict[str, Candidate], candidate: Candidate) -> None:
@@ -1030,6 +1342,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Invoke the fail-open adapter placeholder. Does not create a network client by default.",
     )
+    parser.add_argument(
+        "--adapter",
+        choices=("langfuse",),
+        default=None,
+        help="Optional write adapter. Only --apply --adapter langfuse attempts to construct a Langfuse client.",
+    )
     return parser.parse_args(argv)
 
 
@@ -1042,6 +1360,7 @@ def main(argv: list[str] | None = None) -> int:
         low_judge_score=args.low_judge_score,
         max_items=args.max_items,
         apply=bool(args.apply),
+        adapter=args.adapter,
     )
     if args.output is None:
         print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))

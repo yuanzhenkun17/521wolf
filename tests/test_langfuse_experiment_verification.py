@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -149,6 +150,9 @@ def test_verifier_default_does_not_load_observability_or_network(monkeypatch: An
     assert report["langfuse_config"]["configured"] is False
     assert report["summary"]["warnings"] == 1
     assert report["summary"]["failed"] == 0
+    assert report["summary"]["warning_checks"] == ["langfuse.config"]
+    assert report["summary"]["failed_checks"] == []
+    assert report["summary"]["fail_open_checks"] == []
 
 
 def test_dataset_item_id_contract_reports_invalid_plan_item(monkeypatch: Any) -> None:
@@ -256,3 +260,112 @@ def test_remote_verification_fail_open_on_client_error(monkeypatch: Any, tmp_pat
     assert remote["status"] == "fail_open"
     assert "langfuse unavailable" in remote["errors"][0]["error"]
     assert report["summary"]["fail_open"] == 1
+    assert report["summary"]["fail_open_checks"] == ["langfuse.remote_verify"]
+
+
+def test_cli_writes_output_file_and_defaults_to_lenient_exit(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    _write_registry(tmp_path)
+    tool = _load_tool(monkeypatch)
+    output_path = tmp_path / "reports" / "langfuse-verification.json"
+
+    exit_code = tool.main(["--root", str(tmp_path), "--output", str(output_path)])
+
+    assert exit_code == 0
+    assert output_path.exists()
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    printed = json.loads(capsys.readouterr().out)
+    assert written == printed
+    assert written["kind"] == "langfuse_experiment_verification"
+    assert written["summary"]["warning_checks"] == ["langfuse.config"]
+
+
+def test_cli_strict_exits_nonzero_on_fail_open_without_network(
+    monkeypatch: Any,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    _write_registry(tmp_path)
+    payload_file = tmp_path / "payload.json"
+    payload_file.write_text(json.dumps(_valid_game_payload()), encoding="utf-8")
+    tool = _load_tool(monkeypatch)
+    monkeypatch.setitem(sys.modules, "app.services.observability", None)
+
+    exit_code = tool.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--payload-file",
+            str(payload_file),
+            "--verify-remote",
+            "--strict",
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert report["status"] == "fail_open"
+    assert report["summary"]["fail_open_checks"] == ["langfuse.remote_verify"]
+
+
+def test_cli_compare_report_tracks_check_status_changes_offline(
+    monkeypatch: Any,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    tool = _load_tool(monkeypatch)
+    monkeypatch.setattr(
+        tool,
+        "verify_langfuse_experiments",
+        lambda **_: (_ for _ in ()).throw(AssertionError("compare should not verify")),
+    )
+    old_report = {
+        "status": "warning",
+        "summary": {"check_count": 2, "passed": 1, "warnings": 1, "failed": 0, "fail_open": 0},
+        "checklist": [
+            {"id": "langfuse.config", "label": "Config", "status": "warning", "message": "missing"},
+            {"id": "benchmark.dataset_sync_plan", "label": "Plan", "status": "pass", "message": "ok"},
+        ],
+    }
+    new_report = {
+        "status": "fail",
+        "summary": {"check_count": 2, "passed": 1, "warnings": 0, "failed": 1, "fail_open": 0},
+        "checklist": [
+            {"id": "langfuse.config", "label": "Config", "status": "pass", "message": "configured"},
+            {"id": "benchmark.result_payload_links", "label": "Payloads", "status": "fail", "message": "bad"},
+        ],
+    }
+    old_path = tmp_path / "old-report.json"
+    new_path = tmp_path / "new-report.json"
+    output_path = tmp_path / "comparison.json"
+    old_path.write_text(json.dumps(old_report), encoding="utf-8")
+    new_path.write_text(json.dumps(new_report), encoding="utf-8")
+
+    exit_code = tool.main(
+        [
+            "--compare-report",
+            str(old_path),
+            str(new_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    printed = json.loads(capsys.readouterr().out)
+    assert written == printed
+    assert written["kind"] == "langfuse_experiment_verification_comparison"
+    assert written["added_checks"][0]["id"] == "benchmark.result_payload_links"
+    assert written["removed_checks"][0]["id"] == "benchmark.dataset_sync_plan"
+    assert written["changed_checks"] == [
+        {
+            "id": "langfuse.config",
+            "label": "Config",
+            "old_status": "warning",
+            "new_status": "pass",
+            "old_message": "missing",
+            "new_message": "configured",
+        }
+    ]
+    assert written["summary_delta"]["failed"] == 1
+    assert written["summary_delta"]["warnings"] == -1

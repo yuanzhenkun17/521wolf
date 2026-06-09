@@ -575,6 +575,134 @@ Prompt fallback 规则：
 - 导出的 queue item 不包含敏感长文本字段。
 - 输出可作为后续 Human Annotation API 写入工具的输入。
 
+## Phase 8：Human Annotation API 接入
+
+目标：在 Phase 7 本地 queue 的基础上，增加可插拔、fail-open 的 Langfuse Human Annotation 写入 adapter，让人工标注从“可导出”升级为“可投递、可回查、可复跑”。
+
+本阶段优先解决三件事：
+
+- 保留本地 JSON queue 作为权威交接物，Langfuse 写入只是附加动作。
+- 写入 adapter 不直接耦合业务工具；SDK/API 变化时只影响 adapter，不影响 queue 构建。
+- 输出写入结果 manifest，记录每个 queue item 的本地 ID、Langfuse 侧 ID、trace/dataset link 和失败原因。
+
+建议接口：
+
+```powershell
+uv run python -m app.tools.export_langfuse_annotation_queue payload.json -o queue.json
+uv run python -m app.tools.export_langfuse_annotation_queue payload.json --apply --adapter langfuse
+```
+
+文件范围：
+
+- `app/tools/export_langfuse_annotation_queue.py`
+- `tests/test_langfuse_annotation_export.py`
+
+实现原则：
+
+- 默认不触网；只有 `--apply --adapter langfuse` 才尝试写入。
+- adapter 使用 `get_langfuse_client()` 获取 client，client 缺失时返回 fail-open manifest。
+- 优先调用 SDK 暴露的 annotation/score/comment 等稳定能力；如果 SDK 缺少对应方法，返回清晰 `unsupported`，不抛出业务异常。
+- 不上传完整 prompt、private reasoning、raw messages；只上传 queue item 中已经脱敏的 summary/evidence/metadata。
+- 写入结果必须可重复：同一个 `queue_item_id` 再次写入应带同一个 deterministic key，避免制造不可追踪重复。
+
+验收：
+
+- dry-run 和本地 JSON 导出行为不变。
+- fake adapter/fake client 测试覆盖成功、unsupported、client exception 三类路径。
+- `--apply` 写入失败时命令仍能产出 queue report，并标记 `langfuse.status=fail_open`。
+- 输出 manifest 不包含敏感原文。
+
+## Phase 9：Prompt Management 托管开关和 Canary
+
+目标：把 Phase 6 的“只记录远端 prompt metadata”升级为“可显式启用远端 prompt compile”，但仍默认保守，不改核心 `decision` prompt。
+
+本阶段优先解决四件事：
+
+- 新增 `LANGFUSE_PROMPT_MANAGEMENT_ENABLED=false`，默认关闭远端 prompt 内容替换。
+- 支持 `LANGFUSE_PROMPT_LABEL=production` 和按 prompt 名称覆盖 label，例如 `LANGFUSE_PROMPT_LABEL_DECISION_JUDGE=canary`。
+- 远端 prompt compile 失败、schema 不匹配、返回空内容时，立即回退本地 prompt。
+- observation metadata 增加 canary/fallback 诊断，但不记录完整 prompt 文本。
+
+文件范围：
+
+- `app/services/prompt_registry.py`
+- `app/services/chain.py`
+- `tests/test_prompt_registry.py`
+- `tests/test_prompt_management_chain.py`
+
+实现原则：
+
+- 默认行为保持 Phase 6：只记录 Langfuse prompt metadata，不替换 messages。
+- 只有显式开关开启且 stage 在 allowlist 中，才允许 remote compile 参与构造 prompt。
+- `decision` stage 不进入本阶段 allowlist。
+- 所有错误 fail-open；任何 prompt 管理问题都不能影响 LLM 调用。
+- metadata 只包含 `prompt_name`、`prompt_label`、`prompt_version`、`prompt_source`、`prompt_fallback_used`、`prompt_compile_enabled`、`prompt_error_type` 等短字段。
+
+验收：
+
+- 默认关闭时，现有 prompt chain 测试行为不变。
+- 开启后 fake remote prompt 可返回编译内容或 metadata，测试覆盖 label 覆盖和 fallback。
+- core `decision` 不调用远端替换路径。
+- `LANGFUSE_CAPTURE_INPUT_OUTPUT=false` 时仍不会上传 prompt/input/output。
+
+## Phase 10：真实验收报告和 CI Contract
+
+目标：让 Phase 5B 的验收工具产出可归档、可比较、可用于 CI 的报告，同时真实环境验收和离线 contract 分离。
+
+本阶段优先解决三件事：
+
+- 增加 `--output` 和 `--strict`，让验收报告可写入文件，CI 可根据 strict 模式失败。
+- 增加 machine-readable summary，包括 `status`、`check_count`、`failed_checks`、`warning_checks`、`artifact_paths`。
+- 增加 report diff/compare 的最小能力，便于比较两次 benchmark release 的 Langfuse linkage 缺口。
+
+文件范围：
+
+- `app/tools/verify_langfuse_experiments.py`
+- `tests/test_langfuse_experiment_verification.py`
+
+实现原则：
+
+- 默认 CLI 行为保持宽松：warning 不失败，真实 Langfuse 不可用 fail-open。
+- `--strict` 只用于 CI contract；出现 `fail` 或 `fail_open` 返回非 0。
+- `--output` 写 JSON，不写密钥，不加载 `.env`。
+- compare 只比较报告摘要和 checklist，不访问网络。
+
+验收：
+
+- dry-run report 可写入文件。
+- strict 模式对缺少 payload link、无效 dataset item id 返回非 0。
+- compare 能报告新增/消失/状态变化的 checks。
+- 测试不访问真实 Langfuse。
+
+## Phase 11：后端 Deep Link Manifest
+
+目标：在不触碰前端 UI 的前提下，提供一个后端可消费的 Langfuse deep link manifest，方便后续 UI 页面展示 trace、experiment、annotation queue 下载入口。
+
+本阶段优先解决三件事：
+
+- 从 benchmark/eval/review payload 中抽取 `trace_url`、`experiment_url`、`local_url`、`ui_deep_link`。
+- 输出稳定 JSON manifest，供前端或发布报告直接读取。
+- 与 annotation queue 和 verification report 使用一致的 ID 和 metadata 命名。
+
+文件范围：
+
+- 新增 `app/tools/build_langfuse_link_manifest.py`
+- 新增 `tests/test_langfuse_link_manifest.py`
+
+实现原则：
+
+- 默认离线，不触网。
+- 不读数据库，只消费 JSON payload/report。
+- 对缺少 URL 的记录保留 ID 和 missing reason，方便 UI 显示“未绑定 Langfuse”。
+- 不修改 `ui/frontend/*`，避免和当前前端现代化改动冲突。
+
+验收：
+
+- fake benchmark payload 可生成 trace/experiment/local link manifest。
+- 缺失链接不会报错，会进入 `missing_links`。
+- manifest 不包含 prompt/private reasoning/raw messages。
+- 后续 UI 只需消费 manifest，不需要重新理解 Langfuse payload 结构。
+
 ## 7. 并行拆分建议
 
 可以分 4 个 agent/分支并行推进，写范围保持隔离：
@@ -691,21 +819,28 @@ uv run pytest tests/test_api_contracts.py
 - eval batch 可选关联 dataset/experiment。
 - Prompt Management 至少完成 `decision_judge` 试点并保留 fallback。
 
+第三轮完成标准：
+
+- annotation queue 可选写入 Langfuse 或输出 fail-open manifest。
+- Prompt Management 支持显式开关、label/canary 和远端 compile fallback。
+- verification report 支持 `--output`、`--strict` 和离线 compare。
+- 后端可生成 deep link manifest，前端无需直接解析 Langfuse 内部 payload。
+
 ## 13. 推荐下一步
 
-Phase 5A 已完成后，下一轮按下面顺序推进：
+Phase 5B、Phase 6、Phase 7 已完成后，下一轮按下面顺序推进：
 
-1. **Phase 5B：真实联调验收包**
-   - 新增 `verify_langfuse_experiments` dry-run 验收工具。
-   - 用 fake payload 锁定 dataset item、trace、dataset run、experiment URL 的验收 contract。
-   - 在本地 Langfuse 环境手动执行 dataset sync + benchmark + verification，产出 JSON 报告。
-2. **Phase 6：Prompt Management 试点**
-   - 新增 `prompt_registry` facade。
-   - 先让 `decision_judge`、`evidence` 记录 prompt metadata，并保留本地 fallback。
-   - 默认不改 core decision prompt，不上传完整 prompt/input/output。
-3. **Phase 7：人工标注闭环**
-   - 新增 annotation queue dry-run export。
-   - 从 problem games、低分 judge、fallback/LLM error、promotion gate 边界样本中筛选。
-   - 输出只包含短摘要、ID、deep link 和 metadata，为后续 Human Annotation API 写入做准备。
+1. **Phase 8：Human Annotation API 接入**
+   - 在本地 queue 基础上增加 Langfuse adapter 和写入 manifest。
+   - 失败保持 fail-open，不影响本地 JSON queue。
+2. **Phase 9：Prompt Management 托管开关和 Canary**
+   - 增加显式开关、label/canary、远端 compile fallback。
+   - 继续排除核心 `decision` prompt。
+3. **Phase 10：真实验收报告和 CI Contract**
+   - `verify_langfuse_experiments` 增加 `--output`、`--strict`、report compare。
+   - CI 使用离线 contract，不依赖真实 Langfuse。
+4. **Phase 11：后端 Deep Link Manifest**
+   - 生成可供 UI/报告消费的 trace、experiment、annotation/local link manifest。
+   - 不修改前端实现，避免和 UI 现代化分支冲突。
 
-这三步完成后，Langfuse 的定位会从“可观测实验面板”扩展为“可验收、可追踪 prompt 版本、可承接人工标注闭环”的辅助系统；PostgreSQL、`app.lib.score` 和正式 leaderboard 仍保持权威地位。
+这四步完成后，Langfuse 的定位会从“可观测实验面板”扩展为“可验收、可追踪 prompt 版本、可承接人工标注闭环、可被 UI 消费的辅助系统”；PostgreSQL、`app.lib.score` 和正式 leaderboard 仍保持权威地位。

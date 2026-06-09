@@ -344,7 +344,11 @@ def _llm_runnable(
 
     async def _call(messages: Any) -> Any:
         prepared_messages = prepare_llm_messages(messages, stage=stage, budget=prompt_budget)
-        prompt_metadata = _prompt_registry_metadata(stage=stage, messages=prepared_messages)
+        prepared_messages, prompt_metadata = _prompt_registry_resolution(
+            stage=stage,
+            messages=prepared_messages,
+            prompt_budget=prompt_budget,
+        )
         model = _model_identifier(llm)
         observation_metadata = _llm_observation_metadata(
             stage=stage,
@@ -418,22 +422,64 @@ def _observability() -> Any:
 
 
 _PROMPT_REGISTRY_STAGES = frozenset({"decision_judge", "evidence", "consolidate", "apply"})
-_PROMPT_METADATA_KEYS = ("prompt_name", "prompt_version", "prompt_label")
+_PROMPT_METADATA_KEYS = ("prompt_name", "prompt_version", "prompt_label", "prompt_compile_enabled")
 
 
-def _prompt_registry_metadata(*, stage: str, messages: Any) -> dict[str, Any]:
+def _prompt_registry_resolution(
+    *,
+    stage: str,
+    messages: Any,
+    prompt_budget: Any | None,
+) -> tuple[Any, dict[str, Any]]:
     if stage not in _PROMPT_REGISTRY_STAGES:
-        return {}
+        return messages, {}
     try:
         registry = importlib.import_module("app.services.prompt_registry")
         get_prompt = getattr(registry, "get_prompt", None)
         if not callable(get_prompt):
-            return {}
-        resolved = get_prompt(stage, label="production", fallback=_prompt_registry_fallback(messages))
-        return _extract_prompt_metadata(resolved)
+            return messages, {}
+        label_for = getattr(registry, "prompt_label_for", None)
+        prompt_label = label_for(stage) if callable(label_for) else "production"
+        management_enabled = getattr(registry, "prompt_management_enabled", None)
+        compile_enabled = management_enabled() if callable(management_enabled) else False
+        resolved = get_prompt(
+            stage,
+            label=prompt_label,
+            fallback=_prompt_registry_fallback(messages),
+            enable_compile=bool(compile_enabled),
+        )
+        prompt_metadata = _extract_prompt_metadata(resolved)
+        if not compile_enabled or not prompt_metadata:
+            return messages, prompt_metadata
+
+        compiled = _compile_prompt_reference(resolved)
+        prompt_metadata = _extract_prompt_metadata(resolved)
+        if not _compiled_prompt_usable(compiled) or not prompt_metadata:
+            return messages, {}
+        return prepare_llm_messages(compiled, stage=stage, budget=prompt_budget), prompt_metadata
     except Exception:  # noqa: BLE001 - prompt registry must not affect LLM behavior
         _log.debug("prompt registry lookup failed for stage=%s", stage, exc_info=True)
-        return {}
+        return messages, {}
+
+
+def _compile_prompt_reference(value: Any) -> Any | None:
+    compile_prompt = getattr(value, "compile", None)
+    if not callable(compile_prompt):
+        return None
+    try:
+        return compile_prompt()
+    except Exception:  # noqa: BLE001 - prompt compile must fail open
+        return None
+
+
+def _compiled_prompt_usable(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return bool(value)
+    return True
 
 
 def _extract_prompt_metadata(value: Any) -> dict[str, Any]:
@@ -441,7 +487,7 @@ def _extract_prompt_metadata(value: Any) -> dict[str, Any]:
     if _value_at_path(payload, ("prompt_fallback_used",)) is True:
         return {}
     source = _value_at_path(payload, ("prompt_source",))
-    if source is not None and str(source) != "langfuse":
+    if str(source) != "langfuse":
         return {}
     metadata: dict[str, Any] = {}
     for key in _PROMPT_METADATA_KEYS:

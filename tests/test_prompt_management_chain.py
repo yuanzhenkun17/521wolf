@@ -85,37 +85,185 @@ def test_low_risk_registry_disabled_preserves_messages_and_metadata(monkeypatch)
 def test_low_risk_registry_metadata_is_merged_into_llm_observation(monkeypatch):
     captured = _install_observability(monkeypatch)
     fake_registry = types.ModuleType("app.services.prompt_registry")
+    prompt_calls: list[dict[str, Any]] = []
 
-    def get_prompt(name: str, *, label: str = "production", fallback: Any = None):
+    from app.services.prompt_registry import prompt_label_for, prompt_management_enabled
+
+    def get_prompt(
+        name: str,
+        *,
+        label: str = "production",
+        fallback: Any = None,
+        enable_compile: bool = False,
+    ):
         assert name == "decision_judge"
-        assert label == "production"
         assert fallback is not None
+        prompt_calls.append(
+            {
+                "name": name,
+                "label": label,
+                "enable_compile": enable_compile,
+                "fallback": fallback,
+            }
+        )
         return {
             "metadata": {
                 "prompt_name": "decision_judge",
                 "prompt_version": 17,
                 "prompt_label": label,
+                "prompt_source": "langfuse",
+                "prompt_fallback_used": False,
+                "prompt_compile_enabled": enable_compile,
             }
         }
 
     fake_registry.get_prompt = get_prompt
+    fake_registry.prompt_label_for = prompt_label_for
+    fake_registry.prompt_management_enabled = prompt_management_enabled
     monkeypatch.setitem(sys.modules, "app.services.prompt_registry", fake_registry)
+    monkeypatch.setenv("LANGFUSE_PROMPT_LABEL", "canary")
+    monkeypatch.delenv("LANGFUSE_PROMPT_MANAGEMENT_ENABLED", raising=False)
     monkeypatch.delitem(sys.modules, "app.services.chain", raising=False)
     chain = importlib.import_module("app.services.chain")
+    model = _FakeModel()
+    messages = [{"role": "user", "content": "judge this decision"}]
 
     result = asyncio.run(
         chain.run_decision_judge_chain(
-            _FakeModel(),
-            messages=[{"role": "user", "content": "judge this decision"}],
+            model,
+            messages=messages,
         )
     )
 
     assert result == '{"schema_version":"1.0","ok":true}'
+    assert prompt_calls
+    assert prompt_calls[-1]["label"] == "canary"
+    assert prompt_calls[-1]["enable_compile"] is False
+    assert model.calls[-1][0] == messages[0]
     metadata = _metadata_from_last_observe(captured)
     assert metadata["stage"] == "decision_judge"
     assert metadata["prompt_name"] == "decision_judge"
     assert metadata["prompt_version"] == 17
-    assert metadata["prompt_label"] == "production"
+    assert metadata["prompt_label"] == "canary"
+    assert metadata["prompt_compile_enabled"] is False
+
+
+def test_prompt_management_enabled_compiles_remote_prompt_for_low_risk_stage(monkeypatch):
+    captured = _install_observability(monkeypatch)
+    fake_registry = types.ModuleType("app.services.prompt_registry")
+    prompt_calls: list[dict[str, Any]] = []
+
+    from app.services.prompt_registry import prompt_label_for, prompt_management_enabled
+
+    class RemotePrompt:
+        metadata = {
+            "prompt_name": "evidence",
+            "prompt_version": 23,
+            "prompt_label": "canary",
+            "prompt_source": "langfuse",
+            "prompt_fallback_used": False,
+            "prompt_compile_enabled": True,
+        }
+
+        def compile(self, **kwargs: Any) -> str:
+            assert kwargs == {}
+            return "remote evidence prompt"
+
+    def get_prompt(
+        name: str,
+        *,
+        label: str = "production",
+        fallback: Any = None,
+        enable_compile: bool = False,
+    ) -> RemotePrompt:
+        prompt_calls.append(
+            {
+                "name": name,
+                "label": label,
+                "enable_compile": enable_compile,
+                "fallback": fallback,
+            }
+        )
+        return RemotePrompt()
+
+    fake_registry.get_prompt = get_prompt
+    fake_registry.prompt_label_for = prompt_label_for
+    fake_registry.prompt_management_enabled = prompt_management_enabled
+    monkeypatch.setitem(sys.modules, "app.services.prompt_registry", fake_registry)
+    monkeypatch.setenv("LANGFUSE_PROMPT_MANAGEMENT_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PROMPT_LABEL_EVIDENCE", "canary")
+    monkeypatch.delitem(sys.modules, "app.services.chain", raising=False)
+    chain = importlib.import_module("app.services.chain")
+    model = _FakeModel()
+    messages = [{"role": "user", "content": "judge this evidence"}]
+
+    result = asyncio.run(chain.run_evidence_chain(model, messages=messages))
+
+    assert result == '{"schema_version":"1.0","ok":true}'
+    assert prompt_calls[-1]["name"] == "evidence"
+    assert prompt_calls[-1]["label"] == "canary"
+    assert prompt_calls[-1]["enable_compile"] is True
+    assert getattr(model.calls[-1][0], "content", "") == "remote evidence prompt"
+    assert any("schema_version" in getattr(message, "content", "") for message in model.calls[-1])
+    metadata = _metadata_from_last_observe(captured)
+    assert metadata["prompt_name"] == "evidence"
+    assert metadata["prompt_version"] == 23
+    assert metadata["prompt_label"] == "canary"
+    assert metadata["prompt_compile_enabled"] is True
+
+
+def test_prompt_management_empty_compile_result_falls_back_to_local_messages(monkeypatch):
+    captured = _install_observability(monkeypatch)
+    fake_registry = types.ModuleType("app.services.prompt_registry")
+
+    from app.services.prompt_registry import prompt_label_for, prompt_management_enabled
+
+    class EmptyRemotePrompt:
+        metadata = {
+            "prompt_name": "evidence",
+            "prompt_version": 24,
+            "prompt_label": "production",
+            "prompt_source": "langfuse",
+            "prompt_fallback_used": False,
+            "prompt_compile_enabled": True,
+        }
+
+        def compile(self, **kwargs: Any) -> str:
+            assert kwargs == {}
+            return "   "
+
+    def get_prompt(
+        name: str,
+        *,
+        label: str = "production",
+        fallback: Any = None,
+        enable_compile: bool = False,
+    ) -> EmptyRemotePrompt:
+        assert name == "evidence"
+        assert label == "production"
+        assert enable_compile is True
+        assert fallback is not None
+        return EmptyRemotePrompt()
+
+    fake_registry.get_prompt = get_prompt
+    fake_registry.prompt_label_for = prompt_label_for
+    fake_registry.prompt_management_enabled = prompt_management_enabled
+    monkeypatch.setitem(sys.modules, "app.services.prompt_registry", fake_registry)
+    monkeypatch.setenv("LANGFUSE_PROMPT_MANAGEMENT_ENABLED", "true")
+    monkeypatch.delenv("LANGFUSE_PROMPT_LABEL_EVIDENCE", raising=False)
+    monkeypatch.delitem(sys.modules, "app.services.chain", raising=False)
+    chain = importlib.import_module("app.services.chain")
+    model = _FakeModel()
+    messages = [{"role": "user", "content": "judge this evidence"}]
+
+    result = asyncio.run(chain.run_evidence_chain(model, messages=messages))
+
+    assert result == '{"schema_version":"1.0","ok":true}'
+    assert model.calls[-1][0] == messages[0]
+    metadata = _metadata_from_last_observe(captured)
+    assert metadata["stage"] == "evidence"
+    assert "prompt_name" not in metadata
+    assert "prompt_compile_enabled" not in metadata
 
 
 def test_prompt_registry_errors_fail_open(monkeypatch):

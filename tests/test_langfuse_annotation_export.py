@@ -242,8 +242,166 @@ def test_export_annotation_queue_writes_local_json_without_observability(monkeyp
 
     written = json.loads(output_path.read_text(encoding="utf-8"))
     assert written["schema_version"] == "langfuse_annotation_queue_export_v1"
+    assert written["dry_run"] is True
+    assert written["langfuse"]["adapter"] is None
+    assert written["langfuse"]["status"] == "local_only"
     assert written["item_count"] == report["item_count"]
     assert written["items"][0]["metadata"]["trace_id"] == "trace-game-002"
+
+
+def test_apply_without_adapter_does_not_construct_observability(monkeypatch: Any, tmp_path: Path) -> None:
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.get_langfuse_client = lambda: (_ for _ in ()).throw(
+        AssertionError("apply without adapter must not construct a Langfuse client")
+    )
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+
+    input_path = tmp_path / "payload.json"
+    input_path.write_text(json.dumps(_sample_payload()), encoding="utf-8")
+
+    report = export_annotation_queue([input_path], apply=True)
+
+    assert report["dry_run"] is True
+    assert report["langfuse"]["adapter"] is None
+    assert report["langfuse"]["write_enabled"] is False
+    assert report["langfuse"]["status"] == "skipped"
+    assert report["langfuse"]["results"] == []
+
+
+def test_langfuse_adapter_uses_fake_client_and_reports_each_result(monkeypatch: Any, tmp_path: Path) -> None:
+    class FakeLangfuseClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def create_score(self, **kwargs: Any) -> dict[str, str]:
+            self.calls.append(kwargs)
+            return {"id": f"score-{len(self.calls)}"}
+
+    client = FakeLangfuseClient()
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.get_langfuse_client = lambda: client
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+
+    input_path = tmp_path / "payload.json"
+    input_path.write_text(json.dumps(_sample_payload()), encoding="utf-8")
+
+    report = export_annotation_queue([input_path], apply=True, adapter="langfuse", max_items=1)
+
+    langfuse = report["langfuse"]
+    assert report["dry_run"] is False
+    assert langfuse["adapter"] == "langfuse"
+    assert langfuse["write_enabled"] is True
+    assert langfuse["status"] == "success"
+    assert langfuse["applied_count"] == 1
+    assert langfuse["method"] == "create_score"
+    assert langfuse["results"] == [
+        {
+            "queue_item_id": report["items"][0]["queue_item_id"],
+            "status": "success",
+            "method": "create_score",
+            "remote_id": "score-1",
+        }
+    ]
+
+    call = client.calls[0]
+    assert call["trace_id"] == "trace-game-002"
+    assert call["dataset_run_id"] == "dataset-run-002"
+    assert call["dataset_run_item_id"] == "dataset-run-item-002"
+    assert call["metadata"]["queue_item_id"] == report["items"][0]["queue_item_id"]
+    assert call["metadata"]["input"] == report["items"][0]["input"]
+
+    serialized_call = json.dumps(call, ensure_ascii=False)
+    assert "BAD_PRIVATE_REASONING_SHOULD_NOT_EXPORT" not in serialized_call
+    assert "BAD_PROMPT_SHOULD_NOT_EXPORT" not in serialized_call
+    assert "RAW_MESSAGES_SHOULD_NOT_EXPORT" not in serialized_call
+
+
+def test_langfuse_adapter_unsupported_client_fails_open(monkeypatch: Any, tmp_path: Path) -> None:
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.get_langfuse_client = lambda: object()
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+
+    input_path = tmp_path / "payload.json"
+    input_path.write_text(json.dumps(_sample_payload()), encoding="utf-8")
+
+    report = export_annotation_queue([input_path], apply=True, adapter="langfuse", max_items=2)
+
+    langfuse = report["langfuse"]
+    assert langfuse["adapter"] == "langfuse"
+    assert langfuse["status"] == "unsupported"
+    assert langfuse["fail_open"] is True
+    assert langfuse["applied_count"] == 0
+    assert [result["queue_item_id"] for result in langfuse["results"]] == [
+        item["queue_item_id"] for item in report["items"]
+    ]
+    assert {result["status"] for result in langfuse["results"]} == {"unsupported"}
+    assert all("error" in result for result in langfuse["results"])
+
+
+def test_langfuse_adapter_client_exception_fails_open(monkeypatch: Any, tmp_path: Path) -> None:
+    class FailingLangfuseClient:
+        def create_annotation(self, **kwargs: Any) -> None:
+            del kwargs
+            raise RuntimeError("annotation endpoint down")
+
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.get_langfuse_client = lambda: FailingLangfuseClient()
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+
+    input_path = tmp_path / "payload.json"
+    input_path.write_text(json.dumps(_sample_payload()), encoding="utf-8")
+
+    report = export_annotation_queue([input_path], apply=True, adapter="langfuse", max_items=1)
+
+    langfuse = report["langfuse"]
+    assert langfuse["status"] == "fail_open"
+    assert langfuse["fail_open"] is True
+    assert langfuse["applied_count"] == 0
+    assert langfuse["method"] == "create_annotation"
+    assert langfuse["results"][0]["queue_item_id"] == report["items"][0]["queue_item_id"]
+    assert langfuse["results"][0]["status"] == "fail_open"
+    assert "RuntimeError: annotation endpoint down" in langfuse["results"][0]["error"]
+
+
+def test_langfuse_adapter_get_client_exception_fails_open(monkeypatch: Any, tmp_path: Path) -> None:
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.get_langfuse_client = lambda: (_ for _ in ()).throw(RuntimeError("sdk unavailable"))
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+
+    input_path = tmp_path / "payload.json"
+    input_path.write_text(json.dumps(_sample_payload()), encoding="utf-8")
+
+    report = export_annotation_queue([input_path], apply=True, adapter="langfuse", max_items=1)
+
+    langfuse = report["langfuse"]
+    assert langfuse["status"] == "fail_open"
+    assert langfuse["fail_open"] is True
+    assert langfuse["results"][0]["queue_item_id"] == report["items"][0]["queue_item_id"]
+    assert langfuse["results"][0]["status"] == "fail_open"
+    assert "RuntimeError: sdk unavailable" in langfuse["results"][0]["error"]
+
+
+def test_main_apply_langfuse_adapter_prints_fail_open_manifest(
+    monkeypatch: Any,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.get_langfuse_client = lambda: None
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+
+    input_path = tmp_path / "payload.json"
+    input_path.write_text(json.dumps(_sample_payload()), encoding="utf-8")
+
+    exit_code = main([str(input_path), "--apply", "--adapter", "langfuse", "--max-items", "1"])
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["dry_run"] is False
+    assert output["langfuse"]["adapter"] == "langfuse"
+    assert output["langfuse"]["status"] == "client_unavailable"
+    assert output["langfuse"]["results"][0]["queue_item_id"] == output["items"][0]["queue_item_id"]
+    assert output["langfuse"]["results"][0]["status"] == "client_unavailable"
 
 
 def test_main_prints_json_when_output_is_omitted(tmp_path: Path, capsys: Any) -> None:

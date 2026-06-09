@@ -19,6 +19,7 @@ def test_langfuse_disabled_returns_local_fallback_without_sdk(monkeypatch):
     langfuse_mod.Langfuse = _Langfuse
     monkeypatch.setitem(sys.modules, "langfuse", langfuse_mod)
     monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")
+    monkeypatch.delenv("LANGFUSE_PROMPT_MANAGEMENT_ENABLED", raising=False)
 
     prompt = get_prompt("decision_judge", fallback="local prompt")
 
@@ -30,9 +31,63 @@ def test_langfuse_disabled_returns_local_fallback_without_sdk(monkeypatch):
         "prompt_version": None,
         "prompt_source": LOCAL_FALLBACK_SOURCE,
         "prompt_fallback_used": True,
+        "prompt_compile_enabled": False,
     }
     assert prompt.to_observation_metadata() == prompt.metadata
     assert calls == []
+
+
+def test_prompt_management_enabled_and_label_overrides():
+    from app.services.prompt_registry import prompt_label_for, prompt_management_enabled
+
+    assert prompt_management_enabled({}) is False
+    assert prompt_management_enabled({"LANGFUSE_PROMPT_MANAGEMENT_ENABLED": "true"}) is True
+    assert prompt_management_enabled({"LANGFUSE_PROMPT_MANAGEMENT_ENABLED": "0"}) is False
+
+    assert prompt_label_for("decision_judge", {}) == "production"
+    assert prompt_label_for("decision_judge", {"LANGFUSE_PROMPT_LABEL": "canary"}) == "canary"
+    assert (
+        prompt_label_for(
+            "decision_judge",
+            {
+                "LANGFUSE_PROMPT_LABEL": "production",
+                "LANGFUSE_PROMPT_LABEL_DECISION_JUDGE": "canary",
+            },
+        )
+        == "canary"
+    )
+
+
+def test_prompt_compile_defaults_to_local_fallback_even_with_remote_prompt():
+    from app.services.prompt_registry import LANGFUSE_SOURCE, get_prompt
+
+    captured: list[dict[str, Any]] = []
+
+    class FakePrompt:
+        version = 18
+        prompt = "remote template"
+
+        def compile(self, **kwargs: Any) -> str:
+            captured.append({"name": "compile", "kwargs": kwargs})
+            return f"remote prompt for {kwargs['role']}"
+
+    class FakeClient:
+        def get_prompt(self, name: str, *, label: str) -> FakePrompt:
+            captured.append({"name": "get_prompt", "prompt_name": name, "label": label})
+            return FakePrompt()
+
+    prompt = get_prompt(
+        "decision_judge",
+        label="canary",
+        fallback="local prompt for {role}",
+        client=FakeClient(),
+    )
+
+    assert prompt.prompt == "remote template"
+    assert prompt.compile(role="seer") == "local prompt for seer"
+    assert prompt.metadata["prompt_source"] == LANGFUSE_SOURCE
+    assert prompt.metadata["prompt_compile_enabled"] is False
+    assert captured == [{"name": "get_prompt", "prompt_name": "decision_judge", "label": "canary"}]
 
 
 def test_fake_client_prompt_success_exposes_metadata_and_compile():
@@ -60,6 +115,7 @@ def test_fake_client_prompt_success_exposes_metadata_and_compile():
         label="canary",
         fallback="local prompt for {role}",
         client=FakeClient(),
+        enable_compile=True,
     )
 
     assert prompt.prompt == "remote template"
@@ -70,6 +126,7 @@ def test_fake_client_prompt_success_exposes_metadata_and_compile():
         "prompt_version": 17,
         "prompt_source": LANGFUSE_SOURCE,
         "prompt_fallback_used": False,
+        "prompt_compile_enabled": True,
     }
     assert captured == [
         {"name": "get_prompt", "prompt_name": "decision_judge", "label": "canary"},
@@ -95,6 +152,7 @@ def test_prompt_not_found_returns_local_fallback():
     assert prompt.metadata["prompt_source"] == LOCAL_FALLBACK_SOURCE
     assert prompt.metadata["prompt_fallback_used"] is True
     assert prompt.metadata["prompt_version"] is None
+    assert prompt.metadata["prompt_compile_enabled"] is False
 
 
 def test_client_or_sdk_errors_return_local_fallback(monkeypatch):
@@ -110,6 +168,8 @@ def test_client_or_sdk_errors_return_local_fallback(monkeypatch):
     assert prompt.prompt == "local apply"
     assert prompt.metadata["prompt_source"] == LOCAL_FALLBACK_SOURCE
     assert prompt.metadata["prompt_fallback_used"] is True
+    assert prompt.metadata["prompt_compile_enabled"] is False
+    assert prompt.metadata["prompt_error_type"] == "RuntimeError"
 
     fake_observability = types.SimpleNamespace(
         langfuse_enabled=lambda: True,
@@ -128,6 +188,7 @@ def test_client_or_sdk_errors_return_local_fallback(monkeypatch):
     assert sdk_error_prompt.prompt == "local evidence"
     assert sdk_error_prompt.metadata["prompt_source"] == LOCAL_FALLBACK_SOURCE
     assert sdk_error_prompt.metadata["prompt_fallback_used"] is True
+    assert sdk_error_prompt.metadata["prompt_compile_enabled"] is False
 
 
 def test_compile_error_switches_to_local_fallback_metadata():
@@ -149,6 +210,7 @@ def test_compile_error_switches_to_local_fallback_metadata():
         label="production",
         fallback="local prompt for {role}",
         client=FakeClient(),
+        enable_compile=True,
     )
 
     assert prompt.metadata["prompt_source"] == "langfuse"
@@ -162,6 +224,8 @@ def test_compile_error_switches_to_local_fallback_metadata():
         "prompt_version": None,
         "prompt_source": LOCAL_FALLBACK_SOURCE,
         "prompt_fallback_used": True,
+        "prompt_compile_enabled": True,
+        "prompt_error_type": "ValueError",
     }
 
 
@@ -180,8 +244,9 @@ def test_dict_prompt_and_fallback_compile_are_supported():
                 "prompt": [{"role": "system", "content": "remote"}],
             }
 
-    prompt = get_prompt("evidence", fallback=FallbackPrompt(), client=FakeClient())
+    prompt = get_prompt("evidence", fallback=FallbackPrompt(), client=FakeClient(), enable_compile=True)
 
     assert prompt.prompt == [{"role": "system", "content": "remote"}]
     assert prompt.compile() == [{"role": "system", "content": "remote"}]
     assert prompt.metadata["prompt_version"] == 3
+    assert prompt.metadata["prompt_compile_enabled"] is True

@@ -402,11 +402,32 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Verify benchmark datasets/items against Langfuse. Fail-open on Langfuse errors.",
     )
     parser.add_argument("--indent", type=int, default=2, help="JSON indentation for the report.")
+    parser.add_argument("--output", type=Path, default=None, help="Write the JSON report to this file.")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero when the verification report contains fail or fail_open checks.",
+    )
+    parser.add_argument(
+        "--compare-report",
+        type=Path,
+        nargs=2,
+        metavar=("OLD", "NEW"),
+        default=None,
+        help="Offline compare two verification report JSON files and exit without running verification.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.compare_report is not None:
+        old_report = json.loads(args.compare_report[0].read_text(encoding="utf-8"))
+        new_report = json.loads(args.compare_report[1].read_text(encoding="utf-8"))
+        comparison = compare_verification_reports(old_report, new_report)
+        _emit_json_report(comparison, output=args.output, indent=args.indent)
+        return 0
+
     paths = PathConfig(root=args.root) if args.root is not None else DEFAULT_PATHS
     report = verify_langfuse_experiments(
         paths=paths,
@@ -414,8 +435,56 @@ def main(argv: list[str] | None = None) -> int:
         apply_sync=bool(args.apply_sync),
         verify_remote=bool(args.verify_remote),
     )
-    print(json.dumps(report, ensure_ascii=False, indent=args.indent, default=str))
-    return 1 if report.get("status") == _CHECK_FAIL else 0
+    _emit_json_report(report, output=args.output, indent=args.indent)
+    if args.strict and report.get("status") in {_CHECK_FAIL, _CHECK_FAIL_OPEN}:
+        return 1
+    return 0
+
+
+def compare_verification_reports(old: Mapping[str, Any], new: Mapping[str, Any]) -> dict[str, Any]:
+    """Compare checklist status changes between two verification reports."""
+    old_checks = _checks_by_id(old)
+    new_checks = _checks_by_id(new)
+    old_ids = set(old_checks)
+    new_ids = set(new_checks)
+
+    added_checks = [
+        _comparison_check_snapshot(check_id, new_checks[check_id])
+        for check_id in sorted(new_ids - old_ids)
+    ]
+    removed_checks = [
+        _comparison_check_snapshot(check_id, old_checks[check_id])
+        for check_id in sorted(old_ids - new_ids)
+    ]
+    changed_checks = []
+    for check_id in sorted(old_ids & new_ids):
+        old_check = old_checks[check_id]
+        new_check = new_checks[check_id]
+        old_status = old_check.get("status")
+        new_status = new_check.get("status")
+        if old_status == new_status:
+            continue
+        changed_checks.append(
+            {
+                "id": check_id,
+                "label": new_check.get("label") or old_check.get("label"),
+                "old_status": old_status,
+                "new_status": new_status,
+                "old_message": old_check.get("message"),
+                "new_message": new_check.get("message"),
+            }
+        )
+
+    return {
+        "kind": "langfuse_experiment_verification_comparison",
+        "schema_version": 1,
+        "old_status": old.get("status"),
+        "new_status": new.get("status"),
+        "added_checks": added_checks,
+        "removed_checks": removed_checks,
+        "changed_checks": changed_checks,
+        "summary_delta": _summary_delta(old.get("summary"), new.get("summary")),
+    }
 
 
 def _load_payload_inputs(
@@ -432,6 +501,47 @@ def _load_payload_inputs(
         else:
             result.append(raw)
     return result
+
+
+def _emit_json_report(report: Mapping[str, Any], *, output: Path | None, indent: int) -> None:
+    rendered = json.dumps(report, ensure_ascii=False, indent=indent, default=str)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
+
+
+def _checks_by_id(report: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    checks: dict[str, Mapping[str, Any]] = {}
+    for index, raw_check in enumerate(report.get("checklist", []) or []):
+        if not isinstance(raw_check, Mapping):
+            continue
+        check_id = _string_or_none(raw_check.get("id")) or f"check[{index}]"
+        checks[check_id] = raw_check
+    return checks
+
+
+def _comparison_check_snapshot(check_id: str, check: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": check_id,
+        "label": check.get("label"),
+        "status": check.get("status"),
+        "message": check.get("message"),
+    }
+
+
+def _summary_delta(old_summary: Any, new_summary: Any) -> dict[str, int]:
+    old_map = old_summary if isinstance(old_summary, Mapping) else {}
+    new_map = new_summary if isinstance(new_summary, Mapping) else {}
+    numeric_keys = {
+        key
+        for key, value in [*old_map.items(), *new_map.items()]
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    return {
+        str(key): int(new_map.get(key, 0) or 0) - int(old_map.get(key, 0) or 0)
+        for key in sorted(numeric_keys)
+    }
 
 
 def _apply_dataset_sync_fail_open(paths: PathConfig, *, client: Any | None) -> dict[str, Any]:
@@ -774,6 +884,9 @@ def _add_check(
 
 def _finalize_report(report: dict[str, Any]) -> None:
     counts = Counter(check.get("status") for check in report.get("checklist", []))
+    failed_checks = _check_ids_with_status(report, _CHECK_FAIL)
+    warning_checks = _check_ids_with_status(report, _CHECK_WARNING)
+    fail_open_checks = _check_ids_with_status(report, _CHECK_FAIL_OPEN)
     if counts[_CHECK_FAIL]:
         status = _CHECK_FAIL
     elif counts[_CHECK_FAIL_OPEN]:
@@ -790,7 +903,18 @@ def _finalize_report(report: dict[str, Any]) -> None:
         "failed": counts[_CHECK_FAIL],
         "fail_open": counts[_CHECK_FAIL_OPEN],
         "skipped": counts[_CHECK_SKIPPED],
+        "failed_checks": failed_checks,
+        "warning_checks": warning_checks,
+        "fail_open_checks": fail_open_checks,
     }
+
+
+def _check_ids_with_status(report: Mapping[str, Any], status: str) -> list[str]:
+    return [
+        str(check.get("id"))
+        for check in report.get("checklist", [])
+        if isinstance(check, Mapping) and check.get("status") == status and check.get("id") is not None
+    ]
 
 
 def _env_bool(value: Any, *, default: bool) -> bool:
