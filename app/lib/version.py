@@ -20,6 +20,7 @@ from app.util.json import read_json, write_json
 from app.util.time import beijing_now_iso
 from storage.interfaces import compute_hash
 from storage.interfaces import normalize_skill_path, normalize_skill_text
+from storage.registry.version_repo import RegistryVersionRepository
 from storage.shared.database import StorageConnection
 
 _log = logging.getLogger(__name__)
@@ -630,6 +631,7 @@ class PostgresVersionRegistry:
         owns_conn: bool = True,
     ) -> None:
         self._conn = conn
+        self._repo = RegistryVersionRepository(conn)
         self._dir = Path(registry_dir)
         self._owns_conn = owns_conn
         self._closed = False
@@ -644,7 +646,7 @@ class PostgresVersionRegistry:
         if self._closed:
             return
         if self._owns_conn:
-            self._conn.close()
+            self._repo.close()
         self._closed = True
 
     def cleanup_scratch(self, max_age_seconds: int = DEFAULT_SCRATCH_MAX_AGE_SECONDS) -> int:
@@ -711,20 +713,19 @@ class PostgresVersionRegistry:
         version_id = version_id or compute_hash(normalized)
         _validate_name(version_id, "version_id")
 
-        existing = self._load_version_row(role, version_id)
+        existing = self._repo.load_version_row(role, version_id)
         if existing is not None:
             existing_skills = _loads_json_object(existing["skills"], default={})
-            self._conn.commit()
             if existing_skills != normalized:
                 raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
             if set_as_baseline or _should_update_existing_release_status(str(existing["status"] or ""), status):
-                self._conn.execute(
-                    "UPDATE role_versions SET status = ?, provenance_json = ? WHERE role = ? AND id = ?",
-                    (status, json.dumps(provenance_payload, ensure_ascii=False), role, version_id),
+                self._repo.update_version_status(
+                    role=role,
+                    version_id=version_id,
+                    status=status,
+                    provenance=provenance_payload,
                 )
-                self._conn.commit()
         else:
-            now = beijing_now_iso()
             notes = [
                 item
                 for item in (
@@ -733,31 +734,22 @@ class PostgresVersionRegistry:
                 if item
             ]
             try:
-                self._conn.execute(
-                    "INSERT INTO role_versions "
-                    "(id, role, parent_id, source, run_id, skills, notes, status, created_at, provenance_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        version_id,
-                        role,
-                        parent_id,
-                        source,
-                        run_id,
-                        json.dumps(normalized, ensure_ascii=False),
-                        json.dumps(notes, ensure_ascii=False),
-                        status,
-                        now,
-                        json.dumps(provenance_payload, ensure_ascii=False),
-                    ),
+                self._repo.insert_version(
+                    version_id=version_id,
+                    role=role,
+                    parent_id=parent_id,
+                    source=source,
+                    run_id=run_id,
+                    skills=normalized,
+                    notes=notes,
+                    status=status,
+                    provenance=provenance_payload,
                 )
-                self._conn.commit()
             except Exception:
-                self._conn.rollback()
-                existing = self._load_version_row(role, version_id)
+                existing = self._repo.load_version_row(role, version_id)
                 if existing is None:
                     raise
                 existing_skills = _loads_json_object(existing["skills"], default={})
-                self._conn.commit()
                 if existing_skills != normalized:
                     raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
 
@@ -769,21 +761,7 @@ class PostgresVersionRegistry:
 
     def get_baseline(self, role: str) -> str | None:
         _validate_name(role, "role")
-        row = self._conn.execute(
-            "SELECT version_id FROM role_current_baseline WHERE role = ?",
-            (role,),
-        ).fetchone()
-        if row is not None:
-            result = str(row["version_id"])
-        else:
-            row = self._conn.execute(
-                "SELECT id FROM role_versions WHERE role = ? AND status = 'baseline' "
-                "ORDER BY created_at LIMIT 1",
-                (role,),
-            ).fetchone()
-            result = str(row["id"]) if row is not None else None
-        self._conn.commit()
-        return result
+        return self._repo.get_baseline(role)
 
     def set_baseline(
         self,
@@ -793,85 +771,22 @@ class PostgresVersionRegistry:
     ) -> bool:
         _validate_name(role, "role")
         _validate_name(version_id, "version_id")
-        from storage.shared.database import begin_write, execute_for_update
-
-        begin_write(self._conn)
-        try:
-            rows = execute_for_update(
-                self._conn,
-                "SELECT id, status FROM role_versions WHERE role = ? ORDER BY created_at",
-                (role,),
-            ).fetchall()
-            if not any(str(row["id"]) == version_id for row in rows):
-                self._conn.rollback()
-                return False
-            current = self._current_baseline_unlocked(role, rows)
-            if current != expected_current:
-                self._conn.rollback()
-                return False
-            now = beijing_now_iso()
-            self._conn.execute(
-                "UPDATE role_versions SET status = 'archived' "
-                "WHERE role = ? AND status = 'baseline' AND id <> ?",
-                (role, version_id),
-            )
-            self._conn.execute(
-                "UPDATE role_versions SET status = 'baseline' WHERE role = ? AND id = ?",
-                (role, version_id),
-            )
-            self._conn.execute(
-                "INSERT INTO role_current_baseline (role, version_id, updated_at) "
-                "VALUES (?, ?, ?) "
-                "ON CONFLICT(role) DO UPDATE SET "
-                "version_id = excluded.version_id, updated_at = excluded.updated_at",
-                (role, version_id, now),
-            )
-            self._conn.execute(
-                "INSERT INTO role_baseline_history "
-                "(role, version_id, previous_version_id, reason, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (role, version_id, current, "baseline_set", now),
-            )
-            self._conn.commit()
-            return True
-        except Exception:
-            self._conn.rollback()
-            raise
+        return self._repo.set_baseline(role=role, version_id=version_id, expected_current=expected_current)
 
     def reject(self, role: str, version_id: str, reason: str = "") -> None:
         _validate_name(role, "role")
         _validate_name(version_id, "version_id")
-        row = self._load_version_row(role, version_id)
-        if row is None:
-            self._conn.commit()
+        if not self._repo.reject_version(role=role, version_id=version_id, reason=reason):
             raise FileNotFoundError(f"Version {role}/{version_id} not found")
-        now = beijing_now_iso()
-        try:
-            self._conn.execute(
-                "UPDATE role_versions SET status = 'rejected' WHERE role = ? AND id = ?",
-                (role, version_id),
-            )
-            self._conn.execute(
-                "INSERT INTO role_baseline_history "
-                "(role, version_id, previous_version_id, reason, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (role, version_id, None, f"rejected: {reason}" if reason else "rejected", now),
-            )
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
 
     def read_skill_contents(self, role: str, version_id: str) -> dict[str, str]:
         _validate_name(role, "role")
         _validate_name(version_id, "version_id")
-        row = self._load_version_row(role, version_id)
+        row = self._repo.load_version_row(role, version_id)
         if row is None:
-            self._conn.commit()
             raise FileNotFoundError(f"Version {role}/{version_id} not found")
         data = _loads_json_object(row["skills"], default={})
         result = {normalize_skill_path(path): str(content) for path, content in data.items()}
-        self._conn.commit()
         return result
 
     def get_skill_dir(self, role: str, version_id: str) -> Path:
@@ -904,11 +819,7 @@ class PostgresVersionRegistry:
     def list_versions(self, role: str) -> list[VersionSummary]:
         _validate_name(role, "role")
         baseline = self.get_baseline(role)
-        rows = self._conn.execute(
-            "SELECT id, role, source, created_at, status, provenance_json "
-            "FROM role_versions WHERE role = ? ORDER BY created_at",
-            (role,),
-        ).fetchall()
+        rows = self._repo.list_version_rows(role)
         result = [
             VersionSummary(
                 version_id=str(row["id"]),
@@ -922,16 +833,10 @@ class PostgresVersionRegistry:
             )
             for row in rows
         ]
-        self._conn.commit()
         return result
 
     def list_roles(self) -> list[str]:
-        rows = self._conn.execute(
-            "SELECT DISTINCT role FROM role_versions ORDER BY role"
-        ).fetchall()
-        result = [str(row["role"]) for row in rows]
-        self._conn.commit()
-        return result
+        return self._repo.list_roles()
 
     def save_rejected(
         self,
@@ -940,20 +845,8 @@ class PostgresVersionRegistry:
         battle_result: dict[str, Any] | None = None,
     ) -> None:
         _validate_name(role, "role")
-        from storage.shared.database import begin_write, execute_for_update
-
-        begin_write(self._conn)
         try:
-            self._conn.execute(
-                "INSERT INTO rejected_proposals (role, proposals_json) VALUES (?, ?) "
-                "ON CONFLICT(role) DO NOTHING",
-                (role, "[]"),
-            )
-            row = execute_for_update(
-                self._conn,
-                "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
-                (role,),
-            ).fetchone()
+            row = self._repo.begin_rejected_update(role)
             existing = _dedupe_rejected_rows(_rejected_rows_from_value(row["proposals_json"] if row else []))
             seen = {_rejected_proposal_key(item) for item in existing}
             for proposal in proposals:
@@ -967,43 +860,17 @@ class PostgresVersionRegistry:
                 existing.append(row_data)
                 seen.add(key)
             payload = existing[-_REJECTED_BUFFER_LIMIT:]
-            self._conn.execute(
-                "UPDATE rejected_proposals SET proposals_json = ? WHERE role = ?",
-                (json.dumps(payload, ensure_ascii=False), role),
-            )
-            self._conn.commit()
+            self._repo.update_rejected(role=role, proposals_json=json.dumps(payload, ensure_ascii=False))
         except Exception:
-            self._conn.rollback()
+            self._repo.rollback()
             raise
 
     def load_rejected(self, role: str) -> list[dict[str, Any]]:
         _validate_name(role, "role")
-        row = self._conn.execute(
-            "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
-            (role,),
-        ).fetchone()
-        if row is None:
-            self._conn.commit()
+        payload = self._repo.load_rejected_payload(role)
+        if payload is None:
             return []
-        result = _rejected_rows_from_value(row["proposals_json"])
-        self._conn.commit()
-        return result
-
-    def _load_version_row(self, role: str, version_id: str) -> Any | None:
-        return self._conn.execute(
-            "SELECT * FROM role_versions WHERE role = ? AND id = ?",
-            (role, version_id),
-        ).fetchone()
-
-    def _current_baseline_unlocked(self, role: str, rows: list[Any]) -> str | None:
-        row = self._conn.execute(
-            "SELECT version_id FROM role_current_baseline WHERE role = ?",
-            (role,),
-        ).fetchone()
-        if row is not None:
-            return str(row["version_id"])
-        baseline_row = next((item for item in rows if item["status"] == "baseline"), None)
-        return str(baseline_row["id"]) if baseline_row is not None else None
+        return _rejected_rows_from_value(payload)
 
     def _scratch_dir(self) -> Path:
         return self._dir / "scratch"
