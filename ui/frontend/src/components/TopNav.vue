@@ -2,7 +2,7 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps({
-  brand: { type: String, default: '夜议会' },
+  brand: { type: String, default: 'NightCouncil' },
   variant: { type: String, default: 'lobby' },
   activeView: { type: String, default: 'lobby' },
   activeSession: { type: Object, default: () => ({}) },
@@ -21,7 +21,7 @@ let exitConfirmTimer = 0
 const navItems = [
   { key: 'lobby', label: '大厅', event: 'go-lobby' },
   { key: 'logs', label: '日志', event: 'open-logs' },
-  { key: 'benchmark', label: '批量评测', event: 'open-benchmark' },
+  { key: 'benchmark', label: '评测', event: 'open-benchmark' },
   { key: 'evolution', label: '自进化', event: 'open-evolution' }
 ]
 
@@ -51,13 +51,13 @@ onBeforeUnmount(clearExitConfirm)
 <template>
   <header :class="['topbar', 'topbar--' + variant]">
     <div class="brand">
-      <img src="/topbar-characters.png" :alt="brand" />
-      <div class="brand-copy">
-        <strong>{{ brand }}</strong>
-        <span>狼人杀实验室</span>
-      </div>
+      <picture class="brand-mark">
+        <source type="image/webp" srcset="/optimized/topbar-characters-320.webp" />
+        <img src="/topbar-characters.png" :alt="brand" decoding="async" />
+      </picture>
+      <strong>NightCouncil</strong>
     </div>
-    <nav class="primary-nav" aria-label="主导航">
+    <nav v-if="variant !== 'match'" class="primary-nav" aria-label="主导航">
       <button
         v-for="item in navItems"
         :key="item.key"
@@ -68,7 +68,7 @@ onBeforeUnmount(clearExitConfirm)
         {{ item.label }}
       </button>
     </nav>
-    <div class="topbar-actions">
+    <div v-if="variant === 'match'" class="topbar-actions">
       <button
         class="audio-toggle"
         :class="{ muted: !audioEnabled }"
@@ -178,21 +178,28 @@ onBeforeUnmount(clearExitConfirm)
   justify-self: start;
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 44px;
+  gap: 12px;
+  height: auto;
   width: max-content;
   max-width: 100%;
   min-width: 0;
-  margin: 0;
+  margin: 0 0 0 -16px;
+}
+
+.topbar .brand .brand-mark {
+  display: block;
+  height: 62px;
+  line-height: 0;
 }
 
 .topbar .brand img {
-  width: 44px;
-  height: 44px;
+  display: block;
+  width: auto;
+  height: 100%;
   object-fit: contain;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.04);
-  filter: drop-shadow(0 7px 12px rgba(0, 0, 0, 0.36));
+  border-radius: 0;
+  background: transparent;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
   pointer-events: none;
 }
 
@@ -202,21 +209,23 @@ onBeforeUnmount(clearExitConfirm)
   align-items: flex-start;
   justify-content: center;
   gap: 1px;
-  height: 44px;
+  height: 58px;
   min-width: 0;
   padding-top: 1px;
 }
 
 .topbar .brand strong {
   display: block;
-  margin: 0;
-  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+  margin: 0px 0px 0px 0px;
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
   color: var(--nav-accent);
-  font-size: 23px;
-  font-weight: 800;
-  line-height: 24px;
+  font-size: 26px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1;
   letter-spacing: 0;
   white-space: nowrap;
+  text-shadow: 0 0 12px rgba(255, 180, 168, 0.14);
 }
 
 .brand-copy span {
@@ -261,7 +270,7 @@ onBeforeUnmount(clearExitConfirm)
   background: transparent;
   color: var(--nav-muted);
   box-shadow: none;
-  font-size: 13px;
+  font-size: 17px;
   font-weight: 700;
   letter-spacing: 0;
   white-space: nowrap;
@@ -288,9 +297,86 @@ onBeforeUnmount(clearExitConfirm)
   --nav-accent-soft: rgba(255, 180, 168, 0.16);
   --nav-border: rgba(255, 204, 160, 0.13);
   --nav-panel: rgba(18, 13, 9, 0.56);
+  grid-template-columns: minmax(0, 1fr) auto;
   background:
     linear-gradient(90deg, rgba(0, 0, 0, 0.28), transparent 24% 76%, rgba(0, 0, 0, 0.2)),
     rgba(16, 12, 7, 0.42);
+}
+
+.topbar--lobby .primary-nav,
+.topbar--section .primary-nav {
+  position: absolute;
+  right: 8px;
+  justify-self: auto;
+  width: 344px;
+  height: 48px;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.topbar--lobby .primary-nav button,
+.topbar--section .primary-nav button {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--nav-accent);
+  background: transparent;
+  box-shadow: none;
+  text-shadow: 0 0 12px rgba(255, 180, 168, 0.14);
+}
+
+.topbar--lobby .primary-nav button:hover {
+  border: 0;
+  color: var(--nav-accent);
+  background: rgba(255, 180, 168, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+.topbar--lobby .primary-nav button.active,
+.topbar--section .primary-nav button.active {
+  border: 0;
+  color: var(--nav-accent);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.topbar--section {
+  --nav-accent: #f2ca50;
+  --nav-accent-soft: rgba(242, 202, 80, 0.16);
+  --nav-border: rgba(242, 202, 80, 0.14);
+  --nav-panel: transparent;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.topbar--section .primary-nav button {
+  color: #f2ca50;
+  text-shadow: 0 0 14px rgba(242, 202, 80, 0.18);
+}
+
+.topbar--section .primary-nav button:hover {
+  border: 0;
+  color: #f2ca50;
+  background: rgba(242, 202, 80, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+.topbar--lobby .primary-nav button.active:hover {
+  background: rgba(255, 180, 168, 0.08);
+}
+
+.topbar--section .primary-nav button.active:hover {
+  background: rgba(242, 202, 80, 0.08);
 }
 
 /* ---- match variant ---- */
@@ -315,6 +401,8 @@ onBeforeUnmount(clearExitConfirm)
 }
 
 .topbar-actions {
+  position: absolute;
+  right: clamp(16px, 2.6vw, 32px);
   justify-self: end;
   display: flex;
   align-items: center;
@@ -545,12 +633,11 @@ onBeforeUnmount(clearExitConfirm)
     gap: 7px;
   }
 
-  .topbar .brand img {
-    width: 38px;
+  .topbar .brand .brand-mark {
     height: 38px;
   }
 
-  .brand-copy {
+  .topbar .brand strong {
     display: none;
   }
 

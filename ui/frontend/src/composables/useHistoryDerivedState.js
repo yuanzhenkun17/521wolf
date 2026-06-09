@@ -80,6 +80,8 @@ function historyPageSortValue(page) {
 export function createHistoryDerivedState(refs, computedState, helpers = {}) {
   const {
     selectedHistoryGame,
+    selectedHistoryShell,
+    selectedPhaseDetail,
     historyPhase,
     selectedHistoryPageKey,
     assessDimension,
@@ -160,8 +162,33 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
   }
 
   computedState.historyPages = computed(() => {
-    const logs = selectedHistoryGame.value?.logs ?? []
-    const decisions = selectedHistoryGame.value?.decisions ?? []
+    const indexedPages = selectedHistoryGame.value?.__historyPages
+      || selectedHistoryGame.value?.history_pages
+      || selectedHistoryGame.value?.phases
+      || selectedHistoryShell.value?.__historyPages
+      || selectedHistoryShell.value?.history_pages
+      || selectedHistoryShell.value?.phases
+    if (Array.isArray(indexedPages) && indexedPages.length) {
+      const pages = indexedPages
+        .map((page, index) => ({
+          ...page,
+          key: page.key || historyPageKey(page.day, page.phase),
+          day: normalizeHistoryDay(page.day),
+          phase: normalizeHistoryPhase(page.phase),
+          logs: Array.isArray(page.logs) ? page.logs : [],
+          decisions: Array.isArray(page.decisions) ? page.decisions : [],
+          index
+        }))
+        .sort((a, b) => historyPageSortValue(a) - historyPageSortValue(b) || String(a.key).localeCompare(String(b.key)))
+      if (!selectedHistoryPageKey.value && pages.length) selectedHistoryPageKey.value = pages[0].key
+      if (historyPhase.value === 'all') return pages
+      if (historyPhase.value === 'vote') {
+        return pages.filter((page) => ['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(page.phase))
+      }
+      return pages.filter((page) => page.phase === historyPhase.value)
+    }
+    const logs = selectedHistoryGame.value?.logs ?? selectedPhaseDetail.value?.logs ?? []
+    const decisions = selectedHistoryGame.value?.decisions ?? selectedPhaseDetail.value?.decisions ?? []
     const map = new Map()
     const ensurePage = (day, phase) => {
       const normalizedPhase = normalizeHistoryPhase(phase)
@@ -205,9 +232,20 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     if (!selectedHistoryGame.value) return {}
     const alive = {}
     ;(selectedHistoryGame.value.players ?? []).forEach((p) => { alive[p.id] = true })
-    const logs = selectedHistoryGame.value.logs ?? []
     const selectedPage = computedState.selectedHistoryPage.value
     if (!selectedPage) return alive
+    const stateAfter = selectedPage.state_after || {}
+    const aliveIds = selectedPage.alive_player_ids || stateAfter.alive
+    const deadIds = selectedPage.dead_player_ids || stateAfter.dead
+    if (Array.isArray(aliveIds) || Array.isArray(deadIds)) {
+      ;(selectedHistoryGame.value.players ?? []).forEach((p) => {
+        const id = p.id ?? p.seat
+        if (Array.isArray(aliveIds) && aliveIds.map(String).includes(String(id))) alive[id] = true
+        if (Array.isArray(deadIds) && deadIds.map(String).includes(String(id))) alive[id] = false
+      })
+      return alive
+    }
+    const logs = selectedHistoryGame.value.logs ?? selectedPhaseDetail.value?.logs ?? []
     const selectedSort = historyPageSortValue(selectedPage)
     const hasAuthoritativeDeathEvents = logs.some((log) => AUTHORITATIVE_DEATH_EVENTS.has(log.event_type || log.type || ''))
     for (const log of logs) {
@@ -219,7 +257,12 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     }
     return alive
   })
-  computedState.historyLogs = computed(() => computedState.selectedHistoryPage.value?.logs ?? [])
+  computedState.historyLogs = computed(() =>
+    selectedPhaseDetail.value?.logs
+    || computedState.selectedHistoryPage.value?.logs
+    || selectedHistoryGame.value?.logs
+    || []
+  )
   computedState.nightResult = computed(() => {
     if (!computedState.historyLogs.value.length) return ''
     const resultLog = computedState.historyLogs.value.find((log) => (log.event_type || log.type) === 'night_result')
@@ -239,7 +282,7 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     }
   })
   computedState.historyDecisionRows = computed(() =>
-    (selectedHistoryGame.value?.decisions ?? []).map((decision, index) => ({
+    (selectedPhaseDetail.value?.decisions ?? selectedHistoryGame.value?.decisions ?? []).map((decision, index) => ({
       ...decision,
       index: index + 1,
       actorName: decision.actor_name || historyPlayerLabelById(decision.actor_id),
@@ -315,32 +358,28 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     const gameId = selectedHistoryGame.value?.game_id
     const review = gameId ? reviewByGameId.value[gameId] : null
     const reviewPayload = review?.data || review
-    const evals = reviewPayload?.player_evaluations || reviewPayload?.player_scores
-    if (evals?.length) {
-      const players = selectedHistoryGame.value?.players ?? []
-      return evals.map((ev) => {
-        const player = players.find((p) => p.id === ev.player_seat) || { id: ev.player_seat, role: ev.role }
-        const speech = ev.speech_score ?? 0
-        const vote = ev.vote_score ?? 0
-        const skill = ev.skill_score ?? 0
-        const logic = ev.logic_score ?? ev.information_score ?? 0
-        const team = ev.team_score ?? ev.cooperation_score ?? 0
-        const overall = ev.role_score ?? ev.overall_score ?? 0
-        return {
-          player,
-          speech: Math.round(speech * 100),
-          vote: Math.round(vote * 100),
-          skill: Math.round(skill * 100),
-          logic: Math.round(logic * 100),
-          team: Math.round(team * 100),
-          risk_penalty: ev.risk_penalty ?? 0,
-          role_score: Math.round(overall * 100),
-          information: Math.round(logic * 100),
-          cooperation: Math.round(team * 100)
-        }
-      })
-    }
-    return []
+    return normalizeReviewScoreRows(reviewPayload).map((ev) => {
+      const speech = reviewScorePercent(firstReviewScoreValue(ev, ['speech_score', 'speech', 'speech_quality']))
+      const vote = reviewScorePercent(firstReviewScoreValue(ev, ['vote_score', 'vote', 'vote_accuracy']))
+      const skill = reviewScorePercent(firstReviewScoreValue(ev, ['skill_score', 'skill', 'skill_accuracy']))
+      const logic = reviewScorePercent(firstReviewScoreValue(ev, ['logic_score', 'logic', 'information_score', 'information', 'overall']))
+      const team = reviewScorePercent(firstReviewScoreValue(ev, ['team_score', 'team', 'cooperation_score', 'cooperation', 'team_contribution']))
+      const overall = firstReviewScoreValue(ev, ['role_score', 'overall_score', 'overall', 'total_score'], null)
+      return {
+        player: playerForReviewScore(ev),
+        speech,
+        vote,
+        skill,
+        logic,
+        team,
+        risk_penalty: ev.risk_penalty ?? 0,
+        role_score: overall == null
+          ? Math.round((speech + vote + skill + logic + team) / 5)
+          : reviewScorePercent(overall),
+        information: logic,
+        cooperation: team
+      }
+    })
   })
   computedState.activeAssessScores = computed(() =>
     computedState.playerAssessmentScores.value.map((item) => ({
@@ -389,6 +428,61 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     if (currentAction === 'antidote') return hasTarget ? `${actor}使用解药${target}` : `${actor}不使用解药`
     if (currentAction === 'shoot' || currentAction === 'hunter_shoot') return hasTarget ? `${actor}开枪带走${target}` : `${actor}未选择开枪目标`
     return hasTarget ? `${actor}${displayActionLabel(currentAction)}${target}` : `${actor}${displayActionLabel(currentAction)}`
+  }
+
+  function normalizeReviewScoreRows(payload) {
+    if (!payload || payload.error) return []
+    const candidates = [
+      payload.player_evaluations,
+      payload.player_scores,
+      payload.agent_scores
+    ]
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate) && candidate.length) {
+        return candidate
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => ({ ...item, ...(item.scores || {}) }))
+      }
+      if (candidate && typeof candidate === 'object' && Object.keys(candidate).length) {
+        return Object.entries(candidate).map(([seat, score]) => {
+          const row = score && typeof score === 'object' ? score : { overall_score: score }
+          return {
+            player_seat: row.player_seat ?? row.player_id ?? row.seat ?? seat,
+            ...row,
+            ...(row.scores || {})
+          }
+        })
+      }
+    }
+    return []
+  }
+
+  function playerForReviewScore(score) {
+    const rawId = score.player_seat ?? score.player_id ?? score.seat ?? score.id
+    const players = selectedHistoryGame.value?.players ?? []
+    const player = players.find((item) =>
+      String(item.id) === String(rawId) || String(item.seat) === String(rawId)
+    )
+    return player || {
+      id: rawId,
+      seat: rawId,
+      role: score.role || score.role_hint || ''
+    }
+  }
+
+  function firstReviewScoreValue(score, fields, fallback = 0) {
+    for (const field of fields) {
+      if (score?.[field] != null) return score[field]
+    }
+    return fallback
+  }
+
+  function reviewScorePercent(value) {
+    const number = Number(value)
+    if (!Number.isFinite(number)) return 0
+    if (number <= 1) return Math.round(Math.max(0, Math.min(number * 100, 100)))
+    if (number <= 10) return Math.round(Math.max(0, Math.min(number * 10, 100)))
+    return Math.round(Math.max(0, Math.min(number, 100)))
   }
 
   return {

@@ -37,6 +37,8 @@ function stepLabel(page) {
     sheriff_vote: '投票',
     sheriff_result: '结果',
     speech: '白天',
+    exile_vote: '放逐',
+    pk_vote: '对决',
     vote: '放逐',
     ended: '结果',
     result: '结果',

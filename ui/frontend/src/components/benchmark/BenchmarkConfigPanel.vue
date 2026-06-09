@@ -36,10 +36,79 @@ const loadingLabel = computed(() => {
   if (String(value || '').startsWith('stop:')) return '正在停止评测'
   return props.benchmark.loading.value ? '读取中' : ''
 })
+const suiteRoleLabels = computed(() => {
+  const roles = props.benchmark.selectedBenchmarkSuite.value?.roles || []
+  if (!roles.length) return '全部角色'
+  return roles.map((role) => props.benchmark.roleMeta(role).label).join('、')
+})
+const suiteModeLabel = computed(() =>
+  props.benchmark.selectedBenchmarkId.value ? '正式 suite' : '临时评测'
+)
+const suiteTargetTypeLabel = computed(() =>
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? 'Model Benchmark' : 'Role Version'
+)
+const suiteCostTierLabel = computed(() => {
+  const tier = props.benchmark.selectedBenchmarkSuite.value?.cost_tier || ''
+  const labels = {
+    smoke: 'Smoke',
+    low: 'Low',
+    medium: 'Medium',
+    standard: 'Standard',
+    release: 'Release',
+    high: 'High'
+  }
+  return labels[tier] || (tier ? tier : '未标注')
+})
+const suiteSeedSummary = computed(() => {
+  const suite = props.benchmark.selectedBenchmarkSuite.value
+  if (!suite) return 'ad-hoc'
+  if (suite.seed_count != null) {
+    const count = Number(suite.seed_count)
+    if (Number.isFinite(count)) return `${count} seeds`
+  }
+  return suite.seed_set_id || '固定 seed'
+})
+const suiteSeedPreview = computed(() => {
+  const preview = props.benchmark.selectedBenchmarkSuite.value?.seed_preview || []
+  return preview.length ? preview.join(', ') : ''
+})
+const launchScopeLabel = computed(() =>
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型配置' : props.benchmark.selectedRoleLabel.value
+)
+const launchSubjectLabel = computed(() => {
+  if (props.benchmark.selectedBenchmarkIsModelSuite.value) {
+    return props.benchmark.form.value.model_id || '当前后端模型'
+  }
+  return props.benchmark.form.value.target_version_id || '当前基线版本'
+})
+const boardTitle = computed(() =>
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型 Benchmark' : '模型与版本'
+)
+const modelBoardTitle = computed(() =>
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型配置榜' : '模型榜'
+)
+const versionBoardTitle = computed(() =>
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? '角色版本榜未混入' : '角色版本榜'
+)
+const runPlan = computed(() => props.benchmark.benchmarkPlan.value || null)
+const planBudget = computed(() => runPlan.value?.budget || {})
+const planEstimates = computed(() => runPlan.value?.estimates || {})
+const planJudge = computed(() => runPlan.value?.judge || {})
+const budgetStatusLabel = computed(() =>
+  planBudget.value.exceeded ? '超出预算' : (runPlan.value ? '预算内' : '未估算')
+)
+const estimatedUnitsLabel = computed(() => {
+  const value = Number(planBudget.value.estimated_units ?? planEstimates.value.estimated_llm_call_units)
+  return Number.isFinite(value) ? value.toLocaleString('zh-CN') : '--'
+})
+const judgeUnitsLabel = computed(() => {
+  const value = Number(planJudge.value.estimated_decisions || 0)
+  return Number.isFinite(value) ? value.toLocaleString('zh-CN') : '--'
+})
 
 function modelLabel(item, index = 0) {
   if (!item) return '暂无'
-  return item.is_baseline ? '基线模型' : `候选模型${index + 1}`
+  return item.model_id || item.model_config_hash || item.hash || (item.is_baseline ? '基线模型' : `候选模型${index + 1}`)
 }
 
 function versionLabel(item, index = 0) {
@@ -64,50 +133,181 @@ function sourceLabel(source) {
       <article class="bench-card bench-card--setup">
         <header>
           <div>
-            <small>启动配置</small>
-            <h2>当前角色评测</h2>
+            <h2>启动配置</h2>
           </div>
-          <b>{{ benchmark.selectedRoleLabel.value }}</b>
         </header>
         <div class="bench-setup-grid">
+          <div class="bench-form bench-form--suite">
+            <label>Benchmark Suite
+              <select
+                :value="benchmark.selectedBenchmarkId.value"
+                @change="benchmark.selectBenchmarkSuite($event.target.value)"
+              >
+                <option value="">临时评测</option>
+                <option
+                  v-for="suite in benchmark.benchmarkSuites.value"
+                  :key="suite.id"
+                  :value="suite.id"
+                >
+                  {{ suite.label }}
+                </option>
+              </select>
+            </label>
+          </div>
           <div class="bench-form bench-form--control">
             <label>对战局数
-              <input v-model.number="benchmark.form.value.battle_games" type="number" min="1" max="200" inputmode="numeric" />
+              <input
+                v-model.number="benchmark.form.value.battle_games"
+                type="number"
+                min="1"
+                max="200"
+                inputmode="numeric"
+                :disabled="Boolean(benchmark.selectedBenchmarkId.value)"
+              />
             </label>
             <label>最大天数
-              <input v-model.number="benchmark.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" />
+              <input
+                v-model.number="benchmark.form.value.max_days"
+                type="number"
+                min="1"
+                max="100"
+                inputmode="numeric"
+                :disabled="Boolean(benchmark.selectedBenchmarkId.value)"
+              />
             </label>
+            <label>预算上限
+              <input
+                v-model.number="benchmark.form.value.budget_limit_units"
+                type="number"
+                min="0"
+                max="1000000"
+                inputmode="numeric"
+              />
+            </label>
+          </div>
+          <div
+            v-if="benchmark.selectedBenchmarkIsModelSuite.value"
+            class="bench-form bench-form--identity"
+          >
+            <label>Model ID
+              <input
+                v-model.trim="benchmark.form.value.model_id"
+                type="text"
+                autocomplete="off"
+                placeholder="留空使用当前后端模型"
+              />
+            </label>
+            <label>Config Hash
+              <input
+                v-model.trim="benchmark.form.value.model_config_hash"
+                type="text"
+                autocomplete="off"
+                placeholder="留空由后端生成"
+              />
+            </label>
+          </div>
+          <div
+            v-else
+            class="bench-form bench-form--identity"
+          >
+            <label>目标版本
+              <input
+                v-model.trim="benchmark.form.value.target_version_id"
+                type="text"
+                autocomplete="off"
+                placeholder="留空使用基线版本"
+              />
+            </label>
+          </div>
+          <section class="bench-suite-summary">
+            <span>
+              <small>模式</small>
+              <b>{{ suiteModeLabel }}</b>
+            </span>
+            <span>
+              <small>对象类型</small>
+              <b>{{ suiteTargetTypeLabel }}</b>
+            </span>
+            <span>
+              <small>固定配置</small>
+              <b>{{ benchmark.launchBattleGames.value }} 局 / {{ benchmark.launchMaxDays.value }} 天</b>
+            </span>
+            <span>
+              <small>Seed Set</small>
+              <b>{{ benchmark.selectedBenchmarkSuite.value?.seed_set_id || 'ad-hoc' }}</b>
+              <em v-if="suiteSeedPreview">{{ suiteSeedPreview }}</em>
+            </span>
+            <span>
+              <small>Seed 摘要</small>
+              <b>{{ suiteSeedSummary }}</b>
+            </span>
+            <span>
+              <small>成本等级</small>
+              <b>{{ suiteCostTierLabel }}</b>
+            </span>
+            <span>
+              <small>角色范围</small>
+              <b>{{ suiteRoleLabels }}</b>
+            </span>
+            <span>
+              <small>被测对象</small>
+              <b>{{ launchSubjectLabel }}</b>
+            </span>
+            <span>
+              <small>预计调用</small>
+              <b>{{ estimatedUnitsLabel }}</b>
+            </span>
+            <span>
+              <small>总局数</small>
+              <b>{{ runPlan?.total_games ?? '--' }}</b>
+            </span>
+            <span>
+              <small>Eval 批次</small>
+              <b>{{ runPlan?.eval_batch_count ?? '--' }}</b>
+            </span>
+            <span>
+              <small>Judge 决策</small>
+              <b>{{ judgeUnitsLabel }}</b>
+            </span>
+            <span :class="{ 'bench-suite-summary--danger': benchmark.benchmarkPlanBudgetExceeded.value }">
+              <small>预算状态</small>
+              <b>{{ budgetStatusLabel }}</b>
+            </span>
+          </section>
+          <div v-if="benchmark.benchmarkSuiteError.value" class="bench-suite-note">
+            {{ benchmark.benchmarkSuiteError.value }}
+          </div>
+          <div v-if="benchmark.benchmarkPlanError.value" class="bench-suite-note">
+            {{ benchmark.benchmarkPlanError.value }}
           </div>
           <section class="bench-launch-row">
             <span>
               <small>评测范围</small>
-              <b>{{ benchmark.selectedRoleLabel.value }}</b>
-              <em>左侧选择角色后启动</em>
+              <b>{{ launchScopeLabel }}</b>
+              <em>{{ benchmark.selectedBenchmarkSuiteLabel.value }}</em>
             </span>
             <button
               type="button"
               class="bench-action"
-              :disabled="Boolean(benchmark.actionLoading.value) || !benchmark.selectedRole.value"
+              :disabled="Boolean(benchmark.actionLoading.value) || (!benchmark.selectedBenchmarkIsModelSuite.value && !benchmark.selectedRole.value) || !benchmark.selectedBenchmarkCanLaunch.value"
               @click="benchmark.startEvaluation()"
             >
-              <span aria-hidden="true">&#9654;</span> 评测当前
+              <span aria-hidden="true">&#9654;</span>
+              {{ benchmark.selectedBenchmarkIsModelSuite.value ? '评测模型' : '评测当前' }}
             </button>
           </section>
           <div class="bench-setup-stat-grid">
             <span>
               <small>模型样本</small>
               <b>{{ modelPreviewRows.length }}</b>
-              <em>模型榜</em>
             </span>
             <span>
               <small>版本样本</small>
               <b>{{ rolePreviewRows.length }}</b>
-              <em>版本榜</em>
             </span>
             <span>
               <small>运行中</small>
               <b>{{ batchStats.active }}</b>
-              <em>运行 / 排队</em>
             </span>
             <span>
               <small>最优模型</small>
@@ -124,20 +324,18 @@ function sourceLabel(source) {
       <article class="bench-card bench-card--board">
         <header>
           <div>
-            <small>榜单预览</small>
-            <h2>模型与版本</h2>
+            <h2>{{ boardTitle }}</h2>
           </div>
-          <b>{{ modelPreviewRows.length }} 条</b>
         </header>
         <div class="bench-board-columns">
           <div class="bench-embedded-section">
             <div class="bench-section-title">
-              <span>模型榜</span>
+              <span>{{ modelBoardTitle }}</span>
               <small>得分 / 胜率</small>
             </div>
             <div v-if="modelPreviewRows.length" class="bench-mini-list">
               <div v-for="(item, index) in modelPreviewRows" :key="item.hash" class="bench-mini-row">
-                <span>{{ modelLabel(item, index) }}<small v-if="item.is_baseline">基线</small></span>
+                <span>{{ modelLabel(item, index) }}</span>
                 <b>{{ item.scorePct }}%</b>
                 <em>{{ item.winRatePct }}%</em>
               </div>
@@ -146,16 +344,17 @@ function sourceLabel(source) {
           </div>
           <div class="bench-embedded-section">
             <div class="bench-section-title">
-              <span>角色版本榜</span>
-              <small>版本 / 来源</small>
+              <span>{{ versionBoardTitle }}</span>
+              <small>{{ benchmark.selectedBenchmarkIsModelSuite.value ? 'scope=model' : '版本 / 来源' }}</small>
             </div>
-            <div v-if="rolePreviewRows.length" class="bench-mini-list">
+            <div v-if="!benchmark.selectedBenchmarkIsModelSuite.value && rolePreviewRows.length" class="bench-mini-list">
               <div v-for="(item, index) in rolePreviewRows" :key="item.version_id" class="bench-mini-row">
-                <span>{{ versionLabel(item, index) }}<small v-if="item.is_baseline">基线</small></span>
+                <span>{{ versionLabel(item, index) }}</span>
                 <b>{{ item.scorePct }}%</b>
                 <em>{{ sourceLabel(item.source) }}</em>
               </div>
             </div>
+            <div v-else-if="benchmark.selectedBenchmarkIsModelSuite.value" class="bench-mini-empty">模型榜单独隔离</div>
             <div v-else class="bench-mini-empty">暂无版本榜数据</div>
           </div>
         </div>
@@ -164,7 +363,6 @@ function sourceLabel(source) {
       <article class="bench-card bench-card--runs">
         <header>
           <div>
-            <small>记录预览</small>
             <h2>评测记录</h2>
           </div>
           <b>{{ batchStats.total }} 批</b>
@@ -173,22 +371,18 @@ function sourceLabel(source) {
           <span>
             <small>运行中</small>
             <b>{{ batchStats.active }}</b>
-            <em>运行 / 排队</em>
           </span>
           <span>
             <small>最近记录</small>
             <b>{{ recentRunRows.length }}</b>
-            <em>最近批次</em>
           </span>
           <span>
             <small>已完成</small>
             <b>{{ batchStats.completed }}</b>
-            <em>已完成</em>
           </span>
           <span>
             <small>失败</small>
             <b>{{ batchStats.failed }}</b>
-            <em>失败</em>
           </span>
         </div>
         <div class="bench-embedded-section">
@@ -310,10 +504,15 @@ function sourceLabel(source) {
   padding: 16px;
 }
 
-.bench-form--control {
+.bench-form--control,
+.bench-form--suite {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   padding: 0;
+}
+
+.bench-form--suite {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .bench-form label {
@@ -325,7 +524,8 @@ function sourceLabel(source) {
   font-weight: 800;
 }
 
-.bench-form input {
+.bench-form input,
+.bench-form select {
   box-sizing: border-box;
   width: 100%;
   height: 32px;
@@ -339,10 +539,82 @@ function sourceLabel(source) {
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
-.bench-form input:focus {
+.bench-form input:focus,
+.bench-form select:focus {
   border-color: var(--bench-accent);
   outline: none;
   box-shadow: 0 0 0 2px rgba(139, 94, 52, 0.08);
+}
+
+.bench-form input:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.bench-suite-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.bench-suite-summary span {
+  display: grid;
+  gap: 4px;
+  min-height: 48px;
+  padding: 8px 9px;
+  border: 1px solid rgba(139, 94, 52, 0.12);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.42);
+}
+
+.bench-suite-summary span.bench-suite-summary--danger {
+  border-color: rgba(168, 42, 42, 0.26);
+  background: rgba(168, 42, 42, 0.08);
+}
+
+.bench-suite-summary span.bench-suite-summary--danger b {
+  color: #8b3a3a;
+}
+
+.bench-suite-summary small {
+  color: var(--bench-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.bench-suite-summary b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bench-text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-suite-summary em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bench-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-suite-note {
+  padding: 8px 9px;
+  border: 1px solid rgba(173, 112, 35, 0.22);
+  border-radius: 7px;
+  background: rgba(173, 112, 35, 0.08);
+  color: #8a5a1d;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .bench-action {

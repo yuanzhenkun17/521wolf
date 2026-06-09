@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -204,6 +205,83 @@ class EvolutionStore:
                 summaries.append(value)
         return summaries
 
+    def save_trust_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
+        """Persist the trust bundle as a first-class audit artifact."""
+        if not isinstance(bundle, dict):
+            raise TypeError("trust bundle must be a dict")
+        run_id = str(bundle.get("run_id") or "").strip()
+        if not run_id:
+            raise ValueError("trust bundle requires run_id")
+        row = _trust_bundle_row_from_bundle(bundle)
+        now = storage_timestamp()
+        self._ensure_trust_bundle_table()
+        self._conn.execute(
+            "INSERT INTO trust_bundles "
+            "(id, run_id, role, baseline_version, candidate_version, bundle_hash, "
+            "gate_report_id, attribution_report_id, bundle_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(run_id) DO UPDATE SET "
+            "id = excluded.id, "
+            "role = excluded.role, "
+            "baseline_version = excluded.baseline_version, "
+            "candidate_version = excluded.candidate_version, "
+            "bundle_hash = excluded.bundle_hash, "
+            "gate_report_id = excluded.gate_report_id, "
+            "attribution_report_id = excluded.attribution_report_id, "
+            "bundle_json = excluded.bundle_json, "
+            "updated_at = excluded.updated_at",
+            (
+                row["id"],
+                row["run_id"],
+                row["role"],
+                row["baseline_version"],
+                row["candidate_version"],
+                row["bundle_hash"],
+                row["gate_report_id"],
+                row["attribution_report_id"],
+                json.dumps(row["bundle_json"], ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        self._conn.commit()
+        return row
+
+    def get_trust_bundle(self, run_id_or_bundle_id: str) -> dict[str, Any] | None:
+        """Return one trust bundle audit row by run id or trust bundle id."""
+        lookup = str(run_id_or_bundle_id or "").strip()
+        if not lookup:
+            return None
+        self._ensure_trust_bundle_table()
+        row = self._conn.execute(
+            "SELECT * FROM trust_bundles WHERE run_id = ? OR id = ? LIMIT 1",
+            (lookup, lookup),
+        ).fetchone()
+        if row is None:
+            return None
+        return _trust_bundle_row_to_payload(row)
+
+    def list_trust_bundles(
+        self,
+        *,
+        role: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """List trust bundle audit rows, newest first."""
+        self._ensure_trust_bundle_table()
+        conditions: list[str] = []
+        params: list[Any] = []
+        if role:
+            conditions.append("role = ?")
+            params.append(role)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        params.append(limit)
+        rows = self._conn.execute(
+            f"SELECT * FROM trust_bundles{where} ORDER BY updated_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [_trust_bundle_row_to_payload(row) for row in rows]
+
     def save_proposals(
         self,
         proposals: list[SkillProposalData],
@@ -310,11 +388,91 @@ class EvolutionStore:
         except RuntimeError:
             return
 
+    def _ensure_trust_bundle_table(self) -> None:
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trust_bundles (
+                id text PRIMARY KEY,
+                run_id text NOT NULL UNIQUE,
+                role text,
+                baseline_version text,
+                candidate_version text,
+                bundle_hash text NOT NULL,
+                gate_report_id text,
+                attribution_report_id text,
+                bundle_json jsonb NOT NULL,
+                created_at timestamptz NOT NULL,
+                updated_at timestamptz NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trust_bundles_run ON trust_bundles(run_id)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trust_bundles_role ON trust_bundles(role)"
+        )
+        self._conn.commit()
+
 
 def _json_value(value: Any) -> Any:
     if isinstance(value, str):
         return json.loads(value)
     return value
+
+
+def _trust_bundle_row_from_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(bundle)
+    bundle_hash = str(payload.get("bundle_hash") or "").strip()
+    if not bundle_hash:
+        payload_for_hash = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"trust_bundle_id", "bundle_hash", "completeness"}
+        }
+        bundle_hash = _sha256_json(payload_for_hash)
+        payload["bundle_hash"] = bundle_hash
+    run_id = str(payload.get("run_id") or "").strip()
+    bundle_id = str(payload.get("trust_bundle_id") or "").strip()
+    if not bundle_id:
+        bundle_id = f"trust_bundle_{run_id}_{bundle_hash[:12]}" if run_id else f"trust_bundle_{bundle_hash[:12]}"
+        payload["trust_bundle_id"] = bundle_id
+    return {
+        "id": bundle_id,
+        "run_id": run_id,
+        "role": str(payload.get("role") or ""),
+        "baseline_version": payload.get("baseline_version"),
+        "candidate_version": payload.get("candidate_version"),
+        "bundle_hash": bundle_hash,
+        "gate_report_id": payload.get("gate_report_id"),
+        "attribution_report_id": payload.get("attribution_report_id"),
+        "bundle_json": payload,
+    }
+
+
+def _trust_bundle_row_to_payload(row: StorageRow) -> dict[str, Any]:
+    bundle = _json_value(row["bundle_json"])
+    if not isinstance(bundle, dict):
+        bundle = {}
+    return {
+        "kind": "evolution_trust_bundle",
+        "schema_version": 1,
+        "trust_bundle_id": str(row["id"]),
+        "run_id": str(row["run_id"]),
+        "role": row["role"],
+        "baseline_version": row["baseline_version"],
+        "candidate_version": row["candidate_version"],
+        "bundle_hash": row["bundle_hash"],
+        "gate_report_id": row["gate_report_id"],
+        "attribution_report_id": row["attribution_report_id"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "trust_bundle": bundle,
+    }
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _runtime_state_timestamp(runtime_state: dict[str, Any] | None, key: str) -> str | None:

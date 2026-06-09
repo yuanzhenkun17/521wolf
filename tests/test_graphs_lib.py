@@ -878,10 +878,24 @@ class TestLibScore:
 
         batches = [
             {"batch_id": "b1", "model_id": "m1", "seed_set_id": "s1"},
-            {"batch_id": "b2", "model_id": "m2", "seed_set_id": "s2"},
+            {"batch_id": "b2", "model_id": "m2", "seed_set_id": "s1"},
         ]
         result = validate_model_comparison(batches)
         assert result.is_fair
+
+        mixed_seed_result = validate_model_comparison([
+            {"batch_id": "b1", "model_id": "m1", "seed_set_id": "s1"},
+            {"batch_id": "b2", "model_id": "m2", "seed_set_id": "s2"},
+        ])
+        assert not mixed_seed_result.is_fair
+        assert "same seed_set_id" in mixed_seed_result.reason
+
+        same_subject_result = validate_model_comparison([
+            {"batch_id": "b1", "model_id": "m1", "model_config_hash": "h1", "seed_set_id": "s1"},
+            {"batch_id": "b2", "model_id": "m1", "model_config_hash": "h1", "seed_set_id": "s1"},
+        ])
+        assert not same_subject_result.is_fair
+        assert "model subjects" in same_subject_result.reason
 
     def test_compute_rankable(self):
         from app.lib.score import compute_rankable
@@ -1068,7 +1082,12 @@ class TestLibEvolve:
                 '{"trends": [], "proposals": [{'
                 '"proposal_id": "p1", "target_file": "seer/vote.md", '
                 '"action_type": "append_rule", "content": "Wait one round.", '
-                '"rationale": "two games support it", "source_games": ["g1", "g2"]'
+                '"rationale": "two games support it", '
+                '"hypothesis": "When early vote pressure is unclear, waiting one round improves seer vote quality.", '
+                '"trigger_condition": {"phase": ["day1"], "public_state": ["unclear_vote_pressure"]}, '
+                '"expected_effect": {"primary_metric": "role_score", "expected_direction": "increase"}, '
+                '"metric_targets": {"min_role_score_delta": 0.2}, '
+                '"source_games": ["g1", "g2"]'
                 '}]}'
             ),
             run_id="r1",
@@ -1076,6 +1095,32 @@ class TestLibEvolve:
 
         assert len(result.proposals) == 1
         assert result.proposals[0].proposal_id == "p1"
+        assert result.generated_proposal_ids == ["p1"]
+        assert result.preflight_passed_proposal_ids == ["p1"]
+        assert result.preflight_rejected_proposal_ids == []
+        assert result.proposals[0].preflight_status == "passed"
+
+    def test_preflight_proposal_blocks_missing_hypothesis_and_specific_trigger(self):
+        from app.lib.evolve import preflight_proposal
+
+        report = preflight_proposal(
+            {
+                "proposal_id": "p_bad",
+                "target_file": "seer/vote.md",
+                "action_type": "append_rule",
+                "content": "In seed 10000, vote player 3.",
+                "rationale": "overfit to one replay",
+                "trigger_condition": {"seed": 10000, "player": "P3"},
+                "expected_effect": {"primary_metric": "role_score"},
+                "metric_targets": {"min_role_score_delta": 0.2},
+                "evidence_game_ids": ["g1", "g2"],
+                "risk": "low",
+            }
+        )
+
+        assert report["status"] == "blocked"
+        assert "missing hypothesis" in report["reasons"]
+        assert any("overfit-specific" in reason for reason in report["reasons"])
 
     def test_evolution_run_roundtrip(self):
         from app.lib.evolve import EvolutionRun
@@ -1291,6 +1336,72 @@ class TestLibVersion:
         summaries = {s.version_id: s for s in reg.list_versions("seer")}
         assert summaries[first].status == "rejected"
         assert summaries[second].is_baseline
+
+    def test_version_registry_release_stage_and_provenance_summaries(self, tmp_path):
+        from app.lib.version import VersionRegistry
+
+        reg = VersionRegistry(registry_dir=tmp_path / "registry")
+        baseline = reg.publish_skills(
+            "seer",
+            {"main.md": _registry_skill("baseline rule")},
+            version_id="seer_baseline",
+            source="seed",
+            set_as_baseline=True,
+        )
+        shadow = reg.publish_skills(
+            "seer",
+            {"main.md": _registry_skill("shadow rule")},
+            parent_id=baseline,
+            source="evolve",
+            run_id="run_shadow",
+            proposal_ids=["p_shadow"],
+            version_id="seer_shadow",
+            release_stage="shadow",
+            provenance={
+                "trust_bundle_id": "tb_shadow",
+                "release_decision": "shadow_candidate",
+            },
+        )
+        canary = reg.publish_skills(
+            "seer",
+            {"main.md": _registry_skill("canary rule")},
+            parent_id=shadow,
+            source="evolve",
+            run_id="run_canary",
+            proposal_ids=["p_canary"],
+            version_id="seer_canary",
+            release_stage="canary",
+            provenance={
+                "trust_bundle_id": "tb_canary",
+                "release_decision": "canary_candidate",
+            },
+        )
+
+        assert reg.get_baseline("seer") == baseline
+
+        summaries = {summary.version_id: summary for summary in reg.list_versions("seer")}
+        assert summaries[baseline].is_baseline is True
+        assert summaries[baseline].release_stage == "baseline"
+        assert summaries[baseline].to_dict()["release_stage"] == "baseline"
+        assert summaries[baseline].to_dict()["provenance"]["release_stage"] == "baseline"
+
+        shadow_summary = summaries[shadow]
+        assert shadow_summary.is_baseline is False
+        assert shadow_summary.status == "shadow"
+        assert shadow_summary.release_stage == "shadow"
+        assert shadow_summary.provenance["source"] == "evolve"
+        assert shadow_summary.provenance["run_id"] == "run_shadow"
+        assert shadow_summary.provenance["proposal_ids"] == ["p_shadow"]
+        assert shadow_summary.provenance["trust_bundle_id"] == "tb_shadow"
+        shadow_payload = shadow_summary.to_dict()
+        assert shadow_payload["release_stage"] == "shadow"
+        assert shadow_payload["provenance"]["release_decision"] == "shadow_candidate"
+
+        canary_summary = summaries[canary]
+        assert canary_summary.is_baseline is False
+        assert canary_summary.status == "canary"
+        assert canary_summary.release_stage == "canary"
+        assert canary_summary.to_dict()["provenance"]["trust_bundle_id"] == "tb_canary"
 
     def test_version_registry_cleanup_scratch_deletes_only_expired_owned_dirs(self, tmp_path):
         import os

@@ -199,6 +199,7 @@ async def game_loop_node(state: dict) -> dict:
 
         state["finished"] = True
         _score_langfuse_game_trace(state)
+    _flush_langfuse(observability)
     return state
 
 
@@ -362,6 +363,16 @@ def _score_langfuse_decision_quality(observability: Any, state: dict) -> None:
             data_type="NUMERIC",
             metadata=metadata,
         )
+
+
+def _flush_langfuse(observability: Any) -> None:
+    flush = getattr(observability, "flush_langfuse", None)
+    if not callable(flush):
+        return
+    try:
+        flush()
+    except Exception:  # noqa: BLE001 - observability must not affect game execution
+        _log.debug("Langfuse game flush failed", exc_info=True)
 
 
 def _langfuse_decision_records(state: dict) -> list[Any]:

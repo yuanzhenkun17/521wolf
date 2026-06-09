@@ -15,7 +15,7 @@ defineExpose({ judgeStripRef });
 
 <template>
   <div class="strip-judge-log" aria-label="对局提示">
-    <img class="strip-judge-avatar" src="/livehall-assets/props/judge-avatar.png" alt="法官" />
+    <img class="strip-judge-avatar" src="/livehall-assets/props/optimized/judge-avatar-160.webp" alt="法官" />
     <div class="strip-judge-copy" :class="{ 'has-start': !judgeBoardStarted }">
       <div ref="judgeStripRef" class="strip-judge-scroll">
         <p v-for="(line, index) in messages" :key="'judge-strip-' + index">

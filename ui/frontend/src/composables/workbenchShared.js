@@ -1,11 +1,11 @@
 const ROLE_META = {
-  white_wolf_king: { label: '白狼王', image: '/role-badges/white-wolf-king.png' },
-  werewolf: { label: '狼人', image: '/role-badges/werewolf.png' },
-  villager: { label: '村民', image: '/role-badges/villager.png' },
-  seer: { label: '预言家', image: '/role-badges/seer.png' },
-  witch: { label: '女巫', image: '/role-badges/witch.png' },
-  hunter: { label: '猎人', image: '/role-badges/hunter.png' },
-  guard: { label: '守卫', image: '/role-badges/guard.png' }
+  white_wolf_king: { label: '白狼王', image: '/role-icons/optimized/白狼王.webp' },
+  werewolf: { label: '狼人', image: '/role-icons/optimized/普通狼.webp' },
+  villager: { label: '村民', image: '/role-icons/optimized/平民.webp' },
+  seer: { label: '预言家', image: '/role-icons/optimized/预言家.webp' },
+  witch: { label: '女巫', image: '/role-icons/optimized/女巫.webp' },
+  hunter: { label: '猎人', image: '/role-icons/optimized/猎人.webp' },
+  guard: { label: '守卫', image: '/role-icons/optimized/守卫.webp' }
 }
 
 const EVOLUTION_TERMINAL_STATUSES = new Set(['promoted', 'rejected', 'failed', 'completed'])
@@ -15,6 +15,7 @@ const EVOLUTION_ACTIVE_STATUSES = new Set([
   'training',
   'consolidating',
   'applying',
+  'scenario_replay',
   'battling',
   'combined_battling',
   'rate_limited'
@@ -27,6 +28,7 @@ const STATUS_LABELS = {
   training: '训练',
   consolidating: '归纳',
   applying: '应用',
+  scenario_replay: '快筛',
   battling: '对战',
   combined_battling: '组合对战',
   reviewing: '待评审',
@@ -58,8 +60,22 @@ const SOURCE_LABELS = {
   queued: '排队',
   running: '运行中',
   baseline: '基线',
+  shadow: '影子',
+  canary: '灰度',
+  draft: '草稿',
   candidate: '候选',
   version: '版本',
+  manual: '手动发布',
+  evolution: '自进化',
+  app: '应用',
+  app_registry: '版本库',
+  'app-registry': '版本库',
+  app_fallback: '本地兜底',
+  'app-fallback': '本地兜底',
+  default_baseline: '默认基线',
+  frontend_mock: '前端模拟',
+  'frontend-mock': '前端模拟',
+  selfplay: '自博弈',
   battle: '对战',
   training: '训练',
   archive: '档案',
@@ -93,7 +109,7 @@ const RECOMMENDATION_LABELS = {
 function roleMeta(role) {
   return ROLE_META[role] || {
     label: '未知角色',
-    image: '/role-badges/villager.png'
+    image: '/role-icons/optimized/未知.webp'
   }
 }
 

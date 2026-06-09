@@ -498,18 +498,6 @@
     frontSpot.castShadow = false;
     scene.add(frontSpot, frontSpot.target);
 
-    const characterFill = new THREE.DirectionalLight(0xffdfc4, 0.34);
-    characterFill.position.set(0, 3.4, 5.8);
-    characterFill.target.position.set(0, 1.35, 0.15);
-    characterFill.castShadow = false;
-    scene.add(characterFill, characterFill.target);
-
-    const characterRim = new THREE.DirectionalLight(0x8fa9ff, 0.22);
-    characterRim.position.set(-4.8, 3.2, -4.8);
-    characterRim.target.position.set(0, 1.45, 0.2);
-    characterRim.castShadow = false;
-    scene.add(characterRim, characterRim.target);
-
     const leftRed = new THREE.PointLight(0xff204f, 1.45, 13, 2.0);
     leftRed.position.set(-6.6, 2.8, 1.4);
     scene.add(leftRed);
@@ -991,7 +979,10 @@
         ctx.shadowColor = 'rgba(32, 15, 5, 0.5)';
         ctx.shadowBlur = 12;
         ctx.fillStyle = 'rgba(56, 31, 13, 0.94)';
-        const fontSize = String(label).length > 1 ? 260 : 340;
+        const compactSeat = Number(label) >= 1 && Number(label) <= 12;
+        const fontSize = String(label).length > 1
+          ? (compactSeat ? 205 : 260)
+          : (compactSeat ? 270 : 340);
         ctx.font = `900 ${fontSize}px Microsoft YaHei, Arial, sans-serif`;
         ctx.fillText(label, w / 2, h * 0.52);
       }, 384, 510);
@@ -1624,6 +1615,9 @@
             modelOutline.visible = false;
             group.add(modelOutline);
             group.add(model);
+            const modelLight = new THREE.PointLight(0xffdfc5, 2.1, 3.0, 1.4);
+            modelLight.position.set(0, 1.62, 0.82);
+            group.add(modelLight);
             figure.visible = false;
             backPlate.visible = false;
             foot.visible = false;
@@ -1648,9 +1642,8 @@
         queuedModelLoaders.push(mountModel);
       }
 
-      const glow = new THREE.PointLight(0xffc07a, 0, 2.0, 2);
+      const glow = new THREE.PointLight(0xffc07a, 0.18, 2.6, 2);
       glow.position.set(0, 1.2, 0.35);
-      glow.visible = false;
       group.add(glow);
       group.userData.activeStartedAt = 0;
       group.userData.speakerAnimating = false;
@@ -1688,8 +1681,8 @@
         activeHalo.visible = !useModelOnlyPlayers && outlined && !modelOutline;
         glow.color.set(selected ? 0xf2ca50 : outlined ? 0xffffff : 0xffc07a);
         if (!nextActive) resetStandeeSpeakerAnimation(group);
-        glow.intensity = nextActive ? 0.58 : selected ? 0.5 : group.userData.hovered ? 0.42 : group.userData.selectable ? 0.28 : 0;
-        glow.visible = glow.intensity > 0.01;
+        glow.intensity = nextActive ? 1.0 : selected ? 0.5 : group.userData.hovered ? 0.48 : group.userData.selectable ? 0.32 : 0.18;
+        glow.visible = true;
         markDirty();
       };
       group.userData.setHover = (hovered) => {
@@ -1743,7 +1736,7 @@
     function updateActiveSeatNumbers() {
       tableSeatNumberGroup.children.forEach((seat) => {
         seat.userData.setSeatStates?.({
-          active: playersRevealed && Boolean(activeSeatLabel) && seat.userData.seatLabel === activeSeatLabel,
+          active: false,
           selected: playersRevealed && Boolean(selectedTargetId) && seat.userData.playerId === selectedTargetId
         });
       });
@@ -1763,9 +1756,14 @@
 
     function scrollSpeechToLatest(standee) {
       const scroll = standee.userData.speechScroll;
+      const speechText = standee.userData.speechText;
       if (!scroll) return;
       requestAnimationFrame(() => {
-        scroll.scrollTop = scroll.scrollHeight;
+        const lineHeight = 24;
+        const contentHeight = Math.max(lineHeight, speechText?.scrollHeight || lineHeight);
+        const visibleHeight = Math.min(lineHeight * 5, Math.ceil(contentHeight / lineHeight) * lineHeight);
+        scroll.style.height = `${visibleHeight}px`;
+        scroll.scrollTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
       });
     }
 
@@ -1800,6 +1798,7 @@
         state.fullText = "";
         state.visibleText = "";
         speechText.textContent = "";
+        standee.userData.speechScroll?.style.removeProperty("height");
         callout.classList.remove("typing");
         return;
       }
@@ -3454,15 +3453,13 @@
       const night = nightMode;
       renderer.toneMappingExposure = night ? 0.78 : 1.32;
       scene.fog.density = night ? 0.036 : 0.028;
-      ambientLight.color.set(night ? 0x435070 : 0x4f3f5d);
-      ambientLight.intensity = night ? 0.66 : 0.84;
-      mainLight.intensity = night ? 1.14 : 2.28;
-      frontSpot.intensity = night ? 0.94 : 2.22;
-      characterFill.intensity = night ? 0.5 : 0.72;
-      characterRim.intensity = night ? 0.36 : 0.3;
+      ambientLight.color.set(0x4b3a58);
+      ambientLight.intensity = 0.72;
+      mainLight.intensity = night ? 1.18 : 2.35;
+      frontSpot.intensity = night ? 0.88 : 2.25;
       leftRed.intensity = night ? 0.72 : 1.45;
       rightPurple.intensity = night ? 0.58 : 1.15;
-      backBlue.intensity = night ? 0.72 : 1.05;
+      backBlue.intensity = night ? 0.52 : 0.9;
       lampCore.material.color.set(night ? 0xe9efff : 0xffe0b0);
       lampCore.material.emissive.set(night ? 0x9eb7ff : 0xffbb77);
       lampCore.material.emissiveIntensity = night ? 0.76 : 1.38;
@@ -3495,7 +3492,6 @@
         ceilingGroup.rotation.y = t * 0.016;
         particles.rotation.y = t * 0.011;
         moonCrescent.quaternion.copy(camera.quaternion);
-        updateStandeeSpeakerAnimations(t);
         updateActiveSeatNumberAnimations(t);
         ambientDirty = true;
       }

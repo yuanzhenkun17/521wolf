@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { displayPhaseLabel } from './history/historyDisplay.js'
 
 const props = defineProps({
@@ -10,9 +10,12 @@ const props = defineProps({
   logMessage: Function
 })
 
-const emit = defineEmits(['toggle-expand', 'update:expanded'])
+const emit = defineEmits(['toggle-expand', 'update:expanded', 'compact-height'])
+const panelRef = ref(null)
 const chatListRef = ref(null)
 const selectedPhaseKey = ref('latest')
+const phaseMenuOpen = ref(false)
+let compactResizeObserver = null
 const phaseFallbackLabel = {
   day_speech: '白天发言',
   night_result: '黑夜结果',
@@ -46,26 +49,24 @@ const phaseOptions = computed(() => {
   })
   return [...options, ...byPhase.values()]
 })
+const selectedPhaseOption = computed(() =>
+  phaseOptions.value.find((option) => option.key === selectedPhaseKey.value) || phaseOptions.value[0]
+)
 const filteredLogs = computed(() => {
   if (selectedPhaseKey.value === 'latest') return props.logs
   return props.logs.filter((log) => phaseKey(log) === selectedPhaseKey.value)
 })
 
-const visibleLogs = computed(() => filteredLogs.value)
-const logCountText = computed(() => {
-  return `${filteredLogs.value.length} 条`
+const visibleLogs = computed(() => {
+  if (props.expanded) return filteredLogs.value
+  return filteredLogs.value.slice(-2)
 })
-
 function speaker(log) {
   return log?._speaker || (props.logSpeaker ? props.logSpeaker(log) : (log?.speaker || ''))
 }
 
 function message(log) {
   return log?._message || (props.logMessage ? props.logMessage(log) : (log?.message || ''))
-}
-
-function seatLabel(log) {
-  return log?._seat ? `${log._seat}` : '?'
 }
 
 function kindLabel(log) {
@@ -91,12 +92,21 @@ function toggleExpanded() {
 
 function selectPhase(key) {
   selectedPhaseKey.value = key
+  phaseMenuOpen.value = false
 }
 
 async function scrollToLatest() {
   await nextTick()
   if (!chatListRef.value) return
   chatListRef.value.scrollTop = chatListRef.value.scrollHeight
+  reportCompactHeight()
+}
+
+async function reportCompactHeight() {
+  if (props.expanded) return
+  await nextTick()
+  const height = Math.ceil(panelRef.value?.getBoundingClientRect?.().height || 0)
+  if (height > 0) emit('compact-height', height)
 }
 
 watch(() => phaseOptions.value.map((option) => option.key).join('|'), (keys) => {
@@ -107,17 +117,49 @@ watch(() => phaseOptions.value.map((option) => option.key).join('|'), (keys) => 
 
 watch(() => [props.logs.length, props.expanded, selectedPhaseKey.value, filteredLogs.value.length], scrollToLatest, { flush: 'post' })
 
+onMounted(() => {
+  compactResizeObserver = new ResizeObserver(reportCompactHeight)
+  if (panelRef.value) compactResizeObserver.observe(panelRef.value)
+  reportCompactHeight()
+})
+
+onBeforeUnmount(() => compactResizeObserver?.disconnect())
+
 defineExpose({ chatListRef });
 </script>
 
 <template>
-  <aside class="chat-log-panel" :class="{ expanded }" aria-label="聊天记录">
+  <aside ref="panelRef" class="chat-log-panel" :class="{ expanded }" aria-label="聊天记录">
     <div class="chat-log-top">
       <div class="chat-log-heading">
         <span>对局记录</span>
-        <small>{{ logCountText }}</small>
       </div>
       <div class="chat-log-actions">
+        <div class="chat-log-phase-picker">
+          <button
+            class="chat-log-phase-button"
+            type="button"
+            :aria-expanded="phaseMenuOpen"
+            aria-label="选择记录阶段"
+            @click="phaseMenuOpen = !phaseMenuOpen"
+          >
+            <span>{{ selectedPhaseOption.label }} · {{ selectedPhaseOption.count }}</span>
+            <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z" /></svg>
+          </button>
+          <div v-if="phaseMenuOpen" class="chat-log-phase-menu" role="menu">
+            <button
+              v-for="option in phaseOptions"
+              :key="option.key"
+              type="button"
+              class="chat-log-phase-option"
+              :class="{ active: option.key === selectedPhaseKey }"
+              @click="selectPhase(option.key)"
+            >
+              <span>{{ option.label }}</span>
+              <small>{{ option.count }}</small>
+            </button>
+          </div>
+        </div>
         <label class="chat-log-phase-filter" title="选择记录阶段">
           <select
             class="chat-log-phase-select"
@@ -146,8 +188,12 @@ defineExpose({ chatListRef });
           class="chat-log-line"
           :class="[`kind-${log?._chatKind || 'action'}`, { speaking: log?._speaking, linked: isLinkedSeat(log), latest: isLatestVisible(index) }]"
         >
-          <span class="chat-log-seat">{{ seatLabel(log) }}</span>
-          <img class="chat-log-avatar" :src="log?._roleIcon || '/role-icons/未知.png'" alt="" />
+          <img
+            class="chat-log-avatar"
+            :class="{ judge: String(log?._roleIcon || '').includes('judge-avatar') }"
+            :src="log?._roleIcon || '/role-icons/optimized/未知.webp'"
+            alt=""
+          />
           <div class="chat-log-content">
             <div class="chat-log-meta">
               <b>{{ speaker(log) }}</b>

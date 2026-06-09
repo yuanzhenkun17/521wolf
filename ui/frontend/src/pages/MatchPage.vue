@@ -9,6 +9,7 @@ import ChatLog from '../components/ChatLog.vue'
 import CouncilScene from '../components/CouncilScene.vue'
 import GameOverBoard from '../components/GameOverBoard.vue'
 import MatchControlStrip from '../components/MatchControlStrip.vue'
+import MobileTaskShell from '../components/MobileTaskShell.vue'
 import PlayerCarousel from '../components/PlayerCarousel.vue'
 import PlayerIdentityBoard from '../components/PlayerIdentityBoard.vue'
 import ReplayControls from '../components/ReplayControls.vue'
@@ -17,6 +18,7 @@ import { displayPhaseLabel } from '../components/history/historyDisplay.js'
 const props = defineProps({
   game: Object,
   loading: Boolean,
+  matchNotice: { type: Object, default: () => ({}) },
   backendMode: { type: String, default: 'mock' },
   isNight: Boolean,
   isWatch: Boolean,
@@ -99,6 +101,7 @@ const emit = defineEmits([
 ])
 
 const sceneApi = ref(null)
+const compactHudHeight = ref(146)
 const introMounted = ref(true)
 const introLeaving = ref(false)
 const hoveredTargetId = ref(null)
@@ -116,7 +119,6 @@ let introTimer = 0
 let introRemoveTimer = 0
 let introSettledGameId = null
 const introWaitTimers = new Set()
-const optionalTargetActions = new Set(['exile_vote', 'pk_vote', 'sheriff_vote', 'hunter_shoot'])
 
 function phaseName(phase) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : displayPhaseLabel(phase)
@@ -132,11 +134,7 @@ const hasPendingHumanAction = computed(() => {
 const sceneSelectableIds = computed(() => {
   if (!hasPendingHumanAction.value) return []
   if (props.burstArmed) return props.whiteWolfTargets.map((player) => player.id)
-  if (props.pendingActionType) {
-    return props.needsTarget || optionalTargetActions.has(props.pendingActionType)
-      ? props.actionCandidates.map((player) => player.id)
-      : []
-  }
+  if (props.pendingActionType) return props.needsTarget ? props.actionCandidates.map((player) => player.id) : []
   if (props.game?.waiting_for === 'vote') return props.canVotePlayers.map((player) => player.id)
   return []
 })
@@ -173,6 +171,21 @@ const introReady = computed(() =>
 )
 const showIntro = computed(() => !props.isReplayMode && introMounted.value)
 const replayPhaseText = computed(() => `第${props.game?.day ?? '-'}天 · ${phaseName(props.game?.phase)}`)
+const replayJudgeStripMessage = computed(() => [
+  { message: props.replayEventLabel || '准备回放' }
+])
+const matchNoticeMessage = computed(() => String(props.matchNotice?.message || '').trim())
+const matchNoticeType = computed(() => {
+  const type = String(props.matchNotice?.type || '').trim()
+  return ['success', 'warning', 'error'].includes(type) ? type : 'info'
+})
+const hasMobileTask = computed(() => (
+  props.roleAssignmentComplete &&
+  !props.isWatch &&
+  !props.isReplayMode &&
+  hasPendingHumanAction.value &&
+  (props.game?.waiting_for === 'speech' || Boolean(props.pendingActionType) || props.game?.waiting_for === 'vote')
+))
 
 function handleCouncilReady(api) {
   sceneApi.value = api
@@ -316,177 +329,186 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <CouncilScene
-    :game="game"
-    :is-night="isNight"
-    :is-watch="isWatch"
-    :is-replay-mode="isReplayMode"
-    :role-assignment-complete="roleAssignmentComplete"
-    :judge-board-started="judgeBoardStarted"
-    :players="playerIdentityList"
-    :current-speaker-id="game?.current_speaker_id ?? null"
-    :speaker-message="speakerMessage"
-    :vote-tally="sceneVoteTally"
-    :scene-effects="sceneEffects"
-    :selectable-ids="sceneSelectableIds"
-    :selected-target-id="selectedSceneTargetId"
-    :hovered-target-id="hoveredTargetId"
-    @player-select="handleScenePlayerSelect"
-    @loading-progress="handleCouncilLoadingProgress"
-    @ready="handleCouncilReady"
-  />
-
-  <section
-    v-if="showIntro"
-    :class="['match-intro-overlay', { leaving: introLeaving }]"
-    aria-live="polite"
-  >
-    <div class="intro-ring" aria-hidden="true">
-      <span></span>
-      <i></i>
-    </div>
-    <div class="intro-copy">
-      <b>夜幕议事厅</b>
-      <strong>议事厅入场</strong>
-      <em>{{ introStageText }}</em>
-    </div>
-    <div class="intro-progress" aria-hidden="true"><span :style="{ width: introProgressPercent }"></span></div>
-    <div class="intro-steps" aria-hidden="true">
-      <span :class="{ active: Boolean(game) }"></span>
-      <span :class="{ active: Boolean(sceneApi) }"></span>
-      <span :class="{ active: roleAssignmentComplete || isReplayMode }"></span>
-    </div>
-  </section>
-
-  <template v-if="game">
-    <MatchControlStrip
-      v-if="!isReplayMode"
+  <MobileTaskShell mode="match" :has-task="hasMobileTask" :replay="isReplayMode">
+    <CouncilScene
       :game="game"
-      :loading="loading"
-      :backend-mode="backendMode"
       :is-night="isNight"
-      :watch-running="watchRunning"
-      :prompt-text="promptText"
-      :judge-strip-message="judgeStripMessage"
-      :judge-board-started="judgeBoardStarted"
-      :judge-board-starting="judgeBoardStarting"
-      :history-phase-name="props.historyPhaseName"
-      @toggle-watch="emit('toggle-watch')"
-      @reset-game="emit('reset-game')"
-      @exit-game="emit('exit-game')"
-      @step-game="emit('step-game')"
-      @start-from-judge-board="emit('start-from-judge-board')"
-    />
-
-    <section v-else class="replay-phase-chip" aria-label="回放阶段">
-      <strong>回放</strong>
-      <span>{{ isNight ? '☾' : '☀' }}</span>
-      <em>{{ replayPhaseText }}</em>
-    </section>
-
-    <ReplayControls
-      v-if="isReplayMode"
-      class="match-replay-controls"
+      :is-watch="isWatch"
       :is-replay-mode="isReplayMode"
-      :cursor="replayCursor"
-      :total="replayTotal"
-      :playing="replayPlaying"
-      :speed="replaySpeed"
-      :event-label="replayEventLabel"
-      @play="emit('play-replay')"
-      @pause="emit('pause-replay')"
-      @step="emit('step-replay', $event)"
-      @seek="emit('seek-replay', $event)"
-      @speed="emit('set-replay-speed', $event)"
-      @return-to-history="emit('return-to-history')"
-      @exit-replay="emit('exit-replay')"
+      :role-assignment-complete="roleAssignmentComplete"
+      :judge-board-started="judgeBoardStarted"
+      :players="playerIdentityList"
+      :current-speaker-id="game?.current_speaker_id ?? null"
+      :speaker-message="speakerMessage"
+      :vote-tally="sceneVoteTally"
+      :scene-effects="sceneEffects"
+      :selectable-ids="sceneSelectableIds"
+      :selected-target-id="selectedSceneTargetId"
+      :hovered-target-id="hoveredTargetId"
+      @player-select="handleScenePlayerSelect"
+      @loading-progress="handleCouncilLoadingProgress"
+      @ready="handleCouncilReady"
     />
 
-    <section class="match-layout">
-      <Transition name="role-grid-in">
-        <PlayerIdentityBoard
-          v-if="roleAssignmentComplete"
-          :players="playerIdentityList"
-          :active-seat="activeSeatLabel"
-          :selected-target-id="selectedSceneTargetId"
-        />
-      </Transition>
-
-      <Transition name="role-grid-in">
-        <ChatLog
-          v-if="roleAssignmentComplete"
-          :logs="matchRecordLogs"
-          :expanded="chatLogExpanded"
-          :active-seat="activeSeatLabel"
-          :log-speaker="props.logSpeaker"
-          :log-message="props.logMessage"
-          @update:expanded="emit('update:chatLogExpanded', $event)"
-        />
-      </Transition>
-
-      <main class="board-stage">
-        <ActionPanel
-          :game="game"
-          :loading="loading"
-          :is-watch="isWatch"
-          :is-replay-mode="isReplayMode"
-          :role-assignment-complete="roleAssignmentComplete"
-          :human-player="humanPlayer"
-          :role-name="roleName"
-          :skill-state="skillState"
-          :is-human-witch="isHumanWitch"
-          :is-human-white-wolf="isHumanWhiteWolf"
-          :can-use-witch-antidote="canUseWitchAntidote"
-          :can-use-witch-poison="canUseWitchPoison"
-          :can-white-wolf-burst="canWhiteWolfBurst"
-          :pending-action-type="pendingActionType"
-          :pending-choice-options="pendingChoiceOptions"
-          :action-instruction="actionInstruction"
-          :speech-countdown-text="speechCountdownText"
-          :can-vote-players="canVotePlayers"
-          :action-candidates="actionCandidates"
-          :white-wolf-targets="whiteWolfTargets"
-          :needs-target="needsTarget"
-          :player-label="props.playerLabel"
-          :role-icon-image="props.roleIconImage"
-          :speech="speech"
-          :witch-choice="witchChoice"
-          :action-choice="actionChoice"
-          :burst-armed="burstArmed"
-          :action-target="actionTarget"
-          @update:speech="emit('update:speech', $event)"
-          @update:witchChoice="emit('update:witchChoice', $event)"
-          @update:actionChoice="emit('update:actionChoice', $event)"
-          @update:burstArmed="emit('update:burstArmed', $event)"
-          @update:actionTarget="emit('update:actionTarget', $event)"
-          @target-hover="handleTargetHover"
-          @submit-speech="emit('submit-speech')"
-          @submit-action="emit('submit-action', $event)"
-        />
-        <section v-if="roleAssignmentComplete" class="square-board">
-          <PlayerCarousel
-            :game="game"
-            :is-night="isNight"
-            :carousel="speakerCarousel"
-            :message="speakerMessage"
-          />
-        </section>
-      </main>
-
+    <section
+      v-if="showIntro"
+      :class="['match-intro-overlay', { leaving: introLeaving }]"
+      aria-live="polite"
+    >
+      <div class="intro-ring" aria-hidden="true">
+        <span></span>
+        <i></i>
+      </div>
+      <div class="intro-copy">
+        <b>夜幕议事厅</b>
+        <strong>议事厅入场</strong>
+        <em>{{ introStageText }}</em>
+      </div>
+      <div class="intro-progress" aria-hidden="true"><span :style="{ width: introProgressPercent }"></span></div>
+      <div class="intro-steps" aria-hidden="true">
+        <span :class="{ active: Boolean(game) }"></span>
+        <span :class="{ active: Boolean(sceneApi) }"></span>
+        <span :class="{ active: roleAssignmentComplete || isReplayMode }"></span>
+      </div>
     </section>
 
-    <Transition name="game-over-board">
-      <GameOverBoard
-        v-if="showGameOverModal"
+    <Transition name="match-notice">
+      <aside
+        v-if="matchNoticeMessage"
+        :class="['match-action-notice', matchNoticeType]"
+        role="status"
+        aria-live="polite"
+      >
+        <span></span>
+        <b>{{ matchNoticeMessage }}</b>
+      </aside>
+    </Transition>
+
+    <template v-if="game">
+      <MatchControlStrip
         :game="game"
         :loading="loading"
-        :living-count="livingPlayers.length"
+        :backend-mode="backendMode"
+        :is-night="isNight"
+        :is-replay-mode="isReplayMode"
+        :watch-running="watchRunning"
+        :prompt-text="isReplayMode ? replayPhaseText : promptText"
+        :judge-strip-message="isReplayMode ? replayJudgeStripMessage : judgeStripMessage"
+        :judge-board-started="isReplayMode ? true : judgeBoardStarted"
+        :judge-board-starting="isReplayMode ? false : judgeBoardStarting"
+        :history-phase-name="props.historyPhaseName"
+        @toggle-watch="emit('toggle-watch')"
         @reset-game="emit('reset-game')"
         @exit-game="emit('exit-game')"
-        @close="closeGameOverModal"
+        @start-from-judge-board="emit('start-from-judge-board')"
       />
-    </Transition>
-  </template>
+
+      <ReplayControls
+        v-if="isReplayMode"
+        class="match-replay-controls"
+        :is-replay-mode="isReplayMode"
+        :cursor="replayCursor"
+        :total="replayTotal"
+        :playing="replayPlaying"
+        :speed="replaySpeed"
+        :event-label="replayEventLabel"
+        @play="emit('play-replay')"
+        @pause="emit('pause-replay')"
+        @step="emit('step-replay', $event)"
+        @seek="emit('seek-replay', $event)"
+        @speed="emit('set-replay-speed', $event)"
+        @return-to-history="emit('return-to-history')"
+        @exit-replay="emit('exit-replay')"
+      />
+
+      <section class="match-layout">
+        <Transition name="role-grid-in">
+          <PlayerIdentityBoard
+            v-if="roleAssignmentComplete"
+            :players="playerIdentityList"
+            :active-seat="activeSeatLabel"
+            :selected-target-id="selectedSceneTargetId"
+            :panel-height="compactHudHeight"
+          />
+        </Transition>
+
+        <Transition name="role-grid-in">
+          <ChatLog
+            v-if="roleAssignmentComplete"
+            :logs="matchRecordLogs"
+            :expanded="chatLogExpanded"
+            :active-seat="activeSeatLabel"
+            :log-speaker="props.logSpeaker"
+            :log-message="props.logMessage"
+            @compact-height="compactHudHeight = $event"
+            @update:expanded="emit('update:chatLogExpanded', $event)"
+          />
+        </Transition>
+
+        <main class="board-stage">
+          <ActionPanel
+            :game="game"
+            :loading="loading"
+            :is-watch="isWatch"
+            :is-replay-mode="isReplayMode"
+            :role-assignment-complete="roleAssignmentComplete"
+            :human-player="humanPlayer"
+            :role-name="roleName"
+            :skill-state="skillState"
+            :is-human-witch="isHumanWitch"
+            :is-human-white-wolf="isHumanWhiteWolf"
+            :can-use-witch-antidote="canUseWitchAntidote"
+            :can-use-witch-poison="canUseWitchPoison"
+            :can-white-wolf-burst="canWhiteWolfBurst"
+            :pending-action-type="pendingActionType"
+            :pending-choice-options="pendingChoiceOptions"
+            :action-instruction="actionInstruction"
+            :speech-countdown-text="speechCountdownText"
+            :can-vote-players="canVotePlayers"
+            :action-candidates="actionCandidates"
+            :white-wolf-targets="whiteWolfTargets"
+            :needs-target="needsTarget"
+            :player-label="props.playerLabel"
+            :role-icon-image="props.roleIconImage"
+            :speech="speech"
+            :witch-choice="witchChoice"
+            :action-choice="actionChoice"
+            :burst-armed="burstArmed"
+            :action-target="actionTarget"
+            @update:speech="emit('update:speech', $event)"
+            @update:witchChoice="emit('update:witchChoice', $event)"
+            @update:actionChoice="emit('update:actionChoice', $event)"
+            @update:burstArmed="emit('update:burstArmed', $event)"
+            @update:actionTarget="emit('update:actionTarget', $event)"
+            @target-hover="handleTargetHover"
+            @submit-speech="emit('submit-speech')"
+            @submit-action="emit('submit-action', $event)"
+          />
+          <section v-if="roleAssignmentComplete" class="square-board">
+            <PlayerCarousel
+              :game="game"
+              :is-night="isNight"
+              :carousel="speakerCarousel"
+              :message="speakerMessage"
+            />
+          </section>
+        </main>
+
+      </section>
+
+      <Transition name="game-over-board">
+        <GameOverBoard
+          v-if="showGameOverModal"
+          :game="game"
+          :loading="loading"
+          :living-count="livingPlayers.length"
+          @reset-game="emit('reset-game')"
+          @exit-game="emit('exit-game')"
+          @close="closeGameOverModal"
+        />
+      </Transition>
+    </template>
+  </MobileTaskShell>
 </template>
 
 <style scoped>
@@ -652,79 +674,104 @@ onBeforeUnmount(() => {
   to { transform: translateX(240%); }
 }
 
-.replay-phase-chip {
+.match-action-notice {
   position: fixed;
-  top: 88px;
+  top: var(--match-toast-top, 158px);
   left: 50%;
-  z-index: 18;
-  display: inline-flex;
+  z-index: 92;
+  display: inline-grid;
+  grid-template-columns: 9px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-  max-width: min(560px, calc(100vw - 40px));
-  height: 38px;
-  padding: 0 14px;
-  border: 1px solid rgba(242, 202, 80, 0.2);
-  border-radius: 8px;
-  background: rgba(11, 9, 7, 0.66);
-  color: #f2ca50;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(14px);
+  gap: 8px;
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - var(--match-toast-gutter, 32px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
+  min-height: 34px;
+  padding: 7px 14px 7px 12px;
+  border: 2px solid rgba(100, 55, 25, 0.62);
+  border-radius: 0;
+  color: #3f2714;
+  background:
+    linear-gradient(180deg, rgba(255, 239, 194, 0.96), rgba(230, 190, 117, 0.96)),
+    repeating-linear-gradient(90deg, rgba(88, 42, 14, 0.08) 0 1px, transparent 1px 18px);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(255, 250, 218, 0.48);
   transform: translateX(-50%);
-  pointer-events: auto;
+  pointer-events: none;
 }
 
-.replay-phase-chip strong,
-.replay-phase-chip em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.replay-phase-chip strong {
-  font-size: 13px;
-  font-weight: 950;
-}
-
-.replay-phase-chip span {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
+.match-action-notice span {
+  display: block;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: rgba(242, 202, 80, 0.12);
-  font-size: 15px;
-  line-height: 1;
+  background: #7c8b43;
+  box-shadow: 0 0 0 3px rgba(124, 139, 67, 0.18);
 }
 
-.replay-phase-chip em {
+.match-action-notice b {
   min-width: 0;
-  color: rgba(255, 240, 198, 0.86);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 800;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.match-action-notice.warning span {
+  background: #b9802d;
+  box-shadow: 0 0 0 3px rgba(185, 128, 45, 0.2);
+}
+
+.match-action-notice.error span {
+  background: #9a2e21;
+  box-shadow: 0 0 0 3px rgba(154, 46, 33, 0.18);
+}
+
+.match-notice-enter-active,
+.match-notice-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.match-notice-enter-from,
+.match-notice-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -6px);
 }
 
 .match-replay-controls {
   position: fixed;
   right: auto;
-  bottom: 24px;
+  bottom: var(--match-replay-bottom, 24px);
   left: 50%;
   z-index: 24;
-  width: min(740px, calc(100vw - 52px));
+  width: min(740px, calc(100vw - var(--match-replay-gutter, 52px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
   transform: translateX(-50%);
   pointer-events: auto;
 }
 
+:deep(.player-command-panel) {
+  bottom: var(--match-action-bottom, clamp(18px, 4vh, 42px));
+  width: min(720px, calc(100vw - var(--match-action-gutter, 64px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
+  max-height: min(224px, var(--match-action-max-height, calc(100vh - 112px)));
+}
+
 @media (max-width: 760px) {
-  .replay-phase-chip {
-    top: 74px;
-    height: 34px;
-    max-width: calc(100vw - 18px);
+  .match-replay-controls {
+    bottom: var(--match-replay-bottom, 12px);
+    width: calc(100vw - var(--match-replay-gutter, 18px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
   }
 
-  .match-replay-controls {
-    bottom: 12px;
-    width: calc(100vw - 18px);
+  .match-action-notice {
+    top: var(--match-toast-top, 146px);
+    width: calc(100vw - var(--match-toast-gutter, 22px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
+    padding-inline: 10px;
+  }
+
+  :deep(.player-command-panel) {
+    bottom: var(--match-action-bottom, 12px);
+    width: calc(100vw - var(--match-action-gutter, 18px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
+    max-height: min(260px, var(--match-action-max-height, calc(100vh - 96px)));
   }
 }
 </style>

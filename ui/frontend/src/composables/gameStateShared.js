@@ -153,13 +153,13 @@ export function fallbackCardImage(isWatch, player) {
 
 export function fallbackRoleIconImage(player) {
   const hint = player?.role_hint || ''
-  if (hint.includes('预言')) return '/role-icons/预言家.png'
-  if (hint.includes('女巫')) return '/role-icons/女巫.png'
-  if (hint.includes('猎人')) return '/role-icons/猎人.png'
-  if (hint.includes('守卫')) return '/role-icons/守卫.png'
-  if (hint.includes('白狼王')) return '/role-icons/白狼王.png'
-  if (hint.includes('狼人')) return '/role-icons/普通狼.png'
-  return '/role-icons/平民.png'
+  if (hint.includes('预言')) return '/role-icons/optimized/预言家.webp'
+  if (hint.includes('女巫')) return '/role-icons/optimized/女巫.webp'
+  if (hint.includes('猎人')) return '/role-icons/optimized/猎人.webp'
+  if (hint.includes('守卫')) return '/role-icons/optimized/守卫.webp'
+  if (hint.includes('白狼王')) return '/role-icons/optimized/白狼王.webp'
+  if (hint.includes('狼人')) return '/role-icons/optimized/普通狼.webp'
+  return '/role-icons/optimized/平民.webp'
 }
 
 export function createRefs() {
@@ -180,6 +180,7 @@ export function createRefs() {
     replayGame,
     loading: ref(false),
     error: ref(''),
+    matchNotice: ref({ type: '', message: '' }),
     speech: ref('我先报一下自己的视角：目前重点听发言逻辑和票型。'),
     speechRemaining: ref(180),
     voteTarget: ref(1),
@@ -204,6 +205,15 @@ export function createRefs() {
     gameHistory: ref([]),
     selectedHistoryGameId: ref(null),
     selectedHistoryGame: ref(null),
+    selectedHistoryShell: ref(null),
+    selectedPhaseDetail: ref(null),
+    phaseDetailByGameId: ref({}),
+    phaseLoadingByKey: ref({}),
+    phaseErrorByKey: ref({}),
+    replayByGameId: ref({}),
+    replayLoadingByGameId: ref({}),
+    flowDataByGameId: ref({}),
+    flowLoadingByGameId: ref({}),
     historyLoading: ref(false),
     historyPhase: ref('all'),
     assessDimension: ref('speech'),

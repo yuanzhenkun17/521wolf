@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
-import logging
 from typing import Any
 
-import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 
 from app.config import load_tts_config
 from ui.backend.schemas import TtsSpeechRequest
-from ui.backend.tts import (
-    _extract_tts_audio_data,
-    _tts_auth_headers,
-    _tts_media_type,
-    _tts_payload,
+from ui.backend.tts_dashscope import (
+    prepare_dashscope_realtime_request,
+    stream_dashscope_realtime_audio,
 )
-
-_log = logging.getLogger(__name__)
 
 
 def register_core_routes(api: FastAPI, store: Any) -> None:
@@ -44,42 +36,61 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
                 ),
                 "llm": store.llm_status(),
                 "tts": store.tts_status(),
+                "tts_streaming": store.tts_streaming_available(),
                 "startup_checks": store.startup_checks,
             },
         }
 
-    @api.post("/api/tts/speech")
-    async def tts_speech(request: TtsSpeechRequest) -> Response:
+    @api.post("/api/tts/speech/stream")
+    async def tts_speech_stream(request: TtsSpeechRequest) -> StreamingResponse:
         try:
             config = load_tts_config()
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail="TTS 未配置，请在 .env 配置 WEREWOLF_TTS_API_KEY。") from exc
 
-        payload = _tts_payload(config, request)
-        url = f"{config['base_url']}/chat/completions"
-        try:
-            async with httpx.AsyncClient(timeout=float(config.get("timeout") or 60.0)) as client:
-                upstream = await client.post(url, headers=_tts_auth_headers(config), json=payload)
-                upstream.raise_for_status()
-                data = upstream.json()
-        except httpx.HTTPStatusError as exc:
-            _log.warning("TTS upstream returned HTTP %s", exc.response.status_code, exc_info=True)
-            raise HTTPException(status_code=502, detail="TTS 服务调用失败。") from exc
-        except (httpx.HTTPError, ValueError) as exc:
-            _log.warning("TTS upstream request failed", exc_info=True)
-            raise HTTPException(status_code=502, detail="TTS 服务调用失败。") from exc
-
-        audio_data = _extract_tts_audio_data(data)
-        try:
-            audio_bytes = base64.b64decode(audio_data, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise HTTPException(status_code=502, detail="TTS 服务返回的音频无效。") from exc
-        return Response(
-            content=audio_bytes,
-            media_type=_tts_media_type(config.get("format")),
-            headers={"Cache-Control": "no-store"},
+        prepared = prepare_dashscope_realtime_request(config, request)
+        return StreamingResponse(
+            stream_dashscope_realtime_audio(config, request, prepared=prepared),
+            media_type="audio/L16",
+            headers={
+                "Cache-Control": "no-store",
+                "X-TTS-Audio-Format": "pcm_s16le",
+                "X-TTS-Sample-Rate": str(prepared["sample_rate"]),
+                "X-TTS-Channels": "1",
+            },
         )
 
     @api.get("/api/leaderboards")
-    def leaderboards() -> dict[str, Any]:
-        return {"entries": [], "source": "app", "source_type": "app"}
+    def leaderboards(
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return {
+            "kind": "benchmark_leaderboard",
+            "schema_version": 1,
+            "scope": scope,
+            "evaluation_set_id": evaluation_set_id,
+            "target_role": target_role,
+            "entries": store.leaderboard_entries(
+                scope=scope,
+                evaluation_set_id=evaluation_set_id,
+                target_role=target_role,
+                limit=limit,
+            ),
+            "source": "app",
+            "source_type": "app",
+        }
+
+    @api.get("/api/models/leaderboard")
+    def model_leaderboard(evaluation_set_id: str | None = None, limit: int = 100) -> dict[str, Any]:
+        return {
+            "kind": "model_leaderboard",
+            "schema_version": 1,
+            "scope": "model",
+            "evaluation_set_id": evaluation_set_id,
+            "entries": store.model_leaderboard_entries(evaluation_set_id=evaluation_set_id, limit=limit),
+            "source": "app",
+            "source_type": "app",
+        }

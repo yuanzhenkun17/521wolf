@@ -8,7 +8,8 @@ const props = defineProps({
   nightResult: { type: String, default: '' },
   selectedDecision: Object,
   detailTab: { type: String, default: 'summary' },
-  nightActionDetail: Function
+  nightActionDetail: Function,
+  roleIconImage: Function
 })
 
 const emit = defineEmits(['update:selectedDecision', 'update:detailTab'])
@@ -53,6 +54,7 @@ function selectDecision(action) {
             :action="action"
             :selected="isSelected(action, index)"
             :night-action-detail="nightActionDetail"
+            :role-icon-image="roleIconImage"
             mode="night"
             @select="selectDecision"
           />

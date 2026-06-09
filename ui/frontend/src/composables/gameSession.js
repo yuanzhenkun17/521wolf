@@ -88,7 +88,8 @@ function clearStoredGameSession(storage) {
 
 function viewFromHash(hash = globalThis.window?.location?.hash || '') {
   if (!hash) return 'lobby'
-  return HASH_VIEWS[hash] || 'lobby'
+  const routeHash = String(hash || '').split('?')[0]
+  return HASH_VIEWS[routeHash] || 'lobby'
 }
 
 function hashForView(view = 'lobby') {

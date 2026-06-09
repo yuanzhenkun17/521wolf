@@ -31,6 +31,37 @@ _EVOLUTION_ALLOWED_ACTIONS = {"append_rule", "rewrite_section", "deprecate_rule"
 _REJECTED_BUFFER_LIMIT = 50
 _LOCK_GUARD = threading.Lock()
 _PROCESS_LOCKS: dict[str, threading.Lock] = {}
+_REGISTRY_RELEASE_STAGE_STATUSES = {"shadow", "canary"}
+
+
+class ReleaseStageNotAllowedError(ValueError):
+    """Raised when an experimental role version is used in a default flow."""
+
+    def __init__(
+        self,
+        role: str,
+        version_id: str,
+        release_stage: str,
+        *,
+        allowed_flow: str = "explicit_evaluation",
+    ) -> None:
+        self.role = str(role)
+        self.version_id = str(version_id)
+        self.release_stage = str(release_stage)
+        self.allowed_flow = str(allowed_flow)
+        super().__init__(
+            f"role version {self.role}/{self.version_id} is release_stage={self.release_stage}; "
+            "shadow/canary versions are only allowed in explicit evaluation flows"
+        )
+
+    def diagnostic(self, *, kind: str = "role_version_release_stage_not_allowed") -> dict[str, str]:
+        return {
+            "kind": kind,
+            "role": self.role,
+            "version_id": self.version_id,
+            "release_stage": self.release_stage,
+            "allowed_flow": self.allowed_flow,
+        }
 
 
 @dataclass
@@ -70,6 +101,8 @@ class VersionSummary:
     created_at: str = ""
     is_baseline: bool = False
     status: str = "active"
+    release_stage: str = "draft"
+    provenance: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +112,8 @@ class VersionSummary:
             "created_at": self.created_at,
             "is_baseline": self.is_baseline,
             "status": self.status,
+            "release_stage": self.release_stage,
+            "provenance": dict(self.provenance),
         }
 
 
@@ -146,9 +181,20 @@ class VersionRegistry:
         version_id: str | None = None,
         set_as_baseline: bool = False,
         expected_current: str | None = None,
+        release_stage: str | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> str:
         """Publish a role skill snapshot and optionally promote it to baseline."""
         _validate_name(role, "role")
+        status = _registry_status_for_release_stage(release_stage, set_as_baseline=set_as_baseline)
+        stage = _release_stage_for_registry(release_stage, set_as_baseline=set_as_baseline)
+        provenance_payload = _registry_provenance(
+            source=source,
+            run_id=run_id,
+            proposal_ids=proposal_ids,
+            release_stage=stage,
+            provenance=provenance,
+        )
         normalized = {normalize_skill_path(path): str(content) for path, content in skill_contents.items()}
         _raise_for_skill_manifest_issues(validate_skill_manifests(role, normalized))
 
@@ -163,6 +209,17 @@ class VersionRegistry:
                 existing = self._read_skill_contents_unlocked(role, version_id)
                 if existing != normalized:
                     raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
+                if set_as_baseline or _should_update_existing_release_status(
+                    self._version_status_unlocked(role, version_id),
+                    status,
+                ):
+                    self._update_release_metadata_unlocked(
+                        role,
+                        version_id,
+                        status=status,
+                        release_stage=stage,
+                        provenance=provenance_payload,
+                    )
             else:
                 self._write_version_dir_atomic(
                     role=role,
@@ -175,6 +232,8 @@ class VersionRegistry:
                         "source": source,
                         "run_id": run_id,
                         "proposal_ids": list(proposal_ids or []),
+                        "release_stage": stage,
+                        "provenance": provenance_payload,
                         "skills": [
                             {
                                 "path": rel_path,
@@ -182,7 +241,7 @@ class VersionRegistry:
                             }
                             for rel_path, content in sorted(normalized.items())
                         ],
-                        "status": "active",
+                        "status": status,
                         "created_at": beijing_now_iso(),
                     },
                 )
@@ -238,6 +297,14 @@ class VersionRegistry:
             if path.is_file():
                 contents[path.relative_to(files_dir).as_posix()] = path.read_text(encoding="utf-8")
         return contents
+
+    def _version_status_unlocked(self, role: str, version_id: str) -> str:
+        meta_path = self._role_dir(role) / version_id / "meta.json"
+        try:
+            meta = read_json(meta_path)
+        except (OSError, TypeError, ValueError):
+            return ""
+        return str(meta.get("status") or "")
 
     def _set_baseline_unlocked(
         self,
@@ -332,14 +399,17 @@ class VersionRegistry:
                 _log.warning("list_versions: skipping non-object metadata %s", meta_path)
                 continue
             version_id = str(meta.get("version_id") or meta_path.parent.name)
+            is_baseline = version_id == baseline
             summaries.append(
                 VersionSummary(
                     version_id=version_id,
                     role=role,
                     source=str(meta.get("source", "")),
                     created_at=str(meta.get("created_at", "")),
-                    is_baseline=version_id == baseline,
+                    is_baseline=is_baseline,
                     status=str(meta.get("status", "active")),
+                    release_stage=_summary_release_stage(meta, is_baseline=is_baseline),
+                    provenance=_summary_provenance(meta),
                 )
             )
         return summaries
@@ -442,6 +512,23 @@ class VersionRegistry:
         meta["updated_at"] = beijing_now_iso()
         write_json(meta_path, meta)
 
+    def _update_release_metadata_unlocked(
+        self,
+        role: str,
+        version_id: str,
+        *,
+        status: str,
+        release_stage: str,
+        provenance: dict[str, Any],
+    ) -> None:
+        meta_path = self._role_dir(role) / version_id / "meta.json"
+        meta = read_json(meta_path)
+        meta["status"] = status
+        meta["release_stage"] = release_stage
+        meta["provenance"] = dict(provenance)
+        meta["updated_at"] = beijing_now_iso()
+        write_json(meta_path, meta)
+
     def _append_history(
         self,
         role: str,
@@ -486,6 +573,8 @@ class VersionRegistryProtocol(Protocol):
         version_id: str | None = None,
         set_as_baseline: bool = False,
         expected_current: str | None = None,
+        release_stage: str | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> str:
         ...
 
@@ -601,8 +690,19 @@ class PostgresVersionRegistry:
         version_id: str | None = None,
         set_as_baseline: bool = False,
         expected_current: str | None = None,
+        release_stage: str | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> str:
         _validate_name(role, "role")
+        status = _registry_status_for_release_stage(release_stage, set_as_baseline=set_as_baseline)
+        stage = _release_stage_for_registry(release_stage, set_as_baseline=set_as_baseline)
+        provenance_payload = _registry_provenance(
+            source=source,
+            run_id=run_id,
+            proposal_ids=proposal_ids,
+            release_stage=stage,
+            provenance=provenance,
+        )
         normalized = {
             normalize_skill_path(path): normalize_skill_text(str(content))
             for path, content in skill_contents.items()
@@ -617,6 +717,12 @@ class PostgresVersionRegistry:
             self._conn.commit()
             if existing_skills != normalized:
                 raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
+            if set_as_baseline or _should_update_existing_release_status(str(existing["status"] or ""), status):
+                self._conn.execute(
+                    "UPDATE role_versions SET status = ?, provenance_json = ? WHERE role = ? AND id = ?",
+                    (status, json.dumps(provenance_payload, ensure_ascii=False), role, version_id),
+                )
+                self._conn.commit()
         else:
             now = beijing_now_iso()
             notes = [
@@ -629,8 +735,8 @@ class PostgresVersionRegistry:
             try:
                 self._conn.execute(
                     "INSERT INTO role_versions "
-                    "(id, role, parent_id, source, run_id, skills, notes, status, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(id, role, parent_id, source, run_id, skills, notes, status, created_at, provenance_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         version_id,
                         role,
@@ -639,8 +745,9 @@ class PostgresVersionRegistry:
                         run_id,
                         json.dumps(normalized, ensure_ascii=False),
                         json.dumps(notes, ensure_ascii=False),
-                        "active",
+                        status,
                         now,
+                        json.dumps(provenance_payload, ensure_ascii=False),
                     ),
                 )
                 self._conn.commit()
@@ -798,7 +905,7 @@ class PostgresVersionRegistry:
         _validate_name(role, "role")
         baseline = self.get_baseline(role)
         rows = self._conn.execute(
-            "SELECT id, role, source, created_at, status "
+            "SELECT id, role, source, created_at, status, provenance_json "
             "FROM role_versions WHERE role = ? ORDER BY created_at",
             (role,),
         ).fetchall()
@@ -810,6 +917,8 @@ class PostgresVersionRegistry:
                 created_at=str(row["created_at"] or ""),
                 is_baseline=str(row["id"]) == baseline,
                 status=str(row["status"] or "active"),
+                release_stage=_summary_release_stage(row, is_baseline=str(row["id"]) == baseline),
+                provenance=_summary_provenance(row),
             )
             for row in rows
         ]
@@ -956,6 +1065,46 @@ def build_composite_skill_dir(registry: VersionRegistryProtocol, config: SkillVe
     return registry.build_skill_dir(config.role_versions)
 
 
+def registry_version_release_stage(
+    registry: VersionRegistryProtocol,
+    role: str,
+    version_id: str,
+) -> str:
+    """Return the registry release stage for a role version summary."""
+    _validate_name(role, "role")
+    _validate_name(version_id, "version_id")
+    list_versions = getattr(registry, "list_versions", None)
+    if callable(list_versions):
+        for summary in list_versions(role):
+            payload = summary.to_dict() if hasattr(summary, "to_dict") else dict(summary)
+            if str(payload.get("version_id") or "") != version_id:
+                continue
+            return _summary_release_stage(payload, is_baseline=bool(payload.get("is_baseline")))
+    direct = getattr(registry, "release_stage", None)
+    if callable(direct):
+        release_stage = str(direct(role, version_id) or "").strip().lower()
+        if release_stage:
+            return release_stage
+    raise FileNotFoundError(f"Version {role}/{version_id} not found")
+
+
+def is_experimental_release_stage(release_stage: Any) -> bool:
+    """Whether a release stage must be isolated from default production use."""
+    return str(release_stage or "").strip().lower() in _REGISTRY_RELEASE_STAGE_STATUSES
+
+
+def ensure_version_allowed_for_default_use(
+    registry: VersionRegistryProtocol,
+    role: str,
+    version_id: str,
+) -> str:
+    """Reject shadow/canary versions from normal games, rollback, and default parent use."""
+    release_stage = registry_version_release_stage(registry, role, version_id)
+    if is_experimental_release_stage(release_stage):
+        raise ReleaseStageNotAllowedError(role, version_id, release_stage)
+    return release_stage
+
+
 def promote_version(registry: VersionRegistryProtocol, role: str, version_id: str) -> None:
     """Promote a version to be the new baseline for a role."""
     current = registry.get_baseline(role)
@@ -968,6 +1117,93 @@ def promote_version(registry: VersionRegistryProtocol, role: str, version_id: st
 def reject_version(registry: VersionRegistryProtocol, role: str, version_id: str) -> None:
     """Mark a version as rejected for a role."""
     registry.reject(role, version_id)
+
+
+def _registry_status_for_release_stage(
+    release_stage: str | None,
+    *,
+    set_as_baseline: bool,
+) -> str:
+    """Map release stages to registry status without changing baseline pointers."""
+    if set_as_baseline:
+        return "active"
+    stage = str(release_stage or "").strip().lower()
+    if stage in _REGISTRY_RELEASE_STAGE_STATUSES:
+        return stage
+    return "active"
+
+
+def _release_stage_for_registry(
+    release_stage: str | None,
+    *,
+    set_as_baseline: bool,
+) -> str:
+    if set_as_baseline:
+        return "baseline"
+    stage = str(release_stage or "").strip().lower()
+    if stage in _REGISTRY_RELEASE_STAGE_STATUSES:
+        return stage
+    return "draft"
+
+
+def _registry_provenance(
+    *,
+    source: str,
+    run_id: str | None,
+    proposal_ids: list[str] | None,
+    release_stage: str,
+    provenance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = dict(provenance or {})
+    payload.setdefault("source", source)
+    if run_id:
+        payload.setdefault("run_id", run_id)
+    payload.setdefault("proposal_ids", list(proposal_ids or []))
+    payload.setdefault("release_stage", release_stage)
+    return payload
+
+
+def _should_update_existing_release_status(current_status: str, next_status: str) -> bool:
+    order = {"active": 0, "shadow": 1, "canary": 2, "baseline": 3, "promoted": 3}
+    current = str(current_status or "active").strip().lower()
+    target = str(next_status or "active").strip().lower()
+    if current in {"baseline", "promoted", "rejected"}:
+        return False
+    return order.get(target, 0) > order.get(current, 0)
+
+
+def _summary_release_stage(value: Any, *, is_baseline: bool) -> str:
+    if is_baseline:
+        return "baseline"
+    provenance = _summary_provenance(value)
+    stage = str(provenance.get("release_stage") or "").strip().lower()
+    if stage:
+        return stage
+    if isinstance(value, dict):
+        stage = str(value.get("release_stage") or "").strip().lower()
+        status = str(value.get("status") or "").strip().lower()
+    else:
+        stage = ""
+        try:
+            status = str(value["status"] or "").strip().lower()
+        except Exception:
+            status = ""
+    if stage:
+        return stage
+    if status in _REGISTRY_RELEASE_STAGE_STATUSES:
+        return status
+    return "draft"
+
+
+def _summary_provenance(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        raw = value.get("provenance") or value.get("provenance_json")
+    else:
+        try:
+            raw = value["provenance_json"]
+        except Exception:
+            raw = None
+    return _loads_json_object(raw, default={})
 
 
 def validate_skill_dir(root: Path | str, *, expected_role: str | None = None) -> list[str]:

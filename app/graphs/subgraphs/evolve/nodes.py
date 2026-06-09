@@ -1,6 +1,6 @@
 """Evolve subgraph nodes — self-evolution pipeline for one role.
 
-Nodes: init → training → consolidate → apply → battle → decide
+Nodes: init → training → consolidate → apply → scenario_replay → battle → decide
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from app.lib.evolve import (
     build_consolidation_messages,
     build_evolution_gate_report,
     build_paired_seed_battle_table,
+    build_trust_bundle,
     deduplicate_proposals,
     format_skill_inventory,
     modifiable_skill_files,
@@ -37,6 +38,7 @@ _STAGE_PROGRESS = {
     "training": 0.25,
     "consolidating": 0.45,
     "applying": 0.65,
+    "scenario_replay": 0.75,
     "battling": 0.85,
     "decide": 0.95,
     "done": 1.0,
@@ -130,6 +132,9 @@ def _progress_snapshot(state: EvolveState) -> dict[str, Any]:
         "battle_result": battle,
         "promotion_gate": state.get("promotion_gate") or result.get("promotion_gate") or battle.get("promotion_gate"),
         "gate_report": state.get("gate_report") or result.get("gate_report") or battle.get("gate_report"),
+        "release_gate": state.get("release_gate") or result.get("release_gate") or battle.get("release_gate"),
+        "release_decision": state.get("release_decision") or result.get("release_decision") or battle.get("release_decision"),
+        "trust_bundle": state.get("trust_bundle") or result.get("trust_bundle") or battle.get("trust_bundle"),
         "paired_seed_pairs": list(state.get("paired_seed_pairs") or result.get("paired_seed_pairs") or battle.get("paired_seed_pairs") or []),
         "paired_seed_battle_table": list(
             state.get("paired_seed_battle_table")
@@ -139,6 +144,25 @@ def _progress_snapshot(state: EvolveState) -> dict[str, Any]:
         ),
         "paired_seed_summary": state.get("paired_seed_summary") or result.get("paired_seed_summary") or battle.get("paired_seed_summary"),
         "proposals": list(state.get("proposals", []) or []),
+        "scenario_snapshots": list(state.get("scenario_snapshots") or result.get("scenario_snapshots") or []),
+        "scenario_replay_report": state.get("scenario_replay_report") or result.get("scenario_replay_report"),
+        "scenario_replay_summary": state.get("scenario_replay_summary") or result.get("scenario_replay_summary"),
+        "proposal_attribution_report": (
+            state.get("proposal_attribution_report")
+            or result.get("proposal_attribution_report")
+            or battle.get("proposal_attribution_report")
+            or (state.get("gate_report") or result.get("gate_report") or battle.get("gate_report") or {}).get("proposal_attribution")
+        ),
+        "generated_proposal_ids": list(state.get("generated_proposal_ids") or result.get("generated_proposal_ids") or []),
+        "preflight_passed_proposal_ids": list(
+            state.get("preflight_passed_proposal_ids") or result.get("preflight_passed_proposal_ids") or []
+        ),
+        "preflight_rejected_proposal_ids": list(
+            state.get("preflight_rejected_proposal_ids") or result.get("preflight_rejected_proposal_ids") or []
+        ),
+        "accepted_proposal_ids": list(state.get("accepted_proposal_ids") or result.get("accepted_proposal_ids") or []),
+        "rejected_proposal_ids": list(state.get("rejected_proposal_ids") or result.get("rejected_proposal_ids") or []),
+        "preflight_reports": list(state.get("preflight_reports") or result.get("preflight_reports") or []),
         "diff": list(state.get("diff", []) or []),
         "recommendation": state.get("recommendation") or result.get("recommendation"),
         "diagnostics": list(state.get("diagnostics", []) or []),
@@ -314,6 +338,10 @@ async def consolidate_node(state: EvolveState) -> dict:
     if max_proposals <= 0 or not games:
         state["proposals"] = []
         state["consolidation"] = None
+        state["generated_proposal_ids"] = []
+        state["preflight_passed_proposal_ids"] = []
+        state["preflight_rejected_proposal_ids"] = []
+        state["preflight_reports"] = []
         _mark_stage(state, "consolidating", status=state.get("status"), progress={"proposal_count": 0})
         return state
 
@@ -344,6 +372,11 @@ async def consolidate_node(state: EvolveState) -> dict:
             source_games=source_games,
             source_window=len(games),
             max_proposals=max_proposals,
+            rejected=rejected,
+            duplicate_threshold=float(
+                cfg.get("duplicate_similarity_threshold", cfg.get("trust_duplicate_similarity_threshold", 0.72))
+                or 0.72
+            ),
         )
     except Exception as exc:  # noqa: BLE001 — degrade gracefully
         _log.error("consolidate: failed for role=%s: %s", role, exc)
@@ -357,6 +390,7 @@ async def consolidate_node(state: EvolveState) -> dict:
     # Drop proposals that repeat a previously rejected direction.
     if rejected and consolidation.proposals:
         try:
+            before_ids = [p.proposal_id for p in consolidation.proposals]
             survivors = {
                 d["proposal_id"]
                 for d in deduplicate_proposals([p.to_dict() for p in consolidation.proposals], rejected)
@@ -364,7 +398,26 @@ async def consolidate_node(state: EvolveState) -> dict:
             dropped = len(consolidation.proposals) - len(survivors)
             if dropped:
                 _log.info("consolidate: dropped %d proposal(s) overlapping rejected buffer", dropped)
+            dropped_ids = [proposal_id for proposal_id in before_ids if proposal_id not in survivors]
+            for proposal_id in dropped_ids:
+                if proposal_id not in consolidation.preflight_rejected_proposal_ids:
+                    consolidation.preflight_rejected_proposal_ids.append(proposal_id)
+                consolidation.preflight_reports.append(
+                    {
+                        "proposal_id": proposal_id,
+                        "status": "blocked",
+                        "reasons": ["duplicate rejected proposal direction"],
+                        "checks": {"deduplicate_rejected": True},
+                    }
+                )
+                warning = f"consolidate: dropped proposal {proposal_id}: duplicate rejected proposal direction"
+                if warning not in consolidation.warnings:
+                    consolidation.warnings.append(warning)
+                state.setdefault("warnings", []).append(warning)
             consolidation.proposals = [p for p in consolidation.proposals if p.proposal_id in survivors]
+            consolidation.preflight_passed_proposal_ids = [
+                proposal_id for proposal_id in consolidation.preflight_passed_proposal_ids if proposal_id in survivors
+            ]
         except Exception as exc:  # noqa: BLE001 — dedup should not block consolidation
             message = f"consolidate: rejected proposal dedup failed for role={role}: {exc}"
             _log.warning(message)
@@ -375,6 +428,12 @@ async def consolidate_node(state: EvolveState) -> dict:
     state["rejected_buffer"] = [dict(item) for item in rejected if isinstance(item, dict)]
     state["consolidation"] = consolidation.to_dict()
     state["proposals"] = [p.to_dict() for p in consolidation.proposals]
+    state["generated_proposal_ids"] = list(consolidation.generated_proposal_ids)
+    state["preflight_passed_proposal_ids"] = list(consolidation.preflight_passed_proposal_ids)
+    state["preflight_rejected_proposal_ids"] = list(consolidation.preflight_rejected_proposal_ids)
+    state.setdefault("accepted_proposal_ids", list(consolidation.accepted_proposal_ids))
+    state["rejected_proposal_ids"] = list(consolidation.rejected_proposal_ids)
+    state["preflight_reports"] = [dict(item) for item in consolidation.preflight_reports]
     _mark_stage(state, "consolidating", status=state.get("status"), progress={"proposal_count": len(state.get("proposals", []))})
     return state
 
@@ -521,6 +580,347 @@ async def apply_node(state: EvolveState) -> dict:
     state["diff"] = [d.to_dict() for d in diffs]
     _mark_stage(state, "applying", status=state.get("status"), progress={"diff_count": len(state.get("diff", []))})
     return state
+
+
+async def scenario_replay_node(state: EvolveState) -> dict:
+    """Freeze scenario snapshots and attach a deterministic replay contract report.
+
+    Phase B starts with a contract-only replay boundary. It freezes the inputs a
+    real replay executor must consume later, without claiming baseline/candidate
+    LLM decisions have already been rerun.
+    """
+    _log.info("scenario_replay: role=%s", state.get("role"))
+    _mark_stage(state, "scenario_replay", status=EvolutionStatus.SCENARIO_REPLAY.value)
+    cfg = state.get("config", {})
+    limit = int(cfg.get("scenario_replay_max_snapshots", cfg.get("scenario_max_snapshots", 3)) or 0)
+    snapshots = _build_scenario_snapshots(state, limit=max(0, limit))
+    report = _build_scenario_replay_report(state, snapshots)
+    state["scenario_snapshots"] = snapshots
+    state["scenario_replay_report"] = report
+    state["scenario_replay_summary"] = report.get("summary")
+    _mark_stage(
+        state,
+        "scenario_replay",
+        status=state.get("status"),
+        progress={
+            "scenario_count": len(snapshots),
+            "execution_mode": report.get("execution_mode"),
+            "verdict": report.get("summary", {}).get("verdict"),
+        },
+    )
+    return state
+
+
+def _build_scenario_snapshots(state: EvolveState, *, limit: int = 3) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+    from app.util.time import beijing_now_iso
+
+    role = str(state.get("role") or "")
+    run_id = normalize_run_id(state.get("run_id"), default="evolve")
+    proposals = [dict(item) for item in state.get("proposals", []) or [] if isinstance(item, dict)]
+    proposal_ids = [str(item.get("proposal_id")) for item in proposals if item.get("proposal_id")]
+    snapshots: list[dict[str, Any]] = []
+    for game in state.get("training_games", []) or []:
+        if not isinstance(game, dict) or game.get("error"):
+            continue
+        evidence = game.get("evidence") if isinstance(game.get("evidence"), dict) else {}
+        decisions = evidence.get("role_key_decisions") or evidence.get("key_decisions") or []
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                continue
+            if role and decision.get("role") and str(decision.get("role")) != role:
+                continue
+            snapshot = _scenario_snapshot_from_decision(
+                state,
+                game,
+                decision,
+                proposal_ids=proposal_ids,
+                index=len(snapshots) + 1,
+                created_at=beijing_now_iso(),
+            )
+            snapshots.append(snapshot)
+            if len(snapshots) >= limit:
+                return snapshots
+    return snapshots
+
+
+def _scenario_snapshot_from_decision(
+    state: EvolveState,
+    game: dict[str, Any],
+    decision: dict[str, Any],
+    *,
+    proposal_ids: list[str],
+    index: int,
+    created_at: str,
+) -> dict[str, Any]:
+    run_id = normalize_run_id(state.get("run_id"), default="evolve")
+    role = str(state.get("role") or decision.get("role") or "")
+    game_id = str(game.get("game_id") or game.get("source_game_id") or f"game_{index}")
+    decision_id = str(decision.get("decision_id") or f"decision_{index}")
+    phase = str(decision.get("phase") or game.get("phase") or "")
+    day = decision.get("day", game.get("day", game.get("days")))
+    action_type = str(decision.get("action_type") or "")
+    actor_id = decision.get("player_id")
+    event_prefix = _scenario_event_prefix(game, day=day, limit=12)
+    return {
+        "schema_version": "scenario_snapshot_v1",
+        "scenario_id": f"{run_id}_{role}_{game_id}_{decision_id}",
+        "source_game_id": game_id,
+        "source_run_id": run_id,
+        "source_decision_id": decision_id,
+        "proposal_ids": list(proposal_ids),
+        "role": role,
+        "actor_id": actor_id,
+        "phase": phase,
+        "day": day,
+        "action_type": action_type,
+        "public_event_prefix": event_prefix,
+        "actor_observation": {
+            "key_reason": decision.get("key_reason"),
+            "impact_level": decision.get("impact_level"),
+            "reason": decision.get("reason"),
+            "public_text": decision.get("public_text"),
+            "notes": list(decision.get("notes") or [])[:3],
+        },
+        "legal_actions": _scenario_legal_actions(action_type),
+        "players_public_state": _scenario_players_public_state(game),
+        "role_state_visible_to_actor": {
+            "target": decision.get("target"),
+            "choice": decision.get("choice"),
+        },
+        "skill_inventory": _scenario_skill_inventory(state),
+        "selected_skill_context": _scenario_selected_skill_context(state),
+        "prompt_policy_version": str(state.get("config", {}).get("prompt_policy_version") or "agent_prompt_v1"),
+        "judge_policy_version": str(state.get("config", {}).get("judge_policy_version") or "judge_policy_v1"),
+        "rubric_version": str(state.get("config", {}).get("rubric_version") or f"{role or 'role'}_rubric_v1"),
+        "baseline_version": state.get("parent_hash"),
+        "candidate_version": state.get("candidate_hash"),
+        "baseline_skill_dir": state.get("baseline_skill_dir") or state.get("skill_dir"),
+        "candidate_skill_dir": state.get("candidate_skill_dir"),
+        "random_seed": game.get("seed"),
+        "created_at": created_at,
+    }
+
+
+def _scenario_event_prefix(game: dict[str, Any], *, day: Any, limit: int = 12) -> list[dict[str, Any]]:
+    events = game.get("events") or game.get("game_events") or []
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if day is not None and event.get("day") is not None:
+            try:
+                if int(event.get("day")) > int(day):
+                    continue
+            except (TypeError, ValueError):
+                pass
+        rows.append(
+            {
+                "event_type": event.get("event_type") or event.get("type"),
+                "day": event.get("day"),
+                "phase": event.get("phase"),
+                "actor": event.get("actor") or event.get("player_id"),
+                "target": event.get("target"),
+                "payload": event.get("payload") if isinstance(event.get("payload"), dict) else {},
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _scenario_legal_actions(action_type: str) -> list[str]:
+    if not action_type:
+        return []
+    aliases = {
+        "seer_check": ["seer_check"],
+        "werewolf_kill": ["werewolf_kill"],
+        "guard_protect": ["guard_protect"],
+        "witch_act": ["witch_save", "witch_poison", "pass"],
+        "vote": ["vote", "abstain"],
+        "exile_vote": ["vote", "abstain"],
+        "speak": ["speak"],
+        "hunter_shoot": ["hunter_shoot", "pass"],
+        "white_wolf_explode": ["white_wolf_explode", "pass"],
+    }
+    return aliases.get(action_type, [action_type])
+
+
+def _scenario_players_public_state(game: dict[str, Any]) -> list[dict[str, Any]]:
+    public_roles = _scenario_public_roles(game)
+    player_ids = _scenario_public_player_ids(game, public_roles)
+    alive = set(str(item) for item in game.get("alive_players", []) or [])
+    dead = set(str(item) for item in game.get("dead_players", []) or [])
+    players: list[dict[str, Any]] = []
+    for player_id in sorted(player_ids, key=lambda value: str(value)):
+        text_id = str(player_id)
+        row: dict[str, Any] = {
+            "player_id": player_id,
+            "alive": False if text_id in dead else True if text_id in alive else None,
+        }
+        public_role = public_roles.get(text_id)
+        if public_role:
+            row["public_role"] = public_role
+        players.append(row)
+    return players
+
+
+def _scenario_public_player_ids(game: dict[str, Any], public_roles: dict[str, Any]) -> set[Any]:
+    ids: set[Any] = set()
+    for key in ("players_public_state", "public_players", "players"):
+        value = game.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if isinstance(item, dict):
+                player_id = item.get("player_id") or item.get("id") or item.get("seat")
+                if player_id not in (None, ""):
+                    ids.add(player_id)
+            elif item not in (None, ""):
+                ids.add(item)
+    ids.update(public_roles.keys())
+    ids.update(str(item) for item in game.get("alive_players", []) or [] if item not in (None, ""))
+    ids.update(str(item) for item in game.get("dead_players", []) or [] if item not in (None, ""))
+    if not ids:
+        private_roles = game.get("player_roles") or game.get("roles") or {}
+        if isinstance(private_roles, dict):
+            ids.update(str(player_id) for player_id in private_roles)
+    return ids
+
+
+def _scenario_public_roles(game: dict[str, Any]) -> dict[str, Any]:
+    roles: dict[str, Any] = {}
+
+    def remember(player_id: Any, role: Any) -> None:
+        if player_id in (None, "") or role in (None, ""):
+            return
+        roles[str(player_id)] = role
+
+    for key in ("public_roles", "revealed_roles", "known_public_roles"):
+        value = game.get(key)
+        if isinstance(value, dict):
+            for player_id, role in value.items():
+                remember(player_id, role)
+
+    for key in ("players_public_state", "public_players", "players"):
+        value = game.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            player_id = item.get("player_id") or item.get("id") or item.get("seat")
+            remember(player_id, item.get("public_role") or item.get("revealed_role"))
+
+    for event in game.get("events") or game.get("game_events") or []:
+        if not isinstance(event, dict):
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        event_type = str(event.get("event_type") or event.get("type") or "").lower()
+        if "reveal" not in event_type and "death" not in event_type and "exile" not in event_type:
+            continue
+        player_id = event.get("player_id") or event.get("target") or payload.get("player_id") or payload.get("target_id")
+        remember(player_id, payload.get("public_role") or payload.get("revealed_role") or payload.get("role"))
+    return roles
+
+
+def _scenario_skill_inventory(state: EvolveState) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for proposal in state.get("proposals", []) or []:
+        if not isinstance(proposal, dict):
+            continue
+        result.append(
+            {
+                "proposal_id": proposal.get("proposal_id"),
+                "target_file": proposal.get("target_file"),
+                "action_type": proposal.get("action_type"),
+                "hypothesis": proposal.get("hypothesis"),
+            }
+        )
+    return result[:8]
+
+
+def _scenario_selected_skill_context(state: EvolveState) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for item in state.get("diff", []) or []:
+        if not isinstance(item, dict):
+            continue
+        result.append(
+            {
+                "filename": item.get("filename"),
+                "action": item.get("action"),
+                "proposal_ref": item.get("proposal_ref"),
+            }
+        )
+    return result[:8]
+
+
+def _build_scenario_replay_report(state: EvolveState, snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = [_contract_only_scenario_result(snapshot) for snapshot in snapshots]
+    verdict_counts: dict[str, int] = {}
+    for row in rows:
+        verdict = str(row.get("verdict") or "unknown")
+        verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+    missing_count = sum(1 for row in rows if row.get("contract_missing"))
+    policy_violation_count = sum(len(row.get("policy_violations") or []) for row in rows)
+    if not rows:
+        verdict = "not_run"
+    elif missing_count or policy_violation_count:
+        verdict = "review_required"
+    else:
+        verdict = "contract_ready"
+    return {
+        "schema_version": "scenario_replay_report_v1",
+        "execution_mode": "contract_only",
+        "status": "contract_ready" if rows else "skipped",
+        "reason": "" if rows else "no_scenario_snapshots",
+        "baseline_version": state.get("parent_hash"),
+        "candidate_version": state.get("candidate_hash"),
+        "scenario_count": len(rows),
+        "results": rows,
+        "summary": {
+            "verdict": verdict,
+            "scenario_count": len(rows),
+            "verdict_counts": verdict_counts,
+            "policy_violation_count": policy_violation_count,
+            "contract_missing_count": missing_count,
+        },
+    }
+
+
+def _contract_only_scenario_result(snapshot: dict[str, Any]) -> dict[str, Any]:
+    required = (
+        "scenario_id",
+        "source_game_id",
+        "role",
+        "actor_id",
+        "phase",
+        "legal_actions",
+        "prompt_policy_version",
+        "judge_policy_version",
+        "rubric_version",
+        "baseline_version",
+        "candidate_version",
+    )
+    missing = [
+        key for key in required
+        if snapshot.get(key) in (None, "", [], {})
+    ]
+    return {
+        "scenario_id": snapshot.get("scenario_id"),
+        "source_game_id": snapshot.get("source_game_id"),
+        "role": snapshot.get("role"),
+        "phase": snapshot.get("phase"),
+        "baseline_decision": None,
+        "candidate_decision": None,
+        "rubric_score_delta": None,
+        "policy_violations": ["missing_contract_fields"] if missing else [],
+        "private_info_leaks": [],
+        "decision_issue_delta": None,
+        "verdict": "contract_incomplete" if missing else "contract_ready",
+        "contract_missing": missing,
+    }
 
 
 def _merge_apply_warnings(state: EvolveState, messages: list[str]) -> None:
@@ -721,10 +1121,27 @@ def _attach_trust_loop_artifacts(
     role = str(state.get("role") or "")
     target_team = str(battle_result.get("target_team") or _target_team(role))
     run_shape = {
+        "run_id": state.get("run_id"),
         "role": role,
+        "parent_hash": state.get("parent_hash"),
+        "candidate_hash": state.get("candidate_hash"),
+        "training_games": list(state.get("training_games", []) or []),
         "battle_games": list(state.get("battle_games", []) or []),
         "battle_result": battle_result,
         "proposals": [dict(item) for item in state.get("proposals", []) or [] if isinstance(item, dict)],
+        "diff": [dict(item) for item in state.get("diff", []) or [] if isinstance(item, dict)],
+        "generated_proposal_ids": list(state.get("generated_proposal_ids") or []),
+        "preflight_passed_proposal_ids": list(state.get("preflight_passed_proposal_ids") or []),
+        "accepted_proposal_ids": list(state.get("accepted_proposal_ids") or []),
+        "rejected_proposal_ids": list(state.get("rejected_proposal_ids") or []),
+        "config": dict(cfg or state.get("config", {}) or {}),
+        "scenario_snapshots": [dict(item) for item in state.get("scenario_snapshots", []) or [] if isinstance(item, dict)],
+        "scenario_replay_report": state.get("scenario_replay_report") if isinstance(state.get("scenario_replay_report"), dict) else None,
+        "proposal_attribution_report": (
+            state.get("proposal_attribution_report")
+            if isinstance(state.get("proposal_attribution_report"), dict)
+            else None
+        ),
     }
     rejected = state.get("rejected_buffer")
     rejected_rows = [dict(item) for item in rejected or [] if isinstance(item, dict)] if isinstance(rejected, list) else []
@@ -750,10 +1167,33 @@ def _attach_trust_loop_artifacts(
     battle_result["paired_seed_pairs"] = paired_rows
     battle_result["paired_seed_summary"] = paired_summary
     battle_result["gate_report"] = gate_report
+    release_gate = gate_report.get("release_gate") if isinstance(gate_report.get("release_gate"), dict) else {}
+    proposal_attribution_report = (
+        gate_report.get("proposal_attribution") if isinstance(gate_report.get("proposal_attribution"), dict) else {}
+    )
+    trust_bundle = build_trust_bundle(
+        run_shape,
+        battle_result=battle_result,
+        gate_report=gate_report,
+        proposals=run_shape["proposals"],
+        diff=run_shape["diff"],
+    )
+    battle_result["release_gate"] = release_gate
+    battle_result["release_decision"] = release_gate.get("decision")
+    battle_result["trust_bundle"] = trust_bundle
+    battle_result["proposal_attribution_report"] = proposal_attribution_report
+    if state.get("scenario_replay_report") is not None:
+        battle_result["scenario_replay_report"] = state.get("scenario_replay_report")
+    if state.get("scenario_replay_summary") is not None:
+        battle_result["scenario_replay_summary"] = state.get("scenario_replay_summary")
     state["paired_seed_battle_table"] = paired_rows
     state["paired_seed_pairs"] = paired_rows
     state["paired_seed_summary"] = paired_summary
     state["gate_report"] = gate_report
+    state["release_gate"] = release_gate
+    state["release_decision"] = release_gate.get("decision")
+    state["trust_bundle"] = trust_bundle
+    state["proposal_attribution_report"] = proposal_attribution_report
     if isinstance(battle_result.get("promotion_gate"), dict):
         state["promotion_gate"] = battle_result["promotion_gate"]
     return battle_result
@@ -1096,7 +1536,7 @@ async def decide_node(state: EvolveState) -> dict:
       - review  : ambiguous — leave for human review
 
     Registry side effects only happen when auto_promote is enabled:
-      - promote → publish candidate skills + set as baseline (CAS)
+      - promote → publish candidate skills according to the release gate stage
       - reject  → persist rejected proposals for future dedup
     The run state is always persisted to PostgreSQL.
     """
@@ -1116,14 +1556,24 @@ async def decide_node(state: EvolveState) -> dict:
 
     status = EvolutionStatus.REVIEWING.value
     published_version_id: str | None = None
+    published_release_stage: str | None = None
     if auto_promote and recommendation == "promote":
-        published_version_id = _registry_promote(state)
+        published = _registry_promote(state)
+        if published is not None:
+            published_version_id = published["version_id"]
+            published_release_stage = published["release_stage"]
         status = EvolutionStatus.PROMOTED.value if published_version_id else EvolutionStatus.REVIEWING.value
     elif auto_promote and recommendation == "reject":
         _registry_reject(state)
         status = EvolutionStatus.REJECTED.value
 
     state["status"] = status
+    if published_version_id:
+        state["published_version_id"] = published_version_id
+    if published_release_stage:
+        state["published_release_stage"] = published_release_stage
+        state["release_stage"] = published_release_stage
+    state["promoted_version_id"] = published_version_id if published_release_stage == "baseline" else None
     state["result"] = {
         "run_id": state.get("run_id"),
         "role": role,
@@ -1132,6 +1582,8 @@ async def decide_node(state: EvolveState) -> dict:
         "candidate_hash": state.get("candidate_hash"),
         "candidate_skill_dir": state.get("candidate_skill_dir"),
         "published_version_id": published_version_id,
+        "published_release_stage": published_release_stage,
+        "promoted_version_id": published_version_id if published_release_stage == "baseline" else None,
         "status": status,
         "recommendation": recommendation,
         "training_games": state.get("training_games", []),
@@ -1139,10 +1591,23 @@ async def decide_node(state: EvolveState) -> dict:
         "battle_result": battle,
         "promotion_gate": state.get("promotion_gate") or battle.get("promotion_gate"),
         "gate_report": state.get("gate_report") or battle.get("gate_report"),
+        "release_gate": state.get("release_gate") or battle.get("release_gate"),
+        "release_decision": state.get("release_decision") or battle.get("release_decision"),
+        "trust_bundle": state.get("trust_bundle") or battle.get("trust_bundle"),
+        "scenario_snapshots": list(state.get("scenario_snapshots") or []),
+        "scenario_replay_report": state.get("scenario_replay_report"),
+        "scenario_replay_summary": state.get("scenario_replay_summary"),
+        "proposal_attribution_report": state.get("proposal_attribution_report") or battle.get("proposal_attribution_report"),
         "paired_seed_pairs": state.get("paired_seed_pairs") or battle.get("paired_seed_pairs") or [],
         "paired_seed_battle_table": state.get("paired_seed_battle_table") or battle.get("paired_seed_battle_table") or [],
         "paired_seed_summary": state.get("paired_seed_summary") or battle.get("paired_seed_summary"),
         "proposals": proposals,
+        "generated_proposal_ids": list(state.get("generated_proposal_ids") or []),
+        "preflight_passed_proposal_ids": list(state.get("preflight_passed_proposal_ids") or []),
+        "preflight_rejected_proposal_ids": list(state.get("preflight_rejected_proposal_ids") or []),
+        "accepted_proposal_ids": list(state.get("accepted_proposal_ids") or []),
+        "rejected_proposal_ids": list(state.get("rejected_proposal_ids") or []),
+        "preflight_reports": list(state.get("preflight_reports") or []),
         "diff": state.get("diff", []),
         "current_stage": state.get("current_stage"),
         "progress": state.get("progress", {}),
@@ -1443,10 +1908,10 @@ def _recommendation(proposals: list[dict[str, Any]], battle: dict[str, Any]) -> 
     return "reject"
 
 
-def _registry_promote(state: EvolveState) -> str | None:
-    """Publish candidate skills to the registry and set them as baseline.
+def _registry_promote(state: EvolveState) -> dict[str, str] | None:
+    """Publish candidate skills to the registry according to release gate stage.
 
-    Returns the published version id, or None on failure (degrade to review).
+    Returns published version metadata, or None on failure (degrade to review).
     """
     role = state.get("role", "")
     candidate_dir = state.get("candidate_skill_dir")
@@ -1475,6 +1940,7 @@ def _registry_promote(state: EvolveState) -> str | None:
     registry = None
     try:
         registry = _registry(state)
+        release_stage = _release_stage_for_registry_publish(state)
         version_id = _safe_id(str(state.get("candidate_hash") or f"{role}_{state.get('run_id', 'run')}"))
         proposal_ids = [str(p.get("proposal_id")) for p in state.get("proposals", []) if p.get("proposal_id")]
         published = registry.publish_skills(
@@ -1485,11 +1951,24 @@ def _registry_promote(state: EvolveState) -> str | None:
             run_id=str(state.get("run_id") or ""),
             proposal_ids=proposal_ids,
             version_id=version_id,
-            set_as_baseline=True,
-            expected_current=registry.get_baseline(role),
+            release_stage=release_stage,
+            set_as_baseline=release_stage == "baseline",
+            expected_current=registry.get_baseline(role) if release_stage == "baseline" else None,
+            provenance=_registry_publish_provenance(state, release_stage=release_stage),
         )
-        _log.info("decide: promoted %s/%s to baseline", role, published)
-        return published
+        state["published_release_stage"] = release_stage
+        state["release_stage"] = release_stage
+        if release_stage == "baseline":
+            state["promoted_version_id"] = published
+        _record_diagnostic(
+            state,
+            kind="registry_publish",
+            stage="registry.promote",
+            message=f"published {role}/{published} as {release_stage}",
+            level="info",
+        )
+        _log.info("decide: published %s/%s as %s", role, published, release_stage)
+        return {"version_id": published, "release_stage": release_stage}
     except Exception as exc:  # noqa: BLE001 — degrade gracefully
         _log.error("decide: registry promote failed for role=%s: %s", role, exc)
         message = f"promote: {exc}"
@@ -1499,6 +1978,47 @@ def _registry_promote(state: EvolveState) -> str | None:
     finally:
         if registry is not None:
             registry.close()
+
+
+def _release_stage_for_registry_publish(state: EvolveState) -> str:
+    decision = str(
+        state.get("release_decision")
+        or (state.get("release_gate") or {}).get("decision")
+        or ((state.get("battle_result") or {}).get("release_gate") or {}).get("decision")
+        or ((state.get("battle_result") or {}).get("release_decision"))
+        or ""
+    ).strip().lower()
+    return {
+        "shadow_candidate": "shadow",
+        "canary_candidate": "canary",
+        "baseline_promote": "baseline",
+    }.get(decision, "shadow")
+
+
+def _registry_publish_provenance(state: EvolveState, *, release_stage: str) -> dict[str, Any]:
+    battle = state.get("battle_result") if isinstance(state.get("battle_result"), dict) else {}
+    gate_report = state.get("gate_report") if isinstance(state.get("gate_report"), dict) else {}
+    if not gate_report and isinstance(battle.get("gate_report"), dict):
+        gate_report = battle["gate_report"]
+    trust_bundle = state.get("trust_bundle") if isinstance(state.get("trust_bundle"), dict) else {}
+    if not trust_bundle and isinstance(battle.get("trust_bundle"), dict):
+        trust_bundle = battle["trust_bundle"]
+    release_decision = str(
+        state.get("release_decision")
+        or (state.get("release_gate") or {}).get("decision")
+        or battle.get("release_decision")
+        or (battle.get("release_gate") or {}).get("decision")
+        or ""
+    ).strip()
+    return {
+        "automatic_action": "auto_promote",
+        "release_stage": release_stage,
+        "release_decision": release_decision or None,
+        "trust_bundle_id": trust_bundle.get("trust_bundle_id"),
+        "bundle_hash": trust_bundle.get("bundle_hash"),
+        "gate_report_id": trust_bundle.get("gate_report_id") or gate_report.get("gate_report_id"),
+        "attribution_report_id": trust_bundle.get("attribution_report_id"),
+    }
 
 
 def _registry_reject(state: EvolveState) -> None:
@@ -1539,6 +2059,25 @@ def _freeze_baseline(
     explicit_parent = state.get("parent_hash") or cfg.get("parent_hash")
     if explicit_parent:
         version_id = str(explicit_parent)
+        registry = None
+        try:
+            from app.lib.version import ensure_version_allowed_for_default_use
+
+            registry = _registry(state)
+            ensure_version_allowed_for_default_use(registry, role, version_id)
+        except FileNotFoundError as exc:
+            raise ValueError(
+                f"role version {role}/{version_id} not found; explicit parent_hash must resolve in registry"
+            ) from exc
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - explicit registry parents must be verifiable.
+            raise RuntimeError(
+                f"init: explicit parent release-stage check failed for role={role}: {exc}"
+            ) from exc
+        finally:
+            if registry is not None:
+                registry.close()
         return version_id, {
             "name": "explicit",
             "role_versions": {role: version_id},
@@ -1650,9 +2189,24 @@ def _persist_run_state(state: EvolveState, *, record_warning: bool = True) -> No
                 "baseline_skill_dir": state.get("baseline_skill_dir"),
                 "candidate_hash": state.get("candidate_hash"),
                 "candidate_skill_dir": state.get("candidate_skill_dir"),
+                "published_version_id": state.get("published_version_id") or result.get("published_version_id"),
+                "published_release_stage": state.get("published_release_stage") or result.get("published_release_stage"),
+                "release_stage": state.get("release_stage") or result.get("published_release_stage") or result.get("release_stage"),
+                "promoted_version_id": state.get("promoted_version_id") or result.get("promoted_version_id"),
                 "battle_result": result.get("battle_result") or state.get("battle_result"),
                 "promotion_gate": state.get("promotion_gate") or result.get("promotion_gate"),
                 "gate_report": state.get("gate_report") or result.get("gate_report"),
+                "release_gate": state.get("release_gate") or result.get("release_gate"),
+                "release_decision": state.get("release_decision") or result.get("release_decision"),
+                "trust_bundle": state.get("trust_bundle") or result.get("trust_bundle"),
+                "scenario_snapshots": list(state.get("scenario_snapshots") or result.get("scenario_snapshots") or []),
+                "scenario_replay_report": state.get("scenario_replay_report") or result.get("scenario_replay_report"),
+                "scenario_replay_summary": state.get("scenario_replay_summary") or result.get("scenario_replay_summary"),
+                "proposal_attribution_report": (
+                    state.get("proposal_attribution_report")
+                    or result.get("proposal_attribution_report")
+                    or (state.get("gate_report") or result.get("gate_report") or {}).get("proposal_attribution")
+                ),
                 "paired_seed_pairs": list(state.get("paired_seed_pairs") or result.get("paired_seed_pairs") or []),
                 "paired_seed_battle_table": list(
                     state.get("paired_seed_battle_table")
@@ -1661,6 +2215,20 @@ def _persist_run_state(state: EvolveState, *, record_warning: bool = True) -> No
                 ),
                 "paired_seed_summary": state.get("paired_seed_summary") or result.get("paired_seed_summary"),
                 "proposals": consolidation.to_dict() if consolidation is not None else None,
+                "generated_proposal_ids": list(state.get("generated_proposal_ids") or result.get("generated_proposal_ids") or []),
+                "preflight_passed_proposal_ids": list(
+                    state.get("preflight_passed_proposal_ids")
+                    or result.get("preflight_passed_proposal_ids")
+                    or []
+                ),
+                "preflight_rejected_proposal_ids": list(
+                    state.get("preflight_rejected_proposal_ids")
+                    or result.get("preflight_rejected_proposal_ids")
+                    or []
+                ),
+                "accepted_proposal_ids": list(state.get("accepted_proposal_ids") or result.get("accepted_proposal_ids") or []),
+                "rejected_proposal_ids": list(state.get("rejected_proposal_ids") or result.get("rejected_proposal_ids") or []),
+                "preflight_reports": list(state.get("preflight_reports") or result.get("preflight_reports") or []),
                 "diff": [item.to_dict() for item in diff] if diff is not None else None,
                 "current_stage": str(state.get("current_stage", "")),
                 "progress": dict(state.get("progress", {}) or {}),
@@ -1676,7 +2244,8 @@ def _persist_run_state(state: EvolveState, *, record_warning: bool = True) -> No
         )
         provider = state.get("storage_provider") or storage_provider_from_env(paths=state.get("paths"))
         conn = provider.open_evolution_connection()
-        EvolutionStore(conn).save_runtime_state(
+        evolution_store = EvolutionStore(conn)
+        evolution_store.save_runtime_state(
             str(state.get("run_id", "")),
             role=str(state.get("role", "")),
             parent_hash=str(state.get("parent_hash", "")),
@@ -1691,6 +2260,9 @@ def _persist_run_state(state: EvolveState, *, record_warning: bool = True) -> No
             started_at=started_at,
             finished_at=finished_at,
         )
+        trust_bundle = runtime_state.get("trust_bundle")
+        if isinstance(trust_bundle, dict) and trust_bundle.get("schema_version") == "trust_bundle_v1":
+            evolution_store.save_trust_bundle(trust_bundle)
     except Exception as exc:  # noqa: BLE001 — persistence is best-effort
         message = f"decide: failed to persist run state: {exc}"
         _log.warning(message)
@@ -1719,6 +2291,12 @@ def _state_consolidation(state: EvolveState) -> SkillConsolidation | None:
             run_id=str(state.get("run_id", "")),
             parent_hash=str(state.get("parent_hash", "")),
             proposals=[SkillProposal.from_dict(p) for p in proposals],
+            generated_proposal_ids=[str(item) for item in state.get("generated_proposal_ids", [])],
+            preflight_passed_proposal_ids=[str(item) for item in state.get("preflight_passed_proposal_ids", [])],
+            preflight_rejected_proposal_ids=[str(item) for item in state.get("preflight_rejected_proposal_ids", [])],
+            accepted_proposal_ids=[str(item) for item in state.get("accepted_proposal_ids", [])],
+            rejected_proposal_ids=[str(item) for item in state.get("rejected_proposal_ids", [])],
+            preflight_reports=[dict(item) for item in state.get("preflight_reports", []) if isinstance(item, dict)],
         )
     return None
 

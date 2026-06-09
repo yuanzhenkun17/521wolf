@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
+import { buildAssessmentScores } from '../../composables/assessmentScores.js'
 import {
   displayActionLabel,
   displayDayLabel,
@@ -9,9 +10,18 @@ import {
   normalizeHistoryDisplayText
 } from './historyDisplay.js'
 
+const VoteFlowSankey = defineAsyncComponent({
+  loader: () => import('./VoteFlowSankey.vue'),
+  delay: 120
+})
+const ReviewScoreStackedBar = defineAsyncComponent(() => import('./ReviewScoreStackedBar.vue'))
+
 const props = defineProps({
   report: { type: Object, default: null },
   game: { type: Object, default: () => ({}) },
+  flowData: { type: Object, default: null },
+  flowLoading: Boolean,
+  loadFlowData: Function,
   formatJson: Function
 })
 
@@ -20,18 +30,140 @@ const reviewData = computed(() => {
   if (!raw || raw.error) return null
   return raw.data || raw
 })
+const flowDataPayload = computed(() => {
+  const raw = props.flowData
+  if (!raw || raw.error) return null
+  return raw.data || raw
+})
+const flowDataError = computed(() => props.flowData?.error || '')
+const reviewFlowDecisions = computed(() => {
+  const flowRows = decisionArray(flowDataPayload.value?.decisions)
+  if (flowRows.length) return dedupeDecisions(flowRows)
+  const candidates = [
+    reviewData.value?.flow_data?.decisions,
+    reviewData.value?.decisions,
+    reviewData.value?.archive?.decisions,
+    reviewData.value?.game?.decisions,
+    reviewData.value?.snapshot?.decisions
+  ]
+  return dedupeDecisions(candidates.flatMap(decisionArray))
+})
+const hasFlowChartData = computed(() => reviewFlowDecisions.value.length > 0)
+const flowDecisionCount = computed(() => {
+  const value = Number(
+    flowDataPayload.value?.decision_count
+    ?? reviewData.value?.game_summary?.decision_count
+    ?? props.game?.decision_count
+    ?? reviewFlowDecisions.value.length
+  )
+  return Number.isFinite(value) ? Math.max(0, value) : 0
+})
+const canShowFlowChartGate = computed(() =>
+  hasFlowChartData.value
+  || Boolean(props.loadFlowData)
+  || Boolean(props.flowLoading)
+  || Boolean(flowDataError.value)
+  || flowDecisionCount.value > 0
+)
+const showFlowCharts = ref(false)
+const flowChartsRequested = ref(false)
+const flowChartGateEl = ref(null)
+let flowChartObserver = null
+
+async function requestFlowCharts() {
+  flowChartsRequested.value = true
+  if (hasFlowChartData.value) {
+    showFlowCharts.value = true
+    return
+  }
+  if (props.flowLoading) return
+  const loaded = await props.loadFlowData?.()
+  const payload = loaded?.data || loaded
+  if (decisionArray(payload?.decisions).length || hasFlowChartData.value) {
+    showFlowCharts.value = true
+  }
+}
+
+function stopFlowChartObserver() {
+  flowChartObserver?.disconnect()
+  flowChartObserver = null
+}
+
+watch(flowChartGateEl, (element) => {
+  stopFlowChartObserver()
+  if (showFlowCharts.value || typeof Element === 'undefined' || !(element instanceof Element)) return
+  if (typeof IntersectionObserver === 'undefined') return
+  flowChartObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) {
+      requestFlowCharts()
+      stopFlowChartObserver()
+    }
+  }, { rootMargin: '160px 0px' })
+  flowChartObserver.observe(element)
+}, { flush: 'post' })
+
+watch(hasFlowChartData, (hasData) => {
+  if (hasData && flowChartsRequested.value) {
+    showFlowCharts.value = true
+    return
+  }
+  if (!hasData) showFlowCharts.value = false
+})
+
+onBeforeUnmount(stopFlowChartObserver)
+
+const hasReviewFallback = computed(() =>
+  reviewScoreCards.value.length
+  || canShowFlowChartGate.value
+)
+const hasReviewContent = computed(() => Boolean(reviewData.value) || hasReviewFallback.value)
 const reviewGameSummary = computed(() => reviewData.value?.game_summary || null)
 const reviewPlayerScores = computed(() => {
-  const raw = reviewData.value?.player_evaluations || reviewData.value?.player_scores || []
+  const candidates = [
+    reviewData.value?.player_evaluations,
+    reviewData.value?.player_scores,
+    reviewData.value?.agent_scores
+  ]
+  const raw = candidates.find((candidate) =>
+    Array.isArray(candidate) ? candidate.length > 0 : candidate && typeof candidate === 'object' && Object.keys(candidate).length > 0
+  )
+  if (!raw) {
+    return buildAssessmentScores(props.game).map((score) => ({
+      player_seat: score.player?.seat ?? score.player?.id,
+      role: score.player?.role ?? score.player?.role_hint,
+      speech_score: score.speech / 100,
+      vote_score: score.vote / 100,
+      skill_score: score.skill / 100,
+      logic_score: score.logic / 100,
+      information_score: score.information / 100,
+      team_score: score.team / 100,
+      cooperation_score: score.cooperation / 100,
+      role_score: score.role_score / 100,
+      overall_score: score.role_score / 100
+    }))
+  }
   if (Array.isArray(raw)) return raw
   if (raw && typeof raw === 'object') {
     return Object.entries(raw).map(([seat, score]) => ({
       player_seat: score?.player_seat ?? score?.player_id ?? score?.seat ?? seat,
-      ...(score || {})
+      ...(score || {}),
+      ...(score?.scores || {})
     }))
   }
   return []
 })
+const reviewScoreSource = computed(() => {
+  if (!reviewScoreCards.value.length) return null
+  return reviewData.value ? 'report' : 'local_estimate'
+})
+const reviewScoreSourceLabel = computed(() =>
+  reviewScoreSource.value === 'local_estimate'
+    ? '本地推算，仅供浏览'
+    : '复盘报告评分'
+)
+const reviewScoreSourceClass = computed(() =>
+  reviewScoreSource.value === 'local_estimate' ? 'local-estimate' : 'report'
+)
 const reviewTurningPoints = computed(() => reviewData.value?.turning_points || [])
 const reviewCounterfactuals = computed(() => reviewData.value?.counterfactuals || [])
 const reviewTimeline = computed(() => reviewData.value?.timeline || [])
@@ -58,19 +190,6 @@ const decisionJudgeLowestRows = computed(() => {
     .sort((a, b) => Number(a.score ?? 99) - Number(b.score ?? 99))
     .slice(0, 3)
 })
-const decisionJudgeQualityRows = computed(() => {
-  const counts = decisionJudgeSummary.value?.quality_counts
-  if (!counts || typeof counts !== 'object') return []
-  const order = { bad: 0, unknown: 1, ok: 2, good: 3 }
-  return Object.entries(counts)
-    .map(([quality, count]) => ({
-      quality,
-      count,
-      label: qualityLabel(quality),
-      className: qualityClass(quality)
-    }))
-    .sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9))
-})
 const showDecisionJudge = computed(() =>
   Boolean(decisionJudgeData.value && (
     decisionJudgeJudgments.value.length
@@ -88,17 +207,24 @@ const scoreDimensions = [
 ]
 const overallScoreField = { fields: ['role_score', 'overall_score', 'overall', 'total_score'] }
 const reviewScoreCards = computed(() =>
-  reviewPlayerScores.value.map((score, index) => ({
-    key: score.player_seat ?? score.player_id ?? score.seat ?? index,
-    seat: playerSeat(score),
-    role: roleLabel(score.role || score.role_hint),
-    score,
-    dimensions: scoreDimensions.map((dim) => ({
+  reviewPlayerScores.value.map((score, index) => {
+    const dimensions = scoreDimensions.map((dim) => ({
       ...dim,
       value: scorePercent(scoreValue(score, dim))
-    })),
-    overall: scorePercent(scoreValue(score, overallScoreField))
-  }))
+    }))
+    const rawOverall = scoreValue(score, overallScoreField, null)
+    const dimensionAverage = dimensions.length
+      ? Math.round(dimensions.reduce((sum, dim) => sum + dim.value, 0) / dimensions.length)
+      : 0
+    return {
+      key: score.player_seat ?? score.player_id ?? score.seat ?? index,
+      seat: playerSeat(score),
+      role: roleLabel(score.role || score.role_hint),
+      score,
+      dimensions,
+      overall: rawOverall == null ? dimensionAverage : scorePercent(rawOverall)
+    }
+  })
 )
 
 function impactClass(impact) {
@@ -157,9 +283,7 @@ function scoreText(value) {
 }
 
 function averageScoreText(value) {
-  const num = Number(value)
-  if (!Number.isFinite(num)) return '—'
-  return `${Math.round(num * 10) / 10}`
+  return scoreText(value)
 }
 
 function playerSeat(score) {
@@ -170,11 +294,44 @@ function roleLabel(role) {
   return displayRoleLabel(role)
 }
 
-function scoreValue(score, dim) {
+function scoreValue(score, dim, fallback = 0) {
   for (const field of dim.fields) {
     if (score[field] != null) return score[field]
   }
-  return 0
+  return fallback
+}
+
+function decisionArray(value) {
+  if (!Array.isArray(value)) return []
+  return value.filter((item) => item && typeof item === 'object')
+}
+
+function decisionKey(decision, index) {
+  const stableId = decision.id || decision.decision_id
+  if (stableId) return `id:${stableId}`
+  return [
+    'row',
+    index,
+    decision.index,
+    decision.day,
+    decision.phase,
+    decision.action || decision.action_type || decision.type,
+    decision.actor_id || decision.player_id,
+    decision.target_id || decision.selected_target || decision.target_player_id,
+    decision.public_summary || decision.public_text || decision.reason || decision.message
+  ].map((part) => String(part ?? '')).join('|')
+}
+
+function dedupeDecisions(decisions) {
+  const seen = new Set()
+  const rows = []
+  decisions.forEach((decision, index) => {
+    const key = decisionKey(decision, index)
+    if (seen.has(key)) return
+    seen.add(key)
+    rows.push(decision)
+  })
+  return rows
 }
 
 function formatReviewText(value) {
@@ -192,7 +349,7 @@ function qualityLabel(quality) {
     ok: '可接受',
     bad: '需复盘',
     unknown: '证据不足'
-  }[key] || normalizeHistoryDisplayText(quality) || '未知'
+  }[key] || formatReviewText(quality)
 }
 
 function qualityClass(quality) {
@@ -211,43 +368,7 @@ function judgeStatusLabel(status) {
     degraded: '部分完成',
     failed: '评审失败',
     skipped: '未启用'
-  }[key] || normalizeHistoryDisplayText(status) || '未记录'
-}
-
-function radarPoint(index, value, total, cx = 80, cy = 80, radius = 46) {
-  const angle = (Math.PI * 2 * index) / total - Math.PI / 2
-  const safe = Math.max(0, Math.min(Number(value) || 0, 100))
-  const r = (safe / 100) * radius
-  return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) }
-}
-
-function radarPolygon(values, cx = 80, cy = 80, radius = 46) {
-  const total = values.length
-  return values.map((value, index) => {
-    const p = radarPoint(index, value, total, cx, cy, radius)
-    return `${p.x},${p.y}`
-  }).join(' ')
-}
-
-function radarGrid(level, total, cx = 80, cy = 80, radius = 46) {
-  return Array.from({ length: total }).map((_, index) => {
-    const p = radarPoint(index, level * 100, total, cx, cy, radius)
-    return `${p.x},${p.y}`
-  }).join(' ')
-}
-
-function radarLabelAnchor(index, total) {
-  const x = Math.cos((Math.PI * 2 * index) / total - Math.PI / 2)
-  if (x > 0.2) return 'start'
-  if (x < -0.2) return 'end'
-  return 'middle'
-}
-
-function radarLabelDy(index, total) {
-  const y = Math.sin((Math.PI * 2 * index) / total - Math.PI / 2)
-  if (y < -0.5) return '-0.45em'
-  if (y > 0.5) return '1.05em'
-  return '0.35em'
+  }[key] || formatReviewText(status)
 }
 
 function jsonText(value) {
@@ -259,7 +380,7 @@ function jsonText(value) {
 <template>
   <section class="archive-review-panel">
     <h3>复盘报告</h3>
-    <template v-if="reviewData">
+    <template v-if="hasReviewContent">
       <div v-if="reviewGameSummary" class="review-summary-strip">
         <span class="review-summary-item review-winner">
           <small>胜方</small><b>{{ winnerLabel(reviewGameSummary.winner || game.winner) }}</b>
@@ -268,77 +389,46 @@ function jsonText(value) {
           <small>天数</small><b>{{ reviewGameSummary.total_days ?? game.day ?? '—' }}</b>
         </span>
         <span class="review-summary-item">
-          <small>事件</small><b>{{ reviewGameSummary.event_count ?? game.events?.length ?? 0 }}</b>
+          <small>事件</small><b>{{ reviewGameSummary.event_count ?? game.event_count ?? game.logs?.length ?? game.events?.length ?? 0 }}</b>
         </span>
         <span class="review-summary-item">
           <small>决策</small><b>{{ reviewGameSummary.decision_count ?? game.decisions?.length ?? 0 }}</b>
         </span>
       </div>
 
-      <div v-else-if="reviewData.review_status" class="empty-log">
+      <div v-else-if="reviewData?.review_status && !reviewScoreCards.length" class="empty-log">
         {{ formatReviewText(reviewData.summary || reviewData.review_status) }}
       </div>
 
       <section v-if="reviewScoreCards.length" class="review-score-section">
         <header class="review-score-panel-head">
           <div>
-            <small>评分预览</small>
-            <h4>玩家评分</h4>
+            <h4>玩家得分</h4>
+            <small :class="['review-score-source', reviewScoreSourceClass]">
+              {{ reviewScoreSourceLabel }}
+            </small>
           </div>
           <b>{{ reviewScoreCards.length }} 人</b>
         </header>
-        <div class="review-score-grid">
-          <article v-for="card in reviewScoreCards" :key="'review-score-' + card.key" class="review-score-card">
-            <header>
-              <span class="review-seat">{{ card.seat }}号</span>
-              <span class="review-role">{{ card.role }}</span>
-              <b>{{ card.overall }}%</b>
-            </header>
-            <svg class="review-radar-svg" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
-              <polygon
-                v-for="level in [0.35, 0.7, 1]"
-                :key="'review-grid-' + card.key + '-' + level"
-                :points="radarGrid(level, card.dimensions.length)"
-                class="review-radar-grid"
-              />
-              <line
-                v-for="(dim, index) in card.dimensions"
-                :key="'review-axis-' + card.key + '-' + dim.key"
-                x1="80"
-                y1="80"
-                :x2="radarPoint(index, 100, card.dimensions.length).x"
-                :y2="radarPoint(index, 100, card.dimensions.length).y"
-                class="review-radar-axis"
-              />
-              <polygon
-                :points="radarPolygon(card.dimensions.map((dim) => dim.value))"
-                class="review-radar-fill"
-              />
-              <circle
-                v-for="(dim, index) in card.dimensions"
-                :key="'review-dot-' + card.key + '-' + dim.key"
-                :cx="radarPoint(index, dim.value, card.dimensions.length).x"
-                :cy="radarPoint(index, dim.value, card.dimensions.length).y"
-                r="2.5"
-                class="review-radar-dot"
-              />
-              <text
-                v-for="(dim, index) in card.dimensions"
-                :key="'review-label-' + card.key + '-' + dim.key"
-                :x="radarPoint(index, 100, card.dimensions.length, 80, 80, 61).x"
-                :y="radarPoint(index, 100, card.dimensions.length, 80, 80, 61).y"
-                :text-anchor="radarLabelAnchor(index, card.dimensions.length)"
-                :dy="radarLabelDy(index, card.dimensions.length)"
-                class="review-radar-label"
-              >{{ dim.label }}</text>
-            </svg>
-            <div class="review-score-metrics">
-              <span v-for="dim in card.dimensions" :key="'review-metric-' + card.key + '-' + dim.key">
-                <small>{{ dim.label }}</small><b>{{ dim.value }}</b>
-              </span>
-            </div>
-          </article>
-        </div>
+        <ReviewScoreStackedBar :cards="reviewScoreCards" />
+      </section>
+
+      <section v-if="canShowFlowChartGate" ref="flowChartGateEl" class="review-flow-gate">
+        <header class="review-flow-gate-head">
+          <div>
+            <h4>图表分析</h4>
+          </div>
+          <button type="button" :aria-expanded="String(showFlowCharts)" :disabled="flowLoading" @click="requestFlowCharts">
+            {{ flowLoading ? '读取中' : (showFlowCharts ? '已展开' : '展开图表') }}
+          </button>
+        </header>
+        <p v-if="flowDataError" class="review-flow-gate-copy">
+          {{ flowDataError }}
+        </p>
+        <p v-else-if="!showFlowCharts" class="review-flow-gate-copy">
+          {{ reviewFlowDecisions.length }} 条决策可生成投票流向与回合热力图。
+        </p>
+        <VoteFlowSankey v-if="showFlowCharts" :decisions="reviewFlowDecisions" :players="game.players || []" />
       </section>
 
       <section v-if="showDecisionJudge" class="review-judge-section">
@@ -369,17 +459,6 @@ function jsonText(value) {
           </span>
         </div>
 
-        <div v-if="decisionJudgeQualityRows.length" class="review-judge-quality">
-          <span
-            v-for="row in decisionJudgeQualityRows"
-            :key="'judge-quality-' + row.quality"
-            :class="['review-judge-quality-chip', row.className]"
-          >
-            <small>{{ row.label }}</small>
-            <b>{{ row.count }}</b>
-          </span>
-        </div>
-
         <div v-if="decisionJudgeLowestRows.length" class="review-judge-lowest">
           <h4>低分决策</h4>
           <article
@@ -391,6 +470,7 @@ function jsonText(value) {
               <span>{{ item.player_id ?? '—' }}号</span>
               <em>{{ roleLabel(item.role) }}</em>
               <strong>{{ actionLabel(item.action_type) }}</strong>
+              <i :class="qualityClass(item.quality)">{{ qualityLabel(item.quality) }}</i>
               <b>{{ scoreText(item.score) }}</b>
             </header>
             <p>{{ formatReviewText(item.reason) }}</p>
@@ -416,11 +496,6 @@ function jsonText(value) {
             </header>
             <p>{{ formatReviewText(item.reason) }}</p>
             <p v-if="item.suggestion" class="review-judge-suggestion">{{ formatReviewText(item.suggestion) }}</p>
-            <div v-if="item.mistake_tags?.length" class="review-judge-tags">
-              <span v-for="tag in item.mistake_tags" :key="'judge-tag-' + item.decision_id + '-' + tag">
-                {{ formatReviewText(tag) }}
-              </span>
-            </div>
           </article>
         </div>
 
@@ -468,7 +543,7 @@ function jsonText(value) {
         </div>
       </div>
     </template>
-    <pre v-if="!reviewData">{{ jsonText(report) }}</pre>
+    <pre v-if="!hasReviewContent">{{ jsonText(report) }}</pre>
   </section>
 </template>
 
@@ -578,7 +653,7 @@ function jsonText(value) {
   gap: 0;
   margin-top: 12px;
   border: 1px solid var(--log-border);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--log-surface);
   box-shadow: 0 1px 3px rgba(91, 47, 18, 0.04);
   overflow: hidden;
@@ -615,9 +690,32 @@ function jsonText(value) {
   font-weight: 800;
 }
 
+.review-score-source {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--log-border);
+  border-radius: 6px;
+  line-height: 1.2;
+}
+
+.review-score-source.local-estimate {
+  border-color: rgba(139, 100, 31, 0.34);
+  background: rgba(255, 232, 170, 0.34);
+  color: #8b641f;
+}
+
+.review-score-source.report {
+  border-color: rgba(68, 124, 68, 0.28);
+  background: rgba(214, 239, 214, 0.32);
+  color: #3f713f;
+}
+
 .review-score-panel-head b {
   padding: 2px 8px;
-  border-radius: 5px;
+  border-radius: 0;
   background: rgba(139, 94, 52, 0.08);
   color: var(--log-accent);
   font-size: 12px;
@@ -625,151 +723,75 @@ function jsonText(value) {
   white-space: nowrap;
 }
 
-.review-score-grid {
+.review-flow-gate {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 1px;
-  min-width: 0;
-  background: rgba(139, 94, 52, 0.11);
+  gap: 9px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 239, 194, 0.32);
 }
 
-.review-score-card {
-  position: relative;
+.review-flow-gate-head {
   display: grid;
-  grid-template-rows: auto 166px auto;
-  gap: 8px;
-  min-width: 0;
-  min-height: 272px;
-  padding: 12px 10px 13px;
-  background: rgba(255, 252, 245, 0.36);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
-}
-
-.review-score-card header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
+  gap: 10px;
 }
 
-.review-seat {
-  display: inline-grid;
-  min-width: 34px;
-  height: 24px;
-  place-items: center;
-  border-radius: 999px;
-  background: var(--log-accent-strong);
-  color: #fff7dc;
+.review-flow-gate-head h4 {
+  margin: 0;
+  color: var(--log-text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.review-flow-gate-head button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(93, 48, 17, 0.22);
+  border-radius: 6px;
+  color: #3b1c09;
+  background: rgba(255, 252, 245, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.46);
   font-size: 12px;
   font-weight: 900;
-  white-space: nowrap;
+  line-height: 1;
+  cursor: pointer;
 }
 
-.review-role {
-  min-width: 0;
-  overflow: hidden;
-  padding: 3px 8px;
-  border: 1px solid var(--log-border);
-  border-radius: 999px;
-  background: rgba(139, 94, 52, 0.08);
+.review-flow-gate-head button:hover {
+  border-color: rgba(93, 48, 17, 0.36);
+  background: rgba(255, 252, 245, 0.92);
+}
+
+.review-flow-gate-head button[aria-expanded='true'] {
   color: var(--log-accent);
-  font-size: 11px;
-  font-weight: 850;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: rgba(139, 94, 52, 0.08);
+  cursor: default;
 }
 
-.review-score-card header b {
-  color: var(--log-accent-strong);
-  font-size: 14px;
-  font-weight: 950;
-  line-height: 1;
-}
-
-.review-radar-svg {
-  width: min(100%, 142px);
-  aspect-ratio: 1;
-  justify-self: center;
-  align-self: start;
-  margin-top: 16px;
-  overflow: visible;
-  transform: none;
-}
-
-.review-radar-grid {
-  fill: none;
-  stroke: rgba(91, 47, 18, 0.16);
-  stroke-width: 1;
-}
-
-.review-radar-axis {
-  stroke: rgba(91, 47, 18, 0.12);
-  stroke-width: 1;
-}
-
-.review-radar-fill {
-  fill: rgba(212, 175, 55, 0.26);
-  stroke: #a56a22;
-  stroke-linejoin: round;
-  stroke-width: 2;
-}
-
-.review-radar-dot {
-  fill: #8b5e34;
-  stroke: #fff7dc;
-  stroke-width: 1.2;
-}
-
-.review-radar-label {
-  fill: var(--log-accent-strong);
-  font-family: inherit;
-  font-size: 10px;
-  font-weight: 900;
-}
-
-.review-score-metrics {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
-  min-width: 0;
-}
-
-.review-score-metrics span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 4px 3px;
-  border-radius: 5px;
-  background: rgba(139, 94, 52, 0.055);
-  text-align: center;
-}
-
-.review-score-metrics small {
+.review-flow-gate-copy {
+  margin: 0;
   color: var(--log-text-secondary);
-  font-size: 9px;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.review-score-metrics b {
-  color: var(--log-text);
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 1;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .review-judge-section {
   display: grid;
   gap: 10px;
-  margin-top: 14px;
+  margin-top: 12px;
   padding: 12px;
-  border: 1px solid rgba(76, 88, 104, 0.22);
+  border: 1px solid rgba(93, 48, 17, 0.18);
   border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(248, 250, 252, 0.72), rgba(255, 252, 245, 0.48)),
-    var(--log-surface);
+  background: rgba(255, 239, 194, 0.36);
 }
 
 .review-judge-head {
@@ -777,9 +799,8 @@ function jsonText(value) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-width: 0;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(76, 88, 104, 0.16);
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.14);
 }
 
 .review-judge-head div {
@@ -788,25 +809,26 @@ function jsonText(value) {
   min-width: 0;
 }
 
-.review-judge-head small {
+.review-judge-head small,
+.review-judge-summary small {
   color: var(--log-text-secondary);
-  font-size: 11px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 850;
   line-height: 1;
 }
 
 .review-judge-head h4 {
   margin: 0;
   color: var(--log-text);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 900;
 }
 
 .review-judge-head b {
-  padding: 3px 9px;
-  border-radius: 6px;
-  background: rgba(76, 88, 104, 0.1);
-  color: #405066;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--log-accent);
   font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
@@ -815,59 +837,143 @@ function jsonText(value) {
 .review-judge-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  min-width: 0;
+  gap: 7px;
 }
 
 .review-judge-summary span {
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid rgba(76, 88, 104, 0.13);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.46);
-}
-
-.review-judge-summary small,
-.review-judge-quality-chip small {
-  color: var(--log-text-secondary);
-  font-size: 10px;
-  font-weight: 850;
-  line-height: 1;
+  padding: 8px 9px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 252, 245, 0.46);
 }
 
 .review-judge-summary b {
   overflow: hidden;
   color: var(--log-text);
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 950;
   line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.review-judge-quality {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.review-judge-quality-chip {
-  display: inline-flex;
-  align-items: center;
+.review-judge-lowest,
+.review-judge-list,
+.review-judge-warnings {
+  display: grid;
   gap: 7px;
-  min-height: 26px;
-  padding: 4px 8px;
-  border: 1px solid rgba(76, 88, 104, 0.13);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.44);
+  min-width: 0;
 }
 
-.review-judge-quality-chip b {
-  color: var(--log-text);
-  font-size: 12px;
+.review-judge-lowest h4 {
+  margin: 2px 0 0;
+}
+
+.review-judge-low-row,
+.review-judge-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.5);
+}
+
+.review-judge-low-row {
+  display: grid;
+  gap: 7px;
+}
+
+.review-judge-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.review-judge-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.review-judge-low-row header,
+.review-judge-card header,
+.review-judge-card header div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.review-judge-card header {
+  justify-content: space-between;
+}
+
+.review-judge-low-row header span,
+.review-judge-card header span {
+  display: inline-grid;
+  min-width: 34px;
+  height: 23px;
+  place-items: center;
+  border-radius: 999px;
+  background: #70401e;
+  color: #fff7dc;
+  font-size: 11px;
   font-weight: 950;
+  white-space: nowrap;
+}
+
+.review-judge-low-row header em,
+.review-judge-card header em,
+.review-judge-low-row header strong,
+.review-judge-card header strong,
+.review-judge-low-row header i {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-judge-low-row header em,
+.review-judge-card header em {
+  background: rgba(112, 64, 30, 0.08);
+  color: #70401e;
+}
+
+.review-judge-low-row header strong,
+.review-judge-card header strong {
+  background: rgba(47, 115, 79, 0.1);
+  color: #2f734f;
+}
+
+.review-judge-low-row header i,
+.review-judge-score {
+  background: var(--judge-quality-bg, rgba(139, 94, 52, 0.09));
+  color: var(--judge-quality-color, var(--log-accent));
+}
+
+.review-judge-low-row header b,
+.review-judge-score {
+  display: inline-grid;
+  min-width: 34px;
+  height: 26px;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.review-judge-low-row header b {
+  margin-left: auto;
+  color: #9c2f29;
+  background: rgba(156, 47, 41, 0.09);
 }
 
 .quality-good {
@@ -876,7 +982,7 @@ function jsonText(value) {
 }
 
 .quality-ok {
-  --judge-quality-color: #6f6536;
+  --judge-quality-color: #7d6728;
   --judge-quality-bg: rgba(177, 152, 63, 0.16);
 }
 
@@ -890,192 +996,28 @@ function jsonText(value) {
   --judge-quality-bg: rgba(95, 111, 134, 0.12);
 }
 
-.review-judge-quality-chip.quality-good,
-.review-judge-quality-chip.quality-ok,
-.review-judge-quality-chip.quality-bad,
-.review-judge-quality-chip.quality-unknown {
-  border-color: color-mix(in srgb, var(--judge-quality-color) 24%, transparent);
-  background: var(--judge-quality-bg);
-}
-
-.review-judge-quality-chip.quality-good b,
-.review-judge-quality-chip.quality-ok b,
-.review-judge-quality-chip.quality-bad b,
-.review-judge-quality-chip.quality-unknown b {
-  color: var(--judge-quality-color);
-}
-
-.review-judge-lowest {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-}
-
-.review-judge-lowest h4 {
-  margin: 2px 0 0;
-}
-
-.review-judge-low-row,
-.review-judge-card {
-  min-width: 0;
-  border: 1px solid rgba(76, 88, 104, 0.14);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.5);
-}
-
-.review-judge-low-row {
-  display: grid;
-  gap: 7px;
-  padding: 10px;
-}
-
-.review-judge-low-row header,
-.review-judge-card header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.review-judge-low-row header span,
-.review-judge-card header span {
-  display: inline-grid;
-  min-width: 34px;
-  height: 23px;
-  place-items: center;
-  border-radius: 999px;
-  background: #405066;
-  color: #f8fafc;
-  font-size: 11px;
-  font-weight: 950;
-  white-space: nowrap;
-}
-
-.review-judge-low-row header em,
-.review-judge-card header em,
-.review-judge-low-row header strong,
-.review-judge-card header strong {
-  min-width: 0;
-  overflow: hidden;
-  padding: 3px 7px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 850;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.review-judge-low-row header em,
-.review-judge-card header em {
-  background: rgba(64, 80, 102, 0.09);
-  color: #405066;
-}
-
-.review-judge-low-row header strong,
-.review-judge-card header strong {
-  background: rgba(35, 122, 87, 0.1);
-  color: #237a57;
-}
-
-.review-judge-low-row header b {
-  margin-left: auto;
-  color: #a33d35;
-  font-size: 16px;
-  font-weight: 950;
-  line-height: 1;
-}
-
 .review-judge-low-row p,
-.review-judge-card p {
+.review-judge-card p,
+.review-judge-warnings span {
   margin: 0;
   color: var(--log-text);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 12px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
 .review-judge-suggestion {
   padding-top: 6px;
-  border-top: 1px dashed rgba(76, 88, 104, 0.17);
+  border-top: 1px dashed rgba(93, 48, 17, 0.16);
   color: var(--log-text-secondary) !important;
-}
-
-.review-judge-list {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-
-.review-judge-card {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  padding: 10px;
-}
-
-.review-judge-card header {
-  justify-content: space-between;
-}
-
-.review-judge-card header div {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.review-judge-score {
-  display: inline-grid;
-  min-width: 34px;
-  height: 28px;
-  place-items: center;
-  border-radius: 7px;
-  background: var(--judge-quality-bg, rgba(76, 88, 104, 0.1));
-  color: var(--judge-quality-color, #405066);
-  font-size: 14px;
-  font-weight: 950;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.review-judge-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.review-judge-tags span {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  padding: 3px 7px;
-  border-radius: 6px;
-  background: rgba(163, 61, 53, 0.08);
-  color: #8f342d;
-  font-size: 11px;
-  font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.review-judge-warnings {
-  display: grid;
-  gap: 5px;
 }
 
 .review-judge-warnings span {
   padding: 7px 9px;
   border: 1px solid rgba(163, 61, 53, 0.16);
-  border-radius: 7px;
+  border-radius: 6px;
   background: rgba(163, 61, 53, 0.08);
   color: #8f342d;
-  font-size: 12px;
-  font-weight: 750;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
 }
 
 .review-tp-card {
@@ -1245,30 +1187,6 @@ function jsonText(value) {
   line-height: 1.45;
 }
 
-@media (max-width: 1280px) {
-  .review-score-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .review-judge-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 960px) {
-  .review-score-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .review-judge-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .review-judge-list {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 @media (max-width: 720px) {
   .archive-review-panel {
     padding: 12px;
@@ -1280,34 +1198,6 @@ function jsonText(value) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .review-score-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .review-score-card {
-    min-height: 232px;
-    padding: 9px;
-  }
-
-  .review-radar-label {
-    font-size: 9px;
-  }
-
-  .review-judge-section {
-    padding: 10px;
-  }
-
-  .review-judge-low-row header,
-  .review-judge-card header,
-  .review-judge-card header div {
-    flex-wrap: wrap;
-  }
-
-  .review-judge-low-row header b,
-  .review-judge-score {
-    margin-left: 0;
-  }
-
   .review-cf-confidence {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1315,23 +1205,6 @@ function jsonText(value) {
 }
 
 @media (max-width: 420px) {
-  .review-score-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .review-score-card {
-    min-height: 232px;
-  }
-
-  .review-judge-head,
-  .review-judge-summary {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .review-judge-head b {
-    justify-self: start;
-  }
-
   .review-tl-item {
     grid-template-columns: minmax(0, 1fr);
   }

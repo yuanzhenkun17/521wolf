@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createCouncilHallScene } from '../CouncilHallScene.js'
+import { displayActionLabel } from './history/historyDisplay.js'
 
 const SPEECH_EVENT_TYPES = new Set([
   'speech',
@@ -12,6 +13,7 @@ const SPEECH_EVENT_TYPES = new Set([
   'discussion',
   'day_speech',
   'player_speech',
+  'sheriff_run',
   'sheriff_speak',
   'sheriff_speech',
   'pk_speak',
@@ -19,6 +21,11 @@ const SPEECH_EVENT_TYPES = new Set([
   'last_word'
 ])
 const NON_PLAYER_LOG_TYPES = new Set(['system', 'judge', 'announcement', 'phase', 'phase_change'])
+const NIGHT_ACTION_TYPES = new Set([
+  'guard_result',
+  'werewolf_result',
+  'witch_result'
+])
 
 const props = defineProps({
   game: Object,
@@ -43,6 +50,7 @@ let scene = null
 let rafId = 0
 let sceneReadyPromise = null
 let disposed = false
+let lastSceneSignature = ''
 const sceneApi = { waitForCouncilModels, syncCouncilScene, scheduleSyncCouncilScene }
 
 function normalizeSpeechText(value) {
@@ -144,6 +152,68 @@ function isSpeechLog(log) {
   return logTypeCandidates(log).some((type) => SPEECH_EVENT_TYPES.has(type))
 }
 
+function isNightActionLog(log) {
+  const phase = String(log?.phase || log?.event_phase || log?.stage || '').trim()
+  const type = normalizedLogType(log)
+  return NIGHT_ACTION_TYPES.has(type)
+    && (phase === 'night' || props.isNight)
+}
+
+function nightActionText(log) {
+  const rawAction = normalizedLogType(log)
+  const targetId = numericId(
+    log?.target_id
+    ?? log?.selected_target
+    ?? log?.target
+    ?? log?.payload?.target_id
+    ?? log?.payload?.protected_target
+    ?? log?.payload?.killed_target
+    ?? log?.payload?.poisoned_target
+  )
+  const target = props.players.find((player) => Number(player?.id) === targetId)
+  const targetSeat = target?.displaySeat ?? targetId
+  if (rawAction === 'guard_result') return targetSeat ? `守护了${targetSeat}号` : '本夜未守护'
+  if (rawAction === 'werewolf_result') return targetSeat ? `刀了${targetSeat}号` : '本夜未落刀'
+  if (rawAction === 'witch_result') {
+    const message = speechLogText(log)
+    if (/解药|救/.test(message)) return targetSeat ? `救了${targetSeat}号` : '使用了解药'
+    if (/毒/.test(message)) return targetSeat ? `毒了${targetSeat}号` : '使用了毒药'
+    return '本夜未使用药剂'
+  }
+  return ''
+}
+
+function nightActionPlayerId(log) {
+  const actorId = playerIdFromLog(log)
+  if (actorId) return actorId
+  if (normalizedLogType(log) === 'werewolf_result') {
+    return numericId(props.players.find((player) => /狼/.test(String(player?.role_hint || '')))?.id)
+  }
+  return null
+}
+
+function nightActionsByPlayer(logs) {
+  if (!props.isWatch || !props.isNight) return {}
+  const currentDay = Number(props.game?.day)
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const log = logs[index]
+    if (!isNightActionLog(log)) continue
+    if (Number.isFinite(currentDay) && log?.day != null && Number(log.day) !== currentDay) continue
+    const playerId = nightActionPlayerId(log)
+    if (!playerId) continue
+    const text = nightActionText(log)
+    if (!text) continue
+    const seat = props.players.find((player) => Number(player?.id) === playerId)?.displaySeat ?? playerId
+    return {
+      [playerId]: {
+        text: `${seat}号：${text}`,
+        tone: 'night'
+      }
+    }
+  }
+  return {}
+}
+
 function isPublicLog(log) {
   return log?.visibility !== 'private' && speechLogText(log)
 }
@@ -177,9 +247,13 @@ function latestPublicLog(logs) {
   return null
 }
 
-function speechPayload(log) {
+function speechPayload(log, speakerId = playerIdFromLog(log)) {
+  const text = speechLogText(log)
+  const seat = props.players.find((player) => Number(player?.id) === Number(speakerId))?.displaySeat ?? speakerId
   return {
-    text: speechLogText(log),
+    text: seat && text && !new RegExp(`^${seat}\\s*号?\\s*[：:]`).test(text)
+      ? `${seat}号：${text}`
+      : text,
     tone: props.isNight || log?.phase === 'night' ? 'night' : ''
   }
 }
@@ -187,7 +261,7 @@ function speechPayload(log) {
 function fallbackSpeakerText(speakerId) {
   const speaker = props.players.find((player) => Number(player?.id) === speakerId)
   const label = speaker?.displaySeat ? `${speaker.displaySeat}号` : (speaker?.name || '当前玩家')
-  return `${label}正在发言...`
+  return `${label}：正在发言...`
 }
 
 function pendingSpeakerId() {
@@ -209,7 +283,10 @@ function explicitCurrentSpeakerId() {
 }
 
 const speechByPlayer = computed(() => {
-  const logs = props.game?.logs || props.game?.events || []
+  const eventLogs = [...(props.game?.logs || []), ...(props.game?.events || [])]
+  const logs = eventLogs.length ? eventLogs : (props.game?.decisions || [])
+  const nightActions = nightActionsByPlayer(logs)
+  if (Object.keys(nightActions).length) return nightActions
   const latestLog = latestPublicLog(logs)
   if (!isSpeechWindow() && !isSpeechLog(latestLog)) return {}
 
@@ -223,7 +300,7 @@ const speechByPlayer = computed(() => {
     for (let index = logs.length - 1; index >= 0; index -= 1) {
       const log = logs[index]
       if (!logMatchesSpeaker(log, currentSpeakerId, currentSpeaker) || !isPublicPlayerLog(log) || !isSpeechLog(log)) continue
-      const payload = speechPayload(log)
+      const payload = speechPayload(log, currentSpeakerId)
       if (!payload.text) continue
       return { [currentSpeakerId]: payload }
     }
@@ -246,7 +323,7 @@ const speechByPlayer = computed(() => {
     if (!isPublicPlayerLog(log) || !isSpeechLog(log)) continue
     const speakerId = playerIdFromLog(log)
     if (!speakerId) continue
-    const payload = speechPayload(log)
+    const payload = speechPayload(log, speakerId)
     if (!payload.text) continue
     return { [speakerId]: payload }
   }
@@ -315,9 +392,79 @@ function scenePayload(revealPlayers = props.roleAssignmentComplete || props.isRe
   }
 }
 
-function updateScene() {
+function valueListSignature(value) {
+  return Array.isArray(value) ? value.map((item) => String(item ?? '')).join(',') : ''
+}
+
+function playerSceneSignature(players = []) {
+  return players.map((player, index) => [
+    player?.id ?? index,
+    player?.alive === false ? 0 : 1,
+    player?.role_hint ?? '',
+    player?.roleIcon ?? '',
+    player?.displaySeat ?? '',
+    player?.isSheriff ? 1 : 0,
+    player?.speaking ? 1 : 0
+  ].join(':')).join('|')
+}
+
+function speechSceneSignature(value = {}) {
+  return Object.entries(value)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([id, speech]) => {
+      const text = typeof speech === 'string' ? speech : speech?.text
+      const tone = typeof speech === 'string' ? '' : speech?.tone
+      return `${id}:${tone || ''}:${text || ''}`
+    })
+    .join('|')
+}
+
+function voteSceneSignature(rows = []) {
+  return rows.map((row) => [
+    row?.target_id ?? row?.targetId ?? '',
+    row?.count ?? '',
+    valueListSignature(row?.voter_ids),
+    valueListSignature(row?.voters),
+    valueListSignature(row?.voter_labels)
+  ].join(':')).join('|')
+}
+
+function effectSceneSignature(effects = []) {
+  return effects.map((effect) => [
+    effect?.id ?? '',
+    effect?.type ?? '',
+    effect?.actorId ?? '',
+    effect?.targetId ?? '',
+    effect?.day ?? '',
+    effect?.sequence ?? ''
+  ].join(':')).join('|')
+}
+
+function buildSceneSignature(revealPlayers = props.roleAssignmentComplete || props.isReplayMode) {
+  return [
+    props.game?.game_id ?? props.game?.id ?? '',
+    props.isNight ? 1 : 0,
+    props.isWatch ? 1 : 0,
+    props.isReplayMode ? 1 : 0,
+    revealPlayers ? 1 : 0,
+    props.isWatch ? '' : props.game?.human_player_id ?? '',
+    effectiveCurrentSpeakerId.value ?? '',
+    valueListSignature(props.selectableIds),
+    props.selectedTargetId ?? '',
+    props.hoveredTargetId ?? '',
+    playerSceneSignature(props.players),
+    speechSceneSignature(speechByPlayer.value),
+    voteSceneSignature(props.voteTally),
+    effectSceneSignature(props.sceneEffects)
+  ].join('||')
+}
+
+function updateScene({ force = false, revealPlayers = props.roleAssignmentComplete || props.isReplayMode } = {}) {
   if (!scene) return
-  scene.update?.(scenePayload())
+  const signature = buildSceneSignature(revealPlayers)
+  if (!force && signature === lastSceneSignature) return
+  lastSceneSignature = signature
+  scene.update?.(scenePayload(revealPlayers))
 }
 
 function scheduleSyncCouncilScene() {
@@ -335,19 +482,20 @@ function syncCouncilScene() {
 
 async function waitForCouncilModels() {
   await ensureScene()
-  scene?.update?.(scenePayload(true))
+  updateScene({ force: true, revealPlayers: true })
   const preload = scene?.preloadModels?.()
   if (preload) await preload
-  updateScene()
+  updateScene({ force: true })
 }
 
 onMounted(() => {
-  ensureScene().then(updateScene)
+  ensureScene().then(() => updateScene())
 })
-watch(() => [props.players, props.currentSpeakerId, props.isNight, props.roleAssignmentComplete, props.isReplayMode, props.selectableIds, props.selectedTargetId, props.hoveredTargetId, props.voteTally, props.sceneEffects, props.speakerMessage, speechByPlayer.value, effectiveCurrentSpeakerId.value], scheduleSyncCouncilScene, { deep: true })
+watch(() => [props.players, props.currentSpeakerId, props.isNight, props.roleAssignmentComplete, props.isReplayMode, props.selectableIds, props.selectedTargetId, props.hoveredTargetId, props.voteTally, props.sceneEffects, props.speakerMessage, speechByPlayer.value, effectiveCurrentSpeakerId.value], scheduleSyncCouncilScene)
 
 onBeforeUnmount(() => {
   disposed = true
+  lastSceneSignature = ''
   if (rafId) cancelAnimationFrame(rafId)
   scene?.setLoadProgressHandler?.(null)
   scene?.dispose?.()

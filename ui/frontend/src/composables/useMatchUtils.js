@@ -150,13 +150,13 @@ function useMatchUtils(state) {
 
   function roleIconImage(player) {
     const hint = player?.role_hint || ''
-    if (hint.includes('预言')) return '/role-icons/预言家.png'
-    if (hint.includes('女巫')) return '/role-icons/女巫.png'
-    if (hint.includes('猎人')) return '/role-icons/猎人.png'
-    if (hint.includes('守卫')) return '/role-icons/守卫.png'
-    if (hint.includes('白狼王')) return '/role-icons/白狼王.png'
-    if (hint.includes('狼人')) return '/role-icons/普通狼.png'
-    return '/role-icons/平民.png'
+    if (hint.includes('预言')) return '/role-icons/optimized/预言家.webp'
+    if (hint.includes('女巫')) return '/role-icons/optimized/女巫.webp'
+    if (hint.includes('猎人')) return '/role-icons/optimized/猎人.webp'
+    if (hint.includes('守卫')) return '/role-icons/optimized/守卫.webp'
+    if (hint.includes('白狼王')) return '/role-icons/optimized/白狼王.webp'
+    if (hint.includes('狼人')) return '/role-icons/optimized/普通狼.webp'
+    return '/role-icons/optimized/平民.webp'
   }
 
   function speakerImage(player) {

@@ -3,12 +3,11 @@ import vue from '@vitejs/plugin-vue'
 import { fileURLToPath } from 'node:url'
 
 const rootEnvDir = fileURLToPath(new URL('../..', import.meta.url))
-const envDir = process.env.UI_FRONTEND_ENV_DIR || rootEnvDir
 const apiProxyTarget = process.env.UI_FRONTEND_API_PROXY_TARGET || 'http://127.0.0.1:8000'
 
 export default defineConfig({
   plugins: [vue()],
-  envDir,
+  envDir: rootEnvDir,
   build: {
     chunkSizeWarningLimit: 650,
     rollupOptions: {

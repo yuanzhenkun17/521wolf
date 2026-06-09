@@ -2,7 +2,8 @@
 const props = defineProps({
   players: { type: Array, default: () => [] },
   activeSeat: { type: [String, Number], default: '' },
-  selectedTargetId: { type: [String, Number, null], default: null }
+  selectedTargetId: { type: [String, Number, null], default: null },
+  panelHeight: { type: Number, default: 146 }
 })
 
 function isActiveSeat(player) {
@@ -16,7 +17,7 @@ function isSelectedTarget(player) {
 </script>
 
 <template>
-  <aside class="role-grid-panel" aria-label="玩家身份列">
+  <aside class="role-grid-panel" :style="{ height: `${panelHeight}px` }" aria-label="玩家身份列">
     <div class="role-grid">
       <article
         v-for="(player, index) in players"

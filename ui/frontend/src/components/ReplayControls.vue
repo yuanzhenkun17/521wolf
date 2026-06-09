@@ -79,25 +79,46 @@ const progressStyle = computed(() => {
 
 <style scoped>
 .replay-controls {
-  --replay-bg: rgba(255, 246, 220, 0.94);
-  --replay-ink: #2f1b0c;
-  --replay-muted: rgba(47, 27, 12, 0.62);
-  --replay-line: rgba(74, 44, 18, 0.18);
+  --replay-ink: #321807;
+  --replay-muted: rgba(75, 37, 13, 0.68);
+  --replay-line: rgba(77, 38, 16, 0.34);
   --replay-accent: #6b3518;
-  --replay-track: rgba(74, 44, 18, 0.16);
+  --replay-track: rgba(91, 47, 18, 0.18);
+  --replay-wood-bg:
+    radial-gradient(ellipse at 22% 18%, rgba(255, 252, 229, 0.72), transparent 38%) padding-box,
+    radial-gradient(ellipse at 78% 88%, rgba(181, 116, 48, 0.1), transparent 44%) padding-box,
+    linear-gradient(180deg, rgba(246, 222, 166, 0.98), rgba(233, 197, 128, 0.96) 52%, rgba(218, 174, 102, 0.96)) padding-box,
+    repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
+  position: relative;
   display: grid;
   grid-template-rows: auto auto;
   gap: 10px;
   min-width: 0;
-  padding: 12px 14px 13px;
-  border: 1px solid var(--replay-line);
-  border-radius: 8px;
-  background:
-    radial-gradient(ellipse at 18% 0%, rgba(255, 255, 255, 0.42), transparent 54%),
-    var(--replay-bg);
-  box-shadow: 0 12px 28px rgba(22, 14, 6, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.38);
+  padding: 15px 18px 16px;
+  border: 5px solid transparent;
+  border-radius: 0;
+  background: var(--replay-wood-bg);
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 239, 183, 0.54),
+    inset 0 0 28px rgba(88, 42, 14, 0.2);
   color: var(--replay-ink);
   font-family: "Microsoft YaHei", Arial, sans-serif;
+}
+
+.replay-controls::before {
+  content: "";
+  position: absolute;
+  inset: 9px 10px;
+  z-index: 0;
+  border: 1px solid var(--replay-line);
+  background:
+    linear-gradient(90deg, rgba(72, 37, 15, 0.08), transparent 12% 88%, rgba(72, 37, 15, 0.1)),
+    repeating-linear-gradient(0deg, rgba(92, 48, 18, 0.035) 0 1px, transparent 1px 7px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 241, 194, 0.42),
+    inset 0 0 24px rgba(87, 43, 15, 0.18);
+  pointer-events: none;
 }
 
 .replay-controls.compact {
@@ -106,12 +127,16 @@ const progressStyle = computed(() => {
   bottom: 22px;
   z-index: 30;
   width: min(680px, calc(100vw - 44px));
-  border-color: rgba(92, 51, 18, 0.28);
-  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.38);
+  box-shadow:
+    0 22px 56px rgba(0, 0, 0, 0.38),
+    inset 0 0 0 1px rgba(255, 239, 183, 0.54),
+    inset 0 0 28px rgba(88, 42, 14, 0.2);
 }
 
 .replay-topline,
 .replay-timeline {
+  position: relative;
+  z-index: 1;
   display: grid;
   align-items: center;
   min-width: 0;
@@ -137,7 +162,7 @@ const progressStyle = computed(() => {
   font-size: 12px;
   font-weight: 1000;
   line-height: 1;
-  color: var(--replay-accent);
+  color: #5b2f12;
   white-space: nowrap;
 }
 
@@ -161,9 +186,10 @@ const progressStyle = computed(() => {
 
 .replay-transport {
   padding: 2px;
-  border: 1px solid var(--replay-line);
-  border-radius: 7px;
-  background: rgba(255, 255, 250, 0.38);
+  border: 1px solid rgba(93, 48, 17, 0.24);
+  border-radius: 6px;
+  background: rgba(255, 239, 194, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.46);
 }
 
 .replay-actions {
@@ -176,13 +202,13 @@ const progressStyle = computed(() => {
   align-items: center;
   justify-content: center;
   height: 32px;
-  border: 1px solid transparent;
+  border: 1px solid rgba(93, 48, 17, 0.18);
   border-radius: 6px;
-  color: var(--replay-accent);
-  background: transparent;
-  box-shadow: none;
+  color: #4b250d;
+  background: rgba(255, 239, 194, 0.36);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.58);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .replay-icon {
@@ -192,7 +218,9 @@ const progressStyle = computed(() => {
 
 .replay-icon.primary {
   color: #fff4d9;
+  border-color: rgba(74, 37, 13, 0.82);
   background: linear-gradient(180deg, #7c431c, #4b250d);
+  box-shadow: 0 2px 6px rgba(74, 37, 13, 0.22), inset 0 1px 0 rgba(255, 226, 164, 0.24);
 }
 
 .replay-icon.close {
@@ -203,7 +231,7 @@ const progressStyle = computed(() => {
   min-width: 76px;
   padding: 0 11px;
   border-color: var(--replay-line);
-  background: rgba(255, 255, 250, 0.42);
+  background: rgba(255, 239, 194, 0.42);
   font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
@@ -211,8 +239,8 @@ const progressStyle = computed(() => {
 
 .replay-icon:hover:not(:disabled),
 .replay-action:hover:not(:disabled) {
-  border-color: rgba(74, 44, 18, 0.26);
-  background: rgba(255, 255, 250, 0.6);
+  border-color: rgba(93, 48, 17, 0.34);
+  background: rgba(255, 245, 214, 0.7);
   color: #4b250d;
 }
 
@@ -241,7 +269,7 @@ const progressStyle = computed(() => {
   height: 6px;
   border-radius: 999px;
   background:
-    linear-gradient(90deg, var(--replay-accent) var(--replay-progress), transparent var(--replay-progress)),
+    linear-gradient(90deg, #6b3518 var(--replay-progress), transparent var(--replay-progress)),
     var(--replay-track);
 }
 
@@ -252,7 +280,7 @@ const progressStyle = computed(() => {
   margin-top: -5px;
   border: 2px solid #fff5dc;
   border-radius: 50%;
-  background: var(--replay-accent);
+  background: #6b3518;
   box-shadow: 0 2px 8px rgba(47, 27, 12, 0.24);
 }
 
@@ -281,10 +309,10 @@ const progressStyle = computed(() => {
   height: 30px;
   min-width: 36px;
   padding: 0 8px;
-  border: 1px solid var(--replay-line);
+  border: 1px solid rgba(93, 48, 17, 0.22);
   border-radius: 6px;
-  background: rgba(255, 255, 250, 0.46);
-  color: var(--replay-accent);
+  background: rgba(255, 239, 194, 0.42);
+  color: #4b250d;
   font-size: 11px;
   font-weight: 900;
   cursor: pointer;

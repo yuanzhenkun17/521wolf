@@ -1,9 +1,16 @@
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.js'
+import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import BenchmarkBatchRunsTable from '../components/benchmark/BenchmarkBatchRunsTable.vue'
-import BenchmarkConfigPanel from '../components/benchmark/BenchmarkConfigPanel.vue'
-import BenchmarkLeaderboardTable from '../components/benchmark/BenchmarkLeaderboardTable.vue'
+import BenchmarkBoundaryBar from '../components/benchmark/BenchmarkBoundaryBar.vue'
+import BenchmarkComparisonView from '../components/benchmark/BenchmarkComparisonView.vue'
+import BenchmarkDiagnosticsExplorer from '../components/benchmark/BenchmarkDiagnosticsExplorer.vue'
+import BenchmarkRunReportPanel from '../components/benchmark/BenchmarkRunReportPanel.vue'
+import BenchmarkSnapshotReleasePanel from '../components/benchmark/BenchmarkSnapshotReleasePanel.vue'
+import BenchmarkSuiteRail from '../components/benchmark/BenchmarkSuiteRail.vue'
+import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSelector.vue'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
 
 defineOptions({
   inheritAttrs: false
@@ -13,837 +20,1140 @@ defineProps({
   returnToMatchAvailable: Boolean
 })
 
-const emit = defineEmits(['back-to-match'])
-
 const benchmark = useEvaluationWorkbench()
-
-const activeTab = ref('config')
-const selectedRunCount = computed(() => benchmark.filteredBatchRunRows.value.length)
+const activeView = ref('overview')
+const launchConfirmationOpen = ref(false)
 
 const navTabs = [
-  { key: 'config', label: '配置' },
-  { key: 'model-lb', label: '模型榜' },
-  { key: 'role-lb', label: '角色版本榜' },
-  { key: 'batches', label: '评测记录' }
+  { key: 'overview', label: 'Overview' },
+  { key: 'leaderboards', label: 'Leaderboards' },
+  { key: 'runs', label: 'Runs' },
+  { key: 'diagnostics', label: 'Diagnostics' },
+  { key: 'reports', label: 'Reports' }
 ]
 
+const benchNotice = computed(() => {
+  if (benchmark.notice.value?.message) return benchmark.notice.value
+  if (benchmark.error.value) return { type: 'error', message: benchmark.error.value }
+  return null
+})
+const benchInlineNotice = computed(() => inlineNoticeForDisplay(benchNotice.value))
+const benchErrorNotice = computed(() => noticeErrorForPanel(benchNotice.value))
+const plan = computed(() => benchmark.benchmarkPlan.value || null)
+const planBudget = computed(() => plan.value?.budget || {})
+const planEstimates = computed(() => plan.value?.estimates || {})
+const planJudge = computed(() => plan.value?.judge || {})
+const planWarnings = computed(() => Array.isArray(plan.value?.warnings) ? plan.value.warnings : [])
+const activeRuns = computed(() => benchmark.filteredBatchRunRows.value.filter((run) => run.isActive).slice(0, 4))
+const recentRuns = computed(() => benchmark.visibleBatchRunRows.value.slice(0, 5))
+const selectedSuite = computed(() => benchmark.selectedBenchmarkSuite.value || null)
+const selectedModeLabel = computed(() =>
+  benchmark.selectedBenchmarkIsModelSuite.value ? 'Model Benchmark' : 'Role-Version Benchmark'
+)
+const budgetStatusLabel = computed(() => {
+  if (!plan.value) return 'Plan pending'
+  return benchmark.benchmarkPlanBudgetExceeded.value ? 'Budget exceeded' : 'Budget ok'
+})
+const estimatedUnitsLabel = computed(() => {
+  const value = planBudget.value.estimated_units ?? planEstimates.value.estimated_llm_call_units
+  return formatNumber(value)
+})
+const estimatedUnits = computed(() =>
+  numberOrNull(planBudget.value.estimated_units ?? planEstimates.value.estimated_llm_call_units)
+)
+const budgetLimitUnits = computed(() => numberOrNull(planBudget.value.limit_units))
+const budgetDeltaUnits = computed(() => {
+  if (estimatedUnits.value == null || budgetLimitUnits.value == null) return null
+  return budgetLimitUnits.value - estimatedUnits.value
+})
+const budgetDeltaLabel = computed(() => {
+  if (budgetDeltaUnits.value == null) return 'No launch limit'
+  const prefix = budgetDeltaUnits.value >= 0 ? '+' : '-'
+  return `${prefix}${formatNumber(Math.abs(budgetDeltaUnits.value))} units`
+})
+const budgetDeltaCaption = computed(() =>
+  budgetDeltaUnits.value == null
+    ? 'set a limit to enforce stop-before-launch'
+    : (budgetDeltaUnits.value >= 0 ? 'remaining before launch' : 'over limit; launch blocked')
+)
+const gameDecisionUnitsLabel = computed(() => formatNumber(planEstimates.value.game_decision_units))
+const judgeUnitValue = computed(() =>
+  planEstimates.value.judge_decision_units ?? planJudge.value.estimated_decisions ?? plan.value?.judge_decisions
+)
+const judgeDecisionLabel = computed(() => formatNumber(judgeUnitValue.value))
+const totalGamesLabel = computed(() => formatNumber(plan.value?.total_games))
+const evalBatchLabel = computed(() => formatNumber(plan.value?.eval_batch_count))
+const suiteCostTier = computed(() => String(plan.value?.cost_tier || selectedSuite.value?.cost_tier || 'ad_hoc').toLowerCase())
+const requiresLaunchConfirmation = computed(() =>
+  ['standard', 'release'].includes(suiteCostTier.value)
+)
+const formalLaunchLabel = computed(() =>
+  benchmark.selectedBenchmarkId.value ? `${suiteCostTier.value || 'suite'} / official boundary` : 'ad-hoc / not official'
+)
+const expectedDurationLabel = computed(() => {
+  const explicitSeconds = numberOrNull(
+    planEstimates.value.expected_duration_seconds ??
+    planEstimates.value.duration_seconds ??
+    plan.value?.expected_duration_seconds
+  )
+  if (explicitSeconds != null) return formatDuration(explicitSeconds)
+  const totalGames = numberOrNull(plan.value?.total_games)
+  const maxDays = numberOrNull(plan.value?.max_days)
+  if (totalGames != null && maxDays != null) return `${formatNumber(totalGames * maxDays)} game-days`
+  return 'Plan pending'
+})
+const concurrencyLabel = computed(() => {
+  const value = numberOrNull(planJudge.value.concurrency ?? plan.value?.concurrency)
+  return value == null ? 'Backend default' : `${formatNumber(value)} judge workers`
+})
+const planCostRows = computed(() => [
+  {
+    key: 'game',
+    label: 'Game Units',
+    value: gameDecisionUnitsLabel.value,
+    caption: `${formatNumber(planEstimates.value.player_count || 12)} players x days x games`
+  },
+  {
+    key: 'judge',
+    label: 'Judge Units',
+    value: judgeDecisionLabel.value,
+    caption: planJudge.value.enabled ? `${formatNumber(planJudge.value.max_decisions_per_game)} max decisions/game` : 'decision judge disabled'
+  },
+  {
+    key: 'limit',
+    label: 'Budget Limit',
+    value: budgetLimitUnits.value == null ? 'No limit' : `${formatNumber(budgetLimitUnits.value)} units`,
+    caption: 'checked before launch'
+  },
+  {
+    key: 'remaining',
+    label: budgetDeltaUnits.value == null || budgetDeltaUnits.value >= 0 ? 'Remaining' : 'Over Limit',
+    value: budgetDeltaLabel.value,
+    caption: budgetDeltaCaption.value,
+    danger: budgetDeltaUnits.value != null && budgetDeltaUnits.value < 0
+  }
+])
+const planPolicyRows = computed(() => [
+  {
+    key: 'duration',
+    label: 'Expected Duration',
+    value: expectedDurationLabel.value,
+    caption: 'workload band before launch'
+  },
+  {
+    key: 'concurrency',
+    label: 'Concurrency',
+    value: concurrencyLabel.value,
+    caption: planJudge.value.timeout_seconds ? `${formatNumber(planJudge.value.timeout_seconds)}s judge timeout` : 'runtime policy'
+  },
+  {
+    key: 'formality',
+    label: 'Formality',
+    value: formalLaunchLabel.value,
+    caption: benchmark.selectedBenchmarkId.value ? 'eligible for isolated leaderboard' : 'ad-hoc runs do not freeze official evidence'
+  },
+  {
+    key: 'confirmation',
+    label: 'Launch Gate',
+    value: requiresLaunchConfirmation.value ? 'Confirm required' : 'Direct launch',
+    caption: requiresLaunchConfirmation.value ? 'standard/release guardrail' : 'quick suite or ad-hoc'
+  }
+])
+const launchSubjectLabel = computed(() => {
+  if (benchmark.selectedBenchmarkIsModelSuite.value) {
+    return benchmark.form.value.model_config_hash || benchmark.form.value.model_id || 'current backend model'
+  }
+  return `${benchmark.selectedRoleLabel.value} / ${benchmark.form.value.target_version_id || 'baseline'}`
+})
+
+function numberOrNull(value) {
+  if (value == null || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function formatNumber(value, fallback = '--') {
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toLocaleString('zh-CN') : fallback
+}
+
 function refresh() {
-  benchmark.refreshAll()
+  benchmark.refreshAll({ notify: true })
+}
+
+function selectRun(run) {
+  if (!run?.id) return
+  benchmark.selectBenchmarkBatch(run.id)
+  activeView.value = 'runs'
+}
+
+function formatDuration(seconds) {
+  const value = Number(seconds)
+  if (!Number.isFinite(value) || value < 0) return 'Plan pending'
+  if (value < 90) return `${Math.round(value)}s`
+  const minutes = Math.round(value / 60)
+  if (minutes < 90) return `${minutes}m`
+  const hours = Math.round(minutes / 60)
+  return `${hours}h`
+}
+
+async function launchBenchmark() {
+  launchConfirmationOpen.value = false
+  await benchmark.startEvaluation()
+}
+
+function requestLaunch() {
+  if (requiresLaunchConfirmation.value && !launchConfirmationOpen.value) {
+    launchConfirmationOpen.value = true
+    return
+  }
+  void launchBenchmark()
+}
+
+function cancelLaunchConfirmation() {
+  launchConfirmationOpen.value = false
 }
 
 onMounted(() => benchmark.refreshAll())
 </script>
 
 <template>
-  <section class="bench-page battle-log-page" aria-label="批量评测">
-    <section class="bench-shell parchment-logbook">
-      <aside class="bench-control-rail" aria-label="评测角色">
-        <header class="bench-rail-header">
-          <span>评测角色</span>
-          <strong>{{ benchmark.roleRows.value.length }}</strong>
+  <section class="bench-page" aria-label="Benchmark Workbench">
+    <div class="bench-workbench-shell">
+      <BenchmarkSuiteRail :benchmark="benchmark" />
+
+      <main class="bench-workbench-main">
+        <header class="bench-workbench-header">
+          <div class="bench-title-block">
+            <small>Evaluation Console</small>
+            <h1>Benchmark Workbench</h1>
+          </div>
+          <div class="bench-header-meta">
+            <span>
+              <small>Mode</small>
+              <b>{{ selectedModeLabel }}</b>
+            </span>
+            <span>
+              <small>Suite</small>
+              <b>{{ benchmark.selectedBenchmarkSuiteLabel.value }}</b>
+            </span>
+            <span :class="{ danger: benchmark.benchmarkPlanBudgetExceeded.value }">
+              <small>Budget</small>
+              <b>{{ budgetStatusLabel }}</b>
+            </span>
+          </div>
+          <button type="button" class="bench-refresh-button" @click="refresh">
+            Refresh
+          </button>
         </header>
 
-        <div class="bench-rail-summary">
-          <span>
-            <small>当前</small>
-            <b>{{ benchmark.selectedRoleLabel.value }}</b>
-          </span>
-          <span>
-            <small>角色数</small>
-            <b>{{ benchmark.roleRows.value.length }} 个</b>
-          </span>
+        <BenchmarkBoundaryBar :benchmark="benchmark" />
+
+        <nav class="bench-view-tabs" aria-label="Benchmark workbench views">
+          <button
+            v-for="tab in navTabs"
+            :key="tab.key"
+            type="button"
+            :class="{ active: activeView === tab.key }"
+            @click="activeView = tab.key"
+          >
+            {{ tab.label }}
+          </button>
+        </nav>
+
+        <ApiErrorPanel
+          v-if="benchErrorNotice"
+          :error="benchErrorNotice"
+          title="评测操作失败"
+          compact
+        />
+        <div
+          v-else-if="benchInlineNotice"
+          :class="['bench-alert', `bench-alert--${benchInlineNotice.type}`]"
+        >
+          {{ benchInlineNotice.message }}
         </div>
 
-        <div class="bench-role-panel" aria-label="角色选择">
-          <span class="bench-role-bar-label">角色列表</span>
-          <div class="bench-role-list">
-            <button
-              v-for="role in benchmark.roleRows.value"
-              :key="role.key"
-              type="button"
-              :class="['bench-role-chip', { selected: benchmark.selectedRole.value === role.key }]"
-              @click="benchmark.selectRole(role.key)"
-            >
-              <img :src="role.image" alt="" aria-hidden="true" />
-              <span class="bench-role-name">{{ role.label }}</span>
-            </button>
+        <section v-if="activeView === 'overview'" class="bench-overview">
+          <div class="bench-overview-primary">
+            <BenchmarkTargetSelector :benchmark="benchmark" />
+
+            <article class="bench-panel bench-planner-panel">
+              <header>
+                <div>
+                  <small>Run Planner</small>
+                  <h2>Launch Plan</h2>
+                </div>
+                <b>{{ budgetStatusLabel }}</b>
+              </header>
+              <div class="bench-plan-grid">
+                <span>
+                  <small>Total Games</small>
+                  <b>{{ totalGamesLabel }}</b>
+                </span>
+                <span>
+                  <small>Eval Batches</small>
+                  <b>{{ evalBatchLabel }}</b>
+                </span>
+                <span>
+                  <small>Judge Decisions</small>
+                  <b>{{ judgeDecisionLabel }}</b>
+                </span>
+                <span :class="{ danger: benchmark.benchmarkPlanBudgetExceeded.value }">
+                  <small>Estimated Units</small>
+                  <b>{{ estimatedUnitsLabel }}</b>
+                </span>
+              </div>
+              <div class="bench-plan-controls">
+                <label>
+                  <span>Games</span>
+                  <input
+                    v-model.number="benchmark.form.value.battle_games"
+                    type="number"
+                    min="1"
+                    max="200"
+                    :disabled="Boolean(benchmark.selectedBenchmarkId.value)"
+                  />
+                </label>
+                <label>
+                  <span>Max Days</span>
+                  <input
+                    v-model.number="benchmark.form.value.max_days"
+                    type="number"
+                    min="1"
+                    max="100"
+                    :disabled="Boolean(benchmark.selectedBenchmarkId.value)"
+                  />
+                </label>
+                <label>
+                  <span>Budget Limit</span>
+                  <input
+                    v-model.number="benchmark.form.value.budget_limit_units"
+                    type="number"
+                    min="0"
+                    max="1000000"
+                  />
+                </label>
+              </div>
+              <div class="bench-cost-breakdown" aria-label="Benchmark cost breakdown">
+                <span
+                  v-for="item in planCostRows"
+                  :key="item.key"
+                  :class="{ danger: item.danger }"
+                >
+                  <small>{{ item.label }}</small>
+                  <b>{{ item.value }}</b>
+                  <em>{{ item.caption }}</em>
+                </span>
+              </div>
+              <div class="bench-policy-breakdown" aria-label="Benchmark execution policy">
+                <span v-for="item in planPolicyRows" :key="item.key">
+                  <small>{{ item.label }}</small>
+                  <b>{{ item.value }}</b>
+                  <em>{{ item.caption }}</em>
+                </span>
+              </div>
+              <div v-if="planWarnings.length" class="bench-plan-warnings">
+                <span v-for="warning in planWarnings" :key="warning.kind || warning.message">
+                  <b>{{ warning.kind || 'warning' }}</b>
+                  <em>{{ warning.message || 'Plan warning' }}</em>
+                </span>
+              </div>
+              <div v-if="benchmark.benchmarkPlanError.value" class="bench-inline-warning">
+                {{ benchmark.benchmarkPlanError.value }}
+              </div>
+              <footer class="bench-launch-strip">
+                <span>
+                  <small>Subject</small>
+                  <b>{{ launchSubjectLabel }}</b>
+                  <em>{{ selectedSuite?.evaluation_set_id || 'ad-hoc evaluation' }}</em>
+                </span>
+                <button
+                  type="button"
+                  class="bench-launch-button"
+                  :disabled="Boolean(benchmark.actionLoading.value) || !benchmark.selectedBenchmarkCanLaunch.value"
+                  @click="requestLaunch"
+                >
+                  <template v-if="requiresLaunchConfirmation && !launchConfirmationOpen">Review Launch</template>
+                  <template v-else>{{ benchmark.selectedBenchmarkIsModelSuite.value ? 'Run Model Benchmark' : 'Run Role Benchmark' }}</template>
+                </button>
+              </footer>
+              <section v-if="launchConfirmationOpen" class="bench-launch-confirmation" aria-label="Benchmark launch confirmation">
+                <div>
+                  <small>{{ suiteCostTier }} suite confirmation</small>
+                  <b>Confirm launch boundary and budget before execution.</b>
+                </div>
+                <dl>
+                  <div>
+                    <dt>Games</dt>
+                    <dd>{{ totalGamesLabel }}</dd>
+                  </div>
+                  <div>
+                    <dt>Judge Decisions</dt>
+                    <dd>{{ judgeDecisionLabel }}</dd>
+                  </div>
+                  <div>
+                    <dt>Estimated Units</dt>
+                    <dd>{{ estimatedUnitsLabel }}</dd>
+                  </div>
+                  <div>
+                    <dt>Concurrency</dt>
+                    <dd>{{ concurrencyLabel }}</dd>
+                  </div>
+                  <div>
+                    <dt>Evaluation Set</dt>
+                    <dd>{{ selectedSuite?.evaluation_set_id || 'ad-hoc' }}</dd>
+                  </div>
+                  <div>
+                    <dt>Seed Set</dt>
+                    <dd>{{ selectedSuite?.seed_set_id || plan?.seed_set_id || 'ad-hoc' }}</dd>
+                  </div>
+                </dl>
+                <footer>
+                  <button type="button" class="bench-confirm-secondary" @click="cancelLaunchConfirmation">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    class="bench-confirm-primary"
+                    :disabled="Boolean(benchmark.actionLoading.value) || !benchmark.selectedBenchmarkCanLaunch.value"
+                    @click="launchBenchmark"
+                  >
+                    Confirm Launch
+                  </button>
+                </footer>
+              </section>
+              <span v-if="benchmark.loading.value || benchmark.actionLoading.value" class="bench-loading">
+                {{ benchmark.actionLoading.value === 'start' ? 'Launching benchmark' : 'Loading benchmark data' }}
+              </span>
+            </article>
           </div>
-        </div>
-      </aside>
 
-      <main class="bench-detail-panel">
-        <header class="bench-command-bar">
-          <div class="bench-command-title">
-            <small>评测工作台</small>
-            <h2>批量评测工作台</h2>
-          </div>
-          <div class="bench-command-metrics">
-            <span><small>当前角色</small><b>{{ benchmark.selectedRoleLabel.value }}</b></span>
-            <span><small>对战局数</small><b>{{ benchmark.form.value.battle_games }} 局</b></span>
-            <span><small>最大天数</small><b>{{ benchmark.form.value.max_days }}</b></span>
-            <span><small>评测记录</small><b>{{ selectedRunCount }}</b></span>
-          </div>
-          <div class="bench-command-actions">
-            <button type="button" class="bench-refresh-button" @click="refresh">
-              <span aria-hidden="true">&#8635;</span> 刷新
-            </button>
-          </div>
-        </header>
+          <aside class="bench-overview-side">
+            <article class="bench-panel">
+              <header>
+                <div>
+                  <small>Active Runs</small>
+                  <h2>Execution</h2>
+                </div>
+                <b>{{ activeRuns.length }}</b>
+              </header>
+              <div v-if="activeRuns.length" class="bench-run-stack">
+                <button
+                  v-for="run in activeRuns"
+                  :key="run.id"
+                  type="button"
+                  class="bench-run-card"
+                  @click="selectRun(run)"
+                >
+                  <strong>{{ run.benchmarkLabel }}</strong>
+                  <span>{{ run.statusLabel }} / {{ run.progress?.percent ? Math.round(run.progress.percent * 100) + '%' : 'progress pending' }}</span>
+                </button>
+              </div>
+              <div v-else class="bench-empty-compact">No active benchmark runs.</div>
+            </article>
 
-        <div class="bench-detail-topbar">
-          <nav class="bench-nav detail-workspace-tabs" aria-label="评测视图">
-            <button
-              v-for="tab in navTabs"
-              :key="tab.key"
-              type="button"
-              :class="['bench-nav-tab', { active: activeTab === tab.key }]"
-              @click="activeTab = tab.key"
-            >
-              <span>{{ tab.label }}</span>
-            </button>
-          </nav>
-        </div>
+            <article class="bench-panel">
+              <header>
+                <div>
+                  <small>Recent Runs</small>
+                  <h2>Latest Evidence</h2>
+                </div>
+                <b>{{ recentRuns.length }}</b>
+              </header>
+              <div v-if="recentRuns.length" class="bench-run-stack">
+                <button
+                  v-for="run in recentRuns"
+                  :key="run.id"
+                  type="button"
+                  class="bench-run-card"
+                  @click="selectRun(run)"
+                >
+                  <strong>{{ run.benchmarkLabel }}</strong>
+                  <span>{{ run.displayRole }} / {{ run.statusLabel }} / {{ run.rankableLabel }}</span>
+                </button>
+              </div>
+              <div v-else class="bench-empty-compact">No benchmark runs yet.</div>
+            </article>
+          </aside>
+        </section>
 
-        <section class="bench-main-pane">
-          <div class="bench-scroll">
-          <div v-if="benchmark.error.value" class="bench-alert">{{ benchmark.error.value }}</div>
+        <BenchmarkComparisonView
+          v-if="activeView === 'leaderboards'"
+          :benchmark="benchmark"
+        />
 
-          <BenchmarkConfigPanel
-            v-if="activeTab === 'config'"
-            :benchmark="benchmark"
-          />
+        <BenchmarkBatchRunsTable
+          v-if="activeView === 'runs'"
+          :benchmark="benchmark"
+        />
 
-          <BenchmarkLeaderboardTable
-            v-if="activeTab === 'model-lb'"
-            kind="model"
-            title="模型排行榜"
-            :meta="`${benchmark.selectedRoleLabel.value} · ${benchmark.modelLeaderboardRows.value.length} 条`"
-            :rows="benchmark.modelLeaderboardRows.value"
-          />
+        <BenchmarkDiagnosticsExplorer
+          v-if="activeView === 'diagnostics'"
+          :benchmark="benchmark"
+        />
 
-          <BenchmarkLeaderboardTable
-            v-if="activeTab === 'role-lb'"
-            kind="role"
-            title="角色版本排行榜"
-            :meta="`${benchmark.selectedRoleLabel.value} · ${benchmark.roleLeaderboardRows.value.length} 条`"
-            :rows="benchmark.roleLeaderboardRows.value"
-          />
-
-          <BenchmarkBatchRunsTable
-            v-if="activeTab === 'batches'"
-            :benchmark="benchmark"
-          />
-          </div>
+        <section
+          v-if="activeView === 'reports'"
+          class="bench-reports-view"
+        >
+          <BenchmarkSnapshotReleasePanel :benchmark="benchmark" />
+          <BenchmarkRunReportPanel :benchmark="benchmark" />
         </section>
       </main>
-    </section>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .bench-page {
-  --bench-bg: #f8f0e0;
-  --bench-surface: rgba(255, 252, 245, 0.7);
-  --bench-border: rgba(139, 94, 52, 0.15);
-  --bench-text: #3a2a18;
-  --bench-text-secondary: #8b6b4a;
-  --bench-accent: #8b5e34;
-  --bench-accent-strong: #5a3319;
-  --bench-input-bg: rgba(255, 255, 250, 0.8);
-  --bench-input-border: rgba(139, 94, 52, 0.2);
-  --bench-hover: rgba(139, 94, 52, 0.06);
-  --bench-active-bg: rgba(139, 94, 52, 0.1);
-  --bench-font: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+  --bench-surface: #ffffff;
+  --bench-border: #d8dedb;
+  --bench-text: #1f2a27;
+  --bench-text-secondary: #66736d;
+  --bench-accent: #256b8f;
+  --bench-accent-strong: #1f6f54;
+  --bench-input-bg: #ffffff;
+  --bench-input-border: #cbd5d0;
+  --bench-hover: #f2f5f3;
+  --bench-active-bg: #e6f2ee;
+  --bench-danger: #a13d36;
+  --bench-warning: #8b641f;
+  --bench-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+  --status-danger: var(--bench-danger);
+  --text-main: var(--bench-text);
+  --text-muted: var(--bench-text-secondary);
   position: fixed;
   z-index: 11;
   top: 72px;
   right: 0;
   bottom: 0;
   left: 0;
-  margin: 0;
-  padding: 0;
   overflow: hidden;
-  background: transparent;
+  background: #eef2f0;
   color: var(--bench-text);
   font-family: var(--bench-font);
-  -webkit-font-smoothing: auto;
-  text-rendering: auto;
 }
 
-.bench-shell {
+.bench-page *:not(svg):not(svg *) {
+  box-sizing: border-box;
+  font-family: var(--bench-font);
+}
+
+.bench-workbench-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr);
-  grid-template-areas:
-    "rail command"
-    "rail topbar"
-    "rail pane";
-  column-gap: 24px;
-  row-gap: 0;
-  padding: 26px;
+  grid-template-columns: 316px minmax(0, 1fr);
+  gap: 14px;
   height: 100%;
   min-height: 0;
-  overflow: hidden;
+  padding: 14px;
 }
 
-.bench-shell.parchment-logbook {
-  grid-template-columns: 248px minmax(0, 1fr);
-}
-
-.bench-detail-panel {
-  display: contents;
-}
-
-.bench-command-bar {
-  grid-area: command;
+.bench-workbench-main {
   display: grid;
-  grid-template-columns: minmax(220px, 1.1fr) minmax(300px, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 18px 20px 16px;
-  border: 1px solid rgba(90, 51, 25, 0.18);
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  background:
-    linear-gradient(135deg, rgba(58, 42, 24, 0.96), rgba(90, 51, 25, 0.9)),
-    repeating-linear-gradient(90deg, rgba(232, 196, 132, 0.08) 0 1px, transparent 1px 18px);
-  box-shadow: 0 2px 8px rgba(91, 47, 18, 0.1);
-  overflow: hidden;
-}
-
-.bench-command-title {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: end;
-  gap: 4px;
-  min-width: 0;
-}
-
-.bench-command-title small {
-  grid-column: 1 / -1;
-  color: rgba(232, 196, 132, 0.72);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.bench-command-title h2 {
-  min-width: 0;
-  overflow: hidden;
-  margin: 0;
-  color: #fff4d9;
-  font-size: 22px;
-  font-weight: 800;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bench-command-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(68px, 1fr));
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.bench-command-metrics span {
-  display: grid;
-  gap: 4px;
-  min-height: 48px;
-  padding: 8px 10px;
-  border: 1px solid rgba(232, 196, 132, 0.18);
-  border-radius: 7px;
-  background: rgba(255, 246, 218, 0.08);
-}
-
-.bench-command-metrics small {
-  color: rgba(232, 210, 170, 0.68);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.bench-command-metrics b {
-  min-width: 0;
-  overflow: hidden;
-  color: #fff4d9;
-  font-size: 15px;
-  font-weight: 800;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bench-command-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.bench-refresh-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-width: 92px;
-  height: 42px;
-  padding: 0 15px;
-  border: 1px solid rgba(232, 196, 132, 0.25);
-  border-radius: 7px;
-  color: #2d1e10;
-  background: #e8c484;
-  box-shadow: 0 3px 10px rgba(18, 10, 5, 0.18);
-  font-size: 13px;
-  font-weight: 800;
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  white-space: nowrap;
-}
-
-.bench-refresh-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 5px 14px rgba(18, 10, 5, 0.22);
-}
-
-.bench-workspace {
-  display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  gap: 10px;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
 }
 
-.bench-control-rail {
-  grid-area: rail;
+.bench-workbench-header {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(420px, 1.3fr) auto;
+  align-items: center;
   gap: 12px;
   min-width: 0;
-  min-height: 0;
-  padding: 0 14px 0 0;
-  border-right: 1px solid rgba(91, 47, 18, 0.2);
-  background: transparent;
+  padding: 10px 12px;
+  border: 1px solid var(--bench-border);
+  border-radius: 8px;
+  background: #ffffff;
 }
 
-.bench-rail-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 14px 14px 12px;
-  border-bottom: 1px solid var(--bench-border);
+.bench-title-block {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
-.bench-rail-header span {
-  color: var(--bench-text);
-  font-size: 16px;
+.bench-title-block small,
+.bench-header-meta small,
+.bench-panel header small,
+.bench-plan-grid small,
+.bench-plan-controls span,
+.bench-launch-strip small,
+.bench-run-card span {
+  color: var(--bench-text-secondary);
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
 }
 
-.bench-rail-header strong {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 26px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 11px;
-  background: var(--bench-active-bg);
-  color: var(--bench-accent);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.bench-rail-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding: 0 0 2px;
-}
-
-.bench-rail-summary span {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  min-height: 48px;
-  padding: 8px 10px;
-  border: 1px solid var(--bench-border);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.42);
-}
-
-.bench-rail-summary small {
-  color: var(--bench-text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.bench-rail-summary b {
+.bench-title-block h1 {
   min-width: 0;
   overflow: hidden;
+  margin: 0;
   color: var(--bench-text);
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.1;
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1.05;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bench-main-pane {
-  grid-area: pane;
-  align-self: start;
-  min-width: 0;
-  min-height: 0;
-  max-height: calc(100vh - 245px);
-  border: 1px solid var(--bench-border);
-  border-top: none;
-  border-radius: 0 0 8px 8px;
-  background: rgba(255, 252, 245, 0.24);
-  overflow: hidden;
-}
-
-.bench-detail-topbar {
-  grid-area: topbar;
+.bench-header-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "workspace";
-  align-items: center;
-  gap: 8px 14px;
-  flex: 0 0 auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   min-width: 0;
-  padding: 10px 16px;
-  border-right: 1px solid var(--bench-border);
-  border-left: 1px solid var(--bench-border);
-  border-bottom: 1px solid var(--bench-border);
-  background: rgba(255, 252, 245, 0.4);
 }
 
-.bench-nav {
-  grid-area: workspace;
-  display: flex;
-  gap: 6px;
+.bench-header-meta span {
+  display: grid;
+  gap: 3px;
   min-width: 0;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: none;
+  min-height: 42px;
+  padding: 7px 9px;
+  border: 1px solid var(--bench-border);
+  border-radius: 6px;
+  background: #f7f8f8;
 }
 
-.bench-nav::-webkit-scrollbar {
-  display: none;
+.bench-header-meta span.danger {
+  border-color: rgba(161, 61, 54, 0.32);
+  background: #fff6f5;
 }
 
-.bench-nav-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  flex: 0 0 auto;
-  width: auto;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--bench-input-border);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.62);
-  color: var(--bench-accent-strong);
-  font-size: 12px;
-  font-weight: 800;
-  text-align: left;
-  cursor: pointer;
+.bench-header-meta b,
+.bench-panel header b,
+.bench-plan-grid b,
+.bench-launch-strip b,
+.bench-launch-strip em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bench-nav-tab:hover {
-  border-color: var(--bench-accent-strong);
-}
-
-.bench-nav-tab.active {
-  border-color: var(--bench-accent-strong);
-  background: var(--bench-accent-strong);
-  color: #fff7dc;
-}
-
-.bench-role-panel {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 8px;
-  min-height: 0;
-}
-
-.bench-role-bar-label {
-  color: var(--bench-accent);
+.bench-header-meta b {
+  color: var(--bench-text);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
 }
 
-.bench-role-list {
-  display: grid;
-  grid-template-columns: 1fr;
-  grid-auto-rows: max-content;
-  gap: 7px;
-  align-content: start;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 2px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(139, 94, 52, 0.28) transparent;
-}
-
-.bench-role-chip {
+.bench-refresh-button,
+.bench-launch-button {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #1a5944;
+  border-radius: 6px;
+  background: #1f6f54;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.bench-refresh-button:hover,
+.bench-launch-button:hover {
+  background: #185a43;
+}
+
+.bench-launch-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bench-view-tabs {
+  display: flex;
   gap: 6px;
-  width: 100%;
-  height: 31px;
-  padding: 0 10px;
-  border: 1px solid var(--bench-input-border);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.62);
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--bench-border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.bench-view-tabs button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
   color: var(--bench-text-secondary);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
 
-.bench-role-chip:hover {
-  background: var(--bench-hover);
-  border-color: var(--bench-accent);
-}
-
-.bench-role-chip img {
-  flex: 0 0 auto;
-  width: 19px;
-  height: 19px;
-  border-radius: 50%;
-  border: 1px solid var(--bench-border);
-}
-
-.bench-role-name {
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.bench-role-chip.selected {
-  background: var(--bench-accent-strong);
-  color: #fff;
-  border-color: var(--bench-accent-strong);
-  box-shadow: 0 2px 8px rgba(90, 51, 25, 0.2);
-}
-
-.bench-role-chip.selected .bench-role-name {
-  color: #fff;
-}
-
-.bench-role-chip.selected img {
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-.bench-scroll {
-  display: flex;
-  flex-direction: column;
-  height: auto;
-  min-height: 0;
-  max-height: calc(100vh - 245px);
-  overflow-y: auto;
-  padding: 16px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(139, 94, 52, 0.34) transparent;
-}
-
-.bench-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-
-.bench-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.bench-scroll::-webkit-scrollbar-thumb {
-  background: rgba(139, 94, 52, 0.15);
-  border-radius: 3px;
-}
-
-.bench-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 94, 52, 0.25);
+.bench-view-tabs button.active {
+  border-color: #1f6f54;
+  background: #e6f2ee;
+  color: #153f31;
 }
 
 .bench-alert {
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  border: 1px solid rgba(168, 42, 42, 0.2);
+  padding: 9px 12px;
+  border: 1px solid rgba(161, 61, 54, 0.26);
   border-radius: 8px;
-  background: rgba(168, 42, 42, 0.06);
-  color: #8b3a3a;
+  background: rgba(161, 61, 54, 0.06);
+  color: var(--bench-danger);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bench-alert--success {
+  border-color: rgba(31, 111, 84, 0.28);
+  background: rgba(31, 111, 84, 0.08);
+  color: #1f6f54;
+}
+
+.bench-alert--warning {
+  border-color: rgba(139, 100, 31, 0.3);
+  background: rgba(139, 100, 31, 0.08);
+  color: var(--bench-warning);
+}
+
+.bench-overview,
+.bench-diagnostics-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bench-overview-primary,
+.bench-overview-side,
+.bench-leaderboard-stack,
+.bench-diagnostics-view {
+  min-width: 0;
+  min-height: 0;
+}
+
+.bench-overview-primary,
+.bench-overview-side,
+.bench-leaderboard-stack {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.bench-panel {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid var(--bench-border);
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.bench-panel header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bench-border);
+  background: #ffffff;
+}
+
+.bench-panel header h2,
+.bench-panel header small {
+  margin: 0;
+}
+
+.bench-panel header h2 {
+  margin-top: 2px;
+  color: var(--bench-text);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.bench-panel header b {
+  max-width: 180px;
+  padding: 3px 8px;
+  border: 1px solid var(--bench-border);
+  border-radius: 6px;
+  background: #f7f8f8;
+  color: var(--bench-text);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.bench-plan-grid,
+.bench-diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.bench-diagnostic-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.bench-plan-grid span,
+.bench-diagnostic-grid span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 56px;
+  padding: 9px 10px;
+  border: 1px solid var(--bench-border);
+  border-radius: 7px;
+  background: #f7f8f8;
+}
+
+.bench-plan-grid span.danger {
+  border-color: rgba(161, 61, 54, 0.3);
+  background: #fff6f5;
+}
+
+.bench-plan-grid b,
+.bench-diagnostic-grid b {
+  color: var(--bench-text);
+  font-size: 17px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.bench-plan-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.bench-plan-controls label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bench-plan-controls input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--bench-input-border);
+  border-radius: 6px;
+  background: var(--bench-input-bg);
+  color: var(--bench-text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 900;
 }
 
-@media (max-width: 1120px) {
-  .bench-command-bar {
-    grid-template-columns: minmax(0, 1fr) minmax(220px, 0.8fr);
-    margin: 0 12px 10px;
-  }
-
-  .bench-command-actions {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-  }
-
-  .bench-command-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .bench-shell,
-  .bench-shell.parchment-logbook {
-    grid-template-columns: 224px minmax(0, 1fr);
-  }
-
-  .bench-detail-topbar {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "workspace";
-    align-items: stretch;
-  }
+.bench-plan-controls input:disabled {
+  opacity: 0.68;
 }
 
-@media (max-width: 960px) {
-  .bench-page {
-    right: 18px;
-    left: 18px;
-    padding: 0 0 18px;
-  }
-
-  .bench-shell,
-  .bench-shell.parchment-logbook {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto;
-    grid-template-areas:
-      "command"
-      "topbar"
-      "rail"
-      "pane";
-    gap: 8px;
-    padding: 16px;
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-
-  .bench-command-bar {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
-    gap: 10px;
-    margin: 0 12px 8px;
-    padding: 14px;
-  }
-
-  .bench-command-actions {
-    grid-column: auto;
-  }
-
-  .bench-workspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .bench-control-rail {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto;
-    gap: 8px;
-    max-height: 50px;
-    overflow: hidden;
-    padding: 0 0 8px;
-    border-right: none;
-    border-bottom: 1px solid var(--bench-border);
-  }
-
-  .bench-rail-header {
-    display: none;
-  }
-
-  .bench-rail-summary {
-    display: none;
-  }
-
-  .bench-detail-topbar {
-    padding: 10px 12px;
-    overflow: hidden;
-  }
-
-  .bench-nav-tab {
-    justify-content: center;
-    min-width: max-content;
-    min-width: 0;
-    padding: 0 8px;
-  }
-
-  .bench-nav-tab span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .bench-role-panel {
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .bench-role-list {
-    display: flex;
-    gap: 8px;
-    align-content: initial;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-right: 0;
-    scrollbar-width: none;
-  }
-
-  .bench-role-list::-webkit-scrollbar {
-    display: none;
-  }
-
-  .bench-role-chip,
-  .bench-role-bar-label {
-    flex: 0 0 auto;
-  }
-
-  .bench-role-chip {
-    width: auto;
-    min-width: max-content;
-  }
-
-  .bench-scroll {
-    padding: 12px;
-    overflow: visible;
-  }
-
-  .bench-main-pane {
-    overflow: visible;
-  }
+.bench-cost-breakdown {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 12px 12px;
 }
 
-@media (max-width: 640px) {
-  .bench-page {
-    right: 10px;
-    left: 10px;
-    padding-bottom: 10px;
-  }
+.bench-policy-breakdown {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 12px 12px;
+}
 
-  .bench-shell,
-  .bench-shell.parchment-logbook {
-    gap: 10px;
-    padding: 10px;
-  }
+.bench-cost-breakdown span,
+.bench-policy-breakdown span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 9px 10px;
+  border: 1px solid #d6dfda;
+  border-radius: 7px;
+  background: #fbfcfb;
+}
 
-  .bench-command-bar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "title action"
-      "metrics metrics";
-    gap: 6px;
-    margin: 0 10px 8px;
-    padding: 9px;
-  }
+.bench-cost-breakdown span.danger {
+  border-color: rgba(161, 61, 54, 0.32);
+  background: #fff6f5;
+}
 
-  .bench-command-title {
-    grid-area: title;
-  }
+.bench-cost-breakdown small,
+.bench-cost-breakdown em,
+.bench-policy-breakdown small,
+.bench-policy-breakdown em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bench-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-  .bench-command-actions {
-    grid-area: action;
-    justify-content: end;
-    align-self: center;
-  }
+.bench-cost-breakdown b,
+.bench-policy-breakdown b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bench-text);
+  font-size: 14px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-  .bench-command-metrics {
-    grid-area: metrics;
-  }
+.bench-cost-breakdown span.danger b,
+.bench-cost-breakdown span.danger em {
+  color: var(--bench-danger);
+}
 
-  .bench-command-title {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2px;
-  }
+.bench-plan-warnings {
+  display: grid;
+  gap: 6px;
+  margin: 0 12px 12px;
+}
 
-  .bench-command-title small {
-    display: none;
-  }
+.bench-plan-warnings span {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(139, 100, 31, 0.28);
+  border-radius: 6px;
+  background: rgba(139, 100, 31, 0.08);
+}
 
-  .bench-command-title h2 {
-    font-size: 18px;
-  }
+.bench-plan-warnings b,
+.bench-plan-warnings em {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--bench-warning);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-  .bench-command-metrics {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 4px;
-  }
+.bench-inline-warning {
+  margin: 0 12px 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(139, 100, 31, 0.28);
+  border-radius: 6px;
+  background: rgba(139, 100, 31, 0.08);
+  color: var(--bench-warning);
+  font-size: 12px;
+  font-weight: 800;
+}
 
-  .bench-command-metrics span {
-    min-height: 32px;
-    padding: 3px 5px;
-  }
+.bench-launch-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 0 12px 12px;
+  padding: 10px;
+  border: 1px solid var(--bench-border);
+  border-radius: 7px;
+  background: #f7f8f8;
+}
 
-  .bench-command-metrics small {
-    display: block;
-    overflow: hidden;
-    font-size: 9px;
-    text-align: center;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+.bench-launch-strip span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
 
-  .bench-command-metrics b {
-    font-size: 12px;
-    text-align: center;
-  }
+.bench-launch-strip b {
+  color: var(--bench-text);
+  font-size: 14px;
+  font-weight: 950;
+}
 
-  .bench-refresh-button {
-    width: auto;
-    min-width: 64px;
-    height: 30px;
-    padding: 0 10px;
-    font-size: 12px;
-  }
+.bench-launch-strip em {
+  color: var(--bench-text-secondary);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
 
-  .bench-control-rail {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
-    max-height: 40px;
-    padding: 0 0 6px;
-  }
+.bench-launch-confirmation {
+  display: grid;
+  gap: 10px;
+  margin: 0 12px 12px;
+  padding: 12px;
+  border: 1px solid rgba(139, 100, 31, 0.34);
+  border-radius: 8px;
+  background: #fffaf0;
+}
 
-  .bench-detail-topbar {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "workspace";
-    padding: 8px;
-  }
+.bench-launch-confirmation small,
+.bench-launch-confirmation dt {
+  color: var(--bench-text-secondary);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
 
-  .bench-nav {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 5px;
-    padding-bottom: 0;
-  }
+.bench-launch-confirmation b {
+  display: block;
+  margin-top: 2px;
+  color: var(--bench-text);
+  font-size: 13px;
+  font-weight: 950;
+}
 
-  .bench-nav-tab {
-    flex: initial;
-    width: 100%;
-    height: 30px;
-    padding: 0 6px;
-  }
+.bench-launch-confirmation dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
 
-  .bench-role-chip {
-    height: 30px;
-  }
+.bench-launch-confirmation dl div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(139, 100, 31, 0.18);
+  border-radius: 7px;
+  background: #ffffff;
+}
 
-  .bench-scroll {
-    padding: 10px;
-  }
+.bench-launch-confirmation dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--bench-text);
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-launch-confirmation footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.bench-confirm-primary,
+.bench-confirm-secondary {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.bench-confirm-primary {
+  border: 1px solid #1a5944;
+  background: #1f6f54;
+  color: #ffffff;
+}
+
+.bench-confirm-secondary {
+  border: 1px solid var(--bench-border);
+  background: #ffffff;
+  color: var(--bench-text);
+}
+
+.bench-confirm-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bench-loading {
+  padding: 0 12px 12px;
+  color: var(--bench-text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bench-run-stack {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+}
+
+.bench-run-card {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--bench-border);
+  border-left: 4px solid #256b8f;
+  border-radius: 7px;
+  background: #f7f8f8;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bench-run-card:hover {
+  border-color: #9cadb5;
+}
+
+.bench-run-card strong,
+.bench-run-card span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-run-card strong {
+  color: var(--bench-text);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.bench-empty,
+.bench-empty-compact {
+  padding: 22px 14px;
+  color: var(--bench-text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.bench-empty-compact {
+  padding: 16px 12px;
+}
+
+.bench-leaderboard-stack,
+.bench-diagnostics-view,
+.bench-reports-view {
+  overflow-y: auto;
+}
+
+.bench-reports-view {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.bench-model-isolation p {
+  margin: 0;
+  padding: 14px;
+  color: var(--bench-text-secondary);
+  font-size: 13px;
+  font-weight: 800;
 }
 </style>

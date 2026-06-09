@@ -136,43 +136,142 @@ def _evolution_battle_result_summary(result: Any) -> Any:
     )
     return {key: result.get(key) for key in keys if key in result}
 
+def _clean_id_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
+
+def _first_id_list(*values: Any) -> list[str] | None:
+    for value in values:
+        if isinstance(value, list):
+            return _clean_id_list(value)
+    return None
+
+def _proposal_status(proposal: dict[str, Any]) -> str:
+    status = str(proposal.get("status") or proposal.get("review_status") or "proposed").strip().lower()
+    if status in {"accept", "approved", "approve"}:
+        return "accepted"
+    if status in {"reject", "declined", "deny", "denied"}:
+        return "rejected"
+    if status in {"", "pending", "reviewing"}:
+        return "proposed"
+    return status
+
+def _proposal_id(proposal: dict[str, Any], index: int | None = None) -> str:
+    proposal_id = str(proposal.get("proposal_id") or "").strip()
+    if proposal_id:
+        return proposal_id
+    if index is not None:
+        return f"proposal_{index}"
+    return ""
+
+def _preflight_status(proposal: dict[str, Any]) -> str:
+    raw = proposal.get("preflight")
+    if isinstance(raw, dict):
+        status = str(raw.get("status") or raw.get("decision") or "").strip().lower()
+        passed = raw.get("passed")
+        if passed is True or status in {"passed", "pass", "ok", "accepted", "approved"}:
+            return "passed"
+        if passed is False or status in {"failed", "fail", "rejected", "blocked", "deny", "denied"}:
+            return "failed"
+    status = str(proposal.get("preflight_status") or "").strip().lower()
+    if status in {"passed", "pass", "ok", "accepted", "approved"}:
+        return "passed"
+    if status in {"failed", "fail", "rejected", "blocked", "deny", "denied"}:
+        return "failed"
+    if proposal.get("preflight_passed") is True:
+        return "passed"
+    if proposal.get("preflight_passed") is False:
+        return "failed"
+    return "unknown"
+
+def _proposal_id_sets(run: dict[str, Any], proposals: list[dict[str, Any]]) -> dict[str, list[str]]:
+    stored = run.get("proposal_review") if isinstance(run.get("proposal_review"), dict) else {}
+    explicit_generated_ids = _first_id_list(run.get("generated_proposal_ids"), stored.get("generated_proposal_ids"))
+    if explicit_generated_ids is not None:
+        generated_ids = explicit_generated_ids
+    else:
+        generated_ids = [
+            proposal_id
+            for index, proposal in enumerate(proposals, start=1)
+            if (proposal_id := _proposal_id(proposal, index))
+        ]
+    explicit_preflight_ids = _first_id_list(
+        run.get("preflight_passed_proposal_ids"),
+        run.get("candidate_proposal_ids"),
+        stored.get("preflight_passed_proposal_ids"),
+    )
+    if explicit_preflight_ids is not None:
+        preflight_ids = explicit_preflight_ids
+    else:
+        failed_ids = {
+            proposal_id
+            for index, proposal in enumerate(proposals, start=1)
+            if (proposal_id := _proposal_id(proposal, index)) and _preflight_status(proposal) == "failed"
+        }
+        preflight_ids = [proposal_id for proposal_id in generated_ids if proposal_id not in failed_ids]
+    accepted_ids = [
+        str(proposal.get("proposal_id"))
+        for proposal in proposals
+        if _proposal_status(proposal) == "accepted" and proposal.get("proposal_id")
+    ]
+    rejected_ids = [
+        str(proposal.get("proposal_id"))
+        for proposal in proposals
+        if _proposal_status(proposal) == "rejected" and proposal.get("proposal_id")
+    ]
+    applied_ids = _first_id_list(run.get("applied_proposal_ids"), stored.get("applied_proposal_ids")) or []
+    accepted_id_set = set(accepted_ids)
+    rejected_id_set = set(rejected_ids)
+    applied_id_set = set(applied_ids)
+    pending_ids = [
+        proposal_id
+        for proposal_id in preflight_ids
+        if proposal_id not in accepted_id_set
+        and proposal_id not in rejected_id_set
+        and proposal_id not in applied_id_set
+    ]
+    return {
+        "generated": generated_ids,
+        "preflight": preflight_ids,
+        "accepted": accepted_ids,
+        "rejected": rejected_ids,
+        "pending": pending_ids,
+        "applied": applied_ids,
+    }
+
 def _proposal_review_summary(run: dict[str, Any]) -> dict[str, Any]:
     stored = run.get("proposal_review") if isinstance(run.get("proposal_review"), dict) else {}
     proposals = [item for item in run.get("proposals", []) or [] if isinstance(item, dict)]
     counts: dict[str, int] = {}
-    accepted_ids: list[str] = []
-    rejected_ids: list[str] = []
-    pending_ids: list[str] = []
     for proposal in proposals:
-        proposal_id = str(proposal.get("proposal_id") or "").strip()
-        status = str(proposal.get("status") or proposal.get("review_status") or "proposed").strip().lower()
-        if status in {"accept", "approved", "approve"}:
-            status = "accepted"
-        elif status in {"reject", "declined", "deny", "denied"}:
-            status = "rejected"
-        elif status in {"", "pending", "reviewing"}:
-            status = "proposed"
+        status = _proposal_status(proposal)
         counts[status] = counts.get(status, 0) + 1
-        if not proposal_id:
-            continue
-        if status == "accepted":
-            accepted_ids.append(proposal_id)
-        elif status == "rejected":
-            rejected_ids.append(proposal_id)
-        else:
-            pending_ids.append(proposal_id)
-    applied_ids = [
-        str(item)
-        for item in (run.get("applied_proposal_ids") or stored.get("applied_proposal_ids") or [])
-        if str(item)
-    ]
+    id_sets = _proposal_id_sets(run, proposals)
+    generated_ids = id_sets["generated"]
+    preflight_ids = id_sets["preflight"]
+    accepted_ids = id_sets["accepted"]
+    rejected_ids = id_sets["rejected"]
+    pending_ids = id_sets["pending"]
+    applied_ids = id_sets["applied"]
+    counts["generated"] = len(generated_ids)
+    counts["preflight"] = len(preflight_ids)
+    counts["pending"] = len(pending_ids)
+    counts["accepted"] = len(accepted_ids)
+    counts["rejected"] = len(rejected_ids)
+    counts["applied"] = len(applied_ids)
     if stored:
         summary = dict(stored)
         summary.setdefault("schema_version", 1)
         summary.setdefault("total", len(proposals))
+        summary.setdefault("generated_count", len(generated_ids))
+        summary.setdefault("preflight_passed_count", len(preflight_ids))
         summary.setdefault("accepted_count", len(accepted_ids))
         summary.setdefault("rejected_count", len(rejected_ids))
         summary.setdefault("pending_count", len(pending_ids))
+        summary.setdefault("applied_count", len(applied_ids))
+        summary.setdefault("generated_proposal_ids", generated_ids)
+        summary.setdefault("preflight_passed_proposal_ids", preflight_ids)
         summary.setdefault("accepted_proposal_ids", accepted_ids)
         summary.setdefault("rejected_proposal_ids", rejected_ids)
         summary.setdefault("pending_proposal_ids", pending_ids)
@@ -195,9 +294,14 @@ def _proposal_review_summary(run: dict[str, Any]) -> dict[str, Any]:
         "schema_version": 1,
         "status": status,
         "total": len(proposals),
+        "generated_count": len(generated_ids),
+        "preflight_passed_count": len(preflight_ids),
         "accepted_count": len(accepted_ids),
         "rejected_count": len(rejected_ids),
         "pending_count": len(pending_ids),
+        "applied_count": len(applied_ids),
+        "generated_proposal_ids": generated_ids,
+        "preflight_passed_proposal_ids": preflight_ids,
         "accepted_proposal_ids": accepted_ids,
         "rejected_proposal_ids": rejected_ids,
         "pending_proposal_ids": pending_ids,
@@ -205,6 +309,21 @@ def _proposal_review_summary(run: dict[str, Any]) -> dict[str, Any]:
         "counts": counts,
         "updated_at": run.get("last_heartbeat_at") or run.get("finished_at"),
     }
+
+def _proposal_attribution_report(run: dict[str, Any], gate: dict[str, Any] | None = None) -> dict[str, Any]:
+    battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
+    candidates = (
+        run.get("proposal_attribution_report"),
+        run.get("proposal_attribution"),
+        gate.get("proposal_attribution_report") if isinstance(gate, dict) else None,
+        gate.get("proposal_attribution") if isinstance(gate, dict) else None,
+        battle.get("proposal_attribution_report"),
+        battle.get("proposal_attribution"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            return candidate
+    return {}
 
 def _evolution_gate_report(run: dict[str, Any]) -> dict[str, Any]:
     battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
@@ -227,13 +346,22 @@ def _evolution_gate_report(run: dict[str, Any]) -> dict[str, Any]:
     if blocked is None:
         blocked = gate.get("reasons")
     metrics = gate.get("metrics") if isinstance(gate.get("metrics"), dict) else {}
+    release_gate = gate.get("release_gate") if isinstance(gate.get("release_gate"), dict) else run.get("release_gate")
+    proposal_attribution = _proposal_attribution_report(run, gate)
     return {
         "schema_version": 1,
         "decision": decision,
         "promote_allowed": bool(gate.get("promote_allowed", decision == "promote")),
+        "release_decision": gate.get("release_decision") or (release_gate or {}).get("decision"),
+        "release_gate": release_gate if isinstance(release_gate, dict) else {},
+        "policy_versions": gate.get("policy_versions") if isinstance(gate.get("policy_versions"), dict) else {},
+        "thresholds": gate.get("thresholds") if isinstance(gate.get("thresholds"), dict) else {},
         "recommendation": gate.get("recommendation") or run.get("recommendation"),
         "blocked_reasons": [str(item) for item in blocked or []],
         "metrics": metrics,
+        "scenario_replay": gate.get("scenario_replay") if isinstance(gate.get("scenario_replay"), dict) else {},
+        "proposal_attribution": proposal_attribution,
+        "trust_bundle_completeness": gate.get("trust_bundle_completeness") if isinstance(gate.get("trust_bundle_completeness"), dict) else {},
         "risk_tags": [str(item) for item in gate.get("risk_tags", []) or []],
         "raw": gate,
     }
@@ -278,6 +406,7 @@ def _evolution_run_summary(run: dict[str, Any]) -> dict[str, Any]:
     battle_games = [game for game in run.get("battle_games", []) or [] if isinstance(game, dict)]
     gate_report = _evolution_gate_report(run)
     paired_summary = _paired_seed_summary(run)
+    result = run.get("result") if isinstance(run.get("result"), dict) else {}
     summary = {
         key: run.get(key)
         for key in (
@@ -306,8 +435,18 @@ def _evolution_run_summary(run: dict[str, Any]) -> dict[str, Any]:
             "stage_progress",
             "diagnostics",
             "recommendation",
+            "published_version_id",
+            "published_release_stage",
+            "release_stage",
+            "promoted_version_id",
             "promotion_gate",
             "gate_report",
+            "release_gate",
+            "release_decision",
+            "trust_bundle",
+            "scenario_replay_report",
+            "scenario_replay_summary",
+            "proposal_attribution_report",
             "paired_seed_summary",
             "proposal_review",
             "error",
@@ -328,8 +467,18 @@ def _evolution_run_summary(run: dict[str, Any]) -> dict[str, Any]:
             "overall_progress": run.get("overall_progress") if isinstance(run.get("overall_progress"), dict) else _overall_progress(run, training_games=training_games, battle_games=battle_games),
             "stage_progress": run.get("stage_progress") if isinstance(run.get("stage_progress"), dict) else run.get("progress", {}),
             "battle_result": _evolution_battle_result_summary(run.get("battle_result")),
+            "published_version_id": run.get("published_version_id") or result.get("published_version_id"),
+            "published_release_stage": run.get("published_release_stage") or result.get("published_release_stage"),
+            "release_stage": run.get("release_stage") or result.get("published_release_stage") or result.get("release_stage"),
+            "promoted_version_id": run.get("promoted_version_id") or result.get("promoted_version_id"),
             "promotion_gate": run.get("promotion_gate") if isinstance(run.get("promotion_gate"), dict) else gate_report["raw"],
             "gate_report": gate_report,
+            "release_gate": run.get("release_gate") if isinstance(run.get("release_gate"), dict) else gate_report.get("release_gate", {}),
+            "release_decision": run.get("release_decision") or gate_report.get("release_decision"),
+            "trust_bundle": run.get("trust_bundle") if isinstance(run.get("trust_bundle"), dict) else {},
+            "scenario_replay_report": run.get("scenario_replay_report") if isinstance(run.get("scenario_replay_report"), dict) else {},
+            "scenario_replay_summary": run.get("scenario_replay_summary") if isinstance(run.get("scenario_replay_summary"), dict) else {},
+            "proposal_attribution_report": _proposal_attribution_report(run, gate_report["raw"]),
             "paired_seed_summary": paired_summary,
             "proposal_review": _proposal_review_summary(run),
         }
@@ -368,6 +517,8 @@ def _evolution_batch_summary(batch: dict[str, Any]) -> dict[str, Any]:
             "schema_version",
             "batch_id",
             "source",
+            "benchmark",
+            "target_type",
             "roles",
             "status",
             "cancelled",
@@ -386,6 +537,7 @@ def _evolution_batch_summary(batch: dict[str, Any]) -> dict[str, Any]:
             "runs",
             "run_summaries",
             "config",
+            "run_plan",
             "error",
             "stop_requested",
         )

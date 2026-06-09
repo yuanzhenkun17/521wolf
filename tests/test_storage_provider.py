@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -223,6 +224,7 @@ def test_postgres_version_registry_facade_materializes_skills() -> None:
                             "source": item["source"],
                             "created_at": item["created_at"],
                             "status": item["status"],
+                            "provenance_json": item["provenance_json"],
                         }
                     )
                     for (item_role, version_id), item in self.versions.items()
@@ -240,6 +242,7 @@ def test_postgres_version_registry_facade_materializes_skills() -> None:
                     notes,
                     status,
                     created_at,
+                    provenance_json,
                 ) = params
                 self.versions[(role, version_id)] = {
                     "id": version_id,
@@ -251,7 +254,13 @@ def test_postgres_version_registry_facade_materializes_skills() -> None:
                     "notes": notes,
                     "status": status,
                     "created_at": created_at,
+                    "provenance_json": provenance_json,
                 }
+                return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
+            if text.startswith("UPDATE role_versions SET status = ?, provenance_json = ?"):
+                status, provenance_json, role, version_id = params
+                self.versions[(role, version_id)]["status"] = status
+                self.versions[(role, version_id)]["provenance_json"] = provenance_json
                 return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
             if text.startswith("UPDATE role_versions SET status = 'archived'"):
                 role, version_id = params
@@ -298,8 +307,9 @@ def test_postgres_version_registry_facade_materializes_skills() -> None:
     from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmp:
+        conn = _Conn()
         registry = PostgresVersionRegistry(
-            _Conn(),
+            conn,
             registry_dir=Path(tmp) / "registry",
             owns_conn=True,
         )
@@ -311,15 +321,117 @@ def test_postgres_version_registry_facade_materializes_skills() -> None:
                 set_as_baseline=True,
                 expected_current=None,
             )
+            shadow_id = registry.publish_skills(
+                "seer",
+                {"main.md": _registry_skill("shadow candidate")},
+                parent_id=version_id,
+                source="evolve",
+                run_id="run_shadow",
+                proposal_ids=["p_shadow"],
+                version_id="seer_shadow",
+                release_stage="shadow",
+                provenance={
+                    "trust_bundle_id": "tb_shadow",
+                    "release_decision": "shadow_candidate",
+                },
+            )
+            canary_id = registry.publish_skills(
+                "seer",
+                {"main.md": _registry_skill("canary candidate")},
+                parent_id=shadow_id,
+                source="evolve",
+                run_id="run_canary",
+                proposal_ids=["p_canary"],
+                version_id="seer_canary",
+                release_stage="canary",
+                provenance={
+                    "trust_bundle_id": "tb_canary",
+                    "release_decision": "canary_candidate",
+                },
+            )
 
             assert version_id == "seer_baseline"
             assert registry.get_baseline("seer") == version_id
+            assert conn.baselines["seer"] == version_id
             assert registry.read_skill_contents("seer", version_id)["main.md"].endswith("\n")
             assert registry.list_roles() == ["seer"]
-            assert registry.list_versions("seer")[0].is_baseline is True
+            summaries = {summary.version_id: summary for summary in registry.list_versions("seer")}
+            assert summaries[version_id].is_baseline is True
+            assert summaries[version_id].release_stage == "baseline"
+            assert summaries[version_id].to_dict()["provenance"]["release_stage"] == "baseline"
+            assert summaries[shadow_id].is_baseline is False
+            assert summaries[shadow_id].status == "shadow"
+            assert summaries[shadow_id].release_stage == "shadow"
+            assert summaries[shadow_id].provenance["run_id"] == "run_shadow"
+            assert summaries[shadow_id].provenance["proposal_ids"] == ["p_shadow"]
+            assert summaries[shadow_id].to_dict()["provenance"]["trust_bundle_id"] == "tb_shadow"
+            assert summaries[canary_id].is_baseline is False
+            assert summaries[canary_id].status == "canary"
+            assert summaries[canary_id].release_stage == "canary"
+            assert summaries[canary_id].provenance["release_decision"] == "canary_candidate"
+            assert json.loads(conn.versions[("seer", shadow_id)]["provenance_json"])["release_stage"] == "shadow"
+            assert json.loads(conn.versions[("seer", canary_id)]["provenance_json"])["release_stage"] == "canary"
             assert (registry.get_skill_dir("seer", version_id) / "main.md").exists()
 
             config = build_baseline_config(registry)
+            assert config.role_versions == {"seer": version_id}
+            canary_baseline_id = registry.publish_skills(
+                "seer",
+                {"main.md": _registry_skill("canary candidate")},
+                parent_id=shadow_id,
+                source="evolve",
+                run_id="run_canary_baseline",
+                proposal_ids=["p_canary"],
+                version_id=canary_id,
+                set_as_baseline=True,
+                expected_current=version_id,
+                release_stage="baseline",
+                provenance={
+                    "trust_bundle_id": "tb_canary_baseline",
+                    "release_decision": "baseline_promote",
+                },
+            )
+            assert canary_baseline_id == canary_id
+            assert registry.get_baseline("seer") == canary_id
+            canary_summary = {
+                summary.version_id: summary
+                for summary in registry.list_versions("seer")
+            }[canary_id]
+            assert canary_summary.is_baseline is True
+            assert canary_summary.release_stage == "baseline"
+            assert canary_summary.provenance["release_decision"] == "baseline_promote"
+            assert canary_summary.provenance["trust_bundle_id"] == "tb_canary_baseline"
+            assert json.loads(conn.versions[("seer", canary_id)]["provenance_json"])["release_stage"] == "baseline"
+
+            config = build_baseline_config(registry)
+            assert config.role_versions == {"seer": canary_id}
+            promoted_id = registry.publish_skills(
+                "seer",
+                {"main.md": _registry_skill("baseline promoted")},
+                parent_id=canary_id,
+                source="evolve",
+                run_id="run_baseline",
+                proposal_ids=["p_baseline"],
+                version_id="seer_promoted",
+                set_as_baseline=True,
+                expected_current=canary_id,
+                release_stage="baseline",
+                provenance={
+                    "trust_bundle_id": "tb_baseline",
+                    "release_decision": "baseline_promote",
+                },
+            )
+            assert registry.get_baseline("seer") == promoted_id
+            promoted_summary = {
+                summary.version_id: summary
+                for summary in registry.list_versions("seer")
+            }[promoted_id]
+            assert promoted_summary.status == "baseline"
+            assert promoted_summary.release_stage == "baseline"
+            assert promoted_summary.provenance["trust_bundle_id"] == "tb_baseline"
+
+            config = build_baseline_config(registry)
+            assert config.role_versions == {"seer": promoted_id}
             composite = build_composite_skill_dir(registry, config)
             assert composite is not None
             assert (composite / "seer" / "main.md").exists()
@@ -336,6 +448,71 @@ def test_postgres_version_registry_facade_materializes_skills() -> None:
             assert len(registry.load_rejected("seer")) == 1
         finally:
             registry.close()
+
+
+def test_filesystem_version_registry_refreshes_existing_candidate_provenance_on_baseline() -> None:
+    from app.lib.version import VersionRegistry
+
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        registry = VersionRegistry(Path(tmp) / "registry")
+        baseline_id = registry.publish_skills(
+            "seer",
+            {"main.md": _registry_skill("baseline candidate")},
+            version_id="seer_baseline",
+            set_as_baseline=True,
+            expected_current=None,
+        )
+        canary_id = registry.publish_skills(
+            "seer",
+            {"main.md": _registry_skill("canary candidate")},
+            parent_id=baseline_id,
+            source="evolve",
+            run_id="run_canary",
+            proposal_ids=["p_canary"],
+            version_id="seer_canary",
+            release_stage="canary",
+            provenance={
+                "trust_bundle_id": "tb_canary",
+                "release_decision": "canary_candidate",
+            },
+        )
+        assert registry.get_baseline("seer") == baseline_id
+        assert {
+            summary.version_id: summary
+            for summary in registry.list_versions("seer")
+        }[canary_id].release_stage == "canary"
+
+        republished = registry.publish_skills(
+            "seer",
+            {"main.md": _registry_skill("canary candidate")},
+            parent_id=baseline_id,
+            source="evolve",
+            run_id="run_canary_baseline",
+            proposal_ids=["p_canary"],
+            version_id=canary_id,
+            set_as_baseline=True,
+            expected_current=baseline_id,
+            release_stage="baseline",
+            provenance={
+                "trust_bundle_id": "tb_canary_baseline",
+                "release_decision": "baseline_promote",
+            },
+        )
+
+        assert republished == canary_id
+        assert registry.get_baseline("seer") == canary_id
+        summary = {
+            item.version_id: item
+            for item in registry.list_versions("seer")
+        }[canary_id]
+        assert summary.is_baseline is True
+        assert summary.release_stage == "baseline"
+        assert summary.provenance["release_stage"] == "baseline"
+        assert summary.provenance["release_decision"] == "baseline_promote"
+        assert summary.provenance["trust_bundle_id"] == "tb_canary_baseline"
 
 
 def test_version_registry_from_env_selects_postgres_registry(

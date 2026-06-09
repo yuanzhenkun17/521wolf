@@ -57,7 +57,7 @@ const coverageRows = computed(() => {
   for (const item of props.rows) {
     const label = props.kind === 'role'
       ? sourceLabel(item.source || 'version')
-      : (item.is_baseline ? '基线模型' : '候选模型')
+      : modelGroupLabel(item)
     groups.set(label, (groups.get(label) || 0) + 1)
   }
   return [...groups.entries()].map(([label, count]) => ({
@@ -109,14 +109,24 @@ function candidateNumber(item) {
 function rowKey(item) {
   if (!item) return ''
   return props.kind === 'model'
-    ? String(item.hash || item.target_version_id || item.short || '')
+    ? String(item.subject_id || item.model_config_hash || item.model_id || item.hash || item.target_version_id || item.short || '')
     : String(item.version_id || item.short || '')
+}
+
+function modelLabel(item) {
+  if (!item) return '暂无'
+  return item.model_id || item.model_config_hash || item.subject_id || item.hash || (item.is_baseline ? '基线模型' : `候选模型${candidateNumber(item)}`)
+}
+
+function modelGroupLabel(item) {
+  if (!item) return '未知模型'
+  return item.model_id || item.model_config_hash || item.subject_id || '候选模型'
 }
 
 function rowLabel(item) {
   if (!item) return '暂无'
   if (props.kind === 'model') {
-    return item.is_baseline ? '基线模型' : `候选模型${candidateNumber(item)}`
+    return modelLabel(item)
   }
   return item.is_baseline ? '基线版本' : `候选版本${candidateNumber(item)}`
 }
@@ -138,12 +148,10 @@ function rowLabel(item) {
       <span>
         <small>平均得分</small>
         <b>{{ averageScore }}</b>
-        <em>{{ rows.length }} 条记录</em>
       </span>
       <span>
         <small>平均胜率</small>
         <b>{{ averageWinRate }}</b>
-        <em>胜率均值</em>
       </span>
     </section>
     <section v-else class="bench-result-empty">
@@ -156,7 +164,6 @@ function rowLabel(item) {
       <article class="bench-card bench-leaderboard-card">
         <header>
           <div>
-            <small>排行榜</small>
             <h2>{{ title }}</h2>
           </div>
           <b>{{ meta }}</b>
@@ -183,7 +190,7 @@ function rowLabel(item) {
             :class="['bench-row', 'bench-row--' + kind]"
           >
             <template v-if="kind === 'model'">
-              <span>{{ rowLabel(item) }}<small v-if="item.is_baseline">基线</small></span>
+              <span>{{ rowLabel(item) }}</span>
               <span>{{ item.scorePct }}%</span>
               <span>{{ item.winRatePct }}%</span>
               <span :class="item.deltaScore >= 0 ? 'positive' : 'negative'">
@@ -191,7 +198,7 @@ function rowLabel(item) {
               </span>
             </template>
             <template v-else>
-              <span>{{ rowLabel(item) }}<small v-if="item.is_baseline">基线</small></span>
+              <span>{{ rowLabel(item) }}</span>
               <span>{{ sourceLabel(item.source) }}</span>
               <span>{{ item.scorePct }}%</span>
               <span>{{ item.winRatePct }}%</span>
@@ -219,7 +226,6 @@ function rowLabel(item) {
     <aside v-if="showRankSummary" class="bench-card bench-rank-card">
       <header>
         <div>
-          <small>排名</small>
           <h2>排名摘要</h2>
         </div>
         <b>{{ rankedRows.length }}</b>

@@ -28,6 +28,7 @@ class EvolutionStatus(str, Enum):
     TRAINING = "training"
     CONSOLIDATING = "consolidating"
     APPLYING = "applying"
+    SCENARIO_REPLAY = "scenario_replay"
     BATTLING = "battling"
     REVIEWING = "reviewing"
     PROMOTED = "promoted"
@@ -44,34 +45,62 @@ class SkillProposal:
     proposal_id: str = ""
     target_file: str = ""
     action_type: str = ""
+    title: str = ""
     section: str = ""
     content: str = ""
     rationale: str = ""
+    hypothesis: str = ""
+    problem_observation: str = ""
+    trigger_condition: dict[str, Any] = field(default_factory=dict)
+    expected_effect: dict[str, Any] = field(default_factory=dict)
+    metric_targets: dict[str, Any] = field(default_factory=dict)
+    evidence_game_ids: list[str] = field(default_factory=list)
+    counter_evidence_game_ids: list[str] = field(default_factory=list)
+    diff_intent: str = ""
     confidence: float = 0.0
     risk: str = "medium"
+    risk_tags: list[str] = field(default_factory=list)
+    failure_mode: str = ""
     expected_metric: str = ""
     expected_direction: str = "improve"
     evidence: list[dict[str, Any]] = field(default_factory=list)
     conflicts_with: list[str] = field(default_factory=list)
     status: str = "proposed"
     quality_score: dict[str, Any] = field(default_factory=dict)
+    preflight_status: str = "pending"
+    preflight_reasons: list[str] = field(default_factory=list)
+    preflight_report: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "proposal_id": self.proposal_id,
             "target_file": self.target_file,
             "action_type": self.action_type,
+            "title": self.title,
             "section": self.section,
             "content": self.content,
             "rationale": self.rationale,
+            "hypothesis": self.hypothesis,
+            "problem_observation": self.problem_observation,
+            "trigger_condition": dict(self.trigger_condition),
+            "expected_effect": dict(self.expected_effect),
+            "metric_targets": dict(self.metric_targets),
+            "evidence_game_ids": list(self.evidence_game_ids),
+            "counter_evidence_game_ids": list(self.counter_evidence_game_ids),
+            "diff_intent": self.diff_intent,
             "confidence": self.confidence,
             "risk": self.risk,
+            "risk_tags": list(self.risk_tags),
+            "failure_mode": self.failure_mode,
             "expected_metric": self.expected_metric,
             "expected_direction": self.expected_direction,
             "evidence": self.evidence,
             "conflicts_with": self.conflicts_with,
             "status": self.status,
             "quality_score": dict(self.quality_score),
+            "preflight_status": self.preflight_status,
+            "preflight_reasons": list(self.preflight_reasons),
+            "preflight_report": dict(self.preflight_report),
         }
 
     @classmethod
@@ -82,17 +111,31 @@ class SkillProposal:
             proposal_id=str(data.get("proposal_id", "")),
             target_file=str(data.get("target_file", "")),
             action_type=str(data.get("action_type", "")),
+            title=str(data.get("title", "")),
             section=str(data.get("section", "")),
             content=str(data.get("content", "")),
             rationale=str(data.get("rationale", "")),
+            hypothesis=str(data.get("hypothesis", "")),
+            problem_observation=str(data.get("problem_observation", "")),
+            trigger_condition=dict(data.get("trigger_condition", {}) or {}) if isinstance(data.get("trigger_condition", {}), dict) else {},
+            expected_effect=dict(data.get("expected_effect", {}) or {}) if isinstance(data.get("expected_effect", {}), dict) else {},
+            metric_targets=dict(data.get("metric_targets", {}) or {}) if isinstance(data.get("metric_targets", {}), dict) else {},
+            evidence_game_ids=[str(g) for g in data.get("evidence_game_ids", [])],
+            counter_evidence_game_ids=[str(g) for g in data.get("counter_evidence_game_ids", [])],
+            diff_intent=str(data.get("diff_intent", "")),
             confidence=float(data.get("confidence", 0.0)),
-            risk=str(data.get("risk", "medium")),
+            risk=str(data.get("risk", data.get("risk_level", "medium"))),
+            risk_tags=[str(tag) for tag in data.get("risk_tags", [])],
+            failure_mode=str(data.get("failure_mode", "")),
             expected_metric=str(data.get("expected_metric", "")),
             expected_direction=str(data.get("expected_direction", "improve")),
             evidence=[dict(e) for e in data.get("evidence", [])],
             conflicts_with=[str(c) for c in data.get("conflicts_with", [])],
             status=str(data.get("status", "proposed")),
             quality_score=dict(data.get("quality_score", {}) or {}),
+            preflight_status=str(data.get("preflight_status", "pending")),
+            preflight_reasons=[str(r) for r in data.get("preflight_reasons", [])],
+            preflight_report=dict(data.get("preflight_report", {}) or {}),
         )
 
 
@@ -108,6 +151,12 @@ class SkillConsolidation:
     source_window: int = 0
     prompt_version: str = ""
     model_name: str | None = None
+    generated_proposal_ids: list[str] = field(default_factory=list)
+    preflight_passed_proposal_ids: list[str] = field(default_factory=list)
+    preflight_rejected_proposal_ids: list[str] = field(default_factory=list)
+    accepted_proposal_ids: list[str] = field(default_factory=list)
+    rejected_proposal_ids: list[str] = field(default_factory=list)
+    preflight_reports: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -123,6 +172,12 @@ class SkillConsolidation:
             "source_window": self.source_window,
             "prompt_version": self.prompt_version,
             "model_name": self.model_name,
+            "generated_proposal_ids": list(self.generated_proposal_ids),
+            "preflight_passed_proposal_ids": list(self.preflight_passed_proposal_ids),
+            "preflight_rejected_proposal_ids": list(self.preflight_rejected_proposal_ids),
+            "accepted_proposal_ids": list(self.accepted_proposal_ids),
+            "rejected_proposal_ids": list(self.rejected_proposal_ids),
+            "preflight_reports": [dict(item) for item in self.preflight_reports],
             "warnings": list(self.warnings),
             "errors": list(self.errors),
         }
@@ -142,6 +197,12 @@ class SkillConsolidation:
             source_window=int(data.get("source_window", 0)),
             prompt_version=str(data.get("prompt_version", "")),
             model_name=data.get("model_name"),
+            generated_proposal_ids=[str(p) for p in data.get("generated_proposal_ids", [])],
+            preflight_passed_proposal_ids=[str(p) for p in data.get("preflight_passed_proposal_ids", [])],
+            preflight_rejected_proposal_ids=[str(p) for p in data.get("preflight_rejected_proposal_ids", [])],
+            accepted_proposal_ids=[str(p) for p in data.get("accepted_proposal_ids", [])],
+            rejected_proposal_ids=[str(p) for p in data.get("rejected_proposal_ids", [])],
+            preflight_reports=[dict(item) for item in data.get("preflight_reports", []) if isinstance(item, dict)],
             warnings=[str(w) for w in data.get("warnings", [])],
             errors=[str(e) for e in data.get("errors", [])],
         )
@@ -313,17 +374,29 @@ def score_proposal_quality(
         evidence = [dict(e) for e in data.get("evidence", []) if isinstance(e, dict)]
     raw_data = dict(raw or data)
     game_ids = _proposal_source_game_ids(raw_data, evidence)
-    risk = str(data.get("risk", "medium")).lower()
+    for game_id in _as_str_list(data.get("evidence_game_ids")):
+        if game_id:
+            game_ids.add(game_id)
+    risk = str(data.get("risk", data.get("risk_level", "medium"))).lower()
     duplicate_rejected = _proposal_matches_rejected(data, rejected or [])
     high_risk_fields = _proposal_high_risk_fields(data)
     evidence_count = len(evidence)
     covered_game_count = len(game_ids)
+    has_hypothesis = bool(str(data.get("hypothesis", "")).strip())
+    has_trigger = bool(_non_empty_mapping(data.get("trigger_condition")))
+    has_metric_target = bool(_non_empty_mapping(data.get("metric_targets")))
 
     score = 0.0
     score += min(evidence_count, 4) * 0.12
     score += min(covered_game_count, 4) * 0.12
     score += max(0.0, min(1.0, _as_float(data.get("confidence"), 0.0))) * 0.24
     score += {"low": 0.16, "medium": 0.08, "high": -0.20}.get(risk, 0.0)
+    if has_hypothesis:
+        score += 0.08
+    if has_trigger:
+        score += 0.08
+    if has_metric_target:
+        score += 0.08
     if duplicate_rejected:
         score -= 0.25
     if high_risk_fields:
@@ -337,6 +410,9 @@ def score_proposal_quality(
         "risk": risk,
         "duplicate_rejected": duplicate_rejected,
         "high_risk_fields": high_risk_fields,
+        "has_hypothesis": has_hypothesis,
+        "has_trigger_condition": has_trigger,
+        "has_metric_targets": has_metric_target,
     }
 
 
@@ -348,6 +424,79 @@ def annotate_proposal_quality(
     """Attach deterministic quality_score to proposals in place."""
     for proposal in proposals:
         proposal.quality_score = score_proposal_quality(proposal, rejected=rejected)
+
+
+def preflight_proposal(
+    proposal: SkillProposal | dict[str, Any],
+    raw: dict[str, Any] | None = None,
+    *,
+    rejected: list[dict[str, Any]] | None = None,
+    duplicate_threshold: float = 0.72,
+) -> dict[str, Any]:
+    """Run deterministic Phase-A proposal checks before candidate build."""
+    row = proposal.to_dict() if isinstance(proposal, SkillProposal) else dict(proposal or {})
+    raw_data = dict(raw or row)
+    evidence_rows = [dict(item) for item in row.get("evidence", []) if isinstance(item, dict)]
+    evidence_game_ids = sorted(_proposal_source_game_ids(raw_data, evidence_rows))
+    for game_id in _as_str_list(row.get("evidence_game_ids")):
+        if game_id and game_id not in evidence_game_ids:
+            evidence_game_ids.append(game_id)
+
+    reasons: list[str] = []
+    checks: dict[str, Any] = {
+        "has_hypothesis": bool(str(row.get("hypothesis", "")).strip()),
+        "has_trigger_condition": _non_empty_mapping(row.get("trigger_condition")),
+        "has_expected_effect": _non_empty_mapping(row.get("expected_effect")),
+        "has_metric_targets": _non_empty_mapping(row.get("metric_targets")),
+        "evidence_game_count": len(evidence_game_ids),
+        "risk": str(row.get("risk", row.get("risk_level", "medium"))).lower(),
+    }
+
+    for field_name in ("target_file", "action_type", "content", "rationale"):
+        if not str(row.get(field_name, "")).strip():
+            reasons.append(f"missing {field_name}")
+    if not checks["has_hypothesis"]:
+        reasons.append("missing hypothesis")
+    if not checks["has_trigger_condition"]:
+        reasons.append("missing trigger_condition")
+    if not checks["has_expected_effect"]:
+        reasons.append("missing expected_effect")
+    if not checks["has_metric_targets"]:
+        reasons.append("missing metric_targets")
+    if checks["evidence_game_count"] < 2:
+        reasons.append("requires evidence from at least 2 distinct game_id values")
+    if checks["risk"] == "high":
+        reasons.append("high risk proposals require manual review")
+
+    high_risk_fields = _proposal_high_risk_fields(row)
+    if high_risk_fields:
+        reasons.append("touches high-risk fields: " + ",".join(high_risk_fields))
+    checks["high_risk_fields"] = high_risk_fields
+
+    policy_specific_tags = _proposal_policy_specific_tags(row)
+    if policy_specific_tags:
+        reasons.append("strategy condition is overfit-specific: " + ",".join(policy_specific_tags))
+    checks["policy_specific_tags"] = policy_specific_tags
+
+    similarity = reject_buffer_similarity(row, rejected, threshold=duplicate_threshold)
+    checks["reject_buffer_similarity"] = similarity
+    if similarity["duplicate_rejected"]:
+        reasons.append("duplicate rejected proposal direction")
+
+    status = "blocked" if reasons else "passed"
+    report = {
+        "proposal_id": str(row.get("proposal_id", "")),
+        "status": status,
+        "reasons": _unique_str(reasons),
+        "evidence_game_ids": evidence_game_ids,
+        "checks": checks,
+    }
+    if isinstance(proposal, SkillProposal):
+        proposal.preflight_status = status
+        proposal.preflight_reasons = list(report["reasons"])
+        proposal.preflight_report = dict(report)
+        proposal.evidence_game_ids = list(evidence_game_ids)
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +691,9 @@ def build_evolution_gate_report(
     paired_summary = _paired_seed_summary(paired_rows)
     role_score = _role_score_gate_summary(paired_rows, result)
     decision_quality = _decision_quality_summary_for_gate(paired_rows, run_data, result)
+    scenario_replay = _scenario_replay_gate_summary(run_data, result)
     proposal_rows = normalize_proposal_reviews(_proposal_rows(proposals, run_data), default="proposed")
+    policy_versions = _gate_policy_versions(run_data, result, role=resolved_role)
     proposal_risks = [
         assess_proposal_risk(
             proposal,
@@ -553,6 +704,13 @@ def build_evolution_gate_report(
         for proposal in proposal_rows
     ]
     risk_tags = sorted({tag for risk in proposal_risks for tag in risk.get("risk_tags", [])})
+    proposal_attribution = build_proposal_attribution_report(
+        run_data,
+        battle_result=result,
+        proposals=proposal_rows,
+        proposal_risks=proposal_risks,
+        paired_seed_table=paired_rows,
+    )
 
     blocked_reasons: list[str] = []
     review_reasons: list[str] = []
@@ -577,9 +735,24 @@ def build_evolution_gate_report(
         review_reasons.append("proposal_overfit_risk_high")
     if any(str(row.get("risk", "")).lower() == "high" for row in proposal_rows):
         review_reasons.append("proposal_high_risk")
+    if proposal_attribution.get("review_required"):
+        review_reasons.append("proposal_attribution_inconclusive")
+    if scenario_replay["execution_mode"] != "contract_only":
+        if scenario_replay["policy_violation_count"] > 0:
+            blocked_reasons.append("scenario_policy_violation")
+        if scenario_replay["verdict"] in {"candidate_worse", "review_required"}:
+            review_reasons.append("scenario_replay_not_passed")
 
     blocked_reasons = _unique_str(blocked_reasons)
     review_reasons = _unique_str(review_reasons)
+    trust_bundle_completeness = _trust_bundle_completeness(
+        run_data,
+        result,
+        proposal_rows=proposal_rows,
+        paired_rows=paired_rows,
+        scenario_replay=scenario_replay,
+        policy_versions=policy_versions,
+    )
     promote_allowed = battle_passed and not blocked_reasons and not review_reasons
     if promote_allowed:
         decision = "promote"
@@ -587,11 +760,31 @@ def build_evolution_gate_report(
         decision = "reject"
     else:
         decision = "review_required"
+    release_gate = _release_gate_v2(
+        battle_passed=battle_passed,
+        blocked_reasons=blocked_reasons,
+        review_reasons=review_reasons,
+        paired_summary=paired_summary,
+        role_score=role_score,
+        decision_quality=decision_quality,
+        scenario_replay=scenario_replay,
+        proposal_rows=proposal_rows,
+        risk_tags=risk_tags,
+        thresholds=threshold_values,
+        trust_bundle_completeness=trust_bundle_completeness,
+    )
 
     return {
         "schema_version": "trust_loop_gate_v1",
         "decision": decision,
         "promote_allowed": promote_allowed,
+        "gate_policy_version": policy_versions["gate_policy_version"],
+        "score_policy_version": policy_versions["score_policy_version"],
+        "judge_policy_version": policy_versions["judge_policy_version"],
+        "rubric_version": policy_versions["rubric_version"],
+        "policy_versions": policy_versions,
+        "release_gate": release_gate,
+        "release_decision": release_gate["decision"],
         "blocked_reasons": blocked_reasons,
         "review_reasons": review_reasons,
         "reasons": _unique_str([*blocked_reasons, *review_reasons]),
@@ -605,11 +798,16 @@ def build_evolution_gate_report(
             "paired_ties": paired_summary["ties"],
             "paired_candidate_edge_rate": paired_summary["candidate_edge_rate"],
             "decision_issue_delta": decision_quality["delta"],
+            "scenario_count": scenario_replay["scenario_count"],
+            "scenario_policy_violation_count": scenario_replay["policy_violation_count"],
         },
         "role_score": role_score,
+        "scenario_replay": scenario_replay,
         "paired_seed_summary": paired_rows,
         "paired_summary": paired_summary,
         "decision_quality": decision_quality,
+        "trust_bundle_completeness": trust_bundle_completeness,
+        "proposal_attribution": proposal_attribution,
         "risk_tags": risk_tags,
         "proposal_risks": proposal_risks,
         "significance": {
@@ -617,6 +815,167 @@ def build_evolution_gate_report(
             "reasons": list((result.get("significance") or {}).get("reasons", []) or [])
             if isinstance(result.get("significance"), dict) else [],
         },
+    }
+
+
+def build_trust_bundle(
+    run: dict[str, Any] | None = None,
+    *,
+    battle_result: dict[str, Any] | None = None,
+    gate_report: dict[str, Any] | None = None,
+    proposals: list[SkillProposal | dict[str, Any]] | None = None,
+    diff: list[SkillDiff | dict[str, Any]] | None = None,
+    review_events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build the auditable trust bundle for one evolution run.
+
+    The bundle is a manifest over already-persisted run artifacts. It does not
+    claim a dedicated replay CLI exists unless the run explicitly provides one.
+    """
+    run_data = run if isinstance(run, dict) else {}
+    result = battle_result if isinstance(battle_result, dict) else {}
+    if not result and isinstance(run_data.get("battle_result"), dict):
+        result = dict(run_data.get("battle_result") or {})
+    report = gate_report if isinstance(gate_report, dict) else {}
+    if not report:
+        candidate_report = result.get("gate_report")
+        if isinstance(candidate_report, dict):
+            report = dict(candidate_report)
+        elif isinstance(run_data.get("gate_report"), dict):
+            report = dict(run_data.get("gate_report") or {})
+    proposal_rows = normalize_proposal_reviews(_proposal_rows(proposals, run_data), default="proposed")
+    diff_rows = _trust_bundle_diff_rows(diff if diff is not None else run_data.get("diff"))
+    paired_rows = build_paired_seed_battle_table(
+        run_data,
+        battle_result=result,
+        role=str(run_data.get("role") or ""),
+        target_team=str(result.get("target_team") or ""),
+    )
+    scenario_snapshots = [dict(item) for item in run_data.get("scenario_snapshots", []) or [] if isinstance(item, dict)]
+    if not scenario_snapshots and isinstance(result.get("scenario_replay_report"), dict):
+        scenario_snapshots = [
+            {"scenario_id": row.get("scenario_id"), "source_game_id": row.get("source_game_id")}
+            for row in result.get("scenario_replay_report", {}).get("results", []) or []
+            if isinstance(row, dict)
+        ]
+    policy_versions = _gate_policy_versions(run_data, result, role=str(run_data.get("role") or ""))
+    if isinstance(report.get("policy_versions"), dict):
+        policy_versions.update({key: str(value) for key, value in report["policy_versions"].items() if value})
+    thresholds = report.get("thresholds") if isinstance(report.get("thresholds"), dict) else {}
+    run_id = str(run_data.get("run_id") or "")
+    baseline_version = run_data.get("parent_hash") or result.get("baseline_version")
+    candidate_version = run_data.get("candidate_hash") or result.get("candidate_version")
+    generated_ids = _trust_bundle_ids(
+        run_data.get("generated_proposal_ids"),
+        fallback=[row.get("proposal_id") for row in proposal_rows],
+    )
+    preflight_passed_ids = _trust_bundle_ids(run_data.get("preflight_passed_proposal_ids"))
+    accepted_ids = _trust_bundle_ids(run_data.get("accepted_proposal_ids"))
+    rejected_ids = _trust_bundle_ids(run_data.get("rejected_proposal_ids"))
+    if not accepted_ids:
+        accepted_ids = [str(row.get("proposal_id")) for row in proposal_rows if row.get("review_status") == "accepted" and row.get("proposal_id")]
+    if not rejected_ids:
+        rejected_ids = [str(row.get("proposal_id")) for row in proposal_rows if row.get("review_status") == "rejected" and row.get("proposal_id")]
+    events = [dict(item) for item in review_events or [] if isinstance(item, dict)]
+    if not events:
+        events = _proposal_review_events(proposal_rows)
+    bundle = {
+        "schema_version": "trust_bundle_v1",
+        "run_id": run_id,
+        "role": str(run_data.get("role") or ""),
+        "baseline_version": baseline_version,
+        "candidate_version": candidate_version,
+        "training_game_ids": _game_ids(run_data.get("training_games")),
+        "scenario_ids": _scenario_ids(scenario_snapshots),
+        "battle_pair_seeds": [row.get("seed") for row in paired_rows],
+        "proposal_ids": [str(row.get("proposal_id")) for row in proposal_rows if row.get("proposal_id")],
+        "generated_proposal_ids": generated_ids,
+        "preflight_passed_proposal_ids": preflight_passed_ids,
+        "accepted_proposal_ids": accepted_ids,
+        "rejected_proposal_ids": rejected_ids,
+        "diff_hash": _sha256_json(diff_rows),
+        "gate_report_id": _gate_report_id(run_id, report),
+        "attribution_report_id": _attribution_report_id(run_id, report.get("proposal_attribution")),
+        "gate_policy_version": policy_versions["gate_policy_version"],
+        "score_policy_version": policy_versions["score_policy_version"],
+        "judge_policy_version": policy_versions["judge_policy_version"],
+        "rubric_version": policy_versions["rubric_version"],
+        "thresholds": dict(thresholds),
+        "review_events": events,
+        "shadow_version_id": run_data.get("shadow_version_id"),
+        "canary_version_id": run_data.get("canary_version_id"),
+        "published_version_id": run_data.get("published_version_id") or result.get("published_version_id"),
+        "rollback_target": baseline_version,
+        "repro_command": _repro_command(run_data),
+    }
+    bundle_hash = _sha256_json(bundle)
+    bundle["bundle_hash"] = bundle_hash
+    bundle["trust_bundle_id"] = _trust_bundle_id(run_id, bundle_hash)
+    bundle["completeness"] = _trust_bundle_manifest_completeness(bundle)
+    return bundle
+
+
+def build_proposal_attribution_report(
+    run: dict[str, Any] | None = None,
+    *,
+    battle_result: dict[str, Any] | None = None,
+    proposals: list[SkillProposal | dict[str, Any]] | None = None,
+    proposal_risks: list[dict[str, Any]] | None = None,
+    paired_seed_table: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Return a conservative attribution report without inventing ablation data.
+
+    Until scenario/full-game ablation is wired, package-level A/B cannot prove
+    individual proposal contribution. The report records the budget and the
+    proposal rows that should be ablated later, then marks attribution as
+    inconclusive instead of assigning fake contribution scores.
+    """
+    run_data = run if isinstance(run, dict) else {}
+    result = battle_result if isinstance(battle_result, dict) else {}
+    if not result and isinstance(run_data.get("battle_result"), dict):
+        result = dict(run_data.get("battle_result") or {})
+    existing = run_data.get("proposal_attribution_report") or result.get("proposal_attribution_report")
+    if isinstance(existing, dict) and existing.get("schema_version"):
+        return dict(existing)
+
+    proposal_rows = normalize_proposal_reviews(_proposal_rows(proposals, run_data), default="proposed")
+    budget = _proposal_attribution_budget(run_data)
+    paired_summary = _paired_seed_summary(paired_seed_table or [])
+    risks_by_id = {
+        str(item.get("proposal_id") or ""): dict(item)
+        for item in proposal_risks or []
+        if isinstance(item, dict)
+    }
+    rows = [
+        _proposal_attribution_row(row, risks_by_id.get(str(row.get("proposal_id") or ""), {}), budget=budget)
+        for row in proposal_rows
+    ]
+    required_rows = [row for row in rows if row.get("requires_ablation")]
+    if not proposal_rows:
+        status = "skipped"
+        reason = "no_proposals"
+    else:
+        status = "attribution_inconclusive"
+        reason = "ablation_not_run"
+    review_required = bool(
+        status == "attribution_inconclusive"
+        and (
+            len(proposal_rows) > 1
+            or required_rows
+            or paired_summary.get("valid_count", 0) < int(budget.get("min_paired_valid_seeds_for_attribution", 0) or 0)
+        )
+    )
+    return {
+        "schema_version": "proposal_attribution_report_v1",
+        "status": status,
+        "reason": reason,
+        "review_required": review_required,
+        "package_proposal_count": len(proposal_rows),
+        "attribution_confidence": "none" if status == "attribution_inconclusive" else "not_applicable",
+        "budget": budget,
+        "paired_summary": paired_summary,
+        "rows": rows,
+        "ablation_candidate_proposal_ids": [row["proposal_id"] for row in required_rows if row.get("proposal_id")],
     }
 
 
@@ -1093,13 +1452,374 @@ def _proposal_rows(
 
 def _gate_thresholds(thresholds: dict[str, Any] | None) -> dict[str, Any]:
     values = dict(thresholds or {})
+    min_paired = int(values.get("min_paired_valid_seeds", 4) or 0)
     return {
-        "min_paired_valid_seeds": int(values.get("min_paired_valid_seeds", 4) or 0),
+        "min_paired_valid_seeds": min_paired,
+        "min_shadow_valid_seeds": int(values.get("min_shadow_valid_seeds", min_paired) or 0),
+        "min_canary_valid_seeds": int(values.get("min_canary_valid_seeds", 8) or 0),
+        "min_baseline_valid_seeds": int(values.get("min_baseline_valid_seeds", 16) or 0),
         "min_role_score_delta": float(values.get("min_role_score_delta", 0.0) or 0.0),
         "max_decision_issue_rate": float(values.get("max_decision_issue_rate", 0.10) or 0.0),
         "max_decision_issue_delta": float(values.get("max_decision_issue_delta", 0.05) or 0.0),
         "min_candidate_edge_rate": float(values.get("min_candidate_edge_rate", 0.50) or 0.0),
         "duplicate_similarity_threshold": float(values.get("duplicate_similarity_threshold", 0.72) or 0.0),
+        "min_trust_bundle_completeness": float(values.get("min_trust_bundle_completeness", 1.0) or 0.0),
+    }
+
+
+def _scenario_replay_gate_summary(run: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    report = result.get("scenario_replay_report")
+    if not isinstance(report, dict):
+        report = run.get("scenario_replay_report") if isinstance(run.get("scenario_replay_report"), dict) else {}
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    return {
+        "schema_version": report.get("schema_version"),
+        "execution_mode": str(report.get("execution_mode") or ""),
+        "status": str(report.get("status") or "missing"),
+        "verdict": str(summary.get("verdict") or report.get("verdict") or "missing"),
+        "scenario_count": int(report.get("scenario_count", summary.get("scenario_count", 0)) or 0),
+        "policy_violation_count": int(summary.get("policy_violation_count", 0) or 0),
+        "contract_missing_count": int(summary.get("contract_missing_count", 0) or 0),
+    }
+
+
+def _gate_policy_versions(run: dict[str, Any], result: dict[str, Any], *, role: str = "") -> dict[str, str]:
+    cfg = run.get("config") if isinstance(run.get("config"), dict) else {}
+    snapshots = [item for item in run.get("scenario_snapshots", []) or [] if isinstance(item, dict)]
+    first_snapshot = snapshots[0] if snapshots else {}
+
+    def _first_text(*values: Any, default: str) -> str:
+        for value in values:
+            text = str(value or "").strip()
+            if text:
+                return text
+        return default
+
+    resolved_role = role or str(run.get("role") or "")
+    return {
+        "gate_policy_version": _first_text(
+            cfg.get("gate_policy_version"),
+            result.get("gate_policy_version"),
+            default="promotion_gate_v2",
+        ),
+        "score_policy_version": _first_text(
+            cfg.get("score_policy_version"),
+            result.get("score_policy_version"),
+            default="role_score_v1",
+        ),
+        "judge_policy_version": _first_text(
+            cfg.get("judge_policy_version"),
+            result.get("judge_policy_version"),
+            first_snapshot.get("judge_policy_version"),
+            default="judge_policy_v1",
+        ),
+        "rubric_version": _first_text(
+            cfg.get("rubric_version"),
+            result.get("rubric_version"),
+            first_snapshot.get("rubric_version"),
+            default=f"{resolved_role or 'role'}_rubric_v1",
+        ),
+    }
+
+
+def _trust_bundle_completeness(
+    run: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    proposal_rows: list[dict[str, Any]],
+    paired_rows: list[dict[str, Any]],
+    scenario_replay: dict[str, Any],
+    policy_versions: dict[str, str],
+) -> dict[str, Any]:
+    checks = {
+        "baseline_version": bool(run.get("parent_hash") or result.get("baseline_version")),
+        "candidate_version": bool(run.get("candidate_hash") or result.get("candidate_version")),
+        "training_evidence": bool(_game_ids(run.get("training_games"))),
+        "proposal_ids": bool([row.get("proposal_id") for row in proposal_rows if row.get("proposal_id")]),
+        "proposal_evidence": bool(proposal_rows) and all(_proposal_has_trust_evidence(row) for row in proposal_rows),
+        "skill_diff": bool(_trust_bundle_diff_rows(run.get("diff")) or run.get("candidate_hash")),
+        "paired_seed_table": bool(paired_rows) and _paired_seed_summary(paired_rows)["valid_count"] > 0,
+        "scenario_replay": scenario_replay.get("scenario_count", 0) > 0 and scenario_replay.get("status") != "missing",
+        "policy_versions": all(bool(str(value or "").strip()) for value in policy_versions.values()),
+    }
+    missing = [key for key, passed in checks.items() if not passed]
+    score = round((len(checks) - len(missing)) / len(checks), 6) if checks else 1.0
+    return {
+        "schema_version": "trust_bundle_completeness_v1",
+        "complete": not missing,
+        "score": score,
+        "checks": checks,
+        "missing": missing,
+    }
+
+
+def _release_gate_v2(
+    *,
+    battle_passed: bool,
+    blocked_reasons: list[str],
+    review_reasons: list[str],
+    paired_summary: dict[str, Any],
+    role_score: dict[str, Any],
+    decision_quality: dict[str, Any],
+    scenario_replay: dict[str, Any],
+    proposal_rows: list[dict[str, Any]],
+    risk_tags: list[str],
+    thresholds: dict[str, Any],
+    trust_bundle_completeness: dict[str, Any],
+) -> dict[str, Any]:
+    reasons = _unique_str([*blocked_reasons, *review_reasons])
+    review = list(review_reasons)
+    block = list(blocked_reasons)
+    if not battle_passed and "battle_not_significant" not in block:
+        block.append("battle_not_significant")
+    if scenario_replay.get("execution_mode") != "contract_only" and scenario_replay.get("policy_violation_count", 0) > 0:
+        block.append("scenario_policy_violation")
+    if "overfit_high" in risk_tags and "proposal_overfit_risk_high" not in block:
+        block.append("proposal_overfit_risk_high")
+    if not trust_bundle_completeness.get("complete"):
+        review.append("trust_bundle_incomplete")
+    if any(str(row.get("risk", "")).lower() == "medium" for row in proposal_rows):
+        review.append("proposal_medium_risk")
+
+    block = _unique_str(block)
+    review = _unique_str(review)
+    valid_count = int(paired_summary.get("valid_count", 0) or 0)
+    if block:
+        decision = "block"
+    elif review:
+        decision = "review_required"
+    elif valid_count < int(thresholds.get("min_shadow_valid_seeds", 0) or 0):
+        decision = "review_required"
+        review.append("paired_valid_count_below_shadow_minimum")
+    elif valid_count < int(thresholds.get("min_canary_valid_seeds", 0) or 0):
+        decision = "shadow_candidate"
+    elif valid_count < int(thresholds.get("min_baseline_valid_seeds", 0) or 0):
+        decision = "canary_candidate"
+    else:
+        decision = "baseline_promote"
+    return {
+        "schema_version": "promotion_gate_v2",
+        "decision": decision,
+        "release_decision": decision,
+        "block_reasons": block,
+        "review_reasons": review,
+        "reasons": _unique_str([*reasons, *block, *review]),
+        "thresholds": dict(thresholds),
+        "metrics": {
+            "paired_valid_count": valid_count,
+            "candidate_edge_rate": paired_summary.get("candidate_edge_rate"),
+            "role_score_delta": role_score.get("delta"),
+            "decision_issue_delta": decision_quality.get("delta"),
+            "scenario_count": scenario_replay.get("scenario_count"),
+            "trust_bundle_completeness": trust_bundle_completeness.get("score"),
+        },
+    }
+
+
+def _proposal_has_trust_evidence(proposal: dict[str, Any]) -> bool:
+    return (
+        bool(str(proposal.get("hypothesis", "")).strip())
+        and _non_empty_mapping(proposal.get("trigger_condition"))
+        and _non_empty_mapping(proposal.get("metric_targets"))
+        and bool(_as_str_list(proposal.get("evidence_game_ids")) or _proposal_source_game_ids(proposal, []))
+    )
+
+
+def _proposal_attribution_budget(run: dict[str, Any]) -> dict[str, Any]:
+    cfg = run.get("config") if isinstance(run.get("config"), dict) else {}
+    scenario_budget = int(
+        cfg.get("attribution_scenario_budget", cfg.get("proposal_attribution_scenario_budget", 0))
+        or 0
+    )
+    full_game_budget = int(
+        cfg.get("attribution_full_game_budget", cfg.get("proposal_attribution_full_game_budget", 0))
+        or 0
+    )
+    max_proposals = int(
+        cfg.get("attribution_max_proposals", cfg.get("proposal_attribution_max_proposals", 2))
+        or 0
+    )
+    min_paired = int(
+        cfg.get(
+            "attribution_min_paired_valid_seeds",
+            cfg.get("proposal_attribution_min_paired_valid_seeds", 4),
+        )
+        or 0
+    )
+    if full_game_budget > 0:
+        scope = "full_game"
+    elif scenario_budget > 0:
+        scope = "scenario_only"
+    else:
+        scope = "not_run"
+    return {
+        "enabled": bool(cfg.get("enable_proposal_attribution", True)),
+        "budget_scope": scope,
+        "scenario_budget": scenario_budget,
+        "full_game_budget": full_game_budget,
+        "max_proposals": max_proposals,
+        "min_paired_valid_seeds_for_attribution": min_paired,
+    }
+
+
+def _proposal_attribution_row(
+    proposal: dict[str, Any],
+    risk: dict[str, Any],
+    *,
+    budget: dict[str, Any],
+) -> dict[str, Any]:
+    risk_tags = _unique_str([*_as_str_list(proposal.get("risk_tags")), *_as_str_list(risk.get("risk_tags"))])
+    risk_level = str(proposal.get("risk") or risk.get("risk") or "").lower()
+    requires_ablation = bool(
+        risk_level in {"high", "medium"}
+        or any(tag in {"duplicate_rejected", "overfit_high", "paired_seed_unstable"} for tag in risk_tags)
+    )
+    reasons: list[str] = []
+    if risk_level in {"high", "medium"}:
+        reasons.append(f"{risk_level}_risk")
+    if "duplicate_rejected" in risk_tags:
+        reasons.append("duplicate_rejected")
+    if "overfit_high" in risk_tags:
+        reasons.append("overfit_high")
+    if "paired_seed_unstable" in risk_tags:
+        reasons.append("paired_seed_unstable")
+    if requires_ablation and not budget.get("scenario_budget") and not budget.get("full_game_budget"):
+        reasons.append("ablation_budget_zero")
+    return {
+        "proposal_id": str(proposal.get("proposal_id") or ""),
+        "target_file": str(proposal.get("target_file") or ""),
+        "review_status": normalize_proposal_review_status(proposal.get("review_status", proposal.get("status"))),
+        "status": "attribution_inconclusive",
+        "reason": "ablation_not_run",
+        "requires_ablation": requires_ablation,
+        "ablation_priority": "required" if requires_ablation else "optional",
+        "budget_scope": budget.get("budget_scope"),
+        "estimated_contribution": None,
+        "recommendation": "review" if requires_ablation else "attribution_inconclusive",
+        "attribution_confidence": "none",
+        "risk_tags": risk_tags,
+        "reasons": _unique_str(reasons),
+    }
+
+
+def _trust_bundle_diff_rows(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, SkillDiff):
+            rows.append(item.to_dict())
+        elif isinstance(item, dict):
+            rows.append(dict(item))
+    return rows
+
+
+def _trust_bundle_ids(value: Any, *, fallback: list[Any] | None = None) -> list[str]:
+    source = value if isinstance(value, list) else fallback or []
+    return _unique_str(str(item) for item in source if item not in (None, ""))
+
+
+def _game_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    ids: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            ids.append(str(item.get("game_id") or item.get("source_game_id") or "").strip())
+        elif item not in (None, ""):
+            ids.append(str(item))
+    return _unique_str(ids)
+
+
+def _scenario_ids(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    ids: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            ids.append(str(item.get("scenario_id") or "").strip())
+        elif item not in (None, ""):
+            ids.append(str(item))
+    return _unique_str(ids)
+
+
+def _proposal_review_events(proposals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for proposal in proposals:
+        status = normalize_proposal_review_status(proposal.get("review_status", proposal.get("status")))
+        if status == "proposed":
+            continue
+        events.append(
+            {
+                "proposal_id": proposal.get("proposal_id"),
+                "decision": status,
+                "review_reason": proposal.get("review_reason") or proposal.get("rejection_reason") or "",
+                "reviewed_by": proposal.get("reviewed_by"),
+                "reviewed_at": proposal.get("reviewed_at"),
+            }
+        )
+    return events
+
+
+def _sha256_json(value: Any) -> str:
+    import hashlib
+
+    return hashlib.sha256(compact_json(to_jsonable(value)).encode("utf-8")).hexdigest()
+
+
+def _gate_report_id(run_id: str, report: dict[str, Any]) -> str:
+    prefix = f"gate_{run_id}" if run_id else "gate"
+    return f"{prefix}_{_sha256_json(report)[:12]}"
+
+
+def _trust_bundle_id(run_id: str, bundle_hash: str) -> str:
+    prefix = f"trust_bundle_{run_id}" if run_id else "trust_bundle"
+    return f"{prefix}_{bundle_hash[:12]}"
+
+
+def _attribution_report_id(run_id: str, report: Any) -> str:
+    prefix = f"attribution_{run_id}" if run_id else "attribution"
+    payload = report if isinstance(report, dict) else {}
+    return f"{prefix}_{_sha256_json(payload)[:12]}"
+
+
+def _repro_command(run: dict[str, Any]) -> str:
+    for key in ("repro_command", "reproduction_command"):
+        value = run.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    run_id = str(run.get("run_id") or "").strip()
+    suffix = f" for run_id={run_id}" if run_id else ""
+    return f"not_available: dedicated evolution replay CLI is not implemented{suffix}"
+
+
+def _trust_bundle_manifest_completeness(bundle: dict[str, Any]) -> dict[str, Any]:
+    checks = {
+        "run_id": bool(bundle.get("run_id")),
+        "role": bool(bundle.get("role")),
+        "baseline_version": bool(bundle.get("baseline_version")),
+        "candidate_version": bool(bundle.get("candidate_version")),
+        "training_game_ids": bool(bundle.get("training_game_ids")),
+        "scenario_ids": bool(bundle.get("scenario_ids")),
+        "battle_pair_seeds": bool(bundle.get("battle_pair_seeds")),
+        "proposal_ids": bool(bundle.get("proposal_ids")),
+        "diff_hash": bool(bundle.get("diff_hash")),
+        "gate_report_id": bool(bundle.get("gate_report_id")),
+        "policy_versions": all(
+            bool(bundle.get(key))
+            for key in ("gate_policy_version", "score_policy_version", "judge_policy_version", "rubric_version")
+        ),
+        "thresholds": bool(bundle.get("thresholds")),
+        "rollback_target": bool(bundle.get("rollback_target")),
+        "repro_command": bool(bundle.get("repro_command")),
+    }
+    missing = [key for key, passed in checks.items() if not passed]
+    score = round((len(checks) - len(missing)) / len(checks), 6) if checks else 1.0
+    return {
+        "complete": not missing,
+        "score": score,
+        "checks": checks,
+        "missing": missing,
     }
 
 
@@ -1110,7 +1830,14 @@ def _proposal_risk_text(proposal: dict[str, Any]) -> str:
         proposal.get("section"),
         proposal.get("content"),
         proposal.get("rationale"),
+        proposal.get("hypothesis"),
+        proposal.get("problem_observation"),
+        proposal.get("diff_intent"),
+        proposal.get("failure_mode"),
         proposal.get("expected_metric"),
+        compact_json(proposal.get("trigger_condition", {})),
+        compact_json(proposal.get("expected_effect", {})),
+        compact_json(proposal.get("metric_targets", {})),
     ]
     for key in ("diff", "before", "after"):
         value = proposal.get(key)
@@ -1559,14 +2286,16 @@ def build_consolidation_messages(
                 f"{rejected_text}\n"
                 "请分析跨局趋势并提出 skill 修改建议，要求:\n"
                 "1. trends: 3-5 条跨局趋势\n"
-                f"2. proposals: 最多 {max_proposals} 个最重要的修改，每条只表达一个可验证的行为变化\n"
+                f"2. proposals: 最多 {max_proposals} 个最重要的修改，每条必须是一条可验证 hypothesis，且只表达一个行为变化\n"
                 "   - target_file 必须从上方可修改文件清单逐字复制；新建用 action_type=create_skill\n"
                 "   - action_type ∈ append_rule|rewrite_section|deprecate_rule|create_skill\n"
                 "   - 已有文件只能使用其 evolution.allowed_actions 内的动作\n"
                 "   - risk ∈ low|medium|high；high risk 只写入 trends，不进 proposals\n"
                 "   - expected_direction ∈ improve|maintain|reduce\n"
-                "   - 每个 proposal 至少引用 2 个不同 game_id 作为 evidence；若摘要含 key_decisions，"
+                "   - 每个 proposal 必须填写 hypothesis、trigger_condition、expected_effect、metric_targets\n"
+                "   - 每个 proposal 至少引用 2 个不同 game_id 作为 evidence_game_ids；若摘要含 key_decisions，"
                 "evidence 必须带 decision_id、action_type 和 quote\n"
+                "   - trigger_condition 不得写具体 seed、game_id、run_id 或玩家号，只能描述可泛化的局面模式\n"
                 "   - 不要把多个规则打包进同一个 proposal\n\n"
                 "输出 JSON schema:\n"
                 "{\n"
@@ -1576,11 +2305,22 @@ def build_consolidation_messages(
                 '      "proposal_id": "prop_001",\n'
                 '      "target_file": "从清单逐字复制.md",\n'
                 '      "action_type": "append_rule|rewrite_section|deprecate_rule|create_skill",\n'
+                '      "title": "短标题",\n'
                 '      "section": "目标章节(rewrite_section时必填)",\n'
+                '      "hypothesis": "当触发条件出现时，采用该行为会改善目标指标",\n'
+                '      "problem_observation": "跨局问题观察",\n'
+                '      "trigger_condition": {"phase": ["day1"], "public_state": ["vote_split"], "actor_pattern": ["泛化模式"]},\n'
+                '      "expected_effect": {"primary_metric": "role_score", "secondary_metrics": ["win_rate"], "expected_direction": "increase_role_score"},\n'
+                '      "metric_targets": {"min_role_score_delta": 0.2, "max_decision_issue_rate_delta": -0.05},\n'
+                '      "evidence_game_ids": ["g1", "g2"],\n'
+                '      "counter_evidence_game_ids": [],\n'
+                '      "diff_intent": "最小修改意图",\n'
                 '      "content": "具体修改内容",\n'
                 '      "rationale": "修改理由",\n'
                 '      "confidence": 0.0,\n'
                 '      "risk": "low|medium|high",\n'
+                '      "risk_tags": [],\n'
+                '      "failure_mode": "可能失败方式",\n'
                 '      "expected_metric": "期望影响的指标",\n'
                 '      "expected_direction": "improve|maintain|reduce",\n'
                 '      "evidence": [{"game_id": "g1", "decision_id": "d1", "action_type": "exile_vote", "quote": "原文摘录"}],\n'
@@ -1616,6 +2356,8 @@ def parse_consolidation(
     source_window: int = 0,
     max_proposals: int = 3,
     prompt_version: str = CONSOLIDATION_PROMPT_VERSION,
+    rejected: list[dict[str, Any]] | None = None,
+    duplicate_threshold: float = 0.72,
 ) -> SkillConsolidation:
     """Parse raw LLM output into a SkillConsolidation. Never raises."""
     from app.util.text import extract_json
@@ -1643,20 +2385,37 @@ def parse_consolidation(
         proposals_raw = list(data.get("proposals") or [])
 
     proposals: list[SkillProposal] = []
+    generated_proposal_ids: list[str] = []
+    preflight_passed_proposal_ids: list[str] = []
+    preflight_rejected_proposal_ids: list[str] = []
+    preflight_reports: list[dict[str, Any]] = []
     for i, p in enumerate(proposals_raw):
         if not isinstance(p, dict):
             warnings.append(f"consolidate: dropped proposal #{i + 1}: proposal must be an object")
             continue
         evidence = [dict(e) for e in p.get("evidence", []) if isinstance(e, dict)]
+        proposal_id = str(p.get("proposal_id", "") or f"{run_id or 'run'}_prop_{i + 1:03d}")
+        generated_proposal_ids.append(proposal_id)
         proposal = SkillProposal(
-            proposal_id=str(p.get("proposal_id", "") or f"{run_id or 'run'}_prop_{i + 1:03d}"),
+            proposal_id=proposal_id,
             target_file=str(p.get("target_file", "")),
             action_type=str(p.get("action_type", "")),
+            title=str(p.get("title", "")),
             section=str(p.get("section", "")),
             content=str(p.get("content", "")),
             rationale=str(p.get("rationale", "")),
+            hypothesis=str(p.get("hypothesis", "")),
+            problem_observation=str(p.get("problem_observation", "")),
+            trigger_condition=dict(p.get("trigger_condition", {}) or {}) if isinstance(p.get("trigger_condition", {}), dict) else {},
+            expected_effect=dict(p.get("expected_effect", {}) or {}) if isinstance(p.get("expected_effect", {}), dict) else {},
+            metric_targets=dict(p.get("metric_targets", {}) or {}) if isinstance(p.get("metric_targets", {}), dict) else {},
+            evidence_game_ids=_as_str_list(p.get("evidence_game_ids")),
+            counter_evidence_game_ids=_as_str_list(p.get("counter_evidence_game_ids")),
+            diff_intent=str(p.get("diff_intent", "")),
             confidence=_as_float(p.get("confidence"), 0.0),
-            risk=str(p.get("risk", "medium")),
+            risk=str(p.get("risk", p.get("risk_level", "medium"))),
+            risk_tags=_as_str_list(p.get("risk_tags")),
+            failure_mode=str(p.get("failure_mode", "")),
             expected_metric=str(p.get("expected_metric", "")),
             expected_direction=str(p.get("expected_direction", "improve")),
             evidence=evidence,
@@ -1664,13 +2423,21 @@ def parse_consolidation(
             status="proposed",
         )
         proposal.quality_score = score_proposal_quality(proposal, raw=p)
-        validation_errors = _validate_consolidation_proposal(proposal, p)
-        if validation_errors:
+        preflight = preflight_proposal(
+            proposal,
+            p,
+            rejected=rejected,
+            duplicate_threshold=duplicate_threshold,
+        )
+        preflight_reports.append(preflight)
+        if preflight["status"] != "passed":
+            preflight_rejected_proposal_ids.append(proposal.proposal_id)
             warnings.append(
                 f"consolidate: dropped proposal {proposal.proposal_id or f'#{i + 1}'}: "
-                + "; ".join(validation_errors)
+                + "; ".join(preflight["reasons"])
             )
             continue
+        preflight_passed_proposal_ids.append(proposal.proposal_id)
         proposals.append(proposal)
 
     trends_raw = data.get("trends", [])
@@ -1685,6 +2452,10 @@ def parse_consolidation(
         prompt_version=prompt_version,
         trends=trends,
         proposals=proposals[:max_proposals],
+        generated_proposal_ids=generated_proposal_ids,
+        preflight_passed_proposal_ids=preflight_passed_proposal_ids[:max_proposals],
+        preflight_rejected_proposal_ids=preflight_rejected_proposal_ids,
+        preflight_reports=preflight_reports,
         warnings=warnings,
         errors=errors,
     )
@@ -1710,7 +2481,7 @@ def _proposal_source_game_ids(raw: dict[str, Any], evidence: list[dict[str, Any]
         game_id = item.get("game_id") or item.get("source_game") or item.get("source_game_id")
         if game_id:
             game_ids.add(str(game_id))
-    for key in ("source_games", "source_game_ids", "game_ids"):
+    for key in ("source_games", "source_game_ids", "game_ids", "evidence_game_ids"):
         values = raw.get(key)
         if isinstance(values, list):
             for value in values:
@@ -1758,6 +2529,29 @@ def _short_text_hash(text: str) -> str:
     import hashlib
 
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _non_empty_mapping(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return any(item not in (None, "", [], {}) for item in value.values())
+
+
+def _proposal_policy_specific_tags(proposal: dict[str, Any]) -> list[str]:
+    text = compact_json(
+        {
+            "trigger_condition": proposal.get("trigger_condition", {}),
+            "hypothesis": proposal.get("hypothesis", ""),
+            "content": proposal.get("content", ""),
+            "diff_intent": proposal.get("diff_intent", ""),
+        }
+    ).lower()
+    checks = [
+        ("seed_specific", r"\bseed[_\s:#-]*\d+\b"),
+        ("game_id_specific", r"\b(game_id|source_game_id|run_id)\b"),
+        ("player_specific", r"\b(player|p)[_\s:#-]*\d+\b|\d+\s*号"),
+    ]
+    return [tag for tag, pattern in checks if re.search(pattern, text)]
 
 
 def format_skill_inventory(skills: list[Any]) -> str:
@@ -1897,10 +2691,12 @@ def _record_apply_error(consolidation: SkillConsolidation, message: str) -> None
 
 
 def _filter_eligible(proposals: list[SkillProposal]) -> list[SkillProposal]:
-    """Keep confidence >= threshold, risk != high, status == proposed."""
+    """Keep confidence >= threshold, risk != high, status == proposed, preflight not blocked."""
     eligible: list[SkillProposal] = []
     for p in proposals:
         if p.status != "proposed":
+            continue
+        if str(p.preflight_status or "").lower() in {"blocked", "failed", "rejected"}:
             continue
         if p.confidence < CONFIDENCE_THRESHOLD:
             continue

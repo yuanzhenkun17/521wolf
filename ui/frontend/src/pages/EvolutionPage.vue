@@ -36,6 +36,8 @@ const navTabs = [
 
 const selectedIsBatch = computed(() => evo.selectedIsBatch.value)
 const selectedCanReview = computed(() => evo.selectedIsRun.value && evo.selectedRun.value?.status === 'reviewing')
+const selectedCanPromote = computed(() => evo.selectedCanPromote.value)
+const selectedPromoteDisabledReason = computed(() => evo.selectedPromoteDisabledReason.value)
 const selectedCanTerminate = computed(() => {
   return Boolean(evo.selectedRun.value) && !evo.selectedRun.value.isTerminal
 })
@@ -53,6 +55,7 @@ onMounted(() => evo.refreshAll())
       :selected-role="evo.selectedRole.value"
       :selected-run-summary="evo.selectedRunSummary.value"
       :error="evo.error.value"
+      :notice="evo.notice.value"
       @refresh="evo.refreshAll()"
       @select-role="evo.selectRole"
     >
@@ -61,6 +64,8 @@ onMounted(() => evo.refreshAll())
         :evo="evo"
         :selected-is-batch="selectedIsBatch"
         :selected-can-review="selectedCanReview"
+        :selected-can-promote="selectedCanPromote"
+        :selected-promote-disabled-reason="selectedPromoteDisabledReason"
         :selected-can-terminate="selectedCanTerminate"
       />
       <EvolutionRunsPanel v-if="activeTab === 'runs'" :evo="evo" />
@@ -97,6 +102,9 @@ onMounted(() => evo.refreshAll())
   --evo-success: #4a7c44;
   --evo-danger: #8b3a2a;
   --evo-font: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+  --status-danger: var(--evo-danger);
+  --text-main: var(--evo-text);
+  --text-muted: var(--evo-text-secondary);
 }
 
 /* ========================================
@@ -117,6 +125,21 @@ onMounted(() => evo.refreshAll())
   font-family: var(--evo-font);
   -webkit-font-smoothing: auto;
   text-rendering: auto;
+}
+
+.evo-page *:not(svg):not(svg *) {
+  font-family: var(--evo-font);
+}
+
+.evo-page button,
+.evo-page input,
+.evo-page select,
+.evo-page textarea,
+.evo-page code,
+.evo-page pre,
+.evo-page kbd,
+.evo-page samp {
+  font-family: var(--evo-font);
 }
 
 .evo-shell {
@@ -601,10 +624,32 @@ onMounted(() => evo.refreshAll())
   font-size: 13px;
 }
 
+.evo-alert.error {
+  border-color: rgba(139, 58, 42, 0.25);
+  background: rgba(139, 58, 42, 0.06);
+  color: var(--evo-danger);
+}
+
+.evo-alert.warning {
+  border-color: rgba(139, 94, 52, 0.32);
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--evo-accent-strong);
+}
+
+.evo-alert.success {
+  border-color: rgba(74, 124, 68, 0.26);
+  background: rgba(74, 124, 68, 0.08);
+  color: var(--evo-success);
+}
+
 .evo-alert.compact {
   margin: 6px 0;
   padding: 6px 10px;
   font-size: 12px;
+}
+
+.evo-error-panel {
+  margin-bottom: 12px;
 }
 
 /* ========================================
@@ -691,7 +736,8 @@ onMounted(() => evo.refreshAll())
   letter-spacing: 0.02em;
 }
 
-.evo-form-grid input {
+.evo-form-grid input,
+.evo-form-grid select {
   box-sizing: border-box;
   width: 100%;
   height: 34px;
@@ -704,21 +750,11 @@ onMounted(() => evo.refreshAll())
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.evo-form-grid input:focus {
+.evo-form-grid input:focus,
+.evo-form-grid select:focus {
   outline: none;
   border-color: var(--evo-accent);
   box-shadow: 0 0 0 3px rgba(139, 94, 52, 0.1);
-}
-
-.evo-check-field {
-  justify-content: space-between;
-}
-
-.evo-check-field input {
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  accent-color: var(--evo-accent);
 }
 
 .evo-batch-role-grid {
@@ -911,7 +947,7 @@ onMounted(() => evo.refreshAll())
   flex: 0 0 auto;
   color: var(--evo-text-secondary);
   font-size: 12px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-progress-track {
@@ -1005,7 +1041,7 @@ onMounted(() => evo.refreshAll())
   overflow: hidden;
   color: var(--evo-text);
   font-size: 13px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1036,7 +1072,7 @@ onMounted(() => evo.refreshAll())
 .evo-kpis b {
   color: var(--evo-text);
   font-size: 13px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-config-grid {
@@ -1061,7 +1097,7 @@ onMounted(() => evo.refreshAll())
 .evo-config-grid b {
   color: var(--evo-text);
   font-size: 12px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-review-actions {
@@ -1069,6 +1105,13 @@ onMounted(() => evo.refreshAll())
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 4px;
+}
+
+.evo-action-reason {
+  margin: -4px 0 0;
+  color: var(--evo-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .evo-batch-detail {
@@ -1143,7 +1186,7 @@ onMounted(() => evo.refreshAll())
 .evo-child-run-row b {
   color: var(--evo-text-secondary);
   font-size: 11px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-mini-columns {
@@ -1294,7 +1337,7 @@ onMounted(() => evo.refreshAll())
 .evo-run-main small {
   color: var(--evo-text-secondary);
   font-size: 10px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1314,7 +1357,7 @@ onMounted(() => evo.refreshAll())
 .evo-run-metric {
   color: var(--evo-text-secondary);
   font-size: 11px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
   white-space: nowrap;
   opacity: 0.8;
 }
@@ -1373,7 +1416,7 @@ onMounted(() => evo.refreshAll())
   flex-direction: column;
   color: var(--evo-text);
   font-size: 12px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-leaderboard-label small {
@@ -1402,7 +1445,7 @@ onMounted(() => evo.refreshAll())
   font-size: 12px;
   font-weight: 700;
   text-align: right;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 /* ========================================
@@ -1449,7 +1492,7 @@ onMounted(() => evo.refreshAll())
 .evo-version-row strong {
   color: var(--evo-text);
   font-size: 13px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-version-row small {
@@ -1480,7 +1523,7 @@ onMounted(() => evo.refreshAll())
 .evo-version-detail header strong {
   color: var(--evo-text);
   font-size: 13px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-version-detail header small {
@@ -1512,7 +1555,7 @@ onMounted(() => evo.refreshAll())
 .evo-version-kpis b {
   color: var(--evo-text);
   font-size: 13px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-version-skill-list {
@@ -1521,7 +1564,7 @@ onMounted(() => evo.refreshAll())
   list-style: none;
   color: var(--evo-text-secondary);
   font-size: 11px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-version-skill-list li {
@@ -1853,7 +1896,7 @@ onMounted(() => evo.refreshAll())
   margin-left: auto;
   color: var(--evo-text-secondary);
   font-size: 10px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
   opacity: 0.6;
 }
 
@@ -1867,7 +1910,7 @@ onMounted(() => evo.refreshAll())
   border-radius: 4px;
   background: rgba(58, 42, 24, 0.06);
   color: var(--evo-text-secondary);
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
   font-size: 11px;
   word-break: break-all;
 }
@@ -1919,7 +1962,7 @@ onMounted(() => evo.refreshAll())
   color: var(--evo-text);
   font-size: 11px;
   font-weight: 700;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 /* Meta row */
@@ -1987,7 +2030,7 @@ onMounted(() => evo.refreshAll())
   list-style: none;
   color: var(--evo-text-secondary);
   font-size: 11px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-pattern-source-list li {
@@ -2098,7 +2141,7 @@ onMounted(() => evo.refreshAll())
   color: var(--evo-text);
   font-size: 12px;
   font-weight: 700;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
 }
 
 .evo-diff-action-badge {
@@ -2116,7 +2159,7 @@ onMounted(() => evo.refreshAll())
   overflow-y: auto;
   padding: 8px 0;
   background: #2d2218;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
   font-size: 11px;
   line-height: 1.6;
 }
@@ -2218,7 +2261,7 @@ onMounted(() => evo.refreshAll())
 .evo-diff-pattern-card strong {
   display: block;
   font-size: 11px;
-  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-family: var(--evo-font);
   margin-bottom: 3px;
 }
 
@@ -2539,6 +2582,206 @@ onMounted(() => evo.refreshAll())
 
   .evo-scroll {
     padding: 10px;
+  }
+}
+
+/* Match the quiet wood-board language used by the battle log. */
+.evo-page {
+  --evo-surface: rgba(255, 239, 194, 0.42);
+  --evo-border: rgba(93, 48, 17, 0.18);
+  --evo-text: #3a1b08;
+  --evo-text-secondary: rgba(93, 48, 17, 0.66);
+  --evo-accent: #70401e;
+  --evo-accent-strong: #5d3011;
+  --evo-input-bg: rgba(255, 245, 214, 0.7);
+  --evo-input-border: rgba(93, 48, 17, 0.22);
+  --evo-hover: rgba(255, 245, 211, 0.5);
+  --evo-active-bg: rgba(224, 184, 111, 0.66);
+}
+
+.evo-shell.parchment-logbook {
+  background:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    #f2dfae;
+}
+
+.evo-nav-tab,
+.evo-role-chip,
+.evo-refresh-button {
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+}
+
+.evo-nav-tab:hover,
+.evo-role-chip:hover,
+.evo-refresh-button:hover {
+  border-color: rgba(93, 48, 17, 0.32);
+  color: #3a1b08;
+  background: rgba(255, 245, 214, 0.88);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.82);
+  transform: none;
+}
+
+.evo-nav-tab.active,
+.evo-role-chip.selected {
+  border-color: rgba(93, 48, 17, 0.45);
+  color: #3a1b08;
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
+}
+
+.evo-role-chip.selected .evo-role-name {
+  color: #3a1b08;
+}
+
+.evo-card {
+  border-color: rgba(93, 48, 17, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 239, 194, 0.34);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.evo-card header {
+  border-bottom-color: rgba(93, 48, 17, 0.16);
+}
+
+@media (min-width: 961px) {
+  .evo-shell,
+  .evo-shell.parchment-logbook {
+    grid-template-columns: 260px minmax(0, 1fr);
+    column-gap: 24px;
+    padding: 22px 26px;
+  }
+
+  .evo-control-rail {
+    gap: 10px;
+    padding-right: 20px;
+    border-right-color: rgba(93, 48, 17, 0.22);
+  }
+
+  .evo-rail-header {
+    min-height: 46px;
+    padding: 0 0 12px;
+    border-bottom-color: rgba(93, 48, 17, 0.2);
+  }
+
+  .evo-rail-header span {
+    font-size: 22px;
+    font-weight: 950;
+  }
+
+  .evo-rail-header strong {
+    height: auto;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--evo-text-secondary);
+    font-size: 13px;
+  }
+
+  .evo-rail-summary {
+    gap: 8px;
+  }
+
+  .evo-rail-summary span {
+    min-height: 44px;
+    padding: 7px 9px;
+    border-color: rgba(93, 48, 17, 0.16);
+    background: rgba(255, 239, 194, 0.42);
+  }
+
+  .evo-role-chip {
+    height: 36px;
+    padding: 0 11px;
+  }
+
+  .evo-command-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 18px;
+    padding: 0 0 12px;
+    border: 0;
+    border-bottom: 1px solid rgba(93, 48, 17, 0.2);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .evo-command-title small,
+  .evo-command-run small,
+  .evo-command-run p {
+    color: var(--evo-text-secondary);
+  }
+
+  .evo-command-title h2,
+  .evo-command-run b {
+    color: var(--evo-text);
+  }
+
+  .evo-command-title h2 {
+    font-size: 22px;
+    font-weight: 950;
+  }
+
+  .evo-command-metrics {
+    gap: 16px;
+  }
+
+  .evo-command-metrics span,
+  .evo-command-run {
+    min-height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .evo-command-metrics small {
+    color: var(--evo-text-secondary);
+  }
+
+  .evo-command-metrics b {
+    color: var(--evo-text);
+  }
+
+  .evo-refresh-button {
+    height: 36px;
+  }
+
+  .evo-detail-topbar {
+    padding: 10px 0;
+    border: 0;
+    border-bottom: 1px solid rgba(93, 48, 17, 0.16);
+    background: transparent;
+  }
+
+  .evo-nav {
+    gap: 8px;
+    padding: 0;
+  }
+
+  .evo-nav-tab {
+    height: 32px;
+    padding: 0 14px;
+  }
+
+  .evo-main-pane {
+    align-self: stretch;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .evo-scroll {
+    height: 100%;
+    max-height: none;
+    padding: 14px 0 12px;
   }
 }
 </style>

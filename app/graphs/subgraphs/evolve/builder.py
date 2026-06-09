@@ -13,6 +13,7 @@ from app.graphs.subgraphs.evolve.nodes import (
     consolidate_node,
     decide_node,
     init_evolve_node,
+    scenario_replay_node,
     training_node,
 )
 
@@ -20,7 +21,7 @@ from app.graphs.subgraphs.evolve.nodes import (
 def build_evolve_graph(game_subgraph: Any = None) -> Any:
     """Build the evolution pipeline graph for a single role.
 
-    Pipeline: init → training → consolidate → apply → battle → decide
+    Pipeline: init → training → consolidate → apply → scenario_replay → battle → decide
     """
     workflow = StateGraph(EvolveState)
 
@@ -39,6 +40,7 @@ def build_evolve_graph(game_subgraph: Any = None) -> Any:
     workflow.add_node("training", _training_with_subgraph)
     workflow.add_node("consolidate", consolidate_node)
     workflow.add_node("apply", apply_node)
+    workflow.add_node("scenario_replay", scenario_replay_node)
     workflow.add_node("battle", _battle_with_subgraph)
     workflow.add_node("decide", decide_node)
 
@@ -46,7 +48,8 @@ def build_evolve_graph(game_subgraph: Any = None) -> Any:
     workflow.add_edge("init", "training")
     workflow.add_edge("training", "consolidate")
     workflow.add_edge("consolidate", "apply")
-    workflow.add_edge("apply", "battle")
+    workflow.add_edge("apply", "scenario_replay")
+    workflow.add_edge("scenario_replay", "battle")
     workflow.add_edge("battle", "decide")
     workflow.add_edge("decide", END)
 

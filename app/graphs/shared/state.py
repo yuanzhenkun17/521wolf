@@ -239,8 +239,15 @@ class EvolveState(TypedDict, total=False):
     candidate_hash: str | None
     candidate_skill_dir: str | None
     consolidation: dict[str, Any] | None
+    scenario_snapshots: list[dict[str, Any]]
+    scenario_replay_report: dict[str, Any] | None
+    scenario_replay_summary: dict[str, Any] | None
+    proposal_attribution_report: dict[str, Any] | None
     battle_result: dict[str, Any] | None
     battle_games: list[dict[str, Any]]
+    release_gate: dict[str, Any] | None
+    release_decision: str | None
+    trust_bundle: dict[str, Any] | None
     proposals: list[dict[str, Any]]
     diff: list[dict[str, Any]]
     current_stage: str

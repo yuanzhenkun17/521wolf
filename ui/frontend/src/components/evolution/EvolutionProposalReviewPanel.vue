@@ -12,6 +12,9 @@ const summary = computed(() => review.value.summary || {})
 const proposals = computed(() => props.evo.selectedProposalRows.value || [])
 const gate = computed(() => review.value.gate || {})
 const pairedSeeds = computed(() => review.value.pairedSeeds || [])
+const scenarioReplay = computed(() => review.value.scenarioReplay || {})
+const trustBundle = computed(() => review.value.trustBundle || {})
+const proposalAttribution = computed(() => review.value.proposalAttribution || gate.value.proposalAttribution || {})
 const selectedRun = computed(() => props.evo.selectedRun.value || null)
 const isBatch = computed(() => Boolean(props.evo.selectedIsBatch.value))
 const hasRun = computed(() => Boolean(props.evo.selectedRunId.value))
@@ -40,6 +43,23 @@ function percentLabel(value) {
   return `${number > 0 ? '+' : ''}${Math.round(number * 100)}%`
 }
 
+function attributionLabel() {
+  const label = displayText(
+    summary.value.proposalAttributionLabel ||
+      gate.value.proposalAttributionLabel ||
+      proposalAttribution.value.statusLabel,
+    ''
+  )
+  const rows = Number(
+    summary.value.proposalAttributionRowCount ??
+      gate.value.proposalAttributionRowCount ??
+      proposalAttribution.value.rowCount
+  )
+  if (!label && !Number.isFinite(rows)) return '—'
+  if (!Number.isFinite(rows) || rows <= 0) return label || '—'
+  return label ? `${label} / ${rows}` : String(rows)
+}
+
 function proposalKey(proposal, index) {
   return proposal?.apiId || proposal?.proposal_id || proposal?.id || index
 }
@@ -59,6 +79,19 @@ function isAccepted(proposal) {
 
 function isRejected(proposal) {
   return ['rejected', 'reject'].includes(String(proposal?.status || '').toLowerCase())
+}
+
+function hasHypothesisDetails(proposal) {
+  return Boolean(
+    proposal?.hypothesis ||
+      proposal?.triggerCondition ||
+      proposal?.expectedEffect ||
+      proposal?.metricTargetRows?.length ||
+      proposal?.evidenceGameIds?.length ||
+      proposal?.counterEvidenceGameIds?.length ||
+      proposal?.preflightStatus ||
+      proposal?.preflightReasons?.length
+  )
 }
 
 function rejectReason(proposal, index) {
@@ -109,9 +142,14 @@ async function applyAccepted() {
 
       <div class="evo-gate-strip">
         <span><small>Gate</small><b>{{ gate.decisionLabel || '—' }}</b></span>
+        <span><small>Release</small><b>{{ gate.releaseLabel || '—' }}</b></span>
         <span><small>胜率差</small><b>{{ percentLabel(gate.winRateDelta) }}</b></span>
         <span><small>角色分差</small><b>{{ formatNumber(gate.roleScoreDelta) }}</b></span>
         <span><small>Paired Seeds</small><b>{{ summary.pairedSeedCount || gate.pairedValidCount || pairedSeeds.length || 0 }}</b></span>
+        <span><small>Scenario</small><b>{{ summary.scenarioCount || gate.scenarioCount || scenarioReplay.scenario_count || 0 }}</b></span>
+        <span><small>Policy</small><b>{{ summary.scenarioPolicyViolationCount || gate.scenarioPolicyViolationCount || scenarioReplay.policy_violation_count || 0 }}</b></span>
+        <span><small>Attribution</small><b>{{ attributionLabel() }}</b></span>
+        <span><small>Trust</small><b>{{ formatNumber(summary.trustCompletenessScore ?? trustBundle.completeness?.score ?? gate.trustCompletenessScore) }}</b></span>
       </div>
 
       <div v-if="review.loading" class="evo-loading">读取中</div>
@@ -137,12 +175,53 @@ async function applyAccepted() {
               <code>{{ displayText(proposal.targetFile) }}</code>
               <small>{{ proposal.operation }}</small>
               <small v-if="proposal.gateDecision">{{ proposal.gateLabel }}</small>
+              <small v-if="proposal.preflightStatus">预检 {{ proposal.preflightLabel }}</small>
               <small v-if="proposal.riskLevel">风险 {{ proposal.riskLevel }}</small>
             </div>
             <p>{{ proposal.summary }}</p>
             <p v-if="proposal.rationale !== proposal.summary" class="evo-proposal-rationale">
               {{ proposal.rationale }}
             </p>
+            <div v-if="hasHypothesisDetails(proposal)" class="evo-hypothesis-grid">
+              <div v-if="proposal.hypothesis" class="wide">
+                <small>Hypothesis</small>
+                <p>{{ proposal.hypothesis }}</p>
+              </div>
+              <div v-if="proposal.triggerCondition">
+                <small>Trigger</small>
+                <p>{{ proposal.triggerCondition }}</p>
+              </div>
+              <div v-if="proposal.expectedEffect">
+                <small>Expected</small>
+                <p>{{ proposal.expectedEffect }}</p>
+              </div>
+              <div v-if="proposal.metricTargetRows.length">
+                <small>Metrics</small>
+                <dl>
+                  <template v-for="metric in proposal.metricTargetRows" :key="metric.name">
+                    <dt>{{ metric.name }}</dt>
+                    <dd>{{ metric.value }}</dd>
+                  </template>
+                </dl>
+              </div>
+              <div v-if="proposal.evidenceGameIds.length || proposal.counterEvidenceGameIds.length">
+                <small>Evidence</small>
+                <div class="evo-id-list">
+                  <code v-for="id in proposal.evidenceGameIds.slice(0, 8)" :key="`ev-${proposal.id}-${id}`">{{ id }}</code>
+                  <code
+                    v-for="id in proposal.counterEvidenceGameIds.slice(0, 8)"
+                    :key="`cev-${proposal.id}-${id}`"
+                    class="counter"
+                  >{{ id }}</code>
+                </div>
+              </div>
+              <div v-if="proposal.preflightReasons.length" class="wide">
+                <small>Preflight</small>
+                <div class="evo-proposal-tags compact">
+                  <span v-for="reason in proposal.preflightReasons" :key="`preflight-${proposal.id}-${reason}`">{{ reason }}</span>
+                </div>
+              </div>
+            </div>
             <div v-if="proposal.riskTags.length || proposal.gateReasons.length" class="evo-proposal-tags">
               <span v-for="tag in proposal.riskTags" :key="`risk-${tag}`">{{ tag }}</span>
               <span v-for="reason in proposal.gateReasons" :key="`gate-${reason}`">{{ reason }}</span>
@@ -350,6 +429,104 @@ async function applyAccepted() {
   color: var(--evo-text-secondary) !important;
 }
 
+.evo-hypothesis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  min-width: 0;
+}
+
+.evo-hypothesis-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(58, 42, 24, 0.08);
+  border-radius: 7px;
+  background: rgba(255, 255, 250, 0.54);
+}
+
+.evo-hypothesis-grid > .wide {
+  grid-column: 1 / -1;
+}
+
+.evo-hypothesis-grid small {
+  overflow: hidden;
+  color: var(--evo-accent-strong);
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.evo-hypothesis-grid p {
+  color: var(--evo-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.evo-hypothesis-grid dl {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.55fr) minmax(0, 1fr);
+  gap: 3px 7px;
+  margin: 0;
+  min-width: 0;
+}
+
+.evo-hypothesis-grid dt,
+.evo-hypothesis-grid dd {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--evo-text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-hypothesis-grid dt {
+  color: var(--evo-text);
+  font-weight: 800;
+}
+
+.evo-hypothesis-grid dd {
+  margin: 0;
+}
+
+.evo-id-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.evo-id-list code {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(74, 124, 68, 0.1);
+  color: var(--evo-text);
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-id-list code.counter {
+  background: rgba(139, 58, 42, 0.1);
+}
+
+.evo-proposal-tags.compact {
+  gap: 5px;
+}
+
+.evo-proposal-tags.compact span {
+  white-space: normal;
+}
+
 .evo-proposal-main pre {
   max-height: 150px;
   overflow: auto;
@@ -441,6 +618,10 @@ async function applyAccepted() {
   .evo-proposal-kpis,
   .evo-gate-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .evo-hypothesis-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .evo-paired-table {

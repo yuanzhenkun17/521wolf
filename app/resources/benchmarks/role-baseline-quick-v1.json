@@ -1,0 +1,36 @@
+{
+  "id": "role-baseline-quick-v1",
+  "version": 1,
+  "name": "Role Baseline Quick Benchmark",
+  "description": "Low-cost benchmark smoke for role-version evaluation.",
+  "target_type": "role_version",
+  "roles": ["seer", "witch", "hunter", "werewolf"],
+  "game_count": 3,
+  "max_days": 5,
+  "paired_seed": true,
+  "seed_set_id": "role-baseline-quick-202606",
+  "seed_start": 260600,
+  "metrics": {
+    "primary": "avg_role_score",
+    "secondary": [
+      "target_side_win_rate",
+      "fallback_rate",
+      "llm_error_rate",
+      "decision_judge_avg_score"
+    ]
+  },
+  "gates": {
+    "min_completed_games": 1,
+    "min_valid_game_rate": 0.5,
+    "max_fallback_rate": 0.5,
+    "max_llm_error_rate": 0.5
+  },
+  "judge": {
+    "enable_decision_judge": true,
+    "judge_max_decisions": 10,
+    "judge_concurrency": 2,
+    "judge_timeout_seconds": 60
+  },
+  "enabled": true,
+  "cost_tier": "quick"
+}

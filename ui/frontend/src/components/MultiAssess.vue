@@ -47,6 +47,17 @@ function overallScore(item) {
   return clampScore(item?.role_score ?? item?.score ?? 0)
 }
 
+function rankBarClass(item) {
+  const role = roleText(item?.player)
+  if (role.includes('预言')) return 'seer'
+  if (role.includes('女巫')) return 'witch'
+  if (role.includes('猎人')) return 'hunter'
+  if (role.includes('守卫')) return 'guard'
+  if (role.includes('白狼')) return 'white-wolf'
+  if (role.includes('狼人')) return 'wolf'
+  return 'villager'
+}
+
 function metricScore(item, key) {
   return clampScore(item?.[key] ?? 0)
 }
@@ -179,7 +190,6 @@ function radarScoreForDim(key) {
             :class="['ma-rank-row', { active: item.player?.id === radarPlayer?.player?.id }]"
             @click="selectPlayer(item)"
           >
-            <span class="ma-rank-index">{{ compactRankNumber(item) || index + 1 }}</span>
             <img :src="roleImage(item.player)" :alt="roleText(item.player)" class="ma-rank-avatar" />
             <span class="ma-rank-player">
               <b>{{ item.player?.seat }}号</b>
@@ -187,7 +197,7 @@ function radarScoreForDim(key) {
             </span>
             <span class="ma-rank-score">{{ overallScore(item) }}</span>
             <span class="ma-rank-bar" aria-hidden="true">
-              <i :style="{ width: overallScore(item) + '%' }"></i>
+              <i :class="'role-' + rankBarClass(item)" :style="{ width: overallScore(item) + '%' }"></i>
             </span>
           </button>
         </div>

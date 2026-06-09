@@ -1,0 +1,37 @@
+{
+  "id": "role-baseline-standard-v1",
+  "version": 1,
+  "name": "Role Baseline Standard Benchmark",
+  "description": "Standard fixed-seed role-version leaderboard benchmark.",
+  "target_type": "role_version",
+  "roles": ["villager", "seer", "witch", "hunter", "guard", "werewolf", "white_wolf_king"],
+  "game_count": 30,
+  "max_days": 5,
+  "paired_seed": true,
+  "seed_set_id": "role-baseline-standard-202606",
+  "seed_start": 261000,
+  "metrics": {
+    "primary": "avg_role_score",
+    "secondary": [
+      "target_side_win_rate",
+      "fallback_rate",
+      "llm_error_rate",
+      "policy_adjusted_rate",
+      "decision_judge_avg_score"
+    ]
+  },
+  "gates": {
+    "min_completed_games": 20,
+    "min_valid_game_rate": 0.8,
+    "max_fallback_rate": 0.25,
+    "max_llm_error_rate": 0.15
+  },
+  "judge": {
+    "enable_decision_judge": true,
+    "judge_max_decisions": 20,
+    "judge_concurrency": 4,
+    "judge_timeout_seconds": 60
+  },
+  "enabled": true,
+  "cost_tier": "standard"
+}

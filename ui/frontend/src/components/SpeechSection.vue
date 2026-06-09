@@ -6,7 +6,8 @@ import NightActionCard from './NightActionCard.vue'
 const props = defineProps({
   decisions: { type: Array, default: () => [] },
   selectedDecision: Object,
-  detailTab: { type: String, default: 'summary' }
+  detailTab: { type: String, default: 'summary' },
+  roleIconImage: Function
 })
 
 const emit = defineEmits(['update:selectedDecision', 'update:detailTab'])
@@ -50,6 +51,7 @@ function selectDecision(decision) {
             :action="decision"
             :selected="isSelected(decision, index)"
             mode="speech"
+            :role-icon-image="roleIconImage"
             @select="selectDecision"
           />
         </div>

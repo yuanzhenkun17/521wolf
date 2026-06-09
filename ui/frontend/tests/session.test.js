@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { nextTick, ref } from 'vue'
+import { createRenderer, nextTick, ref } from 'vue'
 import { useGameState } from '../src/composables/useGameState.js'
 import { useGameActions } from '../src/composables/useGameActions.js'
 import { useGameHistory } from '../src/composables/useGameHistory.js'
 import { useGameAudio } from '../src/composables/useGameAudio.js'
 import { useEvolutionWorkbench } from '../src/composables/useEvolutionWorkbench.js'
 import { useEvaluationWorkbench } from '../src/composables/useEvaluationWorkbench.js'
+import { createNoticeAutoDismiss } from '../src/composables/noticeAutoDismiss.js'
 import { normalizeGameSnapshot } from '../src/composables/gameSnapshot.js'
 import { buildSceneEffects } from '../src/composables/sceneEffects.js'
 import {
@@ -17,6 +18,7 @@ import {
   isReturnableGame,
   isTerminalGame,
   readStoredGameSession,
+  viewFromHash,
   writeStoredGameSession
 } from '../src/composables/gameSession.js'
 
@@ -68,6 +70,12 @@ function createTimerHarness() {
       callback()
       return true
     },
+    runNextInterval() {
+      const [, callback] = intervals.entries().next().value || []
+      if (!callback) return false
+      callback()
+      return true
+    },
     timeoutCount() {
       return timeouts.size
     },
@@ -75,6 +83,10 @@ function createTimerHarness() {
       return intervals.size
     }
   }
+}
+
+async function flushPromises(count = 6) {
+  for (let index = 0; index < count; index += 1) await Promise.resolve()
 }
 
 function withWindow(callback, { hash = '', eventSource = undefined } = {}) {
@@ -104,6 +116,62 @@ function withWindow(callback, { hash = '', eventSource = undefined } = {}) {
     })
 }
 
+const lifecycleRenderer = createRenderer({
+  patchProp() {},
+  insert(child, parent, anchor = null) {
+    child.parent = parent
+    parent.children ||= []
+    if (!anchor) {
+      parent.children.push(child)
+      return
+    }
+    const index = parent.children.indexOf(anchor)
+    if (index === -1) parent.children.push(child)
+    else parent.children.splice(index, 0, child)
+  },
+  remove(child) {
+    const children = child.parent?.children
+    if (!children) return
+    const index = children.indexOf(child)
+    if (index >= 0) children.splice(index, 1)
+  },
+  createElement(type) {
+    return { type, children: [] }
+  },
+  createText(text) {
+    return { type: 'text', text }
+  },
+  createComment(text) {
+    return { type: 'comment', text }
+  },
+  setText(node, text) {
+    node.text = text
+  },
+  setElementText(node, text) {
+    node.children = [text]
+  },
+  parentNode(node) {
+    return node.parent || null
+  },
+  nextSibling(node) {
+    const children = node.parent?.children || []
+    const index = children.indexOf(node)
+    return index >= 0 ? children[index + 1] || null : null
+  }
+})
+
+function mountLifecycleComposable(setup) {
+  const root = { type: 'root', children: [] }
+  const app = lifecycleRenderer.createApp({
+    setup() {
+      setup()
+      return () => null
+    }
+  })
+  app.mount(root)
+  return () => app.unmount()
+}
+
 function game(id, extra = {}) {
   return {
     game_id: id,
@@ -121,6 +189,17 @@ function game(id, extra = {}) {
     waiting_for: 'none',
     ...extra
   }
+}
+
+function historyPhasePath(gameId, { day = 1, phase = 'setup', logOffset = 0, logLimit = 300, decisionOffset = 0, decisionLimit = 200 } = {}) {
+  const params = new URLSearchParams()
+  params.set('day', String(day))
+  params.set('phase', phase)
+  params.set('log_offset', String(logOffset))
+  params.set('log_limit', String(logLimit))
+  params.set('decision_offset', String(decisionOffset))
+  params.set('decision_limit', String(decisionLimit))
+  return `/games/${encodeURIComponent(gameId)}/phase?${params.toString()}`
 }
 
 test('game session helpers only return active sessions for non-terminal games', () => {
@@ -234,6 +313,78 @@ test('exitGame stops the live game even when replay mode is active', () => withW
   assert.equal(state.currentView.value, 'lobby')
 }))
 
+test('exitGame returns to lobby without waiting for stop response', () => withWindow(async () => {
+  const state = useGameState()
+  const stopRequest = createDeferred()
+  const stoppedPaths = []
+  state.liveGame.value = game('slow-stop-game')
+  state.currentView.value = 'match'
+
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path) => {
+      stoppedPaths.push(path)
+      return stopRequest.promise
+    }
+  })
+
+  await actions.exitGame()
+
+  assert.deepEqual(stoppedPaths, ['/games/slow-stop-game/stop'])
+  assert.equal(state.liveGame.value, null)
+  assert.equal(state.currentView.value, 'lobby')
+  assert.equal(state.loading.value, false)
+
+  stopRequest.resolve({})
+  await stopRequest.promise
+}))
+
+test('exitGame reports a warning when the background stop request fails', () => withWindow(async () => {
+  const state = useGameState()
+  state.liveGame.value = game('stop-fails')
+  state.currentView.value = 'match'
+
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path) => {
+      if (path === '/games/stop-fails/stop') throw new Error('Failed to fetch')
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  await actions.exitGame()
+  await flushPromises()
+
+  assert.equal(state.liveGame.value, null)
+  assert.equal(state.currentView.value, 'lobby')
+  assert.deepEqual(state.matchNotice.value, {
+    type: 'warning',
+    message: '已返回大厅，但后台停止对局失败。'
+  })
+  assert.equal(state.error.value, '已返回大厅，但后台停止对局失败。')
+}))
+
+test('startMode reports a local notice when the backend is offline', () => withWindow(async () => {
+  const state = useGameState()
+  state.backendMode.value = 'offline'
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async () => {
+      throw new Error('should not call api')
+    }
+  })
+
+  const started = await actions.startMode({ mode: 'watch' })
+
+  assert.equal(started, null)
+  assert.equal(state.currentView.value, 'lobby')
+  assert.deepEqual(state.matchNotice.value, {
+    type: 'error',
+    message: '后端未连接，请先启动 FastAPI 服务。'
+  })
+  assert.equal(state.error.value, '后端未连接，请先启动 FastAPI 服务。')
+}))
+
 test('restoreStoredGame reloads a returnable game and skips the intro', () => withWindow(async () => {
   const state = useGameState()
   const restored = game('stored-game')
@@ -275,6 +426,38 @@ test('restoreStoredGame routes stale match links back to lobby', () => withWindo
   assert.equal(window.location.hash, '')
   assert.equal(readStoredGameSession(), null)
 }))
+
+test('mounted game actions delays stored game restore away from match view', () => withWindow(async ({ timers }) => {
+  const state = useGameState()
+  const restored = game('stored-game')
+  writeStoredGameSession(restored)
+  const requests = []
+
+  const unmount = mountLifecycleComposable(() => {
+    useGameActions(state, {
+      apiFetch: async (path) => {
+        requests.push(path)
+        if (path === '/health') return { mode: 'api', external: { supports_human: true } }
+        if (path === '/games/stored-game') return restored
+        throw new Error(`unexpected ${path}`)
+      }
+    })
+  })
+
+  await nextTick()
+  await flushPromises()
+  assert.deepEqual(requests, ['/health'])
+  assert.equal(state.liveGame.value, null)
+  assert.equal(timers.timeoutCount(), 1)
+
+  timers.runNextTimeout()
+  await flushPromises()
+
+  assert.equal(requests.includes('/games/stored-game'), true)
+  assert.equal(state.liveGame.value?.game_id, 'stored-game')
+  assert.equal(state.currentView.value, 'benchmark')
+  unmount()
+}, { hash: '#benchmark' }))
 
 test('pending human vote actions normalize aliases and candidate objects', () => {
   const snapshot = normalizeGameSnapshot(game('pending-vote', {
@@ -519,6 +702,10 @@ test('witch skip submits none and clears pending human action', () => withWindow
   }])
   assert.equal(state.liveGame.value.pending_human_action, null)
   assert.equal(state.liveGame.value.waiting_for, 'none')
+  assert.deepEqual(state.matchNotice.value, {
+    type: 'success',
+    message: '女巫行动已提交。'
+  })
 }))
 
 test('targeted non-witch actions do not inherit witch skip choice', () => withWindow(async () => {
@@ -577,6 +764,46 @@ test('targeted non-witch actions do not inherit witch skip choice', () => withWi
   }])
   assert.equal(state.liveGame.value.pending_human_action, null)
   assert.equal(state.liveGame.value.waiting_for, 'none')
+  assert.deepEqual(state.matchNotice.value, {
+    type: 'success',
+    message: '行动已提交。'
+  })
+}))
+
+test('submitHumanAction reports a localized error notice when the backend rejects the action', () => withWindow(async () => {
+  const state = useGameState()
+  const initial = normalizeGameSnapshot(game('reject-action', {
+    mode: 'play',
+    human_player_id: 1,
+    phase: 'vote',
+    players: [
+      { id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true },
+      { id: 2, seat: 2, name: '2号', role_hint: '狼人', alive: true }
+    ],
+    pending_human_action: {
+      action_type: 'exile_vote',
+      player_id: 1,
+      candidate_ids: [2]
+    }
+  }), { mode: 'play' })
+  state.liveGame.value = initial
+  state.actionTarget.value = 2
+
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path) => {
+      if (path === '/games/reject-action/action') throw new Error('no pending human action')
+      if (path === '/games/reject-action') return initial
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  await actions.submitVote()
+
+  assert.deepEqual(state.matchNotice.value, {
+    type: 'error',
+    message: '当前没有等待你处理的行动。'
+  })
 }))
 
 test('white wolf burst is only available for backend white wolf pending action', () => withWindow(async () => {
@@ -733,6 +960,50 @@ test('startMode in watch mode starts god view without skipping the model intro',
   assert.equal(timers.intervalCount(), 1)
 }))
 
+test('resetGame restarts the match and warns when stopping the old game fails', () => withWindow(async () => {
+  const state = useGameState()
+  const paths = []
+  const nextGame = game('reset-next', {
+    mode: 'watch',
+    human_player_id: null,
+    player_count: 12,
+    players: Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      seat: index + 1,
+      name: `${index + 1}号`,
+      role_hint: '未知',
+      alive: true
+    }))
+  })
+  state.liveGame.value = game('reset-old', { mode: 'watch' })
+
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path) => {
+      paths.push(path)
+      if (path === '/games/reset-old/stop') throw new Error('stop failed')
+      if (path === '/games') return nextGame
+      if (path === '/games/reset-next?advance=1') return nextGame
+      if (path === '/health') return { mode: 'mock', external: { supports_human: true } }
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  await actions.resetGame()
+
+  assert.deepEqual(paths, [
+    '/games/reset-old/stop',
+    '/games',
+    '/games/reset-next?advance=1',
+    '/health'
+  ])
+  assert.equal(state.liveGame.value.game_id, 'reset-next')
+  assert.deepEqual(state.matchNotice.value, {
+    type: 'warning',
+    message: '已重开对局；旧对局后台停止失败。'
+  })
+}))
+
 test('startMode does not send enable_sheriff from the frontend start request', () => withWindow(async () => {
   const state = useGameState()
   let startBody = null
@@ -784,7 +1055,7 @@ test('player mode hides other identities for villagers and reveals wolf teammate
   assert.equal(villagerView.find((player) => player.id === 1).role_hint, '村民')
   assert.equal(villagerView.find((player) => player.id === 2).role_hint, '未知')
   assert.equal(villagerView.find((player) => player.id === 2).role_visible, false)
-  assert.equal(villagerView.find((player) => player.id === 3).roleIcon, '/role-icons/未知.png')
+  assert.equal(villagerView.find((player) => player.id === 3).roleIcon, '/role-icons/optimized/未知.webp')
 
   state.liveGame.value = normalizeGameSnapshot(game('wolf-view', {
     mode: 'play',
@@ -1352,8 +1623,7 @@ test('game audio dispose clears delayed TTS retry timers', () => withWindow(asyn
       ]
     })
     await nextTick()
-    await Promise.resolve()
-    await Promise.resolve()
+    await flushPromises()
 
     assert.equal(timers.timeoutCount(), 1)
     audio.dispose()
@@ -1363,6 +1633,360 @@ test('game audio dispose clears delayed TTS retry timers', () => withWindow(asyn
     else globalThis.fetch = originalFetch
   }
 }))
+
+test('game audio uses the realtime TTS stream endpoint', () => withWindow(async () => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  const startedAt = []
+
+  class FakeAudioContext {
+    constructor() {
+      this.currentTime = 1
+      this.destination = {}
+      this.state = 'running'
+    }
+    createBuffer(channels, frameCount, sampleRate) {
+      assert.equal(channels, 1)
+      assert.equal(sampleRate, 24000)
+      return {
+        duration: frameCount / sampleRate,
+        getChannelData: () => new Float32Array(frameCount)
+      }
+    }
+    createBufferSource() {
+      return {
+        connect() {},
+        disconnect() {},
+        start: (when) => startedAt.push(when),
+        stop() {}
+      }
+    }
+    createGain() {
+      return {
+        gain: { value: 0 },
+        connect() {},
+        disconnect() {}
+      }
+    }
+    resume() {
+      return Promise.resolve()
+    }
+    close() {
+      return Promise.resolve()
+    }
+  }
+  window.AudioContext = FakeAudioContext
+
+  globalThis.fetch = async (url) => {
+    requests.push(String(url))
+    assert.equal(String(url), '/api/tts/speech/stream')
+    let reads = 0
+    return {
+      ok: true,
+      headers: { get: (key) => key === 'X-TTS-Sample-Rate' ? '24000' : null },
+      body: {
+        getReader: () => ({
+          async read() {
+            reads += 1
+            return reads === 1
+              ? { done: false, value: new Uint8Array([0, 0, 255, 127]) }
+              : { done: true }
+          },
+          releaseLock() {}
+        })
+      }
+    }
+  }
+
+  try {
+    const runtime = {
+      currentView: ref('match'),
+      game: ref(null),
+      isReplayMode: ref(false),
+      externalStatus: ref({ tts: 'configured' }),
+      apiBase: ref('/api'),
+      roleAssignmentComplete: ref(true)
+    }
+    const audio = useGameAudio(runtime, { installLifecycle: false })
+
+    runtime.game.value = game('audio-stream-tts', { phase: 'speech', waiting_for: 'speech', logs: [] })
+    await nextTick()
+    runtime.game.value = game('audio-stream-tts', {
+      phase: 'speech',
+      waiting_for: 'speech',
+      logs: [
+        { type: 'speech', actor_id: 2, speaker: '2号', message: '我这里先表水。', visibility: 'public' }
+      ]
+    })
+    await nextTick()
+    await flushPromises()
+
+    assert.deepEqual(requests, ['/api/tts/speech/stream'])
+    assert.equal(startedAt.length, 1)
+    audio.dispose()
+  } finally {
+    if (originalFetch === undefined) delete globalThis.fetch
+    else globalThis.fetch = originalFetch
+  }
+}))
+
+test('game audio does not scan or request TTS outside match view', () => withWindow(async () => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (url) => {
+    requests.push(String(url))
+    throw new Error('tts should stay idle outside match')
+  }
+
+  try {
+    const runtime = {
+      currentView: ref('benchmark'),
+      game: ref(null),
+      isReplayMode: ref(false),
+      externalStatus: ref({ tts: 'configured' }),
+      apiBase: ref('/api'),
+      roleAssignmentComplete: ref(true)
+    }
+    const audio = useGameAudio(runtime, { installLifecycle: false })
+
+    runtime.game.value = game('audio-idle-tts', {
+      phase: 'speech',
+      waiting_for: 'speech',
+      logs: [
+        { type: 'speech', actor_id: 1, speaker: '1号', message: '我这里先表水。', visibility: 'public' }
+      ]
+    })
+    await nextTick()
+    await flushPromises()
+
+    assert.deepEqual(requests, [])
+    audio.dispose()
+  } finally {
+    if (originalFetch === undefined) delete globalThis.fetch
+    else globalThis.fetch = originalFetch
+  }
+}))
+
+test('mounted history does not prefetch the game list outside logs by default', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+
+  const unmount = mountLifecycleComposable(() => {
+    useGameHistory(state, {
+      apiFetch: async (path) => {
+        requests.push(path)
+        return { games: [], pagination: { total: 0, offset: 0, limit: 8, returned: 0, has_more: false } }
+      }
+    })
+  })
+
+  await nextTick()
+  await flushPromises()
+
+  assert.deepEqual(requests, [])
+  assert.deepEqual(state.gameHistory.value, [])
+  unmount()
+}))
+
+test('opening logs loads the first listed game detail by default', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const rows = [
+    game('history-first', { winner: 'villagers' }),
+    game('history-second', { winner: 'werewolves' })
+  ]
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games?limit=2&offset=0') {
+      return {
+        games: rows,
+        pagination: { total: rows.length, offset: 0, limit: 2, returned: rows.length, has_more: false }
+      }
+    }
+    if (path === '/games/history-first?view=history-shell') {
+      return game('history-first', {
+        day: 3,
+        winner: 'villagers',
+        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
+      })
+    }
+    if (path === historyPhasePath('history-first')) {
+      return {
+        game_id: 'history-first',
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'started' }],
+        decisions: []
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 2,
+    apiFetch
+  })
+
+  await history.openLogPage()
+
+  assert.deepEqual(requests, [
+    '/games?limit=2&offset=0',
+    '/games/history-first?view=history-shell',
+    historyPhasePath('history-first')
+  ])
+  assert.equal(state.currentView.value, 'logs')
+  assert.equal(state.selectedHistoryGameId.value, 'history-first')
+  assert.equal(state.selectedHistoryGame.value.game_id, 'history-first')
+  assert.equal(state.selectedHistoryGame.value.day, 1)
+  assert.equal(state.selectedHistoryGame.value.logs[0].message, 'started')
+}))
+
+test('history detail and replay preserve evidence source context for benchmark games', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const evidenceSource = {
+    log_source: 'benchmark',
+    log_source_label: '批量评测',
+    source_run_id: 'bench_run_42',
+    source_phase: 'battle',
+    source_phase_label: '对战',
+    seed: 4242,
+    role_versions: { seer: 'seer_canary' }
+  }
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games?limit=2&offset=0') {
+      return {
+        games: [
+          game('benchmark-context', {
+            log_source: 'benchmark',
+            source_run_id: 'bench_run_42',
+            source_phase: 'battle',
+            seed: 4242,
+            role_versions: { seer: 'seer_canary' },
+            evidence_source: evidenceSource
+          })
+        ],
+        pagination: { total: 1, offset: 0, limit: 2, returned: 1, has_more: false }
+      }
+    }
+    if (path === '/games/benchmark-context?view=history-shell') {
+      return game('benchmark-context', {
+        detail_view: 'history-shell',
+        log_source: 'benchmark',
+        source_run_id: 'bench_run_42',
+        source_phase: 'battle',
+        seed: 4242,
+        role_versions: { seer: 'seer_canary' },
+        evidence_source: evidenceSource,
+        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
+      })
+    }
+    if (path === historyPhasePath('benchmark-context')) {
+      return {
+        game_id: 'benchmark-context',
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'benchmark started' }],
+        decisions: []
+      }
+    }
+    if (path === '/games/benchmark-context/replay?cursor=0&limit=500') {
+      return {
+        game_id: 'benchmark-context',
+        log_source: 'benchmark',
+        source_run_id: 'bench_run_42',
+        source_phase: 'battle',
+        seed: 4242,
+        role_versions: { seer: 'seer_canary' },
+        evidence_source: evidenceSource,
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'benchmark replay' }],
+        decisions: [],
+        event_count: 1,
+        cursor: 0,
+        limit: 500,
+        next_cursor: 1,
+        has_more: false
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 2,
+    apiFetch
+  })
+
+  await history.openLogPage()
+
+  assert.equal(state.selectedHistoryGame.value.log_source, 'benchmark')
+  assert.equal(state.selectedHistoryGame.value.source_run_id, 'bench_run_42')
+  assert.deepEqual(state.selectedHistoryGame.value.role_versions, { seer: 'seer_canary' })
+  assert.deepEqual(state.selectedHistoryGame.value.evidence_source, evidenceSource)
+
+  await history.replayHistoryGame('benchmark-context')
+
+  assert.equal(state.currentView.value, 'match')
+  assert.equal(state.replayByGameId.value['benchmark-context'].source_phase, 'battle')
+  assert.deepEqual(state.replayByGameId.value['benchmark-context'].role_versions, { seer: 'seer_canary' })
+  assert.deepEqual(state.replayByGameId.value['benchmark-context'].evidence_source, evidenceSource)
+  assert.equal(requests.includes('/games/benchmark-context/replay?cursor=0&limit=500'), true)
+}))
+
+test('logs hash deep link selects the requested benchmark replay game', () => withWindow(async () => {
+  assert.equal(viewFromHash('#logs?game_id=benchmark-game-2'), 'logs')
+
+  const state = useGameState()
+  const requests = []
+  const rows = [
+    game('history-first', { winner: 'villagers' }),
+    game('benchmark-game-2', { source: 'benchmark', winner: 'werewolves' })
+  ]
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games?limit=3&offset=0') {
+      return {
+        games: rows,
+        pagination: { total: rows.length, offset: 0, limit: 3, returned: rows.length, has_more: false }
+      }
+    }
+    if (path === '/games/benchmark-game-2?view=history-shell') {
+      return game('benchmark-game-2', {
+        source: 'benchmark',
+        winner: 'werewolves',
+        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
+      })
+    }
+    if (path === historyPhasePath('benchmark-game-2')) {
+      return {
+        game_id: 'benchmark-game-2',
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'benchmark replay' }],
+        decisions: []
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 3,
+    apiFetch
+  })
+
+  history.syncHashRoute()
+  await flushPromises(10)
+
+  assert.deepEqual(requests, [
+    '/games?limit=3&offset=0',
+    '/games/benchmark-game-2?view=history-shell',
+    historyPhasePath('benchmark-game-2')
+  ])
+  assert.equal(state.currentView.value, 'logs')
+  assert.equal(state.selectedHistoryGameId.value, 'benchmark-game-2')
+  assert.equal(state.selectedHistoryGame.value.game_id, 'benchmark-game-2')
+  assert.equal(state.selectedHistoryGame.value.logs[0].message, 'benchmark replay')
+}, { hash: '#logs?game_id=benchmark-game-2' }))
 
 test('history list uses paginated API and load more appends without changing selection', () => withWindow(async () => {
   const state = useGameState()
@@ -1405,6 +2029,17 @@ test('history list uses paginated API and load more appends without changing sel
     if (gameIdMatch) {
       return [...rows, ...evolutionRows].find((item) => item.game_id === decodeURIComponent(gameIdMatch[1]))
     }
+    const phaseMatch = route.match(/^\/games\/([^/]+)\/phase$/)
+    if (phaseMatch) {
+      const gameId = decodeURIComponent(phaseMatch[1])
+      return {
+        game_id: gameId,
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: `${gameId} started` }],
+        decisions: []
+      }
+    }
     if (/^\/games\/[^/]+\/review$/.test(route)) return { summary: 'ok' }
     throw new Error(`unexpected ${path}`)
   }
@@ -1433,7 +2068,269 @@ test('history list uses paginated API and load more appends without changing sel
   assert.equal(requests.includes('/games?limit=2&offset=0&source=evolution'), true)
   assert.equal(state.selectedHistoryGameId.value, 'evolution-1')
   assert.equal(state.selectedHistoryGame.value.game_id, 'evolution-1')
+  assert.equal(state.selectedHistoryGame.value.logs[0].message, 'evolution-1 started')
   assert.equal(history.historyHasMore.value, false)
+}))
+
+test('history page changes select and load the first game on the new page', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const rows = [
+    game('history-1', { winner: 'villagers' }),
+    game('history-2', { winner: 'werewolves' }),
+    game('history-3', { winner: 'villagers' })
+  ]
+  const apiFetch = async (path) => {
+    requests.push(path)
+    const [route, query = ''] = path.split('?')
+    if (route === '/games') {
+      const params = new URLSearchParams(query)
+      const offset = Number(params.get('offset') || 0)
+      const limit = Number(params.get('limit') || rows.length)
+      const page = rows.slice(offset, offset + limit)
+      return {
+        games: page,
+        pagination: {
+          total: rows.length,
+          offset,
+          limit,
+          returned: page.length,
+          has_more: offset + page.length < rows.length
+        }
+      }
+    }
+    const gameIdMatch = route.match(/^\/games\/([^/]+)$/)
+    if (gameIdMatch) return rows.find((item) => item.game_id === decodeURIComponent(gameIdMatch[1]))
+    const phaseMatch = route.match(/^\/games\/([^/]+)\/phase$/)
+    if (phaseMatch) {
+      const gameId = decodeURIComponent(phaseMatch[1])
+      return {
+        game_id: gameId,
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: `${gameId} detail` }],
+        decisions: []
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 2,
+    apiFetch
+  })
+
+  await history.refreshHistoryList()
+  assert.equal(state.selectedHistoryGameId.value, 'history-1')
+
+  const changed = await history.goHistoryPage(2)
+
+  assert.equal(changed, true)
+  assert.deepEqual(state.gameHistory.value.map((item) => item.game_id), ['history-3'])
+  assert.equal(state.selectedHistoryGameId.value, 'history-3')
+  assert.equal(state.selectedHistoryGame.value.game_id, 'history-3')
+  assert.equal(state.selectedHistoryGame.value.logs[0].message, 'history-3 detail')
+  assert.deepEqual(requests, [
+    '/games?limit=2&offset=0',
+    '/games?limit=2&offset=2',
+    '/games/history-3?view=history-shell',
+    historyPhasePath('history-3')
+  ])
+}))
+
+test('deleteHistoryGame refreshes the history list and surfaces a success notice', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  let rows = [
+    game('history-1', { winner: 'villagers' }),
+    game('history-2', { winner: 'werewolves' })
+  ]
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, method: options.method || 'GET' })
+    const [route, query = ''] = path.split('?')
+    if (route === '/games') {
+      const params = new URLSearchParams(query)
+      const offset = Number(params.get('offset') || 0)
+      const limit = Number(params.get('limit') || rows.length)
+      const page = rows.slice(offset, offset + limit)
+      return {
+        games: page,
+        pagination: {
+          total: rows.length,
+          offset,
+          limit,
+          returned: page.length,
+          has_more: offset + page.length < rows.length
+        }
+      }
+    }
+    if (route === '/games/history-1' && options.method === 'DELETE') {
+      rows = rows.filter((item) => item.game_id !== 'history-1')
+      return null
+    }
+    if (path === '/games/history-2?view=history-shell') {
+      return {
+        ...rows.find((item) => item.game_id === 'history-2'),
+        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
+      }
+    }
+    if (path === historyPhasePath('history-2')) {
+      return {
+        game_id: 'history-2',
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'started' }],
+        decisions: []
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 8,
+    apiFetch
+  })
+
+  await history.refreshHistoryList()
+  state.selectedHistoryGame.value = game('history-1')
+  state.archiveByGameId.value = { 'history-1': { title: 'cached' } }
+  state.reviewByGameId.value = { 'history-1': { summary: 'cached' } }
+
+  const deleted = await history.deleteHistoryGame('history-1')
+
+  assert.equal(deleted, true)
+  assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
+    'GET /games?limit=8&offset=0',
+    'DELETE /games/history-1',
+    'GET /games?limit=8&offset=0',
+    'GET /games/history-2?view=history-shell',
+    `GET ${historyPhasePath('history-2')}`
+  ])
+  assert.deepEqual(state.gameHistory.value.map((item) => item.game_id), ['history-2'])
+  assert.equal(state.selectedHistoryGameId.value, 'history-2')
+  assert.equal(state.selectedHistoryGame.value.game_id, 'history-2')
+  assert.equal(state.archiveByGameId.value['history-1'], undefined)
+  assert.equal(state.reviewByGameId.value['history-1'], undefined)
+  assert.equal(history.historyNotice.value.type, 'success')
+  assert.match(history.historyNotice.value.message, /已删除/)
+  assert.equal(state.error.value, '')
+}))
+
+test('deleteHistoryGame keeps protected benchmark games and shows a warning notice', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const rows = [
+    game('benchmark-1', { source: 'benchmark', winner: 'villagers' }),
+    game('history-2', { winner: 'werewolves' })
+  ]
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, method: options.method || 'GET' })
+    const [route, query = ''] = path.split('?')
+    if (route === '/games') {
+      const params = new URLSearchParams(query)
+      const offset = Number(params.get('offset') || 0)
+      const limit = Number(params.get('limit') || rows.length)
+      const page = rows.slice(offset, offset + limit)
+      return {
+        games: page,
+        pagination: {
+          total: rows.length,
+          offset,
+          limit,
+          returned: page.length,
+          has_more: offset + page.length < rows.length
+        }
+      }
+    }
+    if (route === '/games/benchmark-1' && options.method === 'DELETE') {
+      throw new Error('benchmark game requires force delete')
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 8,
+    apiFetch
+  })
+
+  await history.refreshHistoryList()
+  state.selectedHistoryGameId.value = 'benchmark-1'
+  state.selectedHistoryGame.value = game('benchmark-1')
+
+  const deleted = await history.deleteHistoryGame('benchmark-1')
+
+  assert.equal(deleted, false)
+  assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
+    'GET /games?limit=8&offset=0',
+    'DELETE /games/benchmark-1'
+  ])
+  assert.deepEqual(state.gameHistory.value.map((item) => item.game_id), ['benchmark-1', 'history-2'])
+  assert.equal(state.selectedHistoryGameId.value, 'benchmark-1')
+  assert.equal(state.selectedHistoryGame.value.game_id, 'benchmark-1')
+  assert.equal(history.historyNotice.value.type, 'warning')
+  assert.match(history.historyNotice.value.message, /评测证据/)
+  assert.equal(state.error.value, history.historyNotice.value.message)
+}))
+
+test('deleteHistoryGame refreshes history when the backend reports a missing game', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  let rows = [
+    game('history-missing', { winner: 'villagers' }),
+    game('history-2', { winner: 'werewolves' })
+  ]
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, method: options.method || 'GET' })
+    const [route, query = ''] = path.split('?')
+    if (route === '/games') {
+      const params = new URLSearchParams(query)
+      rows = rows.filter((item) => item.game_id !== 'history-missing')
+      const offset = Number(params.get('offset') || 0)
+      const limit = Number(params.get('limit') || rows.length)
+      const page = rows.slice(offset, offset + limit)
+      return {
+        games: page,
+        pagination: {
+          total: rows.length,
+          offset,
+          limit,
+          returned: page.length,
+          has_more: offset + page.length < rows.length
+        }
+      }
+    }
+    if (route === '/games/history-missing' && options.method === 'DELETE') {
+      throw new Error('game not found')
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 8,
+    apiFetch
+  })
+
+  state.gameHistory.value = rows
+  state.selectedHistoryGameId.value = 'history-missing'
+  state.selectedHistoryGame.value = game('history-missing')
+  state.archiveByGameId.value = { 'history-missing': { title: 'cached' } }
+  state.reviewByGameId.value = { 'history-missing': { summary: 'cached' } }
+
+  const deleted = await history.deleteHistoryGame('history-missing')
+
+  assert.equal(deleted, false)
+  assert.deepEqual(requests.map((request) => `${request.method} ${request.path}`), [
+    'DELETE /games/history-missing',
+    'GET /games?limit=8&offset=0'
+  ])
+  assert.deepEqual(state.gameHistory.value.map((item) => item.game_id), ['history-2'])
+  assert.equal(state.selectedHistoryGameId.value, 'history-2')
+  assert.equal(state.selectedHistoryGame.value, null)
+  assert.equal(state.archiveByGameId.value['history-missing'], undefined)
+  assert.equal(state.reviewByGameId.value['history-missing'], undefined)
+  assert.equal(history.historyNotice.value.type, 'warning')
+  assert.match(history.historyNotice.value.message, /已刷新/)
+  assert.equal(state.error.value, history.historyNotice.value.message)
 }))
 
 test('history load more stale requests do not leave the button loading', () => withWindow(async () => {
@@ -1454,8 +2351,20 @@ test('history load more stale requests do not leave the button loading', () => w
         pagination: { total: 1, offset: 0, limit: 1, returned: 1, has_more: false }
       }
     }
-    if (path === '/games/benchmark-1') return game('benchmark-1')
-    if (path === '/games/benchmark-1/review') return { summary: 'ok' }
+    if (path === '/games/benchmark-1?view=history-shell') {
+      return game('benchmark-1', {
+        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
+      })
+    }
+    if (path === historyPhasePath('benchmark-1')) {
+      return {
+        game_id: 'benchmark-1',
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'started' }],
+        decisions: []
+      }
+    }
     throw new Error(`unexpected ${path}`)
   }
   const history = useGameHistory(state, {
@@ -1485,8 +2394,23 @@ test('history detail ignores stale selection responses', () => withWindow(async 
   const state = useGameState()
   const slowDetail = createDeferred()
   const apiFetch = async (path) => {
-    if (path === '/games/history-a') return slowDetail.promise
-    if (path === '/games/history-b') return game('history-b', { day: 2, winner: 'villagers' })
+    if (path === '/games/history-a?view=history-shell') return slowDetail.promise
+    if (path === '/games/history-b?view=history-shell') {
+      return game('history-b', {
+        day: 2,
+        winner: 'villagers',
+        phases: [{ key: 'day-2-night', day: 2, phase: 'night', log_count: 1 }]
+      })
+    }
+    if (path === historyPhasePath('history-b', { day: 2, phase: 'night' })) {
+      return {
+        game_id: 'history-b',
+        day: 2,
+        phase: 'night',
+        logs: [{ sequence: 1, day: 2, phase: 'night', event_type: 'night_start', message: 'night' }],
+        decisions: []
+      }
+    }
     if (/^\/games\/[^/]+\/review$/.test(path)) return { summary: 'ok' }
     throw new Error(`unexpected ${path}`)
   }
@@ -1508,6 +2432,373 @@ test('history detail ignores stale selection responses', () => withWindow(async 
   assert.equal(state.selectedHistoryGame.value.game_id, 'history-b')
   assert.equal(state.selectedHistoryGame.value.day, 2)
   assert.equal(state.historyLoading.value, false)
+}))
+
+test('history phase detail load more appends paginated logs and decisions', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games/history-paged?view=history-shell') {
+      return game('history-paged', {
+        day: 1,
+        phase: 'speech',
+        phases: [{ key: 'day-1-speech', day: 1, phase: 'speech', log_count: 3, decision_count: 2 }]
+      })
+    }
+    if (path === historyPhasePath('history-paged', { day: 1, phase: 'speech' })) {
+      return {
+        game_id: 'history-paged',
+        day: 1,
+        phase: 'speech',
+        summary: { log_count: 3, decision_count: 2 },
+        logs: [{ sequence: 1, day: 1, phase: 'speech', event_type: 'speech', message: 'first log' }],
+        decisions: [{ id: 'decision-1', day: 1, phase: 'speech', action: 'speech', actor_id: 1 }],
+        pagination: {
+          logs: { total: 3, offset: 0, limit: 300, returned: 1, has_more: true },
+          decisions: { total: 2, offset: 0, limit: 200, returned: 1, has_more: true }
+        }
+      }
+    }
+    if (path === historyPhasePath('history-paged', { day: 1, phase: 'speech', logOffset: 1, decisionOffset: 1 })) {
+      return {
+        game_id: 'history-paged',
+        day: 1,
+        phase: 'speech',
+        summary: { log_count: 3, decision_count: 2 },
+        logs: [
+          { sequence: 2, day: 1, phase: 'speech', event_type: 'speech', message: 'second log' },
+          { sequence: 3, day: 1, phase: 'speech', event_type: 'speech', message: 'third log' }
+        ],
+        decisions: [{ id: 'decision-2', day: 1, phase: 'speech', action: 'speech', actor_id: 2 }],
+        pagination: {
+          logs: { total: 3, offset: 1, limit: 300, returned: 2, has_more: false },
+          decisions: { total: 2, offset: 1, limit: 200, returned: 1, has_more: false }
+        }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.selectHistoryGame('history-paged')
+  assert.deepEqual(state.selectedHistoryGame.value.logs.map((log) => log.message), ['first log'])
+  assert.deepEqual(state.selectedHistoryGame.value.decisions.map((decision) => decision.id), ['decision-1'])
+  assert.equal(state.selectedPhaseDetail.value.pagination.logs.has_more, true)
+  assert.equal(state.selectedPhaseDetail.value.pagination.decisions.has_more, true)
+
+  const detail = await history.loadMoreHistoryPhaseDetail('history-paged', 'day-1-speech')
+
+  assert.deepEqual(requests, [
+    '/games/history-paged?view=history-shell',
+    historyPhasePath('history-paged', { day: 1, phase: 'speech' }),
+    historyPhasePath('history-paged', { day: 1, phase: 'speech', logOffset: 1, decisionOffset: 1 })
+  ])
+  assert.deepEqual(detail.logs.map((log) => log.message), ['first log', 'second log', 'third log'])
+  assert.deepEqual(detail.decisions.map((decision) => decision.id), ['decision-1', 'decision-2'])
+  assert.equal(detail.pagination.logs.has_more, false)
+  assert.equal(detail.pagination.decisions.has_more, false)
+  assert.deepEqual(state.selectedHistoryGame.value.logs.map((log) => log.message), ['first log', 'second log', 'third log'])
+  assert.deepEqual(state.phaseDetailByGameId.value['history-paged']['day-1-speech'].logs.map((log) => log.message), ['first log', 'second log', 'third log'])
+  assert.equal(state.phaseLoadingByKey.value['history-paged:day-1-speech'], false)
+}))
+
+test('history detail failures surface a local notice', () => withWindow(async () => {
+  const state = useGameState()
+  const apiFetch = async (path) => {
+    if (path === '/games/history-fail?view=history-shell') throw new Error('detail backend down')
+    if (path === '/games/history-fail/review') return { summary: 'ok' }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.selectHistoryGame('history-fail')
+
+  assert.equal(state.selectedHistoryGame.value, null)
+  assert.equal(state.historyLoading.value, false)
+  assert.deepEqual(history.historyNotice.value, {
+    type: 'error',
+    message: 'detail backend down'
+  })
+  assert.equal(state.error.value, 'detail backend down')
+}))
+
+test('history archive and review loaders surface local notices', () => withWindow(async () => {
+  const state = useGameState()
+  state.selectedHistoryGameId.value = 'history-1'
+  const apiFetch = async (path) => {
+    if (path === '/games/history-1/archive') return { game_id: 'history-1', status: 'ok' }
+    if (path === '/games/history-1/review') throw new Error('review unavailable')
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.loadArchive()
+
+  assert.equal(state.archiveByGameId.value['history-1'].status, 'ok')
+  assert.deepEqual(history.historyNotice.value, {
+    type: 'success',
+    message: '对局档案已载入。'
+  })
+
+  await history.loadReview()
+
+  assert.deepEqual(state.reviewByGameId.value['history-1'], { error: 'review unavailable' })
+  assert.deepEqual(history.historyNotice.value, {
+    type: 'error',
+    message: 'review unavailable'
+  })
+  assert.equal(state.error.value, 'review unavailable')
+}))
+
+test('history replay loads cursor chunks on demand', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const secondChunk = createDeferred()
+  const replayPlayers = [
+    { id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true },
+    { id: 2, seat: 2, name: '2号', role_hint: '狼人', alive: true }
+  ]
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games/replay-paged/replay?cursor=0&limit=500') {
+      return {
+        game_id: 'replay-paged',
+        winner: 'villagers',
+        players: replayPlayers,
+        logs: [
+          { sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'start' },
+          { sequence: 2, day: 1, phase: 'speech', event_type: 'speech', actor_id: 1, message: 'hello' }
+        ],
+        decisions: [{ id: 'decision-1', day: 1, phase: 'speech', action: 'speech', actor_id: 1 }],
+        event_count: 4,
+        cursor: 0,
+        limit: 500,
+        next_cursor: 2,
+        has_more: true
+      }
+    }
+    if (path === '/games/replay-paged/replay?cursor=2&limit=500') return secondChunk.promise
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.replayHistoryGame('replay-paged')
+
+  assert.equal(state.isReplayMode.value, true)
+  assert.equal(state.currentView.value, 'match')
+  assert.equal(state.replayTotal.value, 4)
+  assert.equal(state.replayCursor.value, 0)
+  assert.equal(state.replayByGameId.value['replay-paged'].logs.length, 2)
+  assert.equal(state.replayLoadingByGameId.value['replay-paged'], true)
+  assert.deepEqual(requests, [
+    '/games/replay-paged/replay?cursor=0&limit=500',
+    '/games/replay-paged/replay?cursor=2&limit=500'
+  ])
+
+  const seek = history.seekReplay(4)
+  secondChunk.resolve({
+    game_id: 'replay-paged',
+    winner: 'villagers',
+    players: replayPlayers,
+    logs: [
+      { sequence: 3, day: 1, phase: 'exile_vote', event_type: 'exile_vote_start', message: 'vote' },
+      { sequence: 4, day: 1, phase: 'ended', event_type: 'game_end', message: 'finished' }
+    ],
+    decisions: [{ id: 'decision-2', day: 1, phase: 'exile_vote', action: 'vote', actor_id: 2, target_id: 1 }],
+    event_count: 4,
+    cursor: 2,
+    limit: 500,
+    next_cursor: 4,
+    has_more: false
+  })
+  await seek
+
+  assert.equal(requests.filter((path) => path === '/games/replay-paged/replay?cursor=2&limit=500').length, 1)
+  assert.equal(state.replayLoadingByGameId.value['replay-paged'], false)
+  assert.equal(state.replayCursor.value, 4)
+  assert.equal(state.replayGame.value.logs.length, 4)
+  assert.equal(state.replayGame.value.winner, 'villagers')
+  assert.equal(state.replayByGameId.value['replay-paged'].logs.length, 4)
+}))
+
+test('history replay ignores failed background prefetch and restarts playback from the end', () => withWindow(async ({ timers }) => {
+  const state = useGameState()
+  const requests = []
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games/replay-restart/replay?cursor=0&limit=500') {
+      return {
+        game_id: 'replay-restart',
+        winner: 'villagers',
+        players: [{ id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true }],
+        logs: [
+          { sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'start' },
+          { sequence: 2, day: 1, phase: 'ended', event_type: 'game_end', message: 'end' }
+        ],
+        cursor: 0,
+        limit: 500,
+        next_cursor: 2,
+        has_more: true
+      }
+    }
+    if (path === '/games/replay-restart/replay?cursor=2&limit=500') throw new Error('background failed')
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.replayHistoryGame('replay-restart')
+  await flushPromises()
+
+  assert.equal(state.replayByGameId.value['replay-restart'].logs.length, 2)
+  assert.equal(state.replayByGameId.value['replay-restart'].error, undefined)
+  assert.equal(state.error.value, '')
+
+  await history.seekReplay(2)
+  assert.equal(state.replayCursor.value, 2)
+  assert.equal(state.replayPlaying.value, false)
+
+  await history.playReplay()
+  assert.equal(state.replayCursor.value, 0)
+  assert.equal(state.replayPlaying.value, true)
+
+  timers.runNextInterval()
+  await flushPromises()
+  assert.equal(state.replayCursor.value, 1)
+  assert.equal(requests.filter((path) => path === '/games/replay-restart/replay?cursor=2&limit=500').length, 1)
+}))
+
+test('history replay ignores stale slow seek results', () => withWindow(async () => {
+  const state = useGameState()
+  const slowChunk = createDeferred()
+  const requests = []
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games/replay-stale/replay?cursor=0&limit=500') {
+      return {
+        game_id: 'replay-stale',
+        players: [{ id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true }],
+        logs: [
+          { sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'start' },
+          { sequence: 2, day: 1, phase: 'speech', event_type: 'speech', message: 'talk' }
+        ],
+        event_count: 4,
+        cursor: 0,
+        limit: 500,
+        next_cursor: 2,
+        has_more: true
+      }
+    }
+    if (path === '/games/replay-stale/replay?cursor=2&limit=500') return slowChunk.promise
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.replayHistoryGame('replay-stale')
+  const staleSeek = history.seekReplay(4)
+  await history.seekReplay(1)
+  assert.equal(state.replayCursor.value, 1)
+
+  slowChunk.resolve({
+    game_id: 'replay-stale',
+    logs: [
+      { sequence: 3, day: 1, phase: 'vote', event_type: 'exile_vote_start', message: 'vote' },
+      { sequence: 4, day: 1, phase: 'ended', event_type: 'game_end', message: 'end' }
+    ],
+    event_count: 4,
+    cursor: 2,
+    limit: 500,
+    next_cursor: 4,
+    has_more: false
+  })
+  await staleSeek
+
+  assert.equal(state.replayCursor.value, 1)
+  assert.equal(state.replayByGameId.value['replay-stale'].logs.length, 4)
+  assert.equal(requests.filter((path) => path === '/games/replay-stale/replay?cursor=2&limit=500').length, 1)
+}))
+
+test('history replay reports foreground chunk failures without unhandled rejection', () => withWindow(async ({ timers }) => {
+  const state = useGameState()
+  const apiFetch = async (path) => {
+    if (path === '/games/replay-fail/replay?cursor=0&limit=500') {
+      return {
+        game_id: 'replay-fail',
+        players: [{ id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true }],
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'start' }],
+        event_count: 2,
+        cursor: 0,
+        limit: 500,
+        next_cursor: 1,
+        has_more: true
+      }
+    }
+    if (path === '/games/replay-fail/replay?cursor=1&limit=500') throw new Error('chunk unavailable')
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.replayHistoryGame('replay-fail')
+  const seek = await history.seekReplay(2)
+
+  assert.equal(seek, null)
+  assert.equal(state.replayCursor.value, 0)
+  assert.deepEqual(history.historyNotice.value, {
+    type: 'error',
+    message: 'chunk unavailable'
+  })
+
+  await history.seekReplay(1)
+  assert.equal(state.replayCursor.value, 1)
+
+  await history.playReplay()
+  timers.runNextInterval()
+  await flushPromises(12)
+
+  assert.equal(state.replayPlaying.value, false)
+  assert.equal(state.error.value, 'chunk unavailable')
+}))
+
+test('history replay shows a notice when source detail cannot be loaded', () => withWindow(async () => {
+  const state = useGameState()
+  const apiFetch = async (path) => {
+    if (path === '/games/replay-missing/replay?cursor=0&limit=500') throw new Error('game not found')
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.replayHistoryGame('replay-missing')
+
+  assert.equal(state.isReplayMode.value, false)
+  assert.deepEqual(history.historyNotice.value, {
+    type: 'error',
+    message: '回放源数据尚未载入，请稍后重试。'
+  })
+  assert.equal(state.error.value, '回放源数据尚未载入，请稍后重试。')
 }))
 
 test('evolution workbench paginates runs and selected sample games', async () => {
@@ -1605,12 +2896,37 @@ test('evolution workbench paginates runs and selected sample games', async () =>
   assert.equal(requests.at(-1), '/evolution-runs?limit=1&offset=1&source=evolution')
   assert.deepEqual(workbench.runRows.value.map((run) => run.id), ['evo-run-a', 'evo-run-b'])
   assert.equal(workbench.selectedRunId.value, 'evo-run-a')
+  assert.deepEqual(workbench.notice.value, { type: 'success', message: '已加载更多运行记录。' })
 
   await workbench.loadMoreSampleGames('training')
   assert.equal(requests.at(-1), '/evolution-runs/evo-run-a/games?phase=training&limit=1&offset=1')
   assert.deepEqual(workbench.selectedGames.value.training.map((item) => item.game_id), ['train-1', 'train-2'])
   assert.equal(workbench.selectedGameId.value, 'train-1')
+  assert.deepEqual(workbench.notice.value, { type: 'success', message: '已加载更多训练样本局。' })
 })
+
+test('notice auto dismiss clears success and warning but keeps errors', () => withWindow(({ timers }) => {
+  const notice = ref({ type: '', message: '' })
+  const dismissed = []
+  const autoDismiss = createNoticeAutoDismiss(notice, {
+    onDismiss: (item) => dismissed.push(item)
+  })
+
+  notice.value = { type: 'success', message: '操作完成' }
+  assert.equal(timers.timeoutCount(), 1)
+
+  notice.value = { type: 'warning', message: '请注意' }
+  assert.equal(timers.timeoutCount(), 1)
+  timers.runNextTimeout()
+  assert.deepEqual(notice.value, { type: '', message: '' })
+  assert.deepEqual(dismissed, [{ type: 'warning', message: '请注意' }])
+
+  notice.value = { type: 'error', message: '失败原因' }
+  assert.equal(timers.timeoutCount(), 0)
+  assert.deepEqual(notice.value, { type: 'error', message: '失败原因' })
+
+  autoDismiss.dispose()
+}))
 
 test('evolution batch selection keeps batch detail separate from run samples and diff', async () => {
   const requests = []
@@ -1660,6 +2976,64 @@ test('evolution batch selection keeps batch detail separate from run samples and
   assert.match(workbench.selectedSampleHistoryUnavailableReason.value, /批量任务/)
   assert.equal(requests.some((path) => path.includes('/diff')), false)
   assert.equal(requests.some((path) => path.includes('/games')), false)
+})
+
+test('evolution proposal review normalizes attribution report from proposal API', async () => {
+  const run = {
+    run_id: 'evo-attribution-run',
+    role: 'seer',
+    status: 'reviewing',
+    started_at: '2026-06-07T12:30:00'
+  }
+  const attribution = {
+    schema_version: 'proposal_attribution_report_v1',
+    status: 'attribution_inconclusive',
+    review_required: true,
+    budget: {
+      enabled: true,
+      budget_scope: 'not_run',
+      scenario_budget: 0,
+      full_game_budget: 0,
+      max_proposals: 2
+    },
+    rows: [
+      { proposal_id: 'p1', status: 'attribution_inconclusive', estimated_contribution: null },
+      { proposal_id: 'p2', status: 'attribution_inconclusive', requires_ablation: true, estimated_contribution: null }
+    ]
+  }
+  const apiFetch = async (path) => {
+    if (path === '/evolution-runs/evo-attribution-run/proposals') {
+      return {
+        run_id: 'evo-attribution-run',
+        role: 'seer',
+        proposals: [{ proposal_id: 'p1', status: 'pending', target_file: 'seer.md' }],
+        proposal_review: { total: 2, generated_count: 2, pending_count: 2 },
+        gate_report: {
+          decision: 'review_required',
+          proposal_attribution: attribution
+        },
+        proposal_attribution_report: attribution,
+        run: {
+          ...run,
+          proposal_attribution_report: attribution
+        }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  workbench.selectedRunId.value = 'evo-attribution-run'
+  workbench.selectedRun.value = run
+
+  await workbench.loadProposalReview('evo-attribution-run')
+
+  assert.equal(workbench.selectedProposalReview.value.proposalAttribution.status, 'attribution_inconclusive')
+  assert.equal(workbench.selectedProposalReview.value.proposalAttribution.statusLabel, '需复核')
+  assert.equal(workbench.selectedProposalReview.value.proposalAttribution.rowCount, 2)
+  assert.equal(workbench.selectedProposalReview.value.gate.proposalAttributionLabel, '需复核')
+  assert.equal(workbench.selectedProposalReview.value.summary.proposalAttributionRowCount, 2)
+  assert.equal(workbench.selectedProposalReview.value.summary.proposalAttributionReviewRequired, true)
 })
 
 test('evolution run progress exposes overall stage training and battle progress separately', async () => {
@@ -1860,6 +3234,276 @@ test('evolution run selection ignores stale sample responses', async () => {
   assert.equal(workbench.selectedSampleHistoryGameId.value, runBTrainingHistoryGameId)
 })
 
+test('evolution workbench shows success notice after starting a single run', async () => {
+  const requests = []
+  let runs = []
+  const createdRun = {
+    run_id: 'evo-new',
+    role: 'seer',
+    status: 'training',
+    started_at: '2026-06-07T15:00:00'
+  }
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/evolution-runs') {
+      runs = [createdRun]
+      return { run_id: 'evo-new' }
+    }
+    if (path === '/evolution-runs?limit=80&offset=0&source=evolution') {
+      return {
+        runs,
+        batches: [],
+        pagination: { total: runs.length, offset: 0, limit: 80, returned: runs.length, has_more: false }
+      }
+    }
+    if (path === '/evolution-runs/evo-new') return createdRun
+    if (path === '/evolution-runs/evo-new/diff') return { diffs: [] }
+    if (path === '/evolution-runs/evo-new/proposals') return { proposals: [] }
+    if (/^\/evolution-runs\/evo-new\/games\?/.test(path)) {
+      return { games: [], pagination: { total: 0, offset: 0, limit: 80, returned: 0, has_more: false } }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  workbench.selectedRole.value = 'seer'
+  await workbench.startSingle()
+
+  assert.deepEqual(requests.find((item) => item.path === '/evolution-runs')?.body, {
+    roles: ['seer'],
+    training_games: 5,
+    battle_games: 4,
+    max_days: 5,
+    auto_promote: true
+  })
+  assert.deepEqual(workbench.notice.value, { type: 'success', message: '单角色进化已启动。' })
+  assert.equal(workbench.error.value, '')
+  assert.equal(workbench.selectedRunId.value, 'evo-new')
+})
+
+test('evolution workbench maps run action failures to warning notices', async () => {
+  const apiFetch = async (path) => {
+    if (path === '/evolution-runs/missing-run/actions') throw new Error('run not found')
+    if (path === '/evolution-runs/batch-1/actions') throw new Error('batch does not support promote')
+    if (path === '/evolution-runs/unreviewed/actions') {
+      throw new Error('evolution promote requires at least one accepted or applied proposal before publishing')
+    }
+    if (path === '/evolution-runs/trust-incomplete/actions') {
+      const err = new Error('Evolution baseline promote requires a complete trust bundle.')
+      err.code = 'evolution_trust_bundle_incomplete'
+      throw err
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.runAction('missing-run', 'promote')
+
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '运行不存在，请刷新列表。'
+  })
+  assert.equal(workbench.error.value, '运行不存在，请刷新列表。')
+
+  await workbench.runAction('batch-1', 'promote')
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '批量任务不支持该操作，请选择子运行。'
+  })
+  assert.equal(workbench.error.value, '批量任务不支持该操作，请选择子运行。')
+
+  await workbench.runAction('unreviewed', 'promote')
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '至少接受或应用一个提案后才能晋升。'
+  })
+  assert.equal(workbench.error.value, '至少接受或应用一个提案后才能晋升。')
+
+  await workbench.runAction('trust-incomplete', 'promote')
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '信任包不完整，不能晋升为基线。'
+  })
+  assert.equal(workbench.error.value, '信任包不完整，不能晋升为基线。')
+})
+
+test('evolution workbench gates promote on explicit proposal review state', () => {
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch: async () => ({}) })
+  workbench.selectedRun.value = { id: 'evo-review', entityType: 'run', status: 'reviewing' }
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 0, applied: 0 }
+  }
+
+  assert.equal(workbench.selectedCanPromote.value, false)
+  assert.equal(workbench.selectedPromoteDisabledReason.value, '至少接受或应用一个提案后才能晋升。')
+
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 }
+  }
+  assert.equal(workbench.selectedCanPromote.value, true)
+  assert.equal(workbench.selectedPromoteDisabledReason.value, '')
+
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 0, applied: 1 }
+  }
+  assert.equal(workbench.selectedCanPromote.value, true)
+
+  workbench.selectedRun.value = { id: 'evo-review', entityType: 'run', status: 'promoted' }
+  assert.equal(workbench.selectedCanPromote.value, false)
+  assert.equal(workbench.selectedPromoteDisabledReason.value, '只有待评审运行可以晋升。')
+})
+
+test('evolution workbench requires complete trust bundle for baseline promote only', () => {
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch: async () => ({}) })
+  workbench.selectedRun.value = { id: 'evo-shadow', entityType: 'run', status: 'reviewing' }
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 }
+  }
+
+  assert.equal(workbench.selectedCanPromote.value, true)
+  assert.equal(workbench.selectedPromoteDisabledReason.value, '')
+
+  workbench.selectedRun.value = {
+    id: 'evo-baseline',
+    entityType: 'run',
+    status: 'reviewing',
+    release_decision: 'baseline_promote'
+  }
+  assert.equal(workbench.selectedCanPromote.value, false)
+  assert.equal(workbench.selectedPromoteDisabledReason.value, '缺少完整信任包，不能晋升为基线。')
+
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 },
+    trustBundle: {
+      trust_bundle_id: 'trust_bundle_incomplete',
+      bundle_hash: 'a'.repeat(64),
+      gate_report_id: 'gate_incomplete',
+      proposal_ids: ['p1'],
+      completeness: {
+        complete: false,
+        score: 0.8,
+        missing: ['training_evidence']
+      }
+    }
+  }
+  assert.equal(workbench.selectedCanPromote.value, false)
+  assert.equal(
+    workbench.selectedPromoteDisabledReason.value,
+    '信任包不完整，不能晋升为基线。缺失：training_evidence、evidence。'
+  )
+
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 },
+    trustBundle: {
+      trust_bundle_id: 'trust_bundle_complete',
+      bundle_hash: 'b'.repeat(64),
+      gate_report_id: 'gate_complete',
+      training_game_ids: ['train_1'],
+      proposal_ids: ['p1'],
+      completeness: {
+        complete: true,
+        score: 1,
+        missing: []
+      }
+    }
+  }
+  assert.equal(workbench.selectedCanPromote.value, true)
+  assert.equal(workbench.selectedPromoteDisabledReason.value, '')
+})
+
+test('evolution workbench maps proposal action failures to warning notices', async () => {
+  const apiFetch = async (path) => {
+    if (path === '/evolution-runs/evo-review/proposals/apply-accepted') {
+      throw new Error('no accepted proposals to apply')
+    }
+    if (path === '/evolution-runs/evo-review/proposals/proposal-a/accept') {
+      throw new Error('proposal not found')
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.applyAcceptedProposals('evo-review')
+
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '没有已接受提案可应用。'
+  })
+  assert.equal(workbench.error.value, '没有已接受提案可应用。')
+
+  await workbench.acceptProposal({ id: 'proposal-a' }, 'evo-review')
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '提案不存在，请刷新审核面板。'
+  })
+  assert.equal(workbench.error.value, '提案不存在，请刷新审核面板。')
+})
+
+test('evolution workbench maps rollback and load-more failures to local notices', async () => {
+  const apiFetch = async (path) => {
+    if (path === '/roles/seer/rollback/v-missing') throw new Error('version not found')
+    if (path === '/evolution-runs?limit=1&offset=1&source=evolution') throw new Error('run not found')
+    if (path === '/evolution-runs/evo-run/games?phase=training&limit=1&offset=1') throw new Error('run not found')
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({
+    installLifecycle: false,
+    runListLimit: 1,
+    sampleGameListLimit: 1,
+    apiFetch
+  })
+
+  await workbench.rollback('seer', 'v-missing')
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '版本不存在，请刷新版本列表。'
+  })
+  assert.equal(workbench.error.value, '版本不存在，请刷新版本列表。')
+
+  workbench.runPagination.value = { total: 2, offset: 0, limit: 1, returned: 1, has_more: true }
+  await workbench.loadMoreRuns()
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '运行不存在，请刷新列表。'
+  })
+  assert.equal(workbench.error.value, '运行不存在，请刷新列表。')
+
+  workbench.selectedRunId.value = 'evo-run'
+  workbench.sampleGamePagination.value = {
+    training: { total: 2, offset: 0, limit: 1, returned: 1, has_more: true },
+    baseline: { total: 0, offset: 0, limit: 1, returned: 0, has_more: false },
+    candidate: { total: 0, offset: 0, limit: 1, returned: 0, has_more: false }
+  }
+  await workbench.loadMoreSampleGames('training')
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '运行不存在，请刷新列表。'
+  })
+  assert.equal(workbench.selectedSampleState.value.error, '运行不存在，请刷新列表。')
+})
+
 test('benchmark SSE reconnect resumes from the last event id and closes on terminal events', () => withWindow(async ({ timers }) => {
   const instances = []
   class FakeEventSource {
@@ -1981,6 +3625,1155 @@ test('evaluation workbench normalizes benchmark decision judge aggregate', async
     { tag: 'vote_alignment', count: 1 }
   ])
 })
+
+test('evaluation workbench starts selected benchmark suite and filters leaderboard by evaluation set', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    seed_count: 3,
+    seed_preview: [260600, 260601, 260602],
+    cost_tier: 'smoke',
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  }
+  let batches = []
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer', 'witch'] }
+    if (/^\/roles\/[^/]+\/leaderboard\?evaluation_set_id=role-baseline-quick-v1%40v1$/.test(path)) {
+      return { entries: [] }
+    }
+    if (/^\/roles\/[^/]+\/versions$/.test(path)) return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches }
+    if (path === '/benchmark') {
+      batches = [{
+        kind: 'benchmark_batch',
+        batch_id: 'bench-suite-new',
+        roles: ['seer'],
+        status: 'queued',
+        started_at: '2026-06-07T10:00:00',
+        benchmark: {
+          id: suite.id,
+          version: suite.version,
+          evaluation_set_id: suite.evaluation_set_id
+        }
+      }]
+      return { batch_id: 'bench-suite-new' }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedBenchmarkId.value, 'role-baseline-quick-v1')
+  assert.equal(workbench.selectedRole.value, 'seer')
+  assert.deepEqual(workbench.roleRows.value.map((role) => role.key), ['seer'])
+  assert.equal(workbench.form.value.battle_games, 3)
+  assert.equal(workbench.form.value.max_days, 5)
+  assert.equal(workbench.selectedBenchmarkTargetType.value, 'role_version')
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, true)
+  assert.equal(workbench.selectedBenchmarkSuite.value.seed_count, 3)
+  assert.deepEqual(workbench.selectedBenchmarkSuite.value.seed_preview, ['260600', '260601', '260602'])
+  assert.equal(workbench.selectedBenchmarkSuite.value.cost_tier, 'smoke')
+  assert.equal(
+    requests.some((item) => item.path === '/roles/seer/leaderboard?evaluation_set_id=role-baseline-quick-v1%40v1'),
+    true
+  )
+
+  await workbench.startEvaluation()
+
+  assert.deepEqual(requests.find((item) => item.path === '/benchmark')?.body, {
+    benchmark_id: 'role-baseline-quick-v1',
+    roles: ['seer'],
+    battle_games: 3,
+    max_days: 5
+  })
+  assert.equal(workbench.filteredBatchRunRows.value[0].id, 'bench-suite-new')
+}))
+
+test('evaluation workbench sends selected role target version for role-version benchmark suite', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer', 'witch'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  }
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer', 'witch'] }
+    if (/^\/roles\/[^/]+\/leaderboard\?evaluation_set_id=role-baseline-quick-v1%40v1$/.test(path)) return { entries: [] }
+    if (/^\/roles\/[^/]+\/versions$/.test(path)) return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark') return { batch_id: 'bench-role-target-version' }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+  workbench.selectRole('witch')
+  workbench.form.value.target_version_id = 'witch_candidate_v2'
+  await flushPromises()
+  await workbench.startEvaluation()
+
+  assert.equal(workbench.selectedRole.value, 'witch')
+  assert.deepEqual(workbench.roleRows.value.map((role) => role.key), ['seer', 'witch'])
+  assert.deepEqual(requests.find((item) => item.path === '/benchmark')?.body, {
+    benchmark_id: 'role-baseline-quick-v1',
+    roles: ['witch'],
+    target_versions: { witch: 'witch_candidate_v2' },
+    battle_games: 3,
+    max_days: 5
+  })
+}))
+
+test('evaluation workbench allows canary target and blocks shadow target versions', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['witch'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  }
+  const versions = [
+    {
+      version_id: 'witch_baseline_v1',
+      source: 'registry',
+      is_baseline: true,
+      release_stage: 'baseline'
+    },
+    {
+      version_id: 'witch_canary_v2',
+      source: 'candidate',
+      release_stage: 'canary',
+      provenance: { source: 'evolution', release_stage: 'canary' }
+    },
+    {
+      version_id: 'witch_shadow_v3',
+      source: 'candidate',
+      release_stage: 'shadow',
+      provenance: { source: 'evolution', release_stage: 'shadow' }
+    }
+  ]
+  const apiFetch = async (path, options = {}) => {
+    const method = options.method || 'GET'
+    requests.push({ path, method, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles/overview?evaluation_set_id=role-baseline-quick-v1%40v1') {
+      return {
+        roles: ['witch'],
+        versions: { witch: versions },
+        leaderboards: {
+          witch: {
+            entries: [
+              {
+                target_version_id: 'witch_baseline_v1',
+                target_role_role_weighted_score: 0.62,
+                target_side_win_rate: 0.51,
+                game_count: 12,
+                rankable: true
+              },
+              {
+                target_version_id: 'witch_canary_v2',
+                target_role_role_weighted_score: 0.71,
+                target_side_win_rate: 0.58,
+                game_count: 12,
+                rankable: true
+              },
+              {
+                target_version_id: 'witch_shadow_v3',
+                target_role_role_weighted_score: 0.74,
+                target_side_win_rate: 0.6,
+                game_count: 12,
+                rankable: true
+              }
+            ]
+          }
+        }
+      }
+    }
+    if (path === '/benchmark/plan') {
+      return {
+        benchmark_id: suite.id,
+        target_type: 'role_version',
+        evaluation_set_id: suite.evaluation_set_id,
+        seed_set_id: suite.seed_set_id,
+        total_games: 3,
+        budget: { estimated_units: 9, limit_units: 30, exceeded: false, status: 'ok' },
+        rankable: { eligible: true, gate_count: 3 }
+      }
+    }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark') return { batch_id: 'bench-canary-target' }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedRole.value, 'witch')
+  assert.deepEqual(
+    workbench.roleLeaderboardRows.value.map((row) => [row.version_id, row.release_stage]),
+    [
+      ['witch_baseline_v1', 'baseline']
+    ]
+  )
+  assert.deepEqual(
+    workbench.currentBenchmarkLeaderboardRows.value.map((row) => [row.version_id, row.release_stage]),
+    [
+      ['witch_baseline_v1', 'baseline']
+    ]
+  )
+  assert.deepEqual(
+    workbench.roleTargetVersionRows.value.map((row) => [row.version_id, row.release_stage, row.targetDisabled]),
+    [
+      ['witch_baseline_v1', 'baseline', false],
+      ['witch_canary_v2', 'canary', false],
+      ['witch_shadow_v3', 'shadow', true]
+    ]
+  )
+
+  workbench.form.value.target_version_id = 'witch_canary_v2'
+  await flushPromises(10)
+  assert.equal(workbench.selectedRoleTargetVersionBlockedReason.value, '')
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, true)
+  await workbench.startEvaluation()
+
+  const benchmarkRequestsAfterCanary = requests.filter((item) => item.path === '/benchmark')
+  assert.equal(benchmarkRequestsAfterCanary.length, 1)
+  assert.deepEqual(benchmarkRequestsAfterCanary[0].body, {
+    benchmark_id: 'role-baseline-quick-v1',
+    roles: ['witch'],
+    target_versions: { witch: 'witch_canary_v2' },
+    battle_games: 3,
+    max_days: 5
+  })
+
+  workbench.form.value.target_version_id = 'witch_shadow_v3'
+  await flushPromises(10)
+  assert.equal(workbench.selectedRoleTargetVersion.value.version_id, 'witch_shadow_v3')
+  assert.equal(workbench.selectedRoleTargetVersionBlockedReason.value, 'Shadow 版本需先晋升 canary 后才能评测。')
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, false)
+  assert.equal(workbench.benchmarkPlan.value, null)
+  assert.equal(workbench.benchmarkPlanError.value, 'Shadow 版本需先晋升 canary 后才能评测。')
+
+  await workbench.startEvaluation()
+  assert.equal(workbench.notice.value.type, 'warning')
+  assert.equal(workbench.error.value, 'Shadow 版本需先晋升 canary 后才能评测。')
+  assert.equal(requests.filter((item) => item.path === '/benchmark').length, 1)
+}))
+
+test('evaluation workbench exposes benchmark boundary and budget plan before launch', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    label: 'Role Baseline Quick v1',
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    seed_count: 3,
+    seed_preview: [260600, 260601, 260602],
+    cost_tier: 'smoke',
+    evaluation_set_id: 'role-baseline-quick-v1@v1',
+    config_hash: 'sha256:role-plan'
+  }
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (/^\/roles\/[^/]+\/leaderboard\?evaluation_set_id=role-baseline-quick-v1%40v1$/.test(path)) return { entries: [] }
+    if (/^\/roles\/[^/]+\/versions$/.test(path)) return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark/plan') {
+      return {
+        benchmark_id: suite.id,
+        target_type: 'role_version',
+        evaluation_set_id: suite.evaluation_set_id,
+        seed_set_id: suite.seed_set_id,
+        benchmark_config_hash: suite.config_hash,
+        total_games: 3,
+        eval_batch_count: 1,
+        judge_decisions: 36,
+        budget: {
+          estimated_units: 36,
+          limit_units: 50,
+          exceeded: false,
+          status: 'ok'
+        },
+        rankable: {
+          eligible: true,
+          gate_count: 3
+        }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  const suiteBoundary = workbench.selectedBenchmarkSuite.value
+  assert.equal(workbench.selectedBenchmarkId.value, 'role-baseline-quick-v1')
+  assert.equal(workbench.selectedBenchmarkTargetType.value, 'role_version')
+  assert.equal(workbench.selectedBenchmarkEvaluationSetId.value, 'role-baseline-quick-v1@v1')
+  assert.equal(workbench.selectedBenchmarkSuiteLabel.value, 'Role Baseline Quick v1')
+  assert.equal(suiteBoundary.seed_set_id, 'role-baseline-quick-202606')
+  assert.equal(suiteBoundary.seed_count, 3)
+  assert.deepEqual(suiteBoundary.seed_preview, ['260600', '260601', '260602'])
+  assert.equal(suiteBoundary.cost_tier, 'smoke')
+  assert.equal(workbench.form.value.battle_games, 3)
+  assert.equal(workbench.form.value.max_days, 5)
+  assert.equal(workbench.launchBattleGames.value, 3)
+  assert.equal(workbench.launchMaxDays.value, 5)
+  assert.equal(workbench.benchmarkPlan.value.evaluation_set_id, 'role-baseline-quick-v1@v1')
+  assert.equal(workbench.benchmarkPlan.value.seed_set_id, 'role-baseline-quick-202606')
+  assert.equal(workbench.benchmarkPlan.value.total_games, 3)
+  assert.equal(workbench.benchmarkPlan.value.budget.estimated_units, 36)
+  assert.equal(workbench.benchmarkPlan.value.budget.exceeded, false)
+  assert.equal(workbench.benchmarkPlanBudgetExceeded.value, false)
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, true)
+  assert.deepEqual(requests.find((item) => item.path === '/benchmark/plan')?.body, {
+    benchmark_id: 'role-baseline-quick-v1',
+    roles: ['seer'],
+    battle_games: 3,
+    max_days: 5
+  })
+}))
+
+test('evaluation workbench keeps model benchmark suite out of role-version leaderboard and launches model scope', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'model-baseline-standard-v1',
+    version: 1,
+    name: 'Model Baseline Standard',
+    target_type: 'model',
+    roles: ['seer', 'witch'],
+    game_count: 30,
+    max_days: 5,
+    seed_set_id: 'model-baseline-standard-202606',
+    seed_count: 30,
+    seed_preview: ['271000', '271001', '271002', '271003', '271004'],
+    cost_tier: 'release',
+    evaluation_set_id: 'model-baseline-standard-v1@v1'
+  }
+  let batches = [{
+    kind: 'benchmark_batch',
+    batch_id: 'model-suite-run',
+    roles: ['seer', 'witch'],
+    status: 'completed',
+    started_at: '2026-06-07T10:00:00',
+    benchmark: {
+      id: suite.id,
+      version: suite.version,
+      target_type: suite.target_type,
+      evaluation_set_id: suite.evaluation_set_id
+    }
+  }]
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer', 'witch', 'guard'] }
+    if (path === '/models/leaderboard?evaluation_set_id=model-baseline-standard-v1%40v1') {
+      return {
+        entries: [{
+          scope: 'model',
+          subject_id: 'runtime_hash_v1',
+          model_id: 'qwen-max',
+          model_config_hash: 'runtime_hash_v1',
+          strength_score: 0.68,
+          avg_role_score: 0.66,
+          target_side_win_rate: 0.57,
+          game_count: 30,
+          rankable: true
+        }]
+      }
+    }
+    if (path === '/evolution-runs') return { runs: [], batches }
+    if (path === '/benchmark') {
+      batches = [{
+        kind: 'benchmark_batch',
+        batch_id: 'model-suite-new',
+        roles: ['seer', 'witch'],
+        status: 'queued',
+        started_at: '2026-06-07T11:00:00',
+        benchmark: {
+          id: suite.id,
+          version: suite.version,
+          target_type: suite.target_type,
+          evaluation_set_id: suite.evaluation_set_id
+        }
+      }]
+      return { batch_id: 'model-suite-new' }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedBenchmarkId.value, 'model-baseline-standard-v1')
+  assert.equal(workbench.selectedBenchmarkTargetType.value, 'model')
+  assert.equal(workbench.selectedBenchmarkIsModelSuite.value, true)
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, true)
+  assert.deepEqual(workbench.selectedBenchmarkSuite.value.roles, ['seer', 'witch'])
+  assert.equal(workbench.form.value.battle_games, 30)
+  assert.equal(workbench.form.value.max_days, 5)
+  assert.equal(workbench.selectedBenchmarkSuite.value.seed_count, 30)
+  assert.deepEqual(workbench.selectedBenchmarkSuite.value.seed_preview, ['271000', '271001', '271002', '271003', '271004'])
+  assert.equal(workbench.selectedBenchmarkSuite.value.cost_tier, 'release')
+  assert.equal(workbench.filteredBatchRunRows.value[0].benchmarkTargetType, 'model')
+  assert.equal(workbench.modelLeaderboardRows.value[0].model_id, 'qwen-max')
+  assert.equal(requests.some((item) => item.path.startsWith('/models/leaderboard')), true)
+  assert.equal(requests.some((item) => /^\/roles\/[^/]+\/leaderboard/.test(item.path)), false)
+  assert.equal(requests.some((item) => item.path.includes('/versions')), false)
+
+  workbench.selectedRole.value = ''
+  workbench.form.value.model_id = 'qwen-max'
+  workbench.form.value.model_config_hash = 'runtime_hash_v1'
+  await flushPromises()
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, true)
+  await workbench.startEvaluation()
+
+  const launchBody = requests.find((item) => item.path === '/benchmark')?.body
+  assert.deepEqual(launchBody, {
+    benchmark_id: 'model-baseline-standard-v1',
+    target_type: 'model',
+    model_id: 'qwen-max',
+    model_config_hash: 'runtime_hash_v1',
+    battle_games: 30,
+    max_days: 5
+  })
+  assert.equal(Object.hasOwn(launchBody, 'roles'), false)
+  assert.equal(Object.hasOwn(launchBody, 'target_versions'), false)
+  assert.equal(workbench.filteredBatchRunRows.value[0].id, 'model-suite-new')
+  assert.deepEqual(workbench.notice.value, { type: 'success', message: '评测已启动。' })
+}))
+
+test('evaluation workbench loads benchmark batch detail games and diagnostics', () => withWindow(async () => {
+  const requests = []
+  const batch = {
+    kind: 'benchmark_batch',
+    batch_id: 'bench-detail',
+    roles: ['seer'],
+    status: 'completed',
+    started_at: '2026-06-07T10:00:00',
+    benchmark: {
+      id: 'role-baseline-quick-v1',
+      version: 1,
+      target_type: 'role_version',
+      evaluation_set_id: 'role-baseline-quick-v1@v1',
+      seed_set_id: 'role-baseline-quick-202606',
+      config_hash: 'sha256:front'
+    }
+  }
+  const apiFetch = async (path) => {
+    requests.push({ path })
+    if (path === '/benchmarks') return { items: [] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [batch] }
+    if (path === '/benchmark/batch/bench-detail') {
+      return {
+        kind: 'benchmark_batch_detail',
+        batch_id: 'bench-detail',
+        status: 'completed',
+        benchmark: batch.benchmark,
+        target_type: 'role_version',
+        roles: ['seer'],
+        result_count: 1,
+        results: [{
+          result_batch_id: 'bench-detail_seer',
+          target_role: 'seer',
+          config: { target_role: 'seer', target_version_id: 'seer_candidate_v2' },
+          completed: 1,
+          errored: 1,
+          attempted_game_count: 2,
+          rankable: false,
+          rankable_reason: 'completed_games 1 < required 2',
+          score_summary: {
+            avg_role_score: 0.62,
+            target_side_win_rate: 0.5,
+            decision_judge_aggregate: { status: 'degraded', metrics: { judged: 1 } }
+          }
+        }],
+        game_summary: {
+          total: 2,
+          completed: 1,
+          failed: 1,
+          timeout: 0,
+          abnormal: 0,
+          by_status: { completed: 1, failed: 1 }
+        },
+        diagnostic_summary: {
+          total: 2,
+          by_kind: { rankable_failed: 1, game_failure: 1 },
+          by_origin: { result: 1, game: 1 }
+        }
+      }
+    }
+    if (path === '/benchmark/batch/bench-detail/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0') {
+      return {
+        kind: 'benchmark_batch_games',
+        batch_id: 'bench-detail',
+        games: [{
+          result_batch_id: 'bench-detail_seer',
+          target_role: 'seer',
+          game_id: 'bench-detail-game-002',
+          status: 'failed',
+          seed: 260601,
+          event_count: 0,
+          decision_count: 0,
+          diagnostic_count: 1,
+          replay_available: false
+        }],
+        pagination: { total: 1, offset: 0, limit: 20, returned: 1, has_more: false }
+      }
+    }
+    if (path === '/benchmark/batch/bench-detail/games?limit=20&offset=0') {
+      return {
+        kind: 'benchmark_batch_games',
+        batch_id: 'bench-detail',
+        games: [{
+          result_batch_id: 'bench-detail_seer',
+          target_role: 'seer',
+          game_id: 'bench-detail-game-001',
+          status: 'completed',
+          seed: 260600,
+          event_count: 1,
+          decision_count: 1,
+          diagnostic_count: 0,
+          replay_available: true
+        }],
+        pagination: { total: 2, offset: 0, limit: 20, returned: 1, has_more: true }
+      }
+    }
+    if (path === '/benchmark/batch/bench-detail/diagnostics') {
+      return {
+        kind: 'benchmark_batch_diagnostics',
+        batch_id: 'bench-detail',
+        diagnostics: [{
+          origin: 'result',
+          kind: 'rankable_failed',
+          level: 'warning',
+          stage: 'leaderboard.rankable',
+          message: 'completed_games 1 < required 2',
+          target_role: 'seer',
+          result_batch_id: 'bench-detail_seer'
+        }],
+        summary: { total: 1, by_kind: { rankable_failed: 1 }, by_origin: { result: 1 } }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+  const loaded = await workbench.loadBenchmarkBatchDetail('bench-detail')
+
+  assert.equal(loaded, true)
+  assert.equal(workbench.selectedBenchmarkBatchId.value, 'bench-detail')
+  assert.equal(workbench.benchmarkBatchDetail.value.benchmarkLabel, 'role-baseline-quick-v1@v1')
+  assert.equal(workbench.benchmarkBatchDetail.value.resultRows[0].rankableLabel, '未入榜')
+  assert.equal(workbench.benchmarkBatchDetail.value.resultRows[0].targetVersionShort, 'seer_can')
+  assert.equal(workbench.benchmarkBatchGames.value[0].game_id, 'bench-detail-game-002')
+  assert.equal(workbench.benchmarkBatchGames.value[0].statusLabel, '失败')
+  assert.equal(workbench.benchmarkBatchDiagnostics.value[0].kindLabel, '未入榜')
+  assert.equal(
+    requests.some((item) => item.path === '/benchmark/batch/bench-detail/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0'),
+    true
+  )
+
+  workbench.setBenchmarkGameStatusFilter('all')
+  await flushPromises()
+  assert.equal(
+    requests.some((item) => item.path === '/benchmark/batch/bench-detail/games?limit=20&offset=0'),
+    true
+  )
+}))
+
+test('evaluation workbench composes reportable benchmark run data from detail games and diagnostics', () => withWindow(async () => {
+  const requests = []
+  const batch = {
+    kind: 'benchmark_batch',
+    batch_id: 'bench-report',
+    roles: ['witch'],
+    status: 'completed',
+    started_at: '2026-06-07T12:00:00',
+    completed_at: '2026-06-07T12:08:00',
+    benchmark: {
+      id: 'role-baseline-standard-v1',
+      version: 2,
+      target_type: 'role_version',
+      evaluation_set_id: 'role-baseline-standard-v1@v2',
+      seed_set_id: 'role-standard-202606',
+      config_hash: 'sha256:reportable'
+    },
+    diagnostic_count: 3,
+    warning_count: 1
+  }
+  const detailResponse = {
+    kind: 'benchmark_batch_detail',
+    batch_id: 'bench-report',
+    status: 'completed',
+    benchmark: batch.benchmark,
+    target_type: 'role_version',
+    roles: ['witch'],
+    result_count: 1,
+    results: [{
+      result_batch_id: 'bench-report_witch',
+      target_role: 'witch',
+      config: { target_role: 'witch', target_version_id: 'witch_candidate_v9' },
+      completed: 18,
+      errored: 2,
+      attempted_game_count: 20,
+      rankable: false,
+      rankable_reason: 'leaderboard gate failed: errored games exceed threshold',
+      score_summary: {
+        avg_role_score: 0.54,
+        target_side_win_rate: 0.45,
+        decision_judge_aggregate: { avg_score: 7.3, judged_decisions: 42 }
+      },
+      diagnostic_count: 2,
+      warning_count: 1
+    }],
+    game_summary: {
+      total: 20,
+      completed: 18,
+      failed: 1,
+      timeout: 1,
+      abnormal: 0,
+      by_status: { completed: 18, failed: 1, timeout: 1 }
+    },
+    diagnostic_summary: {
+      total: 3,
+      by_kind: { leaderboard_gate_failed: 1, game_failure: 1, timeout: 1 },
+      by_origin: { result: 1, game: 2 }
+    }
+  }
+  const problemGames = [{
+    result_batch_id: 'bench-report_witch',
+    target_role: 'witch',
+    game_id: 'bench-report-game-019',
+    status: 'failed',
+    seed: 260919,
+    event_count: 3,
+    decision_count: 2,
+    diagnostic_count: 2,
+    replay_available: false
+  }]
+  const allGames = [{
+    result_batch_id: 'bench-report_witch',
+    target_role: 'witch',
+    game_id: 'bench-report-game-001',
+    status: 'completed',
+    seed: 260901,
+    event_count: 54,
+    decision_count: 13,
+    diagnostic_count: 0,
+    replay_available: true
+  }, ...problemGames]
+  const diagnosticsResponse = {
+    kind: 'benchmark_batch_diagnostics',
+    batch_id: 'bench-report',
+    diagnostics: [{
+      origin: 'result',
+      kind: 'leaderboard_gate_failed',
+      level: 'error',
+      stage: 'leaderboard.rankable',
+      message: 'leaderboard gate failed: errored games exceed threshold',
+      target_role: 'witch',
+      result_batch_id: 'bench-report_witch'
+    }, {
+      origin: 'game',
+      kind: 'game_failure',
+      level: 'warning',
+      stage: 'game.persist',
+      message: 'game failed before scoring',
+      target_role: 'witch',
+      result_batch_id: 'bench-report_witch',
+      game_id: 'bench-report-game-019',
+      seed: 260919
+    }],
+    summary: {
+      total: 2,
+      by_kind: { leaderboard_gate_failed: 1, game_failure: 1 },
+      by_origin: { result: 1, game: 1 },
+      by_level: { error: 1, warning: 1 }
+    }
+  }
+  const apiFetch = async (path) => {
+    requests.push({ path })
+    if (path === '/benchmarks') return { items: [] }
+    if (path === '/roles') return { roles: ['witch'] }
+    if (path === '/roles/witch/leaderboard') return { entries: [] }
+    if (path === '/roles/witch/versions') return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [batch] }
+    if (path === '/benchmark/batch/bench-report') return detailResponse
+    if (path === '/benchmark/batch/bench-report/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0') {
+      return {
+        kind: 'benchmark_batch_games',
+        batch_id: 'bench-report',
+        games: problemGames,
+        pagination: { total: 1, offset: 0, limit: 20, returned: 1, has_more: false }
+      }
+    }
+    if (path === '/benchmark/batch/bench-report/games?limit=20&offset=0') {
+      return {
+        kind: 'benchmark_batch_games',
+        batch_id: 'bench-report',
+        games: allGames,
+        pagination: { total: 20, offset: 0, limit: 20, returned: 2, has_more: false }
+      }
+    }
+    if (path === '/benchmark/batch/bench-report/diagnostics') return diagnosticsResponse
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+  const loaded = await workbench.loadBenchmarkBatchDetail('bench-report')
+
+  assert.equal(loaded, true)
+  assert.equal(workbench.selectedBenchmarkBatchRun.value.id, 'bench-report')
+  assert.equal(workbench.selectedBenchmarkBatchRun.value.benchmarkLabel, 'role-baseline-standard-v1@v2')
+  assert.equal(workbench.selectedBenchmarkBatchRun.value.evaluationSetId, 'role-baseline-standard-v1@v2')
+
+  const reportData = {
+    selectedRun: workbench.selectedBenchmarkBatchRun.value,
+    boundary: {
+      benchmark: workbench.benchmarkBatchDetail.value.benchmark.id,
+      evaluation_set_id: workbench.benchmarkBatchDetail.value.benchmark.evaluation_set_id,
+      seed_set_id: workbench.benchmarkBatchDetail.value.benchmark.seed_set_id,
+      config_hash: workbench.benchmarkBatchDetail.value.benchmark.config_hash
+    },
+    results: workbench.benchmarkBatchDetail.value.resultRows.map((row) => ({
+      result_batch_id: row.result_batch_id,
+      rankableLabel: row.rankableLabel,
+      rankableReason: row.rankableReason
+    })),
+    games: workbench.benchmarkBatchGames.value.map((game) => ({
+      game_id: game.game_id,
+      status: game.status,
+      seed: game.seed,
+      seedLabel: game.seedLabel,
+      diagnostic_count: game.diagnostic_count
+    })),
+    diagnostics: workbench.benchmarkBatchDiagnostics.value.map((diagnostic) => ({
+      kindLabel: diagnostic.kindLabel,
+      levelLabel: diagnostic.levelLabel,
+      message: diagnostic.message,
+      stage: diagnostic.stage
+    }))
+  }
+
+  assert.deepEqual(reportData.boundary, {
+    benchmark: 'role-baseline-standard-v1',
+    evaluation_set_id: 'role-baseline-standard-v1@v2',
+    seed_set_id: 'role-standard-202606',
+    config_hash: 'sha256:reportable'
+  })
+  assert.deepEqual(reportData.results, [{
+    result_batch_id: 'bench-report_witch',
+    rankableLabel: '未入榜',
+    rankableReason: 'leaderboard gate failed: errored games exceed threshold'
+  }])
+  assert.deepEqual(reportData.games, [{
+    game_id: 'bench-report-game-019',
+    status: 'failed',
+    seed: 260919,
+    seedLabel: '260919',
+    diagnostic_count: 2
+  }])
+  assert.deepEqual(reportData.diagnostics[0], {
+    kindLabel: '门禁失败',
+    levelLabel: '错误',
+    message: 'leaderboard gate failed: errored games exceed threshold',
+    stage: 'leaderboard.rankable'
+  })
+  assert.deepEqual(reportData.diagnostics[1], {
+    kindLabel: '失败局',
+    levelLabel: '警告',
+    message: 'game failed before scoring',
+    stage: 'game.persist'
+  })
+
+  workbench.setBenchmarkGameStatusFilter('all')
+  await flushPromises()
+  assert.equal(workbench.selectedBenchmarkBatchRun.value.id, 'bench-report')
+  assert.equal(workbench.benchmarkBatchDetail.value.benchmark.config_hash, 'sha256:reportable')
+  assert.equal(workbench.benchmarkBatchDetail.value.resultRows[0].rankableReason, 'leaderboard gate failed: errored games exceed threshold')
+  assert.equal(workbench.benchmarkBatchGames.value[0].status, 'completed')
+  assert.equal(workbench.benchmarkBatchGames.value[0].seedLabel, '260901')
+  assert.equal(workbench.benchmarkBatchDiagnostics.value[0].message, 'leaderboard gate failed: errored games exceed threshold')
+
+  workbench.setBenchmarkGameStatusFilter('problem')
+  await flushPromises()
+  assert.equal(workbench.selectedBenchmarkBatchRun.value.id, 'bench-report')
+  assert.equal(workbench.benchmarkBatchDetail.value.benchmark.evaluation_set_id, 'role-baseline-standard-v1@v2')
+  assert.equal(workbench.benchmarkBatchGames.value[0].status, 'failed')
+  assert.equal(workbench.benchmarkBatchGames.value[0].diagnostic_count, 2)
+  assert.equal(workbench.benchmarkBatchDiagnostics.value[1].stage, 'game.persist')
+  assert.equal(
+    requests.filter((item) => item.path === '/benchmark/batch/bench-report/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0').length,
+    2
+  )
+  assert.equal(
+    requests.some((item) => item.path === '/benchmark/batch/bench-report/games?limit=20&offset=0'),
+    true
+  )
+}))
+
+test('evaluation workbench creates benchmark snapshots from frozen leaderboard rows', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    label: 'Role Baseline Quick v1',
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    evaluation_set_id: 'role-baseline-quick-v1@v1',
+    config_hash: 'sha256:snapshot-suite'
+  }
+  let liveLeaderboardRows = [{
+    scope: 'role_version',
+    subject_id: 'seer_candidate_v1',
+    target_role: 'seer',
+    target_version_id: 'seer_candidate_v1',
+    target_role_role_weighted_score: 0.72,
+    target_side_win_rate: 0.6,
+    game_count: 30,
+    rankable: true
+  }]
+  const snapshots = []
+  const snapshotDetails = new Map()
+  const clone = (value) => JSON.parse(JSON.stringify(value))
+  const snapshotSummary = (snapshot) => {
+    const { rows, ...summary } = snapshot
+    return summary
+  }
+  const versionRows = () => liveLeaderboardRows.map((row) => ({
+    version_id: row.target_version_id,
+    source: 'candidate',
+    is_baseline: false
+  }))
+
+  const apiFetch = async (path, options = {}) => {
+    const method = options.method || 'GET'
+    const body = options.body ? JSON.parse(options.body) : null
+    requests.push({ path, method, body })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/overview?evaluation_set_id=role-baseline-quick-v1%40v1') {
+      return {
+        roles: ['seer'],
+        versions: { seer: versionRows() },
+        leaderboards: { seer: { entries: clone(liveLeaderboardRows) } }
+      }
+    }
+    if (path === '/roles/seer/leaderboard?evaluation_set_id=role-baseline-quick-v1%40v1') {
+      return { entries: clone(liveLeaderboardRows) }
+    }
+    if (path === '/roles/seer/versions') return { versions: versionRows() }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark/plan') {
+      return {
+        benchmark_id: suite.id,
+        target_type: 'role_version',
+        evaluation_set_id: suite.evaluation_set_id,
+        seed_set_id: suite.seed_set_id,
+        benchmark_config_hash: suite.config_hash,
+        total_games: 3,
+        budget: { estimated_units: 9, limit_units: 20, exceeded: false, status: 'ok' },
+        rankable: { eligible: true, gate_count: 3 }
+      }
+    }
+    if (path.startsWith('/benchmark/snapshots?')) {
+      return { items: snapshots.map(snapshotSummary) }
+    }
+    if (path === '/benchmark/snapshots' && method === 'POST') {
+      const frozenRows = clone(liveLeaderboardRows)
+      const snapshot = {
+        kind: 'benchmark_leaderboard_snapshot',
+        snapshot_id: 'snap-release-1',
+        title: body.title,
+        release_notes: body.release_notes,
+        scope: body.scope,
+        benchmark_id: body.benchmark_id,
+        benchmark_version: body.benchmark_version,
+        evaluation_set_id: body.evaluation_set_id,
+        seed_set_id: body.seed_set_id,
+        benchmark_config_hash: body.benchmark_config_hash,
+        target_role: body.target_role,
+        source_filter: body.source_filter,
+        view_config: body.view_config,
+        content_hash: 'sha256:frozen-v1',
+        row_count: frozenRows.length,
+        summary: {
+          row_count: frozenRows.length,
+          rankable_count: frozenRows.filter((row) => row.rankable).length
+        },
+        rows: frozenRows,
+        created_at: '2026-06-09T10:00:00Z'
+      }
+      snapshots.unshift(snapshotSummary(snapshot))
+      snapshotDetails.set(snapshot.snapshot_id, snapshot)
+      return clone(snapshot)
+    }
+    if (path === '/benchmark/snapshots/snap-release-1') {
+      return clone(snapshotDetails.get('snap-release-1'))
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+  await workbench.loadBenchmarkSnapshots()
+
+  const listRequest = requests.find((item) => item.path.startsWith('/benchmark/snapshots?'))
+  assert.equal(Boolean(listRequest), true)
+  const listQuery = new URLSearchParams(listRequest.path.split('?')[1])
+  assert.equal(listQuery.get('scope'), 'role_version')
+  assert.equal(listQuery.get('benchmark_id'), 'role-baseline-quick-v1')
+  assert.equal(listQuery.get('evaluation_set_id'), 'role-baseline-quick-v1@v1')
+  assert.equal(listQuery.get('target_role'), 'seer')
+
+  await workbench.createBenchmarkSnapshot({
+    title: 'Release gate 2026-06-09',
+    release_notes: 'candidate v1 accepted'
+  })
+
+  const createRequest = requests.find((item) => item.path === '/benchmark/snapshots' && item.method === 'POST')
+  assert.equal(Boolean(createRequest), true)
+  assert.equal(createRequest.body.title, 'Release gate 2026-06-09')
+  assert.equal(createRequest.body.release_notes, 'candidate v1 accepted')
+  assert.equal(createRequest.body.scope, 'role_version')
+  assert.equal(createRequest.body.benchmark_id, 'role-baseline-quick-v1')
+  assert.equal(createRequest.body.benchmark_version, 1)
+  assert.equal(createRequest.body.evaluation_set_id, 'role-baseline-quick-v1@v1')
+  assert.equal(createRequest.body.seed_set_id, 'role-baseline-quick-202606')
+  assert.equal(createRequest.body.benchmark_config_hash, 'sha256:snapshot-suite')
+  assert.equal(createRequest.body.target_role, 'seer')
+  assert.deepEqual(createRequest.body.source_filter, {
+    rankable: 'all',
+    target_role: 'seer',
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  })
+
+  liveLeaderboardRows = [{
+    scope: 'role_version',
+    subject_id: 'seer_candidate_v2',
+    target_role: 'seer',
+    target_version_id: 'seer_candidate_v2',
+    target_role_role_weighted_score: 0.81,
+    target_side_win_rate: 0.67,
+    game_count: 30,
+    rankable: true
+  }]
+  await workbench.refreshAll({ silent: true })
+  assert.equal(workbench.roleLeaderboardRows.value[0].version_id, 'seer_candidate_v2')
+
+  await workbench.selectBenchmarkSnapshot('snap-release-1')
+  assert.equal(workbench.selectedBenchmarkSnapshotId.value, 'snap-release-1')
+  assert.equal(workbench.benchmarkSnapshotDetail.value.snapshot_id, 'snap-release-1')
+  assert.equal(workbench.benchmarkSnapshotDetail.value.rows[0].target_version_id, 'seer_candidate_v1')
+  assert.equal(workbench.benchmarkSnapshotDetail.value.rows[0].target_role_role_weighted_score, 0.72)
+  assert.equal(workbench.roleLeaderboardRows.value[0].version_id, 'seer_candidate_v2')
+}))
+
+test('evaluation workbench persists benchmark comparison saved views through API', () => withWindow(async () => {
+  const requests = []
+  const viewKey = 'benchmark-comparison-view:role_version:role-baseline-quick-v1:role-baseline-quick-v1@v1:seer'
+  const savedView = {
+    kind: 'benchmark_saved_view',
+    schema_version: 1,
+    view_key: viewKey,
+    name: 'Release reviewer',
+    scope: 'role_version',
+    benchmark_id: 'role-baseline-quick-v1',
+    evaluation_set_id: 'role-baseline-quick-v1@v1',
+    target_role: 'seer',
+    view_config: { rank_filter: 'rankable', columns: ['score', 'winRate'] },
+    created_at: '2026-06-09T10:00:00Z',
+    updated_at: '2026-06-09T10:00:00Z'
+  }
+  const apiFetch = async (path, options = {}) => {
+    const method = options.method || 'GET'
+    const body = options.body ? JSON.parse(options.body) : null
+    requests.push({ path, method, body })
+    if (path === '/benchmark/views' && method === 'POST') return { ...savedView, ...body }
+    if (path === `/benchmark/views/${encodeURIComponent(viewKey)}` && method === 'GET') return savedView
+    if (path === `/benchmark/views/${encodeURIComponent(viewKey)}` && method === 'DELETE') {
+      return { kind: 'benchmark_saved_view_deleted', view_key: viewKey, deleted: true }
+    }
+    throw new Error(`unexpected ${method} ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  const created = await workbench.saveBenchmarkView({
+    view_key: viewKey,
+    name: 'Release reviewer',
+    scope: 'role_version',
+    benchmark_id: 'role-baseline-quick-v1',
+    evaluation_set_id: 'role-baseline-quick-v1@v1',
+    target_role: 'seer',
+    view_config: { rank_filter: 'rankable', columns: ['score', 'winRate'] }
+  })
+  const loaded = await workbench.loadBenchmarkView(viewKey)
+  const deleted = await workbench.deleteBenchmarkView(viewKey)
+
+  assert.equal(created.view_key, viewKey)
+  assert.equal(loaded.view_config.rank_filter, 'rankable')
+  assert.equal(deleted.deleted, true)
+  assert.deepEqual(requests.map((item) => [item.method, item.path]), [
+    ['POST', '/benchmark/views'],
+    ['GET', `/benchmark/views/${encodeURIComponent(viewKey)}`],
+    ['DELETE', `/benchmark/views/${encodeURIComponent(viewKey)}`]
+  ])
+  assert.deepEqual(requests[0].body.view_config.columns, ['score', 'winRate'])
+}))
+
+test('evaluation workbench shows success notice after starting a benchmark', () => withWindow(async () => {
+  const requests = []
+  let batches = []
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches }
+    if (path === '/benchmark') {
+      batches = [{
+        kind: 'benchmark_batch',
+        batch_id: 'bench-new',
+        roles: ['seer'],
+        status: 'queued',
+        started_at: '2026-06-07T10:00:00'
+      }]
+      return { batch_id: 'bench-new' }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+  await workbench.startEvaluation()
+
+  assert.deepEqual(requests.find((item) => item.path === '/benchmark')?.body, {
+    roles: ['seer'],
+    battle_games: 10,
+    max_days: 5
+  })
+  assert.deepEqual(workbench.notice.value, { type: 'success', message: '评测已启动。' })
+  assert.equal(workbench.error.value, '')
+  assert.equal(workbench.batchRunRows.value[0].id, 'bench-new')
+}))
+
+test('evaluation workbench warns when a started benchmark cannot refresh the list', () => withWindow(async () => {
+  let benchmarkStarted = false
+  const apiFetch = async (path) => {
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') {
+      if (benchmarkStarted) throw new Error('benchmark failed')
+      return { runs: [], batches: [] }
+    }
+    if (path === '/benchmark') {
+      benchmarkStarted = true
+      return { batch_id: 'bench-refresh-failed' }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+  await workbench.startEvaluation()
+
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '评测已启动，但列表刷新失败，请手动刷新。'
+  })
+  assert.equal(workbench.error.value, '评测执行失败，请查看评测记录。')
+}))
+
+test('evaluation workbench maps missing benchmark batch stop failures to warning notice', () => withWindow(async () => {
+  let batches = [{
+    kind: 'benchmark_batch',
+    batch_id: 'bench-missing',
+    roles: ['seer'],
+    status: 'running',
+    started_at: '2026-06-07T10:00:00'
+  }]
+  const apiFetch = async (path) => {
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches }
+    if (path === '/benchmark/batch/bench-missing/stop') {
+      batches = []
+      throw new Error('batch not found')
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+  await workbench.stopBatch('bench-missing')
+
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '评测批次不存在，已刷新列表。'
+  })
+  assert.equal(workbench.error.value, '')
+  assert.deepEqual(workbench.batchRunRows.value, [])
+}))
+
+test('evaluation workbench surfaces manual refresh failures as local notice', () => withWindow(async () => {
+  const apiFetch = async (path) => {
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') throw new Error('invalid config')
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll({ notify: true })
+
+  assert.deepEqual(workbench.notice.value, {
+    type: 'warning',
+    message: '评测配置无效，请检查局数和天数。'
+  })
+  assert.equal(workbench.error.value, '评测配置无效，请检查局数和天数。')
+}))
 
 test('evolution SSE reconnect resumes from the last event id per run and clears stale retry timers', () => withWindow(async ({ timers }) => {
   const instances = []

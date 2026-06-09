@@ -21,6 +21,7 @@ from app.graphs.subgraphs.evolve.nodes import (
     consolidate_node,
     decide_node,
     init_evolve_node,
+    scenario_replay_node,
     training_node,
 )
 
@@ -64,6 +65,7 @@ class FakeRuntimeRegistry:
         self._root = Path(root)
         self._root.mkdir(parents=True, exist_ok=True)
         self._versions: dict[tuple[str, str], dict[str, str]] = {}
+        self._metadata: dict[tuple[str, str], dict[str, Any]] = {}
         self._baselines: dict[str, str] = {}
         self._rejected: dict[str, list[dict[str, Any]]] = {}
         self.closed = False
@@ -84,6 +86,10 @@ class FakeRuntimeRegistry:
         baseline: bool = False,
     ) -> str:
         self._versions[(role, version_id)] = dict(skills)
+        self._metadata[(role, version_id)] = {
+            "release_stage": "baseline" if baseline else "draft",
+            "status": "baseline" if baseline else "active",
+        }
         if baseline:
             self._baselines[role] = version_id
         return version_id
@@ -100,13 +106,27 @@ class FakeRuntimeRegistry:
         version_id: str | None = None,
         set_as_baseline: bool = False,
         expected_current: str | None = None,
+        release_stage: str | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> str:
-        del parent_id, source, run_id, proposal_ids
+        del parent_id
         version_id = version_id or f"{role}_v{len(self._versions) + 1}"
         current = self.get_baseline(role)
         if set_as_baseline and expected_current is not None and current != expected_current:
             raise RuntimeError(f"baseline mismatch: expected {expected_current}, got {current}")
         self.seed_version(role, version_id, skill_contents, baseline=set_as_baseline)
+        stage = "baseline" if set_as_baseline else str(release_stage or "draft")
+        provenance_payload = dict(provenance or {})
+        provenance_payload.setdefault("source", source)
+        if run_id:
+            provenance_payload.setdefault("run_id", run_id)
+        provenance_payload.setdefault("proposal_ids", list(proposal_ids or []))
+        provenance_payload.setdefault("release_stage", stage)
+        self._metadata[(role, version_id)] = {
+            "release_stage": stage,
+            "status": "baseline" if set_as_baseline else stage if stage in {"shadow", "canary"} else "active",
+            "provenance": provenance_payload,
+        }
         return version_id
 
     def get_baseline(self, role: str) -> str | None:
@@ -124,7 +144,15 @@ class FakeRuntimeRegistry:
         if (role, version_id) not in self._versions:
             return False
         self._baselines[role] = version_id
+        self._metadata.setdefault((role, version_id), {})["release_stage"] = "baseline"
+        self._metadata[(role, version_id)]["status"] = "baseline"
         return True
+
+    def release_stage(self, role: str, version_id: str) -> str:
+        return str(self._metadata.get((role, version_id), {}).get("release_stage") or "")
+
+    def provenance(self, role: str, version_id: str) -> dict[str, Any]:
+        return dict(self._metadata.get((role, version_id), {}).get("provenance") or {})
 
     def reject(self, role: str, version_id: str, reason: str = "") -> None:
         del role, version_id, reason
@@ -193,8 +221,13 @@ class _Cursor:
 
 
 class FakeEvolutionConnection:
-    def __init__(self, rows: dict[str, dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        rows: dict[str, dict[str, Any]],
+        trust_bundles: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         self._rows = rows
+        self._trust_bundles = trust_bundles if trust_bundles is not None else {}
         self.closed = False
         self.commits = 0
         self.rollbacks = 0
@@ -219,6 +252,64 @@ class FakeEvolutionConnection:
             raise RuntimeError("connection closed")
         text = " ".join(sql.split())
         params = tuple(parameters)
+
+        if text.startswith("CREATE TABLE IF NOT EXISTS trust_bundles"):
+            return _Cursor()
+
+        if text.startswith("CREATE INDEX IF NOT EXISTS idx_trust_bundles_"):
+            return _Cursor()
+
+        if text.startswith("INSERT INTO trust_bundles"):
+            (
+                bundle_id,
+                run_id,
+                role,
+                baseline_version,
+                candidate_version,
+                bundle_hash,
+                gate_report_id,
+                attribution_report_id,
+                bundle_json,
+                created_at,
+                updated_at,
+            ) = params
+            run_key = str(run_id)
+            existing = self._trust_bundles.get(run_key)
+            self._trust_bundles[run_key] = {
+                "id": bundle_id,
+                "run_id": run_id,
+                "role": role,
+                "baseline_version": baseline_version,
+                "candidate_version": candidate_version,
+                "bundle_hash": bundle_hash,
+                "gate_report_id": gate_report_id,
+                "attribution_report_id": attribution_report_id,
+                "bundle_json": bundle_json,
+                "created_at": existing.get("created_at") if existing is not None else created_at,
+                "updated_at": updated_at,
+            }
+            return _Cursor()
+
+        if text == "SELECT * FROM trust_bundles WHERE run_id = ? OR id = ? LIMIT 1":
+            lookup = str(params[0])
+            row = self._trust_bundles.get(lookup)
+            if row is None:
+                row = next(
+                    (item for item in self._trust_bundles.values() if str(item.get("id")) == str(params[1])),
+                    None,
+                )
+            return _Cursor([row] if row is not None else [])
+
+        if text.startswith("SELECT * FROM trust_bundles"):
+            limit = int(params[-1])
+            role = str(params[0]) if "role = ?" in text else None
+            rows = [
+                row
+                for row in self._trust_bundles.values()
+                if role is None or row.get("role") == role
+            ]
+            rows.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+            return _Cursor(rows[:limit])
 
         if text.startswith("INSERT INTO evolution_runs"):
             (
@@ -317,9 +408,23 @@ class FakeEvolutionConnection:
         return False
 
     def table_exists(self, table_name: str) -> bool:
-        return table_name == "evolution_runs"
+        return table_name in {"evolution_runs", "trust_bundles"}
 
     def table_columns(self, table_name: str) -> set[str]:
+        if table_name == "trust_bundles":
+            return {
+                "id",
+                "run_id",
+                "role",
+                "baseline_version",
+                "candidate_version",
+                "bundle_hash",
+                "gate_report_id",
+                "attribution_report_id",
+                "bundle_json",
+                "created_at",
+                "updated_at",
+            }
         assert table_name == "evolution_runs"
         return set(self.columns)
 
@@ -332,6 +437,7 @@ class FakeEvolutionConnection:
 class FakeEvolutionStorageProvider:
     def __init__(self, *, fail_message: str | None = None) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
+        self.trust_bundles: dict[str, dict[str, Any]] = {}
         self.connections: list[FakeEvolutionConnection] = []
         self.fail_message = fail_message
 
@@ -344,7 +450,7 @@ class FakeEvolutionStorageProvider:
     def open_evolution_connection(self) -> FakeEvolutionConnection:
         if self.fail_message is not None:
             raise RuntimeError(self.fail_message)
-        conn = FakeEvolutionConnection(self.rows)
+        conn = FakeEvolutionConnection(self.rows, self.trust_bundles)
         self.connections.append(conn)
         return conn
 
@@ -353,6 +459,13 @@ class FakeEvolutionStorageProvider:
 
     def runtime_state(self, run_id: str) -> dict[str, Any]:
         value = self.row(run_id)["runtime_state"]
+        if isinstance(value, str):
+            return json.loads(value)
+        assert isinstance(value, dict)
+        return value
+
+    def trust_bundle(self, run_id: str) -> dict[str, Any]:
+        value = self.trust_bundles[run_id]["bundle_json"]
         if isinstance(value, str):
             return json.loads(value)
         assert isinstance(value, dict)
@@ -408,6 +521,55 @@ def test_evolution_store_save_runtime_state_uses_supplied_started_at_on_first_in
 
     assert rows["r_first_insert"]["started_at"] == "2026-06-08T10:00:00+08:00"
     assert rows["r_first_insert"]["finished_at"] == "2026-06-08T10:30:00+08:00"
+
+
+def test_evolution_store_save_and_get_trust_bundle_audit_row():
+    from storage.evolution.run_repo import EvolutionStore
+
+    rows: dict[str, dict[str, Any]] = {}
+    trust_bundles: dict[str, dict[str, Any]] = {}
+    store = EvolutionStore(FakeEvolutionConnection(rows, trust_bundles))
+    bundle = {
+        "schema_version": "trust_bundle_v1",
+        "trust_bundle_id": "trust_bundle_r_audit_fixture",
+        "bundle_hash": "a" * 64,
+        "run_id": "r_audit",
+        "role": "seer",
+        "baseline_version": "baseline_seer",
+        "candidate_version": "candidate_seer",
+        "gate_report_id": "gate_r_audit",
+        "attribution_report_id": "attribution_r_audit",
+        "rollback_target": "baseline_seer",
+    }
+
+    row = store.save_trust_bundle(bundle)
+    by_run = store.get_trust_bundle("r_audit")
+    by_id = store.get_trust_bundle("trust_bundle_r_audit_fixture")
+    listed = store.list_trust_bundles(role="seer")
+
+    assert row["id"] == "trust_bundle_r_audit_fixture"
+    assert trust_bundles["r_audit"]["bundle_hash"] == "a" * 64
+    assert by_run is not None
+    assert by_run == by_id
+    assert by_run["kind"] == "evolution_trust_bundle"
+    assert by_run["trust_bundle_id"] == "trust_bundle_r_audit_fixture"
+    assert by_run["run_id"] == "r_audit"
+    assert by_run["role"] == "seer"
+    assert by_run["bundle_hash"] == "a" * 64
+    assert by_run["trust_bundle"]["schema_version"] == "trust_bundle_v1"
+    assert by_run["trust_bundle"]["rollback_target"] == "baseline_seer"
+    assert listed[0]["trust_bundle_id"] == "trust_bundle_r_audit_fixture"
+
+    updated = dict(bundle)
+    updated["bundle_hash"] = "b" * 64
+    updated["candidate_version"] = "candidate_seer_v2"
+    store.save_trust_bundle(updated)
+
+    refreshed = store.get_trust_bundle("r_audit")
+    assert refreshed is not None
+    assert refreshed["bundle_hash"] == "b" * 64
+    assert refreshed["candidate_version"] == "candidate_seer_v2"
+    assert trust_bundles["r_audit"]["created_at"] <= trust_bundles["r_audit"]["updated_at"]
 
 
 @pytest.fixture(autouse=True)
@@ -553,6 +715,72 @@ def test_init_evolve_node_materializes_registry_baseline_skill_dir(tmp_path, mon
     assert not (baseline_dir / "seer" / "seer" / "vote.md").exists()
 
 
+@pytest.mark.parametrize("release_stage", ["shadow", "canary"])
+def test_init_evolve_node_rejects_experimental_explicit_parent(tmp_path, monkeypatch, release_stage):
+    paths = _PathsStub(tmp_path)
+    registry = FakeRuntimeRegistry(paths.registry_dir)
+    registry.seed_version("seer", "seer_v1", {"seer/vote.md": SEER_SKILL}, baseline=True)
+    registry.publish_skills(
+        "seer",
+        {"seer/vote.md": SEER_SKILL + f"\n# {release_stage}\n"},
+        version_id=f"seer_{release_stage}_v1",
+        release_stage=release_stage,
+    )
+    _patch_runtime_registry(monkeypatch, registry)
+
+    with pytest.raises(ValueError, match=f"release_stage={release_stage}"):
+        asyncio.run(
+            init_evolve_node(
+                {
+                    "role": "seer",
+                    "run_id": f"r_parent_{release_stage}",
+                    "paths": paths,
+                    "parent_hash": f"seer_{release_stage}_v1",
+                }
+            )
+        )
+
+
+def test_init_evolve_node_rejects_explicit_parent_when_registry_check_fails(tmp_path, monkeypatch):
+    import app.graphs.subgraphs.evolve.nodes as nodes
+
+    def _boom(state):
+        raise RuntimeError("registry down")
+
+    monkeypatch.setattr(nodes, "_registry", _boom)
+
+    with pytest.raises(RuntimeError, match="explicit parent release-stage check failed"):
+        asyncio.run(
+            init_evolve_node(
+                {
+                    "role": "seer",
+                    "run_id": "r_parent_registry_down",
+                    "paths": _PathsStub(tmp_path),
+                    "parent_hash": "seer_v_explicit",
+                }
+            )
+        )
+
+
+def test_init_evolve_node_rejects_missing_explicit_parent(tmp_path, monkeypatch):
+    paths = _PathsStub(tmp_path)
+    registry = FakeRuntimeRegistry(paths.registry_dir)
+    registry.seed_version("seer", "seer_v1", {"seer/vote.md": SEER_SKILL}, baseline=True)
+    _patch_runtime_registry(monkeypatch, registry)
+
+    with pytest.raises(ValueError, match="explicit parent_hash must resolve"):
+        asyncio.run(
+            init_evolve_node(
+                {
+                    "role": "seer",
+                    "run_id": "r_parent_missing",
+                    "paths": paths,
+                    "parent_hash": "missing_parent",
+                }
+            )
+        )
+
+
 def test_init_evolve_node_warns_when_registry_baseline_unavailable(tmp_path, monkeypatch):
     import app.graphs.subgraphs.evolve.nodes as nodes
 
@@ -639,6 +867,65 @@ def test_training_node_attaches_decision_judge_when_enabled(tmp_path):
     assert key["judge"]["quality"] == "good"
 
 
+def test_scenario_replay_node_freezes_contract_snapshots(tmp_path):
+    game = TrainingEvidenceGameSubgraph()
+    state = {
+        "role": "seer",
+        "run_id": "evolve_scenario",
+        "parent_hash": "baseline_seer",
+        "candidate_hash": "candidate_scenario",
+        "baseline_skill_dir": str(tmp_path / "baseline"),
+        "candidate_skill_dir": str(tmp_path / "candidate"),
+        "config": {
+            "training_games": 1,
+            "seed_start": 7,
+            "max_days": 2,
+            "game_concurrency": 1,
+            "scenario_replay_max_snapshots": 1,
+        },
+        "paths": _PathsStub(tmp_path),
+        "game_subgraph": game,
+        "proposals": [{
+            "proposal_id": "p1",
+            "target_file": "seer/vote.md",
+            "action_type": "append_rule",
+            "hypothesis": "Checking contradiction drivers improves seer information gain.",
+        }],
+        "diff": [{
+            "filename": "seer/vote.md",
+            "action": "modified",
+            "proposal_ref": "p1",
+        }],
+    }
+
+    trained = asyncio.run(training_node(state))
+    out = asyncio.run(scenario_replay_node(trained))
+
+    assert out["current_stage"] == "scenario_replay"
+    assert out["status"] == "scenario_replay"
+    assert len(out["scenario_snapshots"]) == 1
+    snapshot = out["scenario_snapshots"][0]
+    assert snapshot["schema_version"] == "scenario_snapshot_v1"
+    assert snapshot["source_game_id"] == "evolve_scenario_train_001"
+    assert snapshot["source_decision_id"] == "d_check"
+    assert snapshot["role"] == "seer"
+    assert snapshot["actor_id"] == 1
+    assert snapshot["legal_actions"] == ["seer_check"]
+    assert snapshot["proposal_ids"] == ["p1"]
+    assert snapshot["baseline_version"] == "baseline_seer"
+    assert snapshot["candidate_version"] == "candidate_scenario"
+    assert snapshot["selected_skill_context"][0]["proposal_ref"] == "p1"
+    assert snapshot["players_public_state"]
+    assert all("known_role" not in row for row in snapshot["players_public_state"])
+    assert all("public_role" not in row for row in snapshot["players_public_state"])
+    report = out["scenario_replay_report"]
+    assert report["schema_version"] == "scenario_replay_report_v1"
+    assert report["execution_mode"] == "contract_only"
+    assert report["summary"]["verdict"] == "contract_ready"
+    assert report["summary"]["scenario_count"] == 1
+    assert report["results"][0]["verdict"] == "contract_ready"
+
+
 def test_training_node_records_evidence_extraction_warning(tmp_path, monkeypatch):
     import app.graphs.subgraphs.evolve.nodes as nodes
 
@@ -700,6 +987,11 @@ def test_consolidate_node_parses_llm_proposals(tmp_path):
         '{"trends": ["seer votes too early"], "proposals": [{'
         '"proposal_id": "p1", "target_file": "seer/vote.md", "action_type": "append_rule", '
         '"content": "Wait one round before voting.", "rationale": "two losses from early votes", '
+        '"hypothesis": "When day one vote evidence is thin, waiting one round improves seer voting quality.", '
+        '"trigger_condition": {"phase": ["day1"], "public_state": ["thin_vote_evidence"]}, '
+        '"expected_effect": {"primary_metric": "role_score", "expected_direction": "increase"}, '
+        '"metric_targets": {"min_role_score_delta": 0.2}, '
+        '"evidence_game_ids": ["g1", "g2"], '
         '"confidence": 0.8, "risk": "low", "expected_metric": "role_score", '
         '"expected_direction": "improve", "evidence": [{"game_id": "g1"}, {"game_id": "g2"}]}]}'
     )
@@ -720,6 +1012,11 @@ def test_consolidate_node_parses_llm_proposals(tmp_path):
     prop = out["proposals"][0]
     assert prop["target_file"] == "seer/vote.md"
     assert prop["status"] == "proposed"
+    assert prop["hypothesis"].startswith("When day one vote evidence")
+    assert prop["preflight_status"] == "passed"
+    assert out["generated_proposal_ids"] == ["p1"]
+    assert out["preflight_passed_proposal_ids"] == ["p1"]
+    assert out["preflight_rejected_proposal_ids"] == []
     assert out["consolidation"]["trends"] == ["seer votes too early"]
 
 
@@ -910,6 +1207,11 @@ def test_consolidate_node_dedups_rejected_proposals(tmp_path, monkeypatch):
         '{"trends": ["x"], "proposals": [{'
         '"proposal_id": "p1", "target_file": "seer/vote.md", "action_type": "append_rule", '
         '"content": "c", "rationale": "wait one round", "confidence": 0.8, "risk": "low", '
+        '"hypothesis": "When early vote evidence is weak, waiting one round improves seer voting quality.", '
+        '"trigger_condition": {"phase": ["day1"], "public_state": ["weak_vote_evidence"]}, '
+        '"expected_effect": {"primary_metric": "role_score", "expected_direction": "increase"}, '
+        '"metric_targets": {"min_role_score_delta": 0.2}, '
+        '"evidence_game_ids": ["g1", "g2"], '
         '"evidence": [{"game_id": "g1"}, {"game_id": "g2"}]}]}'
     )
     model = FakeModel([raw])
@@ -925,6 +1227,9 @@ def test_consolidate_node_dedups_rejected_proposals(tmp_path, monkeypatch):
     out = asyncio.run(consolidate_node(state))
     assert len(model.calls) == 1  # LLM was consulted
     assert out["proposals"] == []  # but the duplicate proposal was dropped
+    assert out["generated_proposal_ids"] == ["p1"]
+    assert out["preflight_passed_proposal_ids"] == []
+    assert out["preflight_rejected_proposal_ids"] == ["p1"]
 
 
 def test_consolidate_node_records_rejected_buffer_warning(tmp_path, monkeypatch):
@@ -1524,17 +1829,70 @@ def test_decide_promotes_to_registry_on_auto_promote(tmp_path, monkeypatch, _fak
     out = asyncio.run(decide_node(state))
     assert out["result"]["recommendation"] == "promote"
     assert out["status"] == "promoted"
+    published = out["result"]["published_version_id"]
 
-    assert registry.get_baseline("seer") == out["result"]["published_version_id"]
+    assert published == "candidate_r1"
+    assert out["result"]["published_release_stage"] == "shadow"
+    assert out["result"]["promoted_version_id"] is None
+    assert registry.get_baseline("seer") == "baseline_seer"
+    assert registry.release_stage("seer", published) == "shadow"
+    provenance = registry.provenance("seer", published)
+    assert provenance["automatic_action"] == "auto_promote"
+    assert provenance["release_stage"] == "shadow"
     payload = _fake_pg_provider.runtime_state("r1")
     assert payload["kind"] == "role_evolution_run"
     assert payload["run_id"] == "r1"
     assert payload["status"] == "promoted"
-    assert payload["result"]["published_version_id"] == out["result"]["published_version_id"]
+    assert payload["result"]["published_version_id"] == published
+    assert payload["result"]["published_release_stage"] == "shadow"
+    assert payload["result"]["promoted_version_id"] is None
     assert payload["finished_at"] == out["result"]["finished_at"]
     assert _fake_pg_provider.row("r1")["finished_at"] == out["result"]["finished_at"]
     assert not (paths.evolution_dir / "r1" / "state.json").exists()
     assert not (paths.evolution_dir / "r1" / "manifest.json").exists()
+
+
+def test_decide_baseline_promote_updates_registry_baseline(tmp_path, monkeypatch):
+    candidate_dir = _seer_candidate_dir(tmp_path)
+    paths = _PathsStub(tmp_path)
+    registry = FakeRuntimeRegistry(paths.registry_dir)
+    registry.seed_version("seer", "baseline_seer", {"seer/vote.md": SEER_SKILL}, baseline=True)
+    _patch_runtime_registry(monkeypatch, registry)
+    state = {
+        "role": "seer",
+        "run_id": "r_baseline",
+        "parent_hash": "baseline_seer",
+        "candidate_hash": "candidate_baseline",
+        "candidate_skill_dir": candidate_dir,
+        "paths": paths,
+        "config": {"auto_promote": True},
+        "proposals": [{"proposal_id": "p1", "target_file": "seer/vote.md"}],
+        "release_gate": {"schema_version": "promotion_gate_v2", "decision": "baseline_promote"},
+        "release_decision": "baseline_promote",
+        "trust_bundle": {
+            "schema_version": "trust_bundle_v1",
+            "trust_bundle_id": "trust_bundle_r_baseline",
+            "bundle_hash": "1" * 64,
+            "gate_report_id": "gate_r_baseline",
+            "attribution_report_id": "attr_r_baseline",
+        },
+        "battle_result": {"significant": True, "candidate_win_rate": 0.9},
+    }
+
+    out = asyncio.run(decide_node(state))
+
+    assert out["result"]["recommendation"] == "promote"
+    assert out["status"] == "promoted"
+    assert out["result"]["published_version_id"] == "candidate_baseline"
+    assert out["result"]["published_release_stage"] == "baseline"
+    assert out["result"]["promoted_version_id"] == "candidate_baseline"
+    assert registry.get_baseline("seer") == "candidate_baseline"
+    assert registry.release_stage("seer", "candidate_baseline") == "baseline"
+    provenance = registry.provenance("seer", "candidate_baseline")
+    assert provenance["automatic_action"] == "auto_promote"
+    assert provenance["release_decision"] == "baseline_promote"
+    assert provenance["trust_bundle_id"] == "trust_bundle_r_baseline"
+    assert provenance["gate_report_id"] == "gate_r_baseline"
 
 
 def test_decide_rejects_and_saves_rejected(tmp_path, monkeypatch):
@@ -1829,7 +2187,48 @@ def test_decide_persists_trust_loop_artifacts_without_replacing_promotion_gate(t
             "target_file": "seer/vote.md",
             "risk": "low",
             "confidence": 0.9,
+            "hypothesis": "Checking vote split drivers improves seer information gain.",
+            "trigger_condition": {"phase": ["day1"], "public_state": ["vote_split"]},
+            "metric_targets": {"min_role_score_delta": 0.2},
+            "evidence_game_ids": ["train_a", "train_b"],
         }],
+        "generated_proposal_ids": ["p1"],
+        "preflight_passed_proposal_ids": ["p1"],
+        "training_games": [{"game_id": "train_a"}, {"game_id": "train_b"}],
+        "diff": [{"filename": "seer/vote.md", "action": "append_rule", "proposal_ref": "p1", "before": "", "after": "Check vote split drivers."}],
+        "scenario_snapshots": [{
+            "schema_version": "scenario_snapshot_v1",
+            "scenario_id": "scenario_1",
+            "source_game_id": "train_a",
+            "role": "seer",
+            "actor_id": 1,
+            "phase": "day",
+            "legal_actions": ["vote"],
+            "prompt_policy_version": "agent_prompt_v1",
+            "judge_policy_version": "judge_policy_v1",
+            "rubric_version": "seer_rubric_v1",
+            "baseline_version": "baseline_seer",
+            "candidate_version": "candidate_trust",
+        }],
+        "scenario_replay_report": {
+            "schema_version": "scenario_replay_report_v1",
+            "execution_mode": "contract_only",
+            "status": "contract_ready",
+            "scenario_count": 1,
+            "results": [{"scenario_id": "scenario_1", "verdict": "contract_ready", "policy_violations": []}],
+            "summary": {
+                "verdict": "contract_ready",
+                "scenario_count": 1,
+                "policy_violation_count": 0,
+                "contract_missing_count": 0,
+            },
+        },
+        "scenario_replay_summary": {
+            "verdict": "contract_ready",
+            "scenario_count": 1,
+            "policy_violation_count": 0,
+            "contract_missing_count": 0,
+        },
         "battle_result": {
             "target_team": "villagers",
             "seeds": [10000],
@@ -1852,13 +2251,49 @@ def test_decide_persists_trust_loop_artifacts_without_replacing_promotion_gate(t
     assert out["result"]["recommendation"] == "review"
     assert out["result"]["promotion_gate"]["recommendation"] == "review"
     assert out["result"]["gate_report"]["schema_version"] == "trust_loop_gate_v1"
+    assert out["result"]["gate_report"]["release_gate"]["schema_version"] == "promotion_gate_v2"
+    assert out["result"]["gate_report"]["scenario_replay"]["execution_mode"] == "contract_only"
+    assert out["result"]["gate_report"]["metrics"]["scenario_count"] == 1
+    assert out["result"]["gate_report"]["proposal_attribution"]["schema_version"] == "proposal_attribution_report_v1"
+    assert out["result"]["gate_report"]["proposal_attribution"]["status"] == "attribution_inconclusive"
+    assert out["result"]["release_gate"]["schema_version"] == "promotion_gate_v2"
+    assert out["result"]["proposal_attribution_report"]["schema_version"] == "proposal_attribution_report_v1"
+    assert out["result"]["proposal_attribution_report"]["rows"][0]["estimated_contribution"] is None
+    assert out["result"]["trust_bundle"]["schema_version"] == "trust_bundle_v1"
+    assert out["result"]["trust_bundle"]["trust_bundle_id"].startswith("trust_bundle_r_trust_decide_")
+    assert len(out["result"]["trust_bundle"]["bundle_hash"]) == 64
+    assert out["result"]["trust_bundle"]["scenario_ids"] == ["scenario_1"]
+    assert out["result"]["trust_bundle"]["training_game_ids"] == ["train_a", "train_b"]
     assert out["result"]["paired_seed_summary"]["seed_count"] == 1
     assert out["result"]["paired_seed_pairs"][0]["winner_side"] == "candidate"
     payload = _fake_pg_provider.runtime_state("r_trust_decide")
     assert payload["promotion_gate"]["recommendation"] == "review"
     assert payload["gate_report"]["metrics"]["paired_valid_count"] == 1
+    assert payload["gate_report"]["release_gate"]["schema_version"] == "promotion_gate_v2"
+    assert payload["release_gate"]["schema_version"] == "promotion_gate_v2"
+    assert payload["trust_bundle"]["schema_version"] == "trust_bundle_v1"
+    assert payload["trust_bundle"]["rollback_target"] == "baseline_seer"
+    assert payload["trust_bundle"]["trust_bundle_id"] == out["result"]["trust_bundle"]["trust_bundle_id"]
+    assert payload["scenario_replay_report"]["execution_mode"] == "contract_only"
+    assert payload["proposal_attribution_report"]["schema_version"] == "proposal_attribution_report_v1"
     assert payload["paired_seed_battle_table"][0]["score_delta"] == 1.0
     assert payload["result"]["paired_seed_pairs"] == payload["paired_seed_pairs"]
+    trust_bundle = _fake_pg_provider.trust_bundle("r_trust_decide")
+    assert trust_bundle["schema_version"] == "trust_bundle_v1"
+    assert trust_bundle["trust_bundle_id"] == out["result"]["trust_bundle"]["trust_bundle_id"]
+    assert trust_bundle["bundle_hash"] == out["result"]["trust_bundle"]["bundle_hash"]
+    stored_bundle = _fake_pg_provider.trust_bundles["r_trust_decide"]
+    assert stored_bundle["id"] == out["result"]["trust_bundle"]["trust_bundle_id"]
+    assert stored_bundle["bundle_hash"] == out["result"]["trust_bundle"]["bundle_hash"]
+
+    from storage.evolution.run_repo import EvolutionStore
+
+    audit_payload = EvolutionStore(
+        FakeEvolutionConnection({}, _fake_pg_provider.trust_bundles)
+    ).get_trust_bundle("r_trust_decide")
+    assert audit_payload is not None
+    assert audit_payload["kind"] == "evolution_trust_bundle"
+    assert audit_payload["trust_bundle"]["rollback_target"] == "baseline_seer"
 
 
 def test_build_evolve_graph_signature_exposes_only_wired_parameters():
@@ -2056,8 +2491,76 @@ def test_evolution_gate_report_adds_role_score_paired_decision_and_risk_tags():
     assert "candidate_decision_issue_rate_above_ceiling" in report["review_reasons"]
     assert "proposal_duplicates_rejected_buffer" in report["review_reasons"]
     assert "proposal_overfit_risk_high" in report["review_reasons"]
+    assert "proposal_attribution_inconclusive" in report["review_reasons"]
     assert {"duplicate_rejected", "seed_specific", "player_specific", "overfit_high"} <= set(report["risk_tags"])
     assert report["proposal_risks"][0]["similarity"]["matched_rejection"]["source_run_id"] == "older"
+    assert report["gate_policy_version"] == "promotion_gate_v2"
+    assert report["release_gate"]["schema_version"] == "promotion_gate_v2"
+    assert report["release_gate"]["decision"] == "block"
+    assert report["trust_bundle_completeness"]["complete"] is False
+    attribution = report["proposal_attribution"]
+    assert attribution["schema_version"] == "proposal_attribution_report_v1"
+    assert attribution["status"] == "attribution_inconclusive"
+    assert attribution["review_required"] is True
+    assert attribution["rows"][0]["estimated_contribution"] is None
+    assert attribution["rows"][0]["requires_ablation"] is True
+
+
+def test_build_trust_bundle_collects_evidence_gate_and_repro_metadata():
+    from app.lib.evolve import build_evolution_gate_report, build_trust_bundle
+
+    proposal = {
+        "proposal_id": "p1",
+        "target_file": "seer/vote.md",
+        "action_type": "append_rule",
+        "status": "accepted",
+        "hypothesis": "Vote split drivers are better check targets.",
+        "trigger_condition": {"phase": ["day1"], "public_state": ["vote_split"]},
+        "metric_targets": {"min_role_score_delta": 0.2},
+        "evidence_game_ids": ["train_1", "train_2"],
+        "risk": "low",
+    }
+    run = {
+        "run_id": "r_bundle",
+        "role": "seer",
+        "parent_hash": "baseline_seer",
+        "candidate_hash": "candidate_seer",
+        "training_games": [{"game_id": "train_1"}, {"game_id": "train_2"}],
+        "scenario_snapshots": [{"scenario_id": "scenario_1", "source_game_id": "train_1"}],
+        "battle_games": [
+            {"game_id": "b_base", "seed": 42, "side": "baseline", "winner": "werewolves", "role_score": 4.0},
+            {"game_id": "b_cand", "seed": 42, "side": "candidate", "winner": "villagers", "role_score": 4.4},
+        ],
+        "battle_result": {"target_team": "villagers", "significant": True, "seeds": [42], "significance": {"reasons": []}},
+        "proposals": [proposal],
+        "generated_proposal_ids": ["p1"],
+        "preflight_passed_proposal_ids": ["p1"],
+        "accepted_proposal_ids": ["p1"],
+        "diff": [{"filename": "seer/vote.md", "action": "append_rule", "proposal_ref": "p1", "before": "", "after": "Check drivers."}],
+        "scenario_replay_report": {
+            "schema_version": "scenario_replay_report_v1",
+            "execution_mode": "contract_only",
+            "status": "contract_ready",
+            "scenario_count": 1,
+            "summary": {"verdict": "contract_ready", "scenario_count": 1, "policy_violation_count": 0, "contract_missing_count": 0},
+        },
+    }
+    gate_report = build_evolution_gate_report(run, thresholds={"min_paired_valid_seeds": 1})
+    bundle = build_trust_bundle(run, gate_report=gate_report)
+
+    assert gate_report["release_gate"]["schema_version"] == "promotion_gate_v2"
+    assert gate_report["policy_versions"]["judge_policy_version"] == "judge_policy_v1"
+    assert bundle["schema_version"] == "trust_bundle_v1"
+    assert bundle["training_game_ids"] == ["train_1", "train_2"]
+    assert bundle["scenario_ids"] == ["scenario_1"]
+    assert bundle["battle_pair_seeds"] == [42]
+    assert bundle["accepted_proposal_ids"] == ["p1"]
+    assert bundle["rollback_target"] == "baseline_seer"
+    assert bundle["gate_policy_version"] == "promotion_gate_v2"
+    assert bundle["trust_bundle_id"].startswith("trust_bundle_r_bundle_")
+    assert len(bundle["bundle_hash"]) == 64
+    assert bundle["attribution_report_id"].startswith("attribution_r_bundle_")
+    assert bundle["repro_command"].startswith("not_available:")
 
 
 def test_reject_buffer_similarity_and_overfit_risk_detect_duplicate_specific_rules():

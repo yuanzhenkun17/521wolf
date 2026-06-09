@@ -1,7 +1,6 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
-import GameArchivePanel from '../components/history/GameArchivePanel.vue'
-import ReviewReportPanel from '../components/history/ReviewReportPanel.vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import HistoryGameList from '../components/HistoryGameList.vue'
 import MultiAssess from '../components/MultiAssess.vue'
 import NightSection from '../components/NightSection.vue'
@@ -9,13 +8,19 @@ import PhaseTabs from '../components/PhaseTabs.vue'
 import SeatLedger from '../components/SeatLedger.vue'
 import SpeechSection from '../components/SpeechSection.vue'
 import VoteSection from '../components/VoteSection.vue'
+import EvidenceContextBar from '../components/history/EvidenceContextBar.vue'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
 import {
+  displayActionLabel,
   displayPhaseLabel,
   displayRoleLabel,
   displaySkillDirLabel,
   displayWinnerLabel,
   normalizeHistoryDisplayText
 } from '../components/history/historyDisplay.js'
+
+const GameArchivePanel = defineAsyncComponent(() => import('../components/history/GameArchivePanel.vue'))
+const ReviewReportPanel = defineAsyncComponent(() => import('../components/history/ReviewReportPanel.vue'))
 
 const props = defineProps({
   returnToMatchAvailable: Boolean,
@@ -28,10 +33,14 @@ const props = defineProps({
   historySourceFilter: { type: String, default: 'all' },
   historyCounts: { type: Object, default: () => ({}) },
   historyFacets: { type: Object, default: () => ({}) },
+  historyNotice: { type: Object, default: () => ({}) },
   historyHasMore: Boolean,
+  historyCurrentPage: { type: Number, default: 1 },
+  historyTotalPages: { type: Number, default: 1 },
   historyPages: { type: Array, default: () => [] },
   selectedHistoryPageKey: { type: String, default: '' },
   selectedHistoryPage: Object,
+  phaseLoadingByKey: { type: Object, default: () => ({}) },
   historyLogs: { type: Array, default: () => [] },
   pageNightActions: { type: Array, default: () => [] },
   pageSpeechDecisions: { type: Array, default: () => [] },
@@ -62,12 +71,18 @@ const props = defineProps({
   playerAliveAtPage: { type: Object, default: () => ({}) },
   archiveByGameId: { type: Object, default: () => ({}) },
   reviewByGameId: { type: Object, default: () => ({}) },
+  flowDataByGameId: { type: Object, default: () => ({}) },
+  flowLoadingByGameId: { type: Object, default: () => ({}) },
   archiveLoading: Boolean,
   reviewLoading: Boolean,
   loadMoreHistory: Function,
+  loadMoreHistoryPhaseDetail: Function,
+  goHistoryPage: Function,
   setHistorySourceFilter: Function,
+  deleteHistoryGame: Function,
   loadArchive: Function,
   loadReview: Function,
+  loadFlowData: Function,
   formatJson: Function
 })
 
@@ -91,16 +106,50 @@ const emit = defineEmits([
 
 const selectedAssessPlayerId = ref(null)
 const workspaceTab = ref('phase')
-const structuredRawPhases = new Set(['night', 'sheriff', 'sheriff_result', 'vote', 'sheriff_vote'])
+const rawLogFilter = ref('all')
+const expandedPhaseEvidenceKeys = ref(new Set())
+const NIGHT_PHASES = new Set(['night'])
+const SPEECH_PHASES = new Set(['speech', 'sheriff'])
+const VOTE_PHASES = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote', 'sheriff_result'])
+const RESULT_PHASES = new Set(['result', 'finished', 'ended'])
+const SHERIFF_VOTE_PHASES = new Set(['sheriff_vote', 'sheriff_result'])
+const RAW_LOG_FILTERS = [
+  { key: 'all', label: '全部' },
+  { key: 'system', label: '系统' },
+  { key: 'action', label: '行动' },
+  { key: 'vote', label: '投票' },
+  { key: 'error', label: '异常' }
+]
 const canShowRawLogs = computed(() =>
   props.historyLogs.length > 0
   && props.selectedHistoryPage
-  && !structuredRawPhases.has(props.selectedHistoryPage.phase)
 )
-const filteredRawLogs = computed(() => props.historyLogs)
+const focusedPlayerId = computed(() => normalizePlayerId(selectedAssessPlayerId.value))
+const focusedPlayer = computed(() => {
+  const id = focusedPlayerId.value
+  if (id == null) return null
+  return (props.selectedHistoryGame?.players || []).find((player) => samePlayer(player?.id ?? player?.seat, id)) || null
+})
+const hasPlayerFocus = computed(() => focusedPlayerId.value != null)
+const rawLogsForFocus = computed(() => props.historyLogs.filter((log) => rowMatchesFocusedPlayer(log, { includeText: true })))
+const filteredRawLogs = computed(() =>
+  rawLogsForFocus.value.filter((log) => rawLogFilter.value === 'all' || rawLogKind(log) === rawLogFilter.value)
+)
 const visibleRawLogs = computed(() => filteredRawLogs.value.slice(0, 180))
+const rawLogFilters = computed(() =>
+  RAW_LOG_FILTERS.map((item) => ({
+    ...item,
+    count: item.key === 'all'
+      ? rawLogsForFocus.value.length
+      : rawLogsForFocus.value.filter((log) => rawLogKind(log) === item.key).length
+  })).filter((item) => item.key === 'all' || item.count > 0)
+)
 const selectedReview = computed(() => props.reviewByGameId[props.selectedHistoryGame?.game_id] || null)
 const selectedArchive = computed(() => props.archiveByGameId[props.selectedHistoryGame?.game_id] || null)
+const selectedFlowData = computed(() => props.flowDataByGameId[props.selectedHistoryGame?.game_id] || null)
+const selectedFlowLoading = computed(() => Boolean(props.flowLoadingByGameId[props.selectedHistoryGame?.game_id]))
+const detailInlineNotice = computed(() => inlineNoticeForDisplay(props.historyNotice))
+const detailErrorNotice = computed(() => noticeErrorForPanel(props.historyNotice))
 const selectedGameConfig = computed(() => {
   const game = props.selectedHistoryGame || {}
   const config = game.config && typeof game.config === 'object' ? game.config : {}
@@ -131,6 +180,33 @@ const historyConfigItems = computed(() => {
 })
 const reviewLoaded = computed(() => Boolean(selectedReview.value && !selectedReview.value.error))
 const archiveLoaded = computed(() => Boolean(selectedArchive.value && !selectedArchive.value.error))
+const selectedPhasePagination = computed(() => props.selectedHistoryPage?.pagination || {})
+const phaseHasMore = computed(() =>
+  Boolean(selectedPhasePagination.value.logs?.has_more || selectedPhasePagination.value.decisions?.has_more)
+)
+const selectedPhaseLoadingKey = computed(() => {
+  const gameId = props.selectedHistoryGame?.game_id || props.selectedHistoryGameId || ''
+  const pageKey = props.selectedHistoryPage?.key || props.selectedHistoryPageKey || ''
+  return gameId && pageKey ? `${gameId}:${pageKey}` : ''
+})
+const selectedPhaseLoading = computed(() =>
+  Boolean(props.phaseLoadingByKey[selectedPhaseLoadingKey.value])
+)
+const phaseMoreMeta = computed(() => {
+  const logs = selectedPhasePagination.value.logs || {}
+  const decisions = selectedPhasePagination.value.decisions || {}
+  const parts = []
+  if (logs.has_more) {
+    const loaded = Number(logs.offset || 0) + Number(logs.returned || props.historyLogs.length || 0)
+    parts.push(`日志 ${loaded}/${Number(logs.total || loaded)}`)
+  }
+  if (decisions.has_more) {
+    const currentDecisions = props.pageNightActions.length + props.pageSpeechDecisions.length + props.voteDecisions.length + props.sheriffVotes.length + props.pageLastWords.length
+    const loaded = Number(decisions.offset || 0) + Number(decisions.returned || currentDecisions || 0)
+    parts.push(`决策 ${loaded}/${Number(decisions.total || loaded)}`)
+  }
+  return parts.join(' · ')
+})
 
 function assessOverallScore(item) {
   const value = Number(item?.role_score ?? item?.score ?? 0)
@@ -146,6 +222,215 @@ const activeAssessPlayerId = computed(() => {
   const topScore = [...props.activeAssessScores]
     .sort((a, b) => assessOverallScore(b) - assessOverallScore(a) || Number(a.player?.seat || 0) - Number(b.player?.seat || 0))[0]
   return topScore?.player?.id || props.selectedHistoryGame?.players?.[0]?.id || null
+})
+
+const phaseCategory = computed(() => {
+  const phase = props.selectedHistoryPage?.phase || ''
+  if (NIGHT_PHASES.has(phase)) return 'night'
+  if (SPEECH_PHASES.has(phase)) return 'speech'
+  if (VOTE_PHASES.has(phase)) return 'vote'
+  if (RESULT_PHASES.has(phase)) return 'result'
+  if (phase === 'setup') return 'setup'
+  return 'event'
+})
+
+const focusedNightActions = computed(() =>
+  props.pageNightActions.filter((item) => rowMatchesFocusedPlayer(item))
+)
+const focusedSpeechDecisions = computed(() =>
+  props.pageSpeechDecisions.filter((item) => rowMatchesFocusedPlayer(item, { includeText: true }))
+)
+const activeVoteDecisions = computed(() =>
+  SHERIFF_VOTE_PHASES.has(props.selectedHistoryPage?.phase) ? props.sheriffVotes : props.voteDecisions
+)
+const activeVoteTally = computed(() =>
+  SHERIFF_VOTE_PHASES.has(props.selectedHistoryPage?.phase) ? props.sheriffVoteTally : props.currentVoteTally
+)
+const focusedVoteDecisions = computed(() =>
+  activeVoteDecisions.value.filter((item) => rowMatchesFocusedPlayer(item, { includeTarget: true }))
+)
+const focusedVoteTally = computed(() =>
+  hasPlayerFocus.value ? tallyVoteRows(focusedVoteDecisions.value) : activeVoteTally.value
+)
+const focusedLastWords = computed(() =>
+  props.pageLastWords.filter((item) => rowMatchesFocusedPlayer(item, { includeText: true }))
+)
+const focusedDecisionCount = computed(() =>
+  focusedNightActions.value.length
+  + focusedSpeechDecisions.value.length
+  + focusedVoteDecisions.value.length
+  + focusedLastWords.value.length
+)
+const focusLabel = computed(() => {
+  const player = focusedPlayer.value
+  if (!player) return focusedPlayerId.value == null ? '' : `${focusedPlayerId.value}号`
+  return `${player.seat ?? player.id}号 ${roleLabel(player.role_hint || player.role)}`
+})
+const phaseDetailCount = computed(() => {
+  if (phaseCategory.value === 'night') return focusedNightActions.value.length
+  if (phaseCategory.value === 'speech') return focusedSpeechDecisions.value.length + focusedLastWords.value.length
+  if (phaseCategory.value === 'vote') return focusedVoteDecisions.value.length
+  return focusedDecisionCount.value
+})
+const canShowPhaseDecisionPanel = computed(() =>
+  ['night', 'speech', 'vote'].includes(phaseCategory.value) || focusedLastWords.value.length > 0
+)
+const phaseDecisionPanelMeta = computed(() => {
+  const scope = hasPlayerFocus.value ? focusLabel.value : '全员'
+  if (phaseCategory.value === 'vote') return `${scope} · ${phaseDetailCount.value} 条投票决策`
+  if (phaseCategory.value === 'speech') return `${scope} · ${phaseDetailCount.value} 条发言/遗言`
+  if (phaseCategory.value === 'night') return `${scope} · ${phaseDetailCount.value} 条夜间行动`
+  return `${scope} · ${phaseDetailCount.value} 条结构化记录`
+})
+const nightMatrixRows = computed(() =>
+  focusedNightActions.value.map((action, index) => ({
+    key: decisionKey(action, index),
+    action,
+    actor: actorLabel(action),
+    actionName: actionLabel(action),
+    target: targetLabel(action) || '无目标',
+    result: props.nightActionDetail ? props.nightActionDetail(action) : decisionSummary(action),
+    confidence: confidencePercent(action)
+  }))
+)
+const speechTimelineRows = computed(() =>
+  focusedSpeechDecisions.value.map((decision, index) => ({
+    key: decisionKey(decision, index),
+    decision,
+    actor: actorLabel(decision),
+    role: roleLabel(decision.roleName || decision.role || decision.role_hint),
+    summary: decisionSummary(decision),
+    tags: speechTags(decision),
+    confidence: confidencePercent(decision)
+  }))
+)
+const voteRankingRows = computed(() => {
+  const max = Math.max(...focusedVoteTally.value.map((item) => voteCount(item)), 1)
+  return [...focusedVoteTally.value].sort((a, b) => voteCount(b) - voteCount(a) || String(targetLabel(a)).localeCompare(String(targetLabel(b)))).map((item, index) => ({
+    key: targetLabel(item) || `vote-target-${index}`,
+    label: targetLabel(item) || '未知目标',
+    count: voteCount(item),
+    percent: Math.round((voteCount(item) / max) * 100),
+    voters: voterLabels(item),
+    tone: index === 0 ? 'lead' : 'normal'
+  }))
+})
+const voteAnomalyRows = computed(() => {
+  if (phaseCategory.value !== 'vote') return []
+  const rows = []
+  const votes = focusedVoteDecisions.value
+  const abstains = votes.filter((vote) => !targetLabel(vote) || targetLabel(vote) === '无目标')
+  const top = voteRankingRows.value[0]
+  const tied = top && voteRankingRows.value.filter((row) => row.count === top.count).length > 1
+  if (abstains.length) rows.push({ key: 'abstain', tone: 'warning', text: `${abstains.length} 票未指向有效目标` })
+  if (tied) rows.push({ key: 'tie', tone: 'warning', text: `最高票出现并列：${voteRankingRows.value.filter((row) => row.count === top.count).map((row) => row.label).join('、')}` })
+  if (!hasPlayerFocus.value) {
+    const totalPlayers = props.selectedHistoryGame?.players?.length || 0
+    const participated = new Set(votes.map((vote) => String(normalizePlayerId(rowActorId(vote)))).filter(Boolean)).size
+    if (totalPlayers && participated && participated < totalPlayers) {
+      rows.push({ key: 'missing', tone: 'info', text: `${totalPlayers - participated} 名玩家未留下投票决策记录` })
+    }
+  }
+  if (hasPlayerFocus.value && !votes.length) rows.push({ key: 'focus-empty', tone: 'info', text: `${focusLabel.value}在本阶段没有可匹配的投票记录` })
+  return rows.slice(0, 3)
+})
+const phaseConclusion = computed(() => {
+  const focusPrefix = hasPlayerFocus.value ? `${focusLabel.value}：` : ''
+  if (phaseCategory.value === 'night') {
+    if (hasPlayerFocus.value && focusedNightActions.value.length) return `${focusPrefix}${focusedNightActions.value.length} 条夜间行动，${props.nightResult || '暂无结算文本'}`
+    return props.nightResult || `${focusedNightActions.value.length} 条夜间行动记录`
+  }
+  if (phaseCategory.value === 'speech') {
+    const speakers = new Set(focusedSpeechDecisions.value.map((item) => String(normalizePlayerId(rowActorId(item)))).filter(Boolean)).size
+    return `${focusPrefix}${speakers || focusedSpeechDecisions.value.length} 名玩家发言，${speechTimelineRows.value.flatMap((row) => row.tags).length} 个关键信号`
+  }
+  if (phaseCategory.value === 'vote') {
+    const top = voteRankingRows.value[0]
+    const result = props.selectedHistoryPage?.phase === 'sheriff_result' ? props.sheriffResult?.message : ''
+    if (top) return `${focusPrefix}最高票 ${top.label}，${top.count} 票${result ? `；${normalizeText(result)}` : ''}`
+    return `${focusPrefix}暂无可统计票型`
+  }
+  if (phaseCategory.value === 'result') return `最终胜方：${winnerLabel(props.selectedHistoryGame?.winner)}`
+  if (phaseCategory.value === 'setup') return `角色、规则和初始状态已记录，原始记录 ${rawLogsForFocus.value.length} 条`
+  return hasPlayerFocus.value ? `${focusPrefix}${focusedDecisionCount.value || rawLogsForFocus.value.length} 条相关记录` : selectedPhaseSummary.value
+})
+const phaseSummaryCards = computed(() => {
+  if (phaseCategory.value === 'night') {
+    const targets = new Set(focusedNightActions.value.map((item) => targetLabel(item)).filter((item) => item && item !== '无目标'))
+    return [
+      { label: '行动', value: focusedNightActions.value.length },
+      { label: '目标', value: targets.size },
+      { label: '结算', value: props.nightResult ? '有' : '无' },
+      { label: '原始', value: rawLogsForFocus.value.length }
+    ]
+  }
+  if (phaseCategory.value === 'speech') {
+    const tags = new Set(speechTimelineRows.value.flatMap((row) => row.tags))
+    return [
+      { label: '发言', value: focusedSpeechDecisions.value.length },
+      { label: '玩家', value: new Set(focusedSpeechDecisions.value.map((item) => String(normalizePlayerId(rowActorId(item)))).filter(Boolean)).size },
+      { label: '信号', value: tags.size },
+      { label: '原始', value: rawLogsForFocus.value.length }
+    ]
+  }
+  if (phaseCategory.value === 'vote') {
+    return [
+      { label: '投票', value: focusedVoteDecisions.value.length },
+      { label: '候选', value: focusedVoteTally.value.length },
+      { label: '最高', value: voteRankingRows.value[0]?.count ?? 0 },
+      { label: '提示', value: voteAnomalyRows.value.length }
+    ]
+  }
+  return [
+    { label: '日志', value: rawLogsForFocus.value.length },
+    { label: '夜间', value: focusedNightActions.value.length },
+    { label: '发言', value: focusedSpeechDecisions.value.length },
+    { label: '投票', value: focusedVoteDecisions.value.length }
+  ]
+})
+
+const phaseEvidenceKey = computed(() => {
+  const gameId = props.selectedHistoryGame?.game_id ?? props.selectedHistoryGameId ?? 'game'
+  const pageKey = props.selectedHistoryPage?.key ?? props.selectedHistoryPageKey ?? props.selectedHistoryPage?.phase ?? 'phase'
+  return `${gameId}::${pageKey}`
+})
+
+const phaseEvidenceBodyId = computed(() =>
+  `phase-evidence-body-${String(phaseEvidenceKey.value).replace(/[^a-zA-Z0-9_-]/g, '-')}`
+)
+
+const phaseEvidenceExpanded = computed(() =>
+  expandedPhaseEvidenceKeys.value.has(phaseEvidenceKey.value)
+)
+
+const phaseEvidenceScope = computed(() =>
+  hasPlayerFocus.value ? focusLabel.value : '全员'
+)
+
+const phaseEvidenceCountLabel = computed(() => {
+  if (phaseCategory.value === 'vote') return `${voteRankingRows.value.length} 组票型`
+  if (phaseCategory.value === 'night') return `${nightMatrixRows.value.length} 条行动`
+  if (phaseCategory.value === 'speech') return `${speechTimelineRows.value.length} 条发言`
+  return `${phaseSummaryCards.value.length} 项摘要`
+})
+
+const phaseEvidenceSummary = computed(() => {
+  if (phaseCategory.value === 'vote') {
+    const top = voteRankingRows.value[0]
+    if (!top) return '暂无可统计票型'
+    const alertText = voteAnomalyRows.value.length ? ` · ${voteAnomalyRows.value.length} 条提示` : ''
+    return `最高票 ${top.label} · ${top.count} 票${alertText}`
+  }
+  if (phaseCategory.value === 'night') {
+    const targets = new Set(nightMatrixRows.value.map((row) => row.target).filter((item) => item && item !== '无目标'))
+    return `${nightMatrixRows.value.length} 次行动 · ${targets.size} 个目标 · ${props.nightResult ? '有结算' : '无结算'}`
+  }
+  if (phaseCategory.value === 'speech') {
+    const speakers = new Set(speechTimelineRows.value.map((row) => String(row.actor || '')).filter(Boolean)).size
+    const signals = speechTimelineRows.value.flatMap((row) => row.tags || []).length
+    return `${speakers || speechTimelineRows.value.length} 名玩家 · ${signals} 个信号 · ${rawLogsForFocus.value.length} 条原始`
+  }
+  return `${rawLogsForFocus.value.length} 条日志 · ${focusedDecisionCount.value} 条结构化记录`
 })
 
 const selectedHistoryGameNumber = computed(() => {
@@ -198,27 +483,11 @@ const selectedPhaseSummary = computed(() => {
   const phase = props.selectedHistoryPage?.phase
   if (phase === 'night') return '夜间行动、技能目标与结算结果'
   if (['speech', 'sheriff'].includes(phase)) return '玩家发言、公开表述与决策依据'
-  if (['vote', 'sheriff_vote', 'sheriff_result'].includes(phase)) return '票型分布、投票理由与阶段结果'
+  if (['vote', 'exile_vote', 'pk_vote', 'sheriff_vote', 'sheriff_result'].includes(phase)) return '票型分布、投票理由与阶段结果'
   if (phase === 'result' || phase === 'finished') return '最终胜负、死亡记录与游戏结束事件'
   return '阶段事件、系统记录与关键上下文'
 })
 
-const selectedPhaseStats = computed(() => {
-  const items = [
-    { label: '日志', value: props.historyLogs.length },
-    { label: '夜间行动', value: props.pageNightActions.length },
-    { label: '发言', value: props.pageSpeechDecisions.length },
-    { label: '投票', value: props.voteDecisions.length + props.sheriffVotes.length }
-  ].filter((item) => item.value > 0)
-  if (props.pageLastWords.length) items.push({ label: '遗言', value: props.pageLastWords.length })
-  return items.length ? items.slice(0, 4) : [{ label: '事件', value: 0 }]
-})
-
-const reviewButtonText = computed(() => {
-  if (props.reviewLoading) return '读取中'
-  if (reviewLoaded.value) return '报告已载入'
-  return selectedReview.value?.error ? '重试报告' : '复盘报告'
-})
 const archiveButtonText = computed(() => {
   if (props.archiveLoading) return '读取中'
   if (archiveLoaded.value) return '档案已载入'
@@ -226,14 +495,32 @@ const archiveButtonText = computed(() => {
 })
 const workspaceTabs = computed(() => [
   { key: 'phase', label: '阶段详情', badge: props.historyLogs.length ? String(props.historyLogs.length) : '' },
-  { key: 'review', label: '复盘报告', badge: props.reviewLoading ? '读取中' : (reviewLoaded.value ? '已载入' : '') },
+  { key: 'review', label: '复盘报告', badge: '' },
   { key: 'archive', label: '对局档案', badge: props.archiveLoading ? '读取中' : (archiveLoaded.value ? '已载入' : '') }
 ])
 
 watch(() => props.selectedHistoryGameId, () => {
   workspaceTab.value = 'phase'
   selectedAssessPlayerId.value = null
+  rawLogFilter.value = 'all'
+  expandedPhaseEvidenceKeys.value = new Set()
 })
+
+watch(() => props.selectedHistoryPage?.key, () => {
+  rawLogFilter.value = 'all'
+})
+
+function togglePhaseEvidence() {
+  const key = phaseEvidenceKey.value
+  if (!key) return
+  const next = new Set(expandedPhaseEvidenceKeys.value)
+  if (next.has(key)) {
+    next.delete(key)
+  } else {
+    next.add(key)
+  }
+  expandedPhaseEvidenceKeys.value = next
+}
 
 function phaseName(phase) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : (phase || '未知阶段')
@@ -277,9 +564,205 @@ function roleLabel(role) {
   return displayRoleLabel(role)
 }
 
+function actionLabel(value) {
+  const action = typeof value === 'object' && value !== null
+    ? value.action || value.action_type || value.event_type || value.type || value.selected_action || value.phase
+    : value
+  return displayActionLabel(action) || normalizeHistoryDisplayText(action) || '行动'
+}
+
+function normalizePlayerId(value) {
+  const raw = value && typeof value === 'object'
+    ? value.id ?? value.player_id ?? value.actor_id ?? value.seat ?? value.target_id ?? value.value
+    : value
+  if (raw == null || raw === '') return null
+  const text = String(raw).trim()
+  if (!text || /^(none|null|无|无目标|no_target|skip|pass)$/i.test(text)) return null
+  const match = text.match(/^#?(\d+)\s*号?(?:\b|\s|$)/)
+  if (match) return Number(match[1])
+  const num = Number(text)
+  return Number.isFinite(num) ? num : text
+}
+
+function samePlayer(a, b) {
+  const left = normalizePlayerId(a)
+  const right = normalizePlayerId(b)
+  return left != null && right != null && String(left) === String(right)
+}
+
+function rowActorId(row = {}) {
+  return normalizePlayerId(
+    row.actor_id
+    ?? row.player_id
+    ?? row.actor
+    ?? row.player
+    ?? row.speaker_id
+    ?? row.speakerId
+    ?? row.payload?.actor_id
+    ?? row.payload?.player_id
+  )
+}
+
+function rowTargetId(row = {}) {
+  return normalizePlayerId(
+    row.target_id
+    ?? row.selected_target
+    ?? row.target_player_id
+    ?? row.target
+    ?? row.payload?.target_id
+    ?? row.payload?.selected_target
+    ?? row.payload?.target
+  )
+}
+
+function rowTargetIds(row = {}) {
+  return [
+    rowTargetId(row),
+    row.target,
+    row.targetName,
+    row.target_name,
+    row.selected_target_name
+  ].map((item) => normalizePlayerId(item)).filter((item) => item != null)
+}
+
+function rowText(row = {}) {
+  return normalizeHistoryDisplayText([
+    row.message,
+    row.public_summary,
+    row.public_text,
+    row.summary,
+    row.reason,
+    row.private_reasoning,
+    row.targetName,
+    row.actorName,
+    row.speaker,
+    row.target_name,
+    row.actor_name
+  ].filter(Boolean).join(' '))
+}
+
+function rowMentionsPlayer(row = {}, playerId) {
+  const id = normalizePlayerId(playerId)
+  if (id == null) return false
+  const text = rowText(row)
+  return text.includes(`${id}号`) || text.includes(`#${id}`) || text.includes(`玩家${id}`)
+}
+
+function rowMatchesFocusedPlayer(row = {}, options = {}) {
+  if (!hasPlayerFocus.value) return true
+  const id = focusedPlayerId.value
+  if (samePlayer(rowActorId(row), id)) return true
+  if (options.includeTarget && rowTargetIds(row).some((targetId) => samePlayer(targetId, id))) return true
+  if (Array.isArray(row.votes) && row.votes.some((vote) => rowMatchesFocusedPlayer(vote, options))) return true
+  if (Array.isArray(row.voter_ids) && row.voter_ids.some((voterId) => samePlayer(voterId, id))) return true
+  if (Array.isArray(row.voters) && row.voters.some((voter) => samePlayer(voter, id) || rowMentionsPlayer({ message: voter }, id))) return true
+  if (options.includeText && rowMentionsPlayer(row, id)) return true
+  return false
+}
+
+function rawLogKind(log = {}) {
+  const type = String(log.event_type || log.type || log.action || log.action_type || log.kind || '').toLowerCase()
+  const phase = String(log.phase || '').toLowerCase()
+  const text = rowText(log).toLowerCase()
+  if (/(error|failed|fail|timeout|exception|invalid|异常|错误|失败|超时)/.test(`${type} ${text}`)) return 'error'
+  if (/(vote|exile|pk|sheriff_vote|投票|票|放逐|警长票)/.test(`${type} ${phase} ${text}`)) return 'vote'
+  if (rowActorId(log) != null || rowTargetId(log) != null || /(kill|guard|seer|witch|poison|shoot|speech|speak|死亡|查验|守护|发言|击杀|开枪)/.test(`${type} ${text}`)) return 'action'
+  return 'system'
+}
+
+function decisionKey(decision, index = 0) {
+  if (!decision) return `empty-${index}`
+  return [
+    decision.id ?? decision.decision_id ?? decision.sequence ?? decision.index ?? index,
+    decision.day ?? '',
+    decision.phase ?? '',
+    decision.action ?? decision.action_type ?? decision.type ?? '',
+    rowActorId(decision) ?? decision.actorName ?? '',
+    rowTargetId(decision) ?? decision.targetName ?? ''
+  ].map((part) => String(part)).join('|')
+}
+
+function actorLabel(row = {}) {
+  const name = row.actorName || row.actor_name || row.player_name || row.name || row.speaker
+  if (name) return normalizeHistoryDisplayText(name)
+  const id = rowActorId(row)
+  return id == null ? '系统' : `${id}号`
+}
+
+function targetLabel(row = {}) {
+  const named = row.targetName || row.target_name || row.selected_target_name || row.target
+  if (named != null && named !== '') {
+    const text = normalizeHistoryDisplayText(named)
+    if (!/^(无目标|无|none|null|no_target|未选择|跳过|pass|skip)$/i.test(text)) return text
+  }
+  const id = rowTargetId(row)
+  return id == null ? '' : `${id}号`
+}
+
+function decisionSummary(row = {}) {
+  return normalizeText(row.public_summary || row.public_text || row.summary || row.reason || row.private_reasoning || row.message || '')
+}
+
+function confidencePercent(row = {}) {
+  const value = Number(row.confidence)
+  if (!Number.isFinite(value)) return null
+  return Math.round(Math.max(0, Math.min(value > 1 ? value : value * 100, 100)))
+}
+
+function speechTags(row = {}) {
+  const text = decisionSummary(row).toLowerCase()
+  const tags = []
+  const tests = [
+    ['跳身份', /(我是|跳|身份|预言家|女巫|猎人|守卫|seer|witch|hunter|guard)/],
+    ['查验', /(查验|验了|金水|查杀|银水|checked|inspect)/],
+    ['踩人', /(怀疑|偏狼|像狼|出|踩|投|wolf)/],
+    ['保人', /(好人|偏好|可信|站边|保|villager|good)/],
+    ['对跳', /(对跳|悍跳|不认|假预言家)/],
+    ['划水', /(过|先过|没信息|不知道|暂无)/]
+  ]
+  tests.forEach(([label, pattern]) => {
+    if (pattern.test(text)) tags.push(label)
+  })
+  return tags.slice(0, 4)
+}
+
+function voteCount(item = {}) {
+  const count = Number(item.count)
+  if (Number.isFinite(count) && count > 0) return count
+  if (Array.isArray(item.votes)) return item.votes.length
+  if (Array.isArray(item.voter_ids)) return item.voter_ids.length
+  if (Array.isArray(item.voters)) return item.voters.length
+  return 0
+}
+
+function voterLabels(item = {}) {
+  if (Array.isArray(item.voters) && item.voters.length) return item.voters.map((value) => normalizeHistoryDisplayText(value)).filter(Boolean)
+  if (Array.isArray(item.votes) && item.votes.length) return item.votes.map(actorLabel).filter(Boolean)
+  if (Array.isArray(item.voter_ids) && item.voter_ids.length) return item.voter_ids.map((id) => `${id}号`)
+  return []
+}
+
+function tallyVoteRows(votes = []) {
+  const map = new Map()
+  votes.forEach((vote) => {
+    const target = targetLabel(vote) || '无目标'
+    if (!map.has(target)) map.set(target, { target, targetName: target, count: 0, voters: [], votes: [] })
+    const row = map.get(target)
+    row.count += 1
+    row.votes.push(vote)
+    const actor = actorLabel(vote)
+    if (actor && !row.voters.includes(actor)) row.voters.push(actor)
+  })
+  return [...map.values()].sort((a, b) => voteCount(b) - voteCount(a) || String(a.target).localeCompare(String(b.target)))
+}
+
 function rawLogPhaseName(log) {
   const phase = log?.phase || log?.event_type || log?.type || props.selectedHistoryPage?.phase
   return displayPhaseLabel(phase) || normalizeHistoryDisplayText(phaseName(phase))
+}
+
+function setupInitMessage(log) {
+  return normalizeText(log?.message || '').replace(/^游戏初始化[：:]\s*/, '')
 }
 
 function rawLogDayLabel(log) {
@@ -305,13 +788,23 @@ function updateDetailTab(tab) {
 }
 
 function loadSelectedReview() {
-  workspaceTab.value = 'review'
   props.loadReview?.(props.selectedHistoryGame?.game_id)
+}
+
+function loadSelectedFlowData() {
+  return props.loadFlowData?.(props.selectedHistoryGame?.game_id, { clearNotice: true })
 }
 
 function loadSelectedArchive() {
   workspaceTab.value = 'archive'
   props.loadArchive?.(props.selectedHistoryGame?.game_id)
+}
+
+function loadMoreSelectedPhase() {
+  return props.loadMoreHistoryPhaseDetail?.(
+    props.selectedHistoryGame?.game_id || props.selectedHistoryGameId,
+    props.selectedHistoryPage?.key || props.selectedHistoryPageKey
+  )
 }
 
 function selectWorkspaceTab(tab) {
@@ -325,7 +818,14 @@ function selectWorkspaceTab(tab) {
 }
 
 function selectAssessPlayer(player) {
-  selectedAssessPlayerId.value = player?.id ?? null
+  const nextId = player?.id ?? player?.seat ?? null
+  selectedAssessPlayerId.value = samePlayer(selectedAssessPlayerId.value, nextId) ? null : nextId
+  rawLogFilter.value = 'all'
+}
+
+function clearPlayerFocus() {
+  selectedAssessPlayerId.value = null
+  rawLogFilter.value = 'all'
 }
 </script>
 
@@ -342,43 +842,34 @@ function selectAssessPlayer(player) {
         :pagination="historyPagination"
         :counts="historyCounts"
         :facets="historyFacets"
+        :notice="historyNotice"
         @select-game="emit('select-history-game', $event)"
         @replay-game="emit('replay-game', $event)"
+        @delete-game="deleteHistoryGame?.($event)"
         @change-source="setHistorySourceFilter?.($event)"
+        @change-page="goHistoryPage?.($event)"
         @load-more="loadMoreHistory?.()"
       />
 
       <main class="history-detail-panel">
-        <section v-if="selectedHistoryGame" class="detail-analysis-bar">
-          <div class="detail-analysis-title">
-            <div class="detail-title-main">
-              <div class="detail-title-row">
-                <h2>{{ selectedHistoryGameLabel }}</h2>
-                <span class="mode-pill">{{ selectedGameModeLabel }}</span>
-              </div>
-              <small class="detail-game-id" :title="selectedGameSubLabel">
-                {{ selectedGameSubLabel }}
-              </small>
-            </div>
-          </div>
-          <div class="detail-analysis-metrics">
-            <span><small>阶段</small><b>{{ historyPages.length }}</b></span>
-            <span><small>日志</small><b>{{ historyLogs.length }}</b></span>
-            <span><small>玩家</small><b>{{ selectedHistoryGame.players?.length || 0 }}</b></span>
-            <span><small>胜方</small><b>{{ winnerLabel(selectedHistoryGame.winner) }}</b></span>
-          </div>
-          <div class="detail-analysis-actions">
-            <button type="button" :class="{ active: workspaceTab === 'review' }" :disabled="reviewLoading" @click="loadSelectedReview">
-              {{ reviewButtonText }}
-            </button>
-            <button type="button" :class="{ active: workspaceTab === 'archive' }" :disabled="archiveLoading" @click="loadSelectedArchive">
-              {{ archiveButtonText }}
-            </button>
-          </div>
-        </section>
+        <ApiErrorPanel
+          v-if="detailErrorNotice"
+          class="detail-error-panel"
+          :error="detailErrorNotice"
+          title="历史记录读取失败"
+          compact
+        />
+        <div
+          v-else-if="detailInlineNotice"
+          :class="['detail-notice', detailInlineNotice.type]"
+          role="status"
+          aria-live="polite"
+        >
+          <span>{{ detailInlineNotice.message }}</span>
+        </div>
 
         <!-- ── Phase navigator + game config ── -->
-        <div v-if="selectedHistoryGame" class="detail-topbar">
+        <div v-if="selectedHistoryGame" :class="['detail-topbar', 'workspace-' + workspaceTab]">
           <nav class="detail-workspace-tabs" aria-label="日志详情视图">
             <button
               v-for="item in workspaceTabs"
@@ -388,9 +879,9 @@ function selectAssessPlayer(player) {
               @click="selectWorkspaceTab(item.key)"
             >
               <span>{{ item.label }}</span>
-              <small v-if="item.badge">{{ item.badge }}</small>
             </button>
           </nav>
+          <EvidenceContextBar :game="selectedHistoryGame" />
           <div class="detail-config-pills">
             <span v-for="item in historyConfigItems" :key="item.label" class="config-pill">
               <small>{{ item.label }}</small><b :title="String(item.value)">{{ item.value }}</b>
@@ -410,138 +901,270 @@ function selectAssessPlayer(player) {
           <div class="detail-main-column">
             <!-- Phase content -->
             <section v-if="workspaceTab === 'phase' && selectedHistoryPage" class="history-page-detail">
-            <header class="phase-overview">
-              <div class="phase-overview-copy">
-                <small>{{ selectedPhaseKind }}</small>
-                <h3>{{ selectedPhaseTitle }}</h3>
-                <p>{{ selectedPhaseSummary }}</p>
-              </div>
-              <div class="phase-overview-stats">
-                <span v-for="item in selectedPhaseStats" :key="item.label">
-                  <small>{{ item.label }}</small>
-                  <b>{{ item.value }}</b>
-                </span>
-              </div>
-            </header>
-            <NightSection
-              v-if="selectedHistoryPage.phase === 'night'"
-              :night-actions="pageNightActions"
-              :night-result="nightResult"
-              :selected-decision="selectedDecision"
-              :detail-tab="detailTab"
-              :night-action-detail="nightActionDetail"
-              @update:selectedDecision="updateDecision"
-              @update:detailTab="updateDetailTab"
-            />
-            <SpeechSection
-              v-if="['speech', 'sheriff'].includes(selectedHistoryPage.phase)"
-              :decisions="pageSpeechDecisions"
-              :selected-decision="selectedDecision"
-              :detail-tab="detailTab"
-              @update:selectedDecision="updateDecision"
-              @update:detailTab="updateDetailTab"
-            />
-            <VoteSection
-              v-if="selectedHistoryPage.phase === 'sheriff_result'"
-              :decisions="sheriffVotes"
-              :tally="sheriffVoteTally"
-              :result-message="sheriffResult?.message || ''"
-              :selected-decision="selectedDecision"
-              :detail-tab="detailTab"
-              @update:selectedDecision="updateDecision"
-              @update:detailTab="updateDetailTab"
-            />
-            <VoteSection
-              v-if="['vote', 'sheriff_vote'].includes(selectedHistoryPage.phase)"
-              :decisions="voteDecisions"
-              :tally="currentVoteTally"
-              :selected-decision="selectedDecision"
-              :detail-tab="detailTab"
-              @update:selectedDecision="updateDecision"
-              @update:detailTab="updateDetailTab"
-            />
-
-            <!-- Last words -->
-            <section v-if="pageLastWords.length" class="history-lastwords-section">
-              <div v-for="(word, index) in pageLastWords" :key="'last-word-' + index" class="last-word-card">
-                <header>
-                  <span class="last-word-actor">{{ word.actorName }}玩家</span>
-                  <span class="last-word-role">{{ roleLabel(word.roleName) }}</span>
-                  <span class="last-word-label">遗言</span>
-                </header>
-                <p class="last-word-message">{{ word.public_summary || word.reason }}</p>
-                <details class="last-word-decision">
-                  <summary>决策过程</summary>
-                  <small v-if="word.private_reasoning || word.reason">{{ word.private_reasoning || word.reason }}</small>
-                  <small v-if="word.candidates?.length">
-                    候选：{{ word.candidates.map(candidateLabel).join('、') }}
-                  </small>
-                </details>
-              </div>
-            </section>
-
-            <!-- Raw logs -->
-            <section v-if="canShowRawLogs" class="history-raw-section">
-              <div v-if="!filteredRawLogs.length" class="empty-log">暂无日志</div>
-              <div v-else class="history-timeline">
-                <article
-                  v-for="(log, index) in visibleRawLogs"
-                  :key="'raw-log-' + (log.sequence || log.event_type || log.type || index)"
-                  class="history-raw-log"
-                >
-                  <span class="timeline-rail" aria-hidden="true">
-                    <i></i>
-                  </span>
-                  <div class="timeline-card">
-                    <template v-if="log.role_assignments">
-                      <header>
-                        <span>{{ rawLogDayLabel(log) }} · {{ rawLogPhaseName(log) }}</span>
-                        <em>角色分配</em>
-                      </header>
-                      <p class="role-assignment-title">角色分配如下</p>
-                      <div class="role-assignment-grid">
-                        <div v-for="item in log.role_assignments" :key="item.seat" class="role-assignment-cell">
-                          <span class="ra-seat">{{ item.seat }}号</span>
-                          <span class="ra-role">{{ roleLabel(item.role) }}</span>
-                        </div>
-                      </div>
-                    </template>
-                    <template v-else>
-                      <header>
-                        <span>{{ rawLogDayLabel(log) }} · {{ rawLogPhaseName(log) }}</span>
-                        <em>{{ logSpeaker(log) || log.speaker || '系统' }}</em>
-                      </header>
-                      <p>{{ normalizeText(log.message || '') }}</p>
-                    </template>
-                  </div>
-                </article>
-                <div v-if="filteredRawLogs.length > visibleRawLogs.length" class="history-raw-more">
-                  还有 {{ filteredRawLogs.length - visibleRawLogs.length }} 条日志未显示
+              <header class="phase-overview" :data-phase="phaseCategory">
+                <div class="phase-overview-copy">
+                  <small>{{ selectedPhaseKind }}</small>
+                  <h3>{{ selectedPhaseTitle }}</h3>
+                  <p>{{ phaseConclusion }}</p>
+                  <button
+                    v-if="hasPlayerFocus"
+                    type="button"
+                    class="phase-focus-clear"
+                    @click="clearPlayerFocus"
+                  >
+                    {{ focusLabel }} · 清除聚焦
+                  </button>
                 </div>
-              </div>
-            </section>
-            </section>
+                <div class="phase-overview-stats" aria-label="阶段摘要">
+                  <span v-for="item in phaseSummaryCards" :key="item.label">
+                    <small>{{ item.label }}</small>
+                    <b>{{ item.value }}</b>
+                  </span>
+                </div>
+              </header>
 
-            <section v-else-if="workspaceTab === 'review'" class="history-document-panel">
-              <ReviewReportPanel
-                v-if="reviewByGameId[selectedHistoryGame.game_id]"
-                :report="reviewByGameId[selectedHistoryGame.game_id]"
-                :game="selectedHistoryGame"
-                :format-json="formatJson"
-              />
-              <div v-else class="document-empty">
-                <strong>复盘报告尚未载入</strong>
-                <span>读取后会展示胜负摘要、玩家评分、关键转折和时间线。</span>
-                <button type="button" :disabled="reviewLoading" @click="loadSelectedReview">
-                  {{ reviewLoading ? '读取中' : '读取复盘报告' }}
+              <section :class="['phase-evidence-panel', { 'is-expanded': phaseEvidenceExpanded }]">
+                <header class="phase-section-head phase-evidence-head">
+                  <button
+                    type="button"
+                    class="phase-evidence-toggle"
+                    :aria-expanded="String(phaseEvidenceExpanded)"
+                    :aria-controls="phaseEvidenceBodyId"
+                    @click="togglePhaseEvidence"
+                  >
+                    <span class="phase-evidence-heading">
+                      <span class="phase-evidence-title">关键证据</span>
+                      <small>{{ phaseEvidenceCountLabel }}</small>
+                    </span>
+                    <span class="phase-evidence-meta">
+                      <span>{{ phaseEvidenceScope }}</span>
+                      <i aria-hidden="true"></i>
+                    </span>
+                  </button>
+                </header>
+
+                <div v-if="!phaseEvidenceExpanded" class="phase-evidence-brief">
+                  <span>{{ phaseEvidenceSummary }}</span>
+                </div>
+
+                <div
+                  v-show="phaseEvidenceExpanded"
+                  :id="phaseEvidenceBodyId"
+                  class="phase-evidence-body"
+                >
+                  <div v-if="phaseCategory === 'vote'" class="phase-vote-layout">
+                    <div v-if="voteRankingRows.length" class="phase-vote-rank">
+                      <article
+                        v-for="row in voteRankingRows"
+                        :key="row.key"
+                        :data-tone="row.tone"
+                        class="phase-vote-row"
+                      >
+                        <div class="phase-vote-main">
+                          <b>{{ row.label }}</b>
+                          <span>{{ row.voters.length ? row.voters.join('、') : '暂无投票人记录' }}</span>
+                        </div>
+                        <div class="phase-vote-track">
+                          <i :style="{ width: row.percent + '%' }"></i>
+                        </div>
+                        <strong>{{ row.count }}票</strong>
+                      </article>
+                    </div>
+                    <div v-else class="phase-empty-state">暂无可统计票型</div>
+                    <div v-if="voteAnomalyRows.length" class="phase-alert-list">
+                      <span v-for="item in voteAnomalyRows" :key="item.key" :data-tone="item.tone">
+                        {{ item.text }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div v-else-if="phaseCategory === 'night'" class="phase-night-matrix">
+                    <div class="phase-matrix-head">
+                      <span>行动者</span><span>动作</span><span>目标</span><span>结果</span><span>置信</span>
+                    </div>
+                    <article v-for="row in nightMatrixRows" :key="row.key" class="phase-matrix-row">
+                      <b>{{ row.actor }}</b>
+                      <span>{{ row.actionName }}</span>
+                      <span>{{ row.target }}</span>
+                      <p>{{ row.result }}</p>
+                      <strong>{{ row.confidence == null ? '--' : row.confidence + '%' }}</strong>
+                    </article>
+                    <div v-if="!nightMatrixRows.length" class="phase-empty-state">暂无夜间行动记录</div>
+                  </div>
+
+                  <div v-else-if="phaseCategory === 'speech'" class="phase-speech-timeline">
+                    <article v-for="row in speechTimelineRows" :key="row.key" class="phase-speech-row">
+                      <div class="phase-speech-id">
+                        <b>{{ row.actor }}</b>
+                        <small>{{ row.role }}</small>
+                      </div>
+                      <p>{{ row.summary }}</p>
+                      <div class="phase-speech-tags">
+                        <span v-for="tag in row.tags" :key="row.key + '-' + tag">{{ tag }}</span>
+                        <em v-if="row.confidence != null">{{ row.confidence }}%</em>
+                      </div>
+                    </article>
+                    <div v-if="!speechTimelineRows.length" class="phase-empty-state">暂无发言决策记录</div>
+                  </div>
+
+                  <div v-else class="phase-generic-evidence">
+                    <span v-for="item in phaseSummaryCards" :key="'generic-' + item.label">
+                      <small>{{ item.label }}</small><b>{{ item.value }}</b>
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section v-if="canShowPhaseDecisionPanel" class="phase-decision-panel">
+                <header class="phase-section-head">
+                  <h4>决策明细</h4>
+                  <span>{{ phaseDecisionPanelMeta }}</span>
+                </header>
+
+                <NightSection
+                  v-if="phaseCategory === 'night' && focusedNightActions.length"
+                  :night-actions="focusedNightActions"
+                  :night-result="nightResult"
+                  :selected-decision="selectedDecision"
+                  :detail-tab="detailTab"
+                  :night-action-detail="nightActionDetail"
+                  :role-icon-image="props.roleIconImage"
+                  @update:selectedDecision="updateDecision"
+                  @update:detailTab="updateDetailTab"
+                />
+                <SpeechSection
+                  v-if="phaseCategory === 'speech' && focusedSpeechDecisions.length"
+                  :decisions="focusedSpeechDecisions"
+                  :selected-decision="selectedDecision"
+                  :detail-tab="detailTab"
+                  :role-icon-image="props.roleIconImage"
+                  @update:selectedDecision="updateDecision"
+                  @update:detailTab="updateDetailTab"
+                />
+                <VoteSection
+                  v-if="phaseCategory === 'vote' && (focusedVoteDecisions.length || sheriffResult?.message)"
+                  :decisions="focusedVoteDecisions"
+                  :tally="focusedVoteTally"
+                  :result-message="selectedHistoryPage.phase === 'sheriff_result' ? (sheriffResult?.message || '') : ''"
+                  :selected-decision="selectedDecision"
+                  :detail-tab="detailTab"
+                  :role-icon-image="props.roleIconImage"
+                  @update:selectedDecision="updateDecision"
+                  @update:detailTab="updateDetailTab"
+                />
+
+                <section v-if="focusedLastWords.length" class="history-lastwords-section">
+                  <div v-for="(word, index) in focusedLastWords" :key="'last-word-' + index" class="last-word-card">
+                    <header>
+                      <span class="last-word-actor">{{ word.actorName }}玩家</span>
+                      <span class="last-word-role">{{ roleLabel(word.roleName) }}</span>
+                      <span class="last-word-label">遗言</span>
+                    </header>
+                    <p class="last-word-message">{{ word.public_summary || word.reason }}</p>
+                    <details class="last-word-decision">
+                      <summary>决策过程</summary>
+                      <small v-if="word.private_reasoning || word.reason">{{ word.private_reasoning || word.reason }}</small>
+                      <small v-if="word.candidates?.length">
+                        候选：{{ word.candidates.map(candidateLabel).join('、') }}
+                      </small>
+                    </details>
+                  </div>
+                </section>
+
+                <div v-if="!phaseDetailCount" class="phase-empty-state phase-detail-empty">
+                  当前筛选范围没有结构化决策，展开原始记录查看系统事件。
+                </div>
+              </section>
+
+              <details v-if="canShowRawLogs" class="history-raw-section">
+                <summary>
+                  <span>原始记录</span>
+                  <b>{{ filteredRawLogs.length }}</b>
+                </summary>
+                <nav v-if="rawLogFilters.length > 1" class="raw-log-filter-tabs" aria-label="原始记录筛选">
+                  <button
+                    v-for="item in rawLogFilters"
+                    :key="item.key"
+                    type="button"
+                    :class="{ active: rawLogFilter === item.key }"
+                    @click="rawLogFilter = item.key"
+                  >
+                    {{ item.label }}<small>{{ item.count }}</small>
+                  </button>
+                </nav>
+                <div v-if="!filteredRawLogs.length" class="empty-log">暂无日志</div>
+                <div v-else class="history-timeline">
+                  <article
+                    v-for="(log, index) in visibleRawLogs"
+                    :key="'raw-log-' + (log.sequence || log.event_type || log.type || index)"
+                    :class="[
+                      'history-raw-log',
+                      {
+                        'setup-init-log': selectedHistoryPage?.phase === 'setup',
+                        'judge-message-log': !log.role_assignments
+                      }
+                    ]"
+                  >
+                    <span class="timeline-rail" aria-hidden="true">
+                      <img v-if="!log.role_assignments" src="/livehall-assets/props/optimized/judge-avatar-160.webp" alt="" />
+                      <i v-else></i>
+                    </span>
+                    <div class="timeline-card">
+                      <template v-if="selectedHistoryPage?.phase === 'setup'">
+                        <p><b>游戏初始化：</b>{{ setupInitMessage(log) }}</p>
+                      </template>
+                      <template v-else-if="log.role_assignments">
+                        <header>
+                          <span>{{ rawLogDayLabel(log) }} · {{ rawLogPhaseName(log) }}</span>
+                          <em>角色分配</em>
+                        </header>
+                        <p class="role-assignment-title">角色分配如下</p>
+                        <div class="role-assignment-grid">
+                          <div v-for="item in log.role_assignments" :key="item.seat" class="role-assignment-cell">
+                            <span class="ra-seat">{{ item.seat }}号</span>
+                            <span class="ra-role">{{ roleLabel(item.role) }}</span>
+                          </div>
+                        </div>
+                      </template>
+                      <template v-else-if="selectedHistoryPage?.phase !== 'setup'">
+                        <p>{{ normalizeText(log.message || '') }}</p>
+                      </template>
+                    </div>
+                  </article>
+                  <div v-if="filteredRawLogs.length > visibleRawLogs.length" class="history-raw-more">
+                    还有 {{ filteredRawLogs.length - visibleRawLogs.length }} 条日志未显示
+                  </div>
+                </div>
+              </details>
+
+              <div v-if="phaseHasMore" class="phase-load-more-strip">
+                <span>{{ phaseMoreMeta || '还有阶段记录未加载' }}</span>
+                <button
+                  type="button"
+                  :disabled="selectedPhaseLoading"
+                  @click="loadMoreSelectedPhase"
+                >
+                  {{ selectedPhaseLoading ? '加载中' : '加载更多阶段记录' }}
                 </button>
               </div>
             </section>
 
-            <section v-else-if="workspaceTab === 'archive'" class="history-document-panel">
+            <section v-else-if="workspaceTab === 'review'" class="history-page-detail">
+              <ReviewReportPanel
+                :report="reviewByGameId[selectedHistoryGame.game_id]"
+                :game="selectedHistoryGame"
+                :flow-data="selectedFlowData"
+                :flow-loading="selectedFlowLoading"
+                :load-flow-data="loadSelectedFlowData"
+                :format-json="formatJson"
+              />
+            </section>
+
+            <section v-else-if="workspaceTab === 'archive'" class="history-page-detail archive-workbench-detail">
               <GameArchivePanel
                 v-if="archiveByGameId[selectedHistoryGame.game_id]"
                 :archive="archiveByGameId[selectedHistoryGame.game_id]"
+                :game="selectedHistoryGame"
                 :format-json="formatJson"
               />
               <div v-else class="document-empty">
@@ -559,7 +1182,6 @@ function selectAssessPlayer(player) {
               <div class="history-side-card--seats">
                 <header class="history-side-card-header">
                   <span>玩家席位</span>
-                  <small>{{ selectedHistoryGame.players?.length || 0 }} 人</small>
                 </header>
                 <SeatLedger
                   :players="selectedHistoryGame.players || []"
@@ -568,7 +1190,7 @@ function selectAssessPlayer(player) {
                   :selected-page="selectedHistoryPage"
                   :role-icon-image="props.roleIconImage"
                   selectable
-                  :selected-player-id="activeAssessPlayerId"
+                  :selected-player-id="selectedAssessPlayerId"
                   @select-player="selectAssessPlayer"
                 />
               </div>
@@ -587,13 +1209,11 @@ function selectAssessPlayer(player) {
                 <div v-else class="history-assess-empty">
                   <header class="history-side-card-header">
                     <span>多维测评</span>
-                    <small>{{ reviewLoading ? '读取中' : '未载入' }}</small>
                   </header>
                   <div class="history-assess-empty-body">
                     <strong>暂无测评数据</strong>
-                    <p>读取复盘报告后展示玩家综合排行、个人画像和雷达图。</p>
                     <button type="button" :disabled="reviewLoading" @click="loadSelectedReview">
-                      {{ reviewLoading ? '读取中' : '读取复盘报告' }}
+                      {{ reviewLoading ? '读取中' : (selectedReview?.error ? '重试报告' : '读取复盘报告') }}
                     </button>
                   </div>
                 </div>
@@ -625,6 +1245,9 @@ function selectAssessPlayer(player) {
   --log-input-border: rgba(139, 94, 52, 0.2);
   --log-hover: rgba(139, 94, 52, 0.06);
   --log-active-bg: rgba(139, 94, 52, 0.1);
+  --status-danger: #993026;
+  --text-main: var(--log-text);
+  --text-muted: var(--log-text-secondary);
 }
 
 /* ── Analysis command bar ── */
@@ -804,6 +1427,7 @@ function selectAssessPlayer(player) {
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "workspace config"
+    "context context"
     "phases phases";
   align-items: center;
   gap: 10px 14px;
@@ -1769,6 +2393,79 @@ function selectAssessPlayer(player) {
   font-weight: 600;
 }
 
+.detail-topbar :deep(.evidence-context-bar) {
+  grid-area: context;
+}
+
+.battle-log-shell :deep(.history-pagination) {
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px 10px;
+  border-top: 1px solid var(--log-border);
+  background: rgba(255, 248, 226, 0.32);
+}
+
+.battle-log-shell :deep(.history-page-meta) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--log-text-secondary);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.battle-log-shell :deep(.history-page-meta small) {
+  color: rgba(74, 37, 15, 0.58);
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.battle-log-shell :deep(.history-page-controls) {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(24px, max-content);
+  justify-content: center;
+  gap: 5px;
+}
+
+.battle-log-shell :deep(.history-page-step),
+.battle-log-shell :deep(.history-page-number) {
+  display: inline-grid;
+  min-width: 24px;
+  height: 25px;
+  place-items: center;
+  padding: 0 7px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  color: #3b1c09;
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.battle-log-shell :deep(.history-page-step:hover:not(:disabled)),
+.battle-log-shell :deep(.history-page-number:hover:not(:disabled)) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.88);
+}
+
+.battle-log-shell :deep(.history-page-number.active) {
+  color: #fff7dc;
+  border-color: rgba(90, 51, 25, 0.46);
+  background: #70401e;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.22);
+}
+
+.battle-log-shell :deep(.history-page-step:disabled),
+.battle-log-shell :deep(.history-page-number:disabled) {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .battle-log-shell :deep(.history-load-more) {
   height: 28px;
   padding: 0 12px;
@@ -1801,7 +2498,7 @@ function selectAssessPlayer(player) {
    ────────────────────────────────────────────── */
 .battle-log-shell :deep(.history-game-item) {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   margin: 0 8px 8px;
@@ -2014,6 +2711,49 @@ function selectAssessPlayer(player) {
 
 .history-detail-panel::-webkit-scrollbar {
   display: none;
+}
+
+.detail-notice {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin: 0 0 10px;
+  padding: 7px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.2);
+  border-radius: 6px;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.54);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.72);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.detail-notice span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-notice.success {
+  border-color: rgba(46, 116, 61, 0.24);
+  color: #2f6b3d;
+  background: rgba(215, 232, 194, 0.62);
+}
+
+.detail-notice.warning {
+  border-color: rgba(151, 95, 18, 0.28);
+  color: #76510e;
+  background: rgba(248, 223, 157, 0.58);
+}
+
+.detail-notice.error {
+  border-color: rgba(154, 45, 36, 0.3);
+  color: #993026;
+  background: rgba(248, 205, 181, 0.6);
+}
+
+.detail-error-panel {
+  margin: 0 0 10px;
 }
 
 /* ──────────────────────────────────────────────
@@ -2409,6 +3149,8 @@ function selectAssessPlayer(player) {
 }
 
 .battle-log-shell :deep(.history-phase-tabs .phase-step.phase-vote .phase-dot),
+.battle-log-shell :deep(.history-phase-tabs .phase-step.phase-exile_vote .phase-dot),
+.battle-log-shell :deep(.history-phase-tabs .phase-step.phase-pk_vote .phase-dot),
 .battle-log-shell :deep(.history-phase-tabs .phase-step.phase-sheriff_vote .phase-dot) {
   border-color: rgba(166, 88, 45, 0.45);
 }
@@ -2495,7 +3237,7 @@ function selectAssessPlayer(player) {
   padding: 14px 16px;
   border: 1px solid var(--log-border);
   border-radius: 8px;
-  background: rgba(255, 252, 245, 0.52);
+  background:#FAE9BA;
 }
 
 .phase-overview-copy {
@@ -2576,7 +3318,7 @@ function selectAssessPlayer(player) {
    ────────────────────────────────────────────── */
 .history-page-detail :deep(.history-night-section) {
   margin: 0;
-  padding: 14px 16px 16px;
+  padding: 14px 14px 16px 14px;
   border-top: 1px solid var(--log-border);
 }
 
@@ -2619,7 +3361,7 @@ function selectAssessPlayer(player) {
 
 .history-page-detail :deep(.night-two-col) {
   display: grid;
-  grid-template-columns: 1fr 380px;
+  grid-template-columns: 1fr 240px;
   gap: 0;
   min-height: 0;
   height: clamp(360px, calc(100vh - 360px), 620px);
@@ -3407,6 +4149,7 @@ function selectAssessPlayer(player) {
     grid-template-areas:
       "workspace"
       "config"
+      "context"
       "phases";
   }
 
@@ -3673,6 +4416,2243 @@ function selectAssessPlayer(player) {
 
   .role-assignment-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* Warm tactile logbook skin, adapted to the current information layout. */
+.battle-log-page {
+  --log-card-bg: linear-gradient(145deg, rgba(255, 249, 230, 0.9), rgba(232, 202, 145, 0.56));
+  --log-card-bg-soft: linear-gradient(145deg, rgba(255, 252, 239, 0.72), rgba(224, 191, 132, 0.34));
+  --log-card-border: rgba(104, 56, 22, 0.25);
+  --log-card-highlight: rgba(255, 250, 224, 0.82);
+  --log-card-shadow: 0 5px 13px rgba(74, 38, 15, 0.1);
+  --log-card-shadow-active: 0 8px 18px rgba(74, 38, 15, 0.16);
+}
+
+.detail-topbar,
+.detail-content,
+.detail-main-column > .history-page-detail,
+.history-side-card {
+  border-color: var(--log-card-border);
+  background: var(--log-card-bg-soft);
+  box-shadow: var(--log-card-shadow), inset 0 1px 0 var(--log-card-highlight);
+}
+
+.detail-topbar {
+  padding: 12px 16px 13px;
+}
+
+.detail-workspace-tabs button,
+.detail-actions button,
+.document-empty button,
+.history-assess-empty-body button,
+.battle-log-shell :deep(.history-load-more),
+.battle-log-shell :deep(.history-game-replay) {
+  border-color: rgba(104, 56, 22, 0.3);
+  color: #4a250f;
+  background: linear-gradient(180deg, rgba(255, 248, 218, 0.94), rgba(219, 177, 105, 0.72));
+  box-shadow: 0 3px 7px rgba(74, 38, 15, 0.14), inset 0 1px 0 rgba(255, 253, 235, 0.9), inset 0 -1px 0 rgba(104, 56, 22, 0.12);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, filter 0.16s ease;
+}
+
+.detail-workspace-tabs button:hover,
+.detail-actions button:hover:not(:disabled),
+.document-empty button:hover,
+.history-assess-empty-body button:hover:not(:disabled),
+.battle-log-shell :deep(.history-load-more:hover:not(:disabled)),
+.battle-log-shell :deep(.history-game-replay:hover) {
+  border-color: rgba(104, 56, 22, 0.48);
+  color: #321606;
+  background: linear-gradient(180deg, rgba(255, 252, 231, 1), rgba(231, 190, 116, 0.84));
+  box-shadow: 0 5px 12px rgba(74, 38, 15, 0.2), inset 0 1px 0 #fff9df;
+  filter: saturate(1.08);
+  transform: translateY(-1px);
+}
+
+.detail-workspace-tabs button:active,
+.detail-actions button:active:not(:disabled),
+.battle-log-shell :deep(.history-game-replay:active) {
+  box-shadow: inset 0 2px 5px rgba(74, 38, 15, 0.22);
+  transform: translateY(1px);
+}
+
+.detail-workspace-tabs button.active {
+  border-color: #5a3319;
+  color: #fff4d2;
+  background: linear-gradient(180deg, #81522b, #4a260f);
+  box-shadow: 0 4px 10px rgba(58, 27, 9, 0.25), inset 0 1px 0 rgba(255, 226, 164, 0.32);
+}
+
+.config-pill {
+  border-color: rgba(104, 56, 22, 0.22);
+  background: linear-gradient(180deg, rgba(255, 250, 230, 0.82), rgba(225, 191, 132, 0.48));
+  box-shadow: 0 2px 6px rgba(74, 38, 15, 0.08), inset 0 1px 0 rgba(255, 252, 235, 0.86);
+}
+
+.battle-log-shell :deep(.history-source-tabs button) {
+  border-color: rgba(104, 56, 22, 0.25);
+  color: #4a250f;
+  background: linear-gradient(180deg, rgba(255, 249, 226, 0.82), rgba(223, 185, 119, 0.5));
+  box-shadow: 0 2px 6px rgba(74, 38, 15, 0.08), inset 0 1px 0 rgba(255, 252, 235, 0.88);
+}
+
+.battle-log-shell :deep(.history-source-tabs button:hover) {
+  border-color: rgba(104, 56, 22, 0.42);
+  background: linear-gradient(180deg, rgba(255, 252, 235, 0.96), rgba(231, 190, 117, 0.62));
+  transform: translateY(-1px);
+}
+
+.battle-log-shell :deep(.history-source-tabs button.active) {
+  border-color: rgba(90, 51, 25, 0.62);
+  background: linear-gradient(180deg, rgba(244, 211, 145, 0.92), rgba(191, 132, 67, 0.66));
+  box-shadow: 0 4px 10px rgba(74, 38, 15, 0.14), inset 0 1px 0 rgba(255, 248, 216, 0.9), inset 3px 0 0 #70401e;
+}
+
+.battle-log-shell :deep(.history-game-item) {
+  border-color: rgba(104, 56, 22, 0.14);
+  background: var(--log-card-bg-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 251, 231, 0.64);
+}
+
+.battle-log-shell :deep(.history-game-item:hover) {
+  border-color: rgba(104, 56, 22, 0.32);
+  background: var(--log-card-bg);
+  box-shadow: var(--log-card-shadow);
+  transform: translateY(-1px);
+}
+
+.battle-log-shell :deep(.history-game-item.active) {
+  border-color: rgba(90, 51, 25, 0.4);
+  border-left-color: #70401e;
+  background: linear-gradient(145deg, rgba(255, 240, 195, 0.94), rgba(210, 161, 87, 0.58));
+  box-shadow: var(--log-card-shadow-active), inset 0 1px 0 rgba(255, 250, 224, 0.86);
+}
+
+.battle-log-shell :deep(.history-game-meta small),
+.battle-log-shell :deep(.history-mode-tag),
+.battle-log-shell :deep(.history-source-tag),
+.detail-workspace-tabs small {
+  border-color: rgba(104, 56, 22, 0.18);
+  background: rgba(255, 246, 218, 0.54);
+  box-shadow: inset 0 1px 0 rgba(255, 253, 237, 0.68);
+}
+
+.history-page-detail :deep(.night-mini-card),
+.history-page-detail :deep(.speech-card),
+.history-page-detail :deep(.vote-result-card),
+.history-page-detail :deep(.last-word-card),
+.history-page-detail :deep(.history-log-row),
+.history-page-detail :deep(.history-decision-row),
+.history-side-card :deep(.history-seat-ledger article) {
+  border-color: rgba(104, 56, 22, 0.2);
+  background: var(--log-card-bg-soft);
+  box-shadow: 0 3px 9px rgba(74, 38, 15, 0.07), inset 0 1px 0 rgba(255, 252, 235, 0.72);
+}
+
+.history-page-detail :deep(.night-mini-card:hover),
+.history-page-detail :deep(.speech-card:hover),
+.history-page-detail :deep(.vote-result-card:hover),
+.history-side-card :deep(.history-seat-ledger article:hover) {
+  border-color: rgba(104, 56, 22, 0.38);
+  background: var(--log-card-bg);
+  box-shadow: var(--log-card-shadow);
+}
+
+.history-page-detail :deep(.night-mini-card.sel),
+.history-side-card :deep(.history-seat-ledger article.selected) {
+  border-color: rgba(90, 51, 25, 0.54);
+  background: linear-gradient(145deg, rgba(255, 239, 193, 0.96), rgba(205, 151, 80, 0.62));
+  box-shadow: var(--log-card-shadow-active), inset 3px 0 0 #70401e;
+}
+
+/* ── Review report parchment styling ── */
+.history-page-detail :deep(.archive-review-panel) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.archive-review-panel > h3) {
+  display: none;
+}
+
+.history-page-detail :deep(.archive-review-panel h4) {
+  margin: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.15);
+  color: var(--log-text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.history-page-detail :deep(.review-summary-strip) {
+  display: none;
+}
+
+.history-page-detail :deep(.archive-review-panel > div:has(.review-tp-card)),
+.history-page-detail :deep(.archive-review-panel > div:has(.review-cf-card)),
+.history-page-detail :deep(.review-timeline) {
+  display: none;
+}
+
+.history-page-detail :deep(.review-score-section) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.review-score-panel-head) {
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.15);
+  background: transparent;
+}
+
+.history-page-detail :deep(.review-score-panel-head small) {
+  display: none;
+}
+
+.history-page-detail :deep(.review-score-panel-head b) {
+  display: none;
+}
+
+.history-page-detail :deep(.review-score-grid) {
+  background: transparent;
+  gap: 0;
+}
+
+.history-page-detail :deep(.review-score-card) {
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.review-score-card:hover) {
+  background: rgba(255, 244, 207, 0.2);
+}
+
+.history-page-detail :deep(.review-tp-card) {
+  margin: 0;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
+}
+
+.history-page-detail :deep(.review-tp-card:hover) {
+  background: rgba(255, 244, 207, 0.2);
+}
+
+.history-page-detail :deep(.review-day-badge) {
+  border: 0;
+  border-radius: 4px;
+  background: rgba(93, 48, 17, 0.08);
+  color: var(--log-accent);
+}
+
+.history-page-detail :deep(.review-cf-card) {
+  margin: 0;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
+}
+
+.history-page-detail :deep(.review-tl-item) {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+}
+
+.history-page-detail :deep(.review-tl-badge) {
+  border-radius: 4px;
+  background: rgba(93, 48, 17, 0.08);
+}
+
+/* ── Archive panel parchment styling ── */
+.history-page-detail :deep(.archive-review-panel) {
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.archive-merged-strip) {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 14px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 6px;
+  background: #FAE9BA;
+  box-shadow: inset 0 1px 0 rgba(255, 244, 205, 0.66);
+}
+
+.history-page-detail :deep(.archive-merged-item) {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.history-page-detail :deep(.archive-merged-item small) {
+  color: rgba(74, 37, 15, 0.56);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-page-detail :deep(.archive-merged-item b) {
+  color: var(--log-text);
+  font-size: 14px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-page-detail :deep(.archive-merged-item b.archive-kpi-error) {
+  color: #c0392b;
+}
+
+.history-page-detail :deep(.archive-review-panel h4) {
+  margin: 0;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.15);
+  color: var(--log-text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.history-page-detail :deep(.archive-section) {
+  gap: 0;
+}
+
+.history-page-detail :deep(.archive-highlight-list) {
+  gap: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.history-page-detail :deep(.archive-highlight-list li) {
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
+  color: var(--log-text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.48;
+}
+
+.history-page-detail :deep(.archive-source-list) {
+  gap: 0;
+}
+
+.history-page-detail :deep(.archive-source-row) {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.08);
+}
+
+.history-page-detail :deep(.archive-source-label) {
+  border-radius: 4px;
+  background: rgba(93, 48, 17, 0.08);
+}
+
+.history-page-detail :deep(.archive-source-track) {
+  border-radius: 999px;
+  background: rgba(93, 48, 17, 0.06);
+}
+
+.history-page-detail :deep(.archive-decision-list) {
+  gap: 0;
+}
+
+.history-page-detail :deep(.archive-decision-card) {
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
+}
+
+.history-page-detail :deep(.archive-decision-card:hover) {
+  background: rgba(255, 244, 207, 0.2);
+}
+
+.history-page-detail :deep(.archive-decision-card header small) {
+  border-radius: 4px;
+  background: rgba(93, 48, 17, 0.08);
+}
+
+.history-page-detail :deep(.archive-extra-fields) {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(93, 48, 17, 0.15);
+}
+
+.history-page-detail :deep(.archive-extra-fields summary) {
+  color: var(--log-accent);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.history-page-detail :deep(.archive-extra-fields div) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.history-page-detail :deep(.archive-extra-item) {
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.history-page-detail :deep(.archive-extra-item small) {
+  color: rgba(74, 37, 15, 0.56);
+}
+
+.history-page-detail :deep(.archive-review-panel pre) {
+  margin: 0;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 248, 225, 0.3);
+}
+
+/* Quiet wood-board layout: broad surfaces, separators, very few framed controls. */
+.parchment-logbook {
+  background:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    #f2dfae;
+}
+
+.battle-log-shell :deep(.history-games-panel) {
+  padding-right: 20px;
+  border-right-color: rgba(93, 48, 17, 0.22);
+  border-radius: 0;
+}
+
+.battle-log-shell :deep(.history-games-panel header) {
+  align-items: flex-start;
+  min-height: 34px;
+  padding: 0;
+  border-bottom-color: rgba(93, 48, 17, 0.2);
+}
+
+.battle-log-shell :deep(.history-games-panel header span) {
+  font-size: 22px;
+  font-weight: 950;
+}
+
+.battle-log-shell :deep(.history-source-tabs) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom-color: rgba(93, 48, 17, 0.16);
+}
+
+.battle-log-shell :deep(.history-source-tabs button),
+.battle-log-shell :deep(.history-source-tabs button:hover),
+.battle-log-shell :deep(.history-source-tabs button.active) {
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  height: 31px;
+  padding: 0 8px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+  transform: none;
+}
+
+.battle-log-shell :deep(.history-source-tabs button:hover) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.88);
+}
+
+.battle-log-shell :deep(.history-source-tabs button.active) {
+  color: #3a1b08;
+  border-color: rgba(93, 48, 17, 0.45);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
+}
+
+.battle-log-shell :deep(.history-source-tabs button small) {
+  min-width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.battle-log-shell :deep(.history-source-tabs button.active small) {
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.battle-log-shell :deep(.history-source-tabs button span) {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.battle-log-shell :deep(.history-notice) {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border: 1px solid rgba(93, 48, 17, 0.2);
+  border-radius: 6px;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.54);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.72);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.battle-log-shell :deep(.history-notice span) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.battle-log-shell :deep(.history-notice.success) {
+  border-color: rgba(46, 116, 61, 0.24);
+  color: #2f6b3d;
+  background: rgba(215, 232, 194, 0.62);
+}
+
+.battle-log-shell :deep(.history-notice.warning) {
+  border-color: rgba(151, 95, 18, 0.28);
+  color: #76510e;
+  background: rgba(248, 223, 157, 0.58);
+}
+
+.battle-log-shell :deep(.history-notice.error) {
+  border-color: rgba(154, 45, 36, 0.3);
+  color: #993026;
+  background: rgba(248, 205, 181, 0.6);
+}
+
+.battle-log-shell :deep(.history-games-list) {
+  padding: 0;
+}
+
+.battle-log-shell :deep(.history-game-item),
+.battle-log-shell :deep(.history-game-item:hover),
+.battle-log-shell :deep(.history-game-item.active) {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 76px;
+  margin: 0;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.battle-log-shell :deep(.history-game-item:hover) {
+  background: rgba(255, 245, 211, 0.2);
+}
+
+.battle-log-shell :deep(.history-game-item.active) {
+  background: linear-gradient(90deg, rgba(255, 240, 194, 0.32), transparent);
+  box-shadow: none;
+}
+
+.battle-log-shell :deep(.history-game-item.active::before) {
+  position: absolute;
+  inset: 9px auto 9px 0;
+  width: 3px;
+  border-radius: 2px;
+  background: #70401e;
+  content: '';
+}
+
+.battle-log-shell :deep(.history-game-title) {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+}
+
+.battle-log-shell :deep(.history-game-title b) {
+  font-size: 17px;
+  line-height: 1.1;
+}
+
+.battle-log-shell :deep(.history-game-support) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.battle-log-shell :deep(.history-game-support time) {
+  color: rgba(74, 37, 15, 0.56);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.battle-log-shell :deep(.history-mode-tag),
+.battle-log-shell :deep(.history-source-tag) {
+  height: 21px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.battle-log-shell :deep(.history-game-actions) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.battle-log-shell :deep(.history-game-delete),
+.battle-log-shell :deep(.history-game-delete:hover) {
+  display: inline-grid;
+  width: 27px;
+  height: 29px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(145, 45, 35, 0.34);
+  border-radius: 6px;
+  color: #b6362d;
+  background: rgba(255, 224, 199, 0.54);
+  box-shadow: inset 0 1px 0 rgba(255, 247, 230, 0.75);
+  transform: none;
+}
+
+.battle-log-shell :deep(.history-game-delete svg) {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.battle-log-shell :deep(.history-game-delete:hover) {
+  color: #98251f;
+  background: rgba(255, 211, 185, 0.86);
+}
+
+.battle-log-shell :deep(.history-game-delete:disabled),
+.battle-log-shell :deep(.history-game-delete.protected) {
+  border-bottom-color: rgba(91, 47, 18, 0.16);
+  color: rgba(91, 47, 18, 0.46);
+  background: rgba(91, 47, 18, 0.08);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.battle-log-shell :deep(.history-game-delete:disabled:hover),
+.battle-log-shell :deep(.history-game-delete.protected:hover) {
+  color: rgba(91, 47, 18, 0.46);
+  background: rgba(91, 47, 18, 0.08);
+}
+
+.battle-log-shell :deep(.history-game-replay),
+.battle-log-shell :deep(.history-game-replay:hover) {
+  width: 46px;
+  height: 29px;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.35);
+  border-radius: 6px;
+  color: #3b1c09;
+  background: rgba(255, 239, 194, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.74);
+  font-size: 12px;
+  transform: none;
+}
+
+.battle-log-shell :deep(.history-game-replay:hover) {
+  background: rgba(255, 245, 214, 0.88);
+}
+
+.history-detail-panel {
+  padding-left: 20px;
+}
+
+.detail-topbar,
+.detail-content,
+.detail-main-column > .history-page-detail,
+.history-side-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.detail-topbar {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.detail-content {
+  gap: 22px;
+  padding: 8px 0 0;
+}
+
+.detail-workspace-tabs {
+  gap: 28px;
+}
+
+.detail-workspace-tabs button,
+.detail-workspace-tabs button:hover,
+.detail-workspace-tabs button.active {
+  align-items: flex-start;
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: rgba(74, 37, 15, 0.72);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.detail-workspace-tabs button span {
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.detail-workspace-tabs button.active {
+  color: #321606;
+  box-shadow: inset 0 -3px 0 #70401e;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs) {
+  align-items: center;
+  gap: 0;
+  height: 70px;
+  min-height: 70px;
+  max-height: 70px;
+  padding: 11px 10px 11px 0;
+  border: 0;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step) {
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  isolation: isolate;
+  width: 86px;
+  min-width: 86px;
+  height: 48px;
+  margin: 0 -1px 0 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  color: #fff8e8;
+  background: #758b73;
+  clip-path: none;
+  filter: saturate(0.82);
+  overflow: visible;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(1)) { z-index: 30; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(2)) { z-index: 29; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(3)) { z-index: 28; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(4)) { z-index: 27; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(5)) { z-index: 26; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(6)) { z-index: 25; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(7)) { z-index: 24; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(8)) { z-index: 23; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(9)) { z-index: 22; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(10)) { z-index: 21; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(11)) { z-index: 20; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(12)) { z-index: 19; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(n + 13)) { z-index: 18; }
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:first-child) {
+  padding-left: 10px;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step::before) {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: -10px;
+  left: auto;
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: inherit;
+  transform: translateY(-50%);
+  content: '';
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step::after) {
+  display: none;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-dot) {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: inherit;
+  box-shadow: none;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(odd) .phase-dot) {
+  top: -9px;
+  bottom: auto;
+  left: calc(50% - 9px);
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(even) .phase-dot) {
+  top: auto;
+  bottom: -9px;
+  left: calc(50% - 9px);
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.active .phase-dot) {
+  border: 0;
+  background: inherit;
+  box-shadow: none;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-night) {
+  background: #344d63;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-sheriff),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-sheriff_vote),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-sheriff_result) {
+  background: #705f81;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-speech) {
+  background: #c45d74;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-vote),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-exile_vote),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-pk_vote) {
+  background: #d77548;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-ended),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-result),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.phase-finished) {
+  background: #d49a32;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:hover) {
+  color: #fffdf3;
+  filter: brightness(1.06) saturate(0.92);
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.active) {
+  z-index: 40;
+  color: #fffdf3;
+  filter: brightness(1.12) saturate(1.08) drop-shadow(0 2px 3px rgba(74, 37, 15, 0.32));
+}
+
+.history-detail-panel .detail-topbar :deep(.phase-copy) {
+  z-index: 4;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  text-align: center;
+}
+
+.history-detail-panel .detail-topbar :deep(.phase-copy small),
+.history-detail-panel .detail-topbar :deep(.phase-copy b),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.active .phase-copy small),
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.active .phase-copy b) {
+  color: inherit;
+  text-shadow: 0 1px 1px rgba(45, 24, 9, 0.35);
+}
+
+.history-detail-panel .detail-topbar :deep(.phase-copy small) {
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.history-detail-panel .detail-topbar :deep(.phase-copy b) {
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.config-pill {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-side-card {
+  border-left: 1px solid rgba(93, 48, 17, 0.18);
+}
+
+.history-side-card--seats,
+.history-page-detail :deep(.night-mini-card),
+.history-page-detail :deep(.speech-card),
+.history-page-detail :deep(.vote-result-card),
+.history-page-detail :deep(.last-word-card),
+.history-page-detail :deep(.history-log-row),
+.history-page-detail :deep(.history-decision-row),
+.history-side-card :deep(.history-seat-ledger article) {
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.15);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.night-mini-card:hover),
+.history-page-detail :deep(.speech-card:hover),
+.history-page-detail :deep(.vote-result-card:hover),
+.history-side-card :deep(.history-seat-ledger article:hover) {
+  border-color: rgba(93, 48, 17, 0.22);
+  background: rgba(255, 244, 207, 0.2);
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.night-mini-card.sel),
+.history-side-card :deep(.history-seat-ledger article.selected) {
+  border-color: rgba(93, 48, 17, 0.22);
+  background: linear-gradient(90deg, rgba(255, 237, 188, 0.38), transparent);
+  box-shadow: inset 3px 0 0 #70401e;
+}
+
+/* Player seats use the same compact wood-button language as history filters. */
+.history-side-card :deep(.history-seat-ledger article),
+.history-side-card :deep(.history-seat-ledger article:hover) {
+  min-height: 31px;
+  padding: 5px 7px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+}
+
+.history-side-card :deep(.history-seat-ledger article:hover) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.88);
+}
+
+.history-side-card :deep(.history-seat-ledger article.selected) {
+  border-color: rgba(93, 48, 17, 0.45);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
+}
+
+.history-side-card :deep(.history-seat-ledger article.dead) {
+  border-color: rgba(166, 65, 53, 0.42);
+  background: rgba(244, 210, 177, 0.62);
+}
+
+.history-side-card :deep(.history-seat-ledger article.sheriff) {
+  border-color: rgba(168, 120, 35, 0.48);
+  background: rgba(248, 223, 157, 0.72);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article),
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article:hover) {
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article:hover) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.88);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article.selected) {
+  border-color: rgba(93, 48, 17, 0.45);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article.dead) {
+  border-color: rgba(166, 65, 53, 0.42);
+  background: rgba(244, 210, 177, 0.62);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article.sheriff) {
+  border-color: rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  background: rgba(255, 239, 194, 0.58);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article.selected),
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article.dead) {
+  border-color: rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article.dead::after) {
+  display: block;
+  left: 50%;
+  top: 50%;
+  width: calc(100% - 12px);
+  height: 2px;
+  background: rgba(190, 45, 36, 0.68);
+  transform: translate(-50%, -50%);
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article.dead img) {
+  opacity: 1;
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger article) {
+  grid-template-columns: 16px max-content max-content;
+  column-gap: 3px;
+  padding-right: 5px;
+  padding-left: 3px;
+}
+
+.battle-log-shell :deep(.history-side-card .history-seat-ledger .sheriff-badge-inline) {
+  top: 7px;
+  right: 3px;
+}
+
+.history-assess-empty {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-assess-empty .history-side-card-header {
+  min-height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.15);
+}
+
+.history-assess-empty-body {
+  min-height: 286px;
+  padding: 18px 18px 22px;
+  background: transparent;
+}
+
+.history-assess-empty-body strong {
+  color: #3b1c09;
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.history-assess-empty-body p {
+  color: rgba(74, 37, 15, 0.64);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-assess-empty-body button,
+.history-assess-empty-body button:hover:not(:disabled) {
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  color: #3b1c09;
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+  font-size: 12px;
+  font-weight: 900;
+  transform: none;
+  filter: none;
+}
+
+.history-assess-empty-body button:hover:not(:disabled) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.88);
+}
+
+.history-assess-empty-body button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.history-page-detail :deep(.history-raw-log.setup-init-log) {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.history-page-detail :deep(.history-raw-log.setup-init-log .timeline-rail) {
+  position: static;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+}
+
+.history-page-detail :deep(.history-raw-log.setup-init-log .timeline-rail::before),
+.history-page-detail :deep(.history-raw-log.setup-init-log .timeline-rail::after) {
+  display: none;
+}
+
+.history-page-detail :deep(.history-raw-log.setup-init-log .timeline-rail img) {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.history-page-detail :deep(.history-raw-log.setup-init-log .timeline-card) {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.history-raw-log.setup-init-log .timeline-card p) {
+  margin: 0;
+  color: #3b210f;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.history-page-detail :deep(.history-raw-log.setup-init-log .timeline-card p b) {
+  color: #6f3b1c;
+}
+
+.history-page-detail :deep(.history-raw-log.judge-message-log) {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.history-page-detail :deep(.history-raw-log.judge-message-log .timeline-rail) {
+  position: static;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+}
+
+.history-page-detail :deep(.history-raw-log.judge-message-log .timeline-rail::before),
+.history-page-detail :deep(.history-raw-log.judge-message-log .timeline-rail::after) {
+  display: none;
+}
+
+.history-page-detail :deep(.history-raw-log.judge-message-log .timeline-rail img) {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.history-page-detail :deep(.history-raw-log.judge-message-log .timeline-card),
+.history-page-detail :deep(.history-raw-log.judge-message-log .timeline-card:hover) {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.history-raw-log.judge-message-log .timeline-card p) {
+  margin: 0;
+  color: #3b210f;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Compact phase header: only phase identity and a horizontal log counter. */
+.phase-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 54px;
+  gap: 16px;
+  padding: 10px 14px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 6px;
+  background: #FAE9BA;
+  box-shadow: inset 0 1px 0 rgba(255, 244, 205, 0.66);
+}
+
+.phase-overview-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.phase-overview-copy small {
+  order: 2;
+  color: rgba(74, 37, 15, 0.64);
+  font-size: 13px;
+}
+
+.phase-overview-copy h3 {
+  order: 1;
+  font-size: 18px;
+}
+
+.phase-overview-log {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(74, 37, 15, 0.66);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.phase-overview-log b {
+  color: #3b1c09;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Decision cards share the history-filter wood button language. */
+.history-page-detail :deep(.night-action-grid) {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 8px;
+}
+
+.history-page-detail :deep(.history-night-section) {
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.history-page-detail :deep(.night-left) {
+  padding-left: 0;
+}
+
+.history-page-detail :deep(.night-mini-card),
+.history-page-detail :deep(.night-mini-card:hover),
+.history-page-detail :deep(.night-mini-card.sel) {
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 7px;
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+  transform: none;
+}
+
+.history-page-detail :deep(.night-mini-card:hover) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.88);
+}
+
+.history-page-detail :deep(.night-mini-card.sel) {
+  border-color: rgba(93, 48, 17, 0.45);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
+}
+
+.history-page-detail :deep(.nmc-header) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+
+.history-page-detail :deep(.nmc-role-icon) {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  object-fit: contain;
+}
+
+.history-page-detail :deep(.nmc-confidence) {
+  margin-left: auto;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.history-page-detail :deep(.nmc-confidence.low) {
+  color: #a92d25;
+  background: rgba(205, 75, 60, 0.14);
+}
+
+.history-page-detail :deep(.nmc-confidence.medium) {
+  color: #91630f;
+  background: rgba(211, 158, 45, 0.18);
+}
+
+.history-page-detail :deep(.nmc-confidence.high) {
+  color: #28743b;
+  background: rgba(70, 150, 83, 0.16);
+}
+
+/* Compact ranking as clean horizontal bar chart. */
+.history-side-card--assess :deep(.ma-rank-list) {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.history-side-card--assess :deep(.ma-rank-row) {
+  display: grid;
+  grid-template-columns: 20px 58px minmax(0, 1fr) 28px;
+  grid-template-areas: "avatar player bar score";
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 32px;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-side-card--assess :deep(.ma-rank-index) {
+  display: none;
+}
+
+.history-side-card--assess :deep(.ma-rank-avatar) {
+  grid-area: avatar;
+}
+
+.history-side-card--assess :deep(.ma-rank-player) {
+  grid-area: player;
+  display: grid;
+  gap: 0;
+}
+
+.history-side-card--assess :deep(.ma-rank-score) {
+  grid-area: score;
+}
+
+.history-side-card--assess :deep(.ma-rank-bar) {
+  grid-area: bar;
+  width: 100%;
+  height: 13px;
+  margin: 0;
+  border-radius: 4px;
+  background: rgba(134, 92, 43, 0.12);
+  overflow: hidden;
+}
+
+.history-side-card--assess :deep(.ma-rank-bar i) {
+  height: 100%;
+  border-radius: 4px;
+}
+
+.history-side-card--assess :deep(.ma-rank-bar i.role-seer) { background: #4698de; }
+.history-side-card--assess :deep(.ma-rank-bar i.role-witch) { background: #9a57bd; }
+.history-side-card--assess :deep(.ma-rank-bar i.role-hunter) { background: #e64b3e; }
+.history-side-card--assess :deep(.ma-rank-bar i.role-guard) { background: #35c86d; }
+.history-side-card--assess :deep(.ma-rank-bar i.role-white-wolf) { background: #ef7f1a; }
+.history-side-card--assess :deep(.ma-rank-bar i.role-wolf) { background: #c83b30; }
+.history-side-card--assess :deep(.ma-rank-bar i.role-villager) { background: #819299; }
+
+.history-side-card--assess :deep(.ma-rank-row:hover),
+.history-side-card--assess :deep(.ma-rank-row.active) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Review score cards: readable identity header and highlighted total score. */
+.history-page-detail :deep(.review-score-grid) {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0;
+  background: transparent;
+}
+
+.history-page-detail :deep(.review-score-panel-head) {
+  display: flex;
+  padding: 0 0 8px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.15);
+}
+
+.history-page-detail :deep(.review-score-card) {
+  min-height: 270px;
+  padding: 12px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 239, 194, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+}
+
+.history-page-detail :deep(.review-score-card:hover) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.82);
+}
+
+.history-page-detail :deep(.review-score-card header) {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.history-page-detail :deep(.review-role-icon) {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.history-page-detail :deep(.review-player-identity) {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.history-page-detail :deep(.review-role) {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: #3b1c09;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-page-detail :deep(.review-seat) {
+  color: rgba(74, 37, 15, 0.56);
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.history-page-detail :deep(.review-overall-score) {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: #7f2430;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-page-detail :deep(.review-overall-score small) {
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.history-page-detail :deep(.review-overall-score b) {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.history-page-detail :deep(.review-score-metrics span) {
+  border: 1px solid rgba(93, 48, 17, 0.1);
+  background: rgba(255, 248, 220, 0.45);
+}
+
+/* Review/archive pages scroll through the main column without a blocking footer gap. */
+.history-detail-panel {
+  padding-bottom: 0;
+}
+
+.detail-content.workspace-review,
+.detail-content.workspace-archive {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.detail-topbar.workspace-review,
+.detail-topbar.workspace-archive {
+  grid-template-areas:
+    "workspace config"
+    "context context";
+  grid-template-rows: auto auto;
+  min-height: 0;
+  row-gap: 8px;
+}
+
+.detail-topbar.workspace-review .detail-workspace-tabs,
+.detail-topbar.workspace-archive .detail-workspace-tabs {
+  align-items: flex-start;
+}
+
+.detail-topbar.workspace-review .detail-workspace-tabs button,
+.detail-topbar.workspace-archive .detail-workspace-tabs button {
+  min-height: 30px;
+}
+
+.detail-topbar.workspace-review + .detail-content,
+.detail-topbar.workspace-archive + .detail-content {
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.detail-content.workspace-review .history-page-detail,
+.detail-content.workspace-archive .history-page-detail {
+  padding-top: 0;
+}
+
+.history-page-detail :deep(.review-score-section) {
+  margin-top: 0;
+}
+
+.history-page-detail :deep(.review-score-panel-head) {
+  min-height: 28px;
+  padding: 0 0 6px;
+}
+
+/* Keep nested vote-flow charts on their own visual rules inside the review report. */
+.history-page-detail :deep(.archive-review-panel .vote-flow-analysis h4),
+.history-page-detail :deep(.archive-review-panel .vote-round-heatmap h4) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.history-page-detail :deep(.archive-review-panel .vote-flow-analysis header),
+.history-page-detail :deep(.archive-review-panel .vote-round-heatmap header) {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+}
+
+.history-page-detail :deep(.archive-review-panel .vote-heatmap-head span) {
+  padding: 0 4px;
+}
+
+.detail-content.workspace-review .detail-main-column,
+.detail-content.workspace-archive .detail-main-column {
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 0;
+  scrollbar-gutter: stable;
+}
+
+.detail-content.workspace-review .history-document-panel,
+.detail-content.workspace-archive .history-document-panel {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}
+
+/* Phase review workbench */
+.history-page-detail .phase-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 14px;
+  align-items: stretch;
+  padding: 14px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 0;
+  background: rgba(250, 233, 186, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 244, 205, 0.72);
+}
+
+.history-page-detail .phase-overview-copy {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.history-page-detail .phase-overview-copy h3 {
+  overflow: hidden;
+  margin: 0;
+  color: #3b1c09;
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-page-detail .phase-overview-copy p {
+  margin: 0;
+  color: rgba(74, 37, 15, 0.72);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.phase-focus-clear {
+  justify-self: start;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(93, 48, 17, 0.22);
+  border-radius: 0;
+  color: #3b1c09;
+  background: rgba(255, 239, 194, 0.74);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.phase-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 0;
+  background: rgba(93, 48, 17, 0.12);
+}
+
+.phase-overview-stats span {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 54px;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.62);
+}
+
+.phase-overview-stats small {
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.58);
+  font-size: 10px;
+  font-weight: 950;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-overview-stats b {
+  color: #3b1c09;
+  font-size: 17px;
+  font-weight: 950;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase-evidence-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid rgba(93, 48, 17, 0.14);
+  background: rgba(255, 252, 245, 0.34);
+}
+
+.phase-evidence-panel.is-expanded {
+  gap: 10px;
+}
+
+.phase-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.phase-section-head h4 {
+  margin: 0;
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.phase-section-head span {
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.62);
+  font-size: 12px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-evidence-head {
+  align-items: stretch;
+}
+
+.phase-evidence-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  color: #3b1c09;
+  background: rgba(255, 239, 194, 0.52);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 245, 0.54);
+  text-align: left;
+  cursor: pointer;
+}
+
+.phase-evidence-toggle:hover {
+  border-color: rgba(127, 36, 48, 0.24);
+  background: rgba(255, 239, 194, 0.7);
+}
+
+.phase-evidence-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.phase-section-head .phase-evidence-toggle span,
+.phase-section-head .phase-evidence-toggle small {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.phase-evidence-title {
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.15;
+}
+
+.phase-evidence-heading small {
+  color: rgba(74, 37, 15, 0.6);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.phase-evidence-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: rgba(74, 37, 15, 0.66);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.phase-evidence-meta span {
+  max-width: 180px;
+  overflow: hidden !important;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: 1.2;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.phase-evidence-meta i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-right: 2px solid rgba(59, 28, 9, 0.7);
+  border-bottom: 2px solid rgba(59, 28, 9, 0.7);
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 0.16s ease;
+}
+
+.phase-evidence-toggle[aria-expanded='true'] .phase-evidence-meta i {
+  transform: rotate(225deg) translateY(-1px);
+}
+
+.phase-evidence-brief {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.1);
+  border-top: 0;
+  color: rgba(59, 28, 9, 0.74);
+  background: rgba(255, 252, 245, 0.42);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.phase-evidence-brief span {
+  overflow-wrap: anywhere;
+}
+
+.phase-evidence-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phase-vote-layout,
+.phase-night-matrix,
+.phase-speech-timeline,
+.phase-generic-evidence {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phase-vote-rank {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.phase-vote-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.72fr) minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 239, 194, 0.46);
+}
+
+.phase-vote-row[data-tone="lead"] {
+  border-color: rgba(127, 36, 48, 0.26);
+  background: rgba(255, 228, 180, 0.64);
+}
+
+.phase-vote-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.phase-vote-main b,
+.phase-matrix-row b,
+.phase-speech-id b {
+  color: #3b1c09;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.phase-vote-main span,
+.phase-matrix-row span,
+.phase-speech-id small {
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.62);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-vote-track {
+  overflow: hidden;
+  height: 10px;
+  border-radius: 0;
+  background: rgba(93, 48, 17, 0.1);
+}
+
+.phase-vote-track i {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  background: linear-gradient(90deg, #7f2430, #d49a32);
+}
+
+.phase-vote-row strong,
+.phase-matrix-row strong {
+  color: #7f2430;
+  font-size: 12px;
+  font-weight: 950;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.phase-alert-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.phase-alert-list span {
+  padding: 5px 8px;
+  border: 1px solid rgba(126, 77, 21, 0.18);
+  border-radius: 0;
+  color: #7e4d15;
+  background: rgba(217, 164, 65, 0.12);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.phase-alert-list span[data-tone="info"] {
+  color: #2e6d73;
+  background: rgba(46, 109, 115, 0.1);
+}
+
+.phase-matrix-head,
+.phase-matrix-row {
+  display: grid;
+  grid-template-columns: 74px 86px 74px minmax(0, 1fr) 46px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.phase-matrix-head {
+  min-height: 28px;
+  padding: 0 10px;
+  color: rgba(74, 37, 15, 0.56);
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.phase-matrix-row {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 239, 194, 0.46);
+}
+
+.phase-matrix-row p,
+.phase-speech-row p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: rgba(59, 28, 9, 0.82);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.phase-speech-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) minmax(110px, auto);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 239, 194, 0.46);
+}
+
+.phase-speech-id {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.phase-speech-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.phase-speech-tags span,
+.phase-speech-tags em {
+  padding: 3px 6px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 0;
+  color: #70401e;
+  background: rgba(255, 252, 245, 0.54);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.phase-generic-evidence {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.phase-generic-evidence span {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  background: rgba(255, 239, 194, 0.46);
+}
+
+.phase-generic-evidence small {
+  color: rgba(74, 37, 15, 0.56);
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.phase-generic-evidence b {
+  color: #3b1c09;
+  font-size: 16px;
+  font-weight: 950;
+}
+
+.phase-empty-state {
+  padding: 14px;
+  border: 1px dashed rgba(93, 48, 17, 0.22);
+  color: rgba(74, 37, 15, 0.62);
+  background: rgba(255, 252, 245, 0.4);
+  font-size: 13px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.phase-decision-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid rgba(93, 48, 17, 0.14);
+  background: rgba(255, 248, 232, 0.5);
+}
+
+.phase-decision-panel :deep(.history-night-section) {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  border-top: 0;
+  background: transparent;
+}
+
+.phase-decision-panel :deep(.night-result-bar) {
+  margin: 0;
+  border-radius: 0;
+  background: rgba(255, 239, 194, 0.56);
+}
+
+.phase-decision-panel :deep(.night-two-col) {
+  height: auto;
+  min-height: 280px;
+  max-height: min(560px, calc(100vh - 330px));
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.36);
+}
+
+.phase-decision-panel :deep(.night-left) {
+  padding: 10px 8px 10px 10px;
+  border-right: 1px solid rgba(93, 48, 17, 0.12);
+}
+
+.phase-decision-panel :deep(.night-action-grid) {
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.phase-decision-panel :deep(.night-mini-card),
+.phase-decision-panel :deep(.night-mini-card:hover),
+.phase-decision-panel :deep(.night-mini-card.sel) {
+  border-radius: 0;
+}
+
+.phase-decision-panel :deep(.night-right) {
+  min-width: 0;
+  border-left: 0;
+  background: rgba(255, 252, 245, 0.42);
+}
+
+.phase-decision-panel :deep(.sheriff-bar-chart) {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.42);
+}
+
+.phase-decision-panel :deep(.history-lastwords-section) {
+  padding: 0;
+  border-top: 0;
+}
+
+.phase-decision-panel :deep(.last-word-card) {
+  border-radius: 0;
+  background: rgba(255, 239, 194, 0.46);
+}
+
+.phase-detail-empty {
+  margin: 0;
+}
+
+.history-page-detail details.history-raw-section {
+  display: grid;
+  margin-top: 0;
+  border-top: 1px solid rgba(93, 48, 17, 0.14);
+}
+
+.history-page-detail details.history-raw-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  color: #3b1c09;
+  background: rgba(255, 239, 194, 0.36);
+  font-size: 13px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.history-page-detail details.history-raw-section > summary b {
+  margin-left: auto;
+  color: #7f2430;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.phase-load-more-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(93, 48, 17, 0.14);
+  background: rgba(255, 239, 194, 0.36);
+}
+
+.phase-load-more-strip span {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.68);
+  font-size: 12px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phase-load-more-strip button {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(93, 48, 17, 0.22);
+  border-radius: 0;
+  color: #3b1c09;
+  background: rgba(255, 252, 245, 0.58);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.phase-load-more-strip button:hover:not(:disabled) {
+  border-color: rgba(127, 36, 48, 0.28);
+  background: rgba(255, 245, 214, 0.82);
+}
+
+.phase-load-more-strip button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.raw-log-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px 0;
+}
+
+.raw-log-filter-tabs button {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 0;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.58);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.raw-log-filter-tabs button.active {
+  color: #3b1c09;
+  background: rgba(224, 184, 111, 0.66);
+}
+
+.raw-log-filter-tabs small {
+  margin-left: 5px;
+  color: inherit;
+  font-size: 10px;
+}
+
+@media (max-width: 920px) {
+  .history-page-detail .phase-overview,
+  .phase-speech-row,
+  .phase-matrix-head,
+  .phase-matrix-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .phase-overview-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .phase-evidence-toggle {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+  }
+
+  .phase-evidence-meta {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .phase-evidence-meta span {
+    max-width: none;
+  }
+
+  .phase-vote-row {
+    grid-template-columns: minmax(0, 1fr) 46px;
+  }
+
+  .phase-vote-track {
+    grid-column: 1 / -1;
+  }
+
+  .phase-speech-tags {
+    justify-content: flex-start;
+  }
+
+  .phase-decision-panel :deep(.night-two-col) {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: none;
+  }
+
+  .phase-decision-panel :deep(.night-left) {
+    border-right: 0;
+    border-bottom: 1px solid rgba(93, 48, 17, 0.12);
   }
 }
 </style>

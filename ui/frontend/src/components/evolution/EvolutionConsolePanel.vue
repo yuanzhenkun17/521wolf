@@ -5,6 +5,8 @@ defineProps({
   evo: { type: Object, required: true },
   selectedIsBatch: Boolean,
   selectedCanReview: Boolean,
+  selectedCanPromote: Boolean,
+  selectedPromoteDisabledReason: { type: String, default: '' },
   selectedCanTerminate: Boolean
 })
 
@@ -231,16 +233,18 @@ function childRunKey(run, index) {
     <article class="evo-card">
       <header>
         <h2>进化控制台</h2>
-        <b>{{ evo.selectedRoleLabel.value }}</b>
       </header>
 
       <div class="evo-form-grid">
         <label>训练局数<input v-model.number="evo.form.value.training_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>对战局数<input v-model.number="evo.form.value.battle_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>最大天数<input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" /></label>
-        <label class="evo-check-field">
+        <label>
           自动晋升
-          <input v-model="evo.form.value.auto_promote" type="checkbox" disabled />
+          <select v-model="evo.form.value.auto_promote">
+            <option :value="true">是</option>
+            <option :value="false">否</option>
+          </select>
         </label>
       </div>
 
@@ -335,6 +339,7 @@ function childRunKey(run, index) {
         <div v-else class="evo-kpis">
           <span><small>父版本</small><b>{{ evo.selectedRun.value.parentShort }}</b></span>
           <span><small>候选版本</small><b>{{ evo.selectedRun.value.candidateShort }}</b></span>
+          <span><small>发布阶段</small><b>{{ evo.selectedRun.value.publishedReleaseStageLabel || '—' }}</b></span>
           <span><small>训练</small><b>{{ evo.selectedRun.value.trainingGameCompleted || 0 }} / {{ evo.selectedRun.value.trainingGameRequested || 0 }}</b></span>
           <span><small>对战</small><b>{{ evo.selectedRun.value.battleGameCompleted || 0 }} / {{ evo.selectedRun.value.battleGameRequested || 0 }}</b></span>
         </div>
@@ -356,7 +361,9 @@ function childRunKey(run, index) {
           <button
             type="button"
             class="evo-action"
-            :disabled="!selectedCanReview || Boolean(evo.actionLoading.value)"
+            :disabled="!selectedCanPromote || Boolean(evo.actionLoading.value)"
+            :aria-describedby="selectedPromoteDisabledReason ? 'evo-promote-disabled-reason' : undefined"
+            :title="selectedPromoteDisabledReason || undefined"
             @click="evo.runAction(evo.selectedRunId.value, 'promote')"
           >
             <span aria-hidden="true">&#8593;</span> 晋升
@@ -378,6 +385,13 @@ function childRunKey(run, index) {
             终止
           </button>
         </div>
+        <p
+          v-if="selectedPromoteDisabledReason"
+          id="evo-promote-disabled-reason"
+          class="evo-action-reason"
+        >
+          {{ selectedPromoteDisabledReason }}
+        </p>
 
         <div v-if="selectedIsBatch" class="evo-batch-detail">
           <h3>批量子运行</h3>

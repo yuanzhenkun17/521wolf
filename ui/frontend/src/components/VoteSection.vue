@@ -9,7 +9,8 @@ const props = defineProps({
   tally: { type: Array, default: () => [] },
   resultMessage: { type: String, default: '' },
   selectedDecision: Object,
-  detailTab: { type: String, default: 'summary' }
+  detailTab: { type: String, default: 'summary' },
+  roleIconImage: Function
 })
 
 const emit = defineEmits(['update:selectedDecision', 'update:detailTab'])
@@ -55,6 +56,7 @@ function selectDecision(decision) {
             :action="vote"
             :selected="isSelected(vote, index)"
             mode="vote"
+            :role-icon-image="roleIconImage"
             @select="selectDecision"
           />
         </div>

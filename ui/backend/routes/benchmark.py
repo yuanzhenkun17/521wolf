@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.evolution_serializers import _evolution_batch_summary
-from ui.backend.schemas import BenchmarkRequest
+from ui.backend.schemas import BenchmarkRequest, BenchmarkSnapshotRequest, BenchmarkViewRequest
 from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import _last_event_id_from_request, _set_task_contract
 
@@ -32,6 +32,72 @@ def _benchmark_task_event_name(item: dict[str, Any]) -> str:
 
 
 def register_benchmark_routes(api: FastAPI, store: Any) -> None:
+    @api.get("/api/benchmarks")
+    def list_benchmarks() -> dict[str, Any]:
+        return {"kind": "benchmark_specs", "schema_version": 1, "items": store.list_benchmark_specs()}
+
+    @api.get("/api/benchmarks/{benchmark_id}")
+    def get_benchmark(benchmark_id: str) -> dict[str, Any]:
+        return store.get_benchmark_spec_summary(benchmark_id)
+
+    @api.post("/api/benchmark/plan")
+    def plan_benchmark(request: BenchmarkRequest) -> dict[str, Any]:
+        return store.plan_benchmark(request)
+
+    @api.post("/api/benchmark/snapshots")
+    def create_benchmark_snapshot(request: BenchmarkSnapshotRequest) -> dict[str, Any]:
+        return store.create_benchmark_snapshot(request)
+
+    @api.get("/api/benchmark/snapshots")
+    def list_benchmark_snapshots(
+        scope: str | None = Query(default=None),
+        evaluation_set_id: str | None = Query(default=None),
+        benchmark_id: str | None = Query(default=None),
+        target_role: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        return store.list_benchmark_snapshots(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            limit=limit,
+        )
+
+    @api.get("/api/benchmark/snapshots/{snapshot_id}")
+    def get_benchmark_snapshot(snapshot_id: str) -> dict[str, Any]:
+        return store.get_benchmark_snapshot(snapshot_id)
+
+    @api.post("/api/benchmark/views")
+    def save_benchmark_view(request: BenchmarkViewRequest) -> dict[str, Any]:
+        return store.save_benchmark_view(request)
+
+    @api.get("/api/benchmark/views")
+    def list_benchmark_views(
+        scope: str | None = Query(default=None),
+        evaluation_set_id: str | None = Query(default=None),
+        benchmark_id: str | None = Query(default=None),
+        target_role: str | None = Query(default=None),
+        view_key: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+    ) -> dict[str, Any]:
+        return store.list_benchmark_views(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            view_key=view_key,
+            limit=limit,
+        )
+
+    @api.get("/api/benchmark/views/{view_key}")
+    def get_benchmark_view(view_key: str) -> dict[str, Any]:
+        return store.get_benchmark_view(view_key)
+
+    @api.delete("/api/benchmark/views/{view_key}")
+    def delete_benchmark_view(view_key: str) -> dict[str, Any]:
+        return store.delete_benchmark_view(view_key)
+
     @api.post("/api/benchmark")
     async def start_benchmark(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         batch = store.queue_benchmark(request)
@@ -44,6 +110,32 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
         background_tasks.add_task(store.run_queued_benchmark, batch["batch_id"], request)
         return batch
 
+    @api.get("/api/benchmark/batch/{batch_id}")
+    def benchmark_batch_detail(batch_id: str) -> dict[str, Any]:
+        return store.benchmark_batch_detail(batch_id)
+
+    @api.get("/api/benchmark/batch/{batch_id}/games")
+    def benchmark_batch_games(
+        batch_id: str,
+        result_batch_id: str | None = Query(default=None),
+        target_role: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        limit: int | None = Query(default=None, ge=0, le=1000),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
+        return store.benchmark_batch_games(
+            batch_id,
+            result_batch_id=result_batch_id,
+            target_role=target_role,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    @api.get("/api/benchmark/batch/{batch_id}/diagnostics")
+    def benchmark_batch_diagnostics(batch_id: str) -> dict[str, Any]:
+        return store.benchmark_batch_diagnostics(batch_id)
+
     @api.post("/api/benchmark/batch/{batch_id}/stop")
     def stop_benchmark(batch_id: str) -> dict[str, Any]:
         batch = store.evolution_batches.get(batch_id)
@@ -52,7 +144,7 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
         batch["status"] = "failed"
         batch["stop_requested"] = True
         _set_task_contract(batch, stop_requested=True, cancelled=True, interrupted=False, failed=False)
-        batch["finished_at"] = batch.get("finished_at") or beijing_now_iso()
+        batch["finished_at"] = beijing_now_iso()
         batch["error"] = batch.get("error") or MANUAL_STOP_REASON
         store._mark_benchmark_stage(
             batch,

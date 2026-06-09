@@ -1,0 +1,9 @@
+{
+  "id": "role-baseline-quick-202606",
+  "purpose": "role_leaderboard_smoke",
+  "version": 1,
+  "description": "Low-cost fixed seeds for role-version benchmark smoke runs.",
+  "target_type": "role_version",
+  "seeds": [260600, 260607, 260619],
+  "enabled": true
+}

@@ -247,6 +247,7 @@
 }
 
 .sheriff-badge-sm {
+  left: -16px;
   width: 12px;
   height: 12px;
   object-fit: contain;

@@ -33,13 +33,12 @@ function bindValue(value) {
   return isRef(value) ? value.value : value
 }
 
-const boundRuntime = computed(() =>
-  Object.fromEntries(Object.entries(runtime).map(([key, value]) => [key, bindValue(value)]))
-)
+function readRuntime(key) {
+  return bindValue(runtime[key])
+}
 
 function pickRuntime(keys) {
-  const bindings = boundRuntime.value
-  return Object.fromEntries(keys.map((key) => [key, bindings[key]]))
+  return Object.fromEntries(keys.map((key) => [key, readRuntime(key)]))
 }
 
 const logsPropKeys = [
@@ -53,10 +52,14 @@ const logsPropKeys = [
   'historySourceFilter',
   'historyCounts',
   'historyFacets',
+  'historyNotice',
   'historyHasMore',
+  'historyCurrentPage',
+  'historyTotalPages',
   'historyPages',
   'selectedHistoryPageKey',
   'selectedHistoryPage',
+  'phaseLoadingByKey',
   'historyLogs',
   'pageNightActions',
   'pageSpeechDecisions',
@@ -87,18 +90,25 @@ const logsPropKeys = [
   'playerAliveAtPage',
   'archiveByGameId',
   'reviewByGameId',
+  'flowDataByGameId',
+  'flowLoadingByGameId',
   'archiveLoading',
   'reviewLoading',
   'loadMoreHistory',
+  'loadMoreHistoryPhaseDetail',
+  'goHistoryPage',
   'setHistorySourceFilter',
+  'deleteHistoryGame',
   'loadArchive',
   'loadReview',
+  'loadFlowData',
   'formatJson'
 ]
 
 const matchPropKeys = [
   'game',
   'loading',
+  'matchNotice',
   'backendMode',
   'isNight',
   'isWatch',
@@ -161,38 +171,34 @@ const benchmarkProps = computed(() => pickRuntime(['returnToMatchAvailable']))
 const evolutionProps = computed(() => pickRuntime(['returnToMatchAvailable']))
 const lobbyProps = computed(() => pickRuntime(['backendMode', 'externalStatus', 'loading', 'playerCount', 'apiFetch']))
 const matchProps = computed(() => pickRuntime(matchPropKeys))
-const activeSession = computed(() => boundRuntime.value.activeSession)
-const audioEnabled = computed(() => boundRuntime.value.audioEnabled)
-const ttsEnabled = computed(() => boundRuntime.value.ttsEnabled)
-const ttsAvailable = computed(() => boundRuntime.value.ttsAvailable)
-const topNavActiveView = computed(() => boundRuntime.value.isReplayMode ? 'logs' : boundRuntime.value.currentView)
+const activeSession = computed(() => readRuntime('activeSession'))
+const audioEnabled = computed(() => readRuntime('audioEnabled'))
+const ttsEnabled = computed(() => readRuntime('ttsEnabled'))
+const ttsAvailable = computed(() => readRuntime('ttsAvailable'))
+const topNavActiveView = computed(() => readRuntime('isReplayMode') ? 'logs' : readRuntime('currentView'))
 const showActiveGamePill = computed(() => {
-  const bindings = boundRuntime.value
-  if (bindings.isReplayMode) return false
-  if (bindings.currentView === 'match') return false
-  return isReturnableGame(bindings.liveGame)
+  if (readRuntime('isReplayMode')) return false
+  if (readRuntime('currentView') === 'match') return false
+  return isReturnableGame(readRuntime('liveGame'))
 })
 const showMatchBoot = computed(() => {
-  const bindings = boundRuntime.value
-  return bindings.currentView === 'match'
-    && !bindings.isReplayMode
+  return readRuntime('currentView') === 'match'
+    && !readRuntime('isReplayMode')
     && (
-      !bindings.game
+      !readRuntime('game')
       || (
-        !bindings.roleAssignmentComplete
-        && (bindings.judgeBoardStarted || bindings.judgeBoardStarting)
+        !readRuntime('roleAssignmentComplete')
+        && (readRuntime('judgeBoardStarted') || readRuntime('judgeBoardStarting'))
       )
     )
 })
 const matchBootStatus = computed(() => {
-  const bindings = boundRuntime.value
-  if (!bindings.game) return '创建房间'
-  if (!bindings.roleAssignmentComplete) return '分配身份'
+  if (!readRuntime('game')) return '创建房间'
+  if (!readRuntime('roleAssignmentComplete')) return '分配身份'
   return '进入议事厅'
 })
 const showTopbarExitGame = computed(() => {
-  const bindings = boundRuntime.value
-  return bindings.currentView === 'match' && !bindings.isReplayMode && Boolean(bindings.game)
+  return readRuntime('currentView') === 'match' && !readRuntime('isReplayMode') && Boolean(readRuntime('game'))
 })
 const topbarExitDisabled = computed(() => false)
 
@@ -247,7 +253,7 @@ const {
       <div class="noise"></div>
 
       <TopNav
-        :variant="inLobby ? 'lobby' : 'match'"
+        :variant="inMatch ? 'match' : (inLobby ? 'lobby' : 'section')"
         :active-view="topNavActiveView"
         :class="{ 'night-mode': isNight }"
         :active-session="activeSession"

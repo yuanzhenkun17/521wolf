@@ -261,7 +261,7 @@ export function createLiveGameState(refs, helpers) {
   }
 
   function visibleRoleIcon(player) {
-    return canSeePlayerRole(player) ? roleIconImage(player) : '/role-icons/未知.png'
+    return canSeePlayerRole(player) ? roleIconImage(player) : '/role-icons/optimized/未知.webp'
   }
 
   function visibleCardImage(player) {
@@ -276,7 +276,7 @@ export function createLiveGameState(refs, helpers) {
       role_visible: roleVisible,
       role_hint_actual: player?.role_hint || '',
       role_hint: roleVisible ? (player?.role_hint || '') : '未知',
-      roleIcon: roleVisible ? roleIconImage(player) : '/role-icons/未知.png'
+      roleIcon: roleVisible ? roleIconImage(player) : '/role-icons/optimized/未知.webp'
     }
   }
 
@@ -328,7 +328,7 @@ export function createLiveGameState(refs, helpers) {
       _seat: seat,
       _speaker: logSpeaker(log),
       _message: logMessage(log) || logText(log),
-      _roleIcon: player ? visibleRoleIcon(player) : '/role-icons/未知.png',
+      _roleIcon: player ? visibleRoleIcon(player) : '/role-icons/optimized/未知.webp',
       _speaking: Boolean(player?.id && player.id === effectiveCurrentSpeakerId())
     }
   }

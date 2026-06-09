@@ -300,6 +300,27 @@ TABLE_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE wolf.benchmark_leaderboard_snapshots (
+        snapshot_id text PRIMARY KEY,
+        title text NOT NULL,
+        release_notes text,
+        scope text NOT NULL,
+        benchmark_id text,
+        benchmark_version text,
+        evaluation_set_id text NOT NULL,
+        seed_set_id text,
+        benchmark_config_hash text,
+        target_role text,
+        source_filter jsonb,
+        view_config jsonb,
+        rows_json jsonb NOT NULL,
+        summary_json jsonb NOT NULL,
+        row_count integer DEFAULT 0,
+        content_hash text NOT NULL,
+        created_at timestamptz NOT NULL
+    )
+    """,
+    """
     CREATE TABLE registry.role_versions (
         id text NOT NULL,
         role text NOT NULL,
@@ -365,6 +386,21 @@ TABLE_STATEMENTS = (
         errors text,
         started_at timestamptz NOT NULL,
         finished_at timestamptz
+    )
+    """,
+    """
+    CREATE TABLE evolution.trust_bundles (
+        id text PRIMARY KEY,
+        run_id text NOT NULL UNIQUE,
+        role text,
+        baseline_version text,
+        candidate_version text,
+        bundle_hash text NOT NULL,
+        gate_report_id text,
+        attribution_report_id text,
+        bundle_json jsonb NOT NULL,
+        created_at timestamptz NOT NULL,
+        updated_at timestamptz NOT NULL
     )
     """,
     """
@@ -594,10 +630,14 @@ INDEX_STATEMENTS = (
     "CREATE INDEX idx_bench_scope ON wolf.benchmark_leaderboard(scope)",
     "CREATE INDEX idx_bench_subject ON wolf.benchmark_leaderboard(subject_id)",
     "CREATE INDEX idx_bench_group ON wolf.benchmark_leaderboard(comparison_group_id)",
+    "CREATE INDEX idx_bench_snapshot_scope_eval ON wolf.benchmark_leaderboard_snapshots(scope, evaluation_set_id)",
+    "CREATE INDEX idx_bench_snapshot_benchmark ON wolf.benchmark_leaderboard_snapshots(benchmark_id)",
     "CREATE INDEX idx_role_versions_role ON registry.role_versions(role)",
     "CREATE INDEX idx_role_versions_status ON registry.role_versions(status)",
     "CREATE INDEX idx_skill_files_version ON registry.skill_files(version_id)",
     "CREATE INDEX idx_evolution_runs_role ON evolution.evolution_runs(role)",
+    "CREATE INDEX idx_trust_bundles_run ON evolution.trust_bundles(run_id)",
+    "CREATE INDEX idx_trust_bundles_role ON evolution.trust_bundles(role)",
     "CREATE INDEX idx_ui_background_tasks_kind ON wolf.ui_background_tasks(entity_kind)",
     "CREATE INDEX idx_ui_task_events_entity_id ON wolf.ui_task_events(entity_id, id)",
     "CREATE INDEX idx_skill_proposals_source ON evolution.skill_proposals(source_version_id)",

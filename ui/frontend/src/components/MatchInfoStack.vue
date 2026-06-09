@@ -30,7 +30,7 @@ function message(log) {
       <div class="judge-list">
         <div v-for="group in groupedJudgeLogs" :key="group.key" class="log-group">
           <div class="log-group-header">
-            <span class="log-day">第{{ group.day }}天</span>
+            <span class="log-day">第 {{ group.day }} 天</span>
             <span class="log-phase">{{ group.phaseLabel }}</span>
             <span class="log-phase-icon">{{ group.phase === 'night' ? '☾' : '☀' }}</span>
           </div>

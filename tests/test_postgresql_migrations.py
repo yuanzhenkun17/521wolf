@@ -38,12 +38,14 @@ def test_postgresql_baseline_covers_current_storage_tables() -> None:
         "wolf.seed_sets",
         "wolf.evaluation_batches",
         "wolf.benchmark_leaderboard",
+        "wolf.benchmark_leaderboard_snapshots",
         "registry.role_versions",
         "registry.role_current_baseline",
         "registry.role_baseline_history",
         "registry.skill_files",
         "registry.rejected_proposals",
         "evolution.evolution_runs",
+        "evolution.trust_bundles",
         "evolution.skill_proposals",
         "evolution.experience_candidates",
         "evolution.patterns",
@@ -69,6 +71,10 @@ def test_postgresql_baseline_preserves_high_risk_constraints() -> None:
     assert "CONSTRAINT uq_leaderboard_role_version UNIQUE (role, version_id)" in text
     assert "CONSTRAINT uq_reports_game UNIQUE (game_id)" in text
     assert "CONSTRAINT uq_skill_files_version_path UNIQUE (version_id, file_path)" in text
+    assert "run_id text NOT NULL UNIQUE" in text
+    assert "bundle_hash text NOT NULL" in text
+    assert "CREATE INDEX idx_trust_bundles_run ON evolution.trust_bundles(run_id)" in text
+    assert "CREATE INDEX idx_trust_bundles_role ON evolution.trust_bundles(role)" in text
 
 
 def test_postgresql_baseline_uses_pg_native_type_mappings() -> None:
@@ -97,8 +103,13 @@ def test_postgresql_baseline_jsonb_policy_is_explicit_and_conservative() -> None
         r"raw_json jsonb",
         r"seeds_json jsonb NOT NULL",
         r"by_role_category_scores jsonb",
+        r"source_filter jsonb",
+        r"view_config jsonb",
+        r"rows_json jsonb NOT NULL",
+        r"summary_json jsonb NOT NULL",
         r"proposal_json jsonb NOT NULL",
         r"proposals_json jsonb NOT NULL",
+        r"bundle_json jsonb NOT NULL",
     ):
         assert re.search(pattern, text), pattern
 

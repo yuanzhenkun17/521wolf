@@ -1,5 +1,7 @@
 <script setup>
 import { computed } from 'vue'
+import ApiErrorPanel from '../ApiErrorPanel.vue'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../../composables/apiErrorDisplay.js'
 
 const props = defineProps({
   title: { type: String, required: true },
@@ -8,7 +10,8 @@ const props = defineProps({
   roles: { type: Array, default: () => [] },
   selectedRole: { type: String, default: '' },
   selectedRunSummary: { type: Object, default: null },
-  error: { type: String, default: '' }
+  error: { type: [String, Object, Error], default: '' },
+  notice: { type: Object, default: null }
 })
 
 const emit = defineEmits(['update:activeTab', 'refresh', 'select-role'])
@@ -22,6 +25,13 @@ const activeTabLabel = computed(() =>
 )
 
 const runSummary = computed(() => props.selectedRunSummary || {})
+const pageNotice = computed(() => {
+  if (props.notice?.message) return props.notice
+  if (props.error) return { type: 'error', message: props.error?.message || props.error, error: props.error }
+  return null
+})
+const inlineNotice = computed(() => inlineNoticeForDisplay(pageNotice.value))
+const errorNotice = computed(() => noticeErrorForPanel(pageNotice.value))
 
 function progressPercent(value) {
   const number = Number(value)
@@ -35,7 +45,6 @@ function progressPercent(value) {
     <aside class="evo-control-rail" aria-label="进化角色">
       <header class="evo-rail-header">
         <span>角色上下文</span>
-        <strong>{{ roles.length }}</strong>
       </header>
 
       <div class="evo-rail-summary">
@@ -69,27 +78,7 @@ function progressPercent(value) {
     <main class="evo-detail-panel">
       <header class="evo-command-bar">
         <div class="evo-command-title">
-          <small>进化工作台</small>
           <h2>{{ title }}工作台</h2>
-        </div>
-        <div class="evo-command-metrics">
-          <span><small>当前运行</small><b>{{ runSummary.id || '—' }}</b></span>
-          <span><small>类型</small><b>{{ runSummary.entityLabel || '—' }}</b></span>
-          <span><small>状态</small><b>{{ runSummary.statusLabel || '—' }}</b></span>
-          <span><small>整体进度</small><b>{{ progressPercent(runSummary.overallProgressPercent) }}%</b></span>
-        </div>
-        <div class="evo-command-run">
-          <div>
-            <small>{{ runSummary.displayRole || selectedRoleRow?.label || '—' }}</small>
-            <b>{{ runSummary.currentStageLabel || activeTabLabel }}</b>
-          </div>
-          <div class="evo-top-progress" aria-hidden="true">
-            <span :style="{ width: `${progressPercent(runSummary.overallProgressPercent)}%` }"></span>
-          </div>
-          <p>
-            整体 {{ runSummary.overallProgressLabel || '等待' }}
-            · 阶段 {{ runSummary.stageProgressLabel || '等待' }}
-          </p>
         </div>
         <div class="evo-command-actions">
           <button type="button" class="evo-refresh-button" @click="emit('refresh')">
@@ -114,7 +103,14 @@ function progressPercent(value) {
 
       <section class="evo-main-pane">
         <div class="evo-scroll">
-          <div v-if="error" class="evo-alert">{{ error }}</div>
+          <ApiErrorPanel
+            v-if="errorNotice"
+            class="evo-error-panel"
+            :error="errorNotice"
+            title="自进化操作失败"
+            compact
+          />
+          <div v-else-if="inlineNotice" :class="['evo-alert', inlineNotice.type]">{{ inlineNotice.message }}</div>
           <slot />
         </div>
       </section>

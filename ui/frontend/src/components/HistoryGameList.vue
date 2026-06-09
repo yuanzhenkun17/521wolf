@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { displayWinnerLabel } from './history/historyDisplay.js'
 
 const props = defineProps({
@@ -11,15 +11,14 @@ const props = defineProps({
   sourceFilter: { type: String, default: 'all' },
   pagination: { type: Object, default: () => ({}) },
   counts: { type: Object, default: () => ({}) },
-  facets: { type: Object, default: () => ({}) }
+  facets: { type: Object, default: () => ({}) },
+  notice: { type: Object, default: () => ({}) }
 })
 
-const emit = defineEmits(['select-game', 'replay-game', 'change-source', 'load-more'])
-const historyFilter = ref('')
-
+const emit = defineEmits(['select-game', 'replay-game', 'delete-game', 'change-source', 'change-page', 'load-more'])
 const SOURCE_OPTIONS = [
   { key: 'all', label: '全部' },
-  { key: 'normal', label: '人机/玩家' },
+  { key: 'normal', label: '观战/玩家' },
   { key: 'benchmark', label: '批量评测' },
   { key: 'evolution', label: '自进化' }
 ]
@@ -67,7 +66,7 @@ function winnerLabel(winner) {
 }
 
 function gameTitle(index) {
-  return `对局${index + 1}`
+  return `对局${pageStartIndex.value + index}`
 }
 
 function sourceKey(game) {
@@ -84,8 +83,17 @@ function sourceDetail(game) {
   return game?.source_phase_label || gameConfig(game).source_phase_label || sourceLabel(game)
 }
 
+function isEvidenceGame(game) {
+  return sourceKey(game) !== 'normal'
+}
+
+function deleteTitle(game) {
+  if (!isEvidenceGame(game)) return '删除对局'
+  return `${sourceLabel(game)}会作为证据资产保留，普通删除不可用`
+}
+
 function modeLabel(game) {
-  return game?.mode === 'watch' ? '人机局' : '玩家局'
+  return game?.mode === 'watch' ? '观战局' : '玩家局'
 }
 
 function modeClass(game) {
@@ -123,33 +131,43 @@ const sourceTabs = computed(() =>
   }))
 )
 
-const sourceFilteredGames = computed(() => {
-  const query = historyFilter.value.trim().toLowerCase()
-  if (!query) return props.games
-  return props.games.filter((game) =>
-    [
-      game.game_id,
-      game.log_name,
-      game.mode,
-      game.status,
-      game.winner,
-      game.phase,
-      game.day,
-      game.seed,
-      game.max_days,
-      game.skill_dir,
-      sourceKey(game),
-      sourceLabel(game),
-      sourceDetail(game),
-      gameConfig(game).seed,
-      gameConfig(game).max_days,
-      gameConfig(game).skill_dir
-    ].some((value) => String(value || '').toLowerCase().includes(query))
-  )
-})
+const sourceFilteredGames = computed(() => props.games)
 const shownTotal = computed(() => props.games.length)
 const backendTotal = computed(() => Number(props.pagination?.total ?? sourceCounts.value[props.sourceFilter] ?? props.games.length))
-const remainingCount = computed(() => Math.max(0, backendTotal.value - shownTotal.value))
+const pageLimit = computed(() => Math.max(1, Number(props.pagination?.limit || shownTotal.value || 1)))
+const pageOffset = computed(() => Math.max(0, Number(props.pagination?.offset || 0)))
+const pageReturned = computed(() => Math.max(0, Number(props.pagination?.returned ?? shownTotal.value)))
+const currentPage = computed(() => Math.max(1, Math.floor(pageOffset.value / pageLimit.value) + 1))
+const totalPages = computed(() => Math.max(1, Math.ceil(Math.max(0, backendTotal.value) / pageLimit.value)))
+const pageStartIndex = computed(() => backendTotal.value > 0 ? pageOffset.value + 1 : 0)
+const pageEndIndex = computed(() => Math.min(backendTotal.value, pageOffset.value + pageReturned.value))
+const pageWindow = computed(() => {
+  const total = totalPages.value
+  const current = currentPage.value
+  const maxButtons = 5
+  if (total <= maxButtons) return Array.from({ length: total }, (_, index) => index + 1)
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, start + maxButtons - 1)
+  start = Math.max(1, end - maxButtons + 1)
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index)
+})
+const pageSummary = computed(() => {
+  if (!backendTotal.value) return '暂无记录'
+  return `${pageStartIndex.value}-${pageEndIndex.value} / ${backendTotal.value} 局`
+})
+const pageIndexSummary = computed(() => `第 ${currentPage.value} / ${totalPages.value} 页`)
+const noticeMessage = computed(() => String(props.notice?.message || '').trim())
+const noticeType = computed(() => {
+  const type = String(props.notice?.type || '').trim()
+  return ['success', 'warning', 'error'].includes(type) ? type : 'info'
+})
+
+function changePage(page) {
+  if (props.loading || props.loadingMore) return
+  const target = Math.max(1, Math.min(Number(page) || 1, totalPages.value))
+  if (target === currentPage.value) return
+  emit('change-page', target)
+}
 
 function selectSource(source) {
   if (source === props.sourceFilter || props.loading) return
@@ -161,7 +179,6 @@ function selectSource(source) {
   <aside class="history-games-panel">
     <header>
       <span>历史对局</span>
-      <strong>{{ backendTotal }}</strong>
     </header>
     <div class="history-source-tabs" aria-label="对局分类">
       <button
@@ -175,9 +192,8 @@ function selectSource(source) {
         <small>{{ item.count }}</small>
       </button>
     </div>
-    <div class="history-list-tools">
-      <input v-model="historyFilter" type="search" placeholder="筛选 game / 阶段 / 胜负" />
-      <span>{{ sourceFilteredGames.length }} / {{ shownTotal }}</span>
+    <div v-if="noticeMessage" :class="['history-notice', noticeType]" role="status" aria-live="polite">
+      <span>{{ noticeMessage }}</span>
     </div>
     <div class="history-games-list">
       <div
@@ -190,30 +206,71 @@ function selectSource(source) {
           <span class="history-game-main">
             <span class="history-game-title">
               <b>{{ gameTitle(index) }}</b>
-              <small :class="[sourceKey(item) === 'normal' ? 'history-mode-tag' : 'history-source-tag', sourceKey(item) === 'normal' ? modeClass(item) : sourceKey(item)]">
-                {{ sourceLabel(item) }}
-              </small>
-            </span>
-            <span class="history-game-subline">
-              <span>{{ outcomeLabel(item) }}</span>
-              <small>{{ sourceDetail(item) }}</small>
+              <span class="history-game-support">
+                <small :class="[sourceKey(item) === 'normal' ? 'history-mode-tag' : 'history-source-tag', sourceKey(item) === 'normal' ? modeClass(item) : sourceKey(item)]">
+                  {{ sourceLabel(item) }}
+                </small>
+                <time>{{ gameDate(item) }}</time>
+              </span>
             </span>
           </span>
-          <div class="history-game-meta">
-            <small class="history-game-date">{{ gameDate(item) }}</small>
-            <small>种子 {{ gameSeed(item) }}</small>
-            <small>{{ gameMaxDays(item) }} 天</small>
-          </div>
         </button>
-        <button class="history-game-replay" title="事件回放" aria-label="事件回放" @click="emit('replay-game', item)">▶</button>
-      </div>
-      <div v-if="hasMore" class="history-list-more">
-        <span>已显示 {{ shownTotal }} / {{ backendTotal }}，还有 {{ remainingCount }} 条</span>
-        <button type="button" class="history-load-more" :disabled="loadingMore || loading" @click="emit('load-more')">
-          {{ loadingMore ? '加载中' : '加载更多' }}
-        </button>
+        <span class="history-game-actions">
+          <button
+            class="history-game-delete"
+            type="button"
+            :class="{ protected: isEvidenceGame(item) }"
+            :disabled="isEvidenceGame(item)"
+            :title="deleteTitle(item)"
+            :aria-label="deleteTitle(item)"
+            @click.stop="emit('delete-game', item)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 12H7L6 9Zm4 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
+            </svg>
+          </button>
+          <button class="history-game-replay" title="事件回放" aria-label="事件回放" @click="emit('replay-game', item)">复盘</button>
+        </span>
       </div>
     </div>
     <p v-if="!sourceFilteredGames.length && !loading" class="empty-log">暂无历史对局</p>
+    <footer class="history-pagination" aria-label="历史对局分页">
+      <div class="history-page-meta">
+        <span>{{ pageSummary }}</span>
+        <small>{{ pageIndexSummary }}</small>
+      </div>
+      <div class="history-page-controls">
+        <button
+          type="button"
+          class="history-page-step"
+          :disabled="loading || loadingMore || currentPage <= 1"
+          aria-label="上一页"
+          @click="changePage(currentPage - 1)"
+        >
+          ‹
+        </button>
+        <button
+          v-for="page in pageWindow"
+          :key="page"
+          type="button"
+          class="history-page-number"
+          :class="{ active: page === currentPage }"
+          :disabled="loading || loadingMore || page === currentPage"
+          :aria-current="page === currentPage ? 'page' : undefined"
+          @click="changePage(page)"
+        >
+          {{ page }}
+        </button>
+        <button
+          type="button"
+          class="history-page-step"
+          :disabled="loading || loadingMore || currentPage >= totalPages"
+          aria-label="下一页"
+          @click="changePage(currentPage + 1)"
+        >
+          ›
+        </button>
+      </div>
+    </footer>
   </aside>
 </template>

@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { createGameApi } from './gameApi.js'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.js'
+import { createNoticeAutoDismiss } from './noticeAutoDismiss.js'
 import { createResumableEventSource } from './resumableEventSource.js'
 import {
   EVOLUTION_ACTIVE_STATUSES,
@@ -22,6 +23,7 @@ const SAMPLE_BUCKET_LABELS = {
   baseline: '基线',
   candidate: '候选'
 }
+const ROLLBACK_BLOCKED_RELEASE_STAGES = new Set(['shadow', 'canary'])
 
 function createPagination(limit) {
   return {
@@ -82,6 +84,16 @@ function stageText(value) {
   return value || '未知'
 }
 
+function normalizeReleaseStage(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function rollbackDisabledReason(version, releaseStage) {
+  if (version?.is_baseline) return '当前基线'
+  if (ROLLBACK_BLOCKED_RELEASE_STAGES.has(releaseStage)) return `${stageText(releaseStage)}不可回滚`
+  return ''
+}
+
 function timeLabel(value) {
   return value ? String(value).replace('T', ' ').slice(0, 19) : '—'
 }
@@ -125,6 +137,7 @@ function isAfterTrainingStage(stage, status) {
   return [
     'consolidating',
     'applying',
+    'scenario_replay',
     'battling',
     'combined_battling',
     'reviewing',
@@ -379,6 +392,7 @@ function normalizeRun(run) {
     ((battle?.candidate_win_rate ?? 0) - (battle?.baseline_win_rate ?? 0))
   )
   const currentStage = run?.current_stage || run?.progress?.stage || run?.stage || run?.status
+  const publishedReleaseStage = run?.published_release_stage || run?.release_stage || ''
   const progress = entityType === 'batch'
     ? buildBatchProgress(run, childRuns)
     : buildRunProgress(run, trainingSamples, battleSamples, currentStage)
@@ -401,6 +415,10 @@ function normalizeRun(run) {
     winRateDeltaPct: Math.round((Number.isFinite(winRateDelta) ? winRateDelta : 0) * 100),
     publishedVersionId: run?.published_version_id || null,
     publishedShort: shortId(run?.published_version_id),
+    publishedReleaseStage,
+    publishedReleaseStageLabel: publishedReleaseStage ? stageText(publishedReleaseStage) : '—',
+    promotedVersionId: run?.promoted_version_id || null,
+    promotedShort: shortId(run?.promoted_version_id),
     statusLabel: statusText(run?.status || run?.stage),
     currentStage,
     currentStageLabel: stageText(currentStage),
@@ -435,8 +453,21 @@ function normalizeRun(run) {
 }
 
 function normalizeVersion(version) {
+  const releaseStage = normalizeReleaseStage(
+    version?.release_stage ||
+    version?.releaseStage ||
+    version?.provenance?.release_stage ||
+    version?.provenance?.releaseStage ||
+    ''
+  )
+  const disabledReason = rollbackDisabledReason(version, releaseStage)
   return {
     ...version,
+    releaseStage,
+    releaseStageLabel: releaseStage ? stageText(releaseStage) : '—',
+    rollbackDisabled: Boolean(disabledReason),
+    rollbackDisabledReason: disabledReason,
+    rollbackLabel: disabledReason || '回滚',
     short: shortId(version.version_id),
     createdLabel: version.created_at ? String(version.created_at).replace('T', ' ').slice(0, 19) : '—'
   }
@@ -493,9 +524,71 @@ function uniqueText(values) {
     })
 }
 
+function textItems(...values) {
+  const items = []
+  const visit = (value) => {
+    if (value == null || value === '') return
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (typeof value === 'object') {
+      Object.values(value).forEach(visit)
+      return
+    }
+    items.push(value)
+  }
+  values.forEach(visit)
+  return uniqueText(items)
+}
+
 function shortText(value, fallback = '—') {
   const text = String(value ?? '').trim()
   return text || fallback
+}
+
+function firstTextValue(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function structuredText(value, fallback = '') {
+  if (value == null || value === '') return fallback
+  if (Array.isArray(value)) {
+    return value.map((item) => structuredText(item)).filter(Boolean).join('; ') || fallback
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, item]) => {
+        const text = structuredText(item)
+        return text ? `${key}: ${text}` : ''
+      })
+      .filter(Boolean)
+      .join('; ') || fallback
+  }
+  return shortText(value, fallback)
+}
+
+function metricTargetRows(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item, index) => {
+        if (item && typeof item === 'object') {
+          const name = shortText(item.metric || item.name || item.key || item.id, `metric_${index + 1}`)
+          const target = item.target ?? item.value ?? item.expected ?? item.threshold ?? item.delta ?? item
+          return { name, value: structuredText(target, '—') }
+        }
+        return { name: `metric_${index + 1}`, value: structuredText(item, '—') }
+      })
+      .filter((item) => item.value && item.value !== '—')
+  }
+  const metrics = firstObject(value)
+  return Object.entries(metrics)
+    .map(([name, target]) => ({ name, value: structuredText(target, '—') }))
+    .filter((item) => item.value && item.value !== '—')
 }
 
 function gateDecisionText(value) {
@@ -508,6 +601,9 @@ function gateDecisionText(value) {
     rejected: '已拒绝',
     block: '阻断',
     blocked: '阻断',
+    shadow_candidate: '影子候选',
+    canary_candidate: '灰度候选',
+    baseline_promote: '基线晋升',
     pending: '待评审',
     allow: '允许'
   }[String(value || '').toLowerCase()] || shortText(value)
@@ -525,6 +621,43 @@ function proposalStatusText(value) {
     applied: '已应用',
     skipped: '已跳过'
   }[String(value || '').toLowerCase()] || shortText(value, '待处理')
+}
+
+function preflightStatusText(value) {
+  return {
+    pass: '通过',
+    passed: '通过',
+    ok: '通过',
+    allow: '通过',
+    allowed: '通过',
+    fail: '未通过',
+    failed: '未通过',
+    reject: '未通过',
+    rejected: '未通过',
+    block: '阻断',
+    blocked: '阻断',
+    review: '需复核',
+    review_required: '需复核',
+    warning: '需复核',
+    pending: '待预检',
+    skipped: '已跳过'
+  }[String(value || '').toLowerCase()] || shortText(value, '')
+}
+
+function attributionStatusText(value, reviewRequired = false) {
+  const status = String(value || '').toLowerCase()
+  if (reviewRequired) return '需复核'
+  return {
+    attributed: '已归因',
+    attribution_ready: '已归因',
+    attribution_inconclusive: '归因不足',
+    inconclusive: '归因不足',
+    skipped: '已跳过',
+    pending: '待归因',
+    review_required: '需复核',
+    failed: '失败',
+    error: '失败'
+  }[status] || shortText(value, '')
 }
 
 function normalizePairedSeed(row, index = 0) {
@@ -552,6 +685,39 @@ function normalizePairedSeed(row, index = 0) {
   }
 }
 
+function normalizeProposalAttributionReport(source = {}, gate = {}, run = {}) {
+  const report = firstObject(
+    source.proposal_attribution_report,
+    source.proposalAttributionReport,
+    source.proposal_attribution,
+    source.proposalAttribution,
+    gate.proposal_attribution_report,
+    gate.proposalAttributionReport,
+    gate.proposal_attribution,
+    gate.proposalAttribution,
+    run?.proposal_attribution_report,
+    run?.proposalAttributionReport,
+    run?.proposal_attribution,
+    run?.proposalAttribution,
+    run?.battle_result?.proposal_attribution_report,
+    run?.battle_result?.proposalAttributionReport,
+    run?.battle_result?.proposal_attribution,
+    run?.battle_result?.proposalAttribution
+  )
+  const rows = firstArray(report.rows, report.proposals, report.proposal_rows, report.proposalRows)
+  const status = shortText(report.status || report.verdict || report.decision, '')
+  const reviewRequired = Boolean(report.review_required || report.reviewRequired)
+  return {
+    ...report,
+    status,
+    statusLabel: attributionStatusText(status, reviewRequired),
+    reviewRequired,
+    rowCount: firstFinite(report.row_count, report.rowCount, rows.length) ?? rows.length,
+    budget: firstFinite(report.budget, report.max_ablation_runs, report.maxAblationRuns),
+    rows
+  }
+}
+
 function normalizeGateReport(source = {}, run = {}) {
   const gate = firstObject(
     source.gate_report,
@@ -565,9 +731,38 @@ function normalizeGateReport(source = {}, run = {}) {
     run?.combined_battle_result?.gate_report
   )
   const metrics = firstObject(gate.metrics, gate.metric_summary, source.metrics, source.metric_summary)
+  const proposalAttribution = normalizeProposalAttributionReport(source, gate, run)
+  const releaseGate = firstObject(
+    source.release_gate,
+    source.releaseGate,
+    gate.release_gate,
+    gate.releaseGate,
+    run?.release_gate,
+    run?.releaseGate,
+    run?.battle_result?.release_gate
+  )
+  const scenario = firstObject(
+    source.scenario_replay_summary,
+    source.scenarioReplaySummary,
+    gate.scenario_replay,
+    gate.scenarioReplay,
+    run?.scenario_replay_summary,
+    run?.scenarioReplaySummary,
+    run?.battle_result?.scenario_replay_summary
+  )
+  const trustCompleteness = firstObject(
+    source.trust_bundle?.completeness,
+    source.trustBundle?.completeness,
+    gate.trust_bundle_completeness,
+    gate.trustBundleCompleteness,
+    run?.trust_bundle?.completeness,
+    run?.trustBundle?.completeness
+  )
   const blockedReasons = uniqueText(firstArray(
     gate.blocked_reasons,
+    releaseGate.block_reasons,
     gate.reasons,
+    releaseGate.reasons,
     gate.fail_reasons,
     source.blocked_reasons,
     source.reasons
@@ -578,10 +773,14 @@ function normalizeGateReport(source = {}, run = {}) {
   ])
   const decision = shortText(
     gate.decision ||
+      gate.release_decision ||
+      releaseGate.decision ||
       gate.status ||
       source.decision ||
+      source.release_decision ||
       source.gate_decision ||
       run?.gate_decision ||
+      run?.release_decision ||
       run?.recommendation,
     ''
   )
@@ -589,6 +788,23 @@ function normalizeGateReport(source = {}, run = {}) {
     ...gate,
     decision,
     decisionLabel: gateDecisionText(decision),
+    releaseGate,
+    releaseDecision: shortText(gate.release_decision || source.release_decision || releaseGate.decision, ''),
+    releaseLabel: gateDecisionText(gate.release_decision || source.release_decision || releaseGate.decision),
+    scenario,
+    proposalAttribution,
+    scenarioCount: firstFinite(metrics.scenario_count, scenario.scenario_count, source.scenario_count),
+    scenarioPolicyViolationCount: firstFinite(
+      metrics.scenario_policy_violation_count,
+      scenario.policy_violation_count,
+      source.scenario_policy_violation_count
+    ),
+    trustCompleteness,
+    trustCompletenessScore: firstFinite(trustCompleteness.score, metrics.trust_bundle_completeness),
+    proposalAttributionStatus: proposalAttribution.status,
+    proposalAttributionLabel: proposalAttribution.statusLabel,
+    proposalAttributionRowCount: proposalAttribution.rowCount,
+    proposalAttributionReviewRequired: proposalAttribution.reviewRequired,
     blockedReasons,
     riskTags,
     metrics,
@@ -601,21 +817,50 @@ function normalizeGateReport(source = {}, run = {}) {
 
 function proposalRiskTags(proposal) {
   const risk = firstObject(proposal?.risk, proposal?.risk_summary, proposal?.overfit_risk)
-  return uniqueText([
-    ...firstArray(proposal?.risk_tags, proposal?.overfit_risk_tags),
-    ...firstArray(risk.tags, risk.risk_tags, risk.overfit_risk_tags)
-  ])
+  return textItems(
+    proposal?.risk_tags,
+    proposal?.riskTags,
+    proposal?.overfit_risk_tags,
+    proposal?.overfitRiskTags,
+    risk.tags,
+    risk.risk_tags,
+    risk.riskTags,
+    risk.overfit_risk_tags,
+    risk.overfitRiskTags
+  )
 }
 
 function normalizeProposal(proposal, index = 0) {
   const gate = firstObject(proposal?.gate, proposal?.gate_report, proposal?.promotion_gate)
   const risk = firstObject(proposal?.risk, proposal?.risk_summary, proposal?.overfit_risk)
+  const preflight = firstObject(proposal?.preflight, proposal?.preflight_result, proposal?.preflight_check)
+  const evidence = firstObject(proposal?.evidence, proposal?.evidence_summary)
+  const counterEvidence = firstObject(proposal?.counter_evidence, proposal?.counterEvidence)
+  const metricTargets = proposal?.metric_targets ||
+    proposal?.metricTargets ||
+    proposal?.metric_target ||
+    proposal?.target_metrics ||
+    proposal?.targets ||
+    proposal?.expected_effect?.metric_targets ||
+    proposal?.expectedEffect?.metricTargets
+  const preflightStatus = shortText(
+    proposal?.preflight_status ||
+      proposal?.preflightStatus ||
+      preflight.status ||
+      preflight.decision ||
+      preflight.result ||
+      (proposal?.preflight_passed === true ? 'passed' : '') ||
+      (proposal?.preflight_passed === false ? 'failed' : ''),
+    ''
+  )
   const apiId = String(proposal?.proposal_id || proposal?.id || '').trim()
   const status = shortText(proposal?.review_status || proposal?.status || proposal?.decision, 'pending')
   const targetFile = shortText(proposal?.target_file || proposal?.file || proposal?.path || proposal?.skill_file, '—')
+  const hypothesis = shortText(proposal?.hypothesis || proposal?.strategy_hypothesis || proposal?.claim, '')
   const title = shortText(
     proposal?.title ||
       proposal?.summary ||
+      hypothesis ||
       proposal?.name ||
       (targetFile !== '—' ? targetFile : ''),
     `提案 ${index + 1}`
@@ -629,8 +874,54 @@ function normalizeProposal(proposal, index = 0) {
     operation: shortText(proposal?.operation || proposal?.action || proposal?.change_type, '变更'),
     status,
     statusLabel: proposalStatusText(status),
-    summary: shortText(proposal?.summary || proposal?.description || proposal?.rationale || proposal?.reason),
-    rationale: shortText(proposal?.rationale || proposal?.evidence || proposal?.reason || proposal?.summary),
+    summary: shortText(proposal?.summary || proposal?.description || proposal?.rationale || proposal?.reason || hypothesis),
+    rationale: shortText(proposal?.rationale || proposal?.problem_observation || proposal?.evidence || proposal?.reason || proposal?.summary),
+    hypothesis,
+    triggerCondition: structuredText(
+      proposal?.trigger_condition ??
+        proposal?.triggerCondition ??
+        proposal?.trigger ??
+        proposal?.conditions ??
+        proposal?.applicability,
+      ''
+    ),
+    expectedEffect: structuredText(
+      proposal?.expected_effect ??
+        proposal?.expectedEffect ??
+        proposal?.expected_outcome ??
+        proposal?.expectedOutcome ??
+        proposal?.expected_improvement,
+      ''
+    ),
+    metricTargetRows: metricTargetRows(metricTargets),
+    evidenceGameIds: textItems(
+      proposal?.evidence_game_ids,
+      proposal?.evidenceGameIds,
+      proposal?.supporting_game_ids,
+      proposal?.supportingGameIds,
+      proposal?.training_game_ids,
+      evidence.game_ids,
+      evidence.gameIds
+    ),
+    counterEvidenceGameIds: textItems(
+      proposal?.counter_evidence_game_ids,
+      proposal?.counterEvidenceGameIds,
+      proposal?.counter_game_ids,
+      proposal?.counterGameIds,
+      counterEvidence.game_ids,
+      counterEvidence.gameIds
+    ),
+    preflightStatus,
+    preflightLabel: preflightStatusText(preflightStatus),
+    preflightReasons: textItems(
+      proposal?.preflight_reasons,
+      proposal?.preflightReasons,
+      proposal?.preflight_reason,
+      preflight.reasons,
+      preflight.reason,
+      preflight.blocked_reasons,
+      preflight.fail_reasons
+    ),
     riskTags: proposalRiskTags(proposal),
     riskLevel: shortText(proposal?.risk_level || risk.level || risk.risk_level || risk.severity, ''),
     riskScore: firstFinite(proposal?.risk_score, proposal?.overfit_risk_score, risk.score, risk.overfit_risk_score),
@@ -676,12 +967,33 @@ function pairedSeedSource(data, run) {
 
 function normalizeProposalReview(data = null, run = null, options = {}) {
   const source = Array.isArray(data) ? { proposals: data } : firstObject(data)
+  const reviewSummary = firstObject(source.proposal_review, source.proposalReview, run?.proposal_review, run?.proposalReview)
   const proposals = proposalSource(source, run).map(normalizeProposal)
   const pairedSeeds = pairedSeedSource(source, run).map(normalizePairedSeed)
   const gate = normalizeGateReport(source, run || {})
+  const proposalAttribution = firstObject(
+    gate.proposalAttribution,
+    normalizeProposalAttributionReport(source, gate, run || {})
+  )
+  const scenarioReplay = firstObject(
+    source.scenario_replay_summary,
+    source.scenarioReplaySummary,
+    source.scenario_replay_report?.summary,
+    source.scenarioReplayReport?.summary,
+    run?.scenario_replay_summary,
+    run?.scenarioReplaySummary,
+    run?.scenario_replay_report?.summary
+  )
+  const trustBundle = firstObject(source.trust_bundle, source.trustBundle, run?.trust_bundle, run?.trustBundle)
   const acceptedCount = proposals.filter((proposal) => ['accepted', 'accept', 'applied'].includes(String(proposal.status).toLowerCase())).length
   const rejectedCount = proposals.filter((proposal) => ['rejected', 'reject'].includes(String(proposal.status).toLowerCase())).length
   const pendingCount = Math.max(0, proposals.length - acceptedCount - rejectedCount)
+  const total = firstFinite(reviewSummary.total, reviewSummary.generated_count, proposals.length) ?? proposals.length
+  const accepted = firstFinite(reviewSummary.accepted_count, acceptedCount) ?? acceptedCount
+  const rejected = firstFinite(reviewSummary.rejected_count, rejectedCount) ?? rejectedCount
+  const pending = firstFinite(reviewSummary.pending_count, pendingCount) ?? pendingCount
+  const preflight = firstFinite(reviewSummary.preflight_passed_count, reviewSummary.counts?.preflight) ?? 0
+  const applied = firstFinite(reviewSummary.applied_count, reviewSummary.applied_proposal_ids?.length) ?? 0
   return {
     loading: false,
     error: options.error || '',
@@ -689,21 +1001,216 @@ function normalizeProposalReview(data = null, run = null, options = {}) {
     source: options.source || (data ? 'api' : 'run-detail'),
     proposals,
     gate,
+    proposalAttribution,
+    scenarioReplay,
+    trustBundle,
     pairedSeeds,
     summary: {
-      total: proposals.length,
-      accepted: acceptedCount,
-      rejected: rejectedCount,
-      pending: pendingCount,
+      total,
+      generated: firstFinite(reviewSummary.generated_count, total) ?? total,
+      preflight,
+      accepted,
+      rejected,
+      pending,
+      applied,
       riskTagCount: uniqueText(proposals.flatMap((proposal) => proposal.riskTags)).length,
-      pairedSeedCount: pairedSeeds.length
+      pairedSeedCount: pairedSeeds.length,
+      scenarioCount: firstFinite(scenarioReplay.scenario_count, gate.scenarioCount) ?? 0,
+      scenarioPolicyViolationCount: firstFinite(
+        scenarioReplay.policy_violation_count,
+        gate.scenarioPolicyViolationCount
+      ) ?? 0,
+      proposalAttributionStatus: proposalAttribution.status || '',
+      proposalAttributionLabel: proposalAttribution.statusLabel || '',
+      proposalAttributionRowCount: proposalAttribution.rowCount ?? 0,
+      proposalAttributionReviewRequired: Boolean(proposalAttribution.reviewRequired),
+      trustCompletenessScore: firstFinite(trustBundle.completeness?.score, gate.trustCompletenessScore)
     }
   }
+}
+
+function promotionTrustBundle(run = {}, review = {}) {
+  return firstObject(
+    review.trustBundle,
+    review.trust_bundle,
+    run?.trust_bundle,
+    run?.trustBundle,
+    run?.result?.trust_bundle,
+    run?.result?.trustBundle,
+    run?.battle_result?.trust_bundle,
+    run?.battleResult?.trustBundle
+  )
+}
+
+function promotionGateReport(run = {}, review = {}) {
+  return firstObject(
+    review.gate,
+    run?.gate_report,
+    run?.gateReport,
+    run?.promotion_gate,
+    run?.promotionGate,
+    run?.release_gate,
+    run?.releaseGate,
+    run?.result?.gate_report,
+    run?.result?.gateReport,
+    run?.result?.promotion_gate,
+    run?.result?.release_gate,
+    run?.battle_result?.gate_report,
+    run?.battle_result?.release_gate,
+    run?.battleResult?.gateReport,
+    run?.battleResult?.releaseGate
+  )
+}
+
+function promotionReleaseDecision(run = {}, review = {}) {
+  const gate = promotionGateReport(run, review)
+  const releaseGate = firstObject(gate.releaseGate, gate.release_gate, run?.release_gate, run?.releaseGate)
+  const trustBundle = promotionTrustBundle(run, review)
+  const trustReleaseGate = firstObject(trustBundle.release_gate, trustBundle.releaseGate)
+  return firstTextValue(
+    run?.release_decision,
+    run?.releaseDecision,
+    review?.gate?.releaseDecision,
+    review?.gate?.release_decision,
+    gate.releaseDecision,
+    gate.release_decision,
+    releaseGate.decision,
+    releaseGate.release_decision,
+    run?.battle_result?.release_decision,
+    run?.battle_result?.release_gate?.decision,
+    run?.result?.release_decision,
+    trustBundle.release_decision,
+    trustBundle.releaseDecision,
+    trustReleaseGate.decision
+  ).toLowerCase()
+}
+
+function promoteRequiresCompleteTrust(run = {}, review = {}) {
+  const releaseStage = normalizeReleaseStage(
+    run?.published_release_stage ||
+      run?.publishedReleaseStage ||
+      run?.release_stage ||
+      run?.releaseStage ||
+      run?.target_release_stage ||
+      run?.targetReleaseStage
+  )
+  const decision = promotionReleaseDecision(run, review)
+  return ['baseline', 'official'].includes(releaseStage) || ['baseline_promote', 'official_publish'].includes(decision)
+}
+
+function promotionTrustCompleteness(run = {}, review = {}, trustBundle = {}, gate = {}) {
+  return firstObject(
+    trustBundle.completeness,
+    trustBundle.trust_bundle_completeness,
+    trustBundle.trustBundleCompleteness,
+    review.trustBundle?.completeness,
+    review.gate?.trustCompleteness,
+    review.gate?.trust_bundle_completeness,
+    gate.trustCompleteness,
+    gate.trust_bundle_completeness,
+    run?.trust_bundle_completeness,
+    run?.trustBundleCompleteness,
+    run?.result?.trust_bundle_completeness,
+    run?.battle_result?.trust_bundle_completeness
+  )
+}
+
+function hasPromotionGateReference(run = {}, trustBundle = {}, gate = {}) {
+  const releaseGate = firstObject(gate.releaseGate, gate.release_gate, run?.release_gate, run?.releaseGate)
+  return Boolean(
+    trustBundle.gate_report_id ||
+      trustBundle.gateReportId ||
+      gate.gate_report_id ||
+      gate.gateReportId ||
+      releaseGate.decision ||
+      releaseGate.release_decision ||
+      gate.decision ||
+      gate.releaseDecision ||
+      gate.release_decision
+  )
+}
+
+function hasPromotionEvidenceReference(trustBundle = {}) {
+  return firstArray(trustBundle.training_game_ids, trustBundle.trainingGameIds).length > 0 &&
+    firstArray(trustBundle.proposal_ids, trustBundle.proposalIds).length > 0
+}
+
+function baselinePromoteTrustDisabledReason(run = {}, review = {}) {
+  if (!promoteRequiresCompleteTrust(run, review)) return ''
+  const trustBundle = promotionTrustBundle(run, review)
+  if (!Object.keys(trustBundle).length) return '缺少完整信任包，不能晋升为基线。'
+  const gate = promotionGateReport(run, review)
+  const completeness = promotionTrustCompleteness(run, review, trustBundle, gate)
+  const missing = uniqueText([
+    ...firstArray(completeness.missing, completeness.missing_items, completeness.missingItems),
+    ...(!Object.keys(completeness).length ? ['completeness'] : []),
+    ...(!trustBundle.trust_bundle_id && !trustBundle.trustBundleId ? ['trust_bundle_id'] : []),
+    ...(!trustBundle.bundle_hash && !trustBundle.bundleHash ? ['bundle_hash'] : []),
+    ...(!hasPromotionGateReference(run, trustBundle, gate) ? ['gate_report'] : []),
+    ...(!hasPromotionEvidenceReference(trustBundle) ? ['evidence'] : [])
+  ])
+  if (completeness.complete !== true || missing.length) {
+    const suffix = missing.length ? `缺失：${missing.slice(0, 4).join('、')}。` : '完整性未通过。'
+    return `信任包不完整，不能晋升为基线。${suffix}`
+  }
+  return ''
 }
 
 function isMissingProposalEndpoint(error) {
   const message = String(error?.message || '').toLowerCase()
   return message.includes('404') || message.includes('not found') || message.includes('unexpected')
+}
+
+function errorText(error) {
+  return String(error?.message || error || '').trim()
+}
+
+function evolutionNoticeFromError(error, fallback = '操作失败', context = '') {
+  const raw = errorText(error)
+  const message = raw.toLowerCase()
+  const code = String(error?.code || error?.payload?.error?.code || '').toLowerCase()
+  const notFound = message.includes('not found') || message.includes('404')
+  if (message.includes('batch does not support')) {
+    return { type: 'warning', message: '批量任务不支持该操作，请选择子运行。', reason: 'batchUnsupported' }
+  }
+  if (message.includes('no accepted proposals to apply')) {
+    return { type: 'warning', message: '没有已接受提案可应用。', reason: 'noAcceptedProposals' }
+  }
+  if (message.includes('accepted or applied proposal') || message.includes('proposal review required')) {
+    return { type: 'warning', message: '至少接受或应用一个提案后才能晋升。', reason: 'proposalReviewRequired' }
+  }
+  if (code === 'evolution_trust_bundle_required' || (context === 'run' && message.includes('trust bundle required'))) {
+    return { type: 'warning', message: '缺少完整信任包，不能晋升为基线。', reason: 'trustBundleRequired' }
+  }
+  if (
+    code === 'evolution_trust_bundle_incomplete' ||
+    (context === 'run' && (message.includes('complete trust bundle') || message.includes('trust bundle/gate/evidence')))
+  ) {
+    return { type: 'warning', message: '信任包不完整，不能晋升为基线。', reason: 'trustBundleIncomplete' }
+  }
+  if (message.includes('proposal not found') || (context === 'proposal' && notFound)) {
+    return { type: 'warning', message: '提案不存在，请刷新审核面板。', reason: 'proposalNotFound' }
+  }
+  if (message.includes('version not found') || (context === 'version' && notFound)) {
+    return { type: 'warning', message: '版本不存在，请刷新版本列表。', reason: 'versionNotFound' }
+  }
+  if (message.includes('run not found') || message.includes('evolution run not found') || (context === 'run' && notFound)) {
+    return { type: 'warning', message: '运行不存在，请刷新列表。', reason: 'runNotFound' }
+  }
+  return { type: 'error', message: raw || fallback, reason: 'error' }
+}
+
+function runActionSuccessMessage(action) {
+  if (action === 'promote') return '运行已晋升。'
+  if (action === 'reject') return '运行已拒绝。'
+  if (action === 'terminate') return '运行已终止。'
+  return '运行操作已完成。'
+}
+
+function proposalActionSuccessMessage(action) {
+  if (action === 'accept') return '提案已接受。'
+  if (action === 'reject') return '提案已拒绝。'
+  return '提案操作已完成。'
 }
 
 function useEvolutionWorkbench(options = {}) {
@@ -714,6 +1221,13 @@ function useEvolutionWorkbench(options = {}) {
   const loading = ref(false)
   const actionLoading = ref('')
   const error = ref('')
+  const notice = ref({ type: '', message: '' })
+  const noticeAutoDismiss = createNoticeAutoDismiss(notice, {
+    enabled: options.installLifecycle !== false,
+    onDismiss(dismissed) {
+      if (dismissed.type !== 'error' && error.value === dismissed.message) error.value = ''
+    }
+  })
   const roles = ref([])
   const versionsByRole = ref({})
   const leaderboardsByRole = ref({})
@@ -911,9 +1425,43 @@ function useEvolutionWorkbench(options = {}) {
     return ''
   })
   const selectedProposalRows = computed(() => selectedProposalReview.value.proposals || [])
+  const selectedPromoteDisabledReason = computed(() => {
+    if (!selectedRun.value) return '请选择一个运行。'
+    if (selectedIsBatch.value) return '批量任务不能直接晋升，请选择子运行。'
+    if (!selectedIsRun.value) return '请选择单角色运行。'
+    if (selectedRun.value.status !== 'reviewing') return '只有待评审运行可以晋升。'
+    const review = selectedProposalReview.value || {}
+    if (review.loading) return '提案审核状态读取中。'
+    if (review.unsupported) return review.error || '提案审核不可用，无法晋升。'
+    if (review.error) return '提案审核读取失败，请刷新后重试。'
+    const summary = review.summary || {}
+    const accepted = Number(summary.accepted || summary.accepted_count || 0)
+    const applied = Number(summary.applied || summary.applied_count || 0)
+    if ((Number.isFinite(accepted) ? accepted : 0) + (Number.isFinite(applied) ? applied : 0) <= 0) {
+      return '至少接受或应用一个提案后才能晋升。'
+    }
+    const trustReason = baselinePromoteTrustDisabledReason(selectedRun.value, review)
+    if (trustReason) return trustReason
+    return ''
+  })
+  const selectedCanPromote = computed(() => !selectedPromoteDisabledReason.value)
 
   function setError(message) {
     error.value = message || ''
+  }
+
+  function setNotice(type, message) {
+    notice.value = { type, message }
+  }
+
+  function clearNotice() {
+    notice.value = { type: '', message: '' }
+  }
+
+  function setNoticeFromError(err, fallback, context = '') {
+    const next = evolutionNoticeFromError(err, fallback, context)
+    setNotice(next.type, next.message)
+    return next
   }
 
   function clearVersionDetail() {
@@ -964,6 +1512,25 @@ function useEvolutionWorkbench(options = {}) {
 
   async function loadRoles() {
     const token = roleRequests.next()
+    try {
+      const overview = await apiFetch('/roles/overview')
+      if (!token.isLatest()) return false
+      roles.value = overview.roles || []
+      if (!selectedRole.value && roles.value.length) selectedRole.value = roles.value[0]
+      if (!selectedBatchRoles.value.length) selectedBatchRoles.value = roles.value.slice()
+      const overviewVersions = overview.versions || {}
+      const overviewLeaderboards = overview.leaderboards || {}
+      versionsByRole.value = Object.fromEntries(
+        roles.value.map((role) => [role, (overviewVersions[role] || []).map(normalizeVersion)])
+      )
+      leaderboardsByRole.value = Object.fromEntries(
+        roles.value.map((role) => [role, (overviewLeaderboards[role]?.entries || []).map(normalizeLeaderboardEntry)])
+      )
+      return token.isLatest()
+    } catch {
+      // Keep compatibility with frontend mock data and older backend instances.
+    }
+
     const data = await apiFetch('/roles')
     if (!token.isLatest()) return false
     roles.value = data.roles || []
@@ -1055,6 +1622,7 @@ function useEvolutionWorkbench(options = {}) {
     if (runLoadingMore.value || !runPagination.value.has_more) return
     const token = runListRequests.next()
     runLoadingMore.value = true
+    clearNotice()
     try {
       const offset = runPagination.value.offset + runPagination.value.returned
       const { pageRuns, pageBatches, pagination } = await fetchRunPage(offset)
@@ -1066,8 +1634,12 @@ function useEvolutionWorkbench(options = {}) {
         const current = runRows.value.find((item) => item.id === selectedRunId.value)
         if (current && (!selectedRun.value || selectedRun.value.id !== current.id)) selectedRun.value = current
       }
+      setNotice('success', pageRuns.length + pageBatches.length ? '已加载更多运行记录。' : '没有更多运行记录。')
     } catch (err) {
-      if (token.isLatest()) setError(err?.message || '运行记录读取失败')
+      if (token.isLatest()) {
+        const next = setNoticeFromError(err, '运行记录读取失败', 'run')
+        setError(next.message)
+      }
     } finally {
       if (token.isLatest()) runLoadingMore.value = false
     }
@@ -1285,6 +1857,7 @@ function useEvolutionWorkbench(options = {}) {
     if (!runId || selectedIsBatch.value || sampleGameLoadingMoreBucket.value || !pagination.has_more) return
     const token = sampleListRequests.next()
     sampleGameLoadingMoreBucket.value = bucket
+    clearNotice()
     try {
       const offset = pagination.offset + pagination.returned
       const { rows, pagination: nextPagination } = await fetchSampleGamePage(runId, bucket, offset)
@@ -1305,9 +1878,11 @@ function useEvolutionWorkbench(options = {}) {
           [bucket]: ''
         }
       }
+      setNotice('success', `已加载更多${SAMPLE_BUCKET_LABELS[bucket] || bucket}样本局。`)
     } catch (err) {
       if (token.isLatest()) {
-        const message = err?.message || `${SAMPLE_BUCKET_LABELS[bucket] || bucket}样本局读取失败`
+        const next = setNoticeFromError(err, `${SAMPLE_BUCKET_LABELS[bucket] || bucket}样本局读取失败`, 'run')
+        const message = next.message
         selectedSampleState.value = {
           ...selectedSampleState.value,
           error: message,
@@ -1508,14 +2083,18 @@ function useEvolutionWorkbench(options = {}) {
 
   async function startSingle() {
     if (!selectedRole.value) {
-      setError('请选择一个有基线版本的角色')
+      const message = '请选择一个有基线版本的角色'
+      setError(message)
+      setNotice('warning', message)
       return
     }
     const token = actionRequests.next()
     actionLoading.value = 'start-single'
     setError('')
+    clearNotice()
+    let created = null
     try {
-      const created = await apiFetch('/evolution-runs', {
+      created = await apiFetch('/evolution-runs', {
         method: 'POST',
         body: JSON.stringify({
           roles: [selectedRole.value],
@@ -1530,8 +2109,19 @@ function useEvolutionWorkbench(options = {}) {
       await loadRuns()
       if (!token.isLatest()) return
       await selectRun(created.run_id || created.batch_id)
+      if (!token.isLatest()) return
+      setNotice('success', '单角色进化已启动。')
     } catch (err) {
-      if (token.isLatest()) setError(err?.message || '启动单角色进化失败')
+      if (token.isLatest()) {
+        if (created?.run_id || created?.batch_id) {
+          const message = '单角色进化已启动，但列表刷新失败，请手动刷新。'
+          setError(message)
+          setNotice('warning', message)
+        } else {
+          const next = setNoticeFromError(err, '启动单角色进化失败', 'run')
+          setError(next.message)
+        }
+      }
     } finally {
       if (token.isLatest()) actionLoading.value = ''
     }
@@ -1539,14 +2129,18 @@ function useEvolutionWorkbench(options = {}) {
 
   async function startBatch() {
     if (!selectedBatchRoles.value.length) {
-      setError('请选择至少一个角色')
+      const message = '请选择至少一个角色'
+      setError(message)
+      setNotice('warning', message)
       return
     }
     const token = actionRequests.next()
     actionLoading.value = 'start-batch'
     setError('')
+    clearNotice()
+    let created = null
     try {
-      const created = await apiFetch('/evolution-runs', {
+      created = await apiFetch('/evolution-runs', {
         method: 'POST',
         body: JSON.stringify({
           roles: [...selectedBatchRoles.value],
@@ -1561,8 +2155,19 @@ function useEvolutionWorkbench(options = {}) {
       await loadRuns()
       if (!token.isLatest()) return
       await selectRun(created.batch_id || created.run_id)
+      if (!token.isLatest()) return
+      setNotice('success', '批量进化已启动。')
     } catch (err) {
-      if (token.isLatest()) setError(err?.message || '启动批量进化失败')
+      if (token.isLatest()) {
+        if (created?.run_id || created?.batch_id) {
+          const message = '批量进化已启动，但列表刷新失败，请手动刷新。'
+          setError(message)
+          setNotice('warning', message)
+        } else {
+          const next = setNoticeFromError(err, '启动批量进化失败', 'run')
+          setError(next.message)
+        }
+      }
     } finally {
       if (token.isLatest()) actionLoading.value = ''
     }
@@ -1573,6 +2178,7 @@ function useEvolutionWorkbench(options = {}) {
     const token = actionRequests.next()
     actionLoading.value = `${action}:${id}`
     setError('')
+    clearNotice()
     try {
       const result = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/actions`, {
         method: 'POST',
@@ -1584,8 +2190,13 @@ function useEvolutionWorkbench(options = {}) {
       await selectRun(result.run_id || result.batch_id || id)
       if (!token.isLatest()) return
       await loadRoles()
+      if (!token.isLatest()) return
+      setNotice('success', runActionSuccessMessage(action))
     } catch (err) {
-      if (token.isLatest()) setError(err?.message || '操作失败')
+      if (token.isLatest()) {
+        const next = setNoticeFromError(err, '操作失败', 'run')
+        setError(next.message)
+      }
     } finally {
       if (token.isLatest()) actionLoading.value = ''
     }
@@ -1596,6 +2207,7 @@ function useEvolutionWorkbench(options = {}) {
     const token = actionRequests.next()
     actionLoading.value = `proposal-${action}:${proposalId}`
     setError('')
+    clearNotice()
     try {
       const result = await apiFetch(
         `/evolution-runs/${encodeURIComponent(id)}/proposals/${encodeURIComponent(proposalId)}/${encodeURIComponent(action)}`,
@@ -1609,8 +2221,13 @@ function useEvolutionWorkbench(options = {}) {
         selectedRun.value = normalizeRun(result.run || { ...(selectedRun.value || {}), ...(result || {}), run_id: id })
       }
       await loadProposalReview(id)
+      if (!token.isLatest()) return
+      setNotice('success', proposalActionSuccessMessage(action))
     } catch (err) {
-      if (token.isLatest()) setError(err?.message || '提案操作失败')
+      if (token.isLatest()) {
+        const next = setNoticeFromError(err, '提案操作失败', 'proposal')
+        setError(next.message)
+      }
     } finally {
       if (token.isLatest()) actionLoading.value = ''
     }
@@ -1633,6 +2250,7 @@ function useEvolutionWorkbench(options = {}) {
     const token = actionRequests.next()
     actionLoading.value = `proposal-apply:${id}`
     setError('')
+    clearNotice()
     try {
       const result = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/proposals/apply-accepted`, {
         method: 'POST'
@@ -1642,8 +2260,13 @@ function useEvolutionWorkbench(options = {}) {
         selectedRun.value = normalizeRun(result.run || { ...(selectedRun.value || {}), ...(result || {}), run_id: id })
       }
       await Promise.all([loadProposalReview(id), loadDiff(id)])
+      if (!token.isLatest()) return
+      setNotice('success', '已应用接受提案。')
     } catch (err) {
-      if (token.isLatest()) setError(err?.message || '应用已接受提案失败')
+      if (token.isLatest()) {
+        const next = setNoticeFromError(err, '应用已接受提案失败', 'proposal')
+        setError(next.message)
+      }
     } finally {
       if (token.isLatest()) actionLoading.value = ''
     }
@@ -1654,14 +2277,20 @@ function useEvolutionWorkbench(options = {}) {
     const token = actionRequests.next()
     actionLoading.value = `rollback:${role}:${versionId}`
     setError('')
+    clearNotice()
     try {
       await apiFetch(`/roles/${encodeURIComponent(role)}/rollback/${encodeURIComponent(versionId)}`, {
         method: 'POST'
       })
       if (!token.isLatest()) return
       await Promise.all([loadVersions(role), loadLeaderboard(role), loadRuns()])
+      if (!token.isLatest()) return
+      setNotice('success', '基线版本已回滚。')
     } catch (err) {
-      if (token.isLatest()) setError(err?.message || '回滚基线失败')
+      if (token.isLatest()) {
+        const next = setNoticeFromError(err, '回滚基线失败', 'version')
+        setError(next.message)
+      }
     } finally {
       if (token.isLatest()) actionLoading.value = ''
     }
@@ -1670,6 +2299,7 @@ function useEvolutionWorkbench(options = {}) {
   if (options.installLifecycle !== false) {
     onBeforeUnmount(() => {
       closeEventStream()
+      noticeAutoDismiss.dispose()
     })
   }
 
@@ -1677,6 +2307,7 @@ function useEvolutionWorkbench(options = {}) {
     loading,
     actionLoading,
     error,
+    notice,
     roles,
     roleRows,
     versionsByRole,
@@ -1707,6 +2338,8 @@ function useEvolutionWorkbench(options = {}) {
     selectedDiffData,
     selectedProposalReview,
     selectedProposalRows,
+    selectedCanPromote,
+    selectedPromoteDisabledReason,
     selectedGames,
     sampleBuckets,
     selectedGameBucket,

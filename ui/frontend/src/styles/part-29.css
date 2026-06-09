@@ -798,6 +798,7 @@
 
 .chat-log-top span,
 .chat-log-heading span {
+  margin-left:9px;
   color: #f2ca50;
   font-size: 13px;
   font-weight: 950;
@@ -2225,6 +2226,65 @@
   filter: grayscale(0.8);
 }
 
+/* Player action panel: show targets as a stable grid instead of a clipped carousel. */
+.player-command-panel.has-panel-action,
+.player-command-panel.has-panel-action:not(.has-action-instruction) {
+  height: auto;
+  min-height: 166px;
+}
+
+.player-command-panel .player-action-box {
+  grid-template-columns: minmax(0, 1fr) 64px;
+  gap: 8px;
+  min-height: 94px;
+  height: auto;
+  padding: 10px 12px;
+  border-radius: 5px;
+}
+
+.player-command-panel .target-action-row {
+  grid-template-rows: 20px minmax(38px, auto);
+  gap: 7px;
+  overflow: visible;
+}
+
+.player-command-panel .target-action-head {
+  height: 20px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.player-command-panel .target-choice-strip {
+  display: grid;
+  grid-auto-flow: row;
+  grid-template-columns: repeat(auto-fit, minmax(62px, 1fr));
+  gap: 7px;
+  overflow: visible;
+  padding: 0;
+  scrollbar-width: none;
+}
+
+.player-command-panel .target-choice-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.player-command-panel .target-choice {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 38px;
+  min-height: 38px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.player-command-panel .player-action-box .primary {
+  width: 64px;
+  min-height: 44px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
 .role-grid article.targeted {
   background: rgba(255, 226, 157, 0.34);
   box-shadow: inset 0 0 0 1px rgba(91, 47, 18, 0.4), 0 0 12px rgba(242, 202, 80, 0.22);
@@ -2348,6 +2408,7 @@
 .role-grid-seat b {
   display: block;
   color: #2d1408;
+  font-family: "Microsoft YaHei", Arial, sans-serif;
   font-size: 15px;
   font-weight: 950;
   line-height: 1;
@@ -2357,12 +2418,98 @@
 
 .sheriff-badge-sm {
   position: absolute;
-  top: 1px;
-  left: 18px;
+  top: 50%;
+  left: 1px;
   z-index: 2;
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
   pointer-events: none;
+}
+
+.role-grid .role-icon-wrap {
+  transform: translateX(4px);
+}
+
+.role-grid article.speaking {
+  animation: none;
+  filter: none;
+}
+
+.role-grid article.linked,
+.role-grid article.targeted,
+.role-grid article.speaking {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+  filter: none;
+}
+
+.role-grid article.dead {
+  opacity: 1;
+  filter: none;
+}
+
+.role-grid article.dead .role-icon-wrap > img {
+  opacity: 1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3));
+}
+
+.role-grid article.dead::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  left: 3px;
+  top: 50%;
+  z-index: 5;
+  height: 3px;
+  border-radius: 2px;
+  background: #c0392b;
+  box-shadow: 0 0 5px rgba(192, 57, 43, 0.62);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.role-grid .role-icon-wrap.dead::after {
+  display: none;
+}
+
+/* Keep the record panel quiet: one separator per event, no nested cards. */
+.chat-log-heading small,
+.chat-log-seat {
+  display: none;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-line,
+.chat-log-panel.expanded .chat-log-line,
+.night .chat-log-line,
+.chat-log-line,
+.night .chat-log-line.speaking,
+.chat-log-line.speaking,
+.night .chat-log-line.linked,
+.chat-log-line.linked,
+.chat-log-line.latest {
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 7px;
+  border: 0;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.18);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+}
+
+.chat-log-meta em,
+.chat-log-line.kind-vote .chat-log-meta em,
+.chat-log-line.kind-action .chat-log-meta em,
+.chat-log-line.kind-speech .chat-log-meta em,
+.night .chat-log-meta em {
+  padding: 0;
+  border: 0;
+  color: rgba(75, 37, 13, 0.68);
+  background: transparent;
+  box-shadow: none;
 }
 
 /* Keep the top HUD blocks separated at common desktop widths. */
@@ -2404,5 +2551,487 @@
     left: 10px;
     width: min(380px, calc(100vw - 20px));
     max-height: calc(100vh - 344px);
+  }
+}
+
+/* Final control strip layout: status left, judge centered, controls right. */
+.match-control-strip {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(280px, 1.4fr) 88px;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 8px 18px;
+}
+
+.strip-status {
+  display: grid;
+  grid-template-columns: auto 28px minmax(5.5em, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.strip-status strong,
+.night .strip-status strong {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.strip-status .phase-icon,
+.night .strip-status .phase-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  background: transparent;
+  box-shadow: none;
+}
+
+.strip-status .phase-icon svg {
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.8;
+}
+
+.strip-status .phase-icon.is-day {
+  color: #c86b2a;
+}
+
+.strip-status .phase-icon.is-night {
+  color: #426ca8;
+}
+
+.strip-status .phase-icon .moon-cutout {
+  fill: #eacb8e;
+  stroke: none;
+}
+
+.strip-judge-log {
+  justify-self: center;
+  display: inline-grid;
+  grid-template-columns: 38px auto;
+  width: max-content;
+  max-width: min(100%, 430px);
+  height: 56px;
+  padding: 0;
+  border: 0;
+  gap: 7px;
+  transform: translateX(24px);
+}
+
+.strip-judge-copy,
+.strip-judge-scroll,
+.strip-judge-copy p {
+  text-align: center;
+}
+
+.strip-judge-copy {
+  width: auto;
+}
+
+.strip-controls {
+  justify-self: end;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Speech paper content starts at the top instead of reserving a blank band. */
+.scene-player-callout.speaking .scene-speech-paper,
+.scene-bubble-layer.instant-speech .scene-player-callout.speaking .scene-speech-paper {
+  max-height: 206px;
+  padding-top: 6px;
+  padding-bottom: calc(10px + var(--tail-h));
+}
+
+.scene-speech-scroll {
+  max-height: 166px;
+}
+
+/* Compact record panel mirrors the identity board and shows only two recent entries. */
+.chat-log-panel:not(.expanded) {
+  top: 86px;
+  width: 370px;
+  height: 146px;
+  max-height: 146px;
+  padding: 10px 14px 11px;
+  grid-template-rows: 28px minmax(0, 1fr);
+}
+
+.chat-log-panel:not(.expanded) .chat-log-scroll {
+  overflow-y: hidden;
+  padding: 2px 0 0;
+  scrollbar-gutter: auto;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-line {
+  min-height: 48px;
+  margin: 0;
+  padding: 4px 5px;
+}
+
+.chat-log-phase-select,
+.night .chat-log-phase-select,
+.chat-log-toggle,
+.night .chat-log-toggle {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-log-phase-select:hover,
+.chat-log-phase-select:focus-visible,
+.chat-log-toggle:hover,
+.night .chat-log-toggle:hover {
+  border-color: transparent;
+  outline: none;
+  background: rgba(93, 48, 17, 0.09);
+  box-shadow: none;
+}
+
+.chat-log-avatar.judge {
+  width: 19px;
+  height: 19px;
+  margin: 2px auto 0;
+}
+
+/* Speech bubbles are a five-line live window: complete rows in, complete rows out. */
+.scene-speech-paper p,
+.scene-player-callout.night-speaking .scene-speech-paper p {
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.scene-player-callout.speaking .scene-speech-paper,
+.scene-bubble-layer.instant-speech .scene-player-callout.speaking .scene-speech-paper {
+  height: auto;
+  min-height: 64px;
+  max-height: 160px;
+  padding-top: 6px;
+  padding-bottom: calc(10px + var(--tail-h));
+}
+
+.scene-speech-scroll {
+  height: 24px;
+  min-height: 24px;
+  max-height: 120px;
+  overflow: hidden;
+  padding-right: 0;
+}
+
+/* Compact records size themselves to their actual one- or two-line content. */
+.chat-log-panel:not(.expanded) {
+  height: auto;
+  max-height: none;
+  grid-template-rows: 28px auto;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-line {
+  min-height: 0;
+  height: auto;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-body,
+.chat-log-panel:not(.expanded) .chat-log-scroll {
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Stable compact HUD: judge copy hugs the avatar and records always reserve two rows. */
+.strip-judge-log {
+  justify-self: start;
+  grid-template-columns: 38px minmax(0, 1fr);
+  width: min(100%, 430px);
+  gap: 4px;
+  transform: none;
+}
+
+.strip-judge-copy,
+.strip-judge-scroll,
+.strip-judge-copy p {
+  text-align: left;
+}
+
+.strip-judge-copy {
+  min-width: 0;
+}
+
+.chat-log-panel:not(.expanded) {
+  height: 146px;
+  max-height: 146px;
+  grid-template-rows: 28px minmax(0, 1fr);
+}
+
+.chat-log-panel:not(.expanded) .chat-log-body,
+.chat-log-panel:not(.expanded) .chat-log-scroll {
+  height: 100%;
+  min-height: 0;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-scroll {
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-line {
+  min-height: 56px;
+  height: 56px;
+}
+
+/* Parchment phase picker. */
+.chat-log-actions {
+  grid-template-columns: minmax(124px, 148px) 28px;
+  gap: 7px;
+}
+
+.chat-log-actions > .chat-log-phase-filter {
+  display: none;
+}
+
+.chat-log-phase-picker {
+  position: relative;
+  z-index: 42;
+  min-width: 0;
+  height: 30px;
+}
+
+.chat-log-phase-button {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px 0 11px;
+  border: 0;
+  border-radius: 0;
+  color: #4b250d;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-log-phase-button span {
+  font-size: 11px;
+}
+
+.chat-log-phase-button:hover {
+  background: rgba(93, 48, 17, 0.06);
+}
+
+.chat-log-phase-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 60;
+  width: 188px;
+  max-height: 240px;
+  padding: 6px;
+  border: 0;
+  border-radius: 0;
+  opacity: 1;
+  background-color: #edce89;
+  background-image: none;
+  box-shadow: 0 12px 22px rgba(0, 0, 0, 0.34);
+  isolation: isolate;
+}
+
+.chat-log-phase-option {
+  min-height: 31px;
+  padding: 0 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(91, 47, 18, 0.16);
+  border-radius: 0;
+  background: #edce89;
+  font-size: 11px;
+}
+
+.chat-log-phase-option:last-child {
+  border-bottom: 0;
+}
+
+.chat-log-phase-option:hover,
+.chat-log-phase-option.active {
+  border-color: rgba(91, 47, 18, 0.16);
+  background: #f4dda5;
+  box-shadow: inset 3px 0 0 rgba(91, 47, 18, 0.58);
+}
+
+.chat-log-top,
+.chat-log-actions {
+  z-index: 40;
+  overflow: visible;
+}
+
+.chat-log-body {
+  z-index: 2;
+}
+
+/* Vote tally uses the daytime parchment speech-bubble language. */
+.scene-vote-badge {
+  min-width: 104px;
+  max-width: 210px;
+  padding: 9px 12px 15px;
+  border: 0;
+  border-radius: 0;
+  color: #321807;
+  background:
+    radial-gradient(circle at 38% 28%, rgba(255, 245, 205, 0.62), transparent 50%),
+    linear-gradient(180deg, #f3dca7, #e1b66e 72%, #c98e46);
+  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 14px), calc(50% + 7px) calc(100% - 14px), 50% 100%, calc(50% - 7px) calc(100% - 14px), 0 calc(100% - 14px), 0 8px);
+  filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.36));
+  box-shadow: inset 0 0 0 2px rgba(90, 43, 13, 0.72);
+}
+
+.scene-vote-badge b {
+  font-size: 15px;
+}
+
+.scene-vote-badge span {
+  color: #4b250d;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+/* Final compact HUD contract: stable rails, stable scrollbar, left-aligned judge copy. */
+.strip-judge-log {
+  justify-self: center;
+  grid-template-columns: 38px auto;
+  width: max-content;
+  max-width: min(100%, 430px);
+  gap: 5px;
+  transform: translateX(-50px);
+}
+
+.strip-judge-avatar {
+  margin-left: 0;
+}
+
+.strip-judge-scroll,
+.strip-judge-copy p {
+  text-align: left;
+}
+
+.strip-judge-copy {
+  width: auto;
+  min-width: 0;
+  margin-left: 0;
+}
+
+.chat-log-panel:not(.expanded) {
+  height: 174px;
+  max-height: 174px;
+  grid-template-rows: 28px minmax(0, 1fr);
+}
+
+.chat-log-panel:not(.expanded) .chat-log-body,
+.chat-log-panel:not(.expanded) .chat-log-scroll {
+  height: 100%;
+  min-height: 0;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-scroll {
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-line {
+  min-height: 56px;
+  height: 56px;
+}
+
+.role-grid-panel {
+  display: grid;
+  align-items: center;
+}
+
+.role-grid {
+  grid-template-rows: repeat(3, 34px);
+  align-content: space-between;
+  row-gap: 0;
+  height: 136px;
+  max-height: 136px;
+  align-self: center;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-meta {
+  justify-content: flex-start;
+  gap: 3px;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-meta b {
+  flex: 0 1 auto;
+}
+
+.chat-log-panel:not(.expanded) .chat-log-meta em,
+.chat-log-meta em,
+.chat-log-line.kind-vote .chat-log-meta em,
+.chat-log-line.kind-action .chat-log-meta em,
+.chat-log-line.kind-speech .chat-log-meta em,
+.night .chat-log-meta em {
+  max-width: none;
+  margin-left: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0 !important;
+  border-radius: 0;
+  color: rgba(75, 37, 13, 0.68);
+  background: transparent !important;
+  box-shadow: none !important;
+  text-overflow: clip;
+  text-shadow: none;
+  white-space: nowrap;
+}
+
+.scene-player-callout.speaking .scene-speech-paper,
+.scene-bubble-layer.instant-speech .scene-player-callout.speaking .scene-speech-paper {
+  min-height: 58px;
+  padding-top: 8px;
+  padding-bottom: calc(5px + var(--tail-h));
+}
+
+.mode-loading-dots {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 4px;
+  height: 0.8em;
+  margin-left: 5px;
+  vertical-align: baseline;
+}
+
+.mode-loading-dots b {
+  display: inline-block;
+  flex: 0 0 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: modeLoadingDot 1.05s ease-in-out infinite;
+}
+
+.mode-loading-dots b:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.mode-loading-dots b:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes modeLoadingDot {
+  0%, 60%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
   }
 }

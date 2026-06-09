@@ -16,6 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import DEFAULT_PATHS, PathConfig
 from ui.backend.constants import ROLE_ORDER
@@ -46,6 +47,10 @@ def create_app(
     async def _lifespan(_api: FastAPI) -> AsyncIterator[None]:
         store.refresh_startup_checks()
         try:
+            store.prewarm_game_history_index()
+        except Exception:  # noqa: BLE001 - history can still be built lazily on demand.
+            _log.warning("Failed to prewarm game history index", exc_info=True)
+        try:
             yield
         finally:
             store.close()
@@ -53,6 +58,7 @@ def create_app(
     api = FastAPI(title="521wolf UI Backend", lifespan=_lifespan)
     api.state.backend_store = store
     _register_error_handlers(api)
+    api.add_middleware(GZipMiddleware, minimum_size=1024)
     api.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -83,14 +89,16 @@ def _register_error_handlers(api: FastAPI) -> None:
     async def http_exception_handler(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
         fallback = _status_message(exc.status_code)
         detail = exc.detail if exc.detail is not None else fallback
+        response_detail = _response_detail(detail)
         message = _detail_message(detail, fallback=fallback)
+        diagnostics = _detail_diagnostics(detail)
         return JSONResponse(
             status_code=exc.status_code,
             content=_error_response(
-                detail=detail,
-                code=_http_error_code(exc.status_code),
+                detail=response_detail,
+                code=_detail_code(detail, fallback=_http_error_code(exc.status_code)),
                 message=message,
-                diagnostics=[],
+                diagnostics=diagnostics,
             ),
             headers=getattr(exc, "headers", None),
         )
@@ -166,6 +174,30 @@ def _detail_message(detail: Any, *, fallback: str) -> str:
             if isinstance(value, str) and value:
                 return value
     return fallback
+
+
+def _response_detail(detail: Any) -> Any:
+    if isinstance(detail, dict):
+        value = detail.get("detail")
+        if value is not None:
+            return value
+    return detail
+
+
+def _detail_code(detail: Any, *, fallback: str) -> str:
+    if isinstance(detail, dict):
+        value = detail.get("code")
+        if isinstance(value, str) and value:
+            return value
+    return fallback
+
+
+def _detail_diagnostics(detail: Any) -> list[Any]:
+    if isinstance(detail, dict):
+        value = detail.get("diagnostics")
+        if isinstance(value, list):
+            return value
+    return []
 
 
 app = create_app(restore_background=False)

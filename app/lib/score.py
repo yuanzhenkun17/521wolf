@@ -280,9 +280,16 @@ def validate_model_comparison(batches: list[dict[str, Any]]) -> FairnessResult:
     if len(batches) < 2:
         return FairnessResult(False, "Need at least 2 batches for model comparison")
     seed_sets = {b.get("seed_set_id") for b in batches}
-    if len(seed_sets) < 2:
-        return FairnessResult(False, "All batches share same seed_set_id")
-    return FairnessResult(True, f"Fair comparison of {len(batches)} batches with {len(seed_sets)} seed sets")
+    if len(seed_sets) > 1:
+        return FairnessResult(False, "Model comparison batches must share the same seed_set_id")
+    model_subjects = {
+        b.get("model_config_hash") or b.get("model_id")
+        for b in batches
+        if b.get("model_config_hash") or b.get("model_id")
+    }
+    if len(model_subjects) < 2:
+        return FairnessResult(False, "Need at least 2 model subjects for comparison")
+    return FairnessResult(True, f"Fair comparison of {len(batches)} model batches on seed_set={next(iter(seed_sets), None)}")
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +611,11 @@ def compute_group_fairness(
     batches = load_comparison_group(conn, comparison_group_id, exclude_batch_id=batch_id)
     if current_batch is not None:
         batches = [*batches, {**current_batch, "batch_id": batch_id}]
+    if len(batches) < 2 and comparison_type == "model" and current_batch is not None:
+        seed_set_id = current_batch.get("seed_set_id")
+        evaluation_set_id = current_batch.get("evaluation_set_id")
+        if seed_set_id and evaluation_set_id:
+            return FairnessResult(True, "model benchmark fixed evaluation_set/seed_set")
     if len(batches) < 2:
         return FairnessResult(False, "comparison group needs at least 2 batches")
     if comparison_type == "role_version":

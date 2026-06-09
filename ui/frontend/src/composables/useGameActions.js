@@ -1,6 +1,7 @@
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { API, createGameApi } from './gameApi.js'
 import { createLatestOnlyTracker } from './latestOnly.js'
+import { createNoticeAutoDismiss } from './noticeAutoDismiss.js'
 import { createResumableEventSource } from './resumableEventSource.js'
 import {
   canonicalActionType,
@@ -39,6 +40,54 @@ const SPEECH_EVENT_TYPES = new Set([
   'pk_speech',
   'last_word'
 ])
+
+function emptyMatchNotice() {
+  return { type: '', message: '' }
+}
+
+function normalizeErrorMessage(error) {
+  return String(error?.message || '').trim()
+}
+
+function localizeMatchError(error, fallback) {
+  const message = normalizeErrorMessage(error)
+  if (!message) return fallback
+  const lower = message.toLowerCase()
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    lower.includes('load failed') ||
+    lower.includes('fetch')
+  ) {
+    return '后端连接失败，请确认服务正在运行。'
+  }
+  if (lower.includes('not found') || lower.includes('404')) {
+    return '对局已不存在，请返回大厅重新开始。'
+  }
+  if (lower.includes('already finished') || lower.includes('finished') || lower.includes('terminal')) {
+    return '对局已结束，无法继续操作。'
+  }
+  if (lower.includes('no pending') || lower.includes('not pending') || lower.includes('not waiting')) {
+    return '当前没有等待你处理的行动。'
+  }
+  if (lower.includes('invalid') || lower.includes('illegal') || lower.includes('非法')) {
+    return '行动参数无效，请重新选择。'
+  }
+  if (lower.includes('timeout') || lower.includes('timed out')) {
+    return '请求超时，请稍后重试。'
+  }
+  return message
+}
+
+function actionSuccessMessage(actionType) {
+  const action = canonicalActionType(actionType)
+  if (isSpeechAction(action)) return '发言已提交。'
+  if (action === 'exile_vote' || action === 'pk_vote' || action === 'sheriff_vote' || action === 'vote') return '投票已提交。'
+  if (action === 'white_wolf_explode') return '白狼王行动已提交。'
+  if (action === 'witch_act') return '女巫行动已提交。'
+  return '行动已提交。'
+}
+
 function useGameActions(state, options = {}) {
   const apiClient = options.apiFetch ? { apiFetch: options.apiFetch, apiBase: options.apiBase || API } : createGameApi(options.apiBase || API)
   const { apiFetch, apiBase } = apiClient
@@ -50,16 +99,33 @@ function useGameActions(state, options = {}) {
   let eventSourceGameId = null
   let roleAssignmentTimer = null
   let roleAssignmentNoticeTimer = null
+  let mountedRestoreTimer = null
+  let mountedRestoreIdle = false
   let lastPendingKey = ''
   let lastStartOptions = {}
   const healthRequests = createLatestOnlyTracker()
   const gameSnapshotRequests = createLatestOnlyTracker()
   const humanActionRequests = createLatestOnlyTracker()
   const visibleLoadingRequests = new Set()
+  const noticeAutoDismiss = createNoticeAutoDismiss(state.matchNotice, {
+    enabled: options.installLifecycle !== false,
+    onDismiss(notice) {
+      if (notice.type !== 'error' && state.error.value === notice.message) state.error.value = ''
+    }
+  })
 
   function setHistoryApi(api = {}) { historyApi = api || {} }
 
   function setSceneApi(api = {}) { sceneApi = api || {} }
+
+  function setMatchNotice(type, message) {
+    if (!state.matchNotice) return
+    state.matchNotice.value = message ? { type, message } : emptyMatchNotice()
+  }
+
+  function clearMatchNotice() {
+    setMatchNotice('', '')
+  }
 
   function beginVisibleLoading(enabled = true) {
     if (!enabled) return null
@@ -107,6 +173,37 @@ function useGameActions(state, options = {}) {
     }
     roleAssignmentTimer = null
     roleAssignmentNoticeTimer = null
+  }
+
+  function clearMountedRestoreTimer() {
+    if (!mountedRestoreTimer || typeof window === 'undefined') return
+    if (mountedRestoreIdle && typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(mountedRestoreTimer)
+    } else {
+      window.clearTimeout(mountedRestoreTimer)
+    }
+    mountedRestoreTimer = null
+    mountedRestoreIdle = false
+  }
+
+  function scheduleMountedRestore() {
+    if (options.restoreStoredGameOnMount === false || typeof window === 'undefined') return
+    const restore = () => {
+      mountedRestoreTimer = null
+      mountedRestoreIdle = false
+      void restoreStoredGame({ silent: true, navigate: true, start: true })
+    }
+    const hashView = viewFromHash(window.location.hash)
+    if (hashView === 'match' || options.restoreStoredGameOnMount === 'immediate') {
+      restore()
+      return
+    }
+    if (typeof window.requestIdleCallback === 'function') {
+      mountedRestoreIdle = true
+      mountedRestoreTimer = window.requestIdleCallback(restore, { timeout: 1500 })
+      return
+    }
+    mountedRestoreTimer = window.setTimeout(restore, Number(options.restoreStoredGameDelayMs ?? 350))
   }
 
   function completeRoleAssignmentForGame(gameId, { notice = true } = {}) {
@@ -167,6 +264,21 @@ function useGameActions(state, options = {}) {
       writeViewHash(route)
     }
     if (refreshHistory) historyApi.refreshHistoryList?.({ silent: true })
+  }
+
+  function stopGameInBackground(gameId, { refreshHistory = false } = {}) {
+    if (!gameId) {
+      if (refreshHistory) historyApi.refreshHistoryList?.({ silent: true })
+      return Promise.resolve(null)
+    }
+    return apiFetch(`/games/${encodeURIComponent(gameId)}/stop`, { method: 'POST' })
+      .catch((err) => {
+        setMatchNotice('warning', localizeMatchError(err, '后台停止对局失败。'))
+        return { stopFailed: true }
+      })
+      .finally(() => {
+        if (refreshHistory) historyApi.refreshHistoryList?.({ silent: true })
+      })
   }
 
   function resetLiveState() {
@@ -482,7 +594,7 @@ function useGameActions(state, options = {}) {
       return game
     } catch (err) {
       if (token.isLatest()) {
-        state.error.value = err?.message || '后端未连接或接口异常，请确认 FastAPI 服务正在运行。'
+        state.error.value = localizeMatchError(err, '后端未连接或接口异常，请确认 FastAPI 服务正在运行。')
         stopWatch()
       }
       return null
@@ -491,17 +603,22 @@ function useGameActions(state, options = {}) {
     }
   }
 
-  async function startMode(payload) {
+  async function startMode(payload, noticeOptions = {}) {
     const { mode, options: payloadOptions, hasOptions } = parseStartPayload(payload)
     const startOptions = hasOptions ? payloadOptions : lastStartOptions
     if (hasOptions) lastStartOptions = { ...payloadOptions }
+    clearMatchNotice()
     stopWatch()
     if (state.backendMode.value === 'offline') {
-      state.error.value = '后端未连接，请先启动 FastAPI 服务。'
+      const message = '后端未连接，请先启动 FastAPI 服务。'
+      state.error.value = message
+      setMatchNotice('error', message)
       return null
     }
     if (mode === 'play' && state.externalStatus.value?.supports_human === false) {
-      state.error.value = '当前后端暂不支持人类加入，请使用观战模式。'
+      const message = '当前后端暂不支持人类加入，请使用观战模式。'
+      state.error.value = message
+      setMatchNotice('warning', message)
       return null
     }
     resetLiveState()
@@ -518,36 +635,50 @@ function useGameActions(state, options = {}) {
       } else {
         startPlayerPolling({ immediate: true })
       }
+      setMatchNotice(
+        noticeOptions.successType || 'success',
+        noticeOptions.successMessage || ((game.mode || mode) === 'watch' ? '观战对局已开始。' : '玩家对局已开始。')
+      )
+    } else if (!game) {
+      setMatchNotice('error', state.error.value || '对局创建失败，请稍后重试。')
     }
     await refreshHealth()
     return game
   }
 
   async function resetGame() {
+    clearMatchNotice()
     stopWatch()
     const previousGameId = state.liveGame.value?.game_id
     const mode = state.isWatch.value ? 'watch' : 'play'
+    let stopFailed = false
     if (previousGameId) {
-      await apiFetch(`/games/${encodeURIComponent(previousGameId)}/stop`, { method: 'POST' }).catch(() => null)
+      await apiFetch(`/games/${encodeURIComponent(previousGameId)}/stop`, { method: 'POST' }).catch(() => {
+        stopFailed = true
+        return null
+      })
     }
     resetLiveState()
-    return startMode(mode)
+    return startMode(mode, {
+      successType: stopFailed ? 'warning' : 'success',
+      successMessage: stopFailed ? '已重开对局；旧对局后台停止失败。' : '已重开对局。'
+    })
   }
 
   async function exitGame() {
     const previousGameId = state.liveGame.value?.game_id
     invalidateLiveHttpRequests()
     closeLiveTransport()
-    const loadingKey = beginVisibleLoading()
     state.error.value = ''
-    try {
-      if (previousGameId) {
-        await apiFetch(`/games/${encodeURIComponent(previousGameId)}/stop`, { method: 'POST' }).catch(() => null)
+    clearMatchNotice()
+    finishGameSession({ clearGame: true, route: 'lobby', resetLive: true, refreshHistory: !previousGameId })
+    stopGameInBackground(previousGameId, { refreshHistory: true }).then((result) => {
+      if (previousGameId && result?.stopFailed) {
+        const message = '已返回大厅，但后台停止对局失败。'
+        setMatchNotice('warning', message)
+        state.error.value = message
       }
-    } finally {
-      finishGameSession({ clearGame: true, route: 'lobby', resetLive: true, refreshHistory: true })
-      endVisibleLoading(loadingKey)
-    }
+    })
   }
 
   function stepGame() {
@@ -756,11 +887,15 @@ function useGameActions(state, options = {}) {
     const liveGame = state.liveGame.value
     const gameId = liveGame?.game_id
     if (state.isReplayMode.value || state.isWatch.value || !gameId || !actionType || !hasPendingHumanAction(liveGame)) {
+      if (!state.isReplayMode.value && !state.isWatch.value && gameId) {
+        setMatchNotice('warning', '当前没有等待你处理的行动。')
+      }
       return Promise.resolve()
     }
 
     const actionToken = humanActionRequests.next()
     const snapshotToken = gameSnapshotRequests.next()
+    clearMatchNotice()
     setGameSnapshot({
       ...liveGame,
       current_speaker_id: null,
@@ -788,11 +923,14 @@ function useGameActions(state, options = {}) {
       }
       if (actionToken.isLatest() && state.liveGame.value?.game_id === gameId) {
         historyApi.refreshHistoryList?.({ silent: true })
+        setMatchNotice('success', actionSuccessMessage(actionType))
       }
       return true
     } catch (err) {
       if (actionToken.isLatest() && state.liveGame.value?.game_id === gameId) {
-        state.error.value = err?.message || '提交行动失败。'
+        const message = localizeMatchError(err, '提交行动失败。')
+        state.error.value = message
+        setMatchNotice('error', message)
         await loadCurrentGame({ silent: true })
       }
       return false
@@ -890,15 +1028,17 @@ function useGameActions(state, options = {}) {
       else clearSpeechTimer()
     }, { immediate: true })
 
-    onMounted(async () => {
-      await refreshHealth()
-      await restoreStoredGame({ silent: true, navigate: true, start: true })
+    onMounted(() => {
+      void refreshHealth()
+      scheduleMountedRestore()
     })
 
     onBeforeUnmount(() => {
       stopWatch()
+      clearMountedRestoreTimer()
       clearRoleAssignmentTimers()
       clearSpeechTimer()
+      noticeAutoDismiss.dispose()
     })
   }
 

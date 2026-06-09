@@ -12,6 +12,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 from app.config import PathConfig
 from app.graphs.subgraphs.eval.nodes import (
     _resolve_role_version_dirs,
@@ -44,8 +46,14 @@ def _valid_game(winner: str = "villagers") -> dict:
 
 
 class FakeVersionRegistry:
-    def __init__(self, skill_dirs: dict[tuple[str, str], Path]) -> None:
+    def __init__(
+        self,
+        skill_dirs: dict[tuple[str, str], Path],
+        *,
+        release_stages: dict[tuple[str, str], str] | None = None,
+    ) -> None:
         self.skill_dirs = skill_dirs
+        self.release_stages = dict(release_stages or {})
         self.closed = False
 
     def get_skill_dir(self, role: str, version_id: str) -> Path:
@@ -53,6 +61,11 @@ class FakeVersionRegistry:
             return self.skill_dirs[(role, version_id)]
         except KeyError as exc:
             raise FileNotFoundError(f"Version {role}/{version_id} not found") from exc
+
+    def release_stage(self, role: str, version_id: str) -> str:
+        if (role, version_id) not in self.skill_dirs:
+            raise FileNotFoundError(f"Version {role}/{version_id} not found")
+        return self.release_stages.get((role, version_id), "draft")
 
     def close(self) -> None:
         self.closed = True
@@ -103,6 +116,29 @@ def test_resolve_role_version_dirs_from_registry(tmp_path, monkeypatch):
     assert "seer" in dirs
 
     assert (Path(dirs["seer"]) / "vote.md").exists()
+
+
+def test_resolve_role_version_dirs_allows_canary_and_rejects_shadow(tmp_path, monkeypatch):
+    canary = "seer_canary_v1"
+    shadow = "seer_shadow_v1"
+    canary_dir = _write_skill_dir(tmp_path, "seer", canary)
+    shadow_dir = _write_skill_dir(tmp_path, "seer", shadow)
+    _patch_version_registry(
+        monkeypatch,
+        FakeVersionRegistry(
+            {("seer", canary): canary_dir, ("seer", shadow): shadow_dir},
+            release_stages={("seer", canary): "canary", ("seer", shadow): "shadow"},
+        ),
+    )
+
+    class _Paths:
+        registry_dir = tmp_path / "registry"
+
+    canary_dirs = _resolve_role_version_dirs({"target_role": "seer", "target_version_id": canary}, _Paths())
+    assert Path(canary_dirs["seer"]) == canary_dir
+
+    with pytest.raises(ValueError, match="release_stage=shadow"):
+        _resolve_role_version_dirs({"target_role": "seer", "target_version_id": shadow}, _Paths())
 
 
 def test_resolve_role_version_dirs_empty_when_unspecified(tmp_path):
@@ -171,6 +207,51 @@ def test_run_games_node_isolates_evaluated_role(tmp_path, monkeypatch):
         assert inv["skill_dir"] == str(tmp_path / "baseline")
     # Real scores were produced.
     assert len(out["player_scores"]) > 0
+
+
+def test_run_games_node_uses_explicit_benchmark_seed_registry(tmp_path):
+    paths = PathConfig(root=tmp_path)
+    game = FakeGameSubgraph()
+    state = {
+        "batch_id": "seed_registry",
+        "batch_config": {
+            "game_count": 3,
+            "max_days": 4,
+            "seed_start": 999,
+            "seeds": [101, 205, 309],
+            "seed_set_id": "role-baseline-quick-202606",
+        },
+        "paths": paths,
+        "game_subgraph": game,
+    }
+
+    out = asyncio.run(run_games_node(state))
+
+    assert [item["seed"] for item in game.invocations] == [101, 205, 309]
+    assert [item["seed"] for item in out["games"]] == [101, 205, 309]
+    assert out["warnings"] == []
+
+
+def test_run_games_node_falls_back_when_explicit_seed_registry_is_incomplete(tmp_path):
+    paths = PathConfig(root=tmp_path)
+    game = FakeGameSubgraph()
+    state = {
+        "batch_id": "seed_registry_incomplete",
+        "batch_config": {
+            "game_count": 3,
+            "max_days": 4,
+            "seed_start": 999,
+            "seeds": [101],
+        },
+        "paths": paths,
+        "game_subgraph": game,
+    }
+
+    out = asyncio.run(run_games_node(state))
+
+    assert [item["seed"] for item in game.invocations] == [999, 1000, 1001]
+    assert out["diagnostics"][0]["kind"] == "benchmark_seed_error"
+    assert "falling back to seed_start" in out["warnings"][0]
 
 
 def test_missing_target_role_version_is_warning_and_unrankable(tmp_path, monkeypatch):
@@ -312,7 +393,52 @@ def test_save_evaluation_batch_normalizes_empty_timestamps_to_null():
     assert conn.rolled_back is False
 
 
-def test_fairness_group_fails_with_single_batch(monkeypatch, tmp_path):
+def test_fairness_model_benchmark_fixed_suite_allows_first_subject(monkeypatch, tmp_path):
+    import app.lib.score as score_lib
+
+    class _Rows:
+        def fetchall(self):
+            return []
+
+    class _Conn:
+        def __init__(self):
+            self.closed = False
+
+        def execute(self, _sql, params=()):
+            assert params == ("grp_empty", "lonely")
+            return _Rows()
+
+        def close(self):
+            self.closed = True
+
+    conn = _Conn()
+    monkeypatch.setattr(score_lib, "open_eval_connection", lambda paths: conn)
+
+    state = {
+        "batch_id": "lonely",
+        "batch_config": {
+            "game_count": 2,
+            "mode": "dev",
+            "comparison_group_id": "grp_empty",
+            "comparison_type": "model",
+            "model_id": "m1",
+            "model_config_hash": "runtime_hash_m1",
+            "evaluation_set_id": "model-baseline-v1@v1",
+            "seed_set_id": "s1",
+        },
+        "games": [_valid_game("villagers"), _valid_game("werewolves")],
+        "paths": PathConfig(root=tmp_path),
+    }
+    out = asyncio.run(fairness_node(state))
+    assert conn.closed is True
+    assert out["fairness"] == {
+        "is_fair": True,
+        "reason": "model benchmark fixed evaluation_set/seed_set",
+    }
+    assert out["rankable"] is True
+
+
+def test_fairness_group_without_fixed_model_suite_still_needs_sibling(monkeypatch, tmp_path):
     import app.lib.score as score_lib
 
     class _Rows:
@@ -1038,6 +1164,211 @@ def test_persist_batch_node_writes_batch_and_leaderboard(tmp_path, monkeypatch):
     assert leaderboard_entries[0]["llm_error_rate"] == 0.25
     assert leaderboard_entries[0]["policy_adjusted_rate"] == 0.25
     assert leaderboard_entries[0]["summary"]["decision_quality"]["default_action_rate"] == 0.25
+
+
+def test_persist_batch_node_carries_benchmark_evaluation_metadata(tmp_path, monkeypatch):
+    import app.lib.score as score_lib
+
+    paths = PathConfig(root=tmp_path)
+    saved_batches: list[dict] = []
+    leaderboard_entries: list[dict] = []
+
+    class _Conn:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    conn = _Conn()
+
+    monkeypatch.setattr(score_lib, "open_eval_connection", lambda seen_paths: conn)
+    monkeypatch.setattr(
+        score_lib,
+        "save_evaluation_batch",
+        lambda conn_arg, batch: saved_batches.append(dict(batch)) or None,
+    )
+    monkeypatch.setattr(
+        score_lib,
+        "persist_leaderboard_entry",
+        lambda conn_arg, entry: leaderboard_entries.append(dict(entry)) or None,
+    )
+
+    state = {
+        "batch_id": "bench_meta_seer",
+        "batch_config": {
+            "game_count": 2,
+            "max_days": 5,
+            "mode": "dev",
+            "comparison_group_id": "bench_meta",
+            "comparison_type": "role_version",
+            "target_role": "seer",
+            "target_version_id": "seer_candidate_v2",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+        },
+        "games": [_valid_game("villagers"), _valid_game("werewolves")],
+        "score_summary": {
+            "avg_role_score": 6.2,
+            "by_role_category": {"seer": 6.2},
+            "fallback_rate": 0.1,
+            "llm_error_rate": 0.1,
+            "policy_adjusted_rate": 0.0,
+            "decision_quality": {"invalid_response_rate": 0.0, "default_action_rate": 0.0},
+        },
+        "rankable": True,
+        "rankable_reason": "ok",
+        "valid_game_rate": 1.0,
+        "paths": paths,
+    }
+
+    out = asyncio.run(persist_batch_node(state))
+
+    assert conn.closed is True
+    assert out["result"]["rankable"] is True
+    assert saved_batches[0]["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert saved_batches[0]["seed_set_id"] == "role-baseline-quick-202606"
+    assert saved_batches[0]["comparison_group_id"] == "bench_meta"
+    assert leaderboard_entries[0]["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert leaderboard_entries[0]["seed_set_id"] == "role-baseline-quick-202606"
+    assert leaderboard_entries[0]["scope"] == "role_version"
+    assert leaderboard_entries[0]["subject_id"] == "seer_candidate_v2"
+
+
+def test_persist_batch_node_writes_model_scope_leaderboard_entry(tmp_path, monkeypatch):
+    import app.lib.score as score_lib
+
+    paths = PathConfig(root=tmp_path)
+    saved_batches: list[dict] = []
+    leaderboard_entries: list[dict] = []
+
+    class _Conn:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    conn = _Conn()
+
+    monkeypatch.setattr(score_lib, "open_eval_connection", lambda seen_paths: conn)
+    monkeypatch.setattr(
+        score_lib,
+        "save_evaluation_batch",
+        lambda conn_arg, batch: saved_batches.append(dict(batch)) or None,
+    )
+    monkeypatch.setattr(
+        score_lib,
+        "persist_leaderboard_entry",
+        lambda conn_arg, entry: leaderboard_entries.append(dict(entry)) or None,
+    )
+
+    state = {
+        "batch_id": "bench_model_runtime",
+        "batch_config": {
+            "game_count": 2,
+            "max_days": 5,
+            "mode": "dev",
+            "comparison_group_id": "bench_model",
+            "comparison_type": "model",
+            "model_id": "qwen-max",
+            "model_config_hash": "runtime_hash_v1",
+            "evaluation_set_id": "model-baseline-v1@v1",
+            "seed_set_id": "model-baseline-quick-202606",
+        },
+        "games": [_valid_game("villagers"), _valid_game("werewolves")],
+        "score_summary": {
+            "avg_role_score": 6.4,
+            "strength_score": 6.8,
+            "by_role_category": {"seer": 6.2, "witch": 6.6},
+            "fallback_rate": 0.1,
+            "llm_error_rate": 0.0,
+            "policy_adjusted_rate": 0.0,
+            "decision_quality": {"invalid_response_rate": 0.0, "default_action_rate": 0.0},
+        },
+        "rankable": True,
+        "rankable_reason": "ok",
+        "valid_game_rate": 1.0,
+        "paths": paths,
+    }
+
+    out = asyncio.run(persist_batch_node(state))
+
+    assert conn.closed is True
+    assert out["result"]["rankable"] is True
+    assert out["result"]["leaderboard_gate"]["accepted"] is True
+    assert saved_batches[0]["comparison_type"] == "model"
+    assert saved_batches[0]["target_role"] is None
+    assert saved_batches[0]["target_version_id"] is None
+    assert saved_batches[0]["evaluation_set_id"] == "model-baseline-v1@v1"
+    assert saved_batches[0]["seed_set_id"] == "model-baseline-quick-202606"
+    assert leaderboard_entries[0]["scope"] == "model"
+    assert leaderboard_entries[0]["subject_id"] == "runtime_hash_v1"
+    assert leaderboard_entries[0]["model_id"] == "qwen-max"
+    assert leaderboard_entries[0]["model_config_hash"] == "runtime_hash_v1"
+    assert leaderboard_entries[0].get("target_role") is None
+    assert leaderboard_entries[0].get("target_version_id") is None
+    assert leaderboard_entries[0]["evaluation_set_id"] == "model-baseline-v1@v1"
+    assert leaderboard_entries[0]["seed_set_id"] == "model-baseline-quick-202606"
+    assert leaderboard_entries[0]["strength_score"] == 6.8
+
+
+def test_persist_batch_node_applies_first_stage_benchmark_gates(monkeypatch, tmp_path):
+    import app.lib.score as score_lib
+
+    paths = PathConfig(root=tmp_path)
+    saved_batches: list[dict] = []
+    leaderboard_entries: list[dict] = []
+
+    class _Conn:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    conn = _Conn()
+
+    monkeypatch.setattr(score_lib, "open_eval_connection", lambda seen_paths: conn)
+    monkeypatch.setattr(
+        score_lib,
+        "save_evaluation_batch",
+        lambda conn_arg, batch: saved_batches.append(dict(batch)) or None,
+    )
+    monkeypatch.setattr(
+        score_lib,
+        "persist_leaderboard_entry",
+        lambda conn_arg, entry: leaderboard_entries.append(dict(entry)) or None,
+    )
+
+    state = {
+        "batch_id": "first_stage_gate",
+        "batch_config": {
+            "game_count": 3,
+            "mode": "dev",
+            "min_completed_games": 3,
+            "min_valid_game_rate": 0.9,
+            "max_fallback_rate": 0.2,
+            "max_llm_error_rate": 0.2,
+        },
+        "games": [_valid_game("villagers"), _valid_game("werewolves")],
+        "score_summary": {
+            "avg_role_score": 6.0,
+            "fallback_rate": 0.3,
+            "llm_error_rate": 0.1,
+            "policy_adjusted_rate": 0.0,
+            "decision_quality": {"invalid_response_rate": 0.0, "default_action_rate": 0.0},
+        },
+        "rankable": True,
+        "rankable_reason": "ok",
+        "paths": paths,
+    }
+
+    out = asyncio.run(persist_batch_node(state))
+
+    assert conn.closed is True
+    assert saved_batches[0]["rankable"] is False
+    assert saved_batches[0]["rankable_reason"] == "completed_games 2 < required 3"
+    assert out["result"]["data_sufficient"] is False
+    assert out["result"]["leaderboard_gate"]["accepted"] is False
+    assert leaderboard_entries == []
 
 
 def test_persist_batch_skips_leaderboard_when_error_rate_is_high(monkeypatch, tmp_path):

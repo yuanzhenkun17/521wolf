@@ -39,13 +39,13 @@ LLM_ENV_PATH = _PROJECT_ROOT / ".env"
 # TTS configuration
 # ---------------------------------------------------------------------------
 
-TTS_BASE_URL = "https://api.xiaomimimo.com/v1"
-TTS_DEFAULT_MODEL = "mimo-v2.5-tts"
-TTS_DEFAULT_FORMAT = "wav"
-TTS_DEFAULT_VOICE = "mimo_default"
+TTS_DEFAULT_MODEL = "qwen3-tts-flash-realtime"
+TTS_DEFAULT_VOICE = "Cherry"
+TTS_DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+TTS_DEFAULT_MODE = "server_commit"
+TTS_DEFAULT_SAMPLE_RATE = 24000
 TTS_DEFAULT_TIMEOUT = 60.0
 TTS_DEFAULT_MAX_CHARS = 320
-TTS_DEFAULT_AUTH_HEADER = "api-key"
 TTS_DEFAULT_STYLE = (
     "自然、清晰、有临场感的中文狼人杀玩家发言，语速适中，情绪克制但有辨识度。"
 )
@@ -115,15 +115,15 @@ def load_tts_config(
 
     return {
         "api_key": resolved_api_key,
-        "base_url": (os.environ.get("WEREWOLF_TTS_BASE_URL") or TTS_BASE_URL).rstrip("/"),
         "model": os.environ.get("WEREWOLF_TTS_MODEL") or TTS_DEFAULT_MODEL,
-        "format": os.environ.get("WEREWOLF_TTS_FORMAT") or TTS_DEFAULT_FORMAT,
         "voice": os.environ.get("WEREWOLF_TTS_VOICE") or TTS_DEFAULT_VOICE,
         "voice_pool": voice_pool,
-        "auth_header": os.environ.get("WEREWOLF_TTS_AUTH_HEADER") or TTS_DEFAULT_AUTH_HEADER,
         "timeout": float(os.environ.get("WEREWOLF_TTS_TIMEOUT") or TTS_DEFAULT_TIMEOUT),
         "max_chars": int(os.environ.get("WEREWOLF_TTS_MAX_CHARS") or TTS_DEFAULT_MAX_CHARS),
         "style": os.environ.get("WEREWOLF_TTS_STYLE") or TTS_DEFAULT_STYLE,
+        "ws_url": os.environ.get("WEREWOLF_TTS_WS_URL") or TTS_DEFAULT_WS_URL,
+        "mode": os.environ.get("WEREWOLF_TTS_MODE") or TTS_DEFAULT_MODE,
+        "sample_rate": int(os.environ.get("WEREWOLF_TTS_SAMPLE_RATE") or TTS_DEFAULT_SAMPLE_RATE),
     }
 
 

@@ -132,6 +132,21 @@ async def run_games_node(state: EvalBatchState) -> dict:
     game_count = int(cfg.get("game_count", 10) or 0)
     max_days = int(cfg.get("max_days", 20) or 20)
     seed_start = int(cfg.get("seed_start", 0) or 0)
+    explicit_seeds = _explicit_batch_seeds(cfg.get("seeds"))
+    if cfg.get("seeds") is not None and len(explicit_seeds) < game_count:
+        message = (
+            f"explicit benchmark seeds {len(explicit_seeds)} < game_count {game_count}; "
+            "falling back to seed_start"
+        )
+        state.setdefault("warnings", []).append(message)
+        _record_diagnostic(
+            state,
+            kind="benchmark_seed_error",
+            stage="run_games.seed",
+            level="warning",
+            message=message,
+        )
+        explicit_seeds = []
     batch_id = state.get("batch_id", "unknown")
     concurrency = int(cfg.get("game_concurrency", 0) or 0) or DEFAULT_CONCURRENCY
     game_subgraph = resolve_game_subgraph(state)
@@ -161,9 +176,10 @@ async def run_games_node(state: EvalBatchState) -> dict:
     )
 
     def _build(index: int) -> dict[str, Any]:
+        seed = explicit_seeds[index] if explicit_seeds else seed_start + index
         game_state: dict[str, Any] = {
             "game_id": f"{batch_id}_game_{index + 1:03d}",
-            "seed": seed_start + index,
+            "seed": seed,
             "max_days": max_days,
             "model": state.get("model"),
             "skill_dir": base_skill_dir,
@@ -197,6 +213,8 @@ async def run_games_node(state: EvalBatchState) -> dict:
             "game_count": game_count,
             "max_days": max_days,
             "seed_start": seed_start,
+            "seed_count": len(explicit_seeds) if explicit_seeds else game_count,
+            "seed_preview": explicit_seeds[:5],
         },
     ):
         try:
@@ -234,6 +252,20 @@ def _role_version_specs(cfg: dict[str, Any]) -> dict[str, str]:
     return role_versions
 
 
+def _explicit_batch_seeds(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    seeds: list[int] = []
+    for item in value:
+        try:
+            seed = int(item)
+        except (TypeError, ValueError):
+            continue
+        if seed >= 0:
+            seeds.append(seed)
+    return seeds
+
+
 def _copy_runner_config(source: dict[str, Any], target: dict[str, Any]) -> None:
     for key in (
         "runner_max_retries",
@@ -264,7 +296,7 @@ def _resolve_role_version_dirs(
         return {}
 
     try:
-        from app.lib.version import version_registry_from_env
+        from app.lib.version import registry_version_release_stage, version_registry_from_env
 
         registry = version_registry_from_env(paths=paths)
     except Exception as exc:  # noqa: BLE001 — degrade to baseline skills
@@ -287,7 +319,15 @@ def _resolve_role_version_dirs(
     try:
         for role, version_id in role_versions.items():
             try:
+                release_stage = registry_version_release_stage(registry, role, version_id)
+                if str(release_stage or "").strip().lower() == "shadow":
+                    raise ValueError(
+                        f"role version {role}/{version_id} is release_stage=shadow; "
+                        "promote to canary before explicit evaluation"
+                    )
                 resolved[role] = str(registry.get_skill_dir(role, version_id))
+            except ValueError:
+                raise
             except Exception as exc:  # noqa: BLE001 — degrade this role to baseline skills
                 message = _exception_message(f"failed to resolve role version {role}/{version_id}", exc)
                 _log.warning(message, exc_info=True)
@@ -674,12 +714,14 @@ def _compute_data_sufficient(
     min_games = int(
         cfg.get("leaderboard_min_games")
         or cfg.get("data_sufficient_min_games")
+        or cfg.get("min_completed_games")
         or cfg.get("min_rankable_games")
         or 1
     )
     min_valid_rate = _safe_float(
         cfg.get("leaderboard_min_valid_game_rate")
         or cfg.get("data_sufficient_min_valid_game_rate")
+        or cfg.get("min_valid_game_rate")
     )
     if min_valid_rate is None:
         min_valid_rate = 0.8 if str(cfg.get("mode", "dev")) == "prod" else 0.0
@@ -691,24 +733,39 @@ def _compute_data_sufficient(
 
 
 def _low_error_rates_ok(cfg: dict[str, Any], summary: dict[str, Any]) -> tuple[bool, str]:
-    ceiling = _safe_float(
+    default_ceiling = _safe_float(
         cfg.get("leaderboard_error_rate_ceiling")
-        or cfg.get("leaderboard_llm_error_rate_ceiling")
         or cfg.get("rankable_error_rate_ceiling")
     )
-    if ceiling is None:
-        ceiling = 0.30
+    if default_ceiling is None:
+        default_ceiling = 0.30
     rate_fields = (
-        ("llm_error_rate", summary.get("llm_error_rate")),
-        ("fallback_rate", summary.get("fallback_rate")),
-        ("policy_adjusted_rate", summary.get("policy_adjusted_rate")),
+        (
+            "llm_error_rate",
+            summary.get("llm_error_rate"),
+            _safe_float(cfg.get("leaderboard_llm_error_rate_ceiling") or cfg.get("max_llm_error_rate")),
+        ),
+        (
+            "fallback_rate",
+            summary.get("fallback_rate"),
+            _safe_float(cfg.get("leaderboard_fallback_rate_ceiling") or cfg.get("max_fallback_rate")),
+        ),
+        (
+            "policy_adjusted_rate",
+            summary.get("policy_adjusted_rate"),
+            _safe_float(
+                cfg.get("leaderboard_policy_adjusted_rate_ceiling")
+                or cfg.get("max_policy_adjusted_rate")
+            ),
+        ),
     )
     decision_quality = summary.get("decision_quality") if isinstance(summary.get("decision_quality"), dict) else {}
-    for name, value in (
+    for name, value, field_ceiling in (
         *rate_fields,
-        ("invalid_response_rate", decision_quality.get("invalid_response_rate")),
-        ("default_action_rate", decision_quality.get("default_action_rate")),
+        ("invalid_response_rate", decision_quality.get("invalid_response_rate"), None),
+        ("default_action_rate", decision_quality.get("default_action_rate"), None),
     ):
+        ceiling = field_ceiling if field_ceiling is not None else default_ceiling
         rate = _safe_float(value)
         if rate is not None and rate > ceiling:
             return False, f"{name} {rate:.1%} > ceiling {ceiling:.1%}"
@@ -1052,9 +1109,11 @@ async def fairness_node(state: EvalBatchState) -> dict:
         current_batch = {
             "comparison_type": comparison_type,
             "model_id": cfg.get("model_id"),
+            "model_config_hash": cfg.get("model_config_hash"),
             "target_role": target_role,
             "target_version_id": cfg.get("target_version_id"),
             "seed_set_id": cfg.get("seed_set_id"),
+            "evaluation_set_id": cfg.get("evaluation_set_id"),
         }
         conn = None
         try:

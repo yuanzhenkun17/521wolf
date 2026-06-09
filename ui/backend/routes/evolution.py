@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, AsyncIterator
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
@@ -45,6 +46,7 @@ from ui.backend.task_state import (
 
 _TERMINAL_SSE_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
 _TERMINAL_TASK_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
+_log = logging.getLogger(__name__)
 
 
 def _proposal_run(store: Any, run_id: str) -> dict[str, Any]:
@@ -73,6 +75,7 @@ def _proposal_pairs(run: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _proposal_payload(run: dict[str, Any], *, action: dict[str, Any] | None = None) -> dict[str, Any]:
     summary = _evolution_run_summary(run)
+    review = summary.get("proposal_review") if isinstance(summary.get("proposal_review"), dict) else {}
     pairs = _proposal_pairs(run)
     payload: dict[str, Any] = {
         "kind": "role_evolution_proposals",
@@ -80,8 +83,19 @@ def _proposal_payload(run: dict[str, Any], *, action: dict[str, Any] | None = No
         "run_id": run.get("run_id"),
         "role": run.get("role"),
         "proposals": [dict(item) for item in run.get("proposals", []) or [] if isinstance(item, dict)],
-        "proposal_review": summary.get("proposal_review", {}),
+        "generated_proposal_ids": list(review.get("generated_proposal_ids", []) or []),
+        "preflight_passed_proposal_ids": list(review.get("preflight_passed_proposal_ids", []) or []),
+        "accepted_proposal_ids": list(review.get("accepted_proposal_ids", []) or []),
+        "rejected_proposal_ids": list(review.get("rejected_proposal_ids", []) or []),
+        "applied_proposal_ids": list(review.get("applied_proposal_ids", []) or []),
+        "proposal_review": review,
         "gate_report": summary.get("gate_report", {}),
+        "release_gate": summary.get("release_gate", {}),
+        "release_decision": summary.get("release_decision"),
+        "trust_bundle": summary.get("trust_bundle", {}),
+        "scenario_replay_report": summary.get("scenario_replay_report", {}),
+        "scenario_replay_summary": summary.get("scenario_replay_summary", {}),
+        "proposal_attribution_report": summary.get("proposal_attribution_report", {}),
         "promotion_gate": summary.get("promotion_gate", {}),
         "paired_seed_summary": summary.get("paired_seed_summary", {}),
         "paired_seed_pairs": pairs,
@@ -92,6 +106,61 @@ def _proposal_payload(run: dict[str, Any], *, action: dict[str, Any] | None = No
     }
     if action is not None:
         payload["action"] = action
+    return payload
+
+
+def _trust_bundle_payload_from_run(run: dict[str, Any]) -> dict[str, Any] | None:
+    bundle = run.get("trust_bundle")
+    if not isinstance(bundle, dict) and isinstance(run.get("result"), dict):
+        bundle = run["result"].get("trust_bundle")
+    if not isinstance(bundle, dict) and isinstance(run.get("battle_result"), dict):
+        bundle = run["battle_result"].get("trust_bundle")
+    if not isinstance(bundle, dict):
+        return None
+    return {
+        "kind": "evolution_trust_bundle",
+        "schema_version": 1,
+        "trust_bundle_id": bundle.get("trust_bundle_id"),
+        "run_id": run.get("run_id") or bundle.get("run_id"),
+        "role": run.get("role") or bundle.get("role"),
+        "baseline_version": bundle.get("baseline_version"),
+        "candidate_version": bundle.get("candidate_version"),
+        "bundle_hash": bundle.get("bundle_hash"),
+        "gate_report_id": bundle.get("gate_report_id"),
+        "attribution_report_id": bundle.get("attribution_report_id"),
+        "created_at": run.get("started_at"),
+        "updated_at": run.get("finished_at") or run.get("last_heartbeat_at") or run.get("started_at"),
+        "trust_bundle": bundle,
+    }
+
+
+def _trust_bundle_payload(store: Any, run_id: str) -> dict[str, Any]:
+    if run_id in store.evolution_batches:
+        raise HTTPException(status_code=400, detail="batch does not support trust bundle; select a child run")
+    run = store.evolution_runs.get(run_id)
+    conn = None
+    try:
+        from storage.evolution.run_repo import EvolutionStore
+        from storage.provider import storage_provider_from_env
+
+        conn = storage_provider_from_env(paths=getattr(store, "paths", None)).open_evolution_connection()
+        payload = EvolutionStore(conn).get_trust_bundle(run_id)
+        if isinstance(payload, dict):
+            return payload
+    except Exception as exc:  # noqa: BLE001 - API falls back to in-memory run artifact
+        _log.debug("failed to load trust bundle from PostgreSQL for %s: %s", run_id, exc)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
+                _log.debug("failed to close trust bundle connection for %s: %s", run_id, exc)
+
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    payload = _trust_bundle_payload_from_run(run)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="trust bundle not found")
     return payload
 
 
@@ -212,6 +281,10 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
     def evolution_proposals(run_id: str) -> dict[str, Any]:
         run = _proposal_run(store, run_id)
         return _proposal_payload(run)
+
+    @api.get("/api/evolution-runs/{run_id}/trust-bundle")
+    def evolution_trust_bundle(run_id: str) -> dict[str, Any]:
+        return _trust_bundle_payload(store, run_id)
 
     @api.post("/api/evolution-runs/{run_id}/proposals/{proposal_id}/accept")
     def accept_evolution_run_proposal(run_id: str, proposal_id: str) -> dict[str, Any]:

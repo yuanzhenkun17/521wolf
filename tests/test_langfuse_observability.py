@@ -461,3 +461,52 @@ def test_game_trace_scores_decision_quality_metrics(monkeypatch: pytest.MonkeyPa
     }
     for name, value in expected.items():
         assert by_name[name]["value"] == value
+
+
+def test_game_loop_flushes_langfuse_after_trace_context(monkeypatch: pytest.MonkeyPatch):
+    from app.graphs.subgraphs.game import nodes as game_nodes
+
+    captured: list[str] = []
+
+    class _RecordingContext:
+        def __enter__(self) -> object:
+            captured.append("context_enter")
+            return object()
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+            captured.append("context_exit")
+            return False
+
+    class _Winner:
+        value = "villagers"
+
+    class _Engine:
+        async def run_until_finished(self) -> _Winner:
+            captured.append("engine_run")
+            return _Winner()
+
+    def _score_current_trace(*args: Any, **kwargs: Any) -> None:
+        captured.append("score")
+
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.create_trace_id = lambda *, seed=None: "trace-game-loop"
+    fake_observability.langfuse_context = lambda **kwargs: _RecordingContext()
+    fake_observability.score_current_trace = _score_current_trace
+    fake_observability.flush_langfuse = lambda: captured.append("flush")
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+
+    state = {
+        "engine": _Engine(),
+        "game_id": "g-langfuse-flush",
+        "seed": 7,
+        "decisions": [],
+        "events": [],
+        "game_events": [],
+    }
+
+    out = asyncio.run(game_nodes.game_loop_node(state))
+
+    assert out["winner"] == "villagers"
+    assert captured[0:2] == ["context_enter", "engine_run"]
+    assert "score" in captured
+    assert captured[-2:] == ["context_exit", "flush"]

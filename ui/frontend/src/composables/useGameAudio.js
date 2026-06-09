@@ -193,9 +193,7 @@ export function useGameAudio(runtime, options = {}) {
   let audioContext = null
   let bgmAudio = null
   let currentBgmKey = ''
-  let activeTtsAudio = null
-  let activeTtsUrl = ''
-  let activeTtsSource = null
+  let activeTtsStreamSources = new Set()
   let activeTtsGain = null
   let activeTtsController = null
   let activeTtsKey = ''
@@ -212,6 +210,7 @@ export function useGameAudio(runtime, options = {}) {
   const externalStatus = computed(() => valueOf(runtime.externalStatus))
   const apiBase = computed(() => String(valueOf(runtime.apiBase) || '/api').replace(/\/$/, ''))
   const ttsAvailable = computed(() => TTS_CONFIG.enabled && externalStatus.value?.tts === 'configured')
+  const audioRuntimeActive = computed(() => currentView.value === 'match')
   const bgmKey = computed(() => {
     if (currentView.value === 'lobby') return 'lobby'
     if (currentView.value === 'match') return 'match'
@@ -246,7 +245,7 @@ export function useGameAudio(runtime, options = {}) {
     return Boolean(
       ttsAvailable.value
       && ttsEnabled.value
-      && currentView.value === 'match'
+      && audioRuntimeActive.value
       && !isReplayMode.value
       && !game.value?.winner
     )
@@ -277,104 +276,156 @@ export function useGameAudio(runtime, options = {}) {
     }
     activeTtsController?.abort?.()
     activeTtsController = null
-    if (activeTtsSource) {
-      const source = activeTtsSource
-      activeTtsSource = null
+    if (activeTtsStreamSources.size) {
+      const sources = activeTtsStreamSources
+      activeTtsStreamSources = new Set()
+      for (const source of sources) {
+        source.onended = null
+        try {
+          source.stop()
+        } catch {}
+        source.disconnect?.()
+      }
+    }
+    if (activeTtsGain) {
+      activeTtsGain.disconnect?.()
       activeTtsGain = null
-      source.onended = null
-      try {
-        source.stop()
-      } catch {}
-      source.disconnect?.()
-    }
-    if (activeTtsAudio) {
-      activeTtsAudio.pause()
-      activeTtsAudio.src = ''
-      activeTtsAudio = null
-    }
-    if (activeTtsUrl) {
-      URL.revokeObjectURL(activeTtsUrl)
-      activeTtsUrl = ''
     }
     ttsSpeaking.value = false
     void syncBgm()
   }
 
-  function finishTtsSource(source, gain, { continueQueue = true } = {}) {
-    if (activeTtsSource !== source) return
-    activeTtsSource = null
+  function finishTtsStream(gain, { continueQueue = true } = {}) {
+    if (activeTtsGain !== gain) return
+    for (const source of activeTtsStreamSources) {
+      source.disconnect?.()
+    }
+    activeTtsStreamSources = new Set()
     activeTtsGain = null
+    activeTtsController = null
     activeTtsKey = ''
-    source.disconnect?.()
     gain?.disconnect?.()
     ttsSpeaking.value = false
     void syncBgm()
     if (continueQueue) scheduleNextTts(100)
   }
 
-  function finishTtsAudio(audio, url, { continueQueue = true } = {}) {
-    if (activeTtsAudio !== audio) return
-    activeTtsAudio = null
-    activeTtsController = null
-    activeTtsUrl = ''
-    activeTtsKey = ''
-    if (url) URL.revokeObjectURL(url)
-    ttsSpeaking.value = false
-    void syncBgm()
-    if (continueQueue) scheduleNextTts(100)
+  function ttsRequestBody(item) {
+    return JSON.stringify({
+      text: item.text,
+      speaker: item.speaker || '',
+      seat: item.seat || null
+    })
   }
 
-  async function requestTtsBlob(item, signal) {
-    const response = await fetch(`${apiBase.value}/tts/speech`, {
+  async function requestTtsStream(item, signal) {
+    return fetch(`${apiBase.value}/tts/speech/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: item.text,
-        speaker: item.speaker || '',
-        seat: item.seat || null
-      }),
+      body: ttsRequestBody(item),
       signal
     })
-    if (!response.ok) throw new Error('发言朗读失败')
-    return response.blob()
   }
 
-  async function playTtsBlob(blob, runId) {
-    const context = ensureAudioContext()
-    if (context?.state === 'running' && typeof blob?.arrayBuffer === 'function') {
-      try {
-        const buffer = await context.decodeAudioData(await blob.arrayBuffer())
-        if (runId !== ttsRunId) return
-        const source = context.createBufferSource()
-        const gain = context.createGain()
-        source.buffer = buffer
-        gain.gain.value = 0.88
-        source.connect(gain)
-        gain.connect(context.destination)
-        activeTtsSource = source
-        activeTtsGain = gain
-        source.onended = () => finishTtsSource(source, gain)
-        source.start()
-        return
-      } catch {
-        activeTtsSource = null
-        activeTtsGain = null
-      }
+  function concatBytes(left, right) {
+    if (!left?.length) return right
+    if (!right?.length) return left
+    const combined = new Uint8Array(left.length + right.length)
+    combined.set(left, 0)
+    combined.set(right, left.length)
+    return combined
+  }
+
+  function schedulePcmChunk(context, gain, bytes, sampleRate, nextStartRef, runId, streamDoneRef) {
+    if (runId !== ttsRunId || !bytes?.length) return
+    const frameCount = Math.floor(bytes.length / 2)
+    if (!frameCount) return
+    const buffer = context.createBuffer(1, frameCount, sampleRate)
+    const channel = buffer.getChannelData(0)
+    const view = new DataView(bytes.buffer, bytes.byteOffset, frameCount * 2)
+    for (let index = 0; index < frameCount; index += 1) {
+      channel[index] = Math.max(-1, Math.min(1, view.getInt16(index * 2, true) / 32768))
     }
 
-    if (runId !== ttsRunId) return
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-    audio.volume = 0.88
-    activeTtsAudio = audio
-    activeTtsUrl = url
-    audio.onended = () => finishTtsAudio(audio, url)
-    audio.onerror = () => finishTtsAudio(audio, url)
-    await audio.play()
+    const source = context.createBufferSource()
+    source.buffer = buffer
+    source.connect(gain)
+    activeTtsStreamSources.add(source)
+    source.onended = () => {
+      activeTtsStreamSources.delete(source)
+      source.disconnect?.()
+      if (streamDoneRef.done && activeTtsStreamSources.size === 0) finishTtsStream(gain)
+    }
+    if (!ttsSpeaking.value) {
+      ttsSpeaking.value = true
+      void syncBgm()
+    }
+    const startAt = Math.max(nextStartRef.value, context.currentTime + 0.01)
+    source.start(startAt)
+    nextStartRef.value = startAt + buffer.duration
+  }
+
+  async function playTtsStream(item, controller, runId) {
+    const context = ensureAudioContext()
+    if (!context) throw new Error('浏览器不支持流式音频播放')
+    if (context.state === 'suspended') await context.resume()
+    if (context.state !== 'running') throw new Error('音频上下文未解锁')
+
+    const response = await requestTtsStream(item, controller.signal)
+    if (!response.ok || !response.body?.getReader) throw new Error('流式发言朗读不可用')
+    const sampleRate = Number(response.headers?.get?.('X-TTS-Sample-Rate')) || 24000
+    const reader = response.body.getReader()
+    const gain = context.createGain()
+    const nextStartRef = { value: context.currentTime + 0.04 }
+    const streamDoneRef = { done: false }
+    let pending = new Uint8Array(0)
+    let scheduled = false
+
+    gain.gain.value = 0.88
+    gain.connect(context.destination)
+    activeTtsGain = gain
+
+    try {
+      while (runId === ttsRunId && !controller.signal.aborted) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = concatBytes(pending, value instanceof Uint8Array ? value : new Uint8Array(value || []))
+        const evenLength = chunk.length - (chunk.length % 2)
+        pending = evenLength === chunk.length ? new Uint8Array(0) : chunk.slice(evenLength)
+        if (evenLength > 0) {
+          schedulePcmChunk(context, gain, chunk.slice(0, evenLength), sampleRate, nextStartRef, runId, streamDoneRef)
+          scheduled = true
+        }
+      }
+      if (runId !== ttsRunId || controller.signal.aborted) return true
+      if (pending.length > 1) {
+        schedulePcmChunk(context, gain, pending, sampleRate, nextStartRef, runId, streamDoneRef)
+        scheduled = true
+      }
+      streamDoneRef.done = true
+      if (!scheduled || activeTtsStreamSources.size === 0) finishTtsStream(gain)
+      return true
+    } catch (error) {
+      if (activeTtsGain === gain) {
+        for (const source of activeTtsStreamSources) {
+          source.onended = null
+          try {
+            source.stop()
+          } catch {}
+          source.disconnect?.()
+        }
+        activeTtsStreamSources = new Set()
+        activeTtsGain = null
+        gain.disconnect?.()
+      }
+      throw error
+    } finally {
+      reader.releaseLock?.()
+    }
   }
 
   async function playNextTts() {
-    if (activeTtsAudio || activeTtsSource || activeTtsController || ttsSpeaking.value) return
+    if (activeTtsStreamSources.size || activeTtsController || ttsSpeaking.value) return
     if (!canPlayTts()) {
       stopTts()
       return
@@ -388,19 +439,9 @@ export function useGameAudio(runtime, options = {}) {
     ttsRunId = runId
     activeTtsKey = next.key || ''
     activeTtsController = controller
-    ttsSpeaking.value = true
-    void syncBgm()
     try {
       if (!audioUnlocked.value) await unlockAudio()
-      const blob = await requestTtsBlob(next, controller.signal)
-      if (runId !== ttsRunId || controller.signal.aborted || !canPlayTts()) {
-        ttsSpeaking.value = false
-        activeTtsController = null
-        void syncBgm()
-        return
-      }
-      activeTtsController = null
-      await playTtsBlob(blob, runId)
+      await playTtsStream(next, controller, runId)
     } catch {
       if (runId !== ttsRunId) return
       stopTts({ clearQueue: false })
@@ -419,7 +460,7 @@ export function useGameAudio(runtime, options = {}) {
       .filter((item) => item.text && !ttsQueuedKeys.has(item.key))
       .at(-1)
     if (!item || activeTtsKey === item.key) return
-    if (activeTtsKey || activeTtsAudio || activeTtsSource || activeTtsController || ttsSpeaking.value) {
+    if (activeTtsKey || activeTtsStreamSources.size || activeTtsController || ttsSpeaking.value) {
       stopTts({ clearQueue: true })
     }
     ttsQueuedKeys = new Set([item.key])
@@ -574,7 +615,7 @@ export function useGameAudio(runtime, options = {}) {
   }
 
   async function playAudioEffect(effect, variant) {
-    if (!audioEnabled.value || isReplayMode.value) return
+    if (!audioRuntimeActive.value || !audioEnabled.value || isReplayMode.value) return
     const entry = AUDIO_LIBRARY.sfx[effect]
     if (!entry) return
     const unlocked = await unlockAudio()
@@ -617,7 +658,8 @@ export function useGameAudio(runtime, options = {}) {
   }
 
   function handleGestureUnlock() {
-    if (audioEnabled.value || ttsEnabled.value) void unlockAudio().then(syncBgm)
+    const track = AUDIO_LIBRARY.bgm[bgmKey.value]
+    if ((audioEnabled.value && track?.src) || canPlayTts()) void unlockAudio().then(syncBgm)
   }
 
   function dispose() {
@@ -646,6 +688,9 @@ export function useGameAudio(runtime, options = {}) {
 
   watch(
     () => {
+      if (!audioRuntimeActive.value || isReplayMode.value) {
+        return { gameId: '', keys: '' }
+      }
       const currentGame = game.value
       return {
         gameId: currentGame?.game_id || '',
@@ -653,6 +698,13 @@ export function useGameAudio(runtime, options = {}) {
       }
     },
     (current) => {
+      if (!audioRuntimeActive.value || isReplayMode.value) {
+        ttsSeenGameId = ''
+        ttsSeenKeys = new Set()
+        ttsQueuedKeys = new Set()
+        stopTts()
+        return
+      }
       const currentGame = game.value
       const items = speechLogItems(currentGame)
       if (!current.gameId) {
@@ -682,6 +734,17 @@ export function useGameAudio(runtime, options = {}) {
 
   watch(
     () => {
+      if (!audioRuntimeActive.value) {
+        return {
+          gameId: '',
+          phase: '',
+          waitingFor: '',
+          winner: '',
+          aliveCount: null,
+          deathLogKey: '',
+          logCount: 0
+        }
+      }
       const currentGame = game.value
       return {
         gameId: currentGame?.game_id || '',
@@ -695,6 +758,7 @@ export function useGameAudio(runtime, options = {}) {
     },
     (current, previous) => {
       if (!current.gameId || !previous || current.gameId !== previous.gameId) return
+      if (!audioRuntimeActive.value) return
       if (isReplayMode.value) return
       if (current.phase === 'night' && previous.phase !== 'night') void playAudioEffect('night')
       if (previous.phase === 'night' && current.phase && current.phase !== 'night' && !current.winner) void playAudioEffect('daybreak')

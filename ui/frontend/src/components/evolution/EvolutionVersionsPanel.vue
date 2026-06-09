@@ -84,11 +84,15 @@ function versionSkillLabel(skill) {
 }
 
 function versionSourceLabel(version) {
-  return sourceText(version?.source || (version?.is_baseline ? 'baseline' : 'version'))
+  const source = sourceText(version?.source || (version?.is_baseline ? 'baseline' : 'version'))
+  const stage = version?.releaseStageLabel || sourceText(version?.release_stage || version?.provenance?.release_stage)
+  return stage && stage !== '未知' ? `${source} · ${stage}` : source
 }
 
 function versionDetailSourceLabel(data) {
-  return sourceText(data?.provenance?.source || data?.source || 'version')
+  const source = sourceText(data?.provenance?.source || data?.source || 'version')
+  const stage = sourceText(data?.release_stage || data?.provenance?.release_stage)
+  return stage && stage !== '未知' ? `${source} · ${stage}` : source
 }
 
 function patternStatusColor(status) {
@@ -154,10 +158,11 @@ function confidenceWidth(value) {
             <button
               type="button"
               class="evo-ghost-action"
-              :disabled="version.is_baseline || Boolean(evo.actionLoading.value)"
+              :disabled="version.rollbackDisabled || version.is_baseline || Boolean(evo.actionLoading.value)"
+              :title="version.rollbackDisabledReason || ''"
               @click="evo.rollback(evo.selectedRole.value, version.version_id)"
             >
-              {{ version.is_baseline ? '当前基线' : '回滚' }}
+              {{ version.rollbackLabel || (version.is_baseline ? '当前基线' : '回滚') }}
             </button>
           </div>
         </div>
