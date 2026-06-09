@@ -76,6 +76,13 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     def get_benchmark_snapshot(snapshot_id: str) -> dict[str, Any]:
         return store.get_benchmark_snapshot(snapshot_id)
 
+    @api.get("/api/benchmark/snapshots/{snapshot_id}/export")
+    def export_benchmark_snapshot(
+        snapshot_id: str,
+        format: str = Query(default="json"),
+    ) -> dict[str, Any]:
+        return store.benchmark_snapshot_export(snapshot_id, format=format)
+
     @api.get("/api/benchmark/snapshots/{snapshot_id}/compare")
     def compare_benchmark_snapshot(
         snapshot_id: str,

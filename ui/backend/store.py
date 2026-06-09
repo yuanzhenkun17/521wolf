@@ -734,6 +734,28 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             raise HTTPException(status_code=404, detail="benchmark snapshot not found")
         return _benchmark_snapshot_detail_payload(snapshot)
 
+    def benchmark_snapshot_export(self, snapshot_id: str, *, format: str = "json") -> dict[str, Any]:
+        """Return an immutable snapshot export payload for release/audit workflows."""
+        snapshot = self.get_benchmark_snapshot(snapshot_id)
+        normalized_format = str(format or "json").strip().lower()
+        if normalized_format == "json":
+            content = json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True)
+        elif normalized_format == "markdown":
+            content = _benchmark_snapshot_markdown(snapshot)
+        elif normalized_format == "csv":
+            content = _benchmark_snapshot_csv(snapshot)
+        else:
+            raise HTTPException(status_code=422, detail="unsupported benchmark snapshot export format")
+        return {
+            "kind": "benchmark_leaderboard_snapshot_export",
+            "schema_version": 1,
+            "snapshot_id": snapshot["snapshot_id"],
+            "format": normalized_format,
+            "content": content,
+            "content_hash": snapshot.get("content_hash"),
+            "snapshot": snapshot,
+        }
+
     def benchmark_snapshot_compare(
         self,
         snapshot_id: str,
@@ -4686,6 +4708,92 @@ def _benchmark_snapshot_detail_payload(snapshot: dict[str, Any]) -> dict[str, An
     rows = snapshot.get("rows") if isinstance(snapshot.get("rows"), list) else []
     payload["rows"] = _json_clone(rows)
     return payload
+
+
+def _benchmark_snapshot_markdown(snapshot: dict[str, Any]) -> str:
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    rows = snapshot.get("rows") if isinstance(snapshot.get("rows"), list) else []
+    lines = [
+        f"# 榜单快照：{_markdown_value(snapshot.get('title'))}",
+        "",
+        "## 快照头",
+        f"- 快照 ID: {_markdown_value(snapshot.get('snapshot_id'))}",
+        f"- 范围: {_markdown_value(snapshot.get('scope'))}",
+        f"- 套件: {_markdown_value(snapshot.get('benchmark_id'))} v{_markdown_value(snapshot.get('benchmark_version'))}",
+        f"- 评测集: {_markdown_value(snapshot.get('evaluation_set_id'))}",
+        f"- 种子集: {_markdown_value(snapshot.get('seed_set_id'))}",
+        f"- Config Hash: {_markdown_value(snapshot.get('benchmark_config_hash'))}",
+        f"- 目标角色: {_markdown_value(snapshot.get('target_role'))}",
+        f"- 内容 Hash: {_markdown_value(snapshot.get('content_hash'))}",
+        f"- 创建时间: {_markdown_value(snapshot.get('created_at'))}",
+        "",
+        "## 发布说明",
+        _markdown_value(snapshot.get("release_notes") or "未填写"),
+        "",
+        "## 摘要",
+        f"- 行数: {summary.get('row_count', snapshot.get('row_count', 0))}",
+        f"- 可入榜: {summary.get('rankable_count', snapshot.get('rankable_count', 0))}",
+        f"- 未入榜: {summary.get('unrankable_count', snapshot.get('unrankable_count', 0))}",
+        f"- 来源运行: {summary.get('source_run_count', snapshot.get('source_run_count', 0))}",
+        f"- 来源报告: {summary.get('source_report_count', snapshot.get('source_report_count', 0))}",
+        "",
+        "## 冻结行",
+    ]
+    for index, row in enumerate(rows[:100], start=1):
+        if not isinstance(row, dict):
+            continue
+        score = _leaderboard_score(row, scope=str(snapshot.get("scope") or "role_version"))
+        win_rate = _leaderboard_metric(row, "target_side_win_rate")
+        lines.append(
+            f"- {index}. {_markdown_value(row.get('subject_id') or row.get('hash'))}: "
+            f"分数 {score:.4f} / 胜率 {win_rate:.4f} / "
+            f"{'可入榜' if row.get('rankable') is not False else '未入榜'} / "
+            f"运行 {_markdown_value(row.get('source_run_id') or row.get('batch_id'))} / "
+            f"报告 {_markdown_value(row.get('report_id'))}"
+        )
+    if len(rows) > 100:
+        lines.append(f"- 另有 {len(rows) - 100} 行未在 Markdown 预览中展开。")
+    if not rows:
+        lines.append("- 无冻结行")
+    return "\n".join(lines)
+
+
+def _benchmark_snapshot_csv(snapshot: dict[str, Any]) -> str:
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    rows: list[list[Any]] = [
+        ["区段", "标签", "值", "详情"],
+        ["快照头", "快照 ID", snapshot.get("snapshot_id"), ""],
+        ["快照头", "标题", snapshot.get("title"), ""],
+        ["快照头", "范围", snapshot.get("scope"), ""],
+        ["快照头", "套件", snapshot.get("benchmark_id"), snapshot.get("benchmark_version")],
+        ["快照头", "评测集", snapshot.get("evaluation_set_id"), ""],
+        ["快照头", "种子集", snapshot.get("seed_set_id"), ""],
+        ["快照头", "Config Hash", snapshot.get("benchmark_config_hash"), ""],
+        ["快照头", "内容 Hash", snapshot.get("content_hash"), ""],
+        ["发布说明", "说明", snapshot.get("release_notes"), ""],
+        ["摘要", "行数", summary.get("row_count", snapshot.get("row_count", 0)), ""],
+        ["摘要", "可入榜", summary.get("rankable_count", snapshot.get("rankable_count", 0)), ""],
+        ["摘要", "未入榜", summary.get("unrankable_count", snapshot.get("unrankable_count", 0)), ""],
+        ["摘要", "来源运行", summary.get("source_run_count", snapshot.get("source_run_count", 0)), ""],
+        ["摘要", "来源报告", summary.get("source_report_count", snapshot.get("source_report_count", 0)), ""],
+    ]
+    scope = str(snapshot.get("scope") or "role_version")
+    for row in snapshot.get("rows", []) or []:
+        if not isinstance(row, dict):
+            continue
+        subject = row.get("subject_id") or row.get("hash") or row.get("model_config_hash") or row.get("model_id")
+        rows.append([
+            "冻结行",
+            subject,
+            _leaderboard_score(row, scope=scope),
+            (
+                f"胜率 {row.get('target_side_win_rate', '')} / "
+                f"入榜 {row.get('rankable') is not False} / "
+                f"运行 {row.get('source_run_id') or row.get('batch_id') or ''} / "
+                f"报告 {row.get('report_id') or ''}"
+            ),
+        ])
+    return "\n".join(",".join(_csv_value(value) for value in row) for row in rows)
 
 
 def _benchmark_snapshot_compare_payload(

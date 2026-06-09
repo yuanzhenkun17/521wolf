@@ -1125,6 +1125,13 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 [("snapshot_id", "path", True)],
             ),
         },
+        "/api/benchmark/snapshots/{snapshot_id}/export": {
+            "get": (
+                "export_benchmark_snapshot_api_benchmark_snapshots__snapshot_id__export_get",
+                None,
+                [("snapshot_id", "path", True), ("format", "query", False)],
+            ),
+        },
         "/api/benchmark/snapshots/{snapshot_id}/compare": {
             "get": (
                 "compare_benchmark_snapshot_api_benchmark_snapshots__snapshot_id__compare_get",
@@ -5159,6 +5166,10 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
         }
         snapshot_id = create_response.json()["snapshot_id"]
         detail_response = client.get(f"/api/benchmark/snapshots/{snapshot_id}")
+        json_export_response = client.get(f"/api/benchmark/snapshots/{snapshot_id}/export")
+        markdown_export_response = client.get(f"/api/benchmark/snapshots/{snapshot_id}/export?format=markdown")
+        csv_export_response = client.get(f"/api/benchmark/snapshots/{snapshot_id}/export?format=csv")
+        unsupported_export_response = client.get(f"/api/benchmark/snapshots/{snapshot_id}/export?format=xml")
         list_response = client.get(
             "/api/benchmark/snapshots?scope=role_version&evaluation_set_id=role-baseline-v1%40v1&benchmark_id=role-baseline-v1"
         )
@@ -5246,6 +5257,31 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert detail["rows"][0]["summary"] == {"source": "first"}
     assert detail["rows"][1]["subject_id"] == "seer_unrankable_v1"
     assert detail["rows"][1]["summary"] == {"source": "unrankable"}
+
+    assert json_export_response.status_code == 200
+    json_export = json_export_response.json()
+    assert json_export["kind"] == "benchmark_leaderboard_snapshot_export"
+    assert json_export["format"] == "json"
+    assert json_export["snapshot_id"] == snapshot_id
+    assert json_export["content_hash"] == created["content_hash"]
+    assert '"snapshot_id": "' + snapshot_id + '"' in json_export["content"]
+    assert json_export["snapshot"]["rows"][0]["subject_id"] == "seer_candidate_v2"
+
+    assert markdown_export_response.status_code == 200
+    markdown_export = markdown_export_response.json()
+    assert markdown_export["format"] == "markdown"
+    assert "# 榜单快照：Role release 2026-06-09" in markdown_export["content"]
+    assert "seer_candidate_v2" in markdown_export["content"]
+    assert "benchmark_report:bench_snapshot_run_a" in markdown_export["content"]
+
+    assert csv_export_response.status_code == 200
+    csv_export = csv_export_response.json()
+    assert csv_export["format"] == "csv"
+    assert csv_export["content"].splitlines()[0] == "区段,标签,值,详情"
+    assert "快照头,快照 ID," + snapshot_id in csv_export["content"]
+    assert "冻结行,seer_candidate_v2" in csv_export["content"]
+
+    _assert_error_detail(unsupported_export_response, 422, "unsupported benchmark snapshot export format")
 
     assert list_response.status_code == 200
     listed = list_response.json()
