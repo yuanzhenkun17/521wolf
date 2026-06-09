@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
 import TopNav from '../../src/components/TopNav.vue'
+import { useGameStore, useSessionStore } from '../../src/stores'
+import type { Game } from '../../src/types/game'
 
 const EmptyRoute = defineComponent({ template: '<div />' })
 
@@ -26,8 +29,28 @@ async function createTestRouter(path: string): Promise<Router> {
   return router
 }
 
-async function mountTopNav(path: string, props = {}) {
+function gameFixture(id: string, overrides: Partial<Game> = {}): Game {
+  return {
+    game_id: id,
+    mode: 'watch',
+    status: 'running',
+    phase: 'night',
+    player_count: 2,
+    players: [],
+    logs: [],
+    decisions: [],
+    waiting_for: 'none',
+    pending_action: null,
+    skill_state: {},
+    ...overrides,
+  }
+}
+
+async function mountTopNav(path: string, props = {}, setupStores: () => void = () => {}) {
   const router = await createTestRouter(path)
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  setupStores()
   return mount(TopNav, {
     props: {
       variant: 'lobby',
@@ -36,7 +59,7 @@ async function mountTopNav(path: string, props = {}) {
       ...props,
     },
     global: {
-      plugins: [router],
+      plugins: [pinia, router],
     },
   })
 }
@@ -65,6 +88,31 @@ describe('TopNav router active state', () => {
 
     expect(evolutionButton.classes()).toContain('active')
     expect(evolutionButton.attributes('aria-current')).toBe('page')
+  })
+
+  it('uses the session store as the transition source when the route is still the lobby shell', async () => {
+    const wrapper = await mountTopNav('/', { activeView: 'lobby' }, () => {
+      useSessionStore().setView('logs')
+    })
+    const logsButton = navButton(wrapper, '日志')
+
+    expect(logsButton.classes()).toContain('active')
+    expect(logsButton.attributes('aria-current')).toBe('page')
+  })
+
+  it('uses Pinia game state for the match exit control before App props are removed', async () => {
+    const wrapper = await mountTopNav('/match', { variant: 'match' }, () => {
+      useSessionStore().setActiveSession({
+        gameId: 'game-store',
+        mode: 'watch',
+        running: true,
+        sseConnected: true,
+      })
+      useGameStore().setGame(gameFixture('game-store'))
+    })
+
+    expect(wrapper.find('button.topbar-exit-game').exists()).toBe(true)
+    expect(wrapper.find('.active-session-pill').exists()).toBe(false)
   })
 
   it('keeps legacy navigation events while route ownership is migrating', async () => {

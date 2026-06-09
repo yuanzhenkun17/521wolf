@@ -11,7 +11,9 @@ test('TopNav derives StreamStatusBadge from existing activeSession stream fields
 
   assert.match(source, /import \{ computed, onBeforeUnmount, ref, watch \} from 'vue'/)
   assert.match(source, /const streamStatusBadge = computed\(\(\) => \{/)
-  assert.match(source, /const session = props\.activeSession \|\| \{\}/)
+  assert.match(source, /const effectiveActiveSession = computed\(\(\) => \{/)
+  assert.match(source, /const session = effectiveActiveSession\.value/)
+  assert.match(source, /return props\.activeSession \|\| \{\}/)
   assert.match(source, /session\.running/)
   assert.match(source, /session\.sseConnected/)
   assert.match(source, /session\.sse_connected/)

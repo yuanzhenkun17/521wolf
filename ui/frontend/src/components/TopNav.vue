@@ -2,6 +2,8 @@
 // @ts-nocheck
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { useGameStore, useSessionStore } from '../stores'
+import { isReturnableGame } from '../composables/gameSession.ts'
 
 const props = defineProps({
   brand: { type: String, default: 'NightCouncil' },
@@ -18,6 +20,8 @@ const props = defineProps({
 
 const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
 const route = useRoute()
+const sessionStore = useSessionStore()
+const gameStore = useGameStore()
 const exitConfirming = ref(false)
 let exitConfirmTimer = 0
 const topbarCharactersWebp = '/optimized/topbar-characters-320.webp'
@@ -87,10 +91,30 @@ const routeActiveView = computed(() => {
   return routeViewByPath[routePath] || ''
 })
 
-const activeNavView = computed(() => routeActiveView.value || props.activeView)
+const storeActiveView = computed(() => sessionStore.currentView || '')
+const activeNavView = computed(() => {
+  if (routeActiveView.value && routeActiveView.value !== 'lobby') return routeActiveView.value
+  if (storeActiveView.value && storeActiveView.value !== 'lobby') return storeActiveView.value
+  return props.activeView || routeActiveView.value || storeActiveView.value || 'lobby'
+})
+
+const storeActiveSession = computed(() => sessionStore.activeSession || {})
+const effectiveActiveSession = computed(() => {
+  const session = storeActiveSession.value
+  if (session?.gameId || session?.game_id || session?.running || session?.mode) return session
+  return props.activeSession || {}
+})
+
+const storeHasActiveGame = computed(() => {
+  if (props.variant === 'match' || activeNavView.value === 'match') return false
+  return sessionStore.returnToMatchAvailable || isReturnableGame(gameStore.liveGame)
+})
+
+const effectiveHasActiveGame = computed(() => props.hasActiveGame || storeHasActiveGame.value)
+const effectiveShowExitGame = computed(() => props.showExitGame || (activeNavView.value === 'match' && Boolean(gameStore.liveGame)))
 
 const streamStatusBadge = computed(() => {
-  const session = props.activeSession || {}
+  const session = effectiveActiveSession.value
   const running = Boolean(session.running)
   const connected = anyTruthy(session.sseConnected, session.sse_connected, session.connected)
   const explicitStatus = normalizedStatus(firstValue(
@@ -170,7 +194,7 @@ function requestExitGame() {
   exitConfirmTimer = window.setTimeout(clearExitConfirm, 1800)
 }
 
-watch(() => [props.activeView, props.variant, props.showExitGame], clearExitConfirm)
+watch(() => [props.activeView, props.variant, props.showExitGame, activeNavView.value, effectiveShowExitGame.value], clearExitConfirm)
 onBeforeUnmount(clearExitConfirm)
 </script>
 
@@ -247,7 +271,7 @@ onBeforeUnmount(clearExitConfirm)
         </span>
       </button>
       <button
-        v-if="hasActiveGame"
+        v-if="effectiveHasActiveGame"
         class="active-session-pill"
         type="button"
         :title="streamStatusBadge.title"
@@ -256,7 +280,7 @@ onBeforeUnmount(clearExitConfirm)
       >
         <span class="session-dot" :data-stream-status="streamStatusBadge.status"></span>
         <span class="session-copy">
-          <b>{{ activeSession?.running ? '对局进行中' : '返回对局' }}</b>
+          <b>{{ effectiveActiveSession?.running ? '对局进行中' : '返回对局' }}</b>
           <small
             class="stream-status-badge"
             :data-stream-status="streamStatusBadge.status"
@@ -268,7 +292,7 @@ onBeforeUnmount(clearExitConfirm)
         </span>
       </button>
       <button
-        v-if="showExitGame"
+        v-if="effectiveShowExitGame"
         class="topbar-exit-game"
         :class="{ confirming: exitConfirming }"
         type="button"
