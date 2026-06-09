@@ -16,6 +16,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.config import PathConfig
+from app.lib.benchmark_reproducibility import verify_benchmark_reproducibility_manifest
 import ui.backend.app as ui_backend_app
 
 
@@ -2363,14 +2364,35 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
             "target_type": "role_version",
             "evaluation_set_id": "role-baseline-v1@v1",
             "seed_set_id": "role-baseline-quick-202606",
+            "seed_set_version": 1,
+            "seed_set_config_hash": "sha256:seed-contract",
             "config_hash": "sha256:report-contract",
         }
         batch["target_type"] = "role_version"
+        batch["model_runtime"] = {
+            "schema_version": 1,
+            "source": "request",
+            "model_id": "qwen-max",
+            "model_config_hash": "sha256:model-runtime",
+            "hash_source": "request",
+            "hash_algorithm": "sha256",
+            "hash_input_schema_version": 1,
+            "hash_input": {},
+            "hash_provided": True,
+            "externally_provided": True,
+        }
+        batch["model_id"] = "qwen-max"
+        batch["model_config_hash"] = "sha256:model-runtime"
         batch["config"] = {
             "benchmark_id": "role-baseline-v1",
             "evaluation_set_id": "role-baseline-v1@v1",
             "seed_set_id": "role-baseline-quick-202606",
+            "seed_set_version": 1,
+            "seed_set_config_hash": "sha256:seed-contract",
             "benchmark_config_hash": "sha256:report-contract",
+            "model_id": "qwen-max",
+            "model_config_hash": "sha256:model-runtime",
+            "model_runtime": batch["model_runtime"],
             "roles": ["witch"],
         }
         batch["results"] = [
@@ -2455,6 +2477,8 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
             "diagnostics": list,
             "tags": list,
             "reproducibility": dict,
+            "reproducibility_manifest": dict,
+            "reproducibility_manifest_hash": str,
             "leaderboard": dict,
             "content_hash": str,
             "artifacts": dict,
@@ -2464,10 +2488,12 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
     assert payload["report_id"] == f"benchmark_report:{batch_id}"
     assert payload["content_hash"].startswith("sha256:")
     assert payload["artifacts"]["content_hash"] == payload["content_hash"]
+    assert payload["artifacts"]["reproducibility_manifest_hash"] == payload["reproducibility_manifest_hash"]
     assert second_json_response.status_code == 200
     second_payload = second_json_response.json()
     assert second_payload["report_id"] == payload["report_id"]
     assert second_payload["content_hash"] == payload["content_hash"]
+    assert second_payload["reproducibility_manifest_hash"] == payload["reproducibility_manifest_hash"]
     assert payload["run_id"] == batch_id
     assert payload["evaluation_set_id"] == "role-baseline-v1@v1"
     assert payload["seed_set_id"] == "role-baseline-quick-202606"
@@ -2488,6 +2514,20 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
     assert payload["gates"][0]["status"] == "未入榜"
     assert payload["reproducibility"]["评测集"] == "role-baseline-v1@v1"
     assert payload["reproducibility"]["Config Hash"] == "sha256:report-contract"
+    manifest = payload["reproducibility_manifest"]
+    assert manifest["benchmark_id"] == "role-baseline-v1"
+    assert manifest["benchmark_version"] == "1"
+    assert manifest["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert manifest["benchmark_config_hash"] == "sha256:report-contract"
+    assert manifest["seed_set_id"] == "role-baseline-quick-202606"
+    assert manifest["seed_set_version"] == "1"
+    assert manifest["seed_set_config_hash"] == "sha256:seed-contract"
+    assert manifest["model_id"] == "qwen-max"
+    assert manifest["model_config_hash"] == "sha256:model-runtime"
+    assert manifest["content_hash"] == payload["content_hash"]
+    assert manifest["artifact_hashes"]["content_hash"] == payload["content_hash"]
+    assert manifest["manifest_hash"] == payload["reproducibility_manifest_hash"]
+    assert verify_benchmark_reproducibility_manifest(manifest)["ok"] is True
     assert payload["tags"][0] == {"label": "low_information_gain", "count": 2}
 
     assert markdown_response.status_code == 200
@@ -2498,6 +2538,10 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
     assert markdown_payload["content_hash"] == payload["content_hash"]
     assert markdown_payload["export_content_hash"].startswith("sha256:")
     assert markdown_payload["artifact_hash"] == markdown_payload["export_content_hash"]
+    assert markdown_payload["reproducibility_manifest_hash"] == markdown_payload["reproducibility_manifest"]["manifest_hash"]
+    assert markdown_payload["reproducibility_manifest"]["content_hash"] == payload["content_hash"]
+    assert markdown_payload["reproducibility_manifest"]["artifact_hashes"]["export_content_hash"] == markdown_payload["export_content_hash"]
+    assert verify_benchmark_reproducibility_manifest(markdown_payload["reproducibility_manifest"])["ok"] is True
     assert "# 评测运行报告" in markdown_payload["content"]
     assert "## 门禁摘要" in markdown_payload["content"]
     assert "role-baseline-v1@v1" in markdown_payload["content"]
@@ -2510,6 +2554,9 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
     assert csv_payload["content_hash"] == payload["content_hash"]
     assert csv_payload["export_content_hash"].startswith("sha256:")
     assert csv_payload["artifact_hash"] == csv_payload["export_content_hash"]
+    assert csv_payload["reproducibility_manifest_hash"] == csv_payload["reproducibility_manifest"]["manifest_hash"]
+    assert csv_payload["reproducibility_manifest"]["artifact_hashes"]["export_content_hash"] == csv_payload["export_content_hash"]
+    assert verify_benchmark_reproducibility_manifest(csv_payload["reproducibility_manifest"])["ok"] is True
     assert csv_payload["content"].splitlines()[0] == "区段,标签,值,详情"
     assert "摘要,可入榜" in csv_payload["content"]
     assert "bench_report_game_timeout" in csv_payload["content"]

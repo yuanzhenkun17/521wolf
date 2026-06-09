@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.config import PathConfig, load_llm_config, load_tts_config
+from app.lib.benchmark_reproducibility import build_benchmark_reproducibility_manifest
 from app.lib.benchmark_spec import (
     BenchmarkSeedSet,
     BenchmarkSpec,
@@ -1773,6 +1774,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         if normalized_format in {"markdown", "md"}:
             content = _benchmark_run_report_markdown(report)
             export_content_hash = _text_content_hash(content)
+            export_manifest = _benchmark_run_report_reproducibility_manifest(
+                batch,
+                report,
+                export_format="markdown",
+                export_content_hash=export_content_hash,
+            )
             return {
                 "kind": "benchmark_run_report_export",
                 "schema_version": 1,
@@ -1784,11 +1791,19 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 "content_hash": report["content_hash"],
                 "export_content_hash": export_content_hash,
                 "artifact_hash": export_content_hash,
+                "reproducibility_manifest": export_manifest,
+                "reproducibility_manifest_hash": export_manifest["manifest_hash"],
                 "report": report,
             }
         if normalized_format == "csv":
             content = _benchmark_run_report_csv(report)
             export_content_hash = _text_content_hash(content)
+            export_manifest = _benchmark_run_report_reproducibility_manifest(
+                batch,
+                report,
+                export_format="csv",
+                export_content_hash=export_content_hash,
+            )
             return {
                 "kind": "benchmark_run_report_export",
                 "schema_version": 1,
@@ -1800,6 +1815,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 "content_hash": report["content_hash"],
                 "export_content_hash": export_content_hash,
                 "artifact_hash": export_content_hash,
+                "reproducibility_manifest": export_manifest,
+                "reproducibility_manifest_hash": export_manifest["manifest_hash"],
                 "report": report,
             }
         raise HTTPException(status_code=422, detail="unsupported benchmark report format")
@@ -3532,6 +3549,10 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
             "csv": f"/api/benchmark/batch/{batch_id}/report?format=csv",
         },
     }
+    manifest = _benchmark_run_report_reproducibility_manifest(batch, payload)
+    payload["reproducibility_manifest"] = manifest
+    payload["reproducibility_manifest_hash"] = manifest["manifest_hash"]
+    payload["artifacts"]["reproducibility_manifest_hash"] = manifest["manifest_hash"]
     return payload
 
 
@@ -3573,6 +3594,7 @@ def _benchmark_run_report_summary(
         "problem_game_count": int(summary.get("problem_game_count") or 0),
         "diagnostic_count": int(diagnostic_summary.get("total") or 0),
         "content_hash": report.get("content_hash") or _benchmark_report_content_hash(report),
+        "reproducibility_manifest_hash": report.get("reproducibility_manifest_hash"),
         "links": {
             "json": f"/api/benchmark/batch/{batch_id}/report",
             "markdown": f"/api/benchmark/batch/{batch_id}/report?format=markdown",
@@ -3667,12 +3689,69 @@ def _benchmark_report_model_runtime(
     }
 
 
+def _benchmark_run_report_reproducibility_manifest(
+    batch: dict[str, Any],
+    report: dict[str, Any],
+    *,
+    export_format: str | None = None,
+    export_content_hash: str | None = None,
+) -> dict[str, Any]:
+    benchmark = batch.get("benchmark") if isinstance(batch.get("benchmark"), dict) else {}
+    config = batch.get("config") if isinstance(batch.get("config"), dict) else {}
+    suite = report.get("suite") if isinstance(report.get("suite"), dict) else {}
+    model_runtime = report.get("model_runtime") if isinstance(report.get("model_runtime"), dict) else {}
+    content_hash = str(report.get("content_hash") or "")
+    run_payload = {
+        "benchmark": {
+            "id": suite.get("benchmark_id") or benchmark.get("id") or config.get("benchmark_id"),
+            "version": suite.get("benchmark_version") or benchmark.get("version") or config.get("benchmark_version"),
+            "evaluation_set_id": report.get("evaluation_set_id") or suite.get("evaluation_set_id"),
+            "config_hash": report.get("benchmark_config_hash") or suite.get("benchmark_config_hash"),
+            "seed_set_id": report.get("seed_set_id") or suite.get("seed_set_id"),
+            "seed_set_version": benchmark.get("seed_set_version") or config.get("seed_set_version"),
+            "seed_set_config_hash": benchmark.get("seed_set_config_hash") or config.get("seed_set_config_hash"),
+            "source_filter": config.get("source_filter") if isinstance(config.get("source_filter"), dict) else {},
+        },
+        "model_runtime": _json_clone(model_runtime),
+        "request": _json_clone(config),
+        "planner": _json_clone(batch.get("run_plan") if isinstance(batch.get("run_plan"), dict) else {}),
+        "artifacts": {
+            "content_hash": content_hash,
+            "json": {"artifact_hash": content_hash},
+        },
+        "created_at": batch.get("finished_at") or batch.get("updated_at") or batch.get("started_at") or report.get("generated_at"),
+    }
+    report_payload = {
+        "subject": _json_clone(report.get("subject") or {}),
+        "model_runtime": _json_clone(model_runtime),
+        "artifacts": _json_clone(report.get("artifacts") or {"content_hash": content_hash}),
+        "content_hash": content_hash,
+    }
+    export_payload = None
+    if export_format:
+        export_payload = {
+            "export": {
+                "format": export_format,
+                "export_content_hash": export_content_hash,
+                "artifact_hash": export_content_hash,
+            }
+        }
+    return build_benchmark_reproducibility_manifest(
+        run_payload=run_payload,
+        report_payload=report_payload,
+        export_payload=export_payload,
+        created_at=str(run_payload.get("created_at") or ""),
+    )
+
+
 def _benchmark_report_content_hash(report: dict[str, Any]) -> str:
     stable_report = _json_clone(report)
     if isinstance(stable_report, dict):
         stable_report.pop("generated_at", None)
         stable_report.pop("content_hash", None)
         stable_report.pop("artifacts", None)
+        stable_report.pop("reproducibility_manifest", None)
+        stable_report.pop("reproducibility_manifest_hash", None)
     return _stable_payload_hash(stable_report if isinstance(stable_report, dict) else {})
 
 
