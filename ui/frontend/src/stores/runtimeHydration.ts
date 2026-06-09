@@ -27,6 +27,11 @@ export interface RuntimeHydrationPayloads {
   ui: UiRuntimeHydration
 }
 
+export interface IncrementalRuntimeHydrator {
+  hydrate(runtime: RuntimeHydrationSource): RuntimeHydrationPayloads
+  reset(): void
+}
+
 export const runtimeHydrationKeys = {
   session: ['currentView', 'backendMode', 'activeSession', 'returnToMatchAvailable'],
   game: ['liveGame', 'game', 'loading', 'error', 'watchRunning'],
@@ -81,4 +86,51 @@ export function hydrateStoresFromRuntime(
   stores.replay.hydrateFromRuntime(payloads.replay)
   stores.ui.hydrateFromRuntime(payloads.ui)
   return payloads
+}
+
+function payloadChanged<TPayload extends object>(previous: TPayload | undefined, next: TPayload): boolean {
+  if (!previous) return true
+  const previousKeys = Object.keys(previous)
+  const nextKeys = Object.keys(next)
+  if (previousKeys.length !== nextKeys.length) return true
+  return nextKeys.some((key) => !Object.is(
+    previous[key as keyof TPayload],
+    next[key as keyof TPayload]
+  ))
+}
+
+export function createIncrementalRuntimeHydrator(stores: RuntimeHydrationStores): IncrementalRuntimeHydrator {
+  let previous: Partial<RuntimeHydrationPayloads> = {}
+
+  return {
+    hydrate(runtime) {
+      const payloads = createStoreRuntimeHydration(runtime)
+
+      if (payloadChanged(previous.session, payloads.session)) {
+        stores.session.hydrateFromRuntime(payloads.session)
+        previous.session = payloads.session
+      }
+      if (payloadChanged(previous.game, payloads.game)) {
+        stores.game.hydrateFromRuntime(payloads.game)
+        previous.game = payloads.game
+      }
+      if (payloadChanged(previous.history, payloads.history)) {
+        stores.history.hydrateFromRuntime(payloads.history)
+        previous.history = payloads.history
+      }
+      if (payloadChanged(previous.replay, payloads.replay)) {
+        stores.replay.hydrateFromRuntime(payloads.replay)
+        previous.replay = payloads.replay
+      }
+      if (payloadChanged(previous.ui, payloads.ui)) {
+        stores.ui.hydrateFromRuntime(payloads.ui)
+        previous.ui = payloads.ui
+      }
+
+      return payloads
+    },
+    reset() {
+      previous = {}
+    }
+  }
 }

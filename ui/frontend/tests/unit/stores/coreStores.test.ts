@@ -6,6 +6,7 @@ import { useGameStore } from '../../../src/stores/game'
 import { useHistoryStore } from '../../../src/stores/history'
 import { useReplayStore } from '../../../src/stores/replay'
 import {
+  createIncrementalRuntimeHydrator,
   createStoreRuntimeHydration,
   hydrateStoresFromRuntime,
   runtimeHydrationKeys
@@ -315,4 +316,66 @@ test('runtime hydration helper creates typed payloads without mutating stores', 
   assert.equal(payloads.replay.replayCursor, 0)
   assert.equal(payloads.replay.replaySpeed, 0)
   assert.equal(store.liveGame, null)
+})
+
+test('incremental runtime hydrator skips unchanged store payloads', () => {
+  const stores = {
+    session: { hydrateFromRuntime: vi.fn() },
+    game: { hydrateFromRuntime: vi.fn() },
+    history: { hydrateFromRuntime: vi.fn() },
+    replay: { hydrateFromRuntime: vi.fn() },
+    ui: { hydrateFromRuntime: vi.fn() }
+  }
+  const runtime = {
+    currentView: ref('logs'),
+    backendMode: ref('mock'),
+    activeSession: ref(null),
+    returnToMatchAvailable: ref(false),
+    liveGame: ref(null),
+    game: ref(null),
+    loading: ref(false),
+    error: ref(''),
+    watchRunning: ref(false),
+    gameHistory: ref([]),
+    selectedHistoryGameId: ref(null),
+    selectedHistoryGame: ref(null),
+    historyWorkspaceTab: ref('phase'),
+    historyLoading: ref(false),
+    historyNotice: ref(null),
+    replayGame: ref(null),
+    isReplayMode: ref(false),
+    replayCursor: ref(0),
+    replayPlaying: ref(false),
+    replaySpeed: ref(1),
+    matchNotice: ref(null)
+  }
+  const hydrator = createIncrementalRuntimeHydrator(stores)
+
+  hydrator.hydrate(runtime)
+  hydrator.hydrate(runtime)
+
+  assert.equal(stores.session.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
+
+  runtime.historyLoading.value = true
+  const payloads = hydrator.hydrate(runtime)
+
+  assert.equal(payloads.history.historyLoading, true)
+  assert.equal(stores.session.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 2)
+  assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
+
+  hydrator.reset()
+  hydrator.hydrate(runtime)
+
+  assert.equal(stores.session.hydrateFromRuntime.mock.calls.length, 2)
+  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 2)
+  assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 3)
+  assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 2)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 2)
 })

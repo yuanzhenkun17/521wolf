@@ -12,7 +12,7 @@ import { useAppRuntimeProps } from './composables/appRuntimeProps'
 import { isReturnableGame } from './composables/gameSession.ts'
 import { appViewFromRoute } from './router/appViews'
 import {
-  hydrateStoresFromRuntime,
+  createIncrementalRuntimeHydrator,
   useGameStore,
   useHistoryStore,
   useReplayStore,
@@ -41,6 +41,13 @@ const gameStore = useGameStore()
 const historyStore = useHistoryStore()
 const replayStore = useReplayStore()
 const uiStore = useUiStore()
+const runtimeHydrator = createIncrementalRuntimeHydrator({
+  session: sessionStore,
+  game: gameStore,
+  history: historyStore,
+  replay: replayStore,
+  ui: uiStore
+})
 
 function registerCouncilScene(sceneApi) {
   actions.setSceneApi?.(sceneApi)
@@ -48,13 +55,7 @@ function registerCouncilScene(sceneApi) {
 }
 
 watchEffect(() => {
-  hydrateStoresFromRuntime(runtime, {
-    session: sessionStore,
-    game: gameStore,
-    history: historyStore,
-    replay: replayStore,
-    ui: uiStore
-  })
+  runtimeHydrator.hydrate(runtime)
 })
 
 const {
