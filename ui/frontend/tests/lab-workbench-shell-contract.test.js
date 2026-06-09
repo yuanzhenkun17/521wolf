@@ -78,9 +78,12 @@ test('Benchmark launch and target panels keep Chinese-first benchmark terminolog
   assert.match(benchmark, /label: '评测集'/)
   assert.match(benchmark, /label: '种子集'/)
   assert.match(benchmark, /quick 快速套件或临时评测/)
-  assert.match(benchmark, /个 Judge 并发任务/)
+  assert.match(benchmark, /label: '并发策略'/)
+  assert.match(benchmark, /批次 \$\{formatNumber\(roleConcurrency\)\}/)
+  assert.match(benchmark, /对局 \$\{formatNumber\(gameConcurrency\)\}/)
+  assert.match(benchmark, /Judge \$\{formatNumber\(judgeConcurrency\)\}/)
   assert.match(benchmark, /预计调用单位/)
-  assert.doesNotMatch(benchmark, /label: 'Scope'|label: 'Evaluation Set'|label: 'Seed Set'|<dt>Evaluation Set<\/dt>|<dt>Seed Set<\/dt>|个 Judge 并发进程|预计单位/)
+  assert.doesNotMatch(benchmark, /label: 'Scope'|label: 'Evaluation Set'|label: 'Seed Set'|<dt>Evaluation Set<\/dt>|<dt>Seed Set<\/dt>|个 Judge 并发进程|个 Judge 并发任务|预计单位/)
 })
 
 test('EvolutionPage has a low-risk LabWorkbenchShell bridge around the existing evolution shell', () => {
