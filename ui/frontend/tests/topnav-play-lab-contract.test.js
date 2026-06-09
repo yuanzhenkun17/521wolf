@@ -20,9 +20,12 @@ test('TopNav buttons show current page state without changing App routing events
   const appSource = readSource('../src/App.vue')
 
   assert.match(source, /function navItemAriaLabel\(item\)[\s\S]*\$\{item\.lineLabel\} 工作线：\$\{item\.label\}[\s\S]*当前页面/)
+  assert.match(source, /import \{ useRoute \} from 'vue-router'/)
+  assert.match(source, /const routeActiveView = computed\(\(\) => \{/)
+  assert.match(source, /const activeNavView = computed\(\(\) => routeActiveView\.value \|\| props\.activeView\)/)
   assert.match(source, /<nav v-if="variant !== 'match'" class="primary-nav" aria-label="主导航">/)
-  assert.match(source, /class="nav-button"[\s\S]*:data-work-line="item\.line"[\s\S]*:aria-current="activeView === item\.key \? 'page' : undefined"[\s\S]*:aria-label="navItemAriaLabel\(item\)"/)
-  assert.match(source, /<span class="nav-line">\{\{ item\.lineLabel \}\}<\/span>[\s\S]*<span class="nav-label">\{\{ item\.label \}\}<\/span>[\s\S]*<span v-if="activeView === item\.key" class="nav-state">当前<\/span>/)
+  assert.match(source, /class="nav-button"[\s\S]*:data-work-line="item\.line"[\s\S]*:aria-current="activeNavView === item\.key \? 'page' : undefined"[\s\S]*:aria-label="navItemAriaLabel\(item\)"/)
+  assert.match(source, /<span class="nav-line">\{\{ item\.lineLabel \}\}<\/span>[\s\S]*<span class="nav-label">\{\{ item\.label \}\}<\/span>[\s\S]*<span v-if="activeNavView === item\.key" class="nav-state">当前<\/span>/)
 
   assert.match(appSource, /@go-lobby="goLobby"/)
   assert.match(appSource, /@open-logs="openLogPage\(\)"/)

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // @ts-nocheck
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 const props = defineProps({
   brand: { type: String, default: 'NightCouncil' },
@@ -16,8 +17,11 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
+const route = useRoute()
 const exitConfirming = ref(false)
 let exitConfirmTimer = 0
+const topbarCharactersWebp = '/optimized/topbar-characters-320.webp'
+const topbarCharactersPng = '/topbar-characters.png'
 
 const navItems = [
   { key: 'lobby', label: '大厅', line: 'play', lineLabel: 'Play', event: 'go-lobby' },
@@ -30,6 +34,22 @@ const RECONNECTING_STREAM_STATUSES = new Set(['connecting', 'reconnect', 'reconn
 const POLLING_STREAM_STATUSES = new Set(['degraded', 'fallback', 'polling', 'polling_fallback', 'long_polling'])
 const BACKGROUND_STREAM_STATUSES = new Set(['background', 'background_running', 'detached'])
 const STOPPED_STREAM_STATUSES = new Set(['closed', 'done', 'stopped', 'terminal'])
+
+const routeViewByName = {
+  lobby: 'lobby',
+  match: 'match',
+  logs: 'logs',
+  benchmark: 'benchmark',
+  evolution: 'evolution'
+}
+
+const routeViewByPath = {
+  '/': 'lobby',
+  '/match': 'match',
+  '/logs': 'logs',
+  '/benchmark': 'benchmark',
+  '/evolution': 'evolution'
+}
 
 function truthy(value) {
   return value === true || value === 1 || value === '1' || value === 'true'
@@ -57,8 +77,17 @@ function formatStreamTime(value) {
 
 function navItemAriaLabel(item) {
   const label = `${item.lineLabel} 工作线：${item.label}`
-  return props.activeView === item.key ? `${label}，当前页面` : label
+  return activeNavView.value === item.key ? `${label}，当前页面` : label
 }
+
+const routeActiveView = computed(() => {
+  const routeName = typeof route?.name === 'string' ? route.name : String(route?.name || '')
+  if (routeViewByName[routeName]) return routeViewByName[routeName]
+  const routePath = String(route?.path || '').replace(/\/+$/, '') || '/'
+  return routeViewByPath[routePath] || ''
+})
+
+const activeNavView = computed(() => routeActiveView.value || props.activeView)
 
 const streamStatusBadge = computed(() => {
   const session = props.activeSession || {}
@@ -149,8 +178,8 @@ onBeforeUnmount(clearExitConfirm)
   <header :class="['topbar', 'topbar--' + variant]">
     <div class="brand">
       <picture class="brand-mark">
-        <source type="image/webp" srcset="/optimized/topbar-characters-320.webp" />
-        <img src="/topbar-characters.png" :alt="brand" decoding="async" />
+        <source type="image/webp" :srcset="topbarCharactersWebp" />
+        <img :src="topbarCharactersPng" :alt="brand" decoding="async" />
       </picture>
       <strong>NightCouncil</strong>
     </div>
@@ -160,15 +189,15 @@ onBeforeUnmount(clearExitConfirm)
         :key="item.key"
         type="button"
         class="nav-button"
-        :class="{ active: activeView === item.key }"
+        :class="{ active: activeNavView === item.key }"
         :data-work-line="item.line"
-        :aria-current="activeView === item.key ? 'page' : undefined"
+        :aria-current="activeNavView === item.key ? 'page' : undefined"
         :aria-label="navItemAriaLabel(item)"
         @click="emit(item.event)"
       >
         <span class="nav-line">{{ item.lineLabel }}</span>
         <span class="nav-label">{{ item.label }}</span>
-        <span v-if="activeView === item.key" class="nav-state">当前</span>
+        <span v-if="activeNavView === item.key" class="nav-state">当前</span>
       </button>
     </nav>
     <div v-if="variant === 'match'" class="topbar-actions">
