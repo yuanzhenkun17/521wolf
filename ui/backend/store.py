@@ -56,6 +56,7 @@ from ui.backend.schemas import (
     EvolutionStartRequest,
     automatic_evolution_request,
 )
+from ui.backend.services import BENCHMARK_PUBLIC_METHODS, BenchmarkService
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
 from ui.backend.task_events import TaskEventLog
 from ui.backend.task_state import (
@@ -280,6 +281,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     _background_state_fingerprint: str | None = field(default=None, init=False, repr=False)
     _task_event_fingerprints: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _task_event_log: TaskEventLog | None = field(default=None, init=False, repr=False)
+    _benchmark_service: BenchmarkService | None = field(default=None, init=False, repr=False)
     _registry: VersionRegistryProtocol | None = field(default=None, init=False, repr=False)
     _role_overview_cache: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     startup_checks: dict[str, Any] = field(default_factory=default_startup_checks)
@@ -309,7 +311,308 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
         return storage_provider_from_env(paths=self.paths).open_wolf_connection()
 
+    @property
+    def benchmark_service(self) -> BenchmarkService:
+        if self._benchmark_service is None:
+            missing = [
+                method_name
+                for method_name in BENCHMARK_PUBLIC_METHODS
+                if not hasattr(self, f"_{method_name}")
+            ]
+            if missing:
+                raise RuntimeError(f"BenchmarkService missing BackendStore implementations: {', '.join(missing)}")
+            self._benchmark_service = BenchmarkService(
+                self,
+                callables={
+                    method_name: getattr(self, f"_{method_name}")
+                    for method_name in BENCHMARK_PUBLIC_METHODS
+                },
+            )
+        return self._benchmark_service
+
     def leaderboard_scores_for_role(
+        self,
+        role: str,
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        return self.benchmark_service.leaderboard_scores_for_role(
+            role,
+            evaluation_set_id=evaluation_set_id,
+        )
+
+    def leaderboard_entries(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self.benchmark_service.leaderboard_entries(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            limit=limit,
+        )
+
+    def model_leaderboard_entries(
+        self,
+        *,
+        evaluation_set_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self.benchmark_service.model_leaderboard_entries(
+            evaluation_set_id=evaluation_set_id,
+            limit=limit,
+        )
+
+    def leaderboard_unrankable_evidence(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 100,
+        rows: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.benchmark_service.leaderboard_unrankable_evidence(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            limit=limit,
+            rows=rows,
+        )
+
+    def leaderboard_compare(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        baseline_subject_id: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.leaderboard_compare(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            baseline_subject_id=baseline_subject_id,
+            limit=limit,
+        )
+
+    def leaderboard_scores_for_roles(
+        self,
+        roles: list[str],
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        return self.benchmark_service.leaderboard_scores_for_roles(
+            roles,
+            evaluation_set_id=evaluation_set_id,
+        )
+
+    def create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
+        return self.benchmark_service.create_benchmark_snapshot(request)
+
+    def list_benchmark_snapshots(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        benchmark_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.list_benchmark_snapshots(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            limit=limit,
+        )
+
+    def get_benchmark_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+        return self.benchmark_service.get_benchmark_snapshot(snapshot_id)
+
+    def benchmark_snapshot_export(self, snapshot_id: str, *, format: str = "json") -> dict[str, Any]:
+        return self.benchmark_service.benchmark_snapshot_export(snapshot_id, format=format)
+
+    def benchmark_snapshot_compare(
+        self,
+        snapshot_id: str,
+        *,
+        against_snapshot_id: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.benchmark_snapshot_compare(
+            snapshot_id,
+            against_snapshot_id=against_snapshot_id,
+            limit=limit,
+        )
+
+    def save_benchmark_view(self, request: BenchmarkViewRequest) -> dict[str, Any]:
+        return self.benchmark_service.save_benchmark_view(request)
+
+    def list_benchmark_views(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        benchmark_id: str | None = None,
+        target_role: str | None = None,
+        view_key: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.list_benchmark_views(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            view_key=view_key,
+            limit=limit,
+        )
+
+    def get_benchmark_view(self, view_key: str) -> dict[str, Any]:
+        return self.benchmark_service.get_benchmark_view(view_key)
+
+    def delete_benchmark_view(self, view_key: str) -> dict[str, Any]:
+        return self.benchmark_service.delete_benchmark_view(view_key)
+
+    def list_benchmark_specs(self) -> list[dict[str, Any]]:
+        return self.benchmark_service.list_benchmark_specs()
+
+    def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
+        return self.benchmark_service.get_benchmark_spec_summary(benchmark_id)
+
+    def update_benchmark_lifecycle(self, benchmark_id: str, request: BenchmarkLifecycleRequest) -> dict[str, Any]:
+        return self.benchmark_service.update_benchmark_lifecycle(benchmark_id, request)
+
+    def list_benchmark_seed_sets(self) -> dict[str, Any]:
+        return self.benchmark_service.list_benchmark_seed_sets()
+
+    def get_benchmark_seed_set(self, seed_set_id: str) -> dict[str, Any]:
+        return self.benchmark_service.get_benchmark_seed_set(seed_set_id)
+
+    def plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
+        return self.benchmark_service.plan_benchmark(request)
+
+    def benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
+        return self.benchmark_service.benchmark_batch_detail(batch_id)
+
+    def benchmark_batch_games(
+        self,
+        batch_id: str,
+        *,
+        result_batch_id: str | None = None,
+        target_role: str | None = None,
+        status: str | None = None,
+        seed: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.benchmark_batch_games(
+            batch_id,
+            result_batch_id=result_batch_id,
+            target_role=target_role,
+            status=status,
+            seed=seed,
+            limit=limit,
+            offset=offset,
+        )
+
+    def benchmark_batch_diagnostics(
+        self,
+        batch_id: str,
+        *,
+        target_role: str | None = None,
+        kind: str | None = None,
+        level: str | None = None,
+        status: str | None = None,
+        stage: str | None = None,
+        seed: str | None = None,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.benchmark_batch_diagnostics(
+            batch_id,
+            target_role=target_role,
+            kind=kind,
+            level=level,
+            status=status,
+            stage=stage,
+            seed=seed,
+        )
+
+    def benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
+        return self.benchmark_service.benchmark_batch_report(batch_id, format=format)
+
+    def benchmark_reports(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        benchmark_id: str | None = None,
+        target_role: str | None = None,
+        model_id: str | None = None,
+        model_config_hash: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.benchmark_reports(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            model_id=model_id,
+            model_config_hash=model_config_hash,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    def benchmark_diagnostics(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        benchmark_id: str | None = None,
+        target_role: str | None = None,
+        model_id: str | None = None,
+        model_config_hash: str | None = None,
+        kind: str | None = None,
+        level: str | None = None,
+        status: str | None = None,
+        stage: str | None = None,
+        seed: str | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return self.benchmark_service.benchmark_diagnostics(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            model_id=model_id,
+            model_config_hash=model_config_hash,
+            kind=kind,
+            level=level,
+            status=status,
+            stage=stage,
+            seed=seed,
+            limit=limit,
+            offset=offset,
+        )
+
+    def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
+        return self.benchmark_service.benchmark_model_runtime(request)
+
+    def queue_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
+        return self.benchmark_service.queue_benchmark(request)
+
+    async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
+        await self.benchmark_service.run_queued_benchmark(batch_id, request)
+
+    def _leaderboard_scores_for_role(
         self,
         role: str,
         *,
@@ -353,7 +656,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 conn.close()
         return scores
 
-    def leaderboard_entries(
+    def _leaderboard_entries(
         self,
         *,
         scope: str | None = None,
@@ -406,7 +709,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 conn.close()
         return rows_out
 
-    def model_leaderboard_entries(
+    def _model_leaderboard_entries(
         self,
         *,
         evaluation_set_id: str | None = None,
@@ -415,7 +718,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         """Load model-scope benchmark leaderboard rows."""
         return self.leaderboard_entries(scope="model", evaluation_set_id=evaluation_set_id, limit=limit)
 
-    def leaderboard_unrankable_evidence(
+    def _leaderboard_unrankable_evidence(
         self,
         *,
         scope: str | None = None,
@@ -565,7 +868,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                     return evidence
         return evidence
 
-    def leaderboard_compare(
+    def _leaderboard_compare(
         self,
         *,
         scope: str | None = None,
@@ -611,7 +914,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "summary": summary,
         }
 
-    def create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
+    def _create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
         """Freeze the current leaderboard rows into an immutable release snapshot."""
         scope = str(request.scope or "").strip().lower()
         if scope not in {"role_version", "model"}:
@@ -729,7 +1032,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "benchmark_config_hash": request.benchmark_config_hash or summary.get("config_hash"),
         }
 
-    def list_benchmark_snapshots(
+    def _list_benchmark_snapshots(
         self,
         *,
         scope: str | None = None,
@@ -760,7 +1063,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "items": snapshots,
         }
 
-    def get_benchmark_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+    def _get_benchmark_snapshot(self, snapshot_id: str) -> dict[str, Any]:
         """Return one frozen benchmark leaderboard snapshot with copied rows."""
         normalized_id = str(snapshot_id or "").strip()
         if not normalized_id:
@@ -770,7 +1073,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             raise HTTPException(status_code=404, detail="benchmark snapshot not found")
         return _benchmark_snapshot_detail_payload(snapshot)
 
-    def benchmark_snapshot_export(self, snapshot_id: str, *, format: str = "json") -> dict[str, Any]:
+    def _benchmark_snapshot_export(self, snapshot_id: str, *, format: str = "json") -> dict[str, Any]:
         """Return an immutable snapshot export payload for release/audit workflows."""
         snapshot = self.get_benchmark_snapshot(snapshot_id)
         normalized_format = str(format or "json").strip().lower()
@@ -797,7 +1100,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "snapshot": snapshot,
         }
 
-    def benchmark_snapshot_compare(
+    def _benchmark_snapshot_compare(
         self,
         snapshot_id: str,
         *,
@@ -855,7 +1158,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         )
         return compare
 
-    def save_benchmark_view(self, request: BenchmarkViewRequest) -> dict[str, Any]:
+    def _save_benchmark_view(self, request: BenchmarkViewRequest) -> dict[str, Any]:
         """Persist a reusable benchmark leaderboard/table view."""
         view_key = str(request.view_key or "").strip()
         if not view_key:
@@ -883,7 +1186,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             _log.warning("persist benchmark saved view failed", exc_info=True)
         return _benchmark_view_payload(view)
 
-    def list_benchmark_views(
+    def _list_benchmark_views(
         self,
         *,
         scope: str | None = None,
@@ -916,7 +1219,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "items": rows,
         }
 
-    def get_benchmark_view(self, view_key: str) -> dict[str, Any]:
+    def _get_benchmark_view(self, view_key: str) -> dict[str, Any]:
         """Return one saved benchmark view."""
         normalized_key = str(view_key or "").strip()
         if not normalized_key:
@@ -926,7 +1229,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             raise HTTPException(status_code=404, detail="benchmark view not found")
         return rows[0]
 
-    def delete_benchmark_view(self, view_key: str) -> dict[str, Any]:
+    def _delete_benchmark_view(self, view_key: str) -> dict[str, Any]:
         """Delete a saved benchmark view."""
         normalized_key = str(view_key or "").strip()
         if not normalized_key:
@@ -1164,7 +1467,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         row_payload.update(_leaderboard_row_statistics(row_payload))
         return row_payload
 
-    def leaderboard_scores_for_roles(
+    def _leaderboard_scores_for_roles(
         self,
         roles: list[str],
         *,
@@ -1209,7 +1512,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 conn.close()
         return scores
 
-    def list_benchmark_specs(self) -> list[dict[str, Any]]:
+    def _list_benchmark_specs(self) -> list[dict[str, Any]]:
         """Return configured benchmark suite summaries for API/UI use."""
         return _annotate_benchmark_suite_lineage(
             self._benchmark_spec_summaries(include_activity=True, skip_invalid=False)
@@ -1264,7 +1567,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             _copy_benchmark_suite_lineage(summary, matched)
         return summary
 
-    def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
+    def _get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
         """Return a single benchmark suite summary."""
         try:
             spec, lifecycle_override = self._benchmark_spec_with_lifecycle(benchmark_id)
@@ -1280,7 +1583,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             detail = "benchmark not found" if status == 404 else str(exc)
             raise HTTPException(status_code=status, detail=detail) from exc
 
-    def update_benchmark_lifecycle(self, benchmark_id: str, request: BenchmarkLifecycleRequest) -> dict[str, Any]:
+    def _update_benchmark_lifecycle(self, benchmark_id: str, request: BenchmarkLifecycleRequest) -> dict[str, Any]:
         """Persist a runtime lifecycle override for a benchmark suite."""
         normalized_id = str(benchmark_id or "").strip()
         if not normalized_id:
@@ -1373,12 +1676,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
-    def list_benchmark_seed_sets(self) -> dict[str, Any]:
+    def _list_benchmark_seed_sets(self) -> dict[str, Any]:
         """Return configured benchmark seed-set registry summaries for API/UI use."""
         seed_sets = list_benchmark_seed_sets(self.paths, include_disabled=True)
         return benchmark_seed_registry_summary(seed_sets)
 
-    def get_benchmark_seed_set(self, seed_set_id: str) -> dict[str, Any]:
+    def _get_benchmark_seed_set(self, seed_set_id: str) -> dict[str, Any]:
         """Return one benchmark seed set with full seeds for audit views."""
         try:
             seed_set = load_benchmark_seed_set(seed_set_id, self.paths, include_disabled=True)
@@ -1423,7 +1726,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "latest_snapshot": snapshots[0] if snapshots else None,
         }
 
-    def plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
+    def _plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
         """Return a launch plan and budget estimate for a benchmark request."""
         return self._benchmark_run_plan(request)
 
@@ -1566,7 +1869,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "warnings": warnings,
         }
 
-    def benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
+    def _benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
         """Return an auditable benchmark batch detail payload."""
         batch = self._benchmark_batch_or_404(batch_id)
         from ui.backend.evolution_serializers import _benchmark_result_summary, _evolution_batch_summary
@@ -1606,7 +1909,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "langfuse": langfuse,
         }
 
-    def benchmark_batch_games(
+    def _benchmark_batch_games(
         self,
         batch_id: str,
         *,
@@ -1644,7 +1947,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "pagination": pagination,
         }
 
-    def benchmark_batch_diagnostics(
+    def _benchmark_batch_diagnostics(
         self,
         batch_id: str,
         *,
@@ -1698,7 +2001,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "summary": _benchmark_diagnostic_summary(diagnostics),
         }
 
-    def benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
+    def _benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
         """Return a canonical benchmark run report or a text export wrapper."""
         batch = self._benchmark_batch_or_404(batch_id)
         report = _benchmark_run_report_payload(batch)
@@ -1755,7 +2058,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             }
         raise HTTPException(status_code=422, detail="unsupported benchmark report format")
 
-    def benchmark_reports(
+    def _benchmark_reports(
         self,
         *,
         scope: str | None = None,
@@ -1821,7 +2124,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "pagination": pagination,
         }
 
-    def benchmark_diagnostics(
+    def _benchmark_diagnostics(
         self,
         *,
         scope: str | None = None,
@@ -1937,7 +2240,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             _log.warning("LLM config missing; UI backend is using fallback model", exc_info=True)
             return _FakeModel()
 
-    def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
+    def _benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
         """Return model identity used to attribute model-scope benchmark runs."""
         request_model_id = str(getattr(request, "model_id", "") or "").strip() if request else ""
         request_config_hash = str(getattr(request, "model_config_hash", "") or "").strip() if request else ""
@@ -2460,7 +2763,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         self._persist_background_tasks()
         return run
 
-    def queue_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
+    def _queue_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
         run_plan = self._benchmark_run_plan(request)
         if _benchmark_budget_exceeded(run_plan.get("budget", {})):
             raise HTTPException(status_code=422, detail=_benchmark_budget_error_detail(run_plan))
@@ -2560,7 +2863,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                     ),
                 )
 
-    async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
+    async def _run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
         batch = self.evolution_batches.get(batch_id)
         if batch is None:
             return

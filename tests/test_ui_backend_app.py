@@ -2408,6 +2408,64 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
     assert diagnostics_status["summary"]["total"] == 1
 
 
+def test_benchmark_service_requires_complete_store_implementations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+    monkeypatch.setattr(
+        ui_backend_store,
+        "BENCHMARK_PUBLIC_METHODS",
+        ("missing_benchmark_method",),
+    )
+
+    with pytest.raises(RuntimeError, match="missing_benchmark_method"):
+        _ = store.benchmark_service
+
+
+def test_benchmark_service_facade_preserves_public_monkeypatch_compatibility(tmp_path: Path) -> None:
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+    _ = store.benchmark_service
+    captured: list[dict[str, Any]] = []
+
+    def fake_leaderboard_entries(
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        captured.append(
+            {
+                "scope": scope,
+                "evaluation_set_id": evaluation_set_id,
+                "target_role": target_role,
+                "limit": limit,
+            }
+        )
+        return []
+
+    store.leaderboard_entries = fake_leaderboard_entries  # type: ignore[method-assign]
+
+    payload = store.leaderboard_compare(
+        scope="role_version",
+        evaluation_set_id="role-baseline-v1@v1",
+        target_role="seer",
+        limit=25,
+    )
+
+    assert captured == [
+        {
+            "scope": "role_version",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "target_role": "seer",
+            "limit": 25,
+        }
+    ]
+    assert payload["kind"] == "benchmark_leaderboard_compare"
+    assert payload["rows"] == []
+
+
 def test_leaderboard_real_store_isolates_scope_evaluation_role_and_formal_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
