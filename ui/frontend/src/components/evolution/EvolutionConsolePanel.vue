@@ -12,8 +12,7 @@ defineProps({
 
 function actionLoadingText(value, loading = false) {
   const text = String(value || '')
-  if (text.startsWith('start-single')) return '启动单角色'
-  if (text.startsWith('start-batch')) return '启动批量'
+  if (text.startsWith('start-single')) return '正在启动当前角色'
   if (text.startsWith('promote')) return '晋升中'
   if (text.startsWith('reject')) return '拒绝中'
   if (text.startsWith('terminate')) return '终止中'
@@ -244,42 +243,23 @@ function childRunKey(run, index) {
           <b>评审门禁</b>
           <span>晋升必须经过提案审核、门禁与信任包。</span>
         </div>
-      </div>
-
-      <div class="evo-batch-role-grid">
-        <button
-          v-for="role in evo.roleRows.value"
-          :key="role.key"
-          type="button"
-          :class="['evo-role-toggle', { selected: role.selected }]"
-          :aria-pressed="role.selected"
-          @click="evo.toggleBatchRole(role.key)"
-        >
-          <img :src="role.image" alt="" aria-hidden="true" />
-          <span>{{ role.label }}</span>
-        </button>
-      </div>
-
-      <div class="evo-command-row">
-        <button
-          type="button"
-          class="evo-action"
-          :disabled="Boolean(evo.actionLoading.value) || !evo.selectedRole.value"
-          @click="evo.startSingle()"
-        >
-          <span aria-hidden="true">&#9654;</span> 单角色
-        </button>
-        <button
-          type="button"
-          class="evo-action"
-          :disabled="Boolean(evo.actionLoading.value) || !evo.selectedBatchRoles.value.length"
-          @click="evo.startBatch()"
-        >
-          <span aria-hidden="true">&#9654;</span> 批量
-        </button>
-        <span v-if="evo.loading.value || evo.actionLoading.value" class="evo-loading">
-          {{ actionLoadingText(evo.actionLoading.value, evo.loading.value) }}
-        </span>
+        <div class="evo-start-panel">
+          <span>
+            <small>启动对象</small>
+            <b>{{ evo.selectedRoleLabel.value || '当前角色' }}</b>
+          </span>
+          <button
+            type="button"
+            class="evo-action evo-start-action"
+            :disabled="Boolean(evo.actionLoading.value) || !evo.selectedRole.value"
+            @click="evo.startSingle()"
+          >
+            <span aria-hidden="true">&#9654;</span> 启动当前角色
+          </button>
+          <em v-if="evo.loading.value || evo.actionLoading.value">
+            {{ actionLoadingText(evo.actionLoading.value, evo.loading.value) }}
+          </em>
+        </div>
       </div>
     </article>
 

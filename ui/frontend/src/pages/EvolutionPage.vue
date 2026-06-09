@@ -1027,7 +1027,8 @@ onMounted(() => evo.refreshAll())
    ======================================== */
 .evo-form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(3, minmax(140px, 1fr)) minmax(180px, 0.9fr) minmax(190px, 0.95fr);
+  align-items: end;
   gap: 12px;
 }
 
@@ -1103,63 +1104,54 @@ onMounted(() => evo.refreshAll())
   box-shadow: 0 0 0 3px rgba(139, 94, 52, 0.1);
 }
 
-.evo-batch-role-grid {
+.evo-start-panel {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-  gap: 8px;
-  margin-top: 14px;
-}
-
-.evo-role-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  align-content: end;
+  gap: 7px;
   min-width: 0;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--evo-border);
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 1px solid rgba(139, 94, 52, 0.2);
   border-radius: 7px;
-  background: rgba(255, 255, 250, 0.5);
+  background: rgba(139, 94, 52, 0.055);
+}
+
+.evo-start-panel span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.evo-start-panel small {
   color: var(--evo-text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.18s ease;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
-.evo-role-toggle:hover {
-  border-color: rgba(139, 94, 52, 0.35);
-  background: var(--evo-hover);
-}
-
-.evo-role-toggle.selected {
-  border-color: var(--evo-accent);
-  background: var(--evo-active-bg);
-  color: var(--evo-accent-strong);
-}
-
-.evo-role-toggle img {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-}
-
-.evo-role-toggle span {
+.evo-start-panel b,
+.evo-start-panel em {
   min-width: 0;
   overflow: hidden;
+  color: var(--evo-text);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ========================================
-   Command Row / Actions
-   ======================================== */
-.evo-command-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
+.evo-start-panel em {
+  color: var(--evo-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.evo-start-action {
+  width: 100%;
+  min-height: 34px;
+  padding-inline: 12px;
 }
 
 .evo-action {
