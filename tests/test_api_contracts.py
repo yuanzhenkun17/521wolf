@@ -355,6 +355,12 @@ enabled: true
     )
 
 
+def _write_benchmark_seed_set(root: Path, filename: str, body: str) -> None:
+    seed_dir = root / "data" / "benchmark_seed_sets"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    (seed_dir / filename).write_text(body, encoding="utf-8")
+
+
 def _assert_shape(payload: dict[str, Any], shape: dict[str, type | tuple[type, ...]]) -> None:
     missing = [key for key in shape if key not in payload]
     assert missing == []
@@ -1050,6 +1056,16 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 [("benchmark_id", "path", True)],
             ),
         },
+        "/api/benchmark/seed-sets": {
+            "get": ("list_benchmark_seed_sets_api_benchmark_seed_sets_get", None, []),
+        },
+        "/api/benchmark/seed-sets/{seed_set_id}": {
+            "get": (
+                "get_benchmark_seed_set_api_benchmark_seed_sets__seed_set_id__get",
+                None,
+                [("seed_set_id", "path", True)],
+            ),
+        },
         "/api/benchmark": {
             "post": ("start_benchmark_api_benchmark_post", "BenchmarkRequest", []),
         },
@@ -1146,7 +1162,15 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
             "get": (
                 "benchmark_batch_diagnostics_api_benchmark_batch__batch_id__diagnostics_get",
                 None,
-                [("batch_id", "path", True)],
+                [
+                    ("batch_id", "path", True),
+                    ("target_role", "query", False),
+                    ("kind", "query", False),
+                    ("level", "query", False),
+                    ("status", "query", False),
+                    ("stage", "query", False),
+                    ("seed", "query", False),
+                ],
             ),
         },
         "/api/benchmark/batch/{batch_id}/report": {
@@ -1189,6 +1213,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                     ("result_batch_id", "query", False),
                     ("target_role", "query", False),
                     ("status", "query", False),
+                    ("seed", "query", False),
                     ("limit", "query", False),
                     ("offset", "query", False),
                 ],
@@ -3822,14 +3847,20 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
                 "scope": "role_version",
                 "subject_id": "seer_candidate_v2",
                 "hash": "seer_candidate_v2",
-                "target_role": "seer",
-                "target_version_id": "seer_candidate_v2",
-                "evaluation_set_id": "role-baseline-v1@v1",
-                "avg_role_score": 0.7,
-                "target_side_win_rate": 0.6,
-                "rankable": True,
-            }
-        ]
+                    "target_role": "seer",
+                    "target_version_id": "seer_candidate_v2",
+                    "evaluation_set_id": "role-baseline-v1@v1",
+                    "seed_set_id": "role-baseline-quick-202606",
+                    "benchmark_config_hash": "sha256:contract",
+                    "avg_role_score": 0.7,
+                    "target_side_win_rate": 0.6,
+                    "rankable": True,
+                    "source_run_id": "bench_role_contract_new",
+                    "batch_id": "bench_role_contract_new",
+                    "result_batch_id": "bench_role_contract_new:seer",
+                    "report_id": "benchmark_report:bench_role_contract_new",
+                }
+            ]
         snapshot_response = client.post(
             "/api/benchmark/snapshots",
             json={
@@ -3981,6 +4012,144 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
     assert model_detail["metrics"]["primary"] == "strength_score"
 
     _assert_error_detail(missing_response, 404, "benchmark not found")
+
+
+def test_benchmark_seed_set_registry_api_contract(tmp_path: Path) -> None:
+    _write_benchmark_seed_set(
+        tmp_path,
+        "role-registry-a.yaml",
+        """
+id: role-registry-a
+purpose: registry_contract
+version: 1
+description: Primary registry contract seed set
+target_type: role_version
+created_at: "2026-06-09T00:00:00+08:00"
+tier: Standard
+usage_boundary: release boundary only
+non_overlap_group: registry-contract
+immutable: false
+seeds: [900001, 900002, 900003]
+enabled: true
+""",
+    )
+    _write_benchmark_seed_set(
+        tmp_path,
+        "role-registry-b.yaml",
+        """
+id: role-registry-b
+purpose: registry_contract_disabled
+version: 1
+target_type: role_version
+created_at: "2026-06-09T00:00:00+08:00"
+tier: standard
+usage_boundary: disabled audit boundary
+non_overlap_group: registry-contract
+immutable: true
+seeds: [900002, 900010, 900011]
+enabled: false
+""",
+    )
+    _write_benchmark_seed_set(
+        tmp_path,
+        "role-registry-c.yaml",
+        """
+id: role-registry-c
+purpose: registry_contract_other_boundary
+version: 1
+target_type: role_version
+created_at: "2026-06-09T00:00:00+08:00"
+tier: quick
+usage_boundary: separate smoke boundary
+non_overlap_group: registry-contract-smoke
+immutable: true
+seeds: [900002, 900020, 900021]
+enabled: true
+""",
+    )
+
+    with _client(tmp_path) as client:
+        list_response = client.get("/api/benchmark/seed-sets")
+        detail_response = client.get("/api/benchmark/seed-sets/role-registry-a")
+        disabled_detail_response = client.get("/api/benchmark/seed-sets/role-registry-b")
+        missing_response = client.get("/api/benchmark/seed-sets/missing-registry")
+
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    _assert_shape(
+        payload,
+        {
+            "kind": str,
+            "schema_version": int,
+            "items": list,
+            "summary": dict,
+        },
+    )
+    assert payload["kind"] == "benchmark_seed_set_registry"
+    assert payload["schema_version"] == 1
+    items = {item["id"]: item for item in payload["items"]}
+    assert {"role-registry-a", "role-registry-b", "role-registry-c"} <= set(items)
+    _assert_shape(
+        items["role-registry-a"],
+        {
+            "id": str,
+            "purpose": str,
+            "version": int,
+            "description": str,
+            "target_type": str,
+            "created_at": str,
+            "tier": str,
+            "usage_boundary": str,
+            "non_overlap_group": str,
+            "immutable": bool,
+            "boundary": dict,
+            "seed_count": int,
+            "seed_preview": list,
+            "config_hash": str,
+            "enabled": bool,
+            "overlap_warnings": list,
+        },
+    )
+    assert items["role-registry-a"]["tier"] == "standard"
+    assert items["role-registry-a"]["immutable"] is False
+    assert items["role-registry-a"]["seed_count"] == 3
+    assert items["role-registry-a"]["seed_preview"] == [900001, 900002, 900003]
+    assert items["role-registry-a"]["config_hash"].startswith("sha256:")
+    assert items["role-registry-a"]["boundary"]["usage_boundary"] == "release boundary only"
+    assert items["role-registry-a"]["boundary"]["non_overlap_group"] == "registry-contract"
+    assert items["role-registry-b"]["enabled"] is False
+    assert payload["summary"]["disabled"] >= 1
+    assert payload["summary"]["by_non_overlap_group"]["registry-contract"] == 2
+
+    warnings = [
+        warning
+        for warning in payload["summary"]["overlap_warnings"]
+        if {warning["left_seed_set_id"], warning["right_seed_set_id"]} == {"role-registry-a", "role-registry-b"}
+    ]
+    assert len(warnings) == 1
+    assert warnings[0]["kind"] == "seed_overlap"
+    assert warnings[0]["non_overlap_group"] == "registry-contract"
+    assert warnings[0]["overlap_count"] == 1
+    assert warnings[0]["overlap_seed_preview"] == [900002]
+    assert items["role-registry-a"]["overlap_warnings"] == warnings
+    assert items["role-registry-b"]["overlap_warnings"] == warnings
+    assert items["role-registry-c"]["overlap_warnings"] == []
+
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()
+    _assert_shape(detail_payload, {"kind": str, "schema_version": int, "item": dict})
+    detail_item = detail_payload["item"]
+    assert detail_item["id"] == "role-registry-a"
+    assert detail_item["seeds"] == [900001, 900002, 900003]
+    assert detail_item["overlap_warnings"] == warnings
+
+    assert disabled_detail_response.status_code == 200
+    disabled_item = disabled_detail_response.json()["item"]
+    assert disabled_item["id"] == "role-registry-b"
+    assert disabled_item["enabled"] is False
+    assert disabled_item["seeds"] == [900002, 900010, 900011]
+
+    _assert_error_detail(missing_response, 404, "benchmark seed set not found")
 
 
 def test_benchmark_lifecycle_api_lists_inactive_suite_and_blocks_launch(tmp_path: Path) -> None:

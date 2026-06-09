@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
@@ -55,6 +56,11 @@ class BenchmarkSeedSet(BaseModel):
     version: int = Field(default=1, ge=1)
     description: str = ""
     target_type: Literal["role_version", "model"] | None = None
+    created_at: str = ""
+    tier: str = ""
+    usage_boundary: str = ""
+    non_overlap_group: str = ""
+    immutable: bool = True
     seeds: list[int] = Field(default_factory=list)
     enabled: bool = True
 
@@ -65,6 +71,16 @@ class BenchmarkSeedSet(BaseModel):
         if not text:
             raise ValueError("seed set id is required")
         return text
+
+    @field_validator("purpose", "description", "created_at", "usage_boundary", "non_overlap_group")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        return str(value or "").strip()
+
+    @field_validator("tier")
+    @classmethod
+    def normalize_tier(cls, value: str) -> str:
+        return str(value or "").strip().lower()
 
     @field_validator("seeds")
     @classmethod
@@ -240,8 +256,8 @@ def load_benchmark_spec(benchmark_id: str, paths: PathConfig | None = None) -> B
     raise BenchmarkSpecError(f"benchmark spec not found: {wanted}")
 
 
-def list_benchmark_seed_sets(paths: PathConfig | None = None) -> list[BenchmarkSeedSet]:
-    """Load every enabled benchmark seed set from the configured registry."""
+def list_benchmark_seed_sets(paths: PathConfig | None = None, *, include_disabled: bool = False) -> list[BenchmarkSeedSet]:
+    """Load benchmark seed sets from the configured registry."""
     seed_sets: list[BenchmarkSeedSet] = []
     seen_ids: set[str] = set()
     for candidate_root in _candidate_seed_set_dirs(paths):
@@ -254,12 +270,17 @@ def list_benchmark_seed_sets(paths: PathConfig | None = None) -> list[BenchmarkS
             if seed_set.id in seen_ids:
                 continue
             seen_ids.add(seed_set.id)
-            if seed_set.enabled:
+            if include_disabled or seed_set.enabled:
                 seed_sets.append(seed_set)
     return seed_sets
 
 
-def load_benchmark_seed_set(seed_set_id: str, paths: PathConfig | None = None) -> BenchmarkSeedSet:
+def load_benchmark_seed_set(
+    seed_set_id: str,
+    paths: PathConfig | None = None,
+    *,
+    include_disabled: bool = False,
+) -> BenchmarkSeedSet:
     """Load a benchmark seed set by id."""
     wanted = str(seed_set_id or "").strip()
     if not wanted:
@@ -272,9 +293,14 @@ def load_benchmark_seed_set(seed_set_id: str, paths: PathConfig | None = None) -
         ]
         for path in candidates:
             if path.exists():
-                return _load_seed_set_path(path)
-    for seed_set in list_benchmark_seed_sets(paths):
+                seed_set = _load_seed_set_path(path)
+                if not include_disabled and not seed_set.enabled:
+                    raise BenchmarkSpecError(f"benchmark seed set disabled: {wanted}")
+                return seed_set
+    for seed_set in list_benchmark_seed_sets(paths, include_disabled=True):
         if seed_set.id == wanted:
+            if not include_disabled and not seed_set.enabled:
+                raise BenchmarkSpecError(f"benchmark seed set disabled: {wanted}")
             return seed_set
     raise BenchmarkSpecError(f"benchmark seed set not found: {wanted}")
 
@@ -329,6 +355,17 @@ def seed_set_config_hash(seed_set: BenchmarkSeedSet | dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+def benchmark_seed_set_boundary_metadata(seed_set: BenchmarkSeedSet) -> dict[str, Any]:
+    return {
+        "target_type": seed_set.target_type,
+        "created_at": seed_set.created_at,
+        "tier": seed_set.tier,
+        "usage_boundary": seed_set.usage_boundary,
+        "non_overlap_group": seed_set.non_overlap_group,
+        "immutable": seed_set.immutable,
+    }
+
+
 def benchmark_seed_set_summary(seed_set: BenchmarkSeedSet) -> dict[str, Any]:
     seeds = list(seed_set.seeds)
     return {
@@ -337,10 +374,85 @@ def benchmark_seed_set_summary(seed_set: BenchmarkSeedSet) -> dict[str, Any]:
         "version": seed_set.version,
         "description": seed_set.description,
         "target_type": seed_set.target_type,
+        "created_at": seed_set.created_at,
+        "tier": seed_set.tier,
+        "usage_boundary": seed_set.usage_boundary,
+        "non_overlap_group": seed_set.non_overlap_group,
+        "immutable": seed_set.immutable,
+        "boundary": benchmark_seed_set_boundary_metadata(seed_set),
         "seed_count": len(seeds),
         "seed_preview": seeds[:5],
         "config_hash": seed_set_config_hash(seed_set),
         "enabled": seed_set.enabled,
+    }
+
+
+def benchmark_seed_set_overlap_warnings(seed_sets: list[BenchmarkSeedSet]) -> list[dict[str, Any]]:
+    """Return overlap warnings for seed sets that declare isolation boundaries."""
+    warnings: list[dict[str, Any]] = []
+    bounded = [seed_set for seed_set in seed_sets if str(seed_set.non_overlap_group or "").strip()]
+    for left_index, left in enumerate(bounded):
+        left_seeds = set(left.seeds)
+        left_group = str(left.non_overlap_group or "").strip()
+        for right in bounded[left_index + 1 :]:
+            if left.id == right.id:
+                continue
+            right_group = str(right.non_overlap_group or "").strip()
+            if right_group != left_group:
+                continue
+            overlap = sorted(left_seeds.intersection(right.seeds))
+            if not overlap:
+                continue
+            warnings.append(
+                {
+                    "level": "error",
+                    "kind": "seed_overlap",
+                    "non_overlap_group": left_group,
+                    "left_seed_set_id": left.id,
+                    "right_seed_set_id": right.id,
+                    "left_target_type": left.target_type,
+                    "right_target_type": right.target_type,
+                    "left_non_overlap_group": left.non_overlap_group,
+                    "right_non_overlap_group": right.non_overlap_group,
+                    "overlap_count": len(overlap),
+                    "overlap_seed_preview": overlap[:5],
+                    "message": "Seed sets in the same non_overlap_group share seeds.",
+                }
+            )
+    return warnings
+
+
+def benchmark_seed_registry_summary(seed_sets: list[BenchmarkSeedSet]) -> dict[str, Any]:
+    """API-safe registry payload with boundary metadata and overlap warnings."""
+    warnings = benchmark_seed_set_overlap_warnings(seed_sets)
+    warnings_by_id: dict[str, list[dict[str, Any]]] = {}
+    for warning in warnings:
+        for key in ("left_seed_set_id", "right_seed_set_id"):
+            seed_set_id = str(warning.get(key) or "").strip()
+            if seed_set_id:
+                warnings_by_id.setdefault(seed_set_id, []).append(warning)
+    items: list[dict[str, Any]] = []
+    for seed_set in seed_sets:
+        item = benchmark_seed_set_summary(seed_set)
+        item["overlap_warnings"] = list(warnings_by_id.get(seed_set.id, []))
+        items.append(item)
+    target_counts = Counter(str(seed_set.target_type or "unscoped") for seed_set in seed_sets)
+    tier_counts = Counter(str(seed_set.tier or "unmarked") for seed_set in seed_sets)
+    boundary_counts = Counter(str(seed_set.non_overlap_group or "unscoped") for seed_set in seed_sets)
+    return {
+        "kind": "benchmark_seed_set_registry",
+        "schema_version": 1,
+        "items": items,
+        "summary": {
+            "total": len(seed_sets),
+            "enabled": sum(1 for seed_set in seed_sets if seed_set.enabled),
+            "disabled": sum(1 for seed_set in seed_sets if not seed_set.enabled),
+            "immutable": sum(1 for seed_set in seed_sets if seed_set.immutable),
+            "by_target_type": dict(sorted(target_counts.items())),
+            "by_tier": dict(sorted(tier_counts.items())),
+            "by_non_overlap_group": dict(sorted(boundary_counts.items())),
+            "overlap_warnings": warnings,
+        },
     }
 
 

@@ -99,6 +99,72 @@ function normalizeSeedCount(raw, seedPreview) {
   return Array.isArray(seedPreview) && seedPreview.length ? seedPreview.length : null
 }
 
+function normalizeBenchmarkSeedSet(raw) {
+  const id = String(raw?.id || raw?.seed_set_id || '').trim()
+  if (!id) return null
+  const seedPreview = normalizeSeedPreview(raw)
+  const seedCount = normalizeSeedCount(raw, seedPreview)
+  const overlapWarnings = Array.isArray(raw?.overlap_warnings)
+    ? raw.overlap_warnings.filter((item) => item && typeof item === 'object')
+    : []
+  return {
+    ...raw,
+    id,
+    seed_set_id: id,
+    purpose: String(raw?.purpose || '').trim(),
+    version: raw?.version == null ? null : Number(raw.version),
+    description: String(raw?.description || ''),
+    target_type: raw?.target_type ? normalizeBenchmarkTargetType(raw.target_type) : '',
+    created_at: String(raw?.created_at || '').trim(),
+    tier: String(raw?.tier || '').trim().toLowerCase(),
+    usage_boundary: String(raw?.usage_boundary || '').trim(),
+    non_overlap_group: String(raw?.non_overlap_group || '').trim(),
+    immutable: raw?.immutable !== false,
+    seed_count: seedCount,
+    seed_preview: seedPreview,
+    config_hash: String(raw?.config_hash || '').trim(),
+    enabled: raw?.enabled !== false,
+    overlap_warnings: overlapWarnings
+  }
+}
+
+function normalizeBenchmarkSeedRegistry(data) {
+  const items = Array.isArray(data) ? data : (data?.items || data?.seed_sets || [])
+  const normalizedItems = items.map(normalizeBenchmarkSeedSet).filter(Boolean)
+  const summary = objectOrEmpty(data?.summary)
+  const overlapWarnings = Array.isArray(summary.overlap_warnings) ? summary.overlap_warnings : []
+  const warningsById = new Map()
+  for (const warning of overlapWarnings) {
+    if (!warning || typeof warning !== 'object') continue
+    const ids = [
+      warning.left_seed_set_id,
+      warning.right_seed_set_id,
+      ...(Array.isArray(warning.seed_set_ids) ? warning.seed_set_ids : [])
+    ].map((item) => String(item || '').trim()).filter(Boolean)
+    for (const id of ids) {
+      const rows = warningsById.get(id) || []
+      rows.push(warning)
+      warningsById.set(id, rows)
+    }
+  }
+  return {
+    items: normalizedItems.map((item) => ({
+      ...item,
+      overlap_warnings: [
+        ...(Array.isArray(item.overlap_warnings) ? item.overlap_warnings : []),
+        ...(warningsById.get(item.id) || [])
+      ]
+    })),
+    summary: {
+      ...summary,
+      total: Number.isFinite(Number(summary.total)) ? Number(summary.total) : normalizedItems.length,
+      by_target_type: objectOrEmpty(summary.by_target_type),
+      by_tier: objectOrEmpty(summary.by_tier),
+      overlap_warnings: overlapWarnings
+    }
+  }
+}
+
 function normalizeCostTier(raw) {
   return String(
     raw?.cost_tier ??
@@ -125,7 +191,7 @@ function benchmarkSuiteLaunchDisabledReason(raw, status, launchable) {
   return BENCHMARK_SUITE_DISABLED_REASONS[status] || '该评测套件当前不可启动。'
 }
 
-function normalizeBenchmarkSuite(raw) {
+function normalizeBenchmarkSuite(raw, seedRegistryById = new Map()) {
   const id = String(raw?.id || raw?.benchmark_id || '').trim()
   if (!id) return null
   const version = raw?.version == null ? null : Number(raw.version)
@@ -137,14 +203,20 @@ function normalizeBenchmarkSuite(raw) {
   const maxDays = raw?.max_days ?? null
   const name = String(raw?.name || raw?.label || id)
   const evaluationSetId = String(raw?.evaluation_set_id || (versionIsValid ? `${id}@v${version}` : ''))
-  const seedPreview = normalizeSeedPreview(raw)
-  const seedCount = normalizeSeedCount(raw, seedPreview)
   const status = normalizeBenchmarkSuiteStatus(raw)
   const serverLaunchable = raw?.launchable == null ? null : raw.launchable !== false
   const launchable = serverLaunchable == null
     ? BENCHMARK_SUITE_LAUNCHABLE_STATUSES.has(status)
     : serverLaunchable && BENCHMARK_SUITE_LAUNCHABLE_STATUSES.has(status)
-  const seedSet = objectOrEmpty(raw?.seed_set)
+  const seedSetId = String(raw?.seed_set_id || raw?.seed_set?.id || raw?.seed_set?.seed_set_id || '')
+  const registrySeedSet = seedRegistryById.get(seedSetId) || null
+  const seedSet = objectOrEmpty({
+    ...objectOrEmpty(registrySeedSet),
+    ...objectOrEmpty(raw?.seed_set)
+  })
+  const seedSource = { ...raw, seed_set: seedSet }
+  const seedPreview = normalizeSeedPreview(seedSource)
+  const seedCount = normalizeSeedCount(seedSource, seedPreview)
   const metrics = objectOrEmpty(raw?.metrics)
   const gates = objectOrEmpty(raw?.gates)
   const judge = objectOrEmpty(raw?.judge)
@@ -160,7 +232,7 @@ function normalizeBenchmarkSuite(raw) {
     roles,
     game_count: gameCount == null ? null : Number(gameCount),
     max_days: maxDays == null ? null : Number(maxDays),
-    seed_set_id: String(raw?.seed_set_id || ''),
+    seed_set_id: seedSetId,
     seed_count: seedCount,
     seed_preview: seedPreview,
     seed_set: seedSet,
@@ -857,6 +929,7 @@ function useEvaluationWorkbench(options = {}) {
     : createGameApi(options.apiBase)
 
   const benchmarkSuites = ref([])
+  const benchmarkSeedSets = ref([])
   const roles = ref([])
   const modelLeaderboard = ref({})
   const roleLeaderboard = ref({})
@@ -932,6 +1005,7 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkViewDirty = ref(false)
   const selectedBenchmarkViewKey = ref('')
   const suiteRequests = createLatestOnlyTracker()
+  const seedSetRequests = createLatestOnlyTracker()
   const roleRequests = createLatestOnlyTracker()
   const roleBoardRequests = createLatestOnlyMap()
   const planRequests = createLatestOnlyTracker()
@@ -1716,14 +1790,38 @@ function useEvaluationWorkbench(options = {}) {
     }
   }
 
+  function benchmarkSeedRegistryById() {
+    return new Map(
+      benchmarkSeedSets.value
+        .map((seedSet) => [String(seedSet?.id || seedSet?.seed_set_id || '').trim(), seedSet])
+        .filter(([id]) => id)
+    )
+  }
+
+  async function loadBenchmarkSeedSets() {
+    const token = seedSetRequests.next()
+    try {
+      const registry = normalizeBenchmarkSeedRegistry(await apiFetch('/benchmark/seed-sets'))
+      if (!token.isLatest()) return false
+      benchmarkSeedSets.value = registry.items
+      return true
+    } catch {
+      if (token.isLatest()) benchmarkSeedSets.value = []
+      return false
+    }
+  }
+
   async function loadBenchmarkSuites() {
     const token = suiteRequests.next()
     benchmarkSuiteError.value = ''
     try {
+      await loadBenchmarkSeedSets()
+      if (!token.isLatest()) return false
+      const seedRegistryById = benchmarkSeedRegistryById()
       const data = await apiFetch('/benchmarks')
       if (!token.isLatest()) return false
       const items = Array.isArray(data) ? data : (data?.items || data?.benchmarks || [])
-      benchmarkSuites.value = items.map(normalizeBenchmarkSuite).filter(Boolean)
+      benchmarkSuites.value = items.map((item) => normalizeBenchmarkSuite(item, seedRegistryById)).filter(Boolean)
       if (
         selectedBenchmarkId.value &&
         !benchmarkSuites.value.some((suite) => suite.id === selectedBenchmarkId.value)
@@ -2629,6 +2727,7 @@ function useEvaluationWorkbench(options = {}) {
 
   return {
     benchmarkSuites,
+    benchmarkSeedSets,
     benchmarkSuiteError,
     benchmarkPlan,
     benchmarkPlanError,
@@ -2679,6 +2778,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkLeaderboardCompareLoading,
     benchmarkLeaderboardCompareError,
     loadBenchmarkLeaderboardCompare,
+    loadBenchmarkSeedSets,
     benchmarkSavedViews,
     benchmarkSavedViewsLoading,
     benchmarkSavedViewsError,
