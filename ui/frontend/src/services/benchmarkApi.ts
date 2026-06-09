@@ -1,6 +1,12 @@
 import type { BenchmarkRequest } from '../types/benchmark'
-import type { ServiceOptions } from '../types/api'
+import type { QueryParams, ServiceOptions } from '../types/api'
 import { defaultApiClient } from './api'
+
+type BenchmarkQuery = Record<string, string | number | boolean | null | undefined>
+
+function benchmarkQueryParams(query: BenchmarkQuery = {}): QueryParams {
+  return query
+}
 
 export function createBenchmarkService(options: ServiceOptions = {}) {
   const client = options.client || defaultApiClient
@@ -10,28 +16,28 @@ export function createBenchmarkService(options: ServiceOptions = {}) {
       return client.fetch('/benchmarks')
     },
     seedSets() {
-      return client.fetch('/benchmark-seed-sets')
+      return client.fetch('/benchmark/seed-sets')
     },
-    leaderboard(query: Record<string, string | number | boolean | null | undefined> = {}) {
-      return client.fetch('/benchmark-leaderboard', { query })
+    leaderboard(query: BenchmarkQuery = {}) {
+      return client.fetch('/leaderboards', { query: benchmarkQueryParams(query) })
     },
-    runs(query: Record<string, string | number | boolean | null | undefined> = {}) {
-      return client.fetch('/benchmark-runs', { query })
+    runs(query: BenchmarkQuery = {}) {
+      return client.fetch('/evolution-runs', { query: benchmarkQueryParams({ ...query, source: 'benchmark' }) })
     },
     launch(payload: BenchmarkRequest) {
-      return client.fetch('/benchmark-runs', { method: 'POST', body: payload })
+      return client.fetch('/benchmark', { method: 'POST', body: payload })
     },
     run(id: string) {
-      return client.fetch(`/benchmark-runs/${encodeURIComponent(id)}`)
+      return client.fetch(`/benchmark/batch/${encodeURIComponent(id)}`)
     },
-    diagnostics(id: string, query: Record<string, string | number | boolean | null | undefined> = {}) {
-      return client.fetch(`/benchmark-runs/${encodeURIComponent(id)}/diagnostics`, { query })
+    diagnostics(id: string, query: BenchmarkQuery = {}) {
+      return client.fetch(`/benchmark/batch/${encodeURIComponent(id)}/diagnostics`, { query: benchmarkQueryParams(query) })
     },
     report(id: string) {
-      return client.fetch(`/benchmark-runs/${encodeURIComponent(id)}/report`)
+      return client.fetch(`/benchmark/batch/${encodeURIComponent(id)}/report`)
     },
-    snapshots(query: Record<string, string | number | boolean | null | undefined> = {}) {
-      return client.fetch('/benchmark-snapshots', { query })
+    snapshots(query: BenchmarkQuery = {}) {
+      return client.fetch('/benchmark/snapshots', { query: benchmarkQueryParams(query) })
     }
   }
 }

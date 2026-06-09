@@ -30,6 +30,29 @@ import { historyGameEvidenceLabel, logsForPhase } from '../../../src/domain/hist
 import { normalizeRun, normalizeVersion } from '../../../src/domain/evolution/normalizers'
 import { activeEvolutionRuns, rollbackEligibleVersions } from '../../../src/domain/evolution/selectors'
 import { ApiError, normalizeApiError } from '../../../src/services/api'
+import { createBenchmarkService } from '../../../src/services/benchmarkApi'
+import { createHistoryService } from '../../../src/services/historyApi'
+import type { ApiClient, ApiRequestOptions } from '../../../src/types/api'
+
+interface RecordedRequest {
+  path: string
+  options: ApiRequestOptions
+}
+
+function recordingClient(response: unknown = {}): { client: ApiClient; requests: RecordedRequest[] } {
+  const requests: RecordedRequest[] = []
+  const client: ApiClient = {
+    apiBase: '/api',
+    async fetch<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+      requests.push({ path, options })
+      return response as T
+    },
+    async raw(): Promise<Response> {
+      throw new Error('raw should not be called by service contract tests')
+    }
+  }
+  return { client, requests }
+}
 
 describe('domain common helpers', () => {
   it('coerces primitive values with explicit fallbacks', () => {
@@ -251,5 +274,103 @@ describe('service error conversion', () => {
     expect(error.requestId).toBe('payload-request')
     expect(error.diagnostics).toEqual([{ level: 'error', message: 'target missing' }])
     expect(error.body).toBe('{"detail":[{"msg":"fallback detail"}]}')
+  })
+})
+
+describe('service endpoint contracts', () => {
+  it('maps history service calls to the current game history backend routes', async () => {
+    const { client, requests } = recordingClient()
+    const history = createHistoryService({ client })
+
+    await history.list({ source: 'benchmark', status: 'completed', limit: 12, offset: 24 })
+    await history.list({ source: 'all', status: 'all' })
+    await history.shell('game id/1')
+    await history.phaseDetail('game id/1', { day: 2, phase: 'speech' })
+    await history.flow('game id/1')
+    await history.delete('game id/1')
+
+    expect(requests).toEqual([
+      {
+        path: '/games',
+        options: { query: { limit: 12, offset: 24, source: 'benchmark', status: 'completed' } }
+      },
+      {
+        path: '/games',
+        options: { query: { limit: 8, offset: 0 } }
+      },
+      {
+        path: '/games/game%20id%2F1',
+        options: { query: { view: 'history-shell' } }
+      },
+      {
+        path: '/games/game%20id%2F1/phase',
+        options: {
+          query: {
+            day: 2,
+            phase: 'speech',
+            log_offset: 0,
+            log_limit: 300,
+            decision_offset: 0,
+            decision_limit: 200
+          }
+        }
+      },
+      {
+        path: '/games/game%20id%2F1/flow-data',
+        options: {}
+      },
+      {
+        path: '/games/game%20id%2F1',
+        options: { method: 'DELETE' }
+      }
+    ])
+  })
+
+  it('maps benchmark service calls to benchmark and leaderboard backend routes', async () => {
+    const { client, requests } = recordingClient()
+    const benchmark = createBenchmarkService({ client })
+    const payload = {
+      benchmark_id: 'role-baseline',
+      target_type: 'role_version' as const,
+      roles: ['seer'],
+      battle_games: 4
+    }
+
+    await benchmark.suites()
+    await benchmark.seedSets()
+    await benchmark.leaderboard({ scope: 'role_version', target_role: 'seer', limit: 50 })
+    await benchmark.runs({ status: 'running', limit: 20 })
+    await benchmark.launch(payload)
+    await benchmark.run('bench id/1')
+    await benchmark.diagnostics('bench id/1', { kind: 'game_failure', seed: 260902 })
+    await benchmark.report('bench id/1')
+    await benchmark.snapshots({ scope: 'role_version', benchmark_id: 'role-baseline' })
+
+    expect(requests).toEqual([
+      { path: '/benchmarks', options: {} },
+      { path: '/benchmark/seed-sets', options: {} },
+      {
+        path: '/leaderboards',
+        options: { query: { scope: 'role_version', target_role: 'seer', limit: 50 } }
+      },
+      {
+        path: '/evolution-runs',
+        options: { query: { status: 'running', limit: 20, source: 'benchmark' } }
+      },
+      {
+        path: '/benchmark',
+        options: { method: 'POST', body: payload }
+      },
+      { path: '/benchmark/batch/bench%20id%2F1', options: {} },
+      {
+        path: '/benchmark/batch/bench%20id%2F1/diagnostics',
+        options: { query: { kind: 'game_failure', seed: 260902 } }
+      },
+      { path: '/benchmark/batch/bench%20id%2F1/report', options: {} },
+      {
+        path: '/benchmark/snapshots',
+        options: { query: { scope: 'role_version', benchmark_id: 'role-baseline' } }
+      }
+    ])
   })
 })
