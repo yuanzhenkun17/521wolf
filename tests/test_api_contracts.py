@@ -5007,6 +5007,59 @@ def test_benchmark_snapshot_api_rejects_formal_release_without_config_hash(tmp_p
     _assert_snapshot_release_gate_error(response, "benchmark_config_hash")
 
 
+def test_benchmark_snapshot_api_rejects_formal_release_without_row_config_hash(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = _post_benchmark_snapshot_with_rows(
+            client,
+            [
+                _benchmark_snapshot_release_row(
+                    drop=("benchmark_config_hash",),
+                    summary={"source": "missing-row-hash"},
+                )
+            ],
+            _benchmark_snapshot_release_request(),
+        )
+
+    _assert_snapshot_release_gate_error(response, "snapshot rows must include benchmark_config_hash")
+
+
+def test_benchmark_snapshot_api_rejects_model_release_without_runtime_identity(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = _post_benchmark_snapshot_with_rows(
+            client,
+            [
+                _benchmark_snapshot_release_row(
+                    scope="model",
+                    hash="runtime_hash_v1",
+                    subject_id="runtime_hash_v1",
+                    target_role=None,
+                    target_version_id=None,
+                    model_id="qwen-max",
+                    model_config_hash="",
+                    evaluation_set_id="model-baseline-v1@v1",
+                    seed_set_id="model-baseline-quick-202606",
+                    benchmark_config_hash="sha256:model-contract",
+                    result_batch_id="bench_snapshot_model_runtime",
+                    summary={
+                        "source": "model-release",
+                        "scope": "model",
+                        "benchmark_config_hash": "sha256:model-contract",
+                    },
+                )
+            ],
+            _benchmark_snapshot_release_request(
+                scope="model",
+                benchmark_id="model-baseline-v1",
+                evaluation_set_id="model-baseline-v1@v1",
+                seed_set_id="model-baseline-quick-202606",
+                benchmark_config_hash="sha256:model-contract",
+                target_role=None,
+            ),
+        )
+
+    _assert_snapshot_release_gate_error(response, "model_config_hash")
+
+
 def test_benchmark_snapshot_api_rejects_formal_release_without_source_run(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         response = _post_benchmark_snapshot_with_rows(
@@ -5064,6 +5117,40 @@ def test_benchmark_snapshot_api_rejects_formal_release_with_mixed_boundary_rows(
     _assert_snapshot_release_gate_error(response, "seed_set_id")
 
 
+def test_benchmark_snapshot_api_applies_rankable_source_filter_before_freezing(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        response = _post_benchmark_snapshot_with_rows(
+            client,
+            [
+                _benchmark_snapshot_release_row(),
+                _benchmark_snapshot_release_row(
+                    hash="seer_unrankable_v1",
+                    subject_id="seer_unrankable_v1",
+                    target_version_id="seer_unrankable_v1",
+                    rankable=False,
+                    data_sufficient=False,
+                    source_run_id="bench_snapshot_run_b",
+                    batch_id="bench_snapshot_run_b",
+                    result_batch_id="bench_snapshot_run_b_seer",
+                    report_id="benchmark_report:bench_snapshot_run_b",
+                    summary={"source": "unrankable", "benchmark_config_hash": "sha256:contract"},
+                ),
+            ],
+            _benchmark_snapshot_release_request(source_filter={"rankable": "rankable"}),
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_filter"] == {"rankable": "rankable"}
+    assert payload["summary"]["source_filter_applied"] == {"rankable": "rankable"}
+    assert payload["row_count"] == 1
+    assert payload["rankable_count"] == 1
+    assert payload["unrankable_count"] == 0
+    assert [row["subject_id"] for row in payload["rows"]] == ["seer_candidate_v2"]
+    assert payload["linked_run_ids"] == ["bench_snapshot_run_a"]
+    assert payload["release_manifest"]["source"]["source_filter_applied"] == {"rankable": "rankable"}
+
+
 def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         store = client.app.state.backend_store
@@ -5077,6 +5164,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
                 "comparison_group_id": "bench_role",
                 "evaluation_set_id": "role-baseline-v1@v1",
                 "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
                 "game_count": 3,
                 "games_played": 3,
                 "valid_game_rate": 1.0,
@@ -5089,7 +5177,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
                 "source_run_id": "bench_snapshot_run_a",
                 "result_batch_id": "bench_snapshot_run_a_seer",
                 "report_id": "benchmark_report:bench_snapshot_run_a",
-                "summary": {"source": "first"},
+                "summary": {"source": "first", "benchmark_config_hash": "sha256:contract"},
                 "updated_at": "2026-06-09T10:00:00+08:00",
             },
             {
@@ -5101,6 +5189,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
                 "comparison_group_id": "bench_role",
                 "evaluation_set_id": "role-baseline-v1@v1",
                 "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
                 "game_count": 3,
                 "games_played": 1,
                 "valid_game_rate": 0.33,
@@ -5114,7 +5203,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
                 "source_run_id": "bench_snapshot_run_b",
                 "result_batch_id": "bench_snapshot_run_b_seer",
                 "report_id": "benchmark_report:bench_snapshot_run_b",
-                "summary": {"source": "unrankable"},
+                "summary": {"source": "unrankable", "benchmark_config_hash": "sha256:contract"},
                 "updated_at": "2026-06-09T10:05:00+08:00",
             }
         ]
@@ -5210,6 +5299,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
             "source_run_count": int,
             "source_report_count": int,
             "source_result_batch_count": int,
+            "release_manifest": dict,
             "content_hash": str,
             "created_at": str,
             "rows": list,
@@ -5244,6 +5334,8 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert created["rows"][1]["subject_id"] == "seer_unrankable_v1"
     assert created["rows"][1]["rankable"] is False
     assert created["content_hash"].startswith("sha256:")
+    assert created["release_manifest"]["boundaries"]["benchmark_config_hash"] == "sha256:contract"
+    assert created["release_manifest"]["source"]["linked_run_ids"] == ["bench_snapshot_run_a", "bench_snapshot_run_b"]
 
     assert detail_response.status_code == 200
     detail = detail_response.json()
@@ -5254,9 +5346,9 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert detail["content_hash"] == created["content_hash"]
     assert detail["rows"][0]["subject_id"] == "seer_candidate_v2"
     assert detail["rows"][0]["avg_role_score"] == 0.7
-    assert detail["rows"][0]["summary"] == {"source": "first"}
+    assert detail["rows"][0]["summary"] == {"source": "first", "benchmark_config_hash": "sha256:contract"}
     assert detail["rows"][1]["subject_id"] == "seer_unrankable_v1"
-    assert detail["rows"][1]["summary"] == {"source": "unrankable"}
+    assert detail["rows"][1]["summary"] == {"source": "unrankable", "benchmark_config_hash": "sha256:contract"}
 
     assert json_export_response.status_code == 200
     json_export = json_export_response.json()
@@ -5264,12 +5356,17 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert json_export["format"] == "json"
     assert json_export["snapshot_id"] == snapshot_id
     assert json_export["content_hash"] == created["content_hash"]
+    assert json_export["export_content_hash"].startswith("sha256:")
+    assert json_export["artifact_hash"] == json_export["export_content_hash"]
+    assert json_export["export_content_hash"] != json_export["content_hash"]
     assert '"snapshot_id": "' + snapshot_id + '"' in json_export["content"]
     assert json_export["snapshot"]["rows"][0]["subject_id"] == "seer_candidate_v2"
 
     assert markdown_export_response.status_code == 200
     markdown_export = markdown_export_response.json()
     assert markdown_export["format"] == "markdown"
+    assert markdown_export["export_content_hash"].startswith("sha256:")
+    assert markdown_export["export_content_hash"] != json_export["export_content_hash"]
     assert "# 榜单快照：Role release 2026-06-09" in markdown_export["content"]
     assert "seer_candidate_v2" in markdown_export["content"]
     assert "benchmark_report:bench_snapshot_run_a" in markdown_export["content"]
@@ -5277,6 +5374,8 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert csv_export_response.status_code == 200
     csv_export = csv_export_response.json()
     assert csv_export["format"] == "csv"
+    assert csv_export["export_content_hash"].startswith("sha256:")
+    assert csv_export["export_content_hash"] != json_export["export_content_hash"]
     assert csv_export["content"].splitlines()[0] == "区段,标签,值,详情"
     assert "快照头,快照 ID," + snapshot_id in csv_export["content"]
     assert "冻结行,seer_candidate_v2" in csv_export["content"]
@@ -5489,6 +5588,77 @@ def test_benchmark_snapshot_compare_api_reports_current_vs_frozen_delta(tmp_path
     assert payload["boundary_warnings"] == ["seed_set_mismatch"]
 
     _assert_error_detail(missing_response, 404, "benchmark snapshot not found")
+
+
+def test_benchmark_snapshot_compare_api_reuses_snapshot_source_filter_for_current_rows(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        current_rows = [
+            _benchmark_snapshot_release_row(),
+            _benchmark_snapshot_release_row(
+                hash="seer_unrankable_v1",
+                subject_id="seer_unrankable_v1",
+                target_version_id="seer_unrankable_v1",
+                rankable=False,
+                data_sufficient=False,
+                source_run_id="bench_snapshot_run_b",
+                batch_id="bench_snapshot_run_b",
+                result_batch_id="bench_snapshot_run_b_seer",
+                report_id="benchmark_report:bench_snapshot_run_b",
+                summary={"source": "unrankable", "benchmark_config_hash": "sha256:contract"},
+            ),
+        ]
+
+        def fake_leaderboard_entries(
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, Any]]:
+            assert scope == "role_version"
+            assert evaluation_set_id == "role-baseline-v1@v1"
+            assert target_role == "seer"
+            assert limit in {25, 50}
+            return [dict(row) for row in current_rows]
+
+        store.leaderboard_entries = fake_leaderboard_entries
+        create_response = client.post(
+            "/api/benchmark/snapshots",
+            json=_benchmark_snapshot_release_request(source_filter={"rankable": "rankable"}),
+        )
+        snapshot_id = create_response.json()["snapshot_id"]
+        current_rows[:] = [
+            {
+                **_benchmark_snapshot_release_row(),
+                "avg_role_score": 0.72,
+                "target_role_role_weighted_score": 0.72,
+                "target_side_win_rate": 0.57,
+            },
+            _benchmark_snapshot_release_row(
+                hash="seer_added_unrankable_v3",
+                subject_id="seer_added_unrankable_v3",
+                target_version_id="seer_added_unrankable_v3",
+                rankable=False,
+                data_sufficient=False,
+                source_run_id="bench_snapshot_run_c",
+                batch_id="bench_snapshot_run_c",
+                result_batch_id="bench_snapshot_run_c_seer",
+                report_id="benchmark_report:bench_snapshot_run_c",
+                summary={"source": "current-unrankable", "benchmark_config_hash": "sha256:contract"},
+            ),
+        ]
+        compare_response = client.get(f"/api/benchmark/snapshots/{snapshot_id}/compare?limit=50")
+
+    assert create_response.status_code == 200
+    assert compare_response.status_code == 200
+    payload = compare_response.json()
+    assert payload["snapshot"]["source_filter"] == {"rankable": "rankable"}
+    assert payload["summary"]["current_row_count"] == 1
+    assert payload["current"]["row_count"] == 1
+    assert [row["subject_id"] for row in payload["current"]["rows"]] == ["seer_candidate_v2"]
+    assert payload["summary"]["added_count"] == 0
+    assert payload["added"] == []
 
 
 def test_benchmark_snapshot_compare_api_supports_frozen_snapshot_pair(tmp_path: Path) -> None:

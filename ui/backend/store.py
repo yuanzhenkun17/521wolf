@@ -622,6 +622,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             target_role=target_role if scope == "role_version" else None,
             limit=request.limit,
         )
+        rows = _filter_benchmark_snapshot_rows(rows, request.source_filter)
         if not rows:
             raise HTTPException(status_code=422, detail="cannot snapshot empty leaderboard")
 
@@ -645,6 +646,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "scope": scope,
             "evaluation_set_id": evaluation_set_id,
             "target_role": target_role,
+            "source_filter_applied": _benchmark_snapshot_source_filter_summary(request.source_filter),
         }
         source_summary = _benchmark_snapshot_source_summary(frozen_rows)
         summary.update(source_summary)
@@ -746,6 +748,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             content = _benchmark_snapshot_csv(snapshot)
         else:
             raise HTTPException(status_code=422, detail="unsupported benchmark snapshot export format")
+        export_content_hash = _text_content_hash(content)
         return {
             "kind": "benchmark_leaderboard_snapshot_export",
             "schema_version": 1,
@@ -753,6 +756,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "format": normalized_format,
             "content": content,
             "content_hash": snapshot.get("content_hash"),
+            "export_content_hash": export_content_hash,
+            "artifact_hash": export_content_hash,
             "snapshot": snapshot,
         }
 
@@ -798,6 +803,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 target_role=target_role if scope == "role_version" else None,
                 limit=limit,
             )
+            current_rows = _filter_benchmark_snapshot_rows(current_rows, snapshot.get("source_filter"))
             compare_mode = "current_vs_snapshot"
             initial_warnings = []
         compare = _benchmark_snapshot_compare_payload(
@@ -916,12 +922,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 "(snapshot_id, title, release_notes, scope, benchmark_id, benchmark_version, "
                 "evaluation_set_id, seed_set_id, benchmark_config_hash, target_role, "
                 "source_filter, view_config, rows_json, summary_json, row_count, content_hash, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(snapshot_id) DO UPDATE SET "
-                "title = excluded.title, "
-                "release_notes = excluded.release_notes, "
-                "source_filter = excluded.source_filter, "
-                "view_config = excluded.view_config",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     snapshot.get("snapshot_id"),
                     snapshot.get("title"),
@@ -4515,6 +4516,93 @@ def _benchmark_snapshot_source_summary(rows: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def _stable_json_text(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def _text_content_hash(value: str) -> str:
+    return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+
+
+def _benchmark_snapshot_filter_values(value: Any) -> set[str] | None:
+    if value in (None, "", [], (), set()):
+        return None
+    if isinstance(value, (list, tuple, set)):
+        values = {str(item).strip().lower() for item in value if str(item or "").strip()}
+        return values or None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return {part.strip().lower() for part in text.split(",") if part.strip()} or None
+
+
+def _benchmark_snapshot_row_field(row: dict[str, Any], key: str) -> Any:
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    aliases = {
+        "source_run_id": ("source_run_id", "run_id", "batch_id"),
+        "batch_id": ("batch_id", "source_run_id", "run_id"),
+        "report_id": ("report_id", "source_report_id"),
+        "source_report_id": ("source_report_id", "report_id"),
+        "result_batch_id": ("result_batch_id",),
+        "subject_id": ("subject_id", "hash", "model_config_hash", "model_id", "target_version_id"),
+    }
+    for candidate in aliases.get(key, (key,)):
+        value = row.get(candidate)
+        if value not in (None, ""):
+            return value
+        value = summary.get(candidate)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _benchmark_snapshot_rankable_matches(row: dict[str, Any], allowed: set[str] | None) -> bool:
+    if not allowed or allowed & {"all", "any", "*"}:
+        return True
+    is_rankable = row.get("rankable") is not False
+    if allowed & {"rankable", "true", "1", "yes"}:
+        return is_rankable
+    if allowed & {"unrankable", "false", "0", "no"}:
+        return not is_rankable
+    return True
+
+
+def _benchmark_snapshot_row_matches_source_filter(row: dict[str, Any], source_filter: dict[str, Any]) -> bool:
+    if not isinstance(row, dict):
+        return False
+    for raw_key, raw_value in source_filter.items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        allowed = _benchmark_snapshot_filter_values(raw_value)
+        if allowed is None:
+            continue
+        if key == "rankable":
+            if not _benchmark_snapshot_rankable_matches(row, allowed):
+                return False
+            continue
+        value = _benchmark_snapshot_row_field(row, key)
+        if str(value or "").strip().lower() not in allowed:
+            return False
+    return True
+
+
+def _filter_benchmark_snapshot_rows(rows: list[dict[str, Any]], source_filter: Any) -> list[dict[str, Any]]:
+    if not isinstance(source_filter, dict) or not source_filter:
+        return rows
+    return [row for row in rows if _benchmark_snapshot_row_matches_source_filter(row, source_filter)]
+
+
+def _benchmark_snapshot_source_filter_summary(source_filter: Any) -> dict[str, Any]:
+    if not isinstance(source_filter, dict):
+        return {}
+    return {
+        key: _json_clone(value)
+        for key, value in source_filter.items()
+        if str(key or "").strip() and value not in (None, "", [], (), set())
+    }
+
+
 def _benchmark_snapshot_release_gate_error(
     rows: list[dict[str, Any]],
     *,
@@ -4538,7 +4626,9 @@ def _benchmark_snapshot_release_gate_error(
             return "snapshot rows must be structured objects"
         summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
         row_scope = str(row.get("scope") or summary.get("scope") or "").strip().lower()
-        if row_scope and row_scope != scope:
+        if not row_scope:
+            return "snapshot rows must include scope"
+        if row_scope != scope:
             return "snapshot boundary mismatch: rows do not match requested scope"
         row_eval = str(row.get("evaluation_set_id") or summary.get("evaluation_set_id") or "").strip()
         if not row_eval or row_eval != requested_eval:
@@ -4552,6 +4642,13 @@ def _benchmark_snapshot_release_gate_error(
             row_role = str(row.get("target_role") or summary.get("target_role") or "").strip().lower()
             if not row_role or row_role != requested_role:
                 return "snapshot boundary mismatch: rows do not match requested target_role"
+        if scope == "model":
+            row_model_id = str(row.get("model_id") or summary.get("model_id") or "").strip()
+            row_model_hash = str(row.get("model_config_hash") or summary.get("model_config_hash") or "").strip()
+            if not row_model_id:
+                return "snapshot model rows must include model_id"
+            if not row_model_hash:
+                return "snapshot model rows must include model_config_hash"
         row_hash = str(
             row.get("benchmark_config_hash")
             or row.get("config_hash")
@@ -4559,7 +4656,9 @@ def _benchmark_snapshot_release_gate_error(
             or summary.get("config_hash")
             or ""
         ).strip()
-        if row_hash and row_hash != requested_hash:
+        if not row_hash:
+            return "snapshot rows must include benchmark_config_hash"
+        if row_hash != requested_hash:
             return "snapshot boundary mismatch: rows do not match requested benchmark_config_hash"
         source_run = _first_text(
             row.get("source_run_id"),
@@ -4673,6 +4772,7 @@ def _benchmark_snapshot_summary_payload(snapshot: dict[str, Any]) -> dict[str, A
             "source_result_batch_count": source_result_batch_count,
         }
     )
+    release_manifest = _benchmark_snapshot_release_manifest(snapshot, summary=summary)
     return {
         "kind": "benchmark_leaderboard_snapshot",
         "schema_version": int(snapshot.get("schema_version") or 1),
@@ -4698,8 +4798,53 @@ def _benchmark_snapshot_summary_payload(snapshot: dict[str, Any]) -> dict[str, A
         "source_run_count": source_run_count,
         "source_report_count": source_report_count,
         "source_result_batch_count": source_result_batch_count,
+        "release_manifest": release_manifest,
         "content_hash": snapshot.get("content_hash"),
         "created_at": snapshot.get("created_at"),
+    }
+
+
+def _benchmark_snapshot_release_manifest(snapshot: dict[str, Any], *, summary: dict[str, Any]) -> dict[str, Any]:
+    snapshot_id = str(snapshot.get("snapshot_id") or "")
+    linked_run_ids = _benchmark_snapshot_string_list(summary.get("linked_run_ids") or snapshot.get("linked_run_ids"))
+    linked_report_ids = _benchmark_snapshot_string_list(summary.get("linked_report_ids") or snapshot.get("linked_report_ids"))
+    linked_result_batch_ids = _benchmark_snapshot_string_list(
+        summary.get("linked_result_batch_ids") or snapshot.get("linked_result_batch_ids")
+    )
+    return {
+        "schema_version": 1,
+        "snapshot_id": snapshot_id,
+        "content_hash": snapshot.get("content_hash"),
+        "created_at": snapshot.get("created_at"),
+        "boundaries": {
+            "scope": snapshot.get("scope"),
+            "benchmark_id": snapshot.get("benchmark_id"),
+            "benchmark_version": snapshot.get("benchmark_version"),
+            "evaluation_set_id": snapshot.get("evaluation_set_id"),
+            "seed_set_id": snapshot.get("seed_set_id"),
+            "benchmark_config_hash": snapshot.get("benchmark_config_hash"),
+            "target_role": snapshot.get("target_role"),
+        },
+        "source": {
+            "row_count": summary.get("row_count", 0),
+            "rankable_count": summary.get("rankable_count", 0),
+            "unrankable_count": summary.get("unrankable_count", 0),
+            "source_filter_applied": _json_clone(summary.get("source_filter_applied") or {}),
+            "linked_run_ids": linked_run_ids,
+            "linked_report_ids": linked_report_ids,
+            "linked_result_batch_ids": linked_result_batch_ids,
+        },
+        "artifacts": {
+            "snapshot": f"/api/benchmark/snapshots/{snapshot_id}",
+            "exports": {
+                "json": f"/api/benchmark/snapshots/{snapshot_id}/export?format=json",
+                "markdown": f"/api/benchmark/snapshots/{snapshot_id}/export?format=markdown",
+                "csv": f"/api/benchmark/snapshots/{snapshot_id}/export?format=csv",
+            },
+            "reports": linked_report_ids,
+            "runs": linked_run_ids,
+            "result_batches": linked_result_batch_ids,
+        },
     }
 
 
@@ -4712,6 +4857,8 @@ def _benchmark_snapshot_detail_payload(snapshot: dict[str, Any]) -> dict[str, An
 
 def _benchmark_snapshot_markdown(snapshot: dict[str, Any]) -> str:
     summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    manifest = snapshot.get("release_manifest") if isinstance(snapshot.get("release_manifest"), dict) else {}
+    source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
     rows = snapshot.get("rows") if isinstance(snapshot.get("rows"), list) else []
     lines = [
         f"# 榜单快照：{_markdown_value(snapshot.get('title'))}",
@@ -4736,6 +4883,7 @@ def _benchmark_snapshot_markdown(snapshot: dict[str, Any]) -> str:
         f"- 未入榜: {summary.get('unrankable_count', snapshot.get('unrankable_count', 0))}",
         f"- 来源运行: {summary.get('source_run_count', snapshot.get('source_run_count', 0))}",
         f"- 来源报告: {summary.get('source_report_count', snapshot.get('source_report_count', 0))}",
+        f"- 来源过滤: {_markdown_value(source.get('source_filter_applied') or summary.get('source_filter_applied') or {})}",
         "",
         "## 冻结行",
     ]
@@ -4760,6 +4908,8 @@ def _benchmark_snapshot_markdown(snapshot: dict[str, Any]) -> str:
 
 def _benchmark_snapshot_csv(snapshot: dict[str, Any]) -> str:
     summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    manifest = snapshot.get("release_manifest") if isinstance(snapshot.get("release_manifest"), dict) else {}
+    source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
     rows: list[list[Any]] = [
         ["区段", "标签", "值", "详情"],
         ["快照头", "快照 ID", snapshot.get("snapshot_id"), ""],
@@ -4776,6 +4926,7 @@ def _benchmark_snapshot_csv(snapshot: dict[str, Any]) -> str:
         ["摘要", "未入榜", summary.get("unrankable_count", snapshot.get("unrankable_count", 0)), ""],
         ["摘要", "来源运行", summary.get("source_run_count", snapshot.get("source_run_count", 0)), ""],
         ["摘要", "来源报告", summary.get("source_report_count", snapshot.get("source_report_count", 0)), ""],
+        ["摘要", "来源过滤", json.dumps(source.get("source_filter_applied") or summary.get("source_filter_applied") or {}, ensure_ascii=False), ""],
     ]
     scope = str(snapshot.get("scope") or "role_version")
     for row in snapshot.get("rows", []) or []:
@@ -4998,6 +5149,8 @@ def _benchmark_snapshot_pair_boundary_warnings(
     against_role = str(against_snapshot.get("target_role") or "").strip().lower()
     if scope == "role_version" and target_role and against_role and against_role != target_role:
         warnings.append("target_role_mismatch")
+    if _stable_json_text(snapshot.get("source_filter") or {}) != _stable_json_text(against_snapshot.get("source_filter") or {}):
+        warnings.append("source_filter_mismatch")
     return sorted(set(warnings))
 
 
