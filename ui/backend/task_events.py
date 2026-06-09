@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
+from storage.postgres.unit_of_work import from_connection_factory
 from storage.ui import TaskEventRepository
 
 _log = logging.getLogger(__name__)
@@ -155,12 +156,9 @@ class TaskEventLog:
                 self._subscribers.pop(entity_id, None)
 
     def _append_event_locked(self, item: dict[str, Any]) -> None:
-        conn = self._connection_factory()
-        try:
-            TaskEventRepository(conn).upsert(item)
-            conn.commit()
-        finally:
-            conn.close()
+        with from_connection_factory(self._connection_factory) as tx:
+            TaskEventRepository(tx.connection).upsert(item)
+            tx.commit()
 
     def _should_compact_locked(self) -> bool:
         if self._compact_pending:
@@ -172,12 +170,9 @@ class TaskEventLog:
     def _compact_locked(self) -> None:
         if len(self._events) >= self.max_backlog:
             cutoff = _event_id(self._events[0])
-            conn = self._connection_factory()
-            try:
-                TaskEventRepository(conn).delete_before_id(cutoff)
-                conn.commit()
-            finally:
-                conn.close()
+            with from_connection_factory(self._connection_factory) as tx:
+                TaskEventRepository(tx.connection).delete_before_id(cutoff)
+                tx.commit()
         self._events_since_compact = 0
         self._compact_pending = False
 

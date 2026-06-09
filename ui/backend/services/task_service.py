@@ -8,6 +8,7 @@ from typing import Any
 
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
+from storage.postgres.unit_of_work import from_connection_factory
 from storage.ui import BackgroundTaskRepository
 from ui.backend.constants import BACKGROUND_ACTIVE_STATUSES
 from ui.backend.task_events import TaskEventLog
@@ -147,9 +148,8 @@ class TaskService:
                 _log.warning("failed to publish task event for %s", self.task_entity_key(entity), exc_info=True)
 
     def persist_background_entities(self, payload: dict[str, Any]) -> None:
-        conn = self._store._open_ui_task_connection()
-        try:
-            repo = BackgroundTaskRepository(conn)
+        with from_connection_factory(self._store._open_ui_task_connection) as tx:
+            repo = BackgroundTaskRepository(tx.connection)
             for entity in [*payload.get("evolution_runs", []), *payload.get("evolution_batches", [])]:
                 if not isinstance(entity, dict):
                     continue
@@ -163,9 +163,7 @@ class TaskService:
                     payload=to_jsonable(entity),
                     updated_at=payload.get("updated_at") or beijing_now_iso(),
                 )
-            conn.commit()
-        finally:
-            conn.close()
+            tx.commit()
 
     def changed_background_entities(self) -> list[dict[str, Any]]:
         changed: list[dict[str, Any]] = []

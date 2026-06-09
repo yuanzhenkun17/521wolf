@@ -346,6 +346,10 @@ class _UiMemoryDatabase:
         self.background_upserts = 0
         self.event_upserts = 0
         self.deletes = 0
+        self.begin_writes = 0
+        self.commits = 0
+        self.rollbacks = 0
+        self.closes = 0
         self.ddl_statements: list[str] = []
         self.game_deletes: list[tuple[str, str, str]] = []
         self.lock = threading.Lock()
@@ -357,6 +361,7 @@ class _UiMemoryConnection:
         self.closed = False
         self.commits = 0
         self.rollbacks = 0
+        self.begin_writes = 0
 
     def execute(self, sql: str, parameters: Any = ()) -> _UiCursor:
         if self.closed:
@@ -456,14 +461,25 @@ class _UiMemoryConnection:
 
         raise AssertionError(f"unexpected SQL: {text}")
 
+    def begin_write(self) -> None:
+        self.begin_writes += 1
+        with self._db.lock:
+            self._db.begin_writes += 1
+
     def commit(self) -> None:
         self.commits += 1
+        with self._db.lock:
+            self._db.commits += 1
 
     def rollback(self) -> None:
         self.rollbacks += 1
+        with self._db.lock:
+            self._db.rollbacks += 1
 
     def close(self) -> None:
         self.closed = True
+        with self._db.lock:
+            self._db.closes += 1
 
     def __enter__(self) -> "_UiMemoryConnection":
         return self
@@ -3398,11 +3414,16 @@ def test_background_tasks_persist_skips_unchanged_state(
         )
     )
     assert _fake_ui_pg_provider.db.background_upserts == 1
+    assert _fake_ui_pg_provider.db.begin_writes == 2
+    assert _fake_ui_pg_provider.db.commits == 2
+    assert _fake_ui_pg_provider.db.closes == 3
     assert batch["batch_id"] in _fake_ui_pg_provider.db.background_tasks
 
     store._persist_background_tasks()
     store._persist_background_tasks()
     assert _fake_ui_pg_provider.db.background_upserts == 1
+    assert _fake_ui_pg_provider.db.begin_writes == 2
+    assert _fake_ui_pg_provider.db.commits == 2
 
     store._mark_benchmark_stage(
         batch,
@@ -3417,6 +3438,10 @@ def test_background_tasks_persist_skips_unchanged_state(
     store._persist_background_tasks()
     store._persist_background_tasks()
     assert _fake_ui_pg_provider.db.background_upserts == 2
+    assert _fake_ui_pg_provider.db.begin_writes == 4
+    assert _fake_ui_pg_provider.db.commits == 4
+    assert _fake_ui_pg_provider.db.rollbacks == 0
+    assert _fake_ui_pg_provider.db.closes == 5
     row = _fake_ui_pg_provider.db.background_tasks[batch["batch_id"]]
     payload = json.loads(row["payload"])
     assert payload["batch_id"] == batch["batch_id"]
@@ -4318,10 +4343,17 @@ def test_task_event_log_appends_and_compacts_pg_backlog() -> None:
         )
 
     assert len(db.task_events) == 5
+    assert db.begin_writes == 5
+    assert db.commits == 5
+    assert db.closes == 5
     assert [item["id"] for item in log.replay("append_compact_run")] == [3, 4, 5]
 
     log.compact()
     assert sorted(db.task_events) == [3, 4, 5]
+    assert db.begin_writes == 6
+    assert db.commits == 6
+    assert db.rollbacks == 0
+    assert db.closes == 6
 
     loaded = TaskEventLog(
         connection_factory=lambda: _UiMemoryConnection(db),
