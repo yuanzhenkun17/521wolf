@@ -13,6 +13,7 @@ import BenchmarkSnapshotReleasePanel from '../components/benchmark/BenchmarkSnap
 import BenchmarkSuiteRail from '../components/benchmark/BenchmarkSuiteRail.vue'
 import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSelector.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
+import { currentLegacyHash } from '../router/legacyViewNavigation.ts'
 import { benchmarkBatchIdFromHash, benchmarkBatchIdFromRoute } from '../router/workbenchDeepLinks.ts'
 
 defineOptions({
@@ -695,7 +696,7 @@ function applyBenchmarkDeepLink(source = route) {
 }
 
 function handleBenchmarkHashChange(event) {
-  applyBenchmarkDeepLink(event?.newURL || window.location.hash)
+  applyBenchmarkDeepLink(event?.newURL || currentLegacyHash())
 }
 
 watch(
