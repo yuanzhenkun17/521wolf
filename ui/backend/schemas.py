@@ -171,6 +171,21 @@ class BenchmarkRequest(BaseModel):
         return normalized
 
 
+class BenchmarkLifecycleRequest(BaseModel):
+    status: Literal["enabled", "active", "draft", "deprecated", "disabled", "archived"] = "enabled"
+    reason: str = Field(default="", max_length=1000)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, value: Any) -> str:
+        return str(value or "enabled").strip().lower()
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_lifecycle_reason(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+
 class BenchmarkSnapshotRequest(BaseModel):
     title: str = Field(default="", max_length=200)
     release_notes: str = Field(default="", max_length=4000)

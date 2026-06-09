@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.evolution_serializers import _evolution_batch_summary
-from ui.backend.schemas import BenchmarkRequest, BenchmarkSnapshotRequest, BenchmarkViewRequest
+from ui.backend.schemas import BenchmarkLifecycleRequest, BenchmarkRequest, BenchmarkSnapshotRequest, BenchmarkViewRequest
 from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import _last_event_id_from_request, _set_task_contract
 
@@ -39,6 +39,10 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     @api.get("/api/benchmarks/{benchmark_id}")
     def get_benchmark(benchmark_id: str) -> dict[str, Any]:
         return store.get_benchmark_spec_summary(benchmark_id)
+
+    @api.patch("/api/benchmarks/{benchmark_id}/lifecycle")
+    def update_benchmark_lifecycle(benchmark_id: str, request: BenchmarkLifecycleRequest) -> dict[str, Any]:
+        return store.update_benchmark_lifecycle(benchmark_id, request)
 
     @api.get("/api/benchmark/seed-sets")
     def list_benchmark_seed_sets() -> dict[str, Any]:

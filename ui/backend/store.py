@@ -21,6 +21,8 @@ from app.lib.benchmark_spec import (
     BenchmarkSeedSet,
     BenchmarkSpec,
     BenchmarkSpecError,
+    LAUNCHABLE_BENCHMARK_STATUSES,
+    VALID_BENCHMARK_STATUSES,
     benchmark_seed_registry_summary,
     benchmark_seed_set_summary,
     benchmark_config_hash,
@@ -43,6 +45,7 @@ from ui.backend.constants import (
 from ui.backend.errors import domain_error_detail, release_stage_diagnostic
 from ui.backend.game_store import GameStoreMixin
 from ui.backend.schemas import (
+    BenchmarkLifecycleRequest,
     BenchmarkRequest,
     BenchmarkSnapshotRequest,
     BenchmarkViewRequest,
@@ -1278,9 +1281,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         from app.lib.benchmark_spec import list_benchmark_specs
 
         summaries: list[dict[str, Any]] = []
+        overrides = self._benchmark_lifecycle_overrides()
         for spec in list_benchmark_specs(self.paths, include_inactive=True):
+            spec, lifecycle_override = _apply_benchmark_lifecycle_override(spec, overrides.get(spec.id))
             materialized, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
             summary = benchmark_spec_summary(materialized, seed_set)
+            summary["lifecycle_override"] = _json_clone(lifecycle_override) if lifecycle_override else None
             summary.update(self._benchmark_suite_activity(summary))
             summaries.append(summary)
         return summaries
@@ -1288,14 +1294,107 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
         """Return a single benchmark suite summary."""
         try:
-            spec, seed_set = materialize_benchmark_spec(load_benchmark_spec(benchmark_id, self.paths), paths=self.paths)
+            spec, lifecycle_override = self._benchmark_spec_with_lifecycle(benchmark_id)
+            spec, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
             summary = benchmark_spec_summary(spec, seed_set)
+            summary["lifecycle_override"] = _json_clone(lifecycle_override) if lifecycle_override else None
             summary.update(self._benchmark_suite_activity(summary))
             return summary
         except BenchmarkSpecError as exc:
             status = 404 if "not found" in str(exc) else 422
             detail = "benchmark not found" if status == 404 else str(exc)
             raise HTTPException(status_code=status, detail=detail) from exc
+
+    def update_benchmark_lifecycle(self, benchmark_id: str, request: BenchmarkLifecycleRequest) -> dict[str, Any]:
+        """Persist a runtime lifecycle override for a benchmark suite."""
+        normalized_id = str(benchmark_id or "").strip()
+        if not normalized_id:
+            raise HTTPException(status_code=404, detail="benchmark not found")
+        status = str(request.status or "").strip().lower()
+        if status not in VALID_BENCHMARK_STATUSES:
+            raise HTTPException(status_code=422, detail="unsupported benchmark lifecycle status")
+        try:
+            original = load_benchmark_spec(normalized_id, self.paths)
+        except BenchmarkSpecError as exc:
+            status_code = 404 if "not found" in str(exc) else 422
+            detail = "benchmark not found" if status_code == 404 else str(exc)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        now = beijing_now_iso()
+        override = {
+            "benchmark_id": original.id,
+            "status": status,
+            "enabled": status in LAUNCHABLE_BENCHMARK_STATUSES,
+            "reason": str(request.reason or ""),
+            "updated_at": now,
+        }
+        overrides = self._benchmark_lifecycle_overrides()
+        overrides[original.id] = override
+        self._persist_benchmark_lifecycle_overrides(overrides)
+        spec, applied_override = _apply_benchmark_lifecycle_override(original, override)
+        try:
+            spec, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
+            summary = benchmark_spec_summary(spec, seed_set)
+            summary["lifecycle_override"] = _json_clone(applied_override)
+            summary.update(self._benchmark_suite_activity(summary))
+            return {
+                "kind": "benchmark_suite_lifecycle",
+                "schema_version": 1,
+                "benchmark_id": original.id,
+                "status": summary["status"],
+                "launchable": summary["launchable"],
+                "item": summary,
+            }
+        except BenchmarkSpecError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _benchmark_spec_with_lifecycle(self, benchmark_id: str) -> tuple[BenchmarkSpec, dict[str, Any] | None]:
+        spec = load_benchmark_spec(benchmark_id, self.paths)
+        override = self._benchmark_lifecycle_overrides().get(spec.id)
+        return _apply_benchmark_lifecycle_override(spec, override)
+
+    def _benchmark_lifecycle_overrides_path(self) -> Any:
+        return self.paths.data_dir / "benchmark_suite_lifecycle_overrides.json"
+
+    def _benchmark_lifecycle_overrides(self) -> dict[str, dict[str, Any]]:
+        path = self._benchmark_lifecycle_overrides_path()
+        if not path.exists():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001 - normalize runtime state read failures
+            raise HTTPException(status_code=500, detail=f"failed to read benchmark lifecycle overrides: {exc}") from exc
+        raw_items = payload.get("items") if isinstance(payload, dict) else {}
+        if not isinstance(raw_items, dict):
+            return {}
+        overrides: dict[str, dict[str, Any]] = {}
+        for key, value in raw_items.items():
+            if not isinstance(value, dict):
+                continue
+            benchmark_id = str(value.get("benchmark_id") or key or "").strip()
+            status = str(value.get("status") or "").strip().lower()
+            if not benchmark_id or status not in VALID_BENCHMARK_STATUSES:
+                continue
+            overrides[benchmark_id] = {
+                "benchmark_id": benchmark_id,
+                "status": status,
+                "enabled": bool(value.get("enabled", status in LAUNCHABLE_BENCHMARK_STATUSES)),
+                "reason": str(value.get("reason") or ""),
+                "updated_at": str(value.get("updated_at") or ""),
+            }
+        return overrides
+
+    def _persist_benchmark_lifecycle_overrides(self, overrides: dict[str, dict[str, Any]]) -> None:
+        path = self._benchmark_lifecycle_overrides_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "kind": "benchmark_suite_lifecycle_overrides",
+            "schema_version": 1,
+            "items": {
+                benchmark_id: _json_clone(override)
+                for benchmark_id, override in sorted(overrides.items())
+            },
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
     def list_benchmark_seed_sets(self) -> dict[str, Any]:
         """Return configured benchmark seed-set registry summaries for API/UI use."""
@@ -2682,7 +2781,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         if not request.benchmark_id:
             return None, None
         try:
-            spec, seed_set = materialize_benchmark_spec(load_benchmark_spec(request.benchmark_id, self.paths), paths=self.paths)
+            spec, _lifecycle_override = self._benchmark_spec_with_lifecycle(request.benchmark_id)
+            spec, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
             if not spec.launchable:
                 reason = benchmark_spec_summary(spec, seed_set).get("launch_disabled_reason") or (
                     f"benchmark suite status={spec.lifecycle_status} cannot be launched"
@@ -5423,6 +5523,25 @@ def _benchmark_view_from_row(row: Any) -> dict[str, Any]:
         "created_at": payload.get("created_at"),
         "updated_at": payload.get("updated_at"),
     }
+
+
+def _apply_benchmark_lifecycle_override(
+    spec: BenchmarkSpec,
+    override: dict[str, Any] | None,
+) -> tuple[BenchmarkSpec, dict[str, Any] | None]:
+    if not isinstance(override, dict) or not override:
+        return spec, None
+    status = str(override.get("status") or "").strip().lower()
+    if status not in VALID_BENCHMARK_STATUSES:
+        return spec, None
+    applied = {
+        "benchmark_id": spec.id,
+        "status": status,
+        "enabled": bool(override.get("enabled", status in LAUNCHABLE_BENCHMARK_STATUSES)),
+        "reason": str(override.get("reason") or ""),
+        "updated_at": str(override.get("updated_at") or ""),
+    }
+    return spec.model_copy(update={"status": status, "enabled": applied["enabled"]}), applied
 
 
 def _filter_benchmark_view_cache(

@@ -1088,6 +1088,13 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 [("benchmark_id", "path", True)],
             ),
         },
+        "/api/benchmarks/{benchmark_id}/lifecycle": {
+            "patch": (
+                "update_benchmark_lifecycle_api_benchmarks__benchmark_id__lifecycle_patch",
+                "BenchmarkLifecycleRequest",
+                [("benchmark_id", "path", True)],
+            ),
+        },
         "/api/benchmark/seed-sets": {
             "get": ("list_benchmark_seed_sets_api_benchmark_seed_sets_get", None, []),
         },
@@ -1511,6 +1518,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
 
     assert set(doc["components"]["schemas"]) == {
         "BenchmarkRequest",
+        "BenchmarkLifecycleRequest",
         "BenchmarkSnapshotRequest",
         "BenchmarkViewRequest",
         "EvolutionActionRequest",
@@ -1585,6 +1593,12 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
     )
     assert stop_after_integer["minimum"] == 0
     assert stop_after_integer["maximum"] == 1_000_000
+
+    benchmark_lifecycle = _schema_properties(doc, "BenchmarkLifecycleRequest")
+    assert benchmark_lifecycle["status"]["default"] == "enabled"
+    assert benchmark_lifecycle["status"]["enum"] == ["enabled", "active", "draft", "deprecated", "disabled", "archived"]
+    assert benchmark_lifecycle["reason"]["default"] == ""
+    assert benchmark_lifecycle["reason"]["maxLength"] == 1000
 
     benchmark_snapshot = _schema_properties(doc, "BenchmarkSnapshotRequest")
     assert benchmark_snapshot["title"]["default"] == ""
@@ -4386,6 +4400,73 @@ def test_benchmark_lifecycle_api_lists_inactive_suite_and_blocks_launch(tmp_path
         diagnostic = payload["error"]["diagnostics"][0]
         assert diagnostic["benchmark_id"] == "role-deprecated-v1"
         assert diagnostic["status"] == "deprecated"
+
+
+def test_benchmark_lifecycle_api_persists_runtime_enable_and_deprecate(tmp_path: Path) -> None:
+    _write_benchmark_spec(tmp_path)
+
+    with _client(tmp_path) as client:
+        deprecate_response = client.patch(
+            "/api/benchmarks/role-baseline-v1/lifecycle",
+            json={"status": "deprecated", "reason": "release suite retired"},
+        )
+        detail_response = client.get("/api/benchmarks/role-baseline-v1")
+        plan_response = client.post(
+            "/api/benchmark/plan",
+            json={"benchmark_id": "role-baseline-v1", "roles": ["seer"]},
+        )
+        missing_response = client.patch(
+            "/api/benchmarks/missing-suite/lifecycle",
+            json={"status": "deprecated"},
+        )
+
+    assert deprecate_response.status_code == 200
+    deprecated = deprecate_response.json()
+    assert deprecated["kind"] == "benchmark_suite_lifecycle"
+    assert deprecated["benchmark_id"] == "role-baseline-v1"
+    assert deprecated["status"] == "deprecated"
+    assert deprecated["launchable"] is False
+    assert deprecated["item"]["lifecycle_override"]["reason"] == "release suite retired"
+    assert deprecated["item"]["lifecycle_override"]["status"] == "deprecated"
+    assert deprecated["item"]["lifecycle_override"]["enabled"] is False
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["status"] == "deprecated"
+    assert detail["launchable"] is False
+    assert detail["lifecycle_override"]["reason"] == "release suite retired"
+    _assert_domain_error(
+        plan_response,
+        409,
+        "benchmark_suite_not_launchable",
+        detail_contains="deprecated",
+        kind="benchmark_suite_not_launchable",
+    )
+    _assert_error_detail(missing_response, 404, "benchmark not found")
+
+    with _client(tmp_path) as restarted_client:
+        restarted_detail_response = restarted_client.get("/api/benchmarks/role-baseline-v1")
+        enable_response = restarted_client.patch(
+            "/api/benchmarks/role-baseline-v1/lifecycle",
+            json={"status": "enabled", "reason": "release suite restored"},
+        )
+        enabled_plan_response = restarted_client.post(
+            "/api/benchmark/plan",
+            json={"benchmark_id": "role-baseline-v1", "roles": ["seer"]},
+        )
+
+    assert restarted_detail_response.status_code == 200
+    restarted_detail = restarted_detail_response.json()
+    assert restarted_detail["status"] == "deprecated"
+    assert restarted_detail["lifecycle_override"]["reason"] == "release suite retired"
+
+    assert enable_response.status_code == 200
+    enabled = enable_response.json()
+    assert enabled["status"] == "enabled"
+    assert enabled["launchable"] is True
+    assert enabled["item"]["lifecycle_override"]["reason"] == "release suite restored"
+    assert enabled_plan_response.status_code == 200
+    assert enabled_plan_response.json()["launchable"] is True
 
 
 def test_leaderboards_api_contract_preserves_scope_isolation_params(tmp_path: Path) -> None:
