@@ -39,6 +39,20 @@ export function hashForView(view: AppView = 'lobby'): string {
   return appViewHash(view)
 }
 
+export function currentLegacyHash(): string {
+  return typeof window === 'undefined' ? '' : String(window.location.hash || '')
+}
+
+export function routeHashFromLegacyHash(hash = ''): string {
+  return String(hash || '').split('?')[0]
+}
+
+export function isLegacyHashForView(view: AppView, hash = currentLegacyHash()): boolean {
+  const viewHash = hashForView(view)
+  const routeHash = routeHashFromLegacyHash(hash)
+  return viewHash ? routeHash === `#${viewHash}` : !routeHash
+}
+
 export function syncRouterToLegacyView(view: AppView, hash = ''): void {
   if (!activeRouter) return
   const legacyHash = String(hash || '')
@@ -49,10 +63,23 @@ export function syncRouterToLegacyView(view: AppView, hash = ''): void {
   }).catch(() => {})
 }
 
+export function writeLegacyHashForView(view: AppView, hash = ''): void {
+  if (typeof window === 'undefined') return
+  const legacyHash = String(hash || '')
+  window.location.hash = legacyHash
+  syncRouterToLegacyView(view, legacyHash)
+}
+
+export function syncCurrentLegacyHashForView(view: AppView): boolean {
+  const hash = currentLegacyHash()
+  if (!isLegacyHashForView(view, hash)) return false
+  syncRouterToLegacyView(view, hash)
+  return true
+}
+
 export function writeViewHash(view: AppView = 'lobby'): void {
   if (typeof window === 'undefined') return
   const hash = hashForView(view)
   const nextHash = hash ? `#${hash}` : ''
-  window.location.hash = nextHash
-  syncRouterToLegacyView(view, nextHash)
+  writeLegacyHashForView(view, nextHash)
 }

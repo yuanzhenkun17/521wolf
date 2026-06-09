@@ -41,7 +41,9 @@ test('legacy #evidence links are not routed or recognized', () => {
   ])
   assertSourceContract(history, [
     ['useGameHistory imports logs deep link helpers', /import \{ historyDeepLinkFromHash, logsHash \} from '..\/router\/workbenchDeepLinks'/],
-    ['hash routing delegates parsing to router helper', /return historyDeepLinkFromHash\(hash\)/],
+    ['useGameHistory reads the current hash through legacy navigation helpers', /import \{[\s\S]*currentLegacyHash[\s\S]*writeLegacyHashForView[\s\S]*\} from '..\/router\/legacyViewNavigation'/],
+    ['hash routing delegates parsing to router helper', /return historyDeepLinkFromHash\(currentLegacyHash\(\)\)/],
+    ['logs deep links are written through legacy navigation helpers', /writeLegacyHashForView\('logs', hash\)/],
     ['openLogPage stores the requested workspace', /state\.historyWorkspaceTab\.value = targetWorkspace/],
   ])
   assert.doesNotMatch(gameSession, /#evidence/)

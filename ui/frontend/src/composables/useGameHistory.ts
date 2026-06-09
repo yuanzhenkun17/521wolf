@@ -10,7 +10,11 @@ import {
   normalizeHistoryDisplayText
 } from '../components/history/historyDisplay.ts'
 import { normalizeHistoryWorkspaceTab } from '../domain/history/normalizers'
-import { syncRouterToLegacyView } from '../router/legacyViewNavigation'
+import {
+  currentLegacyHash,
+  syncCurrentLegacyHashForView,
+  writeLegacyHashForView
+} from '../router/legacyViewNavigation'
 import { historyDeepLinkFromHash, logsHash } from '../router/workbenchDeepLinks'
 import { isReturnableGame, writeViewHash } from './gameSession.ts'
 import {
@@ -125,10 +129,8 @@ function historyLoadNotice(type, message, fallback) {
 }
 
 function writeLogsHash(options = {}) {
-  if (typeof window === 'undefined') return
   const hash = logsHash(options)
-  window.location.hash = hash
-  syncRouterToLegacyView('logs', hash)
+  writeLegacyHashForView('logs', hash)
 }
 
 function normalizeHistoryPhase(phase = 'setup') {
@@ -1353,28 +1355,19 @@ function useGameHistory(state, options = {}) {
   function openEvolutionPage({ rememberOrigin = true } = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'evolution'
-    const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
-    if (hash.split('?')[0] === '#evolution') {
-      syncRouterToLegacyView('evolution', hash)
-      return
-    }
+    if (syncCurrentLegacyHashForView('evolution')) return
     writeViewHash('evolution')
   }
 
   function openBenchmarkPage({ rememberOrigin = true } = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'benchmark'
-    const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
-    if (hash.split('?')[0] === '#benchmark') {
-      syncRouterToLegacyView('benchmark', hash)
-      return
-    }
+    if (syncCurrentLegacyHashForView('benchmark')) return
     writeViewHash('benchmark')
   }
 
   function hashRouteInfo() {
-    const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
-    return historyDeepLinkFromHash(hash)
+    return historyDeepLinkFromHash(currentLegacyHash())
   }
 
   function syncHashRoute({ rememberOrigin = false } = {}) {
@@ -1859,7 +1852,7 @@ function useGameHistory(state, options = {}) {
   if (options.installLifecycle !== false) {
     const handleHashChange = () => syncHashRoute({ rememberOrigin: false })
     onMounted(() => {
-      const hash = typeof window === 'undefined' ? '' : window.location.hash
+      const hash = currentLegacyHash()
       if (['#logs', '#evolution', '#benchmark', '#match'].includes(String(hash || '').split('?')[0])) {
         syncHashRoute({ rememberOrigin: false })
       } else if (options.prefetchHistoryOnMount === true) {
