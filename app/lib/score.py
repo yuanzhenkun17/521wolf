@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.util.time import beijing_now_iso
+from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository, open_benchmark_connection
 
 _log = logging.getLogger(__name__)
 
@@ -385,112 +385,8 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
     batch overwrites its row rather than accumulating duplicates. Returns a
     warning string when the best-effort write fails.
     """
-    import uuid
-
-    scope = entry.get("scope") or ("role_version" if entry.get("target_role") else "model")
-    subject_id = str(
-        entry.get("subject_id")
-        or entry.get("target_version_id")
-        or entry.get("model_config_hash")
-        or entry.get("model_id")
-        or entry.get("hash")
-        or ""
-    )
-    group_id = entry.get("comparison_group_id")
-    # Stable id so re-runs replace rather than duplicate.
-    row_id = entry.get("id") or f"{scope}:{subject_id}:{group_id or entry.get('batch_id', '')}" or uuid.uuid4().hex
-    by_role = entry.get("by_role_category_scores")
-    summary = dict(entry.get("summary") or {})
-    for key in ("benchmark_id", "benchmark_version", "benchmark_config_hash", "config_hash", "model_runtime"):
-        if entry.get(key) not in (None, ""):
-            summary.setdefault(key, entry.get(key))
-    source_run_id = (
-        entry.get("source_run_id")
-        or entry.get("run_id")
-        or entry.get("benchmark_batch_id")
-        or entry.get("comparison_group_id")
-        or entry.get("batch_id")
-    )
-    result_batch_id = entry.get("result_batch_id") or entry.get("batch_id")
-    if source_run_id:
-        summary.setdefault("source_run_id", str(source_run_id))
-        summary.setdefault("batch_id", str(source_run_id))
-        summary.setdefault("report_id", f"benchmark_report:{source_run_id}")
-    if result_batch_id:
-        summary.setdefault("result_batch_id", str(result_batch_id))
-    updated_at = str(entry.get("updated_at") or beijing_now_iso())
     try:
-        conn.execute(
-            """INSERT INTO benchmark_leaderboard
-            (id, scope, subject_id, model_id, model_config_hash, target_role, target_version_id,
-             comparison_group_id, evaluation_set_id, seed_set_id,
-             games_played, valid_game_rate, strength_score, avg_role_score, by_role_category_scores,
-             avg_speech_score, avg_vote_score, avg_skill_score, avg_logic_score, avg_team_score,
-             risk_penalty, fallback_rate, llm_error_rate, policy_adjusted_rate,
-             target_side_win_rate, rankable, data_sufficient, summary, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-                scope = excluded.scope,
-                subject_id = excluded.subject_id,
-                model_id = excluded.model_id,
-                model_config_hash = excluded.model_config_hash,
-                target_role = excluded.target_role,
-                target_version_id = excluded.target_version_id,
-                comparison_group_id = excluded.comparison_group_id,
-                evaluation_set_id = excluded.evaluation_set_id,
-                seed_set_id = excluded.seed_set_id,
-                games_played = excluded.games_played,
-                valid_game_rate = excluded.valid_game_rate,
-                strength_score = excluded.strength_score,
-                avg_role_score = excluded.avg_role_score,
-                by_role_category_scores = excluded.by_role_category_scores,
-                avg_speech_score = excluded.avg_speech_score,
-                avg_vote_score = excluded.avg_vote_score,
-                avg_skill_score = excluded.avg_skill_score,
-                avg_logic_score = excluded.avg_logic_score,
-                avg_team_score = excluded.avg_team_score,
-                risk_penalty = excluded.risk_penalty,
-                fallback_rate = excluded.fallback_rate,
-                llm_error_rate = excluded.llm_error_rate,
-                policy_adjusted_rate = excluded.policy_adjusted_rate,
-                target_side_win_rate = excluded.target_side_win_rate,
-                rankable = excluded.rankable,
-                data_sufficient = excluded.data_sufficient,
-                summary = excluded.summary,
-                updated_at = excluded.updated_at""",
-            (
-                row_id,
-                scope,
-                subject_id,
-                entry.get("model_id"),
-                entry.get("model_config_hash"),
-                entry.get("target_role"),
-                entry.get("target_version_id"),
-                group_id,
-                entry.get("evaluation_set_id"),
-                entry.get("seed_set_id"),
-                entry.get("game_count", 0),
-                entry.get("valid_game_rate", 0.0),
-                entry.get("strength_score", 0.0),
-                entry.get("avg_role_score", entry.get("target_role_role_weighted_score", 0.0)),
-                json.dumps(by_role, ensure_ascii=False) if by_role is not None else None,
-                entry.get("avg_speech_score", 0.0),
-                entry.get("avg_vote_score", 0.0),
-                entry.get("avg_skill_score", 0.0),
-                entry.get("avg_logic_score", 0.0),
-                entry.get("avg_team_score", 0.0),
-                entry.get("risk_penalty", 0.0),
-                entry.get("fallback_rate", 0.0),
-                entry.get("llm_error_rate", 0.0),
-                entry.get("policy_adjusted_rate", 0.0),
-                entry.get("target_side_win_rate", 0.0),
-                1 if entry.get("rankable") else 0,
-                1 if entry.get("rankable") else 0,
-                json.dumps(summary, ensure_ascii=False),
-                updated_at,
-            ),
-        )
-        conn.commit()
+        BenchmarkEvaluationRepository(conn).save_leaderboard_entry(entry)
         return None
     except Exception as exc:  # noqa: BLE001 — leaderboard write is best-effort
         _log.warning("persist_leaderboard_entry failed", exc_info=True)
@@ -503,9 +399,7 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
 
 def open_eval_connection(paths: Any = None) -> Any:
     """Open the wolf-domain storage connection used by evaluation persistence."""
-    from storage.provider import storage_provider_from_env
-
-    return storage_provider_from_env(paths=paths).open_wolf_connection()
+    return open_benchmark_connection(paths=paths)
 
 
 def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
@@ -513,61 +407,8 @@ def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
 
     Returns a warning string when the best-effort write fails.
     """
-    summary = batch.get("score_summary")
-    created_at = str(batch.get("created_at") or beijing_now_iso())
-    started_at = _nullable_timestamp(batch.get("started_at"))
-    finished_at = _nullable_timestamp(batch.get("finished_at"))
     try:
-        conn.execute(
-            """INSERT INTO evaluation_batches
-            (id, comparison_group_id, comparison_type, mode, model_id, model_config_hash,
-             target_role, target_version_id, role_version_config, game_count,
-             evaluation_set_id, seed_set_id, max_days, rankable, rankable_reason,
-             summary, started_at, finished_at, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-                comparison_group_id = excluded.comparison_group_id,
-                comparison_type = excluded.comparison_type,
-                mode = excluded.mode,
-                model_id = excluded.model_id,
-                model_config_hash = excluded.model_config_hash,
-                target_role = excluded.target_role,
-                target_version_id = excluded.target_version_id,
-                role_version_config = excluded.role_version_config,
-                game_count = excluded.game_count,
-                evaluation_set_id = excluded.evaluation_set_id,
-                seed_set_id = excluded.seed_set_id,
-                max_days = excluded.max_days,
-                rankable = excluded.rankable,
-                rankable_reason = excluded.rankable_reason,
-                summary = excluded.summary,
-                started_at = excluded.started_at,
-                finished_at = excluded.finished_at,
-                created_at = excluded.created_at""",
-            (
-                str(batch.get("batch_id", "")),
-                batch.get("comparison_group_id"),
-                batch.get("comparison_type"),
-                str(batch.get("mode", "dev")),
-                batch.get("model_id"),
-                batch.get("model_config_hash"),
-                batch.get("target_role"),
-                batch.get("target_version_id"),
-                json.dumps(batch.get("role_version_config"), ensure_ascii=False)
-                if batch.get("role_version_config") is not None else None,
-                int(batch.get("game_count", 0) or 0),
-                batch.get("evaluation_set_id"),
-                batch.get("seed_set_id"),
-                int(batch.get("max_days", 20) or 20),
-                1 if batch.get("rankable") else 0,
-                batch.get("rankable_reason", ""),
-                json.dumps(summary, ensure_ascii=False) if summary is not None else None,
-                started_at,
-                finished_at,
-                created_at,
-            ),
-        )
-        conn.commit()
+        BenchmarkEvaluationRepository(conn).save_batch(batch)
         return None
     except Exception as exc:  # noqa: BLE001 — persistence is best-effort
         try:
@@ -578,35 +419,20 @@ def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
         return _persistence_warning("save_evaluation_batch", exc)
 
 
-def _nullable_timestamp(value: Any) -> str | None:
-    text = str(value or "").strip()
-    return text or None
-
-
 def load_comparison_group(conn: Any, comparison_group_id: str, *, exclude_batch_id: str = "") -> list[dict[str, Any]]:
     """Load sibling batches in a comparison group (excluding the current batch).
 
     Read failures are raised so callers can distinguish storage problems from
     a genuinely empty comparison group.
     """
-    if not comparison_group_id:
-        return []
     try:
-        rows = conn.execute(
-            "SELECT id, comparison_group_id, comparison_type, mode, model_id, "
-            "model_config_hash, target_role, target_version_id, seed_set_id, game_count "
-            "FROM evaluation_batches WHERE comparison_group_id = ? AND id != ?",
-            (comparison_group_id, exclude_batch_id),
-        ).fetchall()
+        return BenchmarkEvaluationRepository(conn).load_comparison_group(
+            comparison_group_id,
+            exclude_batch_id=exclude_batch_id,
+        )
     except Exception:  # noqa: BLE001 — keep the original error for caller diagnostics
         _log.warning("load_comparison_group failed", exc_info=True)
         raise
-    result: list[dict[str, Any]] = []
-    for row in rows:
-        d = dict(row)
-        d["batch_id"] = d.get("id")
-        result.append(d)
-    return result
 
 
 def compute_group_fairness(
