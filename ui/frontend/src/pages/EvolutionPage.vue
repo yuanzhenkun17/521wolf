@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // @ts-nocheck
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.ts'
 import EvolutionConsolePanel from '../components/evolution/EvolutionConsolePanel.vue'
 import EvolutionEventsPanel from '../components/evolution/EvolutionEventsPanel.vue'
@@ -22,7 +23,8 @@ defineProps({
 
 const emit = defineEmits(['back-to-match', 'open-sample-log', 'replay-sample-game'])
 
-const evo = useEvolutionWorkbench()
+const route = useRoute()
+const evo = useEvolutionWorkbench({ initialRoute: route })
 
 const activeTab = ref('console')
 
@@ -48,6 +50,14 @@ watch(
     if (panel && navTabs.some((tab) => tab.key === panel)) activeTab.value = panel
   },
   { immediate: true }
+)
+
+watch(
+  () => route.fullPath,
+  () => {
+    const target = evo.consumeEvolutionDeepLink(route)
+    if (target) void evo.applyEvolutionDeepLink(target)
+  }
 )
 
 onMounted(() => evo.refreshAll())

@@ -136,10 +136,12 @@ test('EvidenceContextBar keeps Archive and Run in the summary row as links', () 
 
 test('BenchmarkPage consumes benchmark run deep links after the router preserves query params', () => {
   const component = readFileSync(new URL('../src/pages/BenchmarkPage.vue', import.meta.url), 'utf8')
+  const helper = readFileSync(new URL('../src/router/workbenchDeepLinks.ts', import.meta.url), 'utf8')
 
   assert.match(component, /function benchmarkDeepLinkBatchId/)
-  assert.match(component, /params\.get\('batch_id'\)/)
-  assert.match(component, /params\.get\('source_run_id'\)/)
+  assert.match(component, /benchmarkBatchIdFromRoute/)
+  assert.match(helper, /const benchmarkIdKeys = \['batch_id', 'batch', 'run_id', 'run', 'source_run_id'\]/)
+  assert.match(helper, /export function benchmarkBatchIdFromRoute/)
   assert.match(component, /activeView\.value = 'runs'/)
   assert.match(component, /benchmark\.selectBenchmarkBatch\(batchId\)/)
   assert.match(component, /addEventListener\('hashchange', handleBenchmarkHashChange\)/)

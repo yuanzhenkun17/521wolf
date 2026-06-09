@@ -5,6 +5,11 @@ import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
 import { createResumableEventSource } from './resumableEventSource.ts'
 import {
+  evolutionDeepLinkFromHash as routeEvolutionDeepLinkFromHash,
+  evolutionDeepLinkFromRoute as routeEvolutionDeepLinkFromRoute,
+  evolutionDeepLinkPanel as routeEvolutionDeepLinkPanel
+} from '../router/workbenchDeepLinks.ts'
+import {
   EVOLUTION_ACTIVE_STATUSES,
   EVOLUTION_TERMINAL_STATUSES,
   isEvolutionBatch,
@@ -1452,41 +1457,16 @@ function evolutionHref(params = {}) {
   return hashHref('evolution', params)
 }
 
-function hashFromRouteValue(value = '') {
-  const text = String(value || '')
-  const hashIndex = text.indexOf('#')
-  return hashIndex >= 0 ? text.slice(hashIndex) : text
-}
-
 function evolutionDeepLinkPanel(target = {}) {
-  if (target.version_id) return 'versions'
-  if (target.proposal_id || target.gate_report_id) return 'review'
-  if (target.run_id) return 'runs'
-  return ''
+  return routeEvolutionDeepLinkPanel(target)
 }
 
 function evolutionDeepLinkFromHash(value = globalThis.window?.location?.hash || '') {
-  const hash = hashFromRouteValue(value)
-  const [routeHash, queryString = ''] = hash.split('?')
-  if (routeHash !== '#evolution' || !queryString) return null
-  const params = new URLSearchParams(queryString)
-  const target = {
-    run_id: firstTextValue(params.get('run_id'), params.get('run'), params.get('source_run_id'), params.get('sourceRunId')),
-    gate_report_id: firstTextValue(params.get('gate_report_id'), params.get('gate'), params.get('gateReportId')),
-    proposal_id: firstTextValue(params.get('proposal_id'), params.get('proposal'), params.get('proposalId')),
-    role: firstTextValue(params.get('role')),
-    version_id: firstTextValue(params.get('version_id'), params.get('version'), params.get('versionId'))
-  }
-  if (!Object.values(target).some(Boolean)) return null
-  const panel = evolutionDeepLinkPanel(target)
-  return {
-    ...target,
-    panel,
-    query: params.toString(),
-    status: 'pending',
-    pending: [],
-    message: panel ? '等待恢复定位链接目标。' : '等待恢复自进化定位链接。'
-  }
+  return routeEvolutionDeepLinkFromHash(value)
+}
+
+function evolutionDeepLinkFromRoute(route) {
+  return routeEvolutionDeepLinkFromRoute(route)
 }
 
 function auditEvidenceRows(ids, hrefForId) {
@@ -1954,7 +1934,10 @@ function useEvolutionWorkbench(options = {}) {
   const initialDeepLinkHash = Object.prototype.hasOwnProperty.call(options, 'initialHash')
     ? options.initialHash
     : globalThis.window?.location?.hash
-  const evolutionDeepLinkTarget = ref(evolutionDeepLinkFromHash(initialDeepLinkHash || ''))
+  const initialDeepLinkTarget = Object.prototype.hasOwnProperty.call(options, 'initialRoute')
+    ? evolutionDeepLinkFromRoute(options.initialRoute)
+    : evolutionDeepLinkFromHash(initialDeepLinkHash || '')
+  const evolutionDeepLinkTarget = ref(initialDeepLinkTarget)
   const versionDetailCache = ref({})
   const selectedGameDetail = ref({
     loading: false,
@@ -2338,7 +2321,9 @@ function useEvolutionWorkbench(options = {}) {
   }
 
   function consumeEvolutionDeepLink(value = globalThis.window?.location?.hash || '') {
-    const target = evolutionDeepLinkFromHash(value)
+    const target = value && typeof value === 'object'
+      ? evolutionDeepLinkFromRoute(value)
+      : evolutionDeepLinkFromHash(value)
     if (!target) return null
     const current = evolutionDeepLinkTarget.value
     if (!current || current.query !== target.query || current.status === 'applied') {

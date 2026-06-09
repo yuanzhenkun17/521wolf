@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // @ts-nocheck
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.ts'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
@@ -12,6 +13,7 @@ import BenchmarkSnapshotReleasePanel from '../components/benchmark/BenchmarkSnap
 import BenchmarkSuiteRail from '../components/benchmark/BenchmarkSuiteRail.vue'
 import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSelector.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
+import { benchmarkBatchIdFromHash, benchmarkBatchIdFromRoute } from '../router/workbenchDeepLinks.ts'
 
 defineOptions({
   inheritAttrs: false
@@ -21,6 +23,7 @@ defineProps({
   returnToMatchAvailable: Boolean
 })
 
+const route = useRoute()
 const benchmark = useEvaluationWorkbench()
 const activeView = ref('overview')
 const launchConfirmationOpen = ref(false)
@@ -675,22 +678,14 @@ function cancelLaunchConfirmation() {
   launchConfirmationOpen.value = false
 }
 
-function benchmarkDeepLinkBatchId(hash = typeof window === 'undefined' ? '' : window.location.hash) {
-  const [routeHash, queryString = ''] = String(hash || '').split('?')
-  if (routeHash !== '#benchmark') return ''
-  const params = new URLSearchParams(queryString)
-  return String(
-    params.get('batch_id') ||
-    params.get('batch') ||
-    params.get('run_id') ||
-    params.get('run') ||
-    params.get('source_run_id') ||
-    ''
-  ).trim()
+function benchmarkDeepLinkBatchId(source = route) {
+  return typeof source === 'string'
+    ? benchmarkBatchIdFromHash(source)
+    : benchmarkBatchIdFromRoute(source)
 }
 
-function applyBenchmarkDeepLink() {
-  const batchId = benchmarkDeepLinkBatchId()
+function applyBenchmarkDeepLink(source = route) {
+  const batchId = benchmarkDeepLinkBatchId(source)
   if (!batchId) return false
   activeView.value = 'runs'
   if (benchmark.selectedBenchmarkBatchId.value !== batchId) {
@@ -699,14 +694,21 @@ function applyBenchmarkDeepLink() {
   return true
 }
 
-function handleBenchmarkHashChange() {
-  applyBenchmarkDeepLink()
+function handleBenchmarkHashChange(event) {
+  applyBenchmarkDeepLink(event?.newURL || window.location.hash)
 }
+
+watch(
+  () => route.fullPath,
+  () => {
+    applyBenchmarkDeepLink(route)
+  }
+)
 
 onMounted(() => {
   if (typeof window !== 'undefined') window.addEventListener('hashchange', handleBenchmarkHashChange)
   void benchmark.refreshAll().finally(() => {
-    applyBenchmarkDeepLink()
+    applyBenchmarkDeepLink(route)
   })
 })
 
