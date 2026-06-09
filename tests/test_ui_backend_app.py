@@ -1927,6 +1927,9 @@ def test_benchmark_request_accepts_suite_and_target_versions() -> None:
         benchmark_id="role-baseline-v1",
         roles=["seer", "seer", "witch"],
         target_versions={"seer": "seer_candidate_v2"},
+        budget_limit_units=500,
+        budget_limit_cost=0.5,
+        stop_after_budget_units=400,
     )
 
     assert request.benchmark_id == "role-baseline-v1"
@@ -1935,6 +1938,9 @@ def test_benchmark_request_accepts_suite_and_target_versions() -> None:
     assert request.target_type == "role_version"
     assert request.battle_games is None
     assert request.max_days is None
+    assert request.budget_limit_units == 500
+    assert request.budget_limit_cost == 0.5
+    assert request.stop_after_budget_units == 400
 
 
 def test_spec_benchmark_queue_saves_snapshot_and_eval_config(tmp_path: Path, monkeypatch) -> None:
@@ -2663,6 +2669,8 @@ def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: P
                 "benchmark_id": "role-baseline-v1",
                 "roles": ["seer"],
                 "budget_limit_units": 1000,
+                "budget_limit_cost": 1.0,
+                "stop_after_budget_units": 500,
             },
         )
         model_plan_response = client.post(
@@ -2671,6 +2679,7 @@ def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: P
                 "benchmark_id": "model-baseline-v1",
                 "target_type": "model",
                 "budget_limit_units": 1000,
+                "budget_limit_cost": 1.0,
             },
         )
         blocked_response = client.post(
@@ -2679,6 +2688,8 @@ def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: P
                 "benchmark_id": "role-baseline-v1",
                 "roles": ["seer"],
                 "budget_limit_units": 100,
+                "budget_limit_cost": 0.1,
+                "stop_after_budget_units": 120,
             },
         )
 
@@ -2691,7 +2702,32 @@ def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: P
     assert role_plan["judge"]["estimated_decisions"] == 30
     assert role_plan["estimates"]["game_decision_units"] == 180
     assert role_plan["estimates"]["estimated_llm_call_units"] == 210
-    assert role_plan["budget"] == {"limit_units": 1000, "estimated_units": 210, "exceeded": False}
+    assert role_plan["dry_run"] is True
+    assert role_plan["estimated_tokens"] == 225900
+    assert role_plan["estimated_cost"] == 0.4518
+    assert role_plan["currency"] == "USD"
+    assert role_plan["expected_duration_seconds"] == 97
+    assert role_plan["concurrency_policy"]["policy"] == "bounded_sequential_eval_batches"
+    assert role_plan["concurrency_policy"]["game_concurrency"] == 3
+    assert role_plan["concurrency_policy"]["judge_concurrency"] == 2
+    assert role_plan["concurrency_policy"]["expected_duration_seconds"] == 97
+    assert role_plan["assumptions"] == [
+        "game_decision_units = total_games * max_days * 12 players",
+        "judge_decision_units = total_games * judge_max_decisions when decision judge is enabled",
+        "estimated_tokens = game units and judge units multiplied by planner token assumptions",
+        "estimated_cost uses planner token cost assumptions and is reported before launch",
+    ]
+    assert role_plan["budget"] == {
+        "limit_units": 1000,
+        "estimated_units": 210,
+        "limit_cost": 1.0,
+        "estimated_cost": 0.4518,
+        "estimated_tokens": 225900,
+        "currency": "USD",
+        "stop_after_budget_units": 500,
+        "stop_after_predicted": False,
+        "exceeded": {"value": False, "reasons": [], "evidence": []},
+    }
     assert role_plan["launchable"] is True
 
     assert model_plan_response.status_code == 200
@@ -2701,10 +2737,41 @@ def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: P
     assert model_plan["eval_batch_count"] == 1
     assert model_plan["total_games"] == 3
     assert model_plan["judge"]["estimated_decisions"] == 30
-    assert model_plan["budget"]["exceeded"] is False
+    assert model_plan["dry_run"] is True
+    assert model_plan["estimated_tokens"] == 225900
+    assert model_plan["estimated_cost"] == 0.4518
+    assert model_plan["currency"] == "USD"
+    assert model_plan["budget"]["exceeded"] == {"value": False, "reasons": [], "evidence": []}
 
     assert blocked_response.status_code == 422
-    assert blocked_response.json()["detail"] == "benchmark budget exceeded"
+    blocked_payload = blocked_response.json()
+    assert blocked_payload["detail"]["message"] == "benchmark budget exceeded"
+    assert blocked_payload["detail"]["estimated"] == {
+        "units": 210,
+        "tokens": 225900,
+        "cost": 0.4518,
+        "currency": "USD",
+    }
+    assert blocked_payload["detail"]["limit"] == {"units": 100, "cost": 0.1, "currency": "USD"}
+    blocked_budget = blocked_payload["detail"]["budget"]
+    assert blocked_budget["stop_after_budget_units"] == 120
+    assert blocked_budget["stop_after_predicted"] is True
+    assert blocked_budget["exceeded"]["value"] is True
+    assert blocked_budget["exceeded"]["reasons"] == [
+        "estimated_units_exceed_limit_units",
+        "estimated_cost_exceed_limit_cost",
+    ]
+    assert blocked_budget["exceeded"]["evidence"] == [
+        {"metric": "estimated_units", "estimated": 210, "limit": 100, "delta": 110, "unit": "llm_call_unit"},
+        {"metric": "estimated_cost", "estimated": 0.4518, "limit": 0.1, "delta": 0.3518, "unit": "USD"},
+    ]
+    assert blocked_payload["error"]["code"] == "benchmark_budget_exceeded"
+    assert blocked_payload["error"]["diagnostics"][0]["kind"] == "budget_exceeded"
+    assert blocked_payload["error"]["diagnostics"][0]["estimated_units"] == 210
+    assert blocked_payload["error"]["diagnostics"][0]["limit_units"] == 100
+    assert blocked_payload["error"]["diagnostics"][0]["estimated_cost"] == 0.4518
+    assert blocked_payload["error"]["diagnostics"][0]["limit_cost"] == 0.1
+    assert blocked_payload["error"]["diagnostics"][0]["evidence"] == blocked_budget["exceeded"]["evidence"]
 
 
 def test_legacy_benchmark_queue_stays_ad_hoc_compatible(tmp_path: Path, monkeypatch) -> None:

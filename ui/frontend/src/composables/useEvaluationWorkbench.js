@@ -181,6 +181,8 @@ function normalizeBenchmarkSuite(raw) {
 }
 
 function benchmarkErrorMessage(err, fallback) {
+  const budgetMessage = benchmarkBudgetErrorMessage(err)
+  if (budgetMessage) return budgetMessage
   const raw = String(err?.message || err || '').trim()
   const text = raw.toLowerCase()
   if (!raw) return fallback
@@ -198,6 +200,36 @@ function benchmarkErrorMessage(err, fallback) {
   if (text.includes('role not found')) return '角色不存在，请刷新后重试。'
   if (text.includes('rate limit') || text.includes('rate_limited')) return '评测请求被限流，请稍后重试。'
   return raw || fallback
+}
+
+function benchmarkBudgetExceededValue(budget = {}) {
+  const exceeded = budget?.exceeded
+  if (exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded)) {
+    return Boolean(exceeded.value)
+  }
+  return Boolean(exceeded)
+}
+
+function benchmarkBudgetErrorMessage(err) {
+  const code = String(err?.code || err?.payload?.error?.code || '').trim()
+  const detail = err?.detail ?? err?.payload?.detail
+  const budget = detail?.budget || detail?.estimated?.budget || err?.budget || null
+  if (code !== 'benchmark_budget_exceeded' && !budget && !String(err?.message || '').toLowerCase().includes('benchmark budget exceeded')) {
+    return ''
+  }
+  const estimated = detail?.estimated || {}
+  const limit = detail?.limit || {}
+  const estimatedUnits = budget?.estimated_units ?? estimated.units
+  const limitUnits = budget?.limit_units ?? limit.units
+  const estimatedCost = budget?.estimated_cost ?? estimated.cost
+  const limitCost = budget?.limit_cost ?? limit.cost
+  const currency = budget?.currency || estimated.currency || limit.currency || ''
+  const parts = []
+  if (estimatedUnits != null && limitUnits != null) parts.push(`调用单位 ${estimatedUnits}/${limitUnits}`)
+  if (estimatedCost != null && limitCost != null) parts.push(`费用 ${estimatedCost}/${limitCost}${currency ? ` ${currency}` : ''}`)
+  return parts.length
+    ? `评测预算超过上限：${parts.join('，')}。`
+    : '评测预算超过上限，请提高预算或选择更小的套件。'
 }
 
 function normalizeModelLeaderboardEntry(entry) {
@@ -958,6 +990,8 @@ function useEvaluationWorkbench(options = {}) {
     battle_games: 10,
     max_days: 5,
     budget_limit_units: '',
+    budget_limit_cost: '',
+    stop_after_budget_units: '',
     target_version_id: '',
     model_id: '',
     model_config_hash: ''
@@ -970,7 +1004,7 @@ function useEvaluationWorkbench(options = {}) {
     selectedBenchmarkSuite.value?.target_type || legacyBenchmarkTargetType.value || 'role_version'
   )
   const selectedBenchmarkIsModelSuite = computed(() => selectedBenchmarkTargetType.value === 'model')
-  const benchmarkPlanBudgetExceeded = computed(() => Boolean(benchmarkPlan.value?.budget?.exceeded))
+  const benchmarkPlanBudgetExceeded = computed(() => benchmarkBudgetExceededValue(benchmarkPlan.value?.budget || {}))
   const selectedBenchmarkEvaluationSetId = computed(() => selectedBenchmarkSuite.value?.evaluation_set_id || '')
   const selectedBenchmarkSuiteLabel = computed(() => {
     if (selectedBenchmarkSuite.value?.label) return selectedBenchmarkSuite.value.label
@@ -1142,8 +1176,22 @@ function useEvaluationWorkbench(options = {}) {
     return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null
   }
 
+  function budgetLimitCost() {
+    if (form.value.budget_limit_cost === '' || form.value.budget_limit_cost == null) return null
+    const value = Number(form.value.budget_limit_cost)
+    return Number.isFinite(value) && value >= 0 ? value : null
+  }
+
+  function stopAfterBudgetUnits() {
+    if (form.value.stop_after_budget_units === '' || form.value.stop_after_budget_units == null) return null
+    const value = Number(form.value.stop_after_budget_units)
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null
+  }
+
   function benchmarkRequestPayload() {
     const budgetLimit = budgetLimitUnits()
+    const costLimit = budgetLimitCost()
+    const stopAfterUnits = stopAfterBudgetUnits()
     const targetVersionId = normalizeTargetVersionId(form.value.target_version_id)
     const modelId = String(form.value.model_id || '').trim()
     const modelConfigHash = String(form.value.model_config_hash || '').trim()
@@ -1158,10 +1206,12 @@ function useEvaluationWorkbench(options = {}) {
         : {
             ...(selectedRole.value ? { roles: [selectedRole.value] } : {}),
             ...(selectedRole.value && targetVersionId ? { target_versions: { [selectedRole.value]: targetVersionId } } : {})
-          }),
+      }),
       battle_games: launchBattleGames.value,
       max_days: launchMaxDays.value,
-      ...(budgetLimit == null ? {} : { budget_limit_units: budgetLimit })
+      ...(budgetLimit == null ? {} : { budget_limit_units: budgetLimit }),
+      ...(costLimit == null ? {} : { budget_limit_cost: costLimit }),
+      ...(stopAfterUnits == null ? {} : { stop_after_budget_units: stopAfterUnits })
     }
   }
 
@@ -1403,8 +1453,8 @@ function useEvaluationWorkbench(options = {}) {
     )
   }
 
-  function setNotice(type, message) {
-    notice.value = { type, message }
+  function setNotice(type, message, extra = {}) {
+    notice.value = { type, message, ...(extra && typeof extra === 'object' ? extra : {}) }
   }
 
   function clearNotice() {
@@ -2533,7 +2583,7 @@ function useEvaluationWorkbench(options = {}) {
       return
     }
     if (benchmarkPlanBudgetExceeded.value) {
-      const message = '评测预算超过上限，请提高预算或选择更小的 suite。'
+      const message = '评测预算超过上限，请提高预算或选择更小的套件。'
       error.value = message
       setNotice('warning', message)
       return
@@ -2562,7 +2612,7 @@ function useEvaluationWorkbench(options = {}) {
       if (token.isLatest() && err?.name !== 'AbortError') {
         const message = benchmarkErrorMessage(err, '启动评测失败')
         error.value = message
-        setNotice('error', message)
+        setNotice('error', message, { error: err })
       }
     } finally {
       if (token.isLatest()) {
@@ -2618,6 +2668,8 @@ function useEvaluationWorkbench(options = {}) {
       form.value.battle_games,
       form.value.max_days,
       form.value.budget_limit_units,
+      form.value.budget_limit_cost,
+      form.value.stop_after_budget_units,
       form.value.target_version_id,
       form.value.model_id,
       form.value.model_config_hash

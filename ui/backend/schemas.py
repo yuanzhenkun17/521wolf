@@ -135,6 +135,8 @@ class BenchmarkRequest(BaseModel):
     model_id: str | None = None
     model_config_hash: str | None = None
     budget_limit_units: int | None = Field(default=None, ge=0, le=1_000_000)
+    budget_limit_cost: float | None = Field(default=None, ge=0.0, le=1_000_000.0)
+    stop_after_budget_units: int | None = Field(default=None, ge=0, le=1_000_000)
 
     @field_validator("roles", mode="before")
     @classmethod

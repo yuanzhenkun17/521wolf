@@ -3809,6 +3809,10 @@ function createMockEvolutionBatch(body = {}) {
 }
 
 function createMockBenchmarkBatch(body = {}) {
+  const runPlan = createMockBenchmarkPlan(body)
+  if (runPlan?.budget?.exceeded?.value) {
+    throw createMockBenchmarkBudgetError(runPlan)
+  }
   const battleGames = Number(body.battle_games || 10)
   const maxDays = Number(body.max_days || 5)
   const suite = MOCK_BENCHMARK_SUITES.find((item) => item.id === body.benchmark_id) || null
@@ -3877,6 +3881,54 @@ function createMockBenchmarkBatch(body = {}) {
   }
   mockBenchmarkBatches.unshift(batch)
   return clone(batch)
+}
+
+function createMockBenchmarkBudgetError(runPlan = {}) {
+  const budget = runPlan?.budget || {}
+  const exceeded = budget?.exceeded || {}
+  const detail = {
+    message: 'benchmark budget exceeded',
+    estimated: {
+      units: budget.estimated_units,
+      tokens: budget.estimated_tokens,
+      cost: budget.estimated_cost,
+      currency: budget.currency
+    },
+    limit: {
+      units: budget.limit_units,
+      cost: budget.limit_cost,
+      currency: budget.currency
+    },
+    budget
+  }
+  const payload = {
+    detail,
+    error: {
+      code: 'benchmark_budget_exceeded',
+      message: 'Benchmark budget exceeded.',
+      diagnostics: [
+        {
+          kind: 'budget_exceeded',
+          estimated_units: budget.estimated_units,
+          limit_units: budget.limit_units,
+          estimated_tokens: budget.estimated_tokens,
+          estimated_cost: budget.estimated_cost,
+          limit_cost: budget.limit_cost,
+          currency: budget.currency,
+          reasons: Array.isArray(exceeded.reasons) ? exceeded.reasons : [],
+          evidence: Array.isArray(exceeded.evidence) ? exceeded.evidence : []
+        }
+      ]
+    }
+  }
+  const error = new Error('Benchmark budget exceeded.')
+  error.name = 'ApiError'
+  error.status = 422
+  error.code = 'benchmark_budget_exceeded'
+  error.detail = detail
+  error.payload = payload
+  error.diagnostics = payload.error.diagnostics
+  return error
 }
 
 function findMockBenchmarkBatch(batchId) {
@@ -4465,13 +4517,49 @@ function createMockBenchmarkPlan(body = {}) {
   const judgeDecisionUnits = totalGames * judgeMaxDecisions
   const gameDecisionUnits = totalGames * maxDays * 12
   const estimatedUnits = gameDecisionUnits + judgeDecisionUnits
+  const estimatedTokens = gameDecisionUnits * 1120 + judgeDecisionUnits * 810
+  const estimatedCost = Number(((estimatedTokens / 1000) * 0.002).toFixed(6))
   const budgetLimit = body.budget_limit_units == null || body.budget_limit_units === ''
     ? null
     : Number(body.budget_limit_units)
-  const budgetExceeded = Number.isFinite(budgetLimit) && estimatedUnits > budgetLimit
+  const costLimit = body.budget_limit_cost == null || body.budget_limit_cost === ''
+    ? null
+    : Number(body.budget_limit_cost)
+  const stopAfterBudgetUnits = body.stop_after_budget_units == null || body.stop_after_budget_units === ''
+    ? null
+    : Number(body.stop_after_budget_units)
+  const evidence = []
+  const reasons = []
+  if (Number.isFinite(budgetLimit) && estimatedUnits > budgetLimit) {
+    reasons.push('estimated_units_exceed_limit_units')
+    evidence.push({
+      metric: 'estimated_units',
+      estimated: estimatedUnits,
+      limit: budgetLimit,
+      delta: estimatedUnits - budgetLimit,
+      unit: 'llm_call_unit'
+    })
+  }
+  if (Number.isFinite(costLimit) && estimatedCost > costLimit) {
+    reasons.push('estimated_cost_exceed_limit_cost')
+    evidence.push({
+      metric: 'estimated_cost',
+      estimated: estimatedCost,
+      limit: costLimit,
+      delta: Number((estimatedCost - costLimit).toFixed(6)),
+      unit: 'USD'
+    })
+  }
+  const budgetExceeded = evidence.length > 0
+  const judgeConcurrency = suite?.judge?.judge_concurrency || (judgeMaxDecisions > 0 ? 1 : 0)
+  const gameConcurrency = Math.max(1, Math.min(3, Math.max(1, gameCount)))
+  const gameWaves = Math.ceil(gameDecisionUnits / gameConcurrency)
+  const judgeWaves = judgeConcurrency > 0 ? Math.ceil(judgeDecisionUnits / judgeConcurrency) : 0
+  const expectedDurationSeconds = Math.max(0, Math.round(10 * evalBatchCount + gameWaves * 1.2 + judgeWaves))
   return {
     kind: 'benchmark_run_plan',
-    schema_version: 1,
+    schema_version: 2,
+    dry_run: true,
     benchmark: suite ? clone(suite) : null,
     target_type: isModelBenchmark ? 'model' : 'role_version',
     roles,
@@ -4483,11 +4571,37 @@ function createMockBenchmarkPlan(body = {}) {
     seed_set_id: suite?.seed_set_id || null,
     seed_count: Number(suite?.seed_count ?? gameCount),
     cost_tier: suite?.cost_tier || 'ad_hoc',
+    estimated_tokens: estimatedTokens,
+    estimated_cost: estimatedCost,
+    currency: 'USD',
+    expected_duration_seconds: expectedDurationSeconds,
+    concurrency_policy: {
+      policy: 'bounded_sequential_eval_batches',
+      role_batch_concurrency: 1,
+      eval_batch_count: evalBatchCount,
+      game_concurrency: gameConcurrency,
+      judge_concurrency: judgeConcurrency,
+      judge_enabled: judgeMaxDecisions > 0,
+      game_waves_per_eval_batch: Math.ceil(gameCount * maxDays * 12 / gameConcurrency),
+      judge_waves: judgeWaves,
+      expected_duration_seconds: expectedDurationSeconds,
+      notes: [
+        'role-version benchmarks run one evaluation batch per role',
+        'model benchmarks run one full-role evaluation batch',
+        'games inside each evaluation batch use bounded game concurrency'
+      ]
+    },
+    assumptions: [
+      'game_decision_units = total_games * max_days * 12 players',
+      'judge_decision_units = total_games * judge_max_decisions when decision judge is enabled',
+      'estimated_tokens = game units and judge units multiplied by planner token assumptions',
+      'estimated_cost uses planner token cost assumptions and is reported before launch'
+    ],
     judge: {
       enabled: judgeMaxDecisions > 0,
       max_decisions_per_game: judgeMaxDecisions,
       estimated_decisions: judgeDecisionUnits,
-      concurrency: suite?.judge?.judge_concurrency || null,
+      concurrency: judgeConcurrency,
       timeout_seconds: suite?.judge?.judge_timeout_seconds || null
     },
     estimates: {
@@ -4495,20 +4609,37 @@ function createMockBenchmarkPlan(body = {}) {
       game_decision_units: gameDecisionUnits,
       judge_decision_units: judgeDecisionUnits,
       estimated_llm_call_units: estimatedUnits,
+      estimated_tokens: estimatedTokens,
+      estimated_cost: estimatedCost,
+      currency: 'USD',
+      expected_duration_seconds: expectedDurationSeconds,
       assumptions: [
         'game_decision_units = total_games * max_days * 12 players',
-        'judge_decision_units = total_games * judge_max_decisions when decision judge is enabled'
+        'judge_decision_units = total_games * judge_max_decisions when decision judge is enabled',
+        'estimated_tokens = game units and judge units multiplied by planner token assumptions',
+        'estimated_cost uses planner token cost assumptions and is reported before launch'
       ]
     },
     budget: {
       limit_units: Number.isFinite(budgetLimit) ? budgetLimit : null,
       estimated_units: estimatedUnits,
-      exceeded: budgetExceeded
+      limit_cost: Number.isFinite(costLimit) ? costLimit : null,
+      estimated_cost: estimatedCost,
+      estimated_tokens: estimatedTokens,
+      currency: 'USD',
+      stop_after_budget_units: Number.isFinite(stopAfterBudgetUnits) ? stopAfterBudgetUnits : null,
+      stop_after_predicted: Number.isFinite(stopAfterBudgetUnits) && estimatedUnits > stopAfterBudgetUnits,
+      exceeded: { value: budgetExceeded, reasons, evidence }
     },
     launchable: !budgetExceeded,
-    warnings: budgetExceeded
-      ? [{ kind: 'budget_exceeded', message: '预计评测成本超过预算上限' }]
-      : []
+    warnings: [
+      ...(budgetExceeded
+        ? [{ kind: 'budget_exceeded', message: '预计评测成本超过预算上限', reasons, evidence }]
+        : []),
+      ...(Number.isFinite(stopAfterBudgetUnits) && estimatedUnits > stopAfterBudgetUnits
+        ? [{ kind: 'stop_after_budget_will_trigger', message: '预计调用单位将达到停止线。' }]
+        : [])
+    ]
   }
 }
 

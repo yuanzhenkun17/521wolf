@@ -59,6 +59,7 @@ test('BenchmarkPage is wired to the shared Lab shell without changing benchmark 
 
 test('Benchmark launch and target panels keep Chinese-first benchmark terminology', () => {
   const benchmark = readSource('../src/pages/BenchmarkPage.vue')
+  const boundary = readSource('../src/components/benchmark/BenchmarkBoundaryBar.vue')
   const config = readSource('../src/components/benchmark/BenchmarkConfigPanel.vue')
   const target = readSource('../src/components/benchmark/BenchmarkTargetSelector.vue')
 
@@ -66,7 +67,10 @@ test('Benchmark launch and target panels keep Chinese-first benchmark terminolog
   assert.match(config, /`\$\{count\} 个种子`/)
   assert.match(config, /<small>种子集<\/small>/)
   assert.match(config, /<small>预计调用单位<\/small>/)
-  assert.doesNotMatch(config, /正式 suite|个 seed|固定 seed|<small>Seed Set<\/small>/)
+  assert.match(config, /<small>预计成本<\/small>/)
+  assert.match(config, /<small>预计 Token<\/small>|<small>预计 token<\/small>/)
+  assert.match(config, /<small>预检模式<\/small>/)
+  assert.doesNotMatch(config, /正式 suite|个 seed|固定 seed|<small>Seed Set<\/small>|<small>Dry-run<\/small>|<small>Dry Run<\/small>/)
 
   assert.match(target, /模型评测写入 scope=model 榜单/)
   assert.match(target, /角色版本评测写入 scope=role_version/)
@@ -80,7 +84,18 @@ test('Benchmark launch and target panels keep Chinese-first benchmark terminolog
   assert.match(benchmark, /quick 快速套件或临时评测/)
   assert.match(benchmark, /个 Judge 并发任务/)
   assert.match(benchmark, /预计调用单位/)
-  assert.doesNotMatch(benchmark, /label: 'Scope'|label: 'Evaluation Set'|label: 'Seed Set'|<dt>Evaluation Set<\/dt>|<dt>Seed Set<\/dt>|个 Judge 并发进程|预计单位/)
+  assert.match(benchmark, /label: '预计成本'/)
+  assert.match(benchmark, /label: '预计 Token'|label: '预计 token'/)
+  assert.match(benchmark, /label: '预计耗时'/)
+  assert.match(benchmark, /label: '并发策略'/)
+  assert.match(benchmark, /label: '预检模式'/)
+  assert.match(benchmark, /超预算原因/)
+  assert.match(benchmark, /预算与停止线提示/)
+  assert.match(benchmark, /仅预估不启动|只做预算预检/)
+  assert.doesNotMatch(benchmark, /label: 'Scope'|label: 'Evaluation Set'|label: 'Seed Set'|label: 'Dry Run'|<dt>Evaluation Set<\/dt>|<dt>Seed Set<\/dt>|个 Judge 并发进程|预计单位/)
+
+  assert.match(boundary, /props\.benchmark\.benchmarkPlanBudgetExceeded\.value\) return '预算超限'/)
+  assert.doesNotMatch(boundary, /budget\.value\?\.exceeded\) return '预算超限'/)
 })
 
 test('EvolutionPage has a low-risk LabWorkbenchShell bridge around the existing evolution shell', () => {

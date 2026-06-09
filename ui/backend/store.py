@@ -57,6 +57,17 @@ from ui.backend.startup_checks import default_startup_checks, log_startup_checks
 
 _log = logging.getLogger(__name__)
 
+_BENCHMARK_PLAYER_COUNT = 12
+_BENCHMARK_DEFAULT_GAME_CONCURRENCY = 3
+_BENCHMARK_DEFAULT_JUDGE_CONCURRENCY = 1
+_BENCHMARK_GAME_UNIT_TOKENS = 1120
+_BENCHMARK_JUDGE_DECISION_TOKENS = 810
+_BENCHMARK_COST_PER_1K_TOKENS = 0.002
+_BENCHMARK_CURRENCY = "USD"
+_BENCHMARK_GAME_UNIT_SECONDS = 1.2
+_BENCHMARK_JUDGE_DECISION_SECONDS = 1.0
+_BENCHMARK_EVAL_BATCH_SETUP_SECONDS = 10.0
+
 
 class _FakeModel:
     async def ainvoke(self, messages: Any) -> Any:
@@ -72,6 +83,176 @@ class _FakeModel:
                 )
             },
         )()
+
+
+def _ceil_div(numerator: int, denominator: int) -> int:
+    if numerator <= 0:
+        return 0
+    safe_denominator = max(1, int(denominator or 1))
+    return (int(numerator) + safe_denominator - 1) // safe_denominator
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _rounded_cost(value: Any) -> float:
+    try:
+        return round(float(value or 0.0), 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _benchmark_estimated_tokens(*, game_decision_units: int, judge_decision_units: int) -> int:
+    return (
+        int(game_decision_units or 0) * _BENCHMARK_GAME_UNIT_TOKENS
+        + int(judge_decision_units or 0) * _BENCHMARK_JUDGE_DECISION_TOKENS
+    )
+
+
+def _benchmark_estimated_cost(estimated_tokens: int) -> float:
+    return _rounded_cost((int(estimated_tokens or 0) / 1000.0) * _BENCHMARK_COST_PER_1K_TOKENS)
+
+
+def _benchmark_concurrency_policy(
+    *,
+    eval_batch_count: int,
+    game_count: int,
+    max_days: int,
+    player_count: int,
+    judge_enabled: bool,
+    judge_decision_units: int,
+    judge_concurrency: Any,
+) -> dict[str, Any]:
+    game_concurrency = max(1, min(_BENCHMARK_DEFAULT_GAME_CONCURRENCY, max(1, int(game_count or 1))))
+    effective_judge_concurrency = (
+        _positive_int(judge_concurrency) or _BENCHMARK_DEFAULT_JUDGE_CONCURRENCY
+        if judge_enabled
+        else 0
+    )
+    game_units_per_eval_batch = int(game_count or 0) * int(max_days or 0) * int(player_count or 0)
+    game_waves_per_eval_batch = _ceil_div(game_units_per_eval_batch, game_concurrency)
+    judge_waves = _ceil_div(int(judge_decision_units or 0), effective_judge_concurrency) if judge_enabled else 0
+    expected_duration_seconds = round(
+        int(eval_batch_count or 0) * _BENCHMARK_EVAL_BATCH_SETUP_SECONDS
+        + game_waves_per_eval_batch * int(eval_batch_count or 0) * _BENCHMARK_GAME_UNIT_SECONDS
+        + judge_waves * _BENCHMARK_JUDGE_DECISION_SECONDS
+    )
+    return {
+        "policy": "bounded_sequential_eval_batches",
+        "role_batch_concurrency": 1,
+        "eval_batch_count": int(eval_batch_count or 0),
+        "game_concurrency": game_concurrency,
+        "judge_concurrency": effective_judge_concurrency,
+        "judge_enabled": bool(judge_enabled),
+        "game_waves_per_eval_batch": game_waves_per_eval_batch,
+        "judge_waves": judge_waves,
+        "expected_duration_seconds": max(0, int(expected_duration_seconds)),
+        "notes": [
+            "role-version benchmarks run one evaluation batch per role",
+            "model benchmarks run one full-role evaluation batch",
+            "games inside each evaluation batch use bounded game concurrency",
+        ],
+    }
+
+
+def _benchmark_budget_payload(
+    request: BenchmarkRequest,
+    *,
+    estimated_units: int,
+    estimated_tokens: int,
+    estimated_cost: float,
+) -> dict[str, Any]:
+    evidence: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    if request.budget_limit_units is not None and int(estimated_units) > int(request.budget_limit_units):
+        reasons.append("estimated_units_exceed_limit_units")
+        evidence.append(
+            {
+                "metric": "estimated_units",
+                "estimated": int(estimated_units),
+                "limit": int(request.budget_limit_units),
+                "delta": int(estimated_units) - int(request.budget_limit_units),
+                "unit": "llm_call_unit",
+            }
+        )
+    if request.budget_limit_cost is not None and float(estimated_cost) > float(request.budget_limit_cost):
+        reasons.append("estimated_cost_exceed_limit_cost")
+        evidence.append(
+            {
+                "metric": "estimated_cost",
+                "estimated": _rounded_cost(estimated_cost),
+                "limit": _rounded_cost(request.budget_limit_cost),
+                "delta": _rounded_cost(float(estimated_cost) - float(request.budget_limit_cost)),
+                "unit": _BENCHMARK_CURRENCY,
+            }
+        )
+    return {
+        "limit_units": request.budget_limit_units,
+        "estimated_units": int(estimated_units),
+        "limit_cost": _rounded_cost(request.budget_limit_cost) if request.budget_limit_cost is not None else None,
+        "estimated_cost": _rounded_cost(estimated_cost),
+        "estimated_tokens": int(estimated_tokens),
+        "currency": _BENCHMARK_CURRENCY,
+        "stop_after_budget_units": request.stop_after_budget_units,
+        "stop_after_predicted": (
+            request.stop_after_budget_units is not None
+            and int(estimated_units) > int(request.stop_after_budget_units)
+        ),
+        "exceeded": {
+            "value": bool(evidence),
+            "reasons": reasons,
+            "evidence": evidence,
+        },
+    }
+
+
+def _benchmark_budget_exceeded(budget: dict[str, Any]) -> bool:
+    exceeded = budget.get("exceeded")
+    if isinstance(exceeded, dict):
+        return bool(exceeded.get("value"))
+    return bool(exceeded)
+
+
+def _benchmark_budget_error_detail(run_plan: dict[str, Any]) -> dict[str, Any]:
+    budget = run_plan.get("budget") if isinstance(run_plan.get("budget"), dict) else {}
+    exceeded = budget.get("exceeded") if isinstance(budget.get("exceeded"), dict) else {}
+    return domain_error_detail(
+        code="benchmark_budget_exceeded",
+        message="Benchmark budget exceeded.",
+        detail={
+            "message": "benchmark budget exceeded",
+            "estimated": {
+                "units": budget.get("estimated_units"),
+                "tokens": budget.get("estimated_tokens"),
+                "cost": budget.get("estimated_cost"),
+                "currency": budget.get("currency"),
+            },
+            "limit": {
+                "units": budget.get("limit_units"),
+                "cost": budget.get("limit_cost"),
+                "currency": budget.get("currency"),
+            },
+            "budget": budget,
+        },
+        diagnostics=[
+            {
+                "kind": "budget_exceeded",
+                "estimated_units": budget.get("estimated_units"),
+                "limit_units": budget.get("limit_units"),
+                "estimated_tokens": budget.get("estimated_tokens"),
+                "estimated_cost": budget.get("estimated_cost"),
+                "limit_cost": budget.get("limit_cost"),
+                "currency": budget.get("currency"),
+                "reasons": exceeded.get("reasons", []) if isinstance(exceeded, dict) else [],
+                "evidence": exceeded.get("evidence", []) if isinstance(exceeded, dict) else [],
+            }
+        ],
+    )
 
 
 @dataclass
@@ -1101,6 +1282,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
     def plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
         """Return a launch plan and budget estimate for a benchmark request."""
+        return self._benchmark_run_plan(request)
+
+    def _benchmark_run_plan(self, request: BenchmarkRequest) -> dict[str, Any]:
+        """Build the shared dry-run launch plan used by API and queue admission."""
         spec, seed_set = self._resolve_benchmark_spec(request)
         roles = self._benchmark_roles(request, spec)
         target_type = spec.target_type if spec else request.target_type
@@ -1127,19 +1312,56 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         judge_enabled = bool(judge.get("enable_decision_judge", False))
         judge_max_decisions = int(judge.get("judge_max_decisions") or 0) if judge_enabled else 0
         judge_decision_units = total_games * judge_max_decisions
-        player_count = 12
+        player_count = _BENCHMARK_PLAYER_COUNT
         game_decision_units = total_games * max_days * player_count
         estimated_units = game_decision_units + judge_decision_units
-        budget_limit = request.budget_limit_units
-        budget_exceeded = budget_limit is not None and estimated_units > int(budget_limit)
+        estimated_tokens = _benchmark_estimated_tokens(
+            game_decision_units=game_decision_units,
+            judge_decision_units=judge_decision_units,
+        )
+        estimated_cost = _benchmark_estimated_cost(estimated_tokens)
+        concurrency_policy = _benchmark_concurrency_policy(
+            eval_batch_count=eval_batch_count,
+            game_count=game_count,
+            max_days=max_days,
+            player_count=player_count,
+            judge_enabled=judge_enabled,
+            judge_decision_units=judge_decision_units,
+            judge_concurrency=judge.get("judge_concurrency"),
+        )
+        expected_duration_seconds = int(concurrency_policy["expected_duration_seconds"])
+        budget = _benchmark_budget_payload(
+            request,
+            estimated_units=estimated_units,
+            estimated_tokens=estimated_tokens,
+            estimated_cost=estimated_cost,
+        )
+        budget_exceeded = _benchmark_budget_exceeded(budget)
         warnings: list[dict[str, Any]] = []
         if budget_exceeded:
+            exceeded = budget.get("exceeded") if isinstance(budget.get("exceeded"), dict) else {}
             warnings.append(
                 {
                     "kind": "budget_exceeded",
                     "message": "estimated benchmark cost exceeds budget limit",
                     "estimated_units": estimated_units,
-                    "limit_units": int(budget_limit),
+                    "limit_units": request.budget_limit_units,
+                    "estimated_cost": estimated_cost,
+                    "limit_cost": request.budget_limit_cost,
+                    "reasons": exceeded.get("reasons", []) if isinstance(exceeded, dict) else [],
+                    "evidence": exceeded.get("evidence", []) if isinstance(exceeded, dict) else [],
+                }
+            )
+        if (
+            request.stop_after_budget_units is not None
+            and estimated_units > int(request.stop_after_budget_units)
+        ):
+            warnings.append(
+                {
+                    "kind": "stop_after_budget_will_trigger",
+                    "message": "estimated benchmark units exceed stop-after threshold",
+                    "estimated_units": estimated_units,
+                    "stop_after_budget_units": int(request.stop_after_budget_units),
                 }
             )
         if not request.benchmark_id:
@@ -1150,9 +1372,17 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 }
             )
 
+        assumptions = [
+            "game_decision_units = total_games * max_days * 12 players",
+            "judge_decision_units = total_games * judge_max_decisions when decision judge is enabled",
+            "estimated_tokens = game units and judge units multiplied by planner token assumptions",
+            "estimated_cost uses planner token cost assumptions and is reported before launch",
+        ]
+
         return {
             "kind": "benchmark_run_plan",
-            "schema_version": 1,
+            "schema_version": 2,
+            "dry_run": True,
             "benchmark": benchmark,
             "target_type": target_type,
             "roles": list(roles),
@@ -1164,11 +1394,17 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "seed_set_id": seed_set_id,
             "seed_count": seed_count,
             "cost_tier": cost_tier,
+            "estimated_tokens": estimated_tokens,
+            "estimated_cost": estimated_cost,
+            "currency": _BENCHMARK_CURRENCY,
+            "expected_duration_seconds": expected_duration_seconds,
+            "concurrency_policy": concurrency_policy,
+            "assumptions": assumptions,
             "judge": {
                 "enabled": judge_enabled,
                 "max_decisions_per_game": judge_max_decisions,
                 "estimated_decisions": judge_decision_units,
-                "concurrency": judge.get("judge_concurrency"),
+                "concurrency": concurrency_policy["judge_concurrency"],
                 "timeout_seconds": judge.get("judge_timeout_seconds"),
             },
             "estimates": {
@@ -1176,16 +1412,13 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 "game_decision_units": game_decision_units,
                 "judge_decision_units": judge_decision_units,
                 "estimated_llm_call_units": estimated_units,
-                "assumptions": [
-                    "game_decision_units = total_games * max_days * 12 players",
-                    "judge_decision_units = total_games * judge_max_decisions when decision judge is enabled",
-                ],
+                "estimated_tokens": estimated_tokens,
+                "estimated_cost": estimated_cost,
+                "currency": _BENCHMARK_CURRENCY,
+                "expected_duration_seconds": expected_duration_seconds,
+                "assumptions": assumptions,
             },
-            "budget": {
-                "limit_units": budget_limit,
-                "estimated_units": estimated_units,
-                "exceeded": budget_exceeded,
-            },
+            "budget": budget,
             "launchable": not budget_exceeded,
             "warnings": warnings,
         }
@@ -2034,9 +2267,9 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         return run
 
     def queue_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
-        run_plan = self.plan_benchmark(request)
-        if run_plan.get("budget", {}).get("exceeded"):
-            raise HTTPException(status_code=422, detail="benchmark budget exceeded")
+        run_plan = self._benchmark_run_plan(request)
+        if _benchmark_budget_exceeded(run_plan.get("budget", {})):
+            raise HTTPException(status_code=422, detail=_benchmark_budget_error_detail(run_plan))
         spec, seed_set = self._resolve_benchmark_spec(request)
         benchmark_meta = self._benchmark_metadata(spec, seed_set) if spec else None
         roles = self._benchmark_roles(request, spec)
