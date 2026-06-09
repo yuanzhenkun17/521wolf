@@ -308,6 +308,41 @@ status: deprecated
     )
 
 
+def _write_benchmark_spec_v2(root: Path) -> None:
+    spec_dir = root / "data" / "benchmarks"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "role-baseline-v2.yaml").write_text(
+        """
+id: role-baseline-v2
+version: 2
+name: Role Baseline Benchmark V2
+description: Draft next-version role benchmark retained in the suite lineage.
+target_type: role_version
+roles: [seer, witch]
+game_count: 3
+max_days: 5
+paired_seed: true
+seed_set_id: role-baseline-quick-202606
+seed_start: 260600
+metrics:
+  primary: avg_role_score
+  secondary: [target_side_win_rate, fallback_rate, llm_error_rate]
+gates:
+  min_completed_games: 1
+  min_valid_game_rate: 0.5
+  max_fallback_rate: 0.5
+  max_llm_error_rate: 0.5
+judge:
+  enable_decision_judge: true
+  judge_max_decisions: 10
+  judge_concurrency: 2
+  judge_timeout_seconds: 60
+status: draft
+""",
+        encoding="utf-8",
+    )
+
+
 def _write_model_benchmark_spec(root: Path) -> None:
     spec_dir = root / "data" / "benchmarks"
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -4010,6 +4045,7 @@ def test_benchmark_plan_api_contract(tmp_path: Path) -> None:
 
 def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
     _write_benchmark_spec(tmp_path)
+    _write_benchmark_spec_v2(tmp_path)
     _write_model_benchmark_spec(tmp_path)
 
     with _client(tmp_path) as client:
@@ -4100,6 +4136,8 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
         {
             "id": str,
             "version": int,
+            "suite_family_id": str,
+            "suite_version": str,
             "name": str,
             "target_type": str,
             "roles": list,
@@ -4114,11 +4152,19 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
             "status": str,
             "launchable": bool,
             "launch_disabled_reason": str,
+            "version_lineage": list,
+            "version_count": int,
+            "latest_version": dict,
+            "latest_launchable_version": dict,
+            "is_latest_version": bool,
+            "is_latest_launchable_version": bool,
             "last_run": dict,
             "latest_snapshot": dict,
         },
     )
     assert item["id"] == "role-baseline-v1"
+    assert item["suite_family_id"] == "role-baseline"
+    assert item["suite_version"] == "v1"
     assert item["evaluation_set_id"] == "role-baseline-v1@v1"
     assert item["seed_count"] == 3
     assert item["seed_preview"] == [260600, 260607, 260619]
@@ -4127,6 +4173,15 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
     assert item["status"] == "enabled"
     assert item["launchable"] is True
     assert item["launch_disabled_reason"] == ""
+    assert item["version_count"] == 2
+    assert [entry["id"] for entry in item["version_lineage"]] == ["role-baseline-v2", "role-baseline-v1"]
+    assert item["latest_version"]["id"] == "role-baseline-v2"
+    assert item["latest_version"]["status"] == "draft"
+    assert item["latest_version"]["launchable"] is False
+    assert item["latest_launchable_version"]["id"] == "role-baseline-v1"
+    assert item["latest_launchable_version"]["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert item["is_latest_version"] is False
+    assert item["is_latest_launchable_version"] is True
     assert item["last_run"] == {
         "batch_id": "bench_role_contract_new",
         "status": "running",
@@ -4142,8 +4197,19 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
     assert item["latest_snapshot"]["title"] == "Role contract release"
     assert item["latest_snapshot"]["row_count"] == 1
     assert item["latest_snapshot"]["content_hash"].startswith("sha256:")
+    draft_item = next(item for item in list_payload["items"] if item["id"] == "role-baseline-v2")
+    assert draft_item["suite_family_id"] == "role-baseline"
+    assert draft_item["suite_version"] == "v2"
+    assert draft_item["status"] == "draft"
+    assert draft_item["launchable"] is False
+    assert draft_item["latest_version"]["id"] == "role-baseline-v2"
+    assert draft_item["latest_launchable_version"]["id"] == "role-baseline-v1"
+    assert draft_item["is_latest_version"] is True
+    assert draft_item["is_latest_launchable_version"] is False
     model_item = next(item for item in list_payload["items"] if item["id"] == "model-baseline-v1")
     assert model_item["target_type"] == "model"
+    assert model_item["suite_family_id"] == "model-baseline"
+    assert model_item["version_count"] == 1
     assert model_item["evaluation_set_id"] == "model-baseline-v1@v1"
     assert model_item["seed_set_id"] == "model-baseline-quick-202606"
     assert model_item["seed_preview"] == [270600, 270611, 270623]
@@ -4158,6 +4224,8 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
         {
             "id": str,
             "version": int,
+            "suite_family_id": str,
+            "suite_version": str,
             "name": str,
             "description": str,
             "target_type": str,
@@ -4178,9 +4246,17 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
             "status": str,
             "launchable": bool,
             "launch_disabled_reason": str,
+            "version_lineage": list,
+            "version_count": int,
+            "latest_version": dict,
+            "latest_launchable_version": dict,
+            "is_latest_version": bool,
+            "is_latest_launchable_version": bool,
         },
     )
     assert detail["id"] == "role-baseline-v1"
+    assert detail["suite_family_id"] == "role-baseline"
+    assert detail["suite_version"] == "v1"
     assert detail["roles"] == ["seer", "witch"]
     assert detail["seed_count"] == 3
     assert detail["seed_preview"] == [260600, 260607, 260619]
@@ -4190,6 +4266,15 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
     assert detail["status"] == "enabled"
     assert detail["launchable"] is True
     assert detail["launch_disabled_reason"] == ""
+    assert detail["version_count"] == 2
+    assert [entry["evaluation_set_id"] for entry in detail["version_lineage"]] == [
+        "role-baseline-v2@v2",
+        "role-baseline-v1@v1",
+    ]
+    assert detail["latest_version"]["id"] == "role-baseline-v2"
+    assert detail["latest_launchable_version"]["id"] == "role-baseline-v1"
+    assert detail["is_latest_version"] is False
+    assert detail["is_latest_launchable_version"] is True
 
     assert model_detail_response.status_code == 200
     model_detail = model_detail_response.json()

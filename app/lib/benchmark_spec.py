@@ -345,6 +345,29 @@ def benchmark_config_hash(spec: BenchmarkSpec | dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+def benchmark_suite_family_id(spec: BenchmarkSpec | dict[str, Any] | str) -> str:
+    """Return the stable family id used to group benchmark suite versions."""
+    if isinstance(spec, BenchmarkSpec):
+        benchmark_id = spec.id
+        version = spec.version
+    elif isinstance(spec, dict):
+        benchmark_id = str(spec.get("id") or spec.get("benchmark_id") or "").strip()
+        try:
+            version = int(spec.get("version") or spec.get("benchmark_version") or 0)
+        except (TypeError, ValueError):
+            version = 0
+    else:
+        benchmark_id = str(spec or "").strip()
+        version = 0
+    if not benchmark_id:
+        return ""
+    if version > 0:
+        for suffix in (f"-v{version}", f"_v{version}"):
+            if benchmark_id.endswith(suffix) and len(benchmark_id) > len(suffix):
+                return benchmark_id[: -len(suffix)]
+    return benchmark_id
+
+
 def seed_set_config_hash(seed_set: BenchmarkSeedSet | dict[str, Any]) -> str:
     """Return a stable hash for a seed set or seed-set snapshot."""
     if isinstance(seed_set, BenchmarkSeedSet):
@@ -461,9 +484,12 @@ def benchmark_spec_summary(spec: BenchmarkSpec, seed_set: BenchmarkSeedSet | Non
     seeds = _spec_seeds(spec, seed_set)
     lifecycle_status = spec.lifecycle_status
     launchable = spec.launchable
+    suite_family_id = benchmark_suite_family_id(spec)
     return {
         "id": spec.id,
         "version": spec.version,
+        "suite_family_id": suite_family_id,
+        "suite_version": f"v{spec.version}",
         "name": spec.name,
         "description": spec.description,
         "target_type": spec.target_type,

@@ -1203,9 +1203,12 @@ def test_persist_batch_node_carries_benchmark_evaluation_metadata(tmp_path, monk
             "comparison_type": "role_version",
             "target_role": "seer",
             "target_version_id": "seer_candidate_v2",
+            "benchmark_id": "role-baseline-v1",
+            "benchmark_version": 1,
             "benchmark_config_hash": "sha256:role-meta",
             "evaluation_set_id": "role-baseline-v1@v1",
             "seed_set_id": "role-baseline-quick-202606",
+            "target_type": "role_version",
         },
         "games": [
             {
@@ -1244,9 +1247,30 @@ def test_persist_batch_node_carries_benchmark_evaluation_metadata(tmp_path, monk
     assert saved_batches[0]["comparison_group_id"] == "bench_meta"
     assert leaderboard_entries[0]["evaluation_set_id"] == "role-baseline-v1@v1"
     assert leaderboard_entries[0]["seed_set_id"] == "role-baseline-quick-202606"
-    assert leaderboard_entries[0]["summary"]["benchmark_config_hash"] == "sha256:role-meta"
-    assert leaderboard_entries[0]["summary"]["evaluation_set_id"] == "role-baseline-v1@v1"
-    assert leaderboard_entries[0]["summary"]["seed_set_id"] == "role-baseline-quick-202606"
+    expected_benchmark_metadata = {
+        "benchmark_id": "role-baseline-v1",
+        "benchmark_version": 1,
+        "benchmark_config_hash": "sha256:role-meta",
+        "evaluation_set_id": "role-baseline-v1@v1",
+        "seed_set_id": "role-baseline-quick-202606",
+        "target_type": "role_version",
+    }
+    assert {
+        "leaderboard_summary": {
+            key: leaderboard_entries[0]["summary"].get(key)
+            for key in expected_benchmark_metadata
+        },
+        "result_score_summary": {
+            "benchmark_config_hash": out["result"]["score_summary"].get("benchmark_config_hash"),
+        },
+        "saved_batch_score_summary": {
+            "benchmark_config_hash": saved_batches[0]["score_summary"].get("benchmark_config_hash"),
+        },
+    } == {
+        "leaderboard_summary": expected_benchmark_metadata,
+        "result_score_summary": {"benchmark_config_hash": "sha256:role-meta"},
+        "saved_batch_score_summary": {"benchmark_config_hash": "sha256:role-meta"},
+    }
     seed_metrics = leaderboard_entries[0]["summary"]["seed_metrics"]
     assert seed_metrics[0]["seed"] == 270600
     assert seed_metrics[0]["game_index"] == 1

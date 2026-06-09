@@ -121,6 +121,21 @@ def test_list_benchmark_specs_returns_public_summaries(tmp_path: Path) -> None:
     assert specs[0].evaluation_set_id == "role-baseline-v1@v1"
 
 
+def test_benchmark_spec_summary_exposes_suite_family_without_changing_hash(tmp_path: Path) -> None:
+    spec_mod = _benchmark_spec_module()
+    _write_spec(tmp_path, "role-baseline-v1.yaml", VALID_ROLE_BASELINE_SPEC)
+
+    spec = spec_mod.load_benchmark_spec("role-baseline-v1", paths=PathConfig(root=tmp_path))
+    summary = spec_mod.benchmark_spec_summary(spec)
+
+    assert spec_mod.benchmark_suite_family_id(spec) == "role-baseline"
+    assert spec_mod.benchmark_suite_family_id({"benchmark_id": "role-baseline-v2", "benchmark_version": 2}) == "role-baseline"
+    assert summary["suite_family_id"] == "role-baseline"
+    assert summary["suite_version"] == "v1"
+    assert "suite_family_id" not in spec.model_dump(mode="json")
+    assert spec_mod.benchmark_config_hash(spec).startswith("sha256:")
+
+
 def test_disabled_local_benchmark_spec_blocks_builtin_with_same_id(tmp_path: Path) -> None:
     spec_mod = _benchmark_spec_module()
     _write_spec(

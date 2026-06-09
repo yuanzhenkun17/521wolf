@@ -1278,27 +1278,69 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
     def list_benchmark_specs(self) -> list[dict[str, Any]]:
         """Return configured benchmark suite summaries for API/UI use."""
+        return _annotate_benchmark_suite_lineage(
+            self._benchmark_spec_summaries(include_activity=True, skip_invalid=False)
+        )
+
+    def _benchmark_spec_summaries(
+        self,
+        *,
+        include_activity: bool,
+        skip_invalid: bool,
+    ) -> list[dict[str, Any]]:
         from app.lib.benchmark_spec import list_benchmark_specs
 
         summaries: list[dict[str, Any]] = []
         overrides = self._benchmark_lifecycle_overrides()
         for spec in list_benchmark_specs(self.paths, include_inactive=True):
-            spec, lifecycle_override = _apply_benchmark_lifecycle_override(spec, overrides.get(spec.id))
-            materialized, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
-            summary = benchmark_spec_summary(materialized, seed_set)
-            summary["lifecycle_override"] = _json_clone(lifecycle_override) if lifecycle_override else None
-            summary.update(self._benchmark_suite_activity(summary))
-            summaries.append(summary)
+            try:
+                spec, lifecycle_override = _apply_benchmark_lifecycle_override(spec, overrides.get(spec.id))
+                summary = self._benchmark_spec_summary_from_spec(
+                    spec,
+                    lifecycle_override=lifecycle_override,
+                    include_activity=include_activity,
+                )
+                summaries.append(summary)
+            except BenchmarkSpecError:
+                if skip_invalid:
+                    continue
+                raise
         return summaries
+
+    def _benchmark_spec_summary_from_spec(
+        self,
+        spec: BenchmarkSpec,
+        *,
+        lifecycle_override: dict[str, Any] | None,
+        include_activity: bool,
+    ) -> dict[str, Any]:
+        materialized, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
+        summary = benchmark_spec_summary(materialized, seed_set)
+        summary["lifecycle_override"] = _json_clone(lifecycle_override) if lifecycle_override else None
+        if include_activity:
+            summary.update(self._benchmark_suite_activity(summary))
+        return summary
+
+    def _apply_benchmark_suite_lineage(self, summary: dict[str, Any]) -> dict[str, Any]:
+        lineage_summaries = self._benchmark_spec_summaries(include_activity=False, skip_invalid=True)
+        if not any(item.get("id") == summary.get("id") for item in lineage_summaries):
+            lineage_summaries.append(_json_clone(summary))
+        _annotate_benchmark_suite_lineage(lineage_summaries)
+        matched = next((item for item in lineage_summaries if item.get("id") == summary.get("id")), None)
+        if matched:
+            _copy_benchmark_suite_lineage(summary, matched)
+        return summary
 
     def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
         """Return a single benchmark suite summary."""
         try:
             spec, lifecycle_override = self._benchmark_spec_with_lifecycle(benchmark_id)
-            spec, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
-            summary = benchmark_spec_summary(spec, seed_set)
-            summary["lifecycle_override"] = _json_clone(lifecycle_override) if lifecycle_override else None
-            summary.update(self._benchmark_suite_activity(summary))
+            summary = self._benchmark_spec_summary_from_spec(
+                spec,
+                lifecycle_override=lifecycle_override,
+                include_activity=True,
+            )
+            self._apply_benchmark_suite_lineage(summary)
             return summary
         except BenchmarkSpecError as exc:
             status = 404 if "not found" in str(exc) else 422
@@ -1332,10 +1374,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         self._persist_benchmark_lifecycle_overrides(overrides)
         spec, applied_override = _apply_benchmark_lifecycle_override(original, override)
         try:
-            spec, seed_set = materialize_benchmark_spec(spec, paths=self.paths)
-            summary = benchmark_spec_summary(spec, seed_set)
-            summary["lifecycle_override"] = _json_clone(applied_override)
-            summary.update(self._benchmark_suite_activity(summary))
+            summary = self._benchmark_spec_summary_from_spec(
+                spec,
+                lifecycle_override=applied_override,
+                include_activity=True,
+            )
+            self._apply_benchmark_suite_lineage(summary)
             return {
                 "kind": "benchmark_suite_lifecycle",
                 "schema_version": 1,
@@ -5542,6 +5586,67 @@ def _apply_benchmark_lifecycle_override(
         "updated_at": str(override.get("updated_at") or ""),
     }
     return spec.model_copy(update={"status": status, "enabled": applied["enabled"]}), applied
+
+
+def _benchmark_suite_lineage_key(item: dict[str, Any]) -> tuple[str, str]:
+    target_type = str(item.get("target_type") or "role_version")
+    family_id = str(item.get("suite_family_id") or item.get("id") or item.get("benchmark_id") or "")
+    return target_type, family_id
+
+
+def _benchmark_suite_lineage_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item.get("id"),
+        "version": item.get("version"),
+        "suite_version": item.get("suite_version") or f"v{item.get('version')}",
+        "evaluation_set_id": item.get("evaluation_set_id"),
+        "config_hash": item.get("config_hash"),
+        "status": item.get("status"),
+        "launchable": bool(item.get("launchable")),
+        "seed_set_id": item.get("seed_set_id"),
+        "seed_set_config_hash": (item.get("seed_set") or {}).get("config_hash")
+        if isinstance(item.get("seed_set"), dict)
+        else None,
+    }
+
+
+def _copy_benchmark_suite_lineage(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key in (
+        "suite_family_id",
+        "suite_version",
+        "version_lineage",
+        "version_count",
+        "latest_version",
+        "latest_launchable_version",
+        "is_latest_version",
+        "is_latest_launchable_version",
+    ):
+        target[key] = _json_clone(source.get(key))
+
+
+def _annotate_benchmark_suite_lineage(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in summaries:
+        groups.setdefault(_benchmark_suite_lineage_key(item), []).append(item)
+    for items in groups.values():
+        ordered = sorted(
+            items,
+            key=lambda item: (int(item.get("version") or 0), str(item.get("id") or "")),
+            reverse=True,
+        )
+        lineage = [_benchmark_suite_lineage_item(item) for item in ordered]
+        latest = next((entry for entry in lineage if entry.get("id")), lineage[0] if lineage else None)
+        latest_launchable = next((entry for entry in lineage if entry.get("launchable")), None)
+        latest_id = latest.get("id") if latest else None
+        latest_launchable_id = latest_launchable.get("id") if latest_launchable else None
+        for item in items:
+            item["version_lineage"] = _json_clone(lineage)
+            item["version_count"] = len(lineage)
+            item["latest_version"] = _json_clone(latest) if latest else None
+            item["latest_launchable_version"] = _json_clone(latest_launchable) if latest_launchable else None
+            item["is_latest_version"] = bool(latest_id and item.get("id") == latest_id)
+            item["is_latest_launchable_version"] = bool(latest_launchable_id and item.get("id") == latest_launchable_id)
+    return summaries
 
 
 def _filter_benchmark_view_cache(

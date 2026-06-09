@@ -988,6 +988,22 @@ def _langfuse_eval_tags(
     return tags
 
 
+def _benchmark_metadata_from_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in (
+        "benchmark_id",
+        "benchmark_version",
+        "benchmark_config_hash",
+        "evaluation_set_id",
+        "seed_set_id",
+        "target_type",
+    ):
+        value = cfg.get(key)
+        if value is not None:
+            metadata[key] = value
+    return metadata
+
+
 def _score_langfuse_eval_batch_trace(state: EvalBatchState, result: dict[str, Any]) -> None:
     observability = _observability()
     if observability is None:
@@ -1360,7 +1376,10 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
 
     warnings: list[str] = []
     cfg = dict(state.get("batch_config", {}))
-    summary = result.get("score_summary") or {}
+    summary = dict(result.get("score_summary") or {})
+    for key, value in _benchmark_metadata_from_config(cfg).items():
+        summary.setdefault(key, value)
+    result["score_summary"] = summary
     target_role = cfg.get("target_role")
     target_version = cfg.get("target_version_id")
     comparison_type = cfg.get("comparison_type") or ("role_version" if target_role else "model")
@@ -1403,6 +1422,7 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
             "benchmark_config_hash",
             "evaluation_set_id",
             "seed_set_id",
+            "target_type",
             "model_runtime",
         ):
             if cfg.get(key) is not None:
