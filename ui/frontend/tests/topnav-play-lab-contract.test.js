@@ -31,7 +31,7 @@ test('TopNav buttons show current page state without changing App routing events
   assert.match(source, /<span class="nav-line">\{\{ item\.lineLabel \}\}<\/span>[\s\S]*<span class="nav-label">\{\{ item\.label \}\}<\/span>[\s\S]*<span v-if="activeNavView === item\.key" class="nav-state">当前<\/span>/)
 
   assert.match(appSource, /import \{ useRoute \} from 'vue-router'/)
-  assert.match(appSource, /import \{ appViewFromRoute \} from '\.\/router\/legacyHashRedirect'/)
+  assert.match(appSource, /import \{ appViewFromRoute, isAppView \} from '\.\/router\/appViews'/)
   assert.match(appSource, /const route = useRoute\(\)/)
   assert.match(appSource, /const routeAppView = computed\(\(\) => appViewFromRoute\(route\)\)/)
   assert.match(appSource, /const activeAppView = computed\(\(\) => \{[\s\S]*route\.path === '\/'[\s\S]*runtimeCurrentView\.value !== 'lobby'[\s\S]*return runtimeCurrentView\.value[\s\S]*return routeAppView\.value \|\| runtimeCurrentView\.value[\s\S]*\}\)/)

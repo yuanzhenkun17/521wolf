@@ -9,7 +9,7 @@ import { useGameActions } from './composables/useGameActions.ts'
 import { useGameAudio } from './composables/useGameAudio.ts'
 import { useGameHistory } from './composables/useGameHistory.ts'
 import { isReturnableGame } from './composables/gameSession.ts'
-import { appViewFromRoute } from './router/legacyHashRedirect'
+import { appViewFromRoute, isAppView } from './router/appViews'
 import {
   hydrateStoresFromRuntime,
   useGameStore,
@@ -207,7 +207,7 @@ const ttsEnabled = computed(() => readRuntime('ttsEnabled'))
 const ttsAvailable = computed(() => readRuntime('ttsAvailable'))
 const runtimeCurrentView = computed(() => {
   const view = String(readRuntime('currentView') || '')
-  return ['lobby', 'match', 'logs', 'benchmark', 'evolution'].includes(view) ? view : 'lobby'
+  return isAppView(view) ? view : 'lobby'
 })
 const routeAppView = computed(() => appViewFromRoute(route))
 const activeAppView = computed(() => {

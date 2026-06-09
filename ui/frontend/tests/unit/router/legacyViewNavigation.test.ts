@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'vitest'
-import { writeViewHash } from '../../../src/composables/gameSession'
 import {
+  hashForView,
   registerLegacyViewRouter,
   routePathForView,
   routeQueryFromLegacyHash,
-  syncRouterToLegacyView
+  syncRouterToLegacyView,
+  viewFromHash,
+  writeViewHash
 } from '../../../src/router/legacyViewNavigation'
 
 const originalWindow = globalThis.window
@@ -26,6 +28,19 @@ test('maps legacy app views to router paths', () => {
   assert.equal(routePathForView('logs'), '/logs')
   assert.equal(routePathForView('benchmark'), '/benchmark')
   assert.equal(routePathForView('evolution'), '/evolution')
+})
+
+test('maps app views to legacy hashes and parses legacy hash routes', () => {
+  assert.equal(hashForView('lobby'), '')
+  assert.equal(hashForView('match'), 'match')
+  assert.equal(hashForView('logs'), 'logs')
+  assert.equal(hashForView('benchmark'), 'benchmark')
+  assert.equal(hashForView('evolution'), 'evolution')
+
+  assert.equal(viewFromHash(''), 'lobby')
+  assert.equal(viewFromHash('#logs?game_id=game-7'), 'logs')
+  assert.equal(viewFromHash('#benchmark?batch_id=bench-1'), 'benchmark')
+  assert.equal(viewFromHash('#evidence?game_id=game-2'), 'lobby')
 })
 
 test('extracts router query from legacy hash deep links', () => {

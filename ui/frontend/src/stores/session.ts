@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { isAppView } from '../router/appViews'
 import type { ActiveGameSession } from '../types/game'
 import type { AppView } from '../types/ui'
 
@@ -14,10 +15,8 @@ export function defaultActiveSession(): ActiveGameSession {
   return { gameId: null, mode: '', running: false, sseConnected: false }
 }
 
-const appViews = new Set<AppView>(['lobby', 'match', 'logs', 'benchmark', 'evolution'])
-
 function asAppView(view: AppView | string | null | undefined): AppView | null {
-  return typeof view === 'string' && appViews.has(view as AppView) ? (view as AppView) : null
+  return isAppView(view) ? view : null
 }
 
 export const useSessionStore = defineStore('session', () => {

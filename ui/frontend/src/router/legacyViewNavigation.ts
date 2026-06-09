@@ -1,13 +1,6 @@
 import type { LocationQueryRaw, Router } from 'vue-router'
 import type { AppView } from '../types/ui'
-
-const VIEW_PATHS: Record<AppView, string> = {
-  lobby: '/',
-  match: '/match',
-  logs: '/logs',
-  benchmark: '/benchmark',
-  evolution: '/evolution'
-}
+import { appViewFromLegacyHash, appViewHash, appViewPath } from './appViews'
 
 let activeRouter: Pick<Router, 'replace'> | null = null
 
@@ -16,7 +9,7 @@ export function registerLegacyViewRouter(router: Pick<Router, 'replace'> | null)
 }
 
 export function routePathForView(view: AppView): string {
-  return VIEW_PATHS[view] || '/'
+  return appViewPath(view)
 }
 
 export function routeQueryFromLegacyHash(hash = ''): LocationQueryRaw {
@@ -38,6 +31,14 @@ export function routeQueryFromLegacyHash(hash = ''): LocationQueryRaw {
   return query
 }
 
+export function viewFromHash(hash = globalThis.window?.location?.hash || ''): AppView {
+  return appViewFromLegacyHash(hash)
+}
+
+export function hashForView(view: AppView = 'lobby'): string {
+  return appViewHash(view)
+}
+
 export function syncRouterToLegacyView(view: AppView, hash = ''): void {
   if (!activeRouter) return
   const legacyHash = String(hash || '')
@@ -46,4 +47,12 @@ export function syncRouterToLegacyView(view: AppView, hash = ''): void {
     query: routeQueryFromLegacyHash(legacyHash),
     hash: legacyHash
   }).catch(() => {})
+}
+
+export function writeViewHash(view: AppView = 'lobby'): void {
+  if (typeof window === 'undefined') return
+  const hash = hashForView(view)
+  const nextHash = hash ? `#${hash}` : ''
+  window.location.hash = nextHash
+  syncRouterToLegacyView(view, nextHash)
 }

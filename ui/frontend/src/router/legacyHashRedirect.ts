@@ -1,37 +1,25 @@
 import type { RouteLocationNormalizedLoaded, Router } from 'vue-router'
 import type { AppView } from '../types/ui'
-
-const ROUTE_TO_LEGACY_HASH: Record<string, AppView> = {
-  '/': 'lobby',
-  '/match': 'match',
-  '/logs': 'logs',
-  '/benchmark': 'benchmark',
-  '/evolution': 'evolution'
-}
-
-const LEGACY_HASHES: Record<AppView, string> = {
-  lobby: '',
-  match: 'match',
-  logs: 'logs',
-  benchmark: 'benchmark',
-  evolution: 'evolution'
-}
+import {
+  appViewFromPath,
+  appViewFromRoute as routeToAppView,
+  appViewHash
+} from './appViews'
 
 export function appViewFromRoute(route: Pick<RouteLocationNormalizedLoaded, 'path'>): AppView {
-  return ROUTE_TO_LEGACY_HASH[route.path] || 'lobby'
+  return routeToAppView(route)
 }
 
 export function legacyHashForView(view: AppView, search = ''): string {
-  const hash = LEGACY_HASHES[view]
+  const hash = appViewHash(view)
   if (!hash) return ''
   const query = search.replace(/^\?/, '')
   return query ? `#${hash}?${query}` : `#${hash}`
 }
 
 export function syncInitialRouteToLegacyHash(locationLike: Location = window.location): void {
-  const path = locationLike.pathname.replace(/\/+$/, '') || '/'
-  const view = ROUTE_TO_LEGACY_HASH[path]
-  if (!view || locationLike.hash) return
+  const view = appViewFromPath(locationLike.pathname)
+  if (locationLike.hash) return
   const nextHash = legacyHashForView(view, locationLike.search)
   if (!nextHash) return
   locationLike.hash = nextHash

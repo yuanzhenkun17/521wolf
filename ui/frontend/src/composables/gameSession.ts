@@ -1,18 +1,12 @@
 // @ts-nocheck
-import { syncRouterToLegacyView } from '../router/legacyViewNavigation'
+import {
+  hashForView,
+  viewFromHash,
+  writeViewHash
+} from '../router/legacyViewNavigation'
 
 const TERMINAL_GAME_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 const ACTIVE_GAME_STORAGE_KEY = 'night-council.active-game.v1'
-const VIEW_HASHES = {
-  lobby: '',
-  match: 'match',
-  logs: 'logs',
-  benchmark: 'benchmark',
-  evolution: 'evolution'
-}
-const HASH_VIEWS = Object.fromEntries(
-  Object.entries(VIEW_HASHES).map(([view, hash]) => [`#${hash}`, view])
-)
 
 function isTerminalGame(game) {
   return Boolean(game?.winner) || TERMINAL_GAME_STATUSES.has(game?.status)
@@ -87,24 +81,6 @@ function clearStoredGameSession(storage) {
   try {
     target.removeItem(ACTIVE_GAME_STORAGE_KEY)
   } catch {}
-}
-
-function viewFromHash(hash = globalThis.window?.location?.hash || '') {
-  if (!hash) return 'lobby'
-  const routeHash = String(hash || '').split('?')[0]
-  return HASH_VIEWS[routeHash] || 'lobby'
-}
-
-function hashForView(view = 'lobby') {
-  return VIEW_HASHES[view] || ''
-}
-
-function writeViewHash(view = 'lobby') {
-  if (typeof window === 'undefined') return
-  const hash = hashForView(view)
-  const nextHash = hash ? `#${hash}` : ''
-  window.location.hash = nextHash
-  syncRouterToLegacyView(view, nextHash)
 }
 
 export {
