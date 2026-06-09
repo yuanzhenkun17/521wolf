@@ -56,7 +56,7 @@ from ui.backend.schemas import (
     EvolutionStartRequest,
     automatic_evolution_request,
 )
-from ui.backend.services import BENCHMARK_PUBLIC_METHODS, BenchmarkService
+from ui.backend.services import BENCHMARK_PUBLIC_METHODS, BenchmarkService, TaskService
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
 from ui.backend.task_events import TaskEventLog
 from ui.backend.task_state import (
@@ -281,6 +281,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     _background_state_fingerprint: str | None = field(default=None, init=False, repr=False)
     _task_event_fingerprints: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _task_event_log: TaskEventLog | None = field(default=None, init=False, repr=False)
+    _task_service: TaskService | None = field(default=None, init=False, repr=False)
     _benchmark_service: BenchmarkService | None = field(default=None, init=False, repr=False)
     _registry: VersionRegistryProtocol | None = field(default=None, init=False, repr=False)
     _role_overview_cache: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
@@ -3064,6 +3065,17 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             cfg["seeds"] = seed_sequence
         _apply_benchmark_gates(cfg, gates)
         _apply_benchmark_judge(cfg, judge)
+        for key in (
+            "game_concurrency",
+            "runner_game_timeout",
+            "game_timeout",
+            "eval_judge_concurrency",
+            "judge_concurrency",
+            "eval_judge_timeout_seconds",
+            "judge_timeout_seconds",
+        ):
+            if frozen_config.get(key) is not None:
+                cfg[key] = frozen_config[key]
         if role and target_type == "role_version":
             explicit_target = request.target_versions.get(role)
             if explicit_target:
