@@ -393,8 +393,12 @@ const contextSuiteSeedRows = computed(() => {
   return [
     { key: 'version', label: '种子版本', value: formatVersion(seed.version) || '未标记' },
     { key: 'tier', label: '种子层级', value: displayMappedLabel(seed.tier, seedTierLabels, '未标记') },
+    { key: 'target-type', label: '对象类型', value: benchmarkTargetTypeLabel(seed.target_type || suite.target_type) },
+    { key: 'created-at', label: '创建时间', value: formatDateTime(seed.created_at) || '未上报' },
     { key: 'usage', label: '使用边界', value: displayMappedLabel(seed.usage_boundary, seedUsageBoundaryLabels, '未标记') },
     { key: 'non-overlap', label: '非重叠组', value: seed.non_overlap_group || '未标记' },
+    { key: 'immutable', label: '不可变', value: seed.immutable === false ? '否' : '是' },
+    { key: 'seed-hash', label: 'Seed Hash', value: shortValue(seed.config_hash), wide: true },
     { key: 'count', label: '种子数', value: suite.seed_count == null ? '未上报' : `${formatNumber(suite.seed_count)} 个` },
     { key: 'preview', label: '种子预览', value: seedPreview.length ? seedPreview.join('、') : '未上报', wide: true },
     { key: 'warning', label: '重叠警告', value: warnings.length ? `${warnings.length} 条` : '无' }
@@ -498,6 +502,18 @@ function formatCost(value, currency = '', fallback = '--') {
   return `${number.toLocaleString('zh-CN', { maximumFractionDigits: 6 })}${suffix}`
 }
 
+function formatDateTime(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const date = new Date(text)
+  if (!Number.isFinite(date.getTime())) return text
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${month}-${day} ${hour}:${minute}`
+}
+
 function costTierDisplayLabel(value) {
   const tier = String(value || '').trim().toLowerCase()
   const labels = {
@@ -531,6 +547,13 @@ function displayDiagnosticLevel(value) {
 
 function displayBenchmarkMetric(value) {
   return displayMappedLabel(value, benchmarkMetricLabels, '')
+}
+
+function benchmarkTargetTypeLabel(value) {
+  const type = String(value || '').trim().toLowerCase()
+  if (type === 'model') return '模型评测'
+  if (type === 'role_version') return '角色版本'
+  return type || '未上报'
 }
 
 function formatBenchmarkGateValue(key, value) {

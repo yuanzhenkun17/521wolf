@@ -11,6 +11,7 @@ const props = defineProps({
 const title = ref('')
 const releaseNotes = ref('')
 const exportState = ref('')
+const selectedSnapshotExportArtifact = ref(null)
 const compareAgainstSnapshotId = ref('')
 
 const snapshots = computed(() => props.benchmark.benchmarkSnapshots.value || [])
@@ -80,6 +81,13 @@ const selectedSnapshotGateIssues = computed(() => [
   ...issueRows(selectedSnapshotReleaseGate.value.blockers, '阻断'),
   ...issueRows(selectedSnapshotReleaseGate.value.warnings, '警告')
 ].slice(0, 5))
+const selectedSnapshotExportHash = computed(() =>
+  String(
+    selectedSnapshotExportArtifact.value?.export_content_hash ||
+    selectedSnapshotExportArtifact.value?.artifact_hash ||
+    ''
+  ).trim()
+)
 const selectedSnapshotEvidenceRows = computed(() => {
   if (!selectedSnapshot.value) return []
   const audit = selectedSnapshotAudit.value
@@ -126,6 +134,12 @@ const selectedSnapshotEvidenceRows = computed(() => {
       label: 'Content Hash',
       value: audit.contentHash ? shortHash(audit.contentHash) : '未上报',
       caption: audit.contentHash || '服务端未返回内容 hash'
+    },
+    {
+      key: 'export-content-hash',
+      label: 'Export Hash',
+      value: selectedSnapshotExportHash.value ? shortHash(selectedSnapshotExportHash.value) : '未读取',
+      caption: selectedSnapshotExportHash.value || '服务端导出 artifact hash 未读取'
     },
     {
       key: 'source-runs',
@@ -354,8 +368,10 @@ watch(
   { immediate: true }
 )
 
-watch(selectedSnapshotId, () => {
+watch(selectedSnapshotId, async (value) => {
   compareAgainstSnapshotId.value = ''
+  selectedSnapshotExportArtifact.value = null
+  if (value) await loadSnapshotExport('json')
 })
 
 async function createSnapshot() {
@@ -384,30 +400,59 @@ async function selectCompareAgainst(event) {
   })
 }
 
-function downloadSnapshot(format) {
-  const text = format === 'json'
-    ? selectedSnapshotJson.value
-    : (format === 'delta-csv' ? snapshotDeltaCsv.value : selectedSnapshotCsv.value)
+async function downloadSnapshot(format) {
+  const exportPayload = await snapshotExportPayload(format)
+  const text = exportPayload.content
   if (!text) return
   const extension = format === 'json' ? 'json' : 'csv'
   const mime = format === 'json' ? 'application/json' : 'text/csv'
   const suffix = format === 'delta-csv' ? 'delta' : 'snapshot'
   if (downloadText(`${safeFilename(selectedSnapshotId.value || 'benchmark-snapshot')}-${suffix}.${extension}`, text, mime)) {
-    exportState.value = `${exportFormatLabel(format)} 已导出`
+    exportState.value = exportStateLabel(format, exportPayload)
     clearTransientState()
   }
 }
 
 async function copySnapshot(format) {
-  const text = format === 'json' ? selectedSnapshotJson.value : selectedSnapshotCsv.value
+  const exportPayload = await snapshotExportPayload(format)
+  const text = exportPayload.content
   if (!text || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return
   try {
     await navigator.clipboard.writeText(text)
-    exportState.value = `${exportFormatLabel(format)} 已复制`
+    exportState.value = exportStateLabel(format, exportPayload, '已复制')
     clearTransientState()
   } catch {
     exportState.value = ''
   }
+}
+
+async function snapshotExportPayload(format) {
+  if (format === 'delta-csv') {
+    return { format, content: snapshotDeltaCsv.value, export_content_hash: '' }
+  }
+  const payload = await loadSnapshotExport(format)
+  if (payload?.content) return payload
+  return {
+    format,
+    content: format === 'json' ? selectedSnapshotJson.value : selectedSnapshotCsv.value,
+    export_content_hash: ''
+  }
+}
+
+async function loadSnapshotExport(format) {
+  const loader = props.benchmark.loadBenchmarkSnapshotExport
+  if (!selectedSnapshotId.value || typeof loader !== 'function') return null
+  const payload = await loader(format, selectedSnapshotId.value)
+  if (payload?.export_content_hash || payload?.artifact_hash) {
+    selectedSnapshotExportArtifact.value = payload
+  }
+  return payload
+}
+
+function exportStateLabel(format, payload, action = '已导出') {
+  const hash = payload?.export_content_hash || payload?.artifact_hash || ''
+  const suffix = hash ? ` / ${shortHash(hash)}` : ''
+  return `${exportFormatLabel(format)} ${action}${suffix}`
 }
 
 function snapshotPayload() {

@@ -726,6 +726,26 @@ function normalizeBenchmarkSnapshot(snapshot, scopeFallback = 'role_version') {
   }
 }
 
+function normalizeBenchmarkSnapshotExport(data) {
+  if (!data || typeof data !== 'object' || data.kind !== 'benchmark_leaderboard_snapshot_export') return null
+  const snapshotId = String(data.snapshot_id || data.snapshot?.snapshot_id || '').trim()
+  const format = String(data.format || 'json').trim().toLowerCase()
+  const content = typeof data.content === 'string' ? data.content : ''
+  if (!snapshotId || !format || !content) return null
+  return {
+    ...data,
+    snapshot_id: snapshotId,
+    format,
+    content,
+    content_hash: String(data.content_hash || data.snapshot?.content_hash || ''),
+    export_content_hash: String(data.export_content_hash || data.artifact_hash || ''),
+    artifact_hash: String(data.artifact_hash || data.export_content_hash || ''),
+    release_gate: objectOrEmpty(data.release_gate),
+    release_manifest: objectOrEmpty(data.release_manifest),
+    snapshot: objectOrEmpty(data.snapshot)
+  }
+}
+
 function compareBenchmarkSnapshotRows(currentRows, snapshotRows, scope) {
   const current = currentRows.map((row, index) => normalizeBenchmarkLeaderboardRow(row, index, scope))
   const frozen = snapshotRows.map((row, index) => normalizeBenchmarkLeaderboardRow(row, index, scope))
@@ -1152,6 +1172,7 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkSnapshots = ref([])
   const benchmarkSnapshotDetail = ref(null)
   const benchmarkSnapshotDetails = ref({})
+  const benchmarkSnapshotExports = ref({})
   const benchmarkSnapshotLoading = ref(false)
   const benchmarkSnapshotError = ref('')
   const benchmarkSnapshotServerCompare = ref(null)
@@ -1185,6 +1206,7 @@ function useEvaluationWorkbench(options = {}) {
   const snapshotRequests = createLatestOnlyTracker()
   const snapshotDetailRequests = createLatestOnlyTracker()
   const snapshotCompareRequests = createLatestOnlyTracker()
+  const snapshotExportRequests = createLatestOnlyMap()
   const snapshotActionRequests = createLatestOnlyTracker()
   const leaderboardCompareRequests = createLatestOnlyTracker()
   const benchmarkViewRequests = createLatestOnlyTracker()
@@ -1500,6 +1522,16 @@ function useEvaluationWorkbench(options = {}) {
     return `/benchmark/snapshots/${encodeURIComponent(snapshotId)}/compare?${query.toString()}`
   }
 
+  function benchmarkSnapshotExportCacheKey(snapshotId, format) {
+    return `${snapshotId}:${String(format || 'json').toLowerCase()}`
+  }
+
+  function benchmarkSnapshotExportPath(snapshotId, format = 'json') {
+    const query = new URLSearchParams()
+    query.set('format', String(format || 'json').toLowerCase())
+    return `/benchmark/snapshots/${encodeURIComponent(snapshotId)}/export?${query.toString()}`
+  }
+
   function benchmarkLeaderboardComparePath(limit = 100) {
     const query = new URLSearchParams()
     query.set('scope', benchmarkSnapshotScope.value)
@@ -1761,6 +1793,28 @@ function useEvaluationWorkbench(options = {}) {
     return report
   }
 
+  function normalizeBenchmarkBatchReportExport(data, format = 'markdown') {
+    if (!data || typeof data !== 'object' || data.kind !== 'benchmark_run_report_export') return null
+    const content = typeof data.content === 'string' ? data.content : ''
+    if (!content) return null
+    const normalized = String(data.format || format || 'markdown').toLowerCase()
+    return {
+      ...data,
+      format: normalized,
+      content,
+      content_hash: String(data.content_hash || data.report?.content_hash || ''),
+      export_content_hash: String(data.export_content_hash || data.artifact_hash || ''),
+      artifact_hash: String(data.artifact_hash || data.export_content_hash || ''),
+      reproducibility_manifest_hash: String(
+        data.reproducibility_manifest_hash ||
+        data.reproducibility_manifest?.manifest_hash ||
+        ''
+      ),
+      reproducibility_manifest: objectOrEmpty(data.reproducibility_manifest),
+      report: objectOrEmpty(data.report)
+    }
+  }
+
   function reportExportCacheKey(batchId, format) {
     return `${batchId}:${String(format || 'markdown').toLowerCase()}`
   }
@@ -1872,15 +1926,15 @@ function useEvaluationWorkbench(options = {}) {
     try {
       const data = await apiFetch(benchmarkBatchReportPath(id, normalized))
       if (!token.isLatest()) return ''
-      const content = typeof data?.content === 'string' ? data.content : ''
-      if (!content) throw new Error('invalid benchmark report export payload')
+      const payload = normalizeBenchmarkBatchReportExport(data, normalized)
+      if (!payload) throw new Error('invalid benchmark report export payload')
       benchmarkBatchReportExports.value = {
         ...benchmarkBatchReportExports.value,
-        [cacheKey]: content
+        [cacheKey]: payload
       }
-      if (data?.report) benchmarkBatchReport.value = normalizeBenchmarkBatchReport(data.report) || benchmarkBatchReport.value
+      if (payload.report) benchmarkBatchReport.value = normalizeBenchmarkBatchReport(payload.report) || benchmarkBatchReport.value
       benchmarkBatchReportError.value = ''
-      return content
+      return payload
     } catch (err) {
       if (token.isLatest()) {
         benchmarkBatchReportError.value = benchmarkErrorMessage(err, '评测报告导出失败，已使用本地导出。')
@@ -2501,6 +2555,45 @@ function useEvaluationWorkbench(options = {}) {
     }
   }
 
+  async function loadBenchmarkSnapshotExport(format = 'json', snapshotId = selectedBenchmarkSnapshotId.value) {
+    const id = String(snapshotId || '').trim()
+    const normalized = String(format || 'json').toLowerCase()
+    if (!id || !['json', 'markdown', 'csv'].includes(normalized)) return null
+    const cacheKey = benchmarkSnapshotExportCacheKey(id, normalized)
+    if (benchmarkSnapshotExports.value[cacheKey]) return benchmarkSnapshotExports.value[cacheKey]
+    const token = snapshotExportRequests.next(cacheKey)
+    try {
+      const data = await apiFetch(benchmarkSnapshotExportPath(id, normalized))
+      if (!snapshotExportRequests.isLatest(cacheKey, token)) return null
+      const payload = normalizeBenchmarkSnapshotExport(data)
+      if (!payload) throw new Error('invalid benchmark snapshot export payload')
+      benchmarkSnapshotExports.value = {
+        ...benchmarkSnapshotExports.value,
+        [cacheKey]: payload
+      }
+      if (payload.snapshot?.snapshot_id) {
+        const detail = normalizeBenchmarkSnapshot(payload.snapshot, benchmarkSnapshotScope.value)
+        if (detail) {
+          benchmarkSnapshotDetails.value = {
+            ...benchmarkSnapshotDetails.value,
+            [detail.snapshot_id]: detail
+          }
+          upsertBenchmarkSnapshot(detail)
+          if (detail.snapshot_id === selectedBenchmarkSnapshotId.value) {
+            benchmarkSnapshotDetail.value = detail
+          }
+        }
+      }
+      benchmarkSnapshotError.value = ''
+      return payload
+    } catch (err) {
+      if (snapshotExportRequests.isLatest(cacheKey, token)) {
+        benchmarkSnapshotError.value = benchmarkErrorMessage(err, '评测快照导出失败。')
+      }
+      return null
+    }
+  }
+
   async function createBenchmarkSnapshot(overrides = {}) {
     if (benchmarkSnapshotScope.value === 'role_version' && !selectedRole.value) {
       const message = '请选择一个角色后再创建快照。'
@@ -2963,6 +3056,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkSnapshots,
     benchmarkSnapshotDetail,
     benchmarkSnapshotDetails,
+    benchmarkSnapshotExports,
     benchmarkSnapshotLoading,
     benchmarkSnapshotError,
     benchmarkSnapshotServerCompare,
@@ -2995,6 +3089,7 @@ function useEvaluationWorkbench(options = {}) {
     loadBenchmarkSnapshots,
     loadBenchmarkSnapshotDetail,
     loadBenchmarkSnapshotCompare,
+    loadBenchmarkSnapshotExport,
     selectBenchmarkSnapshot,
     createBenchmarkSnapshot,
     loadBenchmarkView,

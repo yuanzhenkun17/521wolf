@@ -38,6 +38,11 @@ test('BenchmarkSnapshotReleasePanel exposes release readiness and disabled reaso
 test('BenchmarkSnapshotReleasePanel shows compact server release evidence after snapshot selection', () => {
   const source = snapshotReleaseSource()
 
+  assert.match(source, /const selectedSnapshotExportArtifact = ref\(null\)/)
+  assert.match(source, /const selectedSnapshotExportHash = computed/)
+  assert.match(source, /selectedSnapshotExportArtifact\.value\?\.export_content_hash/)
+  assert.match(source, /props\.benchmark\.loadBenchmarkSnapshotExport/)
+  assert.match(source, /snapshotExportPayload/)
   assert.match(source, /Evaluation Set/)
   assert.match(source, /缺少 Evaluation Set，无法冻结正式快照/)
   assert.match(source, /缺少 Seed Set，无法证明种子边界/)
@@ -51,6 +56,8 @@ test('BenchmarkSnapshotReleasePanel shows compact server release evidence after 
   assert.match(source, /服务端门禁/)
   assert.match(source, /门禁阈值/)
   assert.match(source, /Content Hash/)
+  assert.match(source, /Export Hash/)
+  assert.match(source, /export_content_hash/)
   assert.match(source, /来源运行/)
   assert.match(source, /来源报告/)
   assert.match(source, /结果批次/)
@@ -105,4 +112,21 @@ test('BenchmarkSnapshotReleasePanel SFC compiles after release gate wiring', () 
     id: 'benchmark-snapshot-release-test'
   })
   assert.deepEqual(template.errors, [])
+})
+
+test('Workbench loads benchmark snapshot export artifacts with hashes', () => {
+  const source = readSource('../src/composables/useEvaluationWorkbench.js')
+
+  assert.match(source, /function normalizeBenchmarkSnapshotExport\(data\)/)
+  assert.match(source, /data\.kind !== 'benchmark_leaderboard_snapshot_export'/)
+  assert.match(source, /const benchmarkSnapshotExports = ref\(\{\}\)/)
+  assert.match(source, /const snapshotExportRequests = createLatestOnlyMap\(\)/)
+  assert.match(source, /function benchmarkSnapshotExportCacheKey\(snapshotId, format\)/)
+  assert.match(source, /function benchmarkSnapshotExportPath\(snapshotId, format = 'json'\)/)
+  assert.match(source, /async function loadBenchmarkSnapshotExport\(format = 'json', snapshotId = selectedBenchmarkSnapshotId\.value\)/)
+  assert.match(source, /apiFetch\(benchmarkSnapshotExportPath\(id, normalized\)\)/)
+  assert.match(source, /export_content_hash: String\(data\.export_content_hash \|\| data\.artifact_hash \|\| ''\)/)
+  assert.match(source, /artifact_hash: String\(data\.artifact_hash \|\| data\.export_content_hash \|\| ''\)/)
+  assert.match(source, /benchmarkSnapshotExports,/)
+  assert.match(source, /loadBenchmarkSnapshotExport,/)
 })

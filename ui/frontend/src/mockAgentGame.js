@@ -3363,6 +3363,70 @@ function getMockBenchmarkSnapshot(snapshotId) {
   return clone(mockSnapshotAuditFields(snapshot))
 }
 
+function mockBenchmarkSnapshotExport(snapshotId, queryString = '') {
+  const query = new URLSearchParams(queryString)
+  const format = String(query.get('format') || 'json').toLowerCase()
+  const snapshot = getMockBenchmarkSnapshot(snapshotId)
+  let content = ''
+  if (format === 'json') {
+    content = JSON.stringify(snapshot, null, 2)
+  } else if (format === 'markdown') {
+    content = mockBenchmarkSnapshotMarkdown(snapshot)
+  } else if (format === 'csv') {
+    content = mockBenchmarkSnapshotCsv(snapshot)
+  } else {
+    throw new Error(`Unsupported benchmark snapshot export format: ${format}`)
+  }
+  const exportContentHash = `sha256:mock-snapshot-export-${snapshot.snapshot_id}-${format}-${content.length}`
+  return {
+    kind: 'benchmark_leaderboard_snapshot_export',
+    schema_version: 1,
+    snapshot_id: snapshot.snapshot_id,
+    format,
+    content,
+    content_hash: snapshot.content_hash,
+    export_content_hash: exportContentHash,
+    artifact_hash: exportContentHash,
+    release_gate: clone(snapshot.release_gate || {}),
+    release_manifest: clone(snapshot.release_manifest || {}),
+    snapshot: clone(snapshot)
+  }
+}
+
+function mockBenchmarkSnapshotMarkdown(snapshot) {
+  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : []
+  const lines = [
+    `# 榜单快照：${snapshot.title || snapshot.snapshot_id}`,
+    '',
+    `- 快照 ID: ${snapshot.snapshot_id || ''}`,
+    `- 评测集: ${snapshot.evaluation_set_id || ''}`,
+    `- 种子集: ${snapshot.seed_set_id || ''}`,
+    `- Content Hash: ${snapshot.content_hash || ''}`,
+    '',
+    '| 对象 | 分数 | 局数 | 入榜 |',
+    '| --- | --- | --- | --- |',
+    ...rows.map((row) => `| ${row.subject_id || row.target_version_id || row.model_id || row.hash || ''} | ${row.score ?? row.target_role_role_weighted_score ?? row.strength_score ?? ''} | ${row.game_count ?? row.games ?? ''} | ${row.rankable === false ? '否' : '是'} |`)
+  ]
+  return `${lines.join('\n')}\n`
+}
+
+function mockBenchmarkSnapshotCsv(snapshot) {
+  const rows = [
+    ['区段', '标签', '值', '详情'],
+    ['快照头', '快照 ID', snapshot.snapshot_id, ''],
+    ['快照头', '评测集', snapshot.evaluation_set_id, ''],
+    ['快照头', '种子集', snapshot.seed_set_id, ''],
+    ['快照头', 'Content Hash', snapshot.content_hash, ''],
+    ...(Array.isArray(snapshot.rows) ? snapshot.rows : []).map((row) => [
+      '冻结行',
+      row.subject_id || row.target_version_id || row.model_id || row.hash || '',
+      row.score ?? row.target_role_role_weighted_score ?? row.strength_score ?? '',
+      row.rankable === false ? '不可入榜' : '可入榜'
+    ])
+  ]
+  return `${rows.map((row) => row.map(mockReportCsvCell).join(',')).join('\n')}\n`
+}
+
 function mockSnapshotCompareNumber(...values) {
   for (const value of values) {
     const number = Number(value)
@@ -4139,22 +4203,38 @@ function mockBenchmarkBatchReport(batchId, queryString = '') {
 
   if (!format || format === 'json') return clone(report)
   if (format === 'markdown') {
+    const content = mockBenchmarkBatchReportMarkdown(report)
+    const exportContentHash = `sha256:mock-report-export-${report.batch_id}-markdown-${content.length}`
+    const manifest = mockBenchmarkRunReportManifest(report, exportContentHash)
     return {
       kind: 'benchmark_run_report_export',
       schema_version: 1,
       format,
       content_type: 'text/markdown; charset=utf-8',
-      content: mockBenchmarkBatchReportMarkdown(report),
+      content,
+      content_hash: report.content_hash,
+      export_content_hash: exportContentHash,
+      artifact_hash: exportContentHash,
+      reproducibility_manifest: manifest,
+      reproducibility_manifest_hash: manifest.manifest_hash,
       report: clone(report)
     }
   }
   if (format === 'csv') {
+    const content = mockBenchmarkBatchReportCsv(report)
+    const exportContentHash = `sha256:mock-report-export-${report.batch_id}-csv-${content.length}`
+    const manifest = mockBenchmarkRunReportManifest(report, exportContentHash)
     return {
       kind: 'benchmark_run_report_export',
       schema_version: 1,
       format,
       content_type: 'text/csv; charset=utf-8',
-      content: mockBenchmarkBatchReportCsv(report),
+      content,
+      content_hash: report.content_hash,
+      export_content_hash: exportContentHash,
+      artifact_hash: exportContentHash,
+      reproducibility_manifest: manifest,
+      reproducibility_manifest_hash: manifest.manifest_hash,
       report: clone(report)
     }
   }
@@ -4192,9 +4272,10 @@ function mockBenchmarkBatchReportPayload(batchId) {
     .flatMap((row) => row.score_summary?.decision_judge_aggregate?.top_mistake_tags || [])
     .filter(Boolean)
 
-  return {
+  const report = {
     kind: 'benchmark_run_report',
     schema_version: 1,
+    report_id: `benchmark_report:${runId}`,
     generated_at: new Date().toISOString(),
     run_id: runId,
     batch_id: batch.batch_id,
@@ -4257,6 +4338,49 @@ function mockBenchmarkBatchReportPayload(batchId) {
         rankable_reason: row.rankable_reason || ''
       }))
     }
+  }
+  report.content_hash = `sha256:mock-report-${batch.batch_id}-${results.length}-${report.problem_games.length}`
+  report.artifacts = {
+    schema_version: 1,
+    report_id: report.report_id,
+    content_hash: report.content_hash,
+    exports: {
+      json: `/api/benchmark/batch/${batch.batch_id}/report`,
+      markdown: `/api/benchmark/batch/${batch.batch_id}/report?format=markdown`,
+      csv: `/api/benchmark/batch/${batch.batch_id}/report?format=csv`
+    }
+  }
+  const manifest = mockBenchmarkRunReportManifest(report)
+  report.reproducibility_manifest = manifest
+  report.reproducibility_manifest_hash = manifest.manifest_hash
+  report.artifacts.reproducibility_manifest_hash = manifest.manifest_hash
+  return report
+}
+
+function mockBenchmarkRunReportManifest(report, exportContentHash = '') {
+  const suite = report.suite || {}
+  const subject = report.subject || {}
+  const artifactHashes = {
+    content_hash: report.content_hash
+  }
+  if (exportContentHash) artifactHashes.export_content_hash = exportContentHash
+  const manifestHash = `sha256:mock-report-manifest-${report.batch_id || report.run_id}-${exportContentHash ? 'export' : 'json'}`
+  return {
+    schema_version: 1,
+    report_id: report.report_id,
+    run_id: report.run_id,
+    benchmark_id: suite.benchmark_id || suite.id || 'ad-hoc',
+    benchmark_version: String(suite.benchmark_version || suite.version || ''),
+    evaluation_set_id: report.evaluation_set_id || suite.evaluation_set_id || 'ad-hoc',
+    seed_set_id: report.seed_set_id || suite.seed_set_id || 'ad-hoc',
+    benchmark_config_hash: report.benchmark_config_hash || suite.benchmark_config_hash || suite.config_hash || '',
+    model_id: subject.model_id || '',
+    model_config_hash: subject.model_config_hash || '',
+    target_role: subject.target_role || '',
+    target_version_id: subject.target_version_id || '',
+    content_hash: report.content_hash,
+    artifact_hashes: artifactHashes,
+    manifest_hash: manifestHash
   }
 }
 
@@ -5118,6 +5242,11 @@ export async function mockApiFetch(path, options = {}) {
   const benchmarkSnapshotCompareMatch = routePath.match(/^\/benchmark\/snapshots\/([^/]+)\/compare$/)
   if (benchmarkSnapshotCompareMatch) {
     return mockBenchmarkSnapshotCompare(decodeURIComponent(benchmarkSnapshotCompareMatch[1]), queryString)
+  }
+
+  const benchmarkSnapshotExportMatch = routePath.match(/^\/benchmark\/snapshots\/([^/]+)\/export$/)
+  if (benchmarkSnapshotExportMatch) {
+    return mockBenchmarkSnapshotExport(decodeURIComponent(benchmarkSnapshotExportMatch[1]), queryString)
   }
 
   const benchmarkSnapshotMatch = routePath.match(/^\/benchmark\/snapshots\/([^/]+)$/)

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import JudgeEvidencePanel from '../history/JudgeEvidencePanel.vue'
 
 const props = defineProps({
@@ -11,6 +11,7 @@ const props = defineProps({
 
 const copyState = ref('')
 const exportState = ref('')
+const selectedReportExportArtifact = ref(null)
 
 const STATUS_LABELS = {
   ok: '正常',
@@ -54,6 +55,9 @@ const DISPLAY_LABELS = {
   benchmark_config_hash: '配置 Hash',
   config_hash: '配置 Hash',
   content_hash: '内容摘要',
+  reproducibility_manifest_hash: '复现清单 Hash',
+  manifest_hash: 'Manifest Hash',
+  artifacts: '产物',
   model_id: '模型 ID',
   model_config_hash: '模型配置 Hash',
   target_role: '目标角色',
@@ -553,6 +557,97 @@ const reproducibilityRows = computed(() => {
     { label: '目标版本', value: targetVersionId.value || '基线版本' }
   ]
 })
+const reportArtifacts = computed(() => objectOrEmpty(canonicalReport.value?.artifacts))
+const reportManifest = computed(() => objectOrEmpty(canonicalReport.value?.reproducibility_manifest))
+const reportManifestArtifactHashes = computed(() => objectOrEmpty(reportManifest.value.artifact_hashes))
+const reportContentHash = computed(() =>
+  String(
+    canonicalReport.value?.content_hash ||
+    reportArtifacts.value.content_hash ||
+    reportManifest.value.content_hash ||
+    reportManifestArtifactHashes.value.content_hash ||
+    ''
+  ).trim()
+)
+const reportManifestHash = computed(() =>
+  String(
+    canonicalReport.value?.reproducibility_manifest_hash ||
+    reportArtifacts.value.reproducibility_manifest_hash ||
+    reportManifest.value.manifest_hash ||
+    ''
+  ).trim()
+)
+const reportManifestContentHash = computed(() =>
+  String(
+    reportManifest.value.content_hash ||
+    reportManifestArtifactHashes.value.content_hash ||
+    ''
+  ).trim()
+)
+const selectedReportExportHash = computed(() =>
+  String(
+    selectedReportExportArtifact.value?.export_content_hash ||
+    selectedReportExportArtifact.value?.artifact_hash ||
+    selectedReportExportArtifact.value?.reproducibility_manifest?.artifact_hashes?.export_content_hash ||
+    ''
+  ).trim()
+)
+const reportManifestStatus = computed(() => {
+  if (!reportManifestHash.value && !reportContentHash.value) {
+    return { label: '未上报', tone: 'unknown', caption: '报告未返回复现清单' }
+  }
+  const checks = []
+  if (reportManifestHash.value && reportManifest.value.manifest_hash) {
+    checks.push(reportManifestHash.value === String(reportManifest.value.manifest_hash))
+  }
+  if (reportContentHash.value && reportManifestContentHash.value) {
+    checks.push(reportContentHash.value === reportManifestContentHash.value)
+  }
+  const artifactContentHash = String(reportManifestArtifactHashes.value.content_hash || '').trim()
+  if (reportContentHash.value && artifactContentHash) {
+    checks.push(reportContentHash.value === artifactContentHash)
+  }
+  if (!checks.length) {
+    return { label: '待校验', tone: 'unknown', caption: '缺少可比对 hash 字段' }
+  }
+  if (checks.every(Boolean)) {
+    return { label: '已校验', tone: 'ready', caption: 'manifest_hash 与 content_hash 一致' }
+  }
+  return { label: '不一致', tone: 'blocked', caption: 'manifest 与报告 hash 不一致' }
+})
+const reportAuditRows = computed(() => [
+  {
+    key: 'content-hash',
+    label: '内容 Hash',
+    value: reportContentHash.value ? shortHash(reportContentHash.value) : '未上报',
+    caption: reportContentHash.value || 'content_hash 未上报'
+  },
+  {
+    key: 'manifest-hash',
+    label: '复现清单 Hash',
+    value: reportManifestHash.value ? shortHash(reportManifestHash.value) : '未上报',
+    caption: reportManifestHash.value ? `Manifest Hash: ${reportManifestHash.value}` : 'reproducibility_manifest_hash 未上报'
+  },
+  {
+    key: 'manifest-status',
+    label: '校验状态',
+    value: reportManifestStatus.value.label,
+    caption: reportManifestStatus.value.caption,
+    tone: reportManifestStatus.value.tone
+  },
+  {
+    key: 'manifest-content',
+    label: 'Manifest 内容',
+    value: reportManifestContentHash.value ? shortHash(reportManifestContentHash.value) : '未上报',
+    caption: reportManifestContentHash.value || 'manifest.content_hash 未上报'
+  },
+  {
+    key: 'export-hash',
+    label: '导出 Hash',
+    value: selectedReportExportHash.value ? shortHash(selectedReportExportHash.value) : '未导出',
+    caption: selectedReportExportHash.value || '导出后显示 export_content_hash'
+  }
+])
 
 const leaderboardScopeValue = computed(() =>
   reportLeaderboard.value.scope || targetType.value
@@ -587,6 +682,11 @@ const topDiagnosticCaption = computed(() =>
     : '未加载'
 )
 
+watch(selectedRunId, () => {
+  selectedReportExportArtifact.value = null
+  exportState.value = ''
+})
+
 const markdownReport = computed(() => {
   if (!selectedRun.value) return ''
   const lines = [
@@ -606,6 +706,9 @@ const markdownReport = computed(() => {
     '',
     '## 诊断与标签',
     ...markdownDiagnosticRows.value,
+    '',
+    '## 审计证据',
+    ...reportAuditRows.value.map((row) => `- ${row.label}: ${markdownValue(row.value)} (${markdownValue(row.caption)})`),
     '',
     '## 追溯数据',
     ...reproducibilityRows.value.map((row) => `- ${row.label}: ${markdownValue(row.value)}`)
@@ -643,6 +746,7 @@ const csvReport = computed(() =>
           compactJoin([group.levelLabel, `${group.gameCount} 局`, `${group.stageCount} 阶段`], ' / ')
         ]),
         ...topTags.value.map((tag) => ['标签', tag.label, tag.count, '']),
+        ...reportAuditRows.value.map((row) => ['审计证据', row.label, row.value, row.caption]),
         ...reproducibilityRows.value.map((row) => ['追溯', row.label, row.value, ''])
       ])
     : ''
@@ -692,13 +796,14 @@ async function copyReport() {
 async function copyExport(format) {
   const text = await resolveExportText(format)
   copyState.value = ''
+  exportState.value = ''
   if (!text || typeof navigator === 'undefined' || !navigator.clipboard?.writeText) return
   try {
     await navigator.clipboard.writeText(text)
-    copyState.value = `${format.toUpperCase()} 已复制`
-    clearTransientState(copyState)
+    exportState.value = reportExportStateLabel(format, '已复制')
+    clearTransientState(exportState)
   } catch {
-    copyState.value = ''
+    exportState.value = ''
   }
 }
 
@@ -710,7 +815,7 @@ async function downloadReport(format) {
     ? 'application/json'
     : (format === 'csv' ? 'text/csv' : 'text/markdown')
   if (downloadText(`${safeFilename(selectedRunId.value || 'benchmark-run-report')}.${extension}`, text, mime)) {
-    exportState.value = `${format.toUpperCase()} 已导出`
+    exportState.value = reportExportStateLabel(format, '已导出')
     clearTransientState(exportState)
   }
 }
@@ -726,10 +831,22 @@ async function resolveExportText(format) {
   if (normalized === 'json') return jsonReport.value
   const loader = props.benchmark.loadBenchmarkBatchReportExport
   if (canonicalReport.value && typeof loader === 'function') {
-    const content = await loader(normalized, selectedRunId.value || selectedBatchId.value)
-    if (content) return content
+    const payload = await loader(normalized, selectedRunId.value || selectedBatchId.value)
+    if (payload && typeof payload === 'object') {
+      if (payload.export_content_hash || payload.artifact_hash || payload.reproducibility_manifest_hash) {
+        selectedReportExportArtifact.value = payload
+      }
+      if (typeof payload.content === 'string') return payload.content
+    }
+    if (typeof payload === 'string' && payload) return payload
   }
   return localExportText(normalized)
+}
+
+function reportExportStateLabel(format, action) {
+  const hash = selectedReportExportHash.value
+  const suffix = hash ? ` / ${shortHash(hash)}` : ''
+  return `${String(format || '').toUpperCase()} ${action}${suffix}`
 }
 
 function reportPayload() {
@@ -1433,6 +1550,17 @@ function clearTransientState(stateRef) {
               <button type="button" @click="copyExport('csv')">复制 CSV</button>
               <em>{{ exportState }}</em>
             </div>
+            <div class="report-audit-grid" aria-label="报告审计证据">
+              <span
+                v-for="row in reportAuditRows"
+                :key="row.key"
+                :class="['report-audit-item', row.tone ? 'is-' + row.tone : '']"
+              >
+                <small>{{ row.label }}</small>
+                <b :title="String(row.value || '')">{{ row.value }}</b>
+                <em :title="String(row.caption || '')">{{ row.caption }}</em>
+              </span>
+            </div>
           </section>
         </aside>
       </div>
@@ -1541,6 +1669,7 @@ function clearTransientState(stateRef) {
 .gate-row small,
 .diagnostic-rollup-row small,
 .benchmark-judge-evidence-head small,
+.report-audit-grid small,
 .recent-run-button small,
 .report-history-row small {
   color: var(--report-muted);
@@ -1593,6 +1722,7 @@ function clearTransientState(stateRef) {
 .report-section-heading em,
 .gate-row em,
 .benchmark-judge-evidence-head em,
+.report-audit-grid em,
 .tag-pill em,
 .recent-run-button em,
 .report-history-row em {
@@ -1918,6 +2048,51 @@ function clearTransientState(stateRef) {
 
 .benchmark-judge-evidence-row :deep(.review-judge-evidence-block) {
   background: rgba(255, 252, 245, 0.42);
+}
+
+.report-audit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.report-audit-item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 68px;
+  padding: 8px 9px;
+  border: 1px solid var(--report-line);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.5);
+}
+
+.report-audit-item.is-ready {
+  border-color: rgba(139, 94, 52, 0.3);
+  background: rgba(139, 94, 52, 0.08);
+}
+
+.report-audit-item.is-blocked {
+  border-color: rgba(90, 51, 25, 0.34);
+  background: rgba(90, 51, 25, 0.08);
+}
+
+.report-audit-item b {
+  overflow: hidden;
+  color: var(--report-ink);
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-audit-item em {
+  overflow: hidden;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ghost-button,
