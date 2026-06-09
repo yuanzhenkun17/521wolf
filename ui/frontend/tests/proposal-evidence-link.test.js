@@ -27,7 +27,7 @@ test('Proposal review renders evidence and counter evidence through EvidenceLink
 
 test('Proposal review falls back to run-scoped proposal evidence without empty links', () => {
   assert.match(proposalPanel, /function proposalFallbackEvidenceTarget/)
-  assert.match(proposalPanel, /label:\s*'Proposal'/)
+  assert.match(proposalPanel, /label:\s*'提案'/)
   assert.match(proposalPanel, /kind:\s*'proposal'/)
   assert.match(proposalPanel, /disabled-label="缺少证据定位字段"/)
 

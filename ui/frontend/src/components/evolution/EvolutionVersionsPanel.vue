@@ -84,6 +84,75 @@ const filteredPatterns = computed(() => {
   return list
 })
 
+const selectedVersion = computed(() => props.evo.selectedVersion?.value || null)
+const currentBaselineVersion = computed(() =>
+  (props.evo.selectedRoleVersions.value || []).find((version) => version.is_baseline) || null
+)
+const versionAuditSource = computed(() => versionDetail.value || selectedVersion.value || {})
+const releaseAuditRows = computed(() => {
+  const data = versionAuditSource.value || {}
+  const provenance = data.provenance || {}
+  const sourceRun = data.source_run_id || data.sourceRunId || provenance.source_run_id || provenance.sourceRunId
+  const gateReport = data.gate_report_id || data.gateReportId || provenance.gate_report_id || provenance.gateReportId
+  const trustBundle = data.trust_bundle_id || data.trustBundleId || provenance.trust_bundle_id || provenance.trustBundleId
+  const bundleHash = data.bundle_hash || data.bundleHash || provenance.bundle_hash || provenance.bundleHash
+  return [
+    {
+      key: 'baseline',
+      label: '当前基线',
+      value: currentBaselineVersion.value?.short || currentBaselineVersion.value?.version_id || '—',
+      code: true
+    },
+    {
+      key: 'candidate',
+      label: '候选版本',
+      value: data.is_baseline ? '—' : (data.short || shortVersionId(data.version_id) || selectedVersion.value?.short || '—'),
+      code: true
+    },
+    {
+      key: 'stage',
+      label: '发布阶段',
+      value: data.releaseStageLabel || sourceText(data.release_stage || data.releaseStage || provenance.release_stage || provenance.releaseStage)
+    },
+    {
+      key: 'source',
+      label: '来源运行',
+      value: sourceRun || '—',
+      code: true,
+      href: sourceRun ? `#evolution?run_id=${encodeURIComponent(sourceRun)}` : ''
+    },
+    {
+      key: 'gate',
+      label: '门禁报告',
+      value: gateReport || '—',
+      code: true,
+      href: sourceRun && gateReport
+        ? `#evolution?run_id=${encodeURIComponent(sourceRun)}&gate_report_id=${encodeURIComponent(gateReport)}`
+        : ''
+    },
+    {
+      key: 'trust',
+      label: '信任包',
+      value: trustBundle || '—',
+      code: true
+    },
+    {
+      key: 'hash',
+      label: '包 Hash',
+      value: bundleHash || '—',
+      code: true,
+      wide: true
+    },
+    {
+      key: 'rollback',
+      label: '回滚',
+      value: data.rollbackDisabledReason || selectedVersion.value?.rollbackDisabledReason || '可在版本列表执行',
+      blocked: Boolean(data.rollbackDisabledReason || selectedVersion.value?.rollbackDisabledReason),
+      wide: true
+    }
+  ]
+})
+
 function versionMetric(value) {
   if (value == null) return '—'
   const n = Number(value)
@@ -151,6 +220,10 @@ function auditFieldText(value) {
   return text || '—'
 }
 
+function shortVersionId(value) {
+  return value ? String(value).slice(0, 8) : ''
+}
+
 function openVersionTrustAudit() {
   props.evo.openTrustBundleDrawer?.('version', { version: versionDetail.value || {} })
 }
@@ -211,6 +284,24 @@ function openVersionTrustAudit() {
             </span>
             <b>{{ evo.selectedVersionDetail.value.data.skills?.length || 0 }} 个技能</b>
           </header>
+
+          <section class="evo-version-release-chain" aria-label="版本发布审计链路">
+            <h3>发布链路</h3>
+            <div class="evo-version-release-grid">
+              <span
+                v-for="field in releaseAuditRows"
+                :key="field.key"
+                :class="{ wide: field.wide, blocked: field.blocked }"
+              >
+                <small>{{ field.label }}</small>
+                <a v-if="field.href" :href="field.href">
+                  {{ auditFieldText(field.value) }}
+                </a>
+                <code v-else-if="field.code">{{ auditFieldText(field.value) }}</code>
+                <b v-else>{{ auditFieldText(field.value) }}</b>
+              </span>
+            </div>
+          </section>
 
           <div class="evo-version-kpis">
             <span><small>胜率</small><b>{{ versionMetric(evo.selectedVersionDetail.value.data.metrics?.win_rate) }}</b></span>
@@ -357,6 +448,71 @@ function openVersionTrustAudit() {
   white-space: nowrap;
 }
 
+.evo-version-release-chain {
+  display: grid;
+  gap: 8px;
+  margin: 11px 0;
+}
+
+.evo-version-release-chain h3 {
+  margin: 0;
+  color: var(--evo-accent-strong);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.evo-version-release-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.evo-version-release-grid span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--evo-border);
+  border-radius: 7px;
+  background: var(--evo-input-bg);
+}
+
+.evo-version-release-grid span.wide {
+  grid-column: span 2;
+}
+
+.evo-version-release-grid span.blocked {
+  border-color: rgba(153, 48, 38, 0.24);
+  background: rgba(153, 48, 38, 0.045);
+}
+
+.evo-version-release-grid small {
+  color: var(--evo-text-secondary);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.evo-version-release-grid b,
+.evo-version-release-grid code,
+.evo-version-release-grid a {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--evo-text);
+  font-size: 12px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-version-release-grid a {
+  color: var(--evo-accent-strong);
+  text-decoration: none;
+}
+
+.evo-version-release-grid span.blocked b {
+  color: var(--evo-danger);
+}
+
 @media (max-width: 760px) {
   .evo-version-audit-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -364,6 +520,10 @@ function openVersionTrustAudit() {
 
   .evo-version-audit-strip > button {
     grid-column: 1 / -1;
+  }
+
+  .evo-version-release-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

@@ -18,6 +18,8 @@ const rejectDialogProposal = ref(null)
 const rejectDialogIndex = ref(-1)
 const rejectDialogReason = ref('')
 const rejectDialogTags = ref([])
+const expandedProposalKeys = ref(new Set())
+const collapsedProposalKeys = ref(new Set())
 
 const review = computed(() => props.evo.selectedProposalReview.value || {})
 const summary = computed(() => review.value.summary || {})
@@ -121,6 +123,28 @@ const trustAuditButtonLabel = computed(() => {
     : '信任包缺失'
 })
 
+const PROPOSAL_STATUS_LABELS = {
+  pending: '待处理',
+  reviewing: '待处理',
+  accepted: '已接受',
+  accept: '已接受',
+  rejected: '已拒绝',
+  reject: '已拒绝',
+  applied: '已应用'
+}
+
+const PROPOSAL_OPERATION_LABELS = {
+  create: '新建',
+  new: '新建',
+  add: '新建',
+  update: '修改',
+  modify: '修改',
+  edit: '修改',
+  patch: '修改',
+  delete: '删除',
+  remove: '删除'
+}
+
 const JUDGE_EVIDENCE_FIELD_ALIASES = {
   evidenceRefs: ['evidenceRefs', 'evidence_refs', 'evidenceRef', 'evidence_ref'],
   counterfactuals: ['counterfactuals', 'counterfactual', 'counterFactuals', 'counter_factuals', 'counter_factual'],
@@ -159,6 +183,12 @@ function displayText(value, fallback = '—') {
 
 function textValue(value) {
   return String(value ?? '').trim()
+}
+
+function textArray(value) {
+  if (Array.isArray(value)) return value.map(textValue).filter(Boolean)
+  const text = textValue(value)
+  return text ? [text] : []
 }
 
 function formatNumber(value, suffix = '') {
@@ -290,8 +320,81 @@ function proposalKey(proposal, index) {
   return proposal?.apiId || proposal?.proposal_id || proposal?.id || index
 }
 
+function proposalExpansionKey(proposal, index) {
+  return String(proposalKey(proposal, index))
+}
+
+function isProposalExpanded(proposal, index) {
+  const key = proposalExpansionKey(proposal, index)
+  if (collapsedProposalKeys.value.has(key)) return false
+  return proposalDeepLinkMatched(proposal) || expandedProposalKeys.value.has(key)
+}
+
+function toggleProposalDetails(proposal, index) {
+  const key = proposalExpansionKey(proposal, index)
+  const nextExpanded = new Set(expandedProposalKeys.value)
+  const nextCollapsed = new Set(collapsedProposalKeys.value)
+  if (isProposalExpanded(proposal, index)) {
+    nextExpanded.delete(key)
+    if (proposalDeepLinkMatched(proposal)) nextCollapsed.add(key)
+  } else {
+    nextExpanded.add(key)
+    nextCollapsed.delete(key)
+  }
+  expandedProposalKeys.value = nextExpanded
+  collapsedProposalKeys.value = nextCollapsed
+}
+
 function proposalId(proposal) {
   return [proposal?.apiId, proposal?.proposal_id, proposal?.id].map(textValue).find(Boolean) || ''
+}
+
+function proposalStatusLabel(proposal) {
+  const status = textValue(proposal?.status).toLowerCase()
+  return displayText(proposal?.statusLabel || PROPOSAL_STATUS_LABELS[status] || proposal?.status)
+}
+
+function proposalOperationLabel(proposal) {
+  const operation = textValue(proposal?.operation || proposal?.action)
+  return displayText(PROPOSAL_OPERATION_LABELS[operation.toLowerCase()] || operation)
+}
+
+function proposalTargetLabel(proposal, index) {
+  return displayText(proposal?.targetFile || proposal?.title || proposalId(proposal), `提案 ${index + 1}`)
+}
+
+function proposalExpectedLabel(proposal) {
+  return displayText(proposal?.expectedEffect || proposal?.summary || proposal?.rationale)
+}
+
+function uniqueTextRows(rows) {
+  return [...new Set(rows.map(textValue).filter(Boolean))]
+}
+
+function proposalRiskItems(proposal) {
+  const rows = []
+  if (proposal?.preflightStatus) rows.push(`预检 ${displayText(proposal.preflightLabel || proposal.preflightStatus, '')}`)
+  if (proposal?.riskLevel) rows.push(`风险 ${proposal.riskLevel}`)
+  if (proposal?.gateDecision) rows.push(proposal.gateLabel || `门禁 ${proposal.gateDecision}`)
+  if (proposal?.rejectBuffer?.visible) rows.push(`拒绝缓冲 ${rejectBufferStatusLabel(proposal.rejectBuffer)}`)
+  if (proposal?.rejectBuffer?.overfitScore != null) rows.push(`过拟合 ${scoreLabel(proposal.rejectBuffer.overfitScore)}`)
+  rows.push(...textArray(proposal?.riskTags))
+  rows.push(...textArray(proposal?.gateReasons))
+  rows.push(...textArray(proposal?.preflightReasons).slice(0, 2))
+  return uniqueTextRows(rows).slice(0, 6)
+}
+
+function proposalEvidenceItems(proposal) {
+  const evidenceGameCount = Array.isArray(proposal?.evidenceGameIds) ? proposal.evidenceGameIds.length : 0
+  const counterEvidenceGameCount = Array.isArray(proposal?.counterEvidenceGameIds) ? proposal.counterEvidenceGameIds.length : 0
+  const rows = []
+  if (evidenceGameCount) rows.push(`样本局 ${evidenceGameCount}`)
+  if (counterEvidenceGameCount) rows.push(`反证局 ${counterEvidenceGameCount}`)
+  if (hasProposalJudgeEvidence(proposal)) rows.push('裁判证据')
+  if (proposal?.diffPreview && proposal.diffPreview !== '—') rows.push('差异')
+  if (proposalEvidenceId(proposal)) rows.push('提案链接')
+  if (proposalDeepLinkMatched(proposal)) rows.push(proposalDeepLinkLabel(proposal))
+  return uniqueTextRows(rows).slice(0, 5)
 }
 
 function proposalEvidenceId(proposal) {
@@ -508,8 +611,10 @@ async function runBulkReview(action, items) {
     for (const proposal of items) {
       if (action === 'accept') {
         await props.evo.acceptProposal(proposal, runId)
-      } else {
+      } else if (bulkRejectReason.value !== bulkRejectReasonText.value) {
         await props.evo.rejectProposal(proposal, runId, bulkRejectReasonText.value)
+      } else {
+        await props.evo.rejectProposal(proposal, runId, bulkRejectReason.value)
       }
       if (hasBlockingReviewError()) break
     }
@@ -687,7 +792,16 @@ function openTrustBundleAudit() {
       <div v-else-if="isBatch" class="evo-empty">批量任务请查看子运行</div>
       <div v-else-if="!proposals.length" class="evo-empty">暂无可审核提案</div>
 
-      <div v-else class="evo-proposal-list">
+      <div v-else class="evo-proposal-list" data-review-audit-list>
+        <div class="evo-proposal-list-head" aria-hidden="true">
+          <span>状态</span>
+          <span>目标</span>
+          <span>操作</span>
+          <span>预期</span>
+          <span>风险</span>
+          <span>证据</span>
+          <span>动作</span>
+        </div>
         <section
           v-for="(proposal, index) in proposals"
           :key="proposalKey(proposal, index)"
@@ -698,10 +812,97 @@ function openTrustBundleAudit() {
           :data-deep-link-state="proposalDeepLinkStateForRow(proposal) || null"
           :data-status="proposal.status"
         >
-          <div class="evo-proposal-main">
+          <div class="evo-proposal-audit-row">
+            <div class="evo-proposal-status-cell" data-column="状态">
+              <span class="evo-proposal-status-pill">{{ proposalStatusLabel(proposal) }}</span>
+              <span
+                v-if="proposalDeepLinkMatched(proposal)"
+                class="evo-deep-link-badge"
+                data-deep-link-marker="proposal"
+                :data-deep-link-state="proposalDeepLinkStateForRow(proposal)"
+              >
+                {{ proposalDeepLinkLabel(proposal) }}
+              </span>
+              <code v-if="proposalId(proposal)">{{ proposalId(proposal) }}</code>
+            </div>
+
+            <div class="evo-proposal-target-cell" data-column="目标">
+              <strong>{{ proposalTargetLabel(proposal, index) }}</strong>
+              <code>{{ displayText(proposal.targetFile) }}</code>
+            </div>
+
+            <div class="evo-proposal-operation-cell" data-column="操作">
+              <b>{{ proposalOperationLabel(proposal) }}</b>
+            </div>
+
+            <div class="evo-proposal-expected-cell" data-column="预期">
+              <p>{{ proposalExpectedLabel(proposal) }}</p>
+            </div>
+
+            <div class="evo-proposal-risk-cell" data-column="风险">
+              <span
+                v-for="item in proposalRiskItems(proposal)"
+                :key="`risk-audit-${proposalKey(proposal, index)}-${item}`"
+              >
+                {{ item }}
+              </span>
+              <span v-if="!proposalRiskItems(proposal).length">—</span>
+            </div>
+
+            <div class="evo-proposal-evidence-cell" data-column="证据">
+              <span
+                v-for="item in proposalEvidenceItems(proposal)"
+                :key="`evidence-audit-${proposalKey(proposal, index)}-${item}`"
+              >
+                {{ item }}
+              </span>
+              <span v-if="!proposalEvidenceItems(proposal).length">—</span>
+            </div>
+
+            <div class="evo-proposal-actions" data-column="动作">
+              <button
+                type="button"
+                class="evo-ghost-action"
+                :aria-expanded="isProposalExpanded(proposal, index)"
+                @click="toggleProposalDetails(proposal, index)"
+              >
+                {{ isProposalExpanded(proposal, index) ? '收起' : '详情' }}
+              </button>
+              <button
+                type="button"
+                class="evo-ghost-action"
+                :disabled="rowActionDisabled(proposal, 'accept')"
+                @click="accept(proposal)"
+              >
+                {{ rowActionLoading(proposal, 'accept') ? '处理中' : '接受' }}
+              </button>
+              <div
+                v-if="rejectMetadataTags(proposal, index).length"
+                class="evo-reject-metadata-preview"
+                data-review-metadata-preview
+              >
+                <small>审核标签</small>
+                <span v-for="tag in rejectMetadataTags(proposal, index)" :key="`review-tag-${proposalKey(proposal, index)}-${tag}`">
+                  {{ tag }}
+                </span>
+              </div>
+              <button
+                type="button"
+                class="evo-ghost-action danger"
+                aria-haspopup="dialog"
+                data-open-reject-dialog
+                :disabled="rowActionDisabled(proposal, 'reject')"
+                @click="openRejectDialog(proposal, index)"
+              >
+                {{ rowActionLoading(proposal, 'reject') ? '拒绝中' : '拒绝' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="isProposalExpanded(proposal, index)" class="evo-proposal-main" data-proposal-details>
             <div class="evo-proposal-head">
               <strong>{{ proposal.title }}</strong>
-              <span>{{ proposal.statusLabel }}</span>
+              <span>{{ proposalStatusLabel(proposal) }}</span>
               <span
                 v-if="proposalDeepLinkMatched(proposal)"
                 class="evo-deep-link-badge"
@@ -713,7 +914,7 @@ function openTrustBundleAudit() {
             </div>
             <div class="evo-proposal-meta">
               <code>{{ displayText(proposal.targetFile) }}</code>
-              <small>{{ proposal.operation }}</small>
+              <small>{{ proposalOperationLabel(proposal) }}</small>
               <small v-if="proposal.gateDecision">{{ proposal.gateLabel }}</small>
               <small v-if="proposal.preflightStatus">预检 {{ proposal.preflightLabel }}</small>
               <small v-if="proposal.riskLevel">风险 {{ proposal.riskLevel }}</small>
@@ -826,37 +1027,6 @@ function openTrustBundleAudit() {
               </div>
             </section>
             <pre v-if="proposal.diffPreview && proposal.diffPreview !== '—'">{{ proposal.diffPreview }}</pre>
-          </div>
-
-          <div class="evo-proposal-actions">
-            <button
-              type="button"
-              class="evo-ghost-action"
-              :disabled="rowActionDisabled(proposal, 'accept')"
-              @click="accept(proposal)"
-            >
-              {{ rowActionLoading(proposal, 'accept') ? '处理中' : '接受' }}
-            </button>
-            <div
-              v-if="rejectMetadataTags(proposal, index).length"
-              class="evo-reject-metadata-preview"
-              data-review-metadata-preview
-            >
-              <small>审核标签</small>
-              <span v-for="tag in rejectMetadataTags(proposal, index)" :key="`review-tag-${proposalKey(proposal, index)}-${tag}`">
-                {{ tag }}
-              </span>
-            </div>
-            <button
-              type="button"
-              class="evo-ghost-action danger"
-              aria-haspopup="dialog"
-              data-open-reject-dialog
-              :disabled="rowActionDisabled(proposal, 'reject')"
-              @click="openRejectDialog(proposal, index)"
-            >
-              {{ rowActionLoading(proposal, 'reject') ? '拒绝中' : '拒绝' }}
-            </button>
           </div>
         </section>
       </div>
@@ -1166,17 +1336,53 @@ function openTrustBundleAudit() {
 
 .evo-proposal-list {
   display: grid;
-  gap: 10px;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--evo-border);
+  border-radius: 8px;
+  background: var(--evo-border);
+}
+
+.evo-proposal-list-head,
+.evo-proposal-audit-row {
+  display: grid;
+  grid-template-columns:
+    minmax(86px, 0.7fr)
+    minmax(150px, 1.35fr)
+    minmax(62px, 0.55fr)
+    minmax(180px, 1.7fr)
+    minmax(150px, 1.25fr)
+    minmax(118px, 0.95fr)
+    minmax(138px, 0.82fr);
+  gap: 1px;
+  min-width: 0;
+}
+
+.evo-proposal-list-head {
+  background: rgba(58, 42, 24, 0.08);
+}
+
+.evo-proposal-list-head span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 6px 8px;
+  background: rgba(255, 255, 250, 0.64);
+  color: var(--evo-accent-strong);
+  font-size: 10px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .evo-proposal-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--evo-border);
-  border-radius: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: var(--evo-input-bg);
 }
 
@@ -1210,6 +1416,99 @@ function openTrustBundleAudit() {
   display: grid;
   gap: 7px;
   min-width: 0;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--evo-border);
+  background: rgba(255, 255, 250, 0.52);
+}
+
+.evo-proposal-audit-row > div {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px;
+  background: var(--evo-input-bg);
+}
+
+.evo-proposal-status-cell code,
+.evo-proposal-target-cell code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--evo-text-secondary);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-proposal-status-pill {
+  width: max-content;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 7px;
+  border: 1px solid rgba(139, 108, 50, 0.18);
+  border-radius: 5px;
+  background: var(--evo-active-bg);
+  color: var(--evo-accent-strong);
+  font-size: 10px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-proposal-target-cell strong,
+.evo-proposal-operation-cell b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--evo-text);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-proposal-operation-cell b {
+  color: var(--evo-accent);
+}
+
+.evo-proposal-expected-cell p {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  color: var(--evo-text);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.evo-proposal-risk-cell,
+.evo-proposal-evidence-cell {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.evo-proposal-risk-cell span,
+.evo-proposal-evidence-cell span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(58, 42, 24, 0.06);
+  color: var(--evo-text-secondary);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .evo-proposal-head {
