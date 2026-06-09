@@ -101,6 +101,7 @@ def build_play_graph(
             "finished",
             "error",
             "game_id",
+            "langfuse_trace_id",
             "seed",
             "max_days",
         ):

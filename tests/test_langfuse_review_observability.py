@@ -33,6 +33,36 @@ def _install_fake_observability(monkeypatch, *, raise_on_score: bool = False) ->
     return captured
 
 
+def _install_trace_scoring_observability(monkeypatch) -> list[dict[str, Any]]:
+    captured: list[dict[str, Any]] = []
+
+    def _score_trace(
+        *,
+        trace_id: str,
+        name: str,
+        value: Any,
+        data_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        captured.append({
+            "method": "score_trace",
+            "trace_id": trace_id,
+            "name": name,
+            "value": value,
+            "data_type": data_type,
+            "metadata": metadata,
+        })
+
+    def _score_current_trace(*args: Any, **kwargs: Any) -> None:
+        captured.append({"method": "score_current_trace", "args": args, "kwargs": kwargs})
+
+    fake_observability = types.ModuleType("app.services.observability")
+    fake_observability.score_trace = _score_trace
+    fake_observability.score_current_trace = _score_current_trace
+    monkeypatch.setitem(sys.modules, "app.services.observability", fake_observability)
+    return captured
+
+
 def _review_state(*, game_id: str = "g_review_langfuse") -> dict[str, Any]:
     return {
         "game_id": game_id,
@@ -90,6 +120,33 @@ def test_review_decision_judge_writes_langfuse_game_scores(monkeypatch):
     assert by_name["review.decision_judge_status"]["data_type"] == "CATEGORICAL"
     assert by_name["review.decision_judge_average_score"]["metadata"]["metric_family"] == "review.decision_judge"
     assert by_name["review.decision_judge_average_score"]["metadata"]["game_id"] == "g_review_langfuse"
+
+
+def test_review_decision_judge_scores_existing_game_trace_id(monkeypatch):
+    from app.graphs.shared.nodes.review import review_node
+
+    captured = _install_trace_scoring_observability(monkeypatch)
+
+    async def fake_judge(_messages):
+        return (
+            '{"schema_version":"1.0","decision_id":"d_check","score":8.5,'
+            '"quality":"good","reason":"查验狼人有信息增量",'
+            '"evidence_refs":["rule_natural_key_action"],"mistake_tags":[],'
+            '"suggestion":"继续围绕查验链组织发言","confidence":0.8}'
+        )
+
+    state = _review_state()
+    state["langfuse_trace_id"] = "trace-existing-game"
+    state["decision_judge_fn"] = fake_judge
+
+    result = asyncio.run(review_node(state))
+
+    assert result["review"]["decision_judge"]["status"] == "ok"
+    assert captured
+    assert {call["method"] for call in captured} == {"score_trace"}
+    assert {call["trace_id"] for call in captured} == {"trace-existing-game"}
+    by_name = {call["name"]: call for call in captured}
+    assert by_name["review.decision_judge_average_score"]["value"] == 8.5
 
 
 def test_review_decision_judge_score_skips_none_and_missing_fields(monkeypatch):

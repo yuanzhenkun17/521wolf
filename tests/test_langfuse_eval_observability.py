@@ -169,6 +169,14 @@ def test_persist_batch_node_writes_eval_langfuse_scores(monkeypatch):
 
     assert by_name["eval.rankable"]["value"] is True
     assert by_name["eval.rankable"]["data_type"] == "BOOLEAN"
+    assert by_name["eval.rankable"]["metadata"]["rankable_reason"] == "ok"
+    assert by_name["eval.data_sufficient"]["value"] is True
+    assert by_name["eval.data_sufficient"]["data_type"] == "BOOLEAN"
+    assert by_name["eval.low_error_rate"]["value"] is True
+    assert by_name["eval.low_error_rate"]["data_type"] == "BOOLEAN"
+    assert by_name["eval.leaderboard_accepted"]["value"] is True
+    assert by_name["eval.leaderboard_accepted"]["data_type"] == "BOOLEAN"
+    assert by_name["eval.leaderboard_accepted"]["metadata"]["leaderboard_gate_reason"] == "ok"
     assert captured[-1]["name"] == "flush_langfuse"
 
 
@@ -223,6 +231,8 @@ def test_run_games_node_creates_eval_batch_langfuse_context(monkeypatch):
         "game_count": 1,
         "max_days": 3,
         "seed_start": 0,
+        "seed_count": 1,
+        "seed_preview": [],
     }
 
 

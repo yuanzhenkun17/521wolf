@@ -81,6 +81,7 @@ def test_decide_node_writes_evolve_run_scores(monkeypatch):
             "promotion_gate": {
                 "promote_allowed": True,
                 "recommendation": "promote",
+                "reasons": [],
                 "decision_quality": {
                     "candidate": {"issue_rate": 0.12},
                     "baseline": {"issue_rate": 0.08},
@@ -125,6 +126,8 @@ def test_decide_node_writes_evolve_run_scores(monkeypatch):
     assert by_name["evolve.candidate_win_rate"]["data_type"] == "NUMERIC"
     assert by_name["evolve.candidate_win_rate"]["metadata"]["run_id"] == "evolve-score-run"
     assert by_name["evolve.candidate_win_rate"]["metadata"]["metric_family"] == "evolve"
+    assert by_name["evolve.candidate_win_rate"]["metadata"]["promote_allowed"] is True
+    assert by_name["evolve.candidate_win_rate"]["metadata"]["promotion_gate_reasons"] == []
 
 
 def test_evolve_scores_skip_none_values(monkeypatch):

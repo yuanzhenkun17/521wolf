@@ -1070,6 +1070,21 @@ def _write_langfuse_eval_scores(
             metadata=metadata,
         )
 
+    boolean_scores = {
+        "eval.data_sufficient": _first_present(result.get("data_sufficient"), state.get("data_sufficient")),
+        "eval.low_error_rate": _first_present(result.get("low_error_rate"), state.get("low_error_rate")),
+        "eval.leaderboard_accepted": _leaderboard_accepted(result),
+    }
+    for name, value in boolean_scores.items():
+        if value is not None:
+            _score_langfuse_metric(
+                observability,
+                name,
+                bool(value),
+                data_type="BOOLEAN",
+                metadata=metadata,
+            )
+
     judge = summary.get("decision_judge_aggregate")
     if not isinstance(judge, dict):
         judge = state.get("decision_judge_aggregate") if isinstance(state.get("decision_judge_aggregate"), dict) else {}
@@ -1097,9 +1112,24 @@ def _langfuse_eval_score_metadata(state: EvalBatchState, result: dict[str, Any])
         "game_count": result.get("game_count"),
         "attempted_game_count": result.get("attempted_game_count"),
         "rankable": result.get("rankable"),
+        "rankable_reason": result.get("rankable_reason") or state.get("rankable_reason"),
+        "data_sufficient": result.get("data_sufficient", state.get("data_sufficient")),
+        "data_sufficient_reason": result.get("data_sufficient_reason") or state.get("data_sufficient_reason"),
+        "low_error_rate": result.get("low_error_rate", state.get("low_error_rate")),
+        "low_error_rate_reason": result.get("low_error_rate_reason") or state.get("low_error_rate_reason"),
         "leaderboard_accepted": gate.get("accepted"),
+        "leaderboard_gate_reason": gate.get("reason"),
     }
     return {key: value for key, value in metadata.items() if value is not None}
+
+
+def _leaderboard_accepted(result: dict[str, Any]) -> bool | None:
+    gate = result.get("leaderboard_gate") if isinstance(result.get("leaderboard_gate"), dict) else {}
+    if "accepted" in gate:
+        return bool(gate.get("accepted"))
+    if "leaderboard_skipped_reason" in result:
+        return False
+    return None
 
 
 def _score_langfuse_metric(

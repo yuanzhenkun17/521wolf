@@ -360,6 +360,7 @@ def _llm_runnable(
                 model=model,
                 messages=prepared_messages,
                 metadata=observation_metadata,
+                trace_id=_trace_id_from_metadata(observation_metadata),
             ) as observation:
                 result = await invoke_llm_with_policy(
                     llm,
@@ -368,6 +369,7 @@ def _llm_runnable(
                     circuit_key=f"{stage}:{model or 'unknown'}",
                 )
                 elapsed_ms = int(round((time.perf_counter() - started) * 1000))
+                usage = _llm_usage_metadata(result)
                 _update_observation(
                     observability,
                     observation,
@@ -377,7 +379,9 @@ def _llm_runnable(
                         "elapsed_ms": elapsed_ms,
                         "attempts": int(getattr(result, "llm_attempts", 1) or 1),
                         **_output_diagnostic(_message_raw_content(result)),
+                        **usage,
                     },
+                    usage_details=usage.get("usage_details"),
                 )
                 return result
         except LLMCallError:
@@ -420,6 +424,14 @@ def _update_observation(observability: Any, observation: Any, **kwargs: Any) -> 
         update(observation, **kwargs)
     except Exception:  # noqa: BLE001
         _log.debug("observability update failed", exc_info=True)
+
+
+def _trace_id_from_metadata(metadata: dict[str, Any]) -> str | None:
+    trace_id = metadata.get("langfuse_trace_id")
+    if trace_id is None:
+        return None
+    text = str(trace_id).strip()
+    return text or None
 
 
 def _message_raw_content(message: Any) -> str:
@@ -475,6 +487,114 @@ def _model_identifier(llm: Any) -> str | None:
                 return text
         current = getattr(current, "bound", None) or getattr(current, "_bound", None)
     return None
+
+
+def _llm_usage_metadata(result: Any) -> dict[str, Any]:
+    try:
+        usage = _extract_usage_payload(result)
+        if not usage:
+            return {}
+        normalized = _normalize_usage_payload(usage)
+        if not normalized:
+            return {"usage": usage}
+        payload: dict[str, Any] = {"usage": normalized}
+        usage_details = _usage_details(normalized)
+        if usage_details:
+            payload["usage_details"] = usage_details
+        return payload
+    except Exception:  # noqa: BLE001 - usage extraction must not affect LLM calls
+        _log.debug("LLM usage extraction failed", exc_info=True)
+        return {}
+
+
+def _extract_usage_payload(result: Any) -> dict[str, Any]:
+    candidates = (
+        _value_at_path(result, ("usage_metadata",)),
+        _value_at_path(result, ("response_metadata", "token_usage")),
+        _value_at_path(result, ("response_metadata", "usage")),
+        _value_at_path(result, ("llm_output", "token_usage")),
+        _value_at_path(result, ("llm_output", "usage")),
+        _value_at_path(result, ("token_usage",)),
+        _value_at_path(result, ("usage",)),
+    )
+    for candidate in candidates:
+        payload = _dict_like(candidate)
+        if payload:
+            return payload
+    return {}
+
+
+def _value_at_path(value: Any, path: tuple[str, ...]) -> Any:
+    current = value
+    for key in path:
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            current = getattr(current, key, None)
+    return current
+
+
+def _dict_like(value: Any) -> dict[str, Any]:
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    items = getattr(value, "items", None)
+    if callable(items):
+        try:
+            return dict(items())
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+def _normalize_usage_payload(usage: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    key_groups = {
+        "input_tokens": ("input_tokens", "prompt_tokens", "prompt_token_count"),
+        "output_tokens": ("output_tokens", "completion_tokens", "completion_token_count"),
+        "total_tokens": ("total_tokens", "total_token_count"),
+    }
+    for canonical, keys in key_groups.items():
+        value = _first_number(usage, keys)
+        if value is not None:
+            normalized[canonical] = value
+
+    for key, value in usage.items():
+        if key not in normalized and isinstance(value, (int, float, str, bool, list, dict, type(None))):
+            normalized.setdefault(str(key), value)
+    return {key: value for key, value in normalized.items() if value is not None}
+
+
+def _first_number(usage: dict[str, Any], keys: tuple[str, ...]) -> int | float | None:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        if isinstance(value, (int, float)):
+            return value
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _usage_details(usage: dict[str, Any]) -> dict[str, int]:
+    details: dict[str, int] = {}
+    for key in ("input_tokens", "output_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number >= 0:
+            details[key] = number
+    return details
 
 
 _SCHEMA_VERSIONED_STAGES = frozenset({"decision", "consolidate", "apply", "evidence", "decision_judge"})

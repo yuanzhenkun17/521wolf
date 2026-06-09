@@ -1708,6 +1708,9 @@ def _langfuse_evolve_trace_id(observability: Any, state: dict) -> str | None:
 
 def _langfuse_evolve_metadata(state: dict) -> dict[str, Any]:
     result = state.get("result") if isinstance(state.get("result"), dict) else {}
+    battle = _nested_dict(result, "battle_result") or _nested_dict(state, "battle_result")
+    gate = _nested_dict(result, "promotion_gate") or _nested_dict(battle, "promotion_gate")
+    gate_report = _nested_dict(result, "gate_report") or _nested_dict(battle, "gate_report")
     proposals = result.get("proposals") if isinstance(result.get("proposals"), list) else state.get("proposals")
     battle_games = result.get("battle_games") if isinstance(result.get("battle_games"), list) else state.get("battle_games")
     training_games = result.get("training_games") if isinstance(result.get("training_games"), list) else state.get("training_games")
@@ -1720,6 +1723,8 @@ def _langfuse_evolve_metadata(state: dict) -> dict[str, Any]:
         "parent_hash": state.get("parent_hash") or result.get("parent_hash"),
         "candidate_hash": state.get("candidate_hash") or result.get("candidate_hash"),
         "auto_promote": (state.get("config") or {}).get("auto_promote") if isinstance(state.get("config"), dict) else None,
+        "promote_allowed": gate.get("promote_allowed", gate_report.get("promote_allowed")),
+        "promotion_gate_reasons": gate.get("reasons", gate_report.get("reasons")),
         "proposal_count": len(proposals) if isinstance(proposals, list) else None,
         "training_game_count": len(training_games) if isinstance(training_games, list) else None,
         "battle_game_count": len(battle_games) if isinstance(battle_games, list) else None,

@@ -168,6 +168,79 @@ def test_tracing_enabled_without_keys_is_still_noop(monkeypatch: pytest.MonkeyPa
     assert sdk_calls == []
 
 
+def test_langfuse_client_uses_mask_and_explicit_trace_helpers(monkeypatch: pytest.MonkeyPatch):
+    _clear_langfuse_env(monkeypatch)
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "public-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret-test")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://127.0.0.1:3000/")
+    monkeypatch.setenv("LANGFUSE_ENVIRONMENT", "test")
+    monkeypatch.setenv("LANGFUSE_RELEASE", "release-test")
+    monkeypatch.setenv("LANGFUSE_SAMPLE_RATE", "0.5")
+
+    captured: list[dict[str, Any]] = []
+
+    class _Langfuse:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured.append({"name": "Langfuse", "args": args, "kwargs": kwargs})
+
+        def create_score(self, **kwargs: Any) -> None:
+            captured.append({"name": "create_score", "kwargs": kwargs})
+
+        def score_current_trace(self, **kwargs: Any) -> None:
+            captured.append({"name": "score_current_trace", "kwargs": kwargs})
+
+        def get_current_trace_id(self) -> str:
+            captured.append({"name": "get_current_trace_id"})
+            return "trace-current"
+
+        def get_trace_url(self, *, trace_id: str | None = None) -> str:
+            captured.append({"name": "get_trace_url", "trace_id": trace_id})
+            return f"http://127.0.0.1:3000/project/traces/{trace_id or 'trace-current'}"
+
+    langfuse_mod = types.ModuleType("langfuse")
+    langfuse_mod.Langfuse = _Langfuse
+    monkeypatch.setitem(sys.modules, "langfuse", langfuse_mod)
+
+    obs = _load_observability(monkeypatch)
+
+    client = obs.get_langfuse_client()
+    assert client is not None
+    init = captured[0]
+    assert init["name"] == "Langfuse"
+    assert init["kwargs"]["base_url"] == "http://127.0.0.1:3000"
+    assert init["kwargs"]["environment"] == "test"
+    assert init["kwargs"]["release"] == "release-test"
+    assert init["kwargs"]["sample_rate"] == 0.5
+    mask = init["kwargs"]["mask"]
+    assert callable(mask)
+    assert mask({"api_key": "sk-secret", "prompt": "full prompt"})["api_key"] == "[REDACTED]"
+    assert obs.capture_input_output() is False
+
+    obs.score_trace(
+        "trace-explicit",
+        "eval.rankable",
+        True,
+        data_type="BOOLEAN",
+        metadata={"batch_id": "batch-a"},
+    )
+    obs.score_trace(
+        None,
+        "eval.current",
+        1.0,
+        data_type="NUMERIC",
+        metadata={"batch_id": "batch-b"},
+    )
+
+    assert obs.get_current_trace_id() == "trace-current"
+    assert obs.get_trace_url("trace-explicit").endswith("/trace-explicit")
+
+    by_name = {call["name"]: call for call in captured if call["name"] != "Langfuse"}
+    assert by_name["create_score"]["kwargs"]["trace_id"] == "trace-explicit"
+    assert by_name["create_score"]["kwargs"]["value"] is True
+    assert by_name["score_current_trace"]["kwargs"]["name"] == "eval.current"
+
+
 class _NoopObservation:
     def __enter__(self):
         return self
@@ -331,6 +404,98 @@ def test_chain_merges_business_metadata_into_llm_observation(monkeypatch: pytest
         assert update_metadata[key] == value
 
 
+def test_chain_writes_llm_usage_metadata_to_observation(monkeypatch: pytest.MonkeyPatch):
+    if not _observability_available():
+        pytest.skip("app.services.observability has not been implemented yet")
+
+    captured = _install_capturing_observability(monkeypatch)
+    monkeypatch.delitem(sys.modules, "app.services.chain", raising=False)
+    chain = importlib.import_module("app.services.chain")
+
+    class FakeModel:
+        model_name = "usage-metadata-model"
+
+        async def ainvoke(self, *args: Any, **kwargs: Any):
+            return type(
+                "Result",
+                (),
+                {
+                    "content": '{"schema_version":"1.0","ok":true}',
+                    "usage_metadata": {
+                        "input_tokens": 11,
+                        "output_tokens": 7,
+                        "total_tokens": 18,
+                    },
+                },
+            )()
+
+    asyncio.run(
+        chain.run_apply_chain(
+            FakeModel(),
+            messages=[{"role": "user", "content": "apply this"}],
+            metadata={"langfuse_trace_id": "trace-usage"},
+        )
+    )
+
+    observe_calls = [call for call in captured if call["name"] == "observe_llm_call"]
+    assert observe_calls
+    assert observe_calls[0]["kwargs"]["trace_id"] == "trace-usage"
+
+    update_calls = [call for call in captured if call["name"] == "update_observation"]
+    assert update_calls
+    update_metadata = _metadata_from_call(update_calls[-1])
+    assert update_metadata["usage"]["input_tokens"] == 11
+    assert update_metadata["usage"]["output_tokens"] == 7
+    assert update_metadata["usage"]["total_tokens"] == 18
+    assert update_calls[-1]["kwargs"]["usage_details"] == {
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+    }
+
+
+def test_chain_writes_response_metadata_token_usage(monkeypatch: pytest.MonkeyPatch):
+    if not _observability_available():
+        pytest.skip("app.services.observability has not been implemented yet")
+
+    captured = _install_capturing_observability(monkeypatch)
+    monkeypatch.delitem(sys.modules, "app.services.chain", raising=False)
+    chain = importlib.import_module("app.services.chain")
+
+    class FakeModel:
+        model_name = "response-token-usage-model"
+
+        async def ainvoke(self, *args: Any, **kwargs: Any):
+            return type(
+                "Result",
+                (),
+                {
+                    "content": '{"schema_version":"1.0","ok":true}',
+                    "response_metadata": {
+                        "token_usage": {
+                            "prompt_tokens": 13,
+                            "completion_tokens": 5,
+                            "total_tokens": 18,
+                        },
+                    },
+                },
+            )()
+
+    asyncio.run(
+        chain.run_apply_chain(
+            FakeModel(),
+            messages=[{"role": "user", "content": "apply this"}],
+        )
+    )
+
+    update_calls = [call for call in captured if call["name"] == "update_observation"]
+    assert update_calls
+    usage = _metadata_from_call(update_calls[-1])["usage"]
+    assert usage["input_tokens"] == 13
+    assert usage["output_tokens"] == 5
+    assert usage["total_tokens"] == 18
+
+
 def test_agent_decision_call_passes_business_metadata_to_chain(monkeypatch: pytest.MonkeyPatch):
     from app.graphs.subgraphs.agent import nodes as agent_nodes
 
@@ -358,6 +523,7 @@ def test_agent_decision_call_passes_business_metadata_to_chain(monkeypatch: pyte
     state = {
         "game_id": "g-agent-meta",
         "source_run_id": "batch-agent-meta",
+        "langfuse_trace_id": "trace-agent-meta",
         "player_id": 7,
         "role": "seer",
         "source": "llm",
@@ -397,6 +563,7 @@ def test_agent_decision_call_passes_business_metadata_to_chain(monkeypatch: pyte
     assert metadata["phase"] == "night"
     assert metadata["day"] == 2
     assert metadata["source"] == "llm"
+    assert metadata["langfuse_trace_id"] == "trace-agent-meta"
     assert metadata["candidate_count"] == 2
     assert metadata["retry_count"] == 1
 

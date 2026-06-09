@@ -821,6 +821,9 @@ def _normalize_agent_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
         normalized["agent_memory_max_events_per_segment"] = memory_max_events
     if memory_event_chars is not None:
         normalized["agent_memory_event_max_chars"] = memory_event_chars
+    langfuse_trace_id = str(raw.get("langfuse_trace_id") or "").strip()
+    if langfuse_trace_id:
+        normalized["langfuse_trace_id"] = langfuse_trace_id
     return normalized
 
 
@@ -944,6 +947,7 @@ def _decision_langfuse_metadata(state: dict, request: ActionRequest) -> dict[str
         "selected_skills": selected_skills,
         "skill_count": len(selected_skills),
         "source": state.get("source") or "llm",
+        "langfuse_trace_id": state.get("langfuse_trace_id"),
     }
     return {key: value for key, value in metadata.items() if value is not None}
 

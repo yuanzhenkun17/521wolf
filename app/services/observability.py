@@ -17,6 +17,7 @@ from typing import Any, Iterator
 from dotenv import load_dotenv
 
 from app.config import LLM_ENV_PATH
+from app.util.redaction import redact
 
 _log = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def get_langfuse_client() -> Any | None:
             environment=environment,
             release=release,
             sample_rate=sample_rate,
+            mask=_langfuse_mask,
         )
         _CLIENT_CONFIG = config
     except Exception as exc:  # noqa: BLE001 - observability must not break runtime
@@ -214,6 +216,8 @@ def update_observation(
     *,
     output: Any | None = None,
     metadata: dict[str, Any] | None = None,
+    usage_details: dict[str, int] | None = None,
+    cost_details: dict[str, float] | None = None,
     level: str | None = None,
     status_message: str | None = None,
 ) -> None:
@@ -228,6 +232,10 @@ def update_observation(
         kwargs["output"] = output
     if metadata is not None:
         kwargs["metadata"] = metadata
+    if usage_details is not None:
+        kwargs["usage_details"] = usage_details
+    if cost_details is not None:
+        kwargs["cost_details"] = cost_details
     if level is not None:
         kwargs["level"] = level
     if status_message is not None:
@@ -252,9 +260,41 @@ def create_trace_id(seed: str | None = None) -> str | None:
         return None
 
 
+def get_current_trace_id() -> str | None:
+    """Return the current Langfuse trace id, when one is active."""
+    client = get_langfuse_client()
+    if client is None:
+        return None
+    get_trace_id = getattr(client, "get_current_trace_id", None)
+    if not callable(get_trace_id):
+        return None
+    try:
+        trace_id = get_trace_id()
+        return str(trace_id) if trace_id else None
+    except Exception:  # noqa: BLE001
+        _log.debug("Langfuse current trace id lookup failed", exc_info=True)
+        return None
+
+
+def get_trace_url(trace_id: str | None = None) -> str | None:
+    """Return a best-effort Langfuse UI URL for a trace."""
+    client = get_langfuse_client()
+    if client is None:
+        return None
+    get_url = getattr(client, "get_trace_url", None)
+    if not callable(get_url):
+        return None
+    try:
+        url = get_url(trace_id=trace_id)
+        return str(url) if url else None
+    except Exception:  # noqa: BLE001
+        _log.debug("Langfuse trace URL lookup failed", exc_info=True)
+        return None
+
+
 def score_current_trace(
     name: str,
-    value: float | str,
+    value: float | str | bool,
     *,
     data_type: str | None = None,
     comment: str | None = None,
@@ -276,6 +316,44 @@ def score_current_trace(
         _log.debug("Langfuse trace scoring failed for %s", name, exc_info=True)
 
 
+def score_trace(
+    trace_id: str | None,
+    name: str,
+    value: float | str | bool,
+    *,
+    data_type: str | None = None,
+    comment: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort score on an explicit Langfuse trace."""
+    if not trace_id:
+        score_current_trace(
+            name,
+            value,
+            data_type=data_type,
+            comment=comment,
+            metadata=metadata,
+        )
+        return
+    client = get_langfuse_client()
+    if client is None:
+        return
+    create_score = getattr(client, "create_score", None)
+    if not callable(create_score):
+        return
+    try:
+        create_score(
+            trace_id=str(trace_id),
+            name=name,
+            value=value,
+            data_type=data_type,
+            comment=comment,
+            metadata=metadata,
+        )
+    except Exception:  # noqa: BLE001
+        _log.debug("Langfuse trace scoring failed for %s on %s", name, trace_id, exc_info=True)
+
+
 def flush_langfuse() -> None:
     """Flush pending Langfuse events, if a client exists."""
     client = _CLIENT
@@ -293,7 +371,16 @@ def flush_langfuse() -> None:
 def capture_input_output() -> bool:
     """Whether raw prompt/response payloads should be sent to Langfuse."""
     _load_env_once()
-    return _env_bool("LANGFUSE_CAPTURE_INPUT_OUTPUT", default=True)
+    return _env_bool("LANGFUSE_CAPTURE_INPUT_OUTPUT", default=False)
+
+
+def _langfuse_mask(data: Any) -> Any:
+    """Redact sensitive payload fields before the SDK exports them."""
+    try:
+        return redact(data, context="diagnostic")
+    except Exception:  # noqa: BLE001 - masking must never break tracing
+        _log.debug("Langfuse masking failed", exc_info=True)
+        return data
 
 
 def _load_env_once() -> None:

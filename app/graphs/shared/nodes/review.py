@@ -128,7 +128,11 @@ async def _attach_decision_judge_report(
             judge_fn=state.get("decision_judge_fn"),
         )
         review["decision_judge"] = report
-        _score_langfuse_decision_judge_report(report, game_id=game_id)
+        _score_langfuse_decision_judge_report(
+            report,
+            game_id=game_id,
+            langfuse_trace_id=_langfuse_trace_id(state),
+        )
         persisted = _persist_decision_judge_report(state, report, game_id=game_id)
         if persisted:
             report.setdefault("persistence", {})["llm_judgment_ids"] = persisted
@@ -142,14 +146,23 @@ async def _attach_decision_judge_report(
         _log.warning("decision judge failed: %s", exc, exc_info=True)
         message = f"decision judge failed: {type(exc).__name__}: {exc}"
         review["decision_judge"] = {"status": "failed", "error": str(exc), "warnings": [message]}
-        _score_langfuse_decision_judge_report(review["decision_judge"], game_id=game_id)
+        _score_langfuse_decision_judge_report(
+            review["decision_judge"],
+            game_id=game_id,
+            langfuse_trace_id=_langfuse_trace_id(state),
+        )
         existing = _list_str(review.get("warnings"))
         if message not in existing:
             review["warnings"] = existing + [message]
         _append_warnings(state, [message])
 
 
-def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
+def _score_langfuse_decision_judge_report(
+    report: Any,
+    *,
+    game_id: str,
+    langfuse_trace_id: str | None = None,
+) -> None:
     if not isinstance(report, dict):
         return
     try:
@@ -168,6 +181,7 @@ def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
             summary.get("average_score"),
             data_type="NUMERIC",
             metadata=metadata,
+            trace_id=langfuse_trace_id,
         )
         _score_langfuse_value(
             observability,
@@ -175,6 +189,7 @@ def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
             metrics.get("judged"),
             data_type="NUMERIC",
             metadata=metadata,
+            trace_id=langfuse_trace_id,
         )
         _score_langfuse_value(
             observability,
@@ -182,6 +197,7 @@ def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
             metrics.get("failed"),
             data_type="NUMERIC",
             metadata=metadata,
+            trace_id=langfuse_trace_id,
         )
         _score_langfuse_value(
             observability,
@@ -189,6 +205,7 @@ def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
             report.get("status"),
             data_type="CATEGORICAL",
             metadata=metadata,
+            trace_id=langfuse_trace_id,
         )
         if quality_counts:
             _score_langfuse_value(
@@ -197,6 +214,7 @@ def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
                 quality_counts.get("bad", 0),
                 data_type="NUMERIC",
                 metadata=metadata,
+                trace_id=langfuse_trace_id,
             )
             _score_langfuse_value(
                 observability,
@@ -204,6 +222,7 @@ def _score_langfuse_decision_judge_report(report: Any, *, game_id: str) -> None:
                 quality_counts.get("good", 0),
                 data_type="NUMERIC",
                 metadata=metadata,
+                trace_id=langfuse_trace_id,
             )
     except Exception:  # noqa: BLE001 - observability must never affect review
         _log.debug("Langfuse decision judge scoring failed", exc_info=True)
@@ -216,15 +235,50 @@ def _score_langfuse_value(
     *,
     data_type: str,
     metadata: dict[str, Any],
+    trace_id: str | None = None,
 ) -> None:
     if value is None:
         return
-    observability.score_current_trace(
-        name,
-        value,
-        data_type=data_type,
-        metadata=metadata,
-    )
+    score_trace = getattr(observability, "score_trace", None)
+    if trace_id and callable(score_trace):
+        try:
+            score_trace(
+                trace_id=trace_id,
+                name=name,
+                value=value,
+                data_type=data_type,
+                metadata=metadata,
+            )
+            return
+        except TypeError:
+            try:
+                score_trace(trace_id, name, value, data_type=data_type, metadata=metadata)
+                return
+            except Exception:  # noqa: BLE001
+                _log.debug("Langfuse trace scoring failed for %s", name, exc_info=True)
+        except Exception:  # noqa: BLE001
+            _log.debug("Langfuse trace scoring failed for %s", name, exc_info=True)
+
+    score_current_trace = getattr(observability, "score_current_trace", None)
+    if not callable(score_current_trace):
+        return
+    try:
+        score_current_trace(
+            name,
+            value,
+            data_type=data_type,
+            metadata=metadata,
+        )
+    except Exception:  # noqa: BLE001
+        _log.debug("Langfuse current trace scoring failed for %s", name, exc_info=True)
+
+
+def _langfuse_trace_id(state: dict) -> str | None:
+    trace_id = state.get("langfuse_trace_id")
+    if trace_id is None:
+        return None
+    text = str(trace_id).strip()
+    return text or None
 
 
 def _persist_decision_judge_report(state: dict, report: dict[str, Any], *, game_id: str) -> list[str]:

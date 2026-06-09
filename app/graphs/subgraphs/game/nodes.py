@@ -89,6 +89,7 @@ async def create_agents_node(state: dict) -> dict:
         recorder = AgentDecisionRecorder(sink=sink)
     trace_recorder = state.get("trace_recorder")
     agent_subgraph = state.get("agent_subgraph")
+    _ensure_langfuse_trace_id(state)
     agent_runtime_config = _agent_runtime_config(state)
 
     def _skill_dir_for(role: "ERole"):
@@ -127,6 +128,7 @@ async def create_agents_node(state: dict) -> dict:
                 paths=state.get("paths"),
                 agent_runtime_config=agent_runtime_config,
             )
+        _attach_langfuse_trace_id(agents[player_id], state)
 
     # Inject agents into engine
     engine = state.get("engine")
@@ -152,9 +154,7 @@ async def game_loop_node(state: dict) -> dict:
 
     observability = _observability()
     metadata = _langfuse_game_metadata(state)
-    trace_id = state.get("langfuse_trace_id") or observability.create_trace_id(
-        seed=str(state.get("game_id") or metadata.get("game_id") or "")
-    )
+    trace_id = _ensure_langfuse_trace_id(state, observability=observability)
     if trace_id:
         state["langfuse_trace_id"] = trace_id
     session_id = str(state.get("langfuse_session_id") or metadata.get("source_run_id") or metadata.get("game_id") or "")
@@ -271,6 +271,37 @@ def _observability() -> Any:
     return importlib.import_module("app.services.observability")
 
 
+def _ensure_langfuse_trace_id(state: dict, *, observability: Any | None = None) -> str | None:
+    existing = state.get("langfuse_trace_id")
+    if existing:
+        return str(existing)
+    try:
+        obs = observability or _observability()
+        create_trace_id = getattr(obs, "create_trace_id", None)
+        if not callable(create_trace_id):
+            return None
+        trace_id = create_trace_id(seed=str(state.get("game_id") or ""))
+    except Exception:  # noqa: BLE001 - tracing must not affect game execution
+        _log.debug("Langfuse trace id creation failed", exc_info=True)
+        return None
+    if trace_id:
+        state["langfuse_trace_id"] = str(trace_id)
+        return str(trace_id)
+    return None
+
+
+def _attach_langfuse_trace_id(agent: Any, state: dict) -> None:
+    trace_id = state.get("langfuse_trace_id")
+    if not trace_id:
+        return
+    try:
+        config = getattr(agent, "agent_runtime_config", None)
+        if isinstance(config, dict):
+            config["langfuse_trace_id"] = str(trace_id)
+    except Exception:  # noqa: BLE001 - observability propagation must be advisory
+        _log.debug("Langfuse trace id propagation to agent failed", exc_info=True)
+
+
 def _langfuse_game_metadata(state: dict) -> dict[str, Any]:
     metadata = {
         "game_id": state.get("game_id"),
@@ -314,17 +345,18 @@ def _score_langfuse_game_trace(state: dict) -> None:
     observability = _observability()
     winner = state.get("winner")
     if winner is not None:
-        observability.score_current_trace("winner", str(winner), data_type="CATEGORICAL")
-    observability.score_current_trace("finished", bool(state.get("finished")), data_type="BOOLEAN")
+        _score_langfuse_value(observability, "winner", str(winner), data_type="CATEGORICAL")
+    _score_langfuse_value(observability, "finished", bool(state.get("finished")), data_type="BOOLEAN")
     if state.get("error"):
-        observability.score_current_trace(
+        _score_langfuse_value(
+            observability,
             "terminal_status",
             "error",
             data_type="CATEGORICAL",
             comment=str(state.get("error")),
         )
     else:
-        observability.score_current_trace("terminal_status", "completed", data_type="CATEGORICAL")
+        _score_langfuse_value(observability, "terminal_status", "completed", data_type="CATEGORICAL")
     _score_langfuse_decision_quality(observability, state)
 
 
@@ -357,12 +389,36 @@ def _score_langfuse_decision_quality(observability: Any, state: dict) -> None:
         value = metrics.get(name)
         if value is None:
             continue
-        observability.score_current_trace(
+        _score_langfuse_value(
+            observability,
             f"decision_quality.{name}",
             value,
             data_type="NUMERIC",
             metadata=metadata,
         )
+
+
+def _score_langfuse_value(
+    observability: Any,
+    name: str,
+    value: Any,
+    *,
+    data_type: str,
+    comment: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    score_current_trace = getattr(observability, "score_current_trace", None)
+    if not callable(score_current_trace):
+        return
+    try:
+        score_current_trace(name, value, data_type=data_type, comment=comment, metadata=metadata)
+    except TypeError:
+        try:
+            score_current_trace(name, value, data_type=data_type, metadata=metadata)
+        except Exception:  # noqa: BLE001
+            _log.debug("Langfuse game score failed for %s", name, exc_info=True)
+    except Exception:  # noqa: BLE001
+        _log.debug("Langfuse game score failed for %s", name, exc_info=True)
 
 
 def _flush_langfuse(observability: Any) -> None:
@@ -462,6 +518,7 @@ def _runner_retry_delay(state: dict) -> float:
 
 
 _AGENT_RUNTIME_CONFIG_KEYS: tuple[str, ...] = (
+    "langfuse_trace_id",
     "agent_fast_smoke",
     "agent_policy_skip_llm_enabled",
     "agent_policy_skip_llm_preset",
