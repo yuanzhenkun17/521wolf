@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.js'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
@@ -344,7 +344,44 @@ function cancelLaunchConfirmation() {
   launchConfirmationOpen.value = false
 }
 
-onMounted(() => benchmark.refreshAll())
+function benchmarkDeepLinkBatchId(hash = typeof window === 'undefined' ? '' : window.location.hash) {
+  const [routeHash, queryString = ''] = String(hash || '').split('?')
+  if (routeHash !== '#benchmark') return ''
+  const params = new URLSearchParams(queryString)
+  return String(
+    params.get('batch_id') ||
+    params.get('batch') ||
+    params.get('run_id') ||
+    params.get('run') ||
+    params.get('source_run_id') ||
+    ''
+  ).trim()
+}
+
+function applyBenchmarkDeepLink() {
+  const batchId = benchmarkDeepLinkBatchId()
+  if (!batchId) return false
+  activeView.value = 'runs'
+  if (benchmark.selectedBenchmarkBatchId.value !== batchId) {
+    benchmark.selectBenchmarkBatch(batchId)
+  }
+  return true
+}
+
+function handleBenchmarkHashChange() {
+  applyBenchmarkDeepLink()
+}
+
+onMounted(() => {
+  if (typeof window !== 'undefined') window.addEventListener('hashchange', handleBenchmarkHashChange)
+  void benchmark.refreshAll().finally(() => {
+    applyBenchmarkDeepLink()
+  })
+})
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') window.removeEventListener('hashchange', handleBenchmarkHashChange)
+})
 </script>
 
 <template>

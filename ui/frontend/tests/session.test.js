@@ -2062,6 +2062,17 @@ test('evolution hash deep links keep query when the global router opens the page
   assert.equal(window.location.hash, '#evolution?run_id=deep-run&proposal_id=proposal-b')
 }))
 
+test('benchmark hash deep links keep query when the global router opens the page', () => withWindow(() => {
+  const state = useGameState()
+  const history = useGameHistory(state, { installLifecycle: false, apiFetch: async () => ({}) })
+
+  window.location.hash = '#benchmark?batch_id=bench-run-7'
+  history.openBenchmarkPage({ rememberOrigin: false })
+
+  assert.equal(state.currentView.value, 'benchmark')
+  assert.equal(window.location.hash, '#benchmark?batch_id=bench-run-7')
+}))
+
 test('history list uses paginated API and load more appends without changing selection', () => withWindow(async () => {
   const state = useGameState()
   const requests = []

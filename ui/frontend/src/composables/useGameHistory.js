@@ -1373,6 +1373,8 @@ function useGameHistory(state, options = {}) {
   function openBenchmarkPage({ rememberOrigin = true } = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'benchmark'
+    const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
+    if (hash.split('?')[0] === '#benchmark') return
     writeViewHash('benchmark')
   }
 
