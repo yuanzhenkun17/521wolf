@@ -40,7 +40,12 @@ function diffActionLabel(action) {
 }
 
 function diffActionColor(action) {
-  return { created: '#2e7d32', modified: '#f9a825', deleted: '#c62828', renamed: '#4a9eff' }[action] || '#666'
+  return {
+    created: 'var(--evo-success)',
+    modified: 'var(--evo-warning)',
+    deleted: 'var(--evo-danger)',
+    renamed: 'var(--evo-accent)'
+  }[action] || 'var(--evo-text-secondary)'
 }
 
 function computeLineDiff(before, after) {

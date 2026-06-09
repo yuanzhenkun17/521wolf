@@ -14,11 +14,11 @@ const expandedPatterns = reactive(new Set())
 const versionDetail = computed(() => props.evo.selectedVersionDetail.value?.data || null)
 
 const PATTERN_STATUS_COLORS = {
-  candidate: '#666',
-  active: '#4a9eff',
-  crystallized: '#f5a623',
-  archived: '#555',
-  deprecated: '#993333'
+  candidate: 'var(--evo-text-secondary)',
+  active: 'var(--evo-accent)',
+  crystallized: 'var(--evo-warning)',
+  archived: 'var(--evo-text-secondary)',
+  deprecated: 'var(--evo-danger)'
 }
 
 const PATTERN_STATUS_LABELS = {
@@ -112,7 +112,7 @@ function versionDetailSourceLabel(data) {
 }
 
 function patternStatusColor(status) {
-  return PATTERN_STATUS_COLORS[status] || '#666'
+  return PATTERN_STATUS_COLORS[status] || 'var(--evo-text-secondary)'
 }
 
 function patternStatusLabel(status) {
@@ -129,9 +129,9 @@ function winRatePct(value) {
 
 function winRateBarColor(value) {
   const n = Number(value) || 0
-  if (n >= 0.6) return '#2e7d32'
-  if (n >= 0.45) return '#f9a825'
-  return '#c62828'
+  if (n >= 0.6) return 'var(--evo-success)'
+  if (n >= 0.45) return 'var(--evo-warning)'
+  return 'var(--evo-danger)'
 }
 
 function togglePatternSource(patternId) {

@@ -14,7 +14,6 @@ import MobileTaskShell from '../components/MobileTaskShell.vue'
 import PlayerCarousel from '../components/PlayerCarousel.vue'
 import PlayerIdentityBoard from '../components/PlayerIdentityBoard.vue'
 import ReplayControls from '../components/ReplayControls.vue'
-import EvidenceContextBar from '../components/history/EvidenceContextBar.vue'
 import { displayPhaseLabel } from '../components/history/historyDisplay.js'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
 
@@ -425,12 +424,6 @@ onBeforeUnmount(() => {
         @start-from-judge-board="emit('start-from-judge-board')"
       />
 
-      <EvidenceContextBar
-        v-if="isReplayMode && game"
-        class="match-replay-evidence-context"
-        :game="game"
-      />
-
       <ReplayControls
         v-if="isReplayMode"
         class="match-replay-controls"
@@ -802,34 +795,6 @@ onBeforeUnmount(() => {
   pointer-events: auto;
 }
 
-.match-replay-evidence-context {
-  position: fixed;
-  top: var(--match-replay-context-top, calc(164px + var(--match-safe-top, 0px)));
-  left: 50%;
-  z-index: 23;
-  box-sizing: border-box;
-  width: min(740px, calc(100vw - var(--match-replay-gutter, 52px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
-  max-height: min(154px, calc(100dvh - var(--match-replay-context-top, 164px) - 150px - var(--match-safe-bottom, 0px)));
-  overflow-y: auto;
-  transform: translateX(-50%);
-  pointer-events: auto;
-  scrollbar-gutter: stable;
-}
-
-.match-replay-evidence-context :deep(.evidence-context-summary) {
-  grid-template-columns:
-    minmax(120px, 0.9fr)
-    minmax(160px, 1.2fr)
-    minmax(100px, 0.75fr)
-    minmax(70px, 0.5fr)
-    minmax(130px, 1fr);
-}
-
-.match-replay-evidence-context :deep(.evidence-context-item) {
-  min-height: 38px;
-  padding: 6px 8px;
-}
-
 :deep(.player-command-panel) {
   bottom: var(--match-action-bottom, clamp(18px, 4vh, 42px));
   width: min(720px, calc(100vw - var(--match-action-gutter, 64px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
@@ -837,26 +802,12 @@ onBeforeUnmount(() => {
 }
 
 @supports not (height: 100dvh) {
-  .match-replay-evidence-context {
-    max-height: min(154px, calc(100vh - var(--match-replay-context-top, 164px) - 150px - var(--match-safe-bottom, 0px)));
-  }
-
   .match-error-notice {
     max-height: clamp(144px, calc(100vh - var(--match-toast-top, 158px) - var(--match-error-bottom-clearance)), 340px);
   }
 }
 
 @media (max-width: 760px) {
-  .match-replay-evidence-context {
-    top: var(--match-replay-context-top, calc(318px + var(--match-safe-top, 0px)));
-    width: calc(100vw - var(--match-replay-gutter, 18px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
-    max-height: min(168px, calc(100dvh - var(--match-replay-context-top, 318px) - 132px - var(--match-safe-bottom, 0px)));
-  }
-
-  .match-replay-evidence-context :deep(.evidence-context-summary) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .match-replay-controls {
     bottom: var(--match-replay-bottom, 12px);
     width: calc(100vw - var(--match-replay-gutter, 18px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
@@ -885,10 +836,6 @@ onBeforeUnmount(() => {
 
 @supports not (height: 100dvh) {
   @media (max-width: 760px) {
-    .match-replay-evidence-context {
-      max-height: min(168px, calc(100vh - var(--match-replay-context-top, 318px) - 132px - var(--match-safe-bottom, 0px)));
-    }
-
     .match-error-notice {
       max-height: clamp(144px, calc(100vh - var(--match-toast-top, 146px) - var(--match-error-bottom-clearance)), 260px);
     }

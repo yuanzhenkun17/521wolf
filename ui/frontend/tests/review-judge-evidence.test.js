@@ -35,10 +35,10 @@ test('JudgeEvidencePanel only renders populated judge evidence blocks', () => {
 
   assert.match(source, /v-if="evidenceGroups\.evidenceRefs\.length"[\s\S]*证据引用/)
   assert.match(source, /v-if="evidenceGroups\.counterfactuals\.length"[\s\S]*反事实/)
-  assert.match(source, /v-if="evidenceGroups\.rubricMisses\.length"[\s\S]*Rubric misses/)
+  assert.match(source, /v-if="evidenceGroups\.rubricMisses\.length"[\s\S]*评分规则未命中/)
   assert.match(source, /v-if="evidenceGroups\.degradedReasons\.length"[\s\S]*降级\/失败原因/)
-  assert.match(source, /v-if="evidenceGroups\.warnings\.length"[\s\S]*Warnings/)
-  assert.match(source, /v-if="evidenceGroups\.diagnostics\.length"[\s\S]*Diagnostics/)
+  assert.match(source, /v-if="evidenceGroups\.warnings\.length"[\s\S]*警告/)
+  assert.match(source, /v-if="evidenceGroups\.diagnostics\.length"[\s\S]*诊断/)
   assert.match(reviewSource(), /details\.hasAny = details\.total > 0/)
 })
 

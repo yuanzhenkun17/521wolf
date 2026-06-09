@@ -1,7 +1,6 @@
 <script setup>
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { buildAssessmentScores } from '../../composables/assessmentScores.js'
-import EvidenceContextBar from './EvidenceContextBar.vue'
 import JudgeEvidencePanel from './JudgeEvidencePanel.vue'
 import {
   displayActionLabel,
@@ -479,7 +478,6 @@ function jsonText(value) {
 <template>
   <section class="archive-review-panel">
     <h3>复盘报告</h3>
-    <EvidenceContextBar v-if="game" class="review-evidence-context" :game="game" />
     <template v-if="hasReviewContent">
       <div v-if="reviewGameSummary" class="review-summary-strip">
         <span class="review-summary-item review-winner">
@@ -667,19 +665,6 @@ function jsonText(value) {
   font-weight: 900;
 }
 
-.review-evidence-context {
-  margin: 10px 0 12px;
-}
-
-.review-evidence-context :deep(.evidence-context-summary) {
-  grid-template-columns:
-    minmax(140px, 1fr)
-    minmax(160px, 1.1fr)
-    minmax(110px, 0.75fr)
-    minmax(74px, 0.5fr)
-    minmax(140px, 1fr);
-}
-
 .archive-review-panel h4 {
   margin: 14px 0 8px;
   color: var(--log-text);
@@ -704,12 +689,6 @@ function jsonText(value) {
   font-size: 12px;
   white-space: pre-wrap;
   line-height: 1.5;
-}
-
-@media (max-width: 860px) {
-  .review-evidence-context :deep(.evidence-context-summary) {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 .empty-log {

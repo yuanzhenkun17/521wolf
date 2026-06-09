@@ -314,27 +314,20 @@ test('MatchPage mobile safe-area source contract keeps errors on ApiErrorPanel',
   assert.match(apiErrorPanel, /<section :class="rootClass" role="alert" aria-live="polite">/)
 })
 
-test('EvidenceContextBar source contract is present in replay and review surfaces', () => {
+test('EvidenceContextBar source contract stays in history detail and is absent from replay', () => {
   const matchPage = readSource(matchPageSourceUrl)
   const reviewPanel = readSource(reviewReportPanelSourceUrl)
-  const replayContextBlock = firstCssBlock(matchPage, '.match-replay-evidence-context')
-  const reviewContextBlock = firstCssBlock(reviewPanel, '.review-evidence-context')
+  const logsPage = readSource(logsPageSourceUrl)
 
-  assert.match(matchPage, /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'/)
-  assert.match(matchPage, /<EvidenceContextBar[\s\S]*v-if="isReplayMode && game"[\s\S]*class="match-replay-evidence-context"[\s\S]*:game="game"/)
+  assert.doesNotMatch(matchPage, /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'/)
+  assert.doesNotMatch(matchPage, /<EvidenceContextBar[\s\S]*class="match-replay-evidence-context"/)
+  assert.doesNotMatch(matchPage, /\.match-replay-evidence-context/)
   assert.match(matchPage, /<ReplayControls[\s\S]*v-if="isReplayMode"[\s\S]*class="match-replay-controls"/)
-  assert.match(replayContextBlock, /position:\s*fixed/)
-  assert.match(replayContextBlock, /top:\s*var\(--match-replay-context-top,\s*calc\(164px \+ var\(--match-safe-top,\s*0px\)\)\)/)
-  assert.match(replayContextBlock, /width:\s*min\(740px,\s*calc\(100vw - var\(--match-replay-gutter,\s*52px\) - var\(--match-safe-left,\s*0px\) - var\(--match-safe-right,\s*0px\)\)\)/)
-  assert.match(replayContextBlock, /overflow-y:\s*auto/)
-  assert.match(matchPage, /\.match-replay-evidence-context :deep\(\.evidence-context-summary\)[\s\S]*grid-template-columns:/)
-  assert.match(matchPage, /@media \(max-width: 760px\)[\s\S]*\.match-replay-evidence-context[\s\S]*top:\s*var\(--match-replay-context-top,\s*calc\(318px \+ var\(--match-safe-top,\s*0px\)\)\)/)
 
-  assert.match(reviewPanel, /import EvidenceContextBar from '\.\/EvidenceContextBar\.vue'/)
-  assert.match(reviewPanel, /<EvidenceContextBar v-if="game" class="review-evidence-context" :game="game" \/>/)
-  assert.match(reviewContextBlock, /margin:\s*10px 0 12px/)
-  assert.match(reviewPanel, /\.review-evidence-context :deep\(\.evidence-context-summary\)[\s\S]*grid-template-columns:/)
-  assert.match(reviewPanel, /@media \(max-width: 860px\)[\s\S]*\.review-evidence-context :deep\(\.evidence-context-summary\)[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
+  assert.match(logsPage, /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'/)
+  assert.match(logsPage, /<div v-if="selectedHistoryGame" :class="\['detail-topbar', 'workspace-' \+ workspaceTab\]">[\s\S]*<EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" \/>/)
+  assert.doesNotMatch(reviewPanel, /import EvidenceContextBar from '\.\/EvidenceContextBar\.vue'/)
+  assert.doesNotMatch(reviewPanel, /review-evidence-context/)
 })
 
 test('History phase summary and Evolution publish policy avoid misleading evidence or auto-promote controls', () => {
@@ -920,8 +913,8 @@ test('mobile viewport TrustBundleDrawer fixture renders authority and evidence l
               <section class="evo-trust-section">
                 <header><h3>Training Evidence</h3><b>2</b></header>
                 <div class="evo-trust-id-grid">
-                  <a href="#evidence?game_id=train_mobile_a">train_mobile_a</a>
-                  <a href="#evidence?game_id=train_mobile_b">train_mobile_b</a>
+                  <a href="#logs?game_id=train_mobile_a&workspace=archive">train_mobile_a</a>
+                  <a href="#logs?game_id=train_mobile_b&workspace=archive">train_mobile_b</a>
                 </div>
               </section>
               <section class="evo-trust-section">
@@ -1008,7 +1001,7 @@ test('mobile viewport TrustBundleDrawer fixture renders authority and evidence l
     assert.ok(hrefs.includes('#evolution?run_id=evo_mobile&gate_report_id=gate_mobile'))
     assert.ok(hrefs.includes('#evolution?run_id=evo_mobile'))
     assert.ok(hrefs.includes('#evolution?role=seer&version_id=version_mobile'))
-    assert.ok(hrefs.includes('#evidence?game_id=train_mobile_a'))
+    assert.ok(hrefs.includes('#logs?game_id=train_mobile_a&workspace=archive'))
     assert.ok(hrefs.includes('#evolution?run_id=evo_mobile&proposal_id=proposal_mobile_a'))
     assert.equal(summary.chipStyle.textOverflow, 'ellipsis')
     assert.equal(summary.chipStyle.whiteSpace, 'nowrap')

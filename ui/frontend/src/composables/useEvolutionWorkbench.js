@@ -1444,7 +1444,7 @@ function hashHref(view, params = {}) {
 
 function evidenceHref(id) {
   const value = String(id || '').trim()
-  return value ? hashHref('evidence', { game_id: value }) : ''
+  return value ? hashHref('logs', { game_id: value, workspace: 'archive' }) : ''
 }
 
 function evolutionHref(params = {}) {

@@ -4108,6 +4108,65 @@ test('evaluation workbench starts selected benchmark suite and filters leaderboa
   assert.equal(workbench.filteredBatchRunRows.value[0].id, 'bench-suite-new')
 }))
 
+test('evaluation workbench blocks launch for non-launchable benchmark suites', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-deprecated-v1',
+    version: 1,
+    name: 'Role Deprecated',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    seed_count: 3,
+    seed_preview: [260600, 260607, 260619],
+    evaluation_set_id: 'role-deprecated-v1@v1',
+    config_hash: 'sha256:deprecated-suite',
+    status: 'deprecated',
+    launchable: false,
+    launch_disabled_reason: '该评测套件已废弃，只保留历史审计，不能启动。',
+    metrics: { primary: 'avg_role_score', secondary: ['target_side_win_rate'] },
+    gates: { min_completed_games: 1 },
+    judge: { enable_decision_judge: true, judge_max_decisions: 10 }
+  }
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (/^\/roles\/[^/]+\/leaderboard\?evaluation_set_id=role-deprecated-v1%40v1$/.test(path)) return { entries: [] }
+    if (/^\/roles\/[^/]+\/versions$/.test(path)) return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark/plan') throw new Error('plan should not be requested for deprecated suite')
+    if (path === '/benchmark') throw new Error('launch should not be requested for deprecated suite')
+    if (path.startsWith('/benchmark/diagnostics')) return { diagnostics: [], summary: {} }
+    if (path.startsWith('/benchmark/snapshots')) return { snapshots: [] }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedBenchmarkId.value, 'role-deprecated-v1')
+  assert.equal(workbench.selectedBenchmarkSuite.value.status, 'deprecated')
+  assert.equal(workbench.selectedBenchmarkSuite.value.statusLabel, '废弃')
+  assert.equal(workbench.selectedBenchmarkSuite.value.launchable, false)
+  assert.equal(
+    workbench.selectedBenchmarkSuiteLaunchDisabledReason.value,
+    '该评测套件已废弃，只保留历史审计，不能启动。'
+  )
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, false)
+  assert.equal(workbench.benchmarkPlan.value, null)
+  assert.equal(workbench.benchmarkPlanError.value, '该评测套件已废弃，只保留历史审计，不能启动。')
+
+  await workbench.startEvaluation()
+
+  assert.equal(workbench.notice.value.type, 'warning')
+  assert.equal(workbench.error.value, '该评测套件已废弃，只保留历史审计，不能启动。')
+  assert.equal(requests.some((item) => item.path === '/benchmark'), false)
+  assert.equal(requests.some((item) => item.path === '/benchmark/plan'), false)
+}))
+
 test('evaluation workbench falls back to legacy benchmark runs when suite has no scoped batches', () => withWindow(async () => {
   const suite = {
     id: 'role-baseline-quick-v1',

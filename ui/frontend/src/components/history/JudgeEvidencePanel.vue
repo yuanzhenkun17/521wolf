@@ -90,7 +90,7 @@ function jsonText(value) {
         </p>
       </section>
       <section v-if="evidenceGroups.rubricMisses.length" class="review-judge-evidence-block">
-        <small>Rubric misses</small>
+        <small>评分规则未命中</small>
         <ul class="review-judge-evidence-list">
           <li v-for="(miss, index) in evidenceGroups.rubricMisses" :key="evidenceKey('miss', miss, index)">
             {{ judgeEvidenceText(miss) }}
@@ -106,7 +106,7 @@ function jsonText(value) {
         </ul>
       </section>
       <section v-if="evidenceGroups.warnings.length" class="review-judge-evidence-block warning-block">
-        <small>Warnings</small>
+        <small>警告</small>
         <ul class="review-judge-evidence-list">
           <li v-for="(warning, index) in evidenceGroups.warnings" :key="evidenceKey('warning', warning, index)">
             {{ judgeEvidenceText(warning) }}
@@ -114,7 +114,7 @@ function jsonText(value) {
         </ul>
       </section>
       <section v-if="evidenceGroups.diagnostics.length" class="review-judge-evidence-block wide-block">
-        <small>Diagnostics</small>
+        <small>诊断</small>
         <ul class="review-judge-evidence-list diagnostic-list">
           <li v-for="(diagnostic, index) in evidenceGroups.diagnostics" :key="evidenceKey('diagnostic', diagnostic, index)">
             {{ judgeEvidenceText(diagnostic) }}

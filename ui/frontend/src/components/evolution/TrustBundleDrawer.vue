@@ -74,7 +74,7 @@ function seedGameId(seed, side) {
 function seedGameHref(gameId) {
   const id = textValue(gameId)
   if (!id) return ''
-  return `#evidence?${new URLSearchParams({ game_id: id }).toString()}`
+  return `#logs?${new URLSearchParams({ game_id: id, workspace: 'archive' }).toString()}`
 }
 
 function rankableLabel(seed) {
@@ -411,6 +411,33 @@ async function refresh() {
 
 <style scoped>
 .evo-trust-drawer-backdrop {
+  --logbook-bg: #f2dfae;
+  --logbook-bg-texture:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    var(--logbook-bg);
+  --logbook-surface: rgba(255, 252, 245, 0.7);
+  --logbook-border: rgba(139, 94, 52, 0.15);
+  --logbook-text: #3a2a18;
+  --logbook-muted: #8b6b4a;
+  --logbook-accent: #8b5e34;
+  --logbook-accent-strong: #5a3319;
+  --logbook-input-bg: rgba(255, 255, 250, 0.8);
+  --logbook-danger: #993026;
+  --evo-bg: var(--logbook-bg);
+  --evo-bg-texture: var(--logbook-bg-texture);
+  --evo-border: var(--logbook-border, rgba(139, 94, 52, 0.15));
+  --evo-text: var(--logbook-text, #3a2a18);
+  --evo-text-secondary: var(--logbook-muted, #8b6b4a);
+  --evo-accent: var(--logbook-accent, #8b5e34);
+  --evo-accent-strong: var(--logbook-accent-strong, #5a3319);
+  --evo-card-bg: var(--logbook-surface);
+  --evo-input-bg: var(--logbook-input-bg, rgba(255, 255, 250, 0.8));
+  --evo-success: var(--evo-accent, var(--logbook-accent, #8b5e34));
+  --evo-success-bg: rgba(211, 190, 112, 0.2);
+  --evo-success-border: rgba(117, 91, 31, 0.28);
+  --evo-danger: var(--logbook-danger, #993026);
+  --evo-danger-bg: rgba(248, 205, 181, 0.6);
+  --evo-danger-border: rgba(154, 45, 36, 0.3);
   position: fixed;
   inset: 0;
   z-index: 1200;
@@ -429,7 +456,7 @@ async function refresh() {
   overflow: auto;
   padding: 18px;
   border-left: 1px solid var(--evo-border, rgba(58, 42, 24, 0.16));
-  background: var(--evo-card-bg, #fffdfa);
+  background: var(--evo-bg-texture);
   box-shadow: -18px 0 42px rgba(38, 29, 19, 0.2);
 }
 
@@ -531,8 +558,8 @@ async function refresh() {
 }
 
 .evo-trust-authority.status-verified {
-  border-color: rgba(74, 124, 68, 0.28);
-  background: rgba(74, 124, 68, 0.055);
+  border-color: var(--evo-success-border);
+  background: var(--evo-success-bg);
 }
 
 .evo-trust-authority.status-mismatch,
@@ -589,8 +616,8 @@ async function refresh() {
 }
 
 .evo-trust-check.status-match {
-  border-color: rgba(74, 124, 68, 0.24);
-  background: rgba(74, 124, 68, 0.045);
+  border-color: var(--evo-success-border);
+  background: var(--evo-success-bg);
 }
 
 .evo-trust-check.status-mismatch,
@@ -601,7 +628,7 @@ async function refresh() {
 
 .evo-trust-check.status-mismatch .evo-trust-check-main b,
 .evo-trust-check.status-missing .evo-trust-check-main b {
-  color: #8b3a2a;
+  color: var(--evo-danger);
 }
 
 .evo-trust-check-values {
@@ -698,8 +725,8 @@ async function refresh() {
 }
 
 .evo-trust-completeness[data-status="complete"] {
-  border-color: rgba(74, 124, 68, 0.28);
-  background: rgba(74, 124, 68, 0.06);
+  border-color: var(--evo-success-border);
+  background: var(--evo-success-bg);
 }
 
 .evo-trust-completeness[data-status="incomplete"],
@@ -826,7 +853,7 @@ async function refresh() {
 }
 
 .evo-trust-seed-badge.tone-ok {
-  background: rgba(74, 124, 68, 0.1);
+  background: var(--evo-success-bg);
 }
 
 .evo-trust-seed-badge.tone-warn {
@@ -838,7 +865,7 @@ async function refresh() {
 }
 
 .evo-trust-seed-badge.tone-danger b {
-  color: #8b3a2a;
+  color: var(--evo-danger);
 }
 
 @media (max-width: 760px) {

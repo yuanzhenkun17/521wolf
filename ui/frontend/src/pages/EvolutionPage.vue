@@ -108,19 +108,57 @@ onMounted(() => evo.refreshAll())
    Design Tokens
    ======================================== */
 .evo-page {
-  --evo-bg: #f8f0e0;
-  --evo-surface: rgba(255, 252, 245, 0.7);
-  --evo-border: rgba(139, 94, 52, 0.15);
-  --evo-text: #3a2a18;
-  --evo-text-secondary: #8b6b4a;
-  --evo-accent: #8b5e34;
-  --evo-accent-strong: #5a3319;
-  --evo-input-bg: rgba(255, 255, 250, 0.8);
-  --evo-input-border: rgba(139, 94, 52, 0.2);
-  --evo-hover: rgba(139, 94, 52, 0.06);
-  --evo-active-bg: rgba(139, 94, 52, 0.1);
-  --evo-success: #4a7c44;
-  --evo-danger: #8b3a2a;
+  --logbook-bg: #f2dfae;
+  --logbook-bg-texture:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    var(--logbook-bg);
+  --logbook-surface: rgba(255, 252, 245, 0.7);
+  --logbook-panel: rgba(255, 252, 245, 0.86);
+  --logbook-panel-solid: rgba(255, 250, 240, 0.92);
+  --logbook-panel-soft: rgba(255, 242, 210, 0.58);
+  --logbook-border: rgba(139, 94, 52, 0.15);
+  --logbook-border-strong: rgba(90, 51, 25, 0.34);
+  --logbook-text: #3a2a18;
+  --logbook-muted: #8b6b4a;
+  --logbook-accent: #8b5e34;
+  --logbook-accent-strong: #5a3319;
+  --logbook-input-bg: rgba(255, 255, 250, 0.8);
+  --logbook-input-border: rgba(139, 94, 52, 0.2);
+  --logbook-hover: rgba(139, 94, 52, 0.06);
+  --logbook-active-bg: rgba(139, 94, 52, 0.1);
+  --logbook-danger: #993026;
+  --logbook-warning: #76510e;
+  --evo-bg: var(--logbook-bg);
+  --evo-bg-texture: var(--logbook-bg-texture);
+  --evo-surface: var(--logbook-surface);
+  --evo-border: var(--logbook-border);
+  --evo-border-strong: var(--logbook-border-strong);
+  --evo-text: var(--logbook-text);
+  --evo-text-secondary: var(--logbook-muted);
+  --evo-accent: var(--logbook-accent);
+  --evo-accent-strong: var(--logbook-accent-strong);
+  --evo-input-bg: var(--logbook-input-bg);
+  --evo-input-border: var(--logbook-input-border);
+  --evo-hover: var(--logbook-hover);
+  --evo-active-bg: var(--logbook-active-bg);
+  --evo-card-bg: var(--logbook-surface);
+  --evo-code-bg: #2d2218;
+  --evo-gold: #d0a96b;
+  --evo-success: #6a5f23;
+  --evo-success-strong: #4f4819;
+  --evo-success-bg: rgba(211, 190, 112, 0.2);
+  --evo-success-border: rgba(117, 91, 31, 0.28);
+  --evo-warning: var(--logbook-warning);
+  --evo-warning-bg: rgba(248, 223, 157, 0.58);
+  --evo-warning-border: rgba(151, 95, 18, 0.28);
+  --evo-danger: var(--logbook-danger);
+  --evo-danger-strong: #7f2430;
+  --evo-danger-bg: rgba(248, 205, 181, 0.6);
+  --evo-danger-border: rgba(154, 45, 36, 0.3);
+  --evo-diff-added-marker: #f0d690;
+  --evo-diff-removed-bg: rgba(139, 58, 42, 0.2);
+  --evo-diff-removed-marker: #f2a08b;
+  --evo-diff-context-marker: rgba(180, 160, 130, 0.35);
   --evo-font: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
   --status-danger: var(--evo-danger);
   --text-main: var(--evo-text);
@@ -637,28 +675,28 @@ onMounted(() => evo.refreshAll())
 .evo-alert {
   margin-bottom: 12px;
   padding: 10px 14px;
-  border: 1px solid rgba(139, 58, 42, 0.25);
+  border: 1px solid var(--evo-danger-border);
   border-radius: 8px;
-  background: rgba(139, 58, 42, 0.06);
+  background: var(--evo-danger-bg);
   color: var(--evo-danger);
   font-size: 13px;
 }
 
 .evo-alert.error {
-  border-color: rgba(139, 58, 42, 0.25);
-  background: rgba(139, 58, 42, 0.06);
+  border-color: var(--evo-danger-border);
+  background: var(--evo-danger-bg);
   color: var(--evo-danger);
 }
 
 .evo-alert.warning {
-  border-color: rgba(139, 94, 52, 0.32);
-  background: rgba(139, 94, 52, 0.08);
-  color: var(--evo-accent-strong);
+  border-color: var(--evo-warning-border);
+  background: var(--evo-warning-bg);
+  color: var(--evo-warning);
 }
 
 .evo-alert.success {
-  border-color: rgba(74, 124, 68, 0.26);
-  background: rgba(74, 124, 68, 0.08);
+  border-color: var(--evo-success-border);
+  background: var(--evo-success-bg);
   color: var(--evo-success);
 }
 
@@ -914,7 +952,7 @@ onMounted(() => evo.refreshAll())
 }
 
 .evo-action.danger:hover {
-  background: #a04535;
+  background: var(--evo-danger-strong);
   box-shadow: 0 3px 8px rgba(139, 58, 42, 0.2);
 }
 
@@ -945,7 +983,7 @@ onMounted(() => evo.refreshAll())
 }
 
 .evo-ghost-action.danger:hover {
-  background: rgba(139, 58, 42, 0.06);
+  background: var(--evo-danger-bg);
 }
 
 /* ========================================
@@ -1023,7 +1061,7 @@ onMounted(() => evo.refreshAll())
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--evo-accent), #d0a96b);
+  background: linear-gradient(90deg, var(--evo-accent), var(--evo-gold));
   transition: width 0.25s ease;
 }
 
@@ -1358,22 +1396,22 @@ onMounted(() => evo.refreshAll())
 
 .run-status[data-status="reviewing"],
 .evo-run-status[data-status="reviewing"] {
-  background: rgba(74, 124, 68, 0.12);
-  color: #3a6b34;
+  background: var(--evo-success-bg);
+  color: var(--evo-success);
 }
 
 .run-status[data-status="promoted"],
 .evo-run-status[data-status="promoted"] {
-  background: rgba(74, 124, 68, 0.18);
-  color: #2d5a28;
+  background: var(--evo-success-bg);
+  color: var(--evo-success-strong);
 }
 
 .run-status[data-status="failed"],
 .run-status[data-status="rejected"],
 .evo-run-status[data-status="failed"],
 .evo-run-status[data-status="rejected"] {
-  background: rgba(139, 58, 42, 0.12);
-  color: #7a3224;
+  background: var(--evo-danger-bg);
+  color: var(--evo-danger-strong);
 }
 
 .run-status[data-status="paused"],
@@ -1497,7 +1535,12 @@ onMounted(() => evo.refreshAll())
 .evo-leaderboard-bar {
   height: 100%;
   border-radius: 5px;
+  background: var(--evo-accent);
   transition: width 0.4s ease;
+}
+
+.evo-leaderboard-bar.is-baseline {
+  background: var(--evo-accent-strong);
 }
 
 .evo-leaderboard-value {
@@ -2219,7 +2262,7 @@ onMounted(() => evo.refreshAll())
   max-height: 220px;
   overflow-y: auto;
   padding: 8px 0;
-  background: #2d2218;
+  background: var(--evo-code-bg);
   font-family: var(--evo-font);
   font-size: 11px;
   line-height: 1.6;
@@ -2242,19 +2285,19 @@ onMounted(() => evo.refreshAll())
 }
 
 .evo-diff-line-added {
-  background: rgba(74, 124, 68, 0.2);
+  background: var(--evo-success-bg);
 }
 
 .evo-diff-line-added .evo-diff-line-marker {
-  color: #6ecf6e;
+  color: var(--evo-diff-added-marker);
 }
 
 .evo-diff-line-removed {
-  background: rgba(139, 58, 42, 0.2);
+  background: var(--evo-diff-removed-bg);
 }
 
 .evo-diff-line-removed .evo-diff-line-marker {
-  color: #f08070;
+  color: var(--evo-diff-removed-marker);
 }
 
 .evo-diff-line-context {
@@ -2262,7 +2305,7 @@ onMounted(() => evo.refreshAll())
 }
 
 .evo-diff-line-context .evo-diff-line-marker {
-  color: rgba(180, 160, 130, 0.35);
+  color: var(--evo-diff-context-marker);
 }
 
 .evo-diff-line-marker {
@@ -2335,7 +2378,7 @@ onMounted(() => evo.refreshAll())
 
 .evo-diff-pattern-card.added {
   border-left: 3px solid var(--evo-success);
-  background: rgba(74, 124, 68, 0.06);
+  background: var(--evo-success-bg);
 }
 
 .evo-diff-pattern-card.added strong {
@@ -2646,24 +2689,8 @@ onMounted(() => evo.refreshAll())
   }
 }
 
-/* Match the quiet wood-board language used by the battle log. */
-.evo-page {
-  --evo-surface: rgba(255, 239, 194, 0.42);
-  --evo-border: rgba(93, 48, 17, 0.18);
-  --evo-text: #3a1b08;
-  --evo-text-secondary: rgba(93, 48, 17, 0.66);
-  --evo-accent: #70401e;
-  --evo-accent-strong: #5d3011;
-  --evo-input-bg: rgba(255, 245, 214, 0.7);
-  --evo-input-border: rgba(93, 48, 17, 0.22);
-  --evo-hover: rgba(255, 245, 211, 0.5);
-  --evo-active-bg: rgba(224, 184, 111, 0.66);
-}
-
 .evo-shell.parchment-logbook {
-  background:
-    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
-    #f2dfae;
+  background: var(--evo-bg-texture);
 }
 
 .evo-nav-tab,
@@ -2681,7 +2708,7 @@ onMounted(() => evo.refreshAll())
 .evo-role-chip:hover,
 .evo-refresh-button:hover {
   border-color: rgba(93, 48, 17, 0.32);
-  color: #3a1b08;
+  color: var(--evo-text);
   background: rgba(255, 245, 214, 0.88);
   box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.82);
   transform: none;
@@ -2690,19 +2717,19 @@ onMounted(() => evo.refreshAll())
 .evo-nav-tab.active,
 .evo-role-chip.selected {
   border-color: rgba(93, 48, 17, 0.45);
-  color: #3a1b08;
+  color: var(--evo-text);
   background: rgba(224, 184, 111, 0.66);
   box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
 }
 
 .evo-role-chip.selected .evo-role-name {
-  color: #3a1b08;
+  color: var(--evo-text);
 }
 
 .evo-card {
   border-color: rgba(93, 48, 17, 0.18);
   border-radius: 7px;
-  background: rgba(255, 239, 194, 0.34);
+  background: var(--evo-card-bg);
   box-shadow: none;
   backdrop-filter: none;
 }

@@ -1068,7 +1068,7 @@ function openTrustBundleAudit() {
 .evo-deep-link-badge[data-deep-link-state="unmatched"] {
   border-color: rgba(139, 58, 42, 0.24);
   background: rgba(139, 58, 42, 0.07);
-  color: #8b3a2a;
+  color: var(--evo-danger);
 }
 
 .evo-gate-deep-link-marker {
@@ -1167,8 +1167,8 @@ function openTrustBundleAudit() {
 
 .evo-proposal-row[data-status="accepted"],
 .evo-proposal-row[data-status="applied"] {
-  border-color: rgba(74, 124, 68, 0.34);
-  background: rgba(74, 124, 68, 0.05);
+  border-color: var(--evo-success-border);
+  background: var(--evo-success-bg);
 }
 
 .evo-proposal-row[data-status="rejected"] {
@@ -1344,7 +1344,7 @@ function openTrustBundleAudit() {
   overflow: hidden;
   padding: 2px 6px;
   border-radius: 5px;
-  background: rgba(74, 124, 68, 0.1);
+  background: var(--evo-active-bg);
   color: var(--evo-text);
   font-size: 10px;
   font-weight: 800;
@@ -1473,7 +1473,7 @@ function openTrustBundleAudit() {
   margin: 2px 0 0;
   padding: 8px 10px;
   border-radius: 7px;
-  background: #2d2218;
+  background: var(--evo-code-bg);
   color: rgba(232, 218, 196, 0.92);
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11px;

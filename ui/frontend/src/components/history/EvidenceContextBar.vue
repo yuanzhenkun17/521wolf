@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import EvidenceLink from './EvidenceLink.vue'
+import { buildEvidenceLink } from './evidenceLinks.js'
 import { displayRoleLabel, normalizeHistoryDisplayText } from './historyDisplay.js'
 
 const props = defineProps({
@@ -43,10 +44,27 @@ const seedLabel = computed(() =>
   firstText(context.value.existing.seed, props.game?.seed, context.value.config.seed, '随机')
 )
 const runLabel = computed(() =>
-  firstText(context.value.existing.source_run_id, props.game?.source_run_id, context.value.config.source_run_id, '未记录')
+  firstText(context.value.existing.source_run_id, props.game?.source_run_id, context.value.config.source_run_id, props.game?.run_id, '未记录')
 )
 const sourceRunId = computed(() =>
   firstText(context.value.existing.source_run_id, props.game?.source_run_id, context.value.config.source_run_id, props.game?.run_id)
+)
+const archiveLink = computed(() => buildEvidenceLink(props.game || {}, { kind: 'game', label: 'Archive' }))
+const runLink = computed(() =>
+  buildEvidenceLink({ ...(props.game || {}), source_run_id: sourceRunId.value }, { kind: 'run', label: 'Run' })
+)
+const archiveLabel = computed(() =>
+  firstText(archiveLink.value.id, archiveLink.value.unavailableReason, archiveLink.value.href, '未记录')
+)
+const archiveTitle = computed(() =>
+  archiveLink.value.disabled
+    ? firstText(archiveLink.value.unavailableReason, archiveLabel.value)
+    : firstText(archiveLink.value.href, archiveLabel.value)
+)
+const runTitle = computed(() =>
+  runLink.value.disabled
+    ? firstText(runLink.value.unavailableReason, runLabel.value)
+    : firstText(runLink.value.href, runLabel.value)
 )
 const proposalId = computed(() =>
   firstText(context.value.existing.proposal_id, props.game?.proposal_id, context.value.config.proposal_id)
@@ -85,28 +103,11 @@ const roleVersionTitle = computed(() =>
     ? roleVersions.value.map((item) => `${item.role}: ${item.version}`).join(' / ')
     : '默认基线'
 )
+const proposalEvidenceMissing = computed(() => sourceKey.value === 'evolution' && !proposalId.value)
 const evidenceLinkTargets = computed(() => {
   const game = props.game || {}
-  const rows = [
-    {
-      key: 'archive',
-      kind: 'game',
-      label: 'Archive',
-      target: game
-    }
-  ]
-  if (sourceRunId.value || sourceKey.value !== 'normal') {
-    rows.push({
-      key: 'run',
-      kind: 'run',
-      label: 'Run',
-      target: {
-        ...game,
-        source_run_id: sourceRunId.value
-      }
-    })
-  }
-  if (proposalId.value || sourceKey.value === 'evolution') {
+  const rows = []
+  if (proposalId.value) {
     rows.push({
       key: 'proposal',
       kind: 'proposal',
@@ -129,9 +130,31 @@ const evidenceLinkTargets = computed(() => {
         <dt>证据上下文</dt>
         <dd :title="sourceLabel">{{ sourceLabel }}</dd>
       </div>
+      <div class="evidence-context-item evidence-context-item--archive">
+        <dt>Archive</dt>
+        <dd :title="archiveTitle">
+          <a
+            v-if="!archiveLink.disabled"
+            class="evidence-context-value-link"
+            :href="archiveLink.href"
+          >
+            {{ archiveLabel }}
+          </a>
+          <span v-else class="evidence-context-disabled-value">{{ archiveLabel }}</span>
+        </dd>
+      </div>
       <div class="evidence-context-item evidence-context-item--run">
         <dt>Run</dt>
-        <dd :title="runLabel">{{ runLabel }}</dd>
+        <dd :title="runTitle">
+          <a
+            v-if="!runLink.disabled"
+            class="evidence-context-value-link"
+            :href="runLink.href"
+          >
+            {{ runLabel }}
+          </a>
+          <span v-else class="evidence-context-disabled-value">{{ runLabel }}</span>
+        </dd>
       </div>
       <div class="evidence-context-item evidence-context-item--phase">
         <dt>阶段</dt>
@@ -162,7 +185,7 @@ const evidenceLinkTargets = computed(() => {
         </dd>
       </div>
     </dl>
-    <nav v-if="evidenceLinkTargets.length" class="evidence-context-links" aria-label="证据跳转">
+    <nav v-if="evidenceLinkTargets.length || proposalEvidenceMissing" class="evidence-context-links" aria-label="证据跳转">
       <EvidenceLink
         v-for="item in evidenceLinkTargets"
         :key="item.key"
@@ -171,6 +194,14 @@ const evidenceLinkTargets = computed(() => {
         :target="item.target"
         compact
       />
+      <span
+        v-if="proposalEvidenceMissing"
+        class="evidence-context-status"
+        data-state="missing"
+      >
+        <span>Proposal</span>
+        <small>未关联提案</small>
+      </span>
     </nav>
   </section>
 </template>
@@ -202,6 +233,7 @@ const evidenceLinkTargets = computed(() => {
   display: grid;
   grid-template-columns:
     minmax(160px, 1.25fr)
+    minmax(140px, 0.95fr)
     minmax(220px, 1.3fr)
     minmax(120px, 0.75fr)
     minmax(74px, 0.45fr)
@@ -245,6 +277,26 @@ const evidenceLinkTargets = computed(() => {
 
 .evidence-context-item--source dd {
   font-size: 14px;
+}
+
+.evidence-context-value-link {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.evidence-context-value-link:hover {
+  color: #70401e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.evidence-context-disabled-value {
+  color: rgba(61, 40, 24, 0.68);
 }
 
 .evidence-context-version-value {
@@ -298,10 +350,46 @@ const evidenceLinkTargets = computed(() => {
   flex: 0 1 190px;
 }
 
+.evidence-context-status {
+  display: inline-grid;
+  align-content: center;
+  gap: 2px;
+  flex: 0 1 190px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 1px solid rgba(92, 63, 37, 0.16);
+  border-radius: 6px;
+  background: rgba(247, 241, 232, 0.72);
+  color: rgba(68, 48, 32, 0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.evidence-context-status span {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-context-status small {
+  overflow: hidden;
+  color: rgba(96, 65, 40, 0.68);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 1080px) {
   .evidence-context-summary {
     grid-template-columns:
       minmax(150px, 1.2fr)
+      minmax(130px, 0.95fr)
       minmax(180px, 1.2fr)
       minmax(110px, 0.8fr)
       minmax(74px, 0.5fr)

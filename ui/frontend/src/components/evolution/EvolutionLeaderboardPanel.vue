@@ -22,7 +22,10 @@ defineProps({
             {{ item.short }}<small>{{ item.is_baseline ? '基线' : (item.recommendationLabel || '未标记') }}</small>
           </span>
           <div class="evo-leaderboard-bar-wrap">
-            <div class="evo-leaderboard-bar" :style="{ width: item.scorePct + '%', background: item.is_baseline ? '#7b5735' : '#0f6b72' }"></div>
+            <div
+              :class="['evo-leaderboard-bar', { 'is-baseline': item.is_baseline }]"
+              :style="{ width: item.scorePct + '%' }"
+            ></div>
           </div>
           <span class="evo-leaderboard-value">{{ item.scorePct }}%</span>
         </div>

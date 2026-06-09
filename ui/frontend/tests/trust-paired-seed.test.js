@@ -13,13 +13,13 @@ function assertSourceContract(source, contracts) {
   }
 }
 
-test('TrustBundleDrawer links paired seed game ids to Evidence Archive', () => {
+test('TrustBundleDrawer links paired seed game ids to Logs archive workspace', () => {
   assertSourceContract(drawer, [
     ['paired seeds are normalized before rendering', /const seedRows = computed\(\(\) => pairedSeeds\.value\.slice\(0, 12\)\.map\(normalizeSeedRow\)\)/],
     ['game id helper accepts camelCase and snake_case baseline fields', /function seedGameId\(seed, side\)[\s\S]*seed\?\.\[`\$\{prefix\}GameId`\][\s\S]*seed\?\.\[`\$\{prefix\}_game_id`\][\s\S]*nested\.game_id[\s\S]*nested\.gameId/],
-    ['game link helper targets the Evidence Archive route with game_id query', /function seedGameHref\(gameId\)[\s\S]*#evidence\?\$\{new URLSearchParams\(\{ game_id: id \}\)\.toString\(\)\}/],
-    ['baseline game id renders as an Evidence Archive link when present', /<a v-if="seed\.baselineGameHref" :href="seed\.baselineGameHref">\{\{ seed\.baselineGameId \}\}<\/a>/],
-    ['candidate game id renders as an Evidence Archive link when present', /<a v-if="seed\.candidateGameHref" :href="seed\.candidateGameHref">\{\{ seed\.candidateGameId \}\}<\/a>/],
+    ['game link helper targets the Logs archive workspace with game_id query', /function seedGameHref\(gameId\)[\s\S]*#logs\?\$\{new URLSearchParams\(\{ game_id: id, workspace: 'archive' \}\)\.toString\(\)\}/],
+    ['baseline game id renders as a Logs archive link when present', /<a v-if="seed\.baselineGameHref" :href="seed\.baselineGameHref">\{\{ seed\.baselineGameId \}\}<\/a>/],
+    ['candidate game id renders as a Logs archive link when present', /<a v-if="seed\.candidateGameHref" :href="seed\.candidateGameHref">\{\{ seed\.candidateGameId \}\}<\/a>/],
     ['missing game ids fall back to compact empty display cells', /<code v-else>\{\{ display\(seed\.baselineGameId\) \}\}<\/code>[\s\S]*<code v-else>\{\{ display\(seed\.candidateGameId\) \}\}<\/code>/],
   ])
 })

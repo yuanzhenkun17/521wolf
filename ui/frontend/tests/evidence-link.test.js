@@ -120,17 +120,26 @@ test('EvidenceLink component renders hrefs and visible unavailable reasons', () 
   assert.match(component, /<small>\{\{ detailText \}\}<\/small>/)
 })
 
-test('EvidenceContextBar exposes unified EvidenceLink targets for history views', () => {
+test('EvidenceContextBar keeps Archive and Run in the summary row as links', () => {
   const component = readFileSync(new URL('../src/components/history/EvidenceContextBar.vue', import.meta.url), 'utf8')
 
   assert.match(component, /import EvidenceLink from '\.\/EvidenceLink\.vue'/)
+  assert.match(component, /import \{ buildEvidenceLink \} from '\.\/evidenceLinks\.js'/)
+  assert.match(component, /const archiveLink = computed\(\(\) => buildEvidenceLink\(props\.game \|\| \{\}, \{ kind: 'game', label: 'Archive' \}\)\)/)
+  assert.match(component, /const runLink = computed\(\(\) =>[\s\S]*buildEvidenceLink\(\{ \.\.\.\(props\.game \|\| \{\}\), source_run_id: sourceRunId\.value \}, \{ kind: 'run', label: 'Run' \}\)/)
+  assert.match(component, /class="evidence-context-item evidence-context-item--archive"[\s\S]*v-if="!archiveLink\.disabled"[\s\S]*:href="archiveLink\.href"/)
+  assert.match(component, /class="evidence-context-item evidence-context-item--run"[\s\S]*v-if="!runLink\.disabled"[\s\S]*:href="runLink\.href"/)
   assert.match(component, /const evidenceLinkTargets = computed/)
-  assert.match(component, /kind: 'game'/)
-  assert.match(component, /kind: 'run'/)
+  assert.match(component, /const proposalEvidenceMissing = computed\(\(\) => sourceKey\.value === 'evolution' && !proposalId\.value\)/)
+  assert.match(component, /if \(proposalId\.value\) \{[\s\S]*key: 'proposal'[\s\S]*kind: 'proposal'/)
   assert.match(component, /kind: 'proposal'/)
+  assert.doesNotMatch(component, /key: 'archive'/)
+  assert.doesNotMatch(component, /key: 'run'/)
   assert.match(component, /<EvidenceLink/)
+  assert.match(component, /v-if="evidenceLinkTargets\.length \|\| proposalEvidenceMissing"/)
+  assert.match(component, /v-if="proposalEvidenceMissing"[\s\S]*class="evidence-context-status"[\s\S]*未关联提案/)
+  assert.doesNotMatch(component, /proposalId\.value \|\| sourceKey\.value === 'evolution'/)
 })
-
 
 test('BenchmarkPage consumes benchmark run deep links after the router preserves query params', () => {
   const component = readFileSync(new URL('../src/pages/BenchmarkPage.vue', import.meta.url), 'utf8')
@@ -141,4 +150,14 @@ test('BenchmarkPage consumes benchmark run deep links after the router preserves
   assert.match(component, /activeView\.value = 'runs'/)
   assert.match(component, /benchmark\.selectBenchmarkBatch\(batchId\)/)
   assert.match(component, /addEventListener\('hashchange', handleBenchmarkHashChange\)/)
+})
+
+test('EvidenceContextBar keeps benchmark and evolution evidence visually aligned with normal games', () => {
+  const component = readFileSync(new URL('../src/components/history/EvidenceContextBar.vue', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(component, /\.evidence-context-bar\[data-source="benchmark"\]/)
+  assert.doesNotMatch(component, /\.evidence-context-bar\[data-source="evolution"\]/)
+  assert.match(component, /\.evidence-context-links :deep\(\.evidence-link\)\s*\{[\s\S]*background:[\s\S]*rgba\(255, 239, 194, 0\.62\)[\s\S]*color:\s*#321606/)
+  assert.match(component, /\.evidence-context-links :deep\(\.evidence-link span\)\s*\{[\s\S]*text-transform:\s*uppercase/)
+  assert.match(component, /\.evidence-context-links :deep\(\.evidence-link small\)\s*\{[\s\S]*font-size:\s*12px/)
 })

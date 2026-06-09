@@ -141,15 +141,15 @@ function selectTab(tab) {
 }
 
 .lab-workbench-shell {
-  --lab-bg: var(--bench-bg, var(--evo-bg, #f8f0e0));
-  --lab-panel: var(--bench-panel, var(--evo-surface, rgba(255, 252, 245, 0.82)));
-  --lab-border: var(--bench-border, var(--evo-border, rgba(93, 48, 17, 0.18)));
-  --lab-border-strong: var(--bench-border-strong, rgba(93, 48, 17, 0.34));
-  --lab-text: var(--bench-text, var(--evo-text, #3a2a18));
-  --lab-muted: var(--bench-text-secondary, var(--evo-text-secondary, rgba(93, 48, 17, 0.66)));
-  --lab-accent: var(--bench-accent-strong, var(--evo-accent-strong, #5d3011));
-  --lab-active-bg: var(--bench-active-bg, var(--evo-active-bg, rgba(224, 184, 111, 0.48)));
-  --lab-danger: var(--bench-danger, var(--evo-danger, #993026));
+  --lab-bg: var(--bench-bg, var(--evo-bg, var(--logbook-bg, #f2dfae)));
+  --lab-panel: var(--bench-panel, var(--evo-surface, var(--logbook-panel, rgba(255, 252, 245, 0.82))));
+  --lab-border: var(--bench-border, var(--evo-border, var(--logbook-border, rgba(93, 48, 17, 0.18))));
+  --lab-border-strong: var(--bench-border-strong, var(--evo-border-strong, var(--logbook-border-strong, rgba(93, 48, 17, 0.34))));
+  --lab-text: var(--bench-text, var(--evo-text, var(--logbook-text, #3a2a18)));
+  --lab-muted: var(--bench-text-secondary, var(--evo-text-secondary, var(--logbook-muted, rgba(93, 48, 17, 0.66))));
+  --lab-accent: var(--bench-accent-strong, var(--evo-accent-strong, var(--logbook-accent-strong, #5a3319)));
+  --lab-active-bg: var(--bench-active-bg, var(--evo-active-bg, var(--logbook-active-bg, rgba(139, 94, 52, 0.1))));
+  --lab-danger: var(--bench-danger, var(--evo-danger, var(--logbook-danger, #993026)));
   display: grid;
   grid-template-columns: var(--lab-rail-width, 316px) minmax(0, 1fr);
   gap: 14px;

@@ -99,6 +99,7 @@ test('History Review and Evidence context keep audit content inside narrow viewp
     ['Logs side column hides x overflow when stacked', /@media \(max-width: 1120px\)[\s\S]*\.detail-side-column\s*\{[\s\S]*grid-template-columns:\s*1fr[\s\S]*overflow-x:\s*hidden/],
     ['Logs shell suppresses x overflow on mobile', /@media \(max-width: 960px\)[\s\S]*\.battle-log-shell\s*\{[\s\S]*grid-template-columns:\s*1fr[\s\S]*overflow-x:\s*hidden/],
     ['Logs review/archive main columns hide x overflow', /\.detail-content\.workspace-review \.detail-main-column,[\s\S]*\.detail-content\.workspace-archive \.detail-main-column\s*\{[\s\S]*overflow-x:\s*hidden[\s\S]*scrollbar-gutter:\s*stable/],
+    ['Logs detail topbar keeps the shared evidence context phase-only', /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'[\s\S]*<div v-if="selectedHistoryGame" :class="\['detail-topbar', 'workspace-' \+ workspaceTab\]">[\s\S]*<EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" \/>/],
     ['Logs phone layout keeps detail columns single-column', /@media \(max-width: 640px\)[\s\S]*\.detail-content,[\s\S]*\.detail-side-column\s*\{[\s\S]*grid-template-columns:\s*1fr/],
     ['Logs raw log headers wrap on phones', /@media \(max-width: 640px\)[\s\S]*\.history-raw-log header\s*\{[\s\S]*flex-wrap:\s*wrap/],
   ])
@@ -113,8 +114,7 @@ test('History Review and Evidence context keep audit content inside narrow viewp
   ])
 
   assertSourceContract(reviewReport, [
-    ['Review report renders the evidence context in the review panel', /import EvidenceContextBar from '\.\/EvidenceContextBar\.vue'[\s\S]*<EvidenceContextBar v-if="game" class="review-evidence-context" :game="game" \/>/],
-    ['Review evidence context becomes two columns below review width', /@media \(max-width: 860px\)[\s\S]*\.review-evidence-context :deep\(\.evidence-context-summary\)\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/],
+    ['Review report does not duplicate the shared evidence context', /<section class="archive-review-panel">[\s\S]*<h3>复盘报告<\/h3>(?![\s\S]*review-evidence-context)/],
     ['Review summary chips wrap', /\.review-summary-strip\s*\{[\s\S]*flex-wrap:\s*wrap/],
     ['Review judge summary uses shrinkable metric columns', /\.review-judge-summary\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/],
     ['Review judge cards use shrinkable columns', /\.review-judge-list\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/],
@@ -182,9 +182,9 @@ test('390px mobile fixture keeps review evidence and Lab tables from widening th
               width: 100%;
               min-width: 0;
               padding: 8px;
-              border: 1px solid rgba(45, 96, 134, 0.24);
+              border: 1px solid rgba(92, 54, 20, 0.18);
               border-radius: 8px;
-              background: rgba(232, 242, 248, 0.78);
+              background: rgba(255, 249, 232, 0.72);
             }
             .evidence-context-summary {
               display: grid;

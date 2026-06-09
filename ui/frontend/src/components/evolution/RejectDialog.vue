@@ -258,6 +258,34 @@ function confirm() {
 
 <style scoped>
 .evo-reject-dialog-backdrop {
+  --logbook-bg: #f2dfae;
+  --logbook-bg-texture:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    var(--logbook-bg);
+  --logbook-surface: rgba(255, 252, 245, 0.7);
+  --logbook-border: rgba(139, 94, 52, 0.15);
+  --logbook-text: #3a2a18;
+  --logbook-muted: #8b6b4a;
+  --logbook-accent: #8b5e34;
+  --logbook-accent-strong: #5a3319;
+  --logbook-input-bg: rgba(255, 255, 250, 0.8);
+  --logbook-input-border: rgba(139, 94, 52, 0.2);
+  --logbook-hover: rgba(139, 94, 52, 0.06);
+  --logbook-danger: #993026;
+  --evo-bg: var(--logbook-bg);
+  --evo-bg-texture: var(--logbook-bg-texture);
+  --evo-border: var(--logbook-border, rgba(139, 94, 52, 0.15));
+  --evo-text: var(--logbook-text, #3a2a18);
+  --evo-text-secondary: var(--logbook-muted, #8b6b4a);
+  --evo-accent: var(--logbook-accent, #8b5e34);
+  --evo-accent-strong: var(--logbook-accent-strong, #5a3319);
+  --evo-card-bg: var(--logbook-surface);
+  --evo-input-bg: var(--logbook-input-bg, rgba(255, 255, 250, 0.8));
+  --evo-input-border: var(--logbook-input-border, rgba(139, 94, 52, 0.2));
+  --evo-hover: var(--logbook-hover, rgba(139, 94, 52, 0.06));
+  --evo-danger: var(--logbook-danger, #993026);
+  --evo-danger-bg: rgba(248, 205, 181, 0.6);
+  --evo-danger-border: rgba(154, 45, 36, 0.3);
   position: fixed;
   inset: 0;
   z-index: 90;
@@ -278,9 +306,9 @@ function confirm() {
   min-width: 0;
   overflow: auto;
   padding: 16px;
-  border: 1px solid rgba(139, 58, 42, 0.24);
+  border: 1px solid var(--evo-danger-border);
   border-radius: 8px;
-  background: var(--evo-card-bg, #fffdfa);
+  background: var(--evo-bg-texture);
   box-shadow: 0 18px 46px rgba(23, 18, 13, 0.22);
 }
 
@@ -331,9 +359,9 @@ function confirm() {
 .evo-reject-dialog-proposal,
 .evo-reject-dialog-buffer {
   padding: 10px;
-  border: 1px solid rgba(139, 58, 42, 0.16);
+  border: 1px solid var(--evo-danger-border);
   border-radius: 8px;
-  background: rgba(139, 58, 42, 0.045);
+  background: var(--evo-danger-bg);
 }
 
 .evo-reject-dialog-proposal b,
@@ -435,7 +463,7 @@ function confirm() {
 }
 
 .evo-reject-dialog-field em {
-  color: #8b3a2a;
+  color: var(--evo-danger);
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
