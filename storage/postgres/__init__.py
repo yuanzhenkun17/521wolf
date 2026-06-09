@@ -11,11 +11,21 @@ from storage.postgres.connection import (
     get_registry_postgres_connection,
     get_wolf_postgres_connection,
 )
+from storage.postgres.unit_of_work import (
+    PostgresUnitOfWork,
+    UnitOfWork,
+    UnitOfWorkBoundaryError,
+    UnitOfWorkConnection,
+)
 
 __all__ = [
     "PostgresConnectionAdapter",
     "PostgresCursor",
     "PostgresRow",
+    "PostgresUnitOfWork",
+    "UnitOfWork",
+    "UnitOfWorkBoundaryError",
+    "UnitOfWorkConnection",
     "connect_postgres",
     "get_evolution_postgres_connection",
     "get_registry_postgres_connection",
