@@ -344,13 +344,14 @@ def _llm_runnable(
 
     async def _call(messages: Any) -> Any:
         prepared_messages = prepare_llm_messages(messages, stage=stage, budget=prompt_budget)
+        prompt_metadata = _prompt_registry_metadata(stage=stage, messages=prepared_messages)
         model = _model_identifier(llm)
         observation_metadata = _llm_observation_metadata(
             stage=stage,
             model=model,
             prompt_budget=prompt_budget,
             messages=prepared_messages,
-            extra_metadata=extra_metadata,
+            extra_metadata={**extra_metadata, **prompt_metadata},
         )
         started = time.perf_counter()
         try:
@@ -414,6 +415,87 @@ def _llm_runnable(
 
 def _observability() -> Any:
     return importlib.import_module("app.services.observability")
+
+
+_PROMPT_REGISTRY_STAGES = frozenset({"decision_judge", "evidence", "consolidate", "apply"})
+_PROMPT_METADATA_KEYS = ("prompt_name", "prompt_version", "prompt_label")
+
+
+def _prompt_registry_metadata(*, stage: str, messages: Any) -> dict[str, Any]:
+    if stage not in _PROMPT_REGISTRY_STAGES:
+        return {}
+    try:
+        registry = importlib.import_module("app.services.prompt_registry")
+        get_prompt = getattr(registry, "get_prompt", None)
+        if not callable(get_prompt):
+            return {}
+        resolved = get_prompt(stage, label="production", fallback=_prompt_registry_fallback(messages))
+        return _extract_prompt_metadata(resolved)
+    except Exception:  # noqa: BLE001 - prompt registry must not affect LLM behavior
+        _log.debug("prompt registry lookup failed for stage=%s", stage, exc_info=True)
+        return {}
+
+
+def _extract_prompt_metadata(value: Any) -> dict[str, Any]:
+    payload = _prompt_metadata_payload(value)
+    if _value_at_path(payload, ("prompt_fallback_used",)) is True:
+        return {}
+    source = _value_at_path(payload, ("prompt_source",))
+    if source is not None and str(source) != "langfuse":
+        return {}
+    metadata: dict[str, Any] = {}
+    for key in _PROMPT_METADATA_KEYS:
+        item = _value_at_path(payload, (key,))
+        if item is not None:
+            metadata[key] = item
+    return metadata
+
+
+def _prompt_metadata_payload(value: Any) -> Any:
+    if isinstance(value, tuple) and len(value) >= 2:
+        tuple_metadata = _prompt_metadata_payload(value[1])
+        if tuple_metadata:
+            return tuple_metadata
+    to_observation_metadata = getattr(value, "to_observation_metadata", None)
+    if callable(to_observation_metadata):
+        try:
+            payload = to_observation_metadata()
+            if payload:
+                return payload
+        except Exception:  # noqa: BLE001 - metadata extraction must fail open
+            return {}
+    for path in (
+        ("metadata",),
+        ("prompt_metadata",),
+        ("langfuse_metadata",),
+        ("prompt", "metadata"),
+    ):
+        payload = _value_at_path(value, path)
+        if payload:
+            return payload
+    return value
+
+
+def _prompt_registry_fallback(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_prompt_registry_fallback(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_prompt_registry_fallback(item) for item in value)
+    if isinstance(value, dict):
+        return dict(value)
+    copy_method = getattr(value, "model_copy", None)
+    if callable(copy_method):
+        try:
+            return copy_method()
+        except Exception:  # noqa: BLE001
+            pass
+    copy_method = getattr(value, "copy", None)
+    if callable(copy_method):
+        try:
+            return copy_method()
+        except Exception:  # noqa: BLE001
+            pass
+    return value
 
 
 def _update_observation(observability: Any, observation: Any, **kwargs: Any) -> None:
