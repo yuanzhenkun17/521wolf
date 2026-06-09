@@ -1,9 +1,4 @@
 // @ts-nocheck
-import {
-  hashForView,
-  viewFromHash,
-  writeViewHash
-} from '../router/legacyViewNavigation'
 
 const TERMINAL_GAME_STATUSES = new Set(['completed', 'failed', 'cancelled'])
 const ACTIVE_GAME_STORAGE_KEY = 'night-council.active-game.v1'
@@ -89,11 +84,8 @@ export {
   activeSessionFromGame,
   clearStoredGameSession,
   emptyActiveSession,
-  hashForView,
   isReturnableGame,
   isTerminalGame,
   readStoredGameSession,
-  viewFromHash,
-  writeStoredGameSession,
-  writeViewHash
+  writeStoredGameSession
 }

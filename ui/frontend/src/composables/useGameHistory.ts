@@ -13,10 +13,11 @@ import { normalizeHistoryWorkspaceTab } from '../domain/history/normalizers'
 import {
   currentLegacyHash,
   syncCurrentLegacyHashForView,
-  writeLegacyHashForView
+  writeLegacyHashForView,
+  writeViewHash
 } from '../router/legacyViewNavigation'
 import { historyDeepLinkFromHash, logsHash } from '../router/workbenchDeepLinks'
-import { isReturnableGame, writeViewHash } from './gameSession.ts'
+import { isReturnableGame } from './gameSession.ts'
 import {
   AUTHORITATIVE_DEATH_EVENTS,
   deathTargetIds,

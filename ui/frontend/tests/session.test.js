@@ -18,9 +18,9 @@ import {
   isReturnableGame,
   isTerminalGame,
   readStoredGameSession,
-  viewFromHash,
   writeStoredGameSession
 } from '../src/composables/gameSession.ts'
+import { viewFromHash } from '../src/router/legacyViewNavigation'
 
 function createMemoryStorage() {
   const values = new Map()

@@ -19,10 +19,9 @@ import {
   isReturnableGame,
   isTerminalGame,
   readStoredGameSession,
-  writeStoredGameSession,
-  writeViewHash
+  writeStoredGameSession
 } from './gameSession.ts'
-import { currentLegacyView } from '../router/legacyViewNavigation'
+import { currentLegacyView, writeViewHash } from '../router/legacyViewNavigation'
 import { applyLogToPlayers, applyLogsToPlayers } from './gameTimeline.ts'
 
 const SPEECH_EVENT_TYPES = new Set([
