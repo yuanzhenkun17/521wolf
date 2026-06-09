@@ -4475,13 +4475,33 @@ test('evaluation workbench exposes benchmark boundary and budget plan before lau
         evaluation_set_id: suite.evaluation_set_id,
         seed_set_id: suite.seed_set_id,
         benchmark_config_hash: suite.config_hash,
+        dry_run: true,
         total_games: 3,
         eval_batch_count: 1,
         judge_decisions: 36,
+        estimated_tokens: 225900,
+        estimated_cost: 0.4518,
+        currency: 'USD',
+        expected_duration_seconds: 97,
+        concurrency_policy: {
+          policy: 'bounded_sequential_eval_batches',
+          game_concurrency: 3,
+          judge_concurrency: 2,
+          expected_duration_seconds: 97
+        },
+        assumptions: [
+          'game_decision_units = total_games * max_days * 12 players',
+          'judge_decision_units = total_games * judge_max_decisions when decision judge is enabled',
+          'estimated_tokens = game units and judge units multiplied by planner token assumptions',
+          'estimated_cost uses planner token cost assumptions and is reported before launch'
+        ],
         budget: {
           estimated_units: 36,
           limit_units: 50,
-          exceeded: false,
+          estimated_tokens: 225900,
+          estimated_cost: 0.4518,
+          currency: 'USD',
+          exceeded: { value: false, reasons: [], evidence: [] },
           status: 'ok'
         },
         rankable: {
@@ -4512,8 +4532,15 @@ test('evaluation workbench exposes benchmark boundary and budget plan before lau
   assert.equal(workbench.benchmarkPlan.value.evaluation_set_id, 'role-baseline-quick-v1@v1')
   assert.equal(workbench.benchmarkPlan.value.seed_set_id, 'role-baseline-quick-202606')
   assert.equal(workbench.benchmarkPlan.value.total_games, 3)
+  assert.equal(workbench.benchmarkPlan.value.dry_run, true)
+  assert.equal(workbench.benchmarkPlan.value.estimated_tokens, 225900)
+  assert.equal(workbench.benchmarkPlan.value.estimated_cost, 0.4518)
+  assert.equal(workbench.benchmarkPlan.value.currency, 'USD')
+  assert.equal(workbench.benchmarkPlan.value.expected_duration_seconds, 97)
+  assert.equal(workbench.benchmarkPlan.value.concurrency_policy.judge_concurrency, 2)
+  assert.equal(workbench.benchmarkPlan.value.assumptions.length, 4)
   assert.equal(workbench.benchmarkPlan.value.budget.estimated_units, 36)
-  assert.equal(workbench.benchmarkPlan.value.budget.exceeded, false)
+  assert.deepEqual(workbench.benchmarkPlan.value.budget.exceeded, { value: false, reasons: [], evidence: [] })
   assert.equal(workbench.benchmarkPlanBudgetExceeded.value, false)
   assert.equal(workbench.selectedBenchmarkCanLaunch.value, true)
   assert.deepEqual(requests.find((item) => item.path === '/benchmark/plan')?.body, {
@@ -4521,6 +4548,105 @@ test('evaluation workbench exposes benchmark boundary and budget plan before lau
     roles: ['seer'],
     battle_games: 3,
     max_days: 5
+  })
+}))
+
+test('evaluation workbench blocks launch from structured budget evidence without treating false evidence as truthy', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    label: 'Role Baseline Quick v1',
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  }
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (/^\/roles\/[^/]+\/leaderboard\?evaluation_set_id=role-baseline-quick-v1%40v1$/.test(path)) return { entries: [] }
+    if (/^\/roles\/[^/]+\/versions$/.test(path)) return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark/plan') {
+      return {
+        benchmark_id: suite.id,
+        target_type: 'role_version',
+        evaluation_set_id: suite.evaluation_set_id,
+        seed_set_id: suite.seed_set_id,
+        dry_run: true,
+        total_games: 3,
+        estimated_tokens: 225900,
+        estimated_cost: 0.4518,
+        currency: 'USD',
+        expected_duration_seconds: 97,
+        concurrency_policy: {
+          policy: 'bounded_sequential_eval_batches',
+          game_concurrency: 3,
+          judge_concurrency: 2,
+          expected_duration_seconds: 97
+        },
+        assumptions: ['planner contract'],
+        budget: {
+          estimated_units: 210,
+          limit_units: 100,
+          limit_cost: 0.1,
+          estimated_tokens: 225900,
+          estimated_cost: 0.4518,
+          currency: 'USD',
+          exceeded: {
+            value: true,
+            reasons: ['estimated_units_exceed_limit_units', 'estimated_cost_exceed_limit_cost'],
+            evidence: [
+              { metric: 'estimated_units', estimated: 210, limit: 100, delta: 110, unit: 'llm_call_unit' },
+              { metric: 'estimated_cost', estimated: 0.4518, limit: 0.1, delta: 0.3518, unit: 'USD' }
+            ]
+          }
+        },
+        launchable: false,
+        warnings: [
+          {
+            kind: 'budget_exceeded',
+            message: '预计评测成本超过预算上限',
+            reasons: ['estimated_units_exceed_limit_units', 'estimated_cost_exceed_limit_cost'],
+            evidence: [
+              { metric: 'estimated_units', estimated: 210, limit: 100, delta: 110, unit: 'llm_call_unit' },
+              { metric: 'estimated_cost', estimated: 0.4518, limit: 0.1, delta: 0.3518, unit: 'USD' }
+            ]
+          }
+        ]
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  workbench.form.value.budget_limit_units = 100
+  workbench.form.value.budget_limit_cost = 0.1
+  workbench.form.value.stop_after_budget_units = 120
+  await workbench.refreshAll()
+
+  assert.equal(workbench.benchmarkPlan.value.dry_run, true)
+  assert.equal(workbench.benchmarkPlan.value.budget.exceeded.value, true)
+  assert.deepEqual(workbench.benchmarkPlan.value.budget.exceeded.reasons, [
+    'estimated_units_exceed_limit_units',
+    'estimated_cost_exceed_limit_cost'
+  ])
+  assert.equal(workbench.benchmarkPlanBudgetExceeded.value, true)
+  assert.equal(workbench.selectedBenchmarkCanLaunch.value, false)
+  assert.equal(requests.filter((item) => item.path === '/benchmark').length, 0)
+  assert.deepEqual(requests.find((item) => item.path === '/benchmark/plan')?.body, {
+    benchmark_id: 'role-baseline-quick-v1',
+    roles: ['seer'],
+    battle_games: 3,
+    max_days: 5,
+    budget_limit_units: 100,
+    budget_limit_cost: 0.1,
+    stop_after_budget_units: 120
   })
 }))
 

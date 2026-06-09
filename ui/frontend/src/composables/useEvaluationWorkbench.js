@@ -284,7 +284,8 @@ function benchmarkErrorMessage(err, fallback) {
   return raw || fallback
 }
 
-function benchmarkBudgetExceededValue(exceeded) {
+function benchmarkBudgetExceededValue(budget = {}) {
+  const exceeded = budget?.exceeded
   if (exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded)) {
     return Boolean(exceeded.value)
   }
@@ -1179,7 +1180,7 @@ function useEvaluationWorkbench(options = {}) {
     selectedBenchmarkSuite.value?.target_type || legacyBenchmarkTargetType.value || 'role_version'
   )
   const selectedBenchmarkIsModelSuite = computed(() => selectedBenchmarkTargetType.value === 'model')
-  const benchmarkPlanBudgetExceeded = computed(() => benchmarkBudgetExceededValue(benchmarkPlan.value?.budget?.exceeded))
+  const benchmarkPlanBudgetExceeded = computed(() => benchmarkBudgetExceededValue(benchmarkPlan.value?.budget || {}))
   const selectedBenchmarkEvaluationSetId = computed(() => selectedBenchmarkSuite.value?.evaluation_set_id || '')
   const selectedBenchmarkSuiteLabel = computed(() => {
     if (selectedBenchmarkSuite.value?.label) return selectedBenchmarkSuite.value.label
@@ -1381,7 +1382,7 @@ function useEvaluationWorkbench(options = {}) {
         : {
             ...(selectedRole.value ? { roles: [selectedRole.value] } : {}),
             ...(selectedRole.value && targetVersionId ? { target_versions: { [selectedRole.value]: targetVersionId } } : {})
-          }),
+      }),
       battle_games: launchBattleGames.value,
       max_days: launchMaxDays.value,
       ...(budgetLimit == null ? {} : { budget_limit_units: budgetLimit }),
@@ -1628,8 +1629,8 @@ function useEvaluationWorkbench(options = {}) {
     )
   }
 
-  function setNotice(type, message) {
-    notice.value = { type, message }
+  function setNotice(type, message, extra = {}) {
+    notice.value = { type, message, ...(extra && typeof extra === 'object' ? extra : {}) }
   }
 
   function clearNotice() {
@@ -2798,7 +2799,7 @@ function useEvaluationWorkbench(options = {}) {
       return
     }
     if (benchmarkPlanBudgetExceeded.value) {
-      const message = '评测预算超过上限，请提高预算或选择更小的 suite。'
+      const message = '评测预算超过上限，请提高预算或选择更小的套件。'
       error.value = message
       setNotice('warning', message)
       return
@@ -2827,7 +2828,7 @@ function useEvaluationWorkbench(options = {}) {
       if (token.isLatest() && err?.name !== 'AbortError') {
         const message = benchmarkErrorMessage(err, '启动评测失败')
         error.value = message
-        setNotice('error', message)
+        setNotice('error', message, { error: err })
       }
     } finally {
       if (token.isLatest()) {

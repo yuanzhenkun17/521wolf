@@ -95,13 +95,28 @@ const runPlan = computed(() => props.benchmark.benchmarkPlan.value || null)
 const planBudget = computed(() => runPlan.value?.budget || {})
 const planEstimates = computed(() => runPlan.value?.estimates || {})
 const planJudge = computed(() => runPlan.value?.judge || {})
+const planBudgetExceeded = computed(() => {
+  const exceeded = planBudget.value.exceeded
+  if (exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded)) return Boolean(exceeded.value)
+  return Boolean(exceeded)
+})
 const budgetStatusLabel = computed(() =>
-  planBudget.value.exceeded ? '超出预算' : (runPlan.value ? '预算内' : '未估算')
+  planBudgetExceeded.value ? '超出预算' : (runPlan.value ? '预算内' : '未估算')
 )
 const estimatedUnitsLabel = computed(() => {
   const value = Number(planBudget.value.estimated_units ?? planEstimates.value.estimated_llm_call_units)
   return Number.isFinite(value) ? value.toLocaleString('zh-CN') : '--'
 })
+const estimatedTokensLabel = computed(() => {
+  const value = Number(runPlan.value?.estimated_tokens ?? planBudget.value.estimated_tokens ?? planEstimates.value.estimated_tokens)
+  return Number.isFinite(value) ? value.toLocaleString('zh-CN') : '--'
+})
+const estimatedCostLabel = computed(() => {
+  const value = Number(runPlan.value?.estimated_cost ?? planBudget.value.estimated_cost ?? planEstimates.value.estimated_cost)
+  const currency = runPlan.value?.currency || planBudget.value.currency || planEstimates.value.currency || 'USD'
+  return Number.isFinite(value) ? `${value.toLocaleString('zh-CN', { maximumFractionDigits: 6 })} ${currency}` : '--'
+})
+const dryRunLabel = computed(() => (runPlan.value?.dry_run ? '仅预估不启动' : (runPlan.value ? '正式启动计划' : '未估算')))
 const judgeUnitsLabel = computed(() => {
   const value = Number(planJudge.value.estimated_decisions || 0)
   return Number.isFinite(value) ? value.toLocaleString('zh-CN') : '--'
@@ -257,6 +272,18 @@ function sourceLabel(source) {
             <span>
               <small>预计调用单位</small>
               <b>{{ estimatedUnitsLabel }}</b>
+            </span>
+            <span>
+              <small>预计成本</small>
+              <b>{{ estimatedCostLabel }}</b>
+            </span>
+            <span>
+              <small>预计 Token</small>
+              <b>{{ estimatedTokensLabel }}</b>
+            </span>
+            <span>
+              <small>预检模式</small>
+              <b>{{ dryRunLabel }}</b>
             </span>
             <span>
               <small>总局数</small>

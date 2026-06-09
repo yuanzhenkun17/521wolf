@@ -35,7 +35,7 @@ const gateLabel = computed(() => {
 })
 const budgetLabel = computed(() => {
   if (!plan.value) return '计划待生成'
-  if (budget.value?.exceeded) return '预算超限'
+  if (props.benchmark.benchmarkPlanBudgetExceeded.value) return '预算超限'
   const units = budget.value?.estimated_units ?? plan.value?.estimates?.estimated_llm_call_units
   return units == null ? '预算正常' : `${Number(units).toLocaleString('zh-CN')} 单位`
 })

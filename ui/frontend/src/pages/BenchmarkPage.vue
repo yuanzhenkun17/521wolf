@@ -46,9 +46,17 @@ const planEstimates = computed(() => plan.value?.estimates || {})
 const planJudge = computed(() => plan.value?.judge || {})
 const planConcurrencyPolicy = computed(() => plan.value?.concurrency_policy || {})
 const planWarnings = computed(() => Array.isArray(plan.value?.warnings) ? plan.value.warnings : [])
-const planBudgetExceededDetail = computed(() => {
+const planBudgetExceeded = computed(() => {
   const exceeded = planBudget.value?.exceeded
-  return exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded) ? exceeded : {}
+  if (exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded)) {
+    return {
+      ...exceeded,
+      value: Boolean(exceeded.value),
+      reasons: Array.isArray(exceeded.reasons) ? exceeded.reasons : [],
+      evidence: Array.isArray(exceeded.evidence) ? exceeded.evidence : []
+    }
+  }
+  return { value: Boolean(exceeded), reasons: [], evidence: [] }
 })
 const activeRuns = computed(() => benchmark.filteredBatchRunRows.value.filter((run) => run.isActive).slice(0, 4))
 const recentRuns = computed(() => benchmark.visibleBatchRunRows.value.slice(0, 5))
@@ -163,16 +171,16 @@ const concurrencyCaption = computed(() => {
 const dryRunBlocked = computed(() =>
   Boolean(plan.value && (benchmark.benchmarkPlanBudgetExceeded.value || plan.value.launchable === false || launchDisabledReason.value))
 )
-const dryRunResultLabel = computed(() => {
+const dryRunLabel = computed(() => {
   if (!plan.value) return '计划待生成'
-  if (plan.value.dry_run === false) return '正式请求'
-  return dryRunBlocked.value ? 'dry-run 未通过' : 'dry-run 通过'
+  if (plan.value.dry_run === false) return '正式启动计划'
+  return dryRunBlocked.value ? '预检未通过' : '仅预估不启动'
 })
-const dryRunResultCaption = computed(() => {
+const dryRunCaption = computed(() => {
   if (!plan.value) return '等待计划接口'
   if (benchmark.benchmarkPlanBudgetExceeded.value) return '预算门禁已拦截'
   if (launchDisabledReason.value) return launchDisabledReason.value
-  return plan.value.dry_run === false ? '后端返回非预演结果' : '启动前预演校验'
+  return plan.value.dry_run === false ? '后端返回正式启动计划' : '只做预算预检'
 })
 const planCostRows = computed(() => [
   {
@@ -198,6 +206,18 @@ const planCostRows = computed(() => [
     label: '裁判判定单位',
     value: judgeDecisionLabel.value,
     caption: planJudge.value.enabled ? `每局最多 ${formatNumber(planJudge.value.max_decisions_per_game)} 次判定` : '裁判判定未启用'
+  },
+  {
+    key: 'tokens',
+    label: '预计 Token',
+    value: estimatedTokensLabel.value,
+    caption: '按 planner 假设折算'
+  },
+  {
+    key: 'cost',
+    label: '预计成本',
+    value: estimatedCostLabel.value,
+    caption: `币种 ${planCurrency.value}`
   },
   {
     key: 'limit',
@@ -228,9 +248,9 @@ const planPolicyRows = computed(() => [
   },
   {
     key: 'dry-run',
-    label: 'dry-run 结果',
-    value: dryRunResultLabel.value,
-    caption: dryRunResultCaption.value,
+    label: '预检模式',
+    value: dryRunLabel.value,
+    caption: dryRunCaption.value,
     danger: dryRunBlocked.value
   },
   {
@@ -248,13 +268,13 @@ const planPolicyRows = computed(() => [
 ])
 const budgetReasonRows = computed(() => {
   const rows = []
-  const reasons = Array.isArray(planBudgetExceededDetail.value.reasons) ? planBudgetExceededDetail.value.reasons : []
-  const evidence = Array.isArray(planBudgetExceededDetail.value.evidence) ? planBudgetExceededDetail.value.evidence : []
+  const reasons = Array.isArray(planBudgetExceeded.value.reasons) ? planBudgetExceeded.value.reasons : []
+  const evidence = Array.isArray(planBudgetExceeded.value.evidence) ? planBudgetExceeded.value.evidence : []
   reasons.forEach((reason) => {
     rows.push({
       key: `reason:${reason}`,
       label: '超预算原因',
-      value: budgetReasonLabel(reason),
+      value: displayPlanBudgetReason(reason),
       caption: '后端预算门禁'
     })
   })
@@ -268,6 +288,14 @@ const budgetReasonRows = computed(() => {
       label: '超预算原因',
       value: '预计调用单位超过预算上限',
       caption: `预计 ${estimatedUnitsLabel.value} / 上限 ${budgetLimitUnits.value == null ? '未设置' : formatNumber(budgetLimitUnits.value)}`
+    })
+  }
+  if (planBudget.value.stop_after_predicted) {
+    rows.push({
+      key: 'stop_after_budget_units',
+      label: '预算停止线',
+      value: `${formatNumber(planBudget.value.stop_after_budget_units)} 单位`,
+      caption: '达到该线后应停止继续消耗'
     })
   }
   return rows
@@ -324,7 +352,7 @@ const viewDensityLabels = {
 }
 const planWarningLabels = {
   budget_exceeded: '预算超限',
-  stop_after_budget_will_trigger: '预算停止阈值',
+  stop_after_budget_will_trigger: '停止线将触发',
   ad_hoc_benchmark: '临时评测',
   missing_seed_set: '缺少种子集',
   small_sample: '样本偏少',
@@ -334,15 +362,14 @@ const planWarningLabels = {
 const planWarningMessages = {
   budget_exceeded: '预计评测成本超过预算上限',
   stop_after_budget_will_trigger: '预计调用单位会触发预算停止阈值',
-  ad_hoc_benchmark: '临时评测不会写入版本化套件证据边界'
+  ad_hoc_benchmark: '临时评测不绑定版本化套件，结果不会进入正式隔离证据。'
 }
-const budgetReasonLabels = {
-  estimated_units_exceed_limit_units: '预计调用单位超过预算上限',
-  estimated_cost_exceed_limit_cost: '预计成本超过成本上限'
-}
-const budgetMetricLabels = {
-  estimated_units: '预计调用单位',
-  estimated_cost: '预计成本',
+const planBudgetReasonLabels = {
+  estimated_units_exceed_limit_units: '预计调用单位超限',
+  estimated_cost_exceed_limit_cost: '预计成本超限',
+  stop_after_budget_units: '达到预算停止线',
+  estimated_units: '预计调用单位超限',
+  estimated_cost: '预计成本超限',
   estimated_tokens: '预计 token'
 }
 const contextDiagnosticRows = computed(() => {
@@ -491,6 +518,10 @@ function displayPlanWarningKind(value) {
   return displayMappedLabel(value, planWarningLabels, '警告')
 }
 
+function displayPlanBudgetReason(value) {
+  return displayMappedLabel(value, planBudgetReasonLabels, '预算原因')
+}
+
 function displayPlanWarningMessage(warning) {
   const message = String(warning?.message || '').trim()
   if (message && /[\u4e00-\u9fff]/.test(message)) return message
@@ -499,32 +530,29 @@ function displayPlanWarningMessage(warning) {
   return message || '计划警告'
 }
 
-function budgetReasonLabel(value) {
-  const key = String(value || '').trim()
-  return budgetReasonLabels[key] || key || '预算门禁触发'
-}
-
-function budgetMetricLabel(value) {
-  const key = String(value || '').trim()
-  return budgetMetricLabels[key] || key || '预算指标'
-}
-
-function budgetEvidenceValue(value, metric) {
+function formatBudgetMetricValue(value, metric) {
   return String(metric || '').includes('cost')
     ? formatCost(value, planCurrency.value)
     : formatNumber(value)
 }
 
+function budgetEvidenceCaption(item = {}) {
+  const metric = String(item.metric || '').trim()
+  const delta = item.delta == null ? '' : `超出 ${formatBudgetMetricValue(item.delta, metric)}`
+  const unit = item.unit ? `单位 ${item.unit}` : '预算证据'
+  return [delta, unit].filter(Boolean).join(' · ')
+}
+
 function budgetEvidenceRow(item, index) {
   if (!item || typeof item !== 'object') return null
   const metric = String(item.metric || '').trim()
-  const estimated = budgetEvidenceValue(item.estimated, metric)
-  const limit = budgetEvidenceValue(item.limit, metric)
-  const delta = item.delta == null ? '' : `，超出 ${budgetEvidenceValue(item.delta, metric)}`
+  const estimated = formatBudgetMetricValue(item.estimated, metric)
+  const limit = formatBudgetMetricValue(item.limit, metric)
+  const delta = item.delta == null ? '' : `，超出 ${formatBudgetMetricValue(item.delta, metric)}`
   return {
     key: `evidence:${metric || index}`,
     label: '预算证据',
-    value: budgetMetricLabel(metric),
+    value: displayPlanBudgetReason(metric),
     caption: `预计 ${estimated} / 上限 ${limit}${delta}`
   }
 }
@@ -844,9 +872,28 @@ onBeforeUnmount(() => {
                   />
                 </label>
                 <label>
-                  <span>预算上限</span>
+                  <span>单位预算上限</span>
                   <input
                     v-model.number="benchmark.form.value.budget_limit_units"
+                    type="number"
+                    min="0"
+                    max="1000000"
+                  />
+                </label>
+                <label>
+                  <span>费用预算上限</span>
+                  <input
+                    v-model.number="benchmark.form.value.budget_limit_cost"
+                    type="number"
+                    min="0"
+                    max="1000000"
+                    step="0.0001"
+                  />
+                </label>
+                <label>
+                  <span>达到预算停止线</span>
+                  <input
+                    v-model.number="benchmark.form.value.stop_after_budget_units"
                     type="number"
                     min="0"
                     max="1000000"
@@ -874,7 +921,15 @@ onBeforeUnmount(() => {
               <div v-if="planWarnings.length" class="bench-plan-warnings">
                 <span v-for="warning in planWarnings" :key="warning.kind || warning.message">
                   <b>{{ displayPlanWarningKind(warning.kind) }}</b>
-                  <em>{{ warning.message || '计划警告' }}</em>
+                  <em>{{ displayPlanWarningMessage(warning) }}</em>
+                </span>
+              </div>
+              <div v-if="budgetReasonRows.length" class="bench-budget-reasons" aria-label="预算与停止线提示">
+                <strong>{{ benchmark.benchmarkPlanBudgetExceeded.value ? '超预算原因' : '预算与停止线提示' }}</strong>
+                <span v-for="item in budgetReasonRows" :key="item.key">
+                  <b>{{ item.label }}</b>
+                  <em>{{ item.value }}</em>
+                  <small>{{ item.caption }}</small>
                 </span>
               </div>
               <div v-if="benchmark.benchmarkPlanError.value" class="bench-inline-warning">
@@ -1595,7 +1650,7 @@ onBeforeUnmount(() => {
 
 .bench-plan-controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   padding: 0 12px 12px;
 }
@@ -1710,6 +1765,63 @@ onBeforeUnmount(() => {
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bench-budget-reasons {
+  display: grid;
+  grid-template-columns: 140px repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  align-items: stretch;
+  margin: 0 12px 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--bench-danger-border);
+  border-radius: 7px;
+  background: var(--bench-danger-bg);
+}
+
+.bench-budget-reasons strong,
+.bench-budget-reasons span {
+  min-width: 0;
+}
+
+.bench-budget-reasons strong {
+  display: flex;
+  align-items: center;
+  color: var(--bench-danger);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.bench-budget-reasons span {
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid rgba(153, 48, 38, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.56);
+}
+
+.bench-budget-reasons b,
+.bench-budget-reasons em,
+.bench-budget-reasons small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-budget-reasons b {
+  color: var(--bench-danger);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.bench-budget-reasons em,
+.bench-budget-reasons small {
+  color: var(--bench-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
 }
 
 .bench-inline-warning {

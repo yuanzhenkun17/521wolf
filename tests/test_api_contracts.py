@@ -1534,6 +1534,18 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
     )
     assert budget_limit_integer["minimum"] == 0
     assert budget_limit_integer["maximum"] == 1_000_000
+    assert {"type": "null"} in benchmark["budget_limit_cost"]["anyOf"]
+    budget_limit_number = next(
+        item for item in benchmark["budget_limit_cost"]["anyOf"] if item.get("type") == "number"
+    )
+    assert budget_limit_number["minimum"] == 0.0
+    assert budget_limit_number["maximum"] == 1_000_000.0
+    assert {"type": "null"} in benchmark["stop_after_budget_units"]["anyOf"]
+    stop_after_integer = next(
+        item for item in benchmark["stop_after_budget_units"]["anyOf"] if item.get("type") == "integer"
+    )
+    assert stop_after_integer["minimum"] == 0
+    assert stop_after_integer["maximum"] == 1_000_000
 
     benchmark_snapshot = _schema_properties(doc, "BenchmarkSnapshotRequest")
     assert benchmark_snapshot["title"]["default"] == ""
@@ -3803,6 +3815,18 @@ def test_benchmark_plan_api_contract(tmp_path: Path) -> None:
                 "benchmark_id": "role-baseline-v1",
                 "roles": ["seer"],
                 "budget_limit_units": 100,
+                "budget_limit_cost": 0.1,
+                "stop_after_budget_units": 120,
+            },
+        )
+        blocked_response = client.post(
+            "/api/benchmark",
+            json={
+                "benchmark_id": "role-baseline-v1",
+                "roles": ["seer"],
+                "budget_limit_units": 100,
+                "budget_limit_cost": 0.1,
+                "stop_after_budget_units": 120,
             },
         )
         missing_response = client.post("/api/benchmark/plan", json={"benchmark_id": "missing-suite"})
@@ -3827,6 +3851,13 @@ def test_benchmark_plan_api_contract(tmp_path: Path) -> None:
             "cost_tier": str,
             "judge": dict,
             "estimates": dict,
+            "dry_run": bool,
+            "estimated_tokens": int,
+            "estimated_cost": (int, float),
+            "currency": str,
+            "expected_duration_seconds": int,
+            "concurrency_policy": dict,
+            "assumptions": list,
             "budget": dict,
             "launchable": bool,
             "warnings": list,
@@ -3844,9 +3875,62 @@ def test_benchmark_plan_api_contract(tmp_path: Path) -> None:
     assert payload["estimates"]["game_decision_units"] == 180
     assert payload["estimates"]["judge_decision_units"] == 30
     assert payload["estimates"]["estimated_llm_call_units"] == 210
-    assert payload["budget"] == {"limit_units": 100, "estimated_units": 210, "exceeded": True}
+    assert payload["dry_run"] is True
+    assert payload["estimated_tokens"] == 225900
+    assert payload["estimated_cost"] == 0.4518
+    assert payload["currency"] == "USD"
+    assert payload["expected_duration_seconds"] == 97
+    assert payload["concurrency_policy"]["policy"] == "bounded_sequential_eval_batches"
+    assert payload["concurrency_policy"]["game_concurrency"] == 3
+    assert payload["concurrency_policy"]["judge_concurrency"] == 2
+    assert payload["concurrency_policy"]["expected_duration_seconds"] == 97
+    assert payload["assumptions"] == [
+        "game_decision_units = total_games * max_days * 12 players",
+        "judge_decision_units = total_games * judge_max_decisions when decision judge is enabled",
+        "estimated_tokens = game units and judge units multiplied by planner token assumptions",
+        "estimated_cost uses planner token cost assumptions and is reported before launch",
+    ]
+    assert payload["budget"] == {
+        "limit_units": 100,
+        "estimated_units": 210,
+        "limit_cost": 0.1,
+        "estimated_cost": 0.4518,
+        "estimated_tokens": 225900,
+        "currency": "USD",
+        "stop_after_budget_units": 120,
+        "stop_after_predicted": True,
+        "exceeded": {
+            "value": True,
+            "reasons": ["estimated_units_exceed_limit_units", "estimated_cost_exceed_limit_cost"],
+            "evidence": [
+                {"metric": "estimated_units", "estimated": 210, "limit": 100, "delta": 110, "unit": "llm_call_unit"},
+                {"metric": "estimated_cost", "estimated": 0.4518, "limit": 0.1, "delta": 0.3518, "unit": "USD"},
+            ],
+        },
+    }
     assert payload["launchable"] is False
     assert payload["warnings"][0]["kind"] == "budget_exceeded"
+    assert payload["warnings"][0]["reasons"] == [
+        "estimated_units_exceed_limit_units",
+        "estimated_cost_exceed_limit_cost",
+    ]
+    assert payload["warnings"][0]["evidence"] == payload["budget"]["exceeded"]["evidence"]
+
+    assert blocked_response.status_code == 422
+    blocked_payload = blocked_response.json()
+    _assert_shape(blocked_payload, {"detail": dict, "error": dict})
+    assert blocked_payload["detail"]["message"] == "benchmark budget exceeded"
+    assert blocked_payload["detail"]["estimated"] == {
+        "units": 210,
+        "tokens": 225900,
+        "cost": 0.4518,
+        "currency": "USD",
+    }
+    assert blocked_payload["detail"]["limit"] == {"units": 100, "cost": 0.1, "currency": "USD"}
+    assert blocked_payload["detail"]["budget"] == payload["budget"]
+    assert blocked_payload["error"]["code"] == "benchmark_budget_exceeded"
+    assert blocked_payload["error"]["diagnostics"][0]["kind"] == "budget_exceeded"
+    assert blocked_payload["error"]["diagnostics"][0]["evidence"] == payload["budget"]["exceeded"]["evidence"]
 
     _assert_error_detail(missing_response, 404, "benchmark not found")
 
