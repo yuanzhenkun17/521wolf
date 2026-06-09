@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from app.lib.version import ReleaseStageNotAllowedError
 from app.util.time import beijing_now_iso
-from ui.backend.errors import domain_error_detail
+from ui.backend.errors import domain_error_detail, release_stage_not_allowed_detail
 from ui.backend.schemas import normalize_rejection_tags
 
 _ACCEPTED_STATUS = "accepted"
@@ -114,6 +114,17 @@ def _ensure_evolution_parent_allowed(store: Any, role: str, run: dict[str, Any])
                 diagnostics=[exc.diagnostic(kind="evolution_parent_release_stage_not_allowed")],
             ),
         ) from exc
+    except ValueError as exc:
+        release_stage_detail = release_stage_not_allowed_detail(
+            exc,
+            code="evolution_parent_release_stage_not_allowed",
+            message="Evolution parent version is not allowed.",
+            detail_prefix="evolution parent not allowed",
+            kind="evolution_parent_release_stage_not_allowed",
+        )
+        if release_stage_detail is not None:
+            raise HTTPException(status_code=409, detail=release_stage_detail) from exc
+        raise
 
 
 def _proposal_review_required_error(run: dict[str, Any]) -> HTTPException:

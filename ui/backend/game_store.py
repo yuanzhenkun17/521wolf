@@ -26,7 +26,7 @@ from storage.provider import storage_provider_from_env
 from storage.public_events import public_events_only
 from storage.runtime import GamePersistence
 from ui.backend.constants import LOG_SOURCE_LABELS
-from ui.backend.errors import domain_error_detail
+from ui.backend.errors import domain_error_detail, release_stage_not_allowed_detail
 from ui.backend.history_index import GameHistoryIndex, history_facets, source_counts
 from ui.backend.live_game import (
     LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS,
@@ -399,6 +399,15 @@ class GameStoreMixin:
                 ),
             ) from exc
         except (RuntimeError, ValueError) as exc:
+            release_stage_detail = release_stage_not_allowed_detail(
+                exc,
+                code="role_version_release_stage_not_allowed",
+                message="Role version is not allowed for normal games.",
+                detail_prefix="role version not allowed",
+                kind="role_version_release_stage_not_allowed",
+            )
+            if release_stage_detail is not None:
+                raise HTTPException(status_code=409, detail=release_stage_detail) from exc
             raise HTTPException(status_code=409, detail=f"role version not allowed: {exc}") from exc
         return str(skill_dir) if skill_dir is not None else request.skill_dir
 

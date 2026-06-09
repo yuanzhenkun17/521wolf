@@ -37,3 +37,38 @@ def release_stage_diagnostic(
         "allowed_flow": str(allowed_flow),
     }
 
+
+def release_stage_not_allowed_detail(
+    exc: Any,
+    *,
+    code: str,
+    message: str,
+    detail_prefix: str,
+    kind: str,
+) -> dict[str, Any] | None:
+    """Normalize release-stage errors even when class identity differs across imports."""
+    role = str(getattr(exc, "role", "") or "").strip()
+    version_id = str(getattr(exc, "version_id", "") or "").strip()
+    release_stage = str(getattr(exc, "release_stage", "") or "").strip()
+    if not role or not version_id or not release_stage:
+        return None
+
+    diagnostic = None
+    diagnostic_fn = getattr(exc, "diagnostic", None)
+    if callable(diagnostic_fn):
+        diagnostic = diagnostic_fn(kind=kind)
+    if not isinstance(diagnostic, dict):
+        diagnostic = release_stage_diagnostic(
+            role=role,
+            version_id=version_id,
+            release_stage=release_stage,
+            kind=kind,
+            allowed_flow=str(getattr(exc, "allowed_flow", "") or "explicit_evaluation"),
+        )
+    return domain_error_detail(
+        code=code,
+        message=message,
+        detail=f"{detail_prefix}: {exc}",
+        diagnostics=[diagnostic],
+    )
+

@@ -371,7 +371,7 @@ async function refresh() {
             <b>{{ pairedSeeds.length }}</b>
           </header>
           <div v-if="seedRows.length" class="evo-trust-seed-table">
-            <span>种子</span>
+            <span>Seed</span>
             <span>基线</span>
             <span>候选</span>
             <span>差值</span>

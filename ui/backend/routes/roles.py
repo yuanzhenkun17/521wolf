@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 
 from app.lib.version import ReleaseStageNotAllowedError, ensure_version_allowed_for_default_use, is_experimental_release_stage, promote_version
 from ui.backend.constants import ROLE_ORDER
-from ui.backend.errors import domain_error_detail
+from ui.backend.errors import domain_error_detail, release_stage_not_allowed_detail
 from ui.backend.serializers import (
     _fallback_version,
     _version_detail_payload,
@@ -363,6 +363,15 @@ def register_role_routes(api: FastAPI, store: Any) -> None:
                 ),
             ) from exc
         except ValueError as exc:
+            release_stage_detail = release_stage_not_allowed_detail(
+                exc,
+                code="role_version_release_stage_not_allowed",
+                message="Role version is not allowed for rollback.",
+                detail_prefix="version not allowed",
+                kind="role_rollback_version_not_allowed",
+            )
+            if release_stage_detail is not None:
+                raise HTTPException(status_code=409, detail=release_stage_detail) from exc
             raise HTTPException(status_code=409, detail=f"version not allowed: {exc}") from exc
         except (FileNotFoundError, RuntimeError):
             if version_id != _fallback_version(role)["version_id"]:
