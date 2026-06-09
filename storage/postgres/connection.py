@@ -43,6 +43,7 @@ _JSONB_COLUMNS_BY_TABLE = {
     "llm_judgments": {"input_refs", "raw_json", "normalized_fields"},
     "seed_sets": {"seeds_json"},
     "benchmark_leaderboard": {"by_role_category_scores"},
+    "benchmark_saved_views": {"view_config"},
     "benchmark_leaderboard_snapshots": {"source_filter", "view_config", "rows_json", "summary_json"},
     "role_versions": {"patterns_json", "metrics_json", "provenance_json"},
     "rejected_proposals": {"proposal_json", "proposals_json"},

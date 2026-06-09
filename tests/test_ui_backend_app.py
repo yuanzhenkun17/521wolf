@@ -346,6 +346,7 @@ class _UiMemoryDatabase:
         self.background_upserts = 0
         self.event_upserts = 0
         self.deletes = 0
+        self.ddl_statements: list[str] = []
         self.game_deletes: list[tuple[str, str, str]] = []
         self.lock = threading.Lock()
 
@@ -364,13 +365,15 @@ class _UiMemoryConnection:
         params = tuple(parameters)
 
         if text.startswith("CREATE TABLE") or text.startswith("CREATE INDEX"):
-            return _UiCursor()
+            with self._db.lock:
+                self._db.ddl_statements.append(text)
+            raise AssertionError(f"runtime DDL is not allowed in UI backend tests: {text}")
 
         if text == "SELECT 1 AS ok":
             return _UiCursor([{"ok": 1}])
 
         if text.startswith("SELECT version_num FROM public.alembic_version"):
-            return _UiCursor([{"version_num": "20260608_0001"}])
+            return _UiCursor([{"version_num": "20260610_0002"}])
 
         if text.startswith("INSERT INTO ui_background_tasks"):
             entity_id, entity_kind, status, payload, updated_at = params

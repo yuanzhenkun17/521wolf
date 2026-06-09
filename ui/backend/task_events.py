@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
+from storage.ui import TaskEventRepository
 
 _log = logging.getLogger(__name__)
 
@@ -38,12 +39,7 @@ class TaskEventLog:
         conn = None
         try:
             conn = self._connection_factory()
-            _ensure_task_event_tables(conn)
-            rows = conn.execute(
-                "SELECT id, entity_id, entity_kind, event, status, payload, created_at "
-                "FROM ui_task_events ORDER BY id DESC LIMIT ?",
-                (self.max_backlog,),
-            ).fetchall()
+            rows = TaskEventRepository(conn).list_recent(limit=self.max_backlog)
         except Exception:  # noqa: BLE001 - event replay is best-effort UI metadata
             _log.warning("failed to load task events from PostgreSQL", exc_info=True)
             return
@@ -161,28 +157,7 @@ class TaskEventLog:
     def _append_event_locked(self, item: dict[str, Any]) -> None:
         conn = self._connection_factory()
         try:
-            _ensure_task_event_tables(conn)
-            conn.execute(
-                "INSERT INTO ui_task_events "
-                "(id, entity_id, entity_kind, event, status, payload, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET "
-                "entity_id = excluded.entity_id, "
-                "entity_kind = excluded.entity_kind, "
-                "event = excluded.event, "
-                "status = excluded.status, "
-                "payload = excluded.payload, "
-                "created_at = excluded.created_at",
-                (
-                    int(item["id"]),
-                    item.get("entity_id"),
-                    item.get("entity_kind"),
-                    item.get("event"),
-                    item.get("status"),
-                    json.dumps(item.get("payload", {}), ensure_ascii=False),
-                    item.get("created_at"),
-                ),
-            )
+            TaskEventRepository(conn).upsert(item)
             conn.commit()
         finally:
             conn.close()
@@ -199,8 +174,7 @@ class TaskEventLog:
             cutoff = _event_id(self._events[0])
             conn = self._connection_factory()
             try:
-                _ensure_task_event_tables(conn)
-                conn.execute("DELETE FROM ui_task_events WHERE id < ?", (cutoff,))
+                TaskEventRepository(conn).delete_before_id(cutoff)
                 conn.commit()
             finally:
                 conn.close()
@@ -285,27 +259,6 @@ def _put_queue_nowait(queue: asyncio.Queue, item: dict[str, Any]) -> None:
             queue.put_nowait(item)
         except asyncio.QueueFull:
             pass
-
-
-def _ensure_task_event_tables(conn: Any) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS ui_task_events (
-            id bigint PRIMARY KEY,
-            entity_id text NOT NULL,
-            entity_kind text,
-            event text,
-            status text,
-            payload jsonb NOT NULL,
-            created_at timestamptz NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ui_task_events_entity_id "
-        "ON ui_task_events(entity_id, id)"
-    )
-    conn.commit()
 
 
 def _event_from_row(row: Any) -> dict[str, Any]:

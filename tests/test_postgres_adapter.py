@@ -197,6 +197,39 @@ def test_execute_casts_jsonb_insert_parameters_and_adapts_boolean_parameters() -
     )
 
 
+def test_execute_casts_benchmark_saved_view_jsonb_insert_parameter() -> None:
+    raw = _FakeRawConnection()
+    adapter = _adapter(raw)
+    raw.calls.clear()
+
+    adapter.execute(
+        """
+        INSERT INTO benchmark_saved_views
+        (view_key, name, scope, view_config, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "view-1",
+            "Release view",
+            "role_version",
+            '{"columns":["score"]}',
+            "2026-06-10T00:00:00+08:00",
+            "2026-06-10T00:00:00+08:00",
+        ),
+    )
+
+    sql, params = raw.calls[0]
+    assert "VALUES (%s, %s, %s, %s::jsonb, %s, %s)" in " ".join(sql.split())
+    assert params == (
+        "view-1",
+        "Release view",
+        "role_version",
+        '{"columns":["score"]}',
+        "2026-06-10T00:00:00+08:00",
+        "2026-06-10T00:00:00+08:00",
+    )
+
+
 def test_execute_casts_jsonb_update_parameters_and_adapts_boolean_where() -> None:
     raw = _FakeRawConnection()
     adapter = _adapter(raw)

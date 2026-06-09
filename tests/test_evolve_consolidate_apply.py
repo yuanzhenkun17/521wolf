@@ -253,12 +253,6 @@ class FakeEvolutionConnection:
         text = " ".join(sql.split())
         params = tuple(parameters)
 
-        if text.startswith("CREATE TABLE IF NOT EXISTS trust_bundles"):
-            return _Cursor()
-
-        if text.startswith("CREATE INDEX IF NOT EXISTS idx_trust_bundles_"):
-            return _Cursor()
-
         if text.startswith("INSERT INTO trust_bundles"):
             (
                 bundle_id,

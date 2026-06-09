@@ -7,6 +7,7 @@ They should fail when frontend-facing field names or basic types drift.
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -225,6 +226,79 @@ def _client(tmp_path: Path) -> TestClient:
     store._deleted_games_for_test = deleted_games
     store._delete_game_from_pg = lambda game_id: deleted_games.append(str(game_id))
     return TestClient(app)
+
+
+def _install_sqlite_eval_storage(monkeypatch: Any, tmp_path: Path) -> None:
+    import app.lib.score as score_lib
+
+    db_path = tmp_path / "benchmark_eval.sqlite3"
+
+    def open_conn(paths: Any = None) -> sqlite3.Connection:
+        del paths
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        _initialize_sqlite_benchmark_eval_schema(conn)
+        return conn
+
+    monkeypatch.setattr(score_lib, "open_eval_connection", open_conn)
+
+
+def _initialize_sqlite_benchmark_eval_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS benchmark_leaderboard_snapshots (
+            snapshot_id text PRIMARY KEY,
+            title text NOT NULL,
+            release_notes text,
+            scope text NOT NULL,
+            benchmark_id text,
+            benchmark_version text,
+            evaluation_set_id text NOT NULL,
+            seed_set_id text,
+            benchmark_config_hash text,
+            target_role text,
+            source_filter jsonb,
+            view_config jsonb,
+            rows_json jsonb NOT NULL,
+            summary_json jsonb NOT NULL,
+            row_count integer DEFAULT 0,
+            content_hash text NOT NULL,
+            created_at timestamptz NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bench_snapshot_scope_eval "
+        "ON benchmark_leaderboard_snapshots(scope, evaluation_set_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bench_snapshot_benchmark "
+        "ON benchmark_leaderboard_snapshots(benchmark_id)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS benchmark_saved_views (
+            view_key text PRIMARY KEY,
+            name text NOT NULL,
+            scope text NOT NULL,
+            benchmark_id text,
+            evaluation_set_id text,
+            target_role text,
+            view_config jsonb NOT NULL,
+            created_at timestamptz NOT NULL,
+            updated_at timestamptz NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bench_view_scope_eval "
+        "ON benchmark_saved_views(scope, evaluation_set_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_bench_view_benchmark "
+        "ON benchmark_saved_views(benchmark_id)"
+    )
+    conn.commit()
 
 
 def _write_benchmark_spec(root: Path) -> None:
@@ -5656,6 +5730,91 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert "rows" not in listed_item
 
     _assert_error_detail(missing_response, 404, "benchmark snapshot not found")
+
+
+def test_benchmark_snapshot_and_saved_view_repository_persist_across_store_instances(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    _install_sqlite_eval_storage(monkeypatch, tmp_path)
+    view_key = "benchmark-release-view:role_version:role-baseline-v1:role-baseline-v1@v1:seer"
+
+    with _client(tmp_path) as client:
+        snapshot_response = _post_benchmark_snapshot_with_rows(
+            client,
+            [_benchmark_snapshot_release_row(summary={"source": "repository-contract"})],
+            _benchmark_snapshot_release_request(
+                title="Repository persisted release",
+                view_config={"columns": ["score", "rankable"], "density": "compact"},
+            ),
+        )
+        view_response = client.post(
+            "/api/benchmark/views",
+            json={
+                "view_key": view_key,
+                "name": "Repository release reviewer",
+                "scope": "role_version",
+                "benchmark_id": "role-baseline-v1",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "target_role": "seer",
+                "view_config": {
+                    "rank_filter": "rankable",
+                    "columns": ["score", "rankable"],
+                },
+            },
+        )
+
+    assert snapshot_response.status_code == 200
+    assert view_response.status_code == 200
+    snapshot_id = snapshot_response.json()["snapshot_id"]
+
+    with _client(tmp_path) as restarted_client:
+        detail_response = restarted_client.get(f"/api/benchmark/snapshots/{snapshot_id}")
+        list_response = restarted_client.get(
+            "/api/benchmark/snapshots?scope=role_version&"
+            "evaluation_set_id=role-baseline-v1%40v1&benchmark_id=role-baseline-v1&target_role=seer"
+        )
+        export_response = restarted_client.get(f"/api/benchmark/snapshots/{snapshot_id}/export?format=json")
+        view_detail_response = restarted_client.get(f"/api/benchmark/views/{view_key}")
+        view_list_response = restarted_client.get(
+            "/api/benchmark/views?scope=role_version&"
+            "evaluation_set_id=role-baseline-v1%40v1&benchmark_id=role-baseline-v1&target_role=seer"
+        )
+        delete_view_response = restarted_client.delete(f"/api/benchmark/views/{view_key}")
+        missing_view_response = restarted_client.get(f"/api/benchmark/views/{view_key}")
+
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["snapshot_id"] == snapshot_id
+    assert detail["title"] == "Repository persisted release"
+    assert detail["view_config"] == {"columns": ["score", "rankable"], "density": "compact"}
+    assert detail["rows"][0]["summary"] == {"source": "repository-contract"}
+    assert detail["release_gate"]["ok"] is True
+    assert detail["release_manifest"]["release_gate"]["ok"] is True
+
+    assert list_response.status_code == 200
+    listed = list_response.json()
+    assert [item["snapshot_id"] for item in listed["items"]] == [snapshot_id]
+    assert "rows" not in listed["items"][0]
+    assert listed["items"][0]["release_gate"]["ok"] is True
+
+    assert export_response.status_code == 200
+    exported = export_response.json()
+    assert exported["snapshot_id"] == snapshot_id
+    assert exported["snapshot"]["rows"][0]["subject_id"] == "seer_candidate_v2"
+
+    assert view_detail_response.status_code == 200
+    view_detail = view_detail_response.json()
+    assert view_detail["view_key"] == view_key
+    assert view_detail["name"] == "Repository release reviewer"
+    assert view_detail["view_config"]["columns"] == ["score", "rankable"]
+
+    assert view_list_response.status_code == 200
+    assert [item["view_key"] for item in view_list_response.json()["items"]] == [view_key]
+
+    assert delete_view_response.status_code == 200
+    assert delete_view_response.json()["deleted"] is True
+    _assert_error_detail(missing_view_response, 404, "benchmark view not found")
 
 
 def test_benchmark_snapshot_compare_api_reports_current_vs_frozen_delta(tmp_path: Path) -> None:

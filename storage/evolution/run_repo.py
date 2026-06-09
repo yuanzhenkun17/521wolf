@@ -6,7 +6,7 @@ import hashlib
 import json
 from typing import Any
 
-from storage.shared.database import StorageConnection, StorageRow, ensure_columns
+from storage.shared.database import StorageConnection, StorageRow
 from storage.shared.interfaces import EvolutionRunData, SkillProposalData, storage_timestamp
 
 
@@ -18,7 +18,6 @@ class EvolutionStore:
         now = storage_timestamp()
         started_at = run.started_at or _runtime_state_timestamp(run.runtime_state, "started_at") or now
         finished_at = run.finished_at or _runtime_state_timestamp(run.runtime_state, "finished_at")
-        self._ensure_runtime_state_column()
         self._conn.execute(
             "INSERT INTO evolution_runs "
             "(id, role, parent_hash, status, training_games, battle_games, "
@@ -71,8 +70,6 @@ class EvolutionStore:
         if not updates:
             return
 
-        if "runtime_state" in updates:
-            self._ensure_runtime_state_column()
         set_parts = []
         params: list[Any] = []
         for key, value in updates.items():
@@ -161,7 +158,6 @@ class EvolutionStore:
         *,
         limit: int = 200,
     ) -> list[dict[str, Any]]:
-        self._ensure_runtime_state_column()
         rows = self._conn.execute(
             "SELECT runtime_state FROM evolution_runs "
             "WHERE runtime_state IS NOT NULL "
@@ -214,7 +210,6 @@ class EvolutionStore:
             raise ValueError("trust bundle requires run_id")
         row = _trust_bundle_row_from_bundle(bundle)
         now = storage_timestamp()
-        self._ensure_trust_bundle_table()
         self._conn.execute(
             "INSERT INTO trust_bundles "
             "(id, run_id, role, baseline_version, candidate_version, bundle_hash, "
@@ -252,7 +247,6 @@ class EvolutionStore:
         lookup = str(run_id_or_bundle_id or "").strip()
         if not lookup:
             return None
-        self._ensure_trust_bundle_table()
         row = self._conn.execute(
             "SELECT * FROM trust_bundles WHERE run_id = ? OR id = ? LIMIT 1",
             (lookup, lookup),
@@ -268,7 +262,6 @@ class EvolutionStore:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """List trust bundle audit rows, newest first."""
-        self._ensure_trust_bundle_table()
         conditions: list[str] = []
         params: list[Any] = []
         if role:
@@ -375,45 +368,6 @@ class EvolutionStore:
             started_at=row["started_at"],
             finished_at=row["finished_at"],
         )
-
-    def _ensure_runtime_state_column(self) -> None:
-        try:
-            ensure_columns(
-                self._conn,
-                "evolution_runs",
-                [("runtime_state", "jsonb")],
-                allowed_tables={"evolution_runs"},
-            )
-            self._conn.commit()
-        except RuntimeError:
-            return
-
-    def _ensure_trust_bundle_table(self) -> None:
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS trust_bundles (
-                id text PRIMARY KEY,
-                run_id text NOT NULL UNIQUE,
-                role text,
-                baseline_version text,
-                candidate_version text,
-                bundle_hash text NOT NULL,
-                gate_report_id text,
-                attribution_report_id text,
-                bundle_json jsonb NOT NULL,
-                created_at timestamptz NOT NULL,
-                updated_at timestamptz NOT NULL
-            )
-            """
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_trust_bundles_run ON trust_bundles(run_id)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_trust_bundles_role ON trust_bundles(role)"
-        )
-        self._conn.commit()
-
 
 def _json_value(value: Any) -> Any:
     if isinstance(value, str):

@@ -39,6 +39,8 @@ from app.lib.version import VersionRegistryProtocol, registry_version_release_st
 from app.run import LANGFUSE_EVAL_CONFIG_KEYS, run_evaluation, run_evolution
 from app.services.llm import create_llm
 from app.util.time import beijing_now_iso
+from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
+from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
 from ui.backend.background_store import BackgroundTaskStoreMixin
 from ui.backend.constants import (
     MANUAL_STOP_REASON,
@@ -950,34 +952,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             from app.lib.score import open_eval_connection
 
             conn = open_eval_connection(self.paths)
-            _ensure_benchmark_snapshot_table(conn)
-            conn.execute(
-                "INSERT INTO benchmark_leaderboard_snapshots "
-                "(snapshot_id, title, release_notes, scope, benchmark_id, benchmark_version, "
-                "evaluation_set_id, seed_set_id, benchmark_config_hash, target_role, "
-                "source_filter, view_config, rows_json, summary_json, row_count, content_hash, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    snapshot.get("snapshot_id"),
-                    snapshot.get("title"),
-                    snapshot.get("release_notes"),
-                    snapshot.get("scope"),
-                    snapshot.get("benchmark_id"),
-                    snapshot.get("benchmark_version"),
-                    snapshot.get("evaluation_set_id"),
-                    snapshot.get("seed_set_id"),
-                    snapshot.get("benchmark_config_hash"),
-                    snapshot.get("target_role"),
-                    json.dumps(snapshot.get("source_filter") or {}, ensure_ascii=False),
-                    json.dumps(snapshot.get("view_config") or {}, ensure_ascii=False),
-                    json.dumps(snapshot.get("rows") or [], ensure_ascii=False),
-                    json.dumps(snapshot.get("summary") or {}, ensure_ascii=False),
-                    int(snapshot.get("row_count") or 0),
-                    snapshot.get("content_hash"),
-                    snapshot.get("created_at"),
-                ),
-            )
-            conn.commit()
+            BenchmarkSnapshotRepository(conn).save(snapshot)
         finally:
             if conn is not None:
                 conn.close()
@@ -997,32 +972,14 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             from app.lib.score import open_eval_connection
 
             conn = open_eval_connection(self.paths)
-            _ensure_benchmark_snapshot_table(conn)
-            where = "WHERE 1 = 1 "
-            params: list[Any] = []
-            if scope:
-                where += "AND scope = ? "
-                params.append(scope)
-            if evaluation_set_id:
-                where += "AND evaluation_set_id = ? "
-                params.append(evaluation_set_id)
-            if benchmark_id:
-                where += "AND benchmark_id = ? "
-                params.append(benchmark_id)
-            if target_role:
-                where += "AND target_role = ? "
-                params.append(target_role)
-            params.append(max(1, min(int(limit or 50), 500)))
-            db_rows = conn.execute(
-                "SELECT snapshot_id, title, release_notes, scope, benchmark_id, benchmark_version, "
-                "evaluation_set_id, seed_set_id, benchmark_config_hash, target_role, "
-                "source_filter, view_config, rows_json, summary_json, row_count, content_hash, created_at "
-                "FROM benchmark_leaderboard_snapshots "
-                f"{where}"
-                "ORDER BY created_at DESC, snapshot_id DESC LIMIT ?",
-                tuple(params),
-            ).fetchall()
-            rows = [_benchmark_snapshot_summary_payload(_benchmark_snapshot_from_row(row)) for row in db_rows]
+            snapshots = BenchmarkSnapshotRepository(conn).list(
+                scope=scope,
+                evaluation_set_id=evaluation_set_id,
+                benchmark_id=benchmark_id,
+                target_role=target_role,
+                limit=limit,
+            )
+            rows = [_benchmark_snapshot_summary_payload(snapshot) for snapshot in snapshots]
         except Exception:  # noqa: BLE001 - fallback to process cache when storage is unavailable
             _log.warning("load benchmark leaderboard snapshots failed", exc_info=True)
             rows = [
@@ -1048,17 +1005,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             from app.lib.score import open_eval_connection
 
             conn = open_eval_connection(self.paths)
-            _ensure_benchmark_snapshot_table(conn)
-            row = conn.execute(
-                "SELECT snapshot_id, title, release_notes, scope, benchmark_id, benchmark_version, "
-                "evaluation_set_id, seed_set_id, benchmark_config_hash, target_role, "
-                "source_filter, view_config, rows_json, summary_json, row_count, content_hash, created_at "
-                "FROM benchmark_leaderboard_snapshots WHERE snapshot_id = ?",
-                (snapshot_id,),
-            ).fetchone()
-            if row is None:
+            snapshot = BenchmarkSnapshotRepository(conn).get(snapshot_id)
+            if snapshot is None:
                 return self.benchmark_leaderboard_snapshots.get(snapshot_id)
-            return _benchmark_snapshot_from_row(row)
+            return snapshot
         except Exception:  # noqa: BLE001 - fallback to process cache when storage is unavailable
             _log.warning("load benchmark leaderboard snapshot detail failed", exc_info=True)
             return self.benchmark_leaderboard_snapshots.get(snapshot_id)
@@ -1072,33 +1022,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             from app.lib.score import open_eval_connection
 
             conn = open_eval_connection(self.paths)
-            _ensure_benchmark_saved_view_table(conn)
-            conn.execute(
-                "INSERT INTO benchmark_saved_views "
-                "(view_key, name, scope, benchmark_id, evaluation_set_id, target_role, "
-                "view_config, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(view_key) DO UPDATE SET "
-                "name = excluded.name, "
-                "scope = excluded.scope, "
-                "benchmark_id = excluded.benchmark_id, "
-                "evaluation_set_id = excluded.evaluation_set_id, "
-                "target_role = excluded.target_role, "
-                "view_config = excluded.view_config, "
-                "updated_at = excluded.updated_at",
-                (
-                    view.get("view_key"),
-                    view.get("name"),
-                    view.get("scope"),
-                    view.get("benchmark_id"),
-                    view.get("evaluation_set_id"),
-                    view.get("target_role"),
-                    json.dumps(view.get("view_config") or {}, ensure_ascii=False),
-                    view.get("created_at"),
-                    view.get("updated_at"),
-                ),
-            )
-            conn.commit()
+            BenchmarkSavedViewRepository(conn).save(view)
         finally:
             if conn is not None:
                 conn.close()
@@ -1119,34 +1043,15 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             from app.lib.score import open_eval_connection
 
             conn = open_eval_connection(self.paths)
-            _ensure_benchmark_saved_view_table(conn)
-            where = "WHERE 1 = 1 "
-            params: list[Any] = []
-            if view_key:
-                where += "AND view_key = ? "
-                params.append(view_key)
-            if scope:
-                where += "AND scope = ? "
-                params.append(scope)
-            if evaluation_set_id:
-                where += "AND evaluation_set_id = ? "
-                params.append(evaluation_set_id)
-            if benchmark_id:
-                where += "AND benchmark_id = ? "
-                params.append(benchmark_id)
-            if target_role:
-                where += "AND target_role = ? "
-                params.append(target_role)
-            params.append(max(1, min(int(limit or 50), 500)))
-            db_rows = conn.execute(
-                "SELECT view_key, name, scope, benchmark_id, evaluation_set_id, target_role, "
-                "view_config, created_at, updated_at "
-                "FROM benchmark_saved_views "
-                f"{where}"
-                "ORDER BY updated_at DESC, view_key ASC LIMIT ?",
-                tuple(params),
-            ).fetchall()
-            rows = [_benchmark_view_payload(_benchmark_view_from_row(row)) for row in db_rows]
+            views = BenchmarkSavedViewRepository(conn).list(
+                scope=scope,
+                evaluation_set_id=evaluation_set_id,
+                benchmark_id=benchmark_id,
+                target_role=target_role,
+                view_key=view_key,
+                limit=limit,
+            )
+            rows = [_benchmark_view_payload(view) for view in views]
         except Exception:  # noqa: BLE001 - fallback to process cache when storage is unavailable
             _log.warning("load benchmark saved views failed", exc_info=True)
             rows = [
@@ -1173,10 +1078,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             from app.lib.score import open_eval_connection
 
             conn = open_eval_connection(self.paths)
-            _ensure_benchmark_saved_view_table(conn)
-            cursor = conn.execute("DELETE FROM benchmark_saved_views WHERE view_key = ?", (view_key,))
-            conn.commit()
-            return int(getattr(cursor, "rowcount", 0) or 0) > 0
+            return BenchmarkSavedViewRepository(conn).delete(view_key)
         finally:
             if conn is not None:
                 conn.close()
@@ -6047,39 +5949,6 @@ def _benchmark_snapshot_boundary_warnings(
     return warnings
 
 
-def _benchmark_snapshot_from_row(row: Any) -> dict[str, Any]:
-    payload = _row_to_dict(row)
-    rows = _decode_json_field(payload.get("rows_json"), fallback=[])
-    summary = _decode_json_field(payload.get("summary_json"), fallback={})
-    source_filter = _decode_json_field(payload.get("source_filter"), fallback={})
-    view_config = _decode_json_field(payload.get("view_config"), fallback={})
-    frozen_rows = rows if isinstance(rows, list) else []
-    snapshot = {
-        "kind": "benchmark_leaderboard_snapshot",
-        "schema_version": 1,
-        "snapshot_id": str(payload.get("snapshot_id") or ""),
-        "title": str(payload.get("title") or ""),
-        "release_notes": str(payload.get("release_notes") or ""),
-        "scope": payload.get("scope"),
-        "benchmark_id": payload.get("benchmark_id"),
-        "benchmark_version": payload.get("benchmark_version"),
-        "evaluation_set_id": payload.get("evaluation_set_id"),
-        "seed_set_id": payload.get("seed_set_id"),
-        "benchmark_config_hash": payload.get("benchmark_config_hash"),
-        "target_role": payload.get("target_role"),
-        "source_filter": source_filter,
-        "view_config": view_config,
-        "rows": frozen_rows,
-        "summary": summary if isinstance(summary, dict) else {},
-        "row_count": payload.get("row_count"),
-        "content_hash": payload.get("content_hash"),
-        "created_at": payload.get("created_at"),
-    }
-    normalized = _benchmark_snapshot_summary_payload(snapshot)
-    normalized["rows"] = frozen_rows
-    return normalized
-
-
 def _filter_benchmark_snapshot_cache(
     rows: list[dict[str, Any]],
     *,
@@ -6115,21 +5984,6 @@ def _benchmark_view_payload(view: dict[str, Any]) -> dict[str, Any]:
         "view_config": _json_clone(view.get("view_config") or {}),
         "created_at": view.get("created_at"),
         "updated_at": view.get("updated_at"),
-    }
-
-
-def _benchmark_view_from_row(row: Any) -> dict[str, Any]:
-    payload = _row_to_dict(row)
-    return {
-        "view_key": payload.get("view_key"),
-        "name": payload.get("name"),
-        "scope": payload.get("scope"),
-        "benchmark_id": payload.get("benchmark_id"),
-        "evaluation_set_id": payload.get("evaluation_set_id"),
-        "target_role": payload.get("target_role"),
-        "view_config": _decode_json_field(payload.get("view_config"), fallback={}),
-        "created_at": payload.get("created_at"),
-        "updated_at": payload.get("updated_at"),
     }
 
 
@@ -6290,68 +6144,6 @@ def _benchmark_latest_run_payload(batch: dict[str, Any]) -> dict[str, Any]:
         "result_count": int(batch.get("result_count") or len(batch.get("results") or []) or (1 if batch.get("result") else 0)),
         "diagnostic_count": int(batch.get("diagnostic_count") or len(diagnostics)),
     }
-
-
-def _ensure_benchmark_saved_view_table(conn: Any) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS benchmark_saved_views (
-            view_key text PRIMARY KEY,
-            name text NOT NULL,
-            scope text NOT NULL,
-            benchmark_id text,
-            evaluation_set_id text,
-            target_role text,
-            view_config jsonb NOT NULL,
-            created_at timestamptz NOT NULL,
-            updated_at timestamptz NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bench_view_scope_eval "
-        "ON benchmark_saved_views(scope, evaluation_set_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bench_view_benchmark "
-        "ON benchmark_saved_views(benchmark_id)"
-    )
-    conn.commit()
-
-
-def _ensure_benchmark_snapshot_table(conn: Any) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS benchmark_leaderboard_snapshots (
-            snapshot_id text PRIMARY KEY,
-            title text NOT NULL,
-            release_notes text,
-            scope text NOT NULL,
-            benchmark_id text,
-            benchmark_version text,
-            evaluation_set_id text NOT NULL,
-            seed_set_id text,
-            benchmark_config_hash text,
-            target_role text,
-            source_filter jsonb,
-            view_config jsonb,
-            rows_json jsonb NOT NULL,
-            summary_json jsonb NOT NULL,
-            row_count integer DEFAULT 0,
-            content_hash text NOT NULL,
-            created_at timestamptz NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bench_snapshot_scope_eval "
-        "ON benchmark_leaderboard_snapshots(scope, evaluation_set_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_bench_snapshot_benchmark "
-        "ON benchmark_leaderboard_snapshots(benchmark_id)"
-    )
-    conn.commit()
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:

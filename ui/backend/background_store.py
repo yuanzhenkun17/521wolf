@@ -8,6 +8,7 @@ from typing import Any
 
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
+from storage.ui import BackgroundTaskRepository
 from ui.backend.constants import (
     BACKGROUND_ACTIVE_STATUSES,
 )
@@ -145,29 +146,19 @@ class BackgroundTaskStoreMixin:
     def _persist_background_entities(self, payload: dict[str, Any]) -> None:
         conn = self._open_ui_task_connection()
         try:
-            _ensure_background_task_tables(conn)
+            repo = BackgroundTaskRepository(conn)
             for entity in [*payload.get("evolution_runs", []), *payload.get("evolution_batches", [])]:
                 if not isinstance(entity, dict):
                     continue
                 entity_id = self._task_entity_key(entity)
                 if not entity_id:
                     continue
-                conn.execute(
-                    "INSERT INTO ui_background_tasks "
-                    "(entity_id, entity_kind, status, payload, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT(entity_id) DO UPDATE SET "
-                    "entity_kind = excluded.entity_kind, "
-                    "status = excluded.status, "
-                    "payload = excluded.payload, "
-                    "updated_at = excluded.updated_at",
-                    (
-                        entity_id,
-                        entity.get("kind"),
-                        entity.get("status"),
-                        json.dumps(to_jsonable(entity), ensure_ascii=False),
-                        payload.get("updated_at") or beijing_now_iso(),
-                    ),
+                repo.upsert(
+                    entity_id=entity_id,
+                    entity_kind=entity.get("kind"),
+                    status=entity.get("status"),
+                    payload=to_jsonable(entity),
+                    updated_at=payload.get("updated_at") or beijing_now_iso(),
                 )
             conn.commit()
         finally:
@@ -219,11 +210,7 @@ class BackgroundTaskStoreMixin:
         conn = None
         try:
             conn = self._open_ui_task_connection()
-            _ensure_background_task_tables(conn)
-            rows = conn.execute(
-                "SELECT entity_id, entity_kind, status, payload, updated_at "
-                "FROM ui_background_tasks ORDER BY updated_at, entity_id"
-            ).fetchall()
+            rows = BackgroundTaskRepository(conn).list_all()
         except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
             _log.warning("failed to load ui backend task index from PostgreSQL", exc_info=True)
             return
@@ -317,25 +304,6 @@ class BackgroundTaskStoreMixin:
     def restore_background_tasks(self) -> int:
         self.load_background_tasks()
         return self.recover_background_tasks()
-
-
-def _ensure_background_task_tables(conn: Any) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS ui_background_tasks (
-            entity_id text PRIMARY KEY,
-            entity_kind text NOT NULL,
-            status text,
-            payload jsonb NOT NULL,
-            updated_at timestamptz NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ui_background_tasks_kind "
-        "ON ui_background_tasks(entity_kind)"
-    )
-    conn.commit()
 
 
 def _background_payload_from_row(row: Any) -> dict[str, Any] | None:
