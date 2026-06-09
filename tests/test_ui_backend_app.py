@@ -2492,6 +2492,16 @@ def test_leaderboard_real_store_isolates_scope_evaluation_role_and_formal_rows(
         "seer_candidate_v2",
         "seer_gate_failed_v1",
     }
+    candidate_entry = next(entry for entry in entries if entry["subject_id"] == "seer_candidate_v2")
+    assert candidate_entry["sample_size"] == 30
+    assert candidate_entry["paired_sample_size"] == 0
+    assert candidate_entry["win_rate_ci"]["level"] == 0.95
+    assert candidate_entry["ci_low"] == candidate_entry["win_rate_ci"]["low"]
+    assert candidate_entry["ci_high"] == candidate_entry["win_rate_ci"]["high"]
+    assert candidate_entry["standard_error"] > 0
+    assert candidate_entry["significant"] is False
+    assert candidate_entry["significance_label"] == "待比较"
+    assert candidate_entry["warnings"] == []
 
     assert compare_response.status_code == 200
     compare = compare_response.json()
@@ -2499,6 +2509,15 @@ def test_leaderboard_real_store_isolates_scope_evaluation_role_and_formal_rows(
     assert formal_subjects == {"seer_base_v1", "seer_candidate_v2"}
     assert all(row["rankable"] is True for row in compare["rows"])
     assert compare["baseline_subject_id"] == "seer_base_v1"
+    compare_candidate = next(row for row in compare["rows"] if row["subject_id"] == "seer_candidate_v2")
+    assert compare_candidate["sample_size"] == 30
+    assert compare_candidate["paired_sample_size"] == 0
+    assert compare_candidate["paired_delta"] is None
+    assert compare_candidate["significant"] is False
+    assert compare_candidate["significance_label"] == "差异不显著"
+    assert "unpaired_seeds" in compare_candidate["warnings"]
+    assert compare["summary"]["not_significant_count"] == 1
+    assert compare["summary"]["unpaired_seed_count"] >= 1
     assert compare["summary"]["unrankable_evidence_count"] == 1
     assert compare["summary"]["unrankable_count"] == 1
     assert len(compare["unrankable_evidence"]) == 1
@@ -2515,6 +2534,8 @@ def test_leaderboard_real_store_isolates_scope_evaluation_role_and_formal_rows(
     assert [entry["subject_id"] for entry in model_entries] == ["runtime_hash_v1"]
     assert model_entries[0]["scope"] == "model"
     assert model_entries[0]["target_role"] is None
+    assert model_entries[0]["sample_size"] == 30
+    assert model_entries[0]["win_rate_ci"]["level"] == 0.95
 
 
 def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path, monkeypatch) -> None:
@@ -4648,6 +4669,16 @@ def test_role_leaderboard_reads_persisted_scores(tmp_path: Path) -> None:
     assert entry["rankable"] is True
     assert entry["game_count"] == 5
     assert entry["is_baseline"] is True
+    assert entry["sample_size"] == 5
+    assert entry["paired_sample_size"] == 0
+    assert entry["win_rate_ci"]["level"] == 0.95
+    assert entry["ci_low"] == entry["win_rate_ci"]["low"]
+    assert entry["ci_high"] == entry["win_rate_ci"]["high"]
+    assert entry["standard_error"] > 0
+    assert entry["paired_delta"] is None
+    assert entry["significant"] is False
+    assert entry["significance_label"] == "待比较"
+    assert entry["warnings"] == ["low_sample"]
 
 
 def test_role_leaderboard_excludes_shadow_and_canary_versions(tmp_path: Path) -> None:
@@ -4767,6 +4798,12 @@ def test_roles_overview_batches_versions_and_leaderboards(tmp_path: Path) -> Non
     assert entry["target_role_role_weighted_score"] == 8.1
     assert entry["target_side_win_rate"] == 0.7
     assert entry["game_count"] == 9
+    assert entry["sample_size"] == 9
+    assert entry["paired_sample_size"] == 0
+    assert entry["win_rate_ci"]["level"] == 0.95
+    assert entry["standard_error"] > 0
+    assert entry["significance_label"] == "待比较"
+    assert entry["warnings"] == ["low_sample"]
     assert calls and calls[0][1] == "suite@v1"
     assert "seer" in calls[0][0]
     assert len(calls) == 1

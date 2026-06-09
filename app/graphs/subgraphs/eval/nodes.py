@@ -680,6 +680,66 @@ def _terminal_stats(games: list[dict[str, Any]]) -> dict[str, Any]:
     return stats
 
 
+def _leaderboard_target_team(cfg: dict[str, Any], target_role: Any) -> str | None:
+    explicit = normalize_winner(cfg.get("target_team") or cfg.get("target_side"))
+    if explicit:
+        return explicit
+    role = str(target_role or "").strip().lower()
+    if not role:
+        return None
+    aliases = {
+        "wolf": "werewolf",
+        "wolves": "werewolf",
+        "white_wolf": "white_wolf_king",
+        "white_wolf_king": "white_wolf_king",
+    }
+    role = aliases.get(role, role)
+    try:
+        from engine import Role, Team
+
+        team = Role(role).team
+        return "werewolves" if team is Team.WEREWOLVES else "villagers"
+    except (ValueError, KeyError):
+        if "wolf" in role:
+            return "werewolves"
+        return "villagers"
+
+
+def _target_side_win_evidence(games: list[dict[str, Any]], *, target_team: str | None) -> dict[str, Any]:
+    if not target_team:
+        return {}
+    completed = valid_completed_games(games)
+    seed_metrics: list[dict[str, Any]] = []
+    target_wins = 0
+    for index, game in enumerate(completed, start=1):
+        winner = normalize_winner(game.get("winner"))
+        target_side_win = winner == target_team
+        if target_side_win:
+            target_wins += 1
+        seed = game.get("seed")
+        source_game_id = game.get("source_game_id") or game.get("game_id")
+        seed_metrics.append(
+            {
+                "seed": seed,
+                "game_index": index,
+                "game_id": game.get("game_id"),
+                "source_game_id": source_game_id,
+                "pair_key": f"{seed}:{index}" if seed is not None else source_game_id,
+                "winner": winner,
+                "target_team": target_team,
+                "target_side_win": target_side_win,
+            }
+        )
+    sample_size = len(completed)
+    return {
+        "sample_size": sample_size,
+        "target_team": target_team,
+        "target_wins": target_wins,
+        "target_side_win_rate": round(target_wins / sample_size, 6) if sample_size else 0.0,
+        "seed_metrics": seed_metrics,
+    }
+
+
 def _is_timeout_game(game: dict[str, Any]) -> bool:
     values = (
         game.get("winner"),
@@ -1346,6 +1406,12 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
         ):
             if cfg.get(key) is not None:
                 leaderboard_summary.setdefault(key, cfg.get(key))
+        target_side_evidence = _target_side_win_evidence(
+            result.get("games", []),
+            target_team=_leaderboard_target_team(cfg, target_role),
+        )
+        for key, value in target_side_evidence.items():
+            leaderboard_summary.setdefault(key, value)
         entry = {
             "batch_id": result["batch_id"],
             "comparison_group_id": cfg.get("comparison_group_id"),
@@ -1368,6 +1434,10 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
             "fallback_rate": summary.get("fallback_rate", 0.0),
             "llm_error_rate": summary.get("llm_error_rate", 0.0),
             "policy_adjusted_rate": summary.get("policy_adjusted_rate", 0.0),
+            "target_side_win_rate": summary.get(
+                "target_side_win_rate",
+                target_side_evidence.get("target_side_win_rate", 0.0),
+            ),
             "summary": leaderboard_summary,
         }
         gate = _leaderboard_acceptance_gate(state, result, entry)

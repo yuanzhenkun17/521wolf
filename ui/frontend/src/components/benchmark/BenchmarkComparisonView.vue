@@ -8,6 +8,11 @@ const RANK_FILTER_LABELS = {
   rankable: '可入榜',
   unrankable: '未入榜'
 }
+const WARNING_LABELS = {
+  low_sample: '小样本',
+  unpaired_seeds: '未配对种子',
+  insufficient_overlap: '配对重叠不足'
+}
 
 const props = defineProps({
   benchmark: {
@@ -150,27 +155,35 @@ const comparisonRows = computed(() => {
   const baseline = baselineRow.value
   const baselineScore = baseline?.scoreValue ?? 0
   const baselineWinRate = baseline?.winRateValue ?? 0
-  const baselineInterval = confidenceInterval(baseline)
+  const baselineInterval = effectiveConfidenceInterval(baseline)
+  const baselineSe = effectiveStandardError(baseline, baselineInterval)
   return rows.value
     .map((row) => {
-      const interval = confidenceInterval(row)
+      const interval = effectiveConfidenceInterval(row)
+      const rowSe = effectiveStandardError(row, interval)
       const relativeWinRateDelta = row.winRateValue - baselineWinRate
-      const combinedSe = Math.sqrt((interval?.se || 0) ** 2 + (baselineInterval?.se || 0) ** 2)
+      const combinedSe = Math.sqrt((rowSe || 0) ** 2 + (baselineSe || 0) ** 2)
       const margin = combinedSe * 1.96
       const enoughSamples = Boolean(
-        row.games >= MIN_CONFIDENT_GAMES &&
-        (!baseline || baseline.games >= MIN_CONFIDENT_GAMES)
+        row.sampleSize >= MIN_CONFIDENT_GAMES &&
+        (!baseline || baseline.sampleSize >= MIN_CONFIDENT_GAMES)
       )
       const isReference = Boolean(baseline && row.key === baseline.key)
-      const likelyDifferent = !isReference && enoughSamples && Math.abs(relativeWinRateDelta) > margin
+      const likelyDifferent = row.significantValue ?? (
+        !isReference && enoughSamples && Math.abs(relativeWinRateDelta) > margin
+      )
+      const relativeScoreDelta = row.hasDelta ? row.deltaValue : row.scoreValue - baselineScore
       return {
         ...row,
         interval,
         confidenceLabel: confidenceLabel(row, baseline, { isReference, likelyDifferent, enoughSamples }),
         confidenceTone: confidenceTone(row, { isReference, likelyDifferent, enoughSamples }),
-        relativeScoreDelta: row.hasDelta ? row.deltaValue : row.scoreValue - baselineScore,
+        relativeScoreDelta,
+        displayDeltaValue: row.pairedDeltaValue ?? relativeScoreDelta,
+        displayDeltaSource: row.pairedDeltaValue == null ? '分数差' : 'paired delta',
         relativeWinRateDelta,
-        relativeWinRateMargin: margin
+        relativeWinRateMargin: margin,
+        standardErrorValue: row.standardErrorValue ?? rowSe ?? null
       }
     })
     .sort((a, b) => {
@@ -181,15 +194,15 @@ const comparisonRows = computed(() => {
 })
 
 const metricColumnDefs = computed(() => {
-  const confidenceWidth = mode.value === 'model' ? '92px' : '118px'
+  const confidenceWidth = mode.value === 'model' ? '150px' : '148px'
   const rankableLabel = mode.value === 'model' ? '入榜' : '基线'
   const baseColumns = [
     { key: 'score', label: '分数', width: '70px' },
     { key: 'winRate', label: '胜率', width: '76px' },
-    { key: 'delta', label: '差值', width: '70px' },
-    { key: 'confidence', label: mode.value === 'model' ? '95% 置信区间' : '置信度', width: confidenceWidth },
+    { key: 'delta', label: 'paired delta', width: '104px' },
+    { key: 'confidence', label: '置信证据', width: confidenceWidth },
     { key: 'rankable', label: rankableLabel, width: '96px' },
-    { key: 'games', label: '局数', width: '70px' }
+    { key: 'games', label: '样本量', width: '104px' }
   ]
   if (mode.value !== 'model') return baseColumns
   return [
@@ -357,8 +370,8 @@ const baselineDeltaRows = computed(() => {
     .slice(0, 6)
     .map((row) => ({
       ...row,
-      barWidth: Math.min(100, Math.max(6, Math.abs(row.relativeScoreDelta))),
-      direction: row.relativeScoreDelta >= 0 ? 'positive' : 'negative'
+      barWidth: Math.min(100, Math.max(6, Math.abs(row.displayDeltaValue))),
+      direction: row.displayDeltaValue >= 0 ? 'positive' : 'negative'
     }))
 })
 
@@ -404,6 +417,41 @@ function normalizeRow(row, index, currentMode) {
   const primary = isModel ? modelPrimary(row, index) : rolePrimary(row, index)
   const secondary = isModel ? modelSecondary(row) : roleSecondary(row)
   const rankable = row?.rankable == null ? null : row.rankable !== false
+  const sampleSize = numberFrom(
+    row?.sample_size,
+    row?.sampleSize,
+    row?.sample_n,
+    row?.n,
+    row?.games,
+    row?.game_count,
+    row?.games_played,
+    row?.total_games,
+    row?.completed
+  ) ?? 0
+  const pairedSampleSize = numberFrom(
+    row?.paired_sample_size,
+    row?.pairedSampleSize,
+    row?.paired_n,
+    row?.paired_games,
+    row?.overlap_sample_size,
+    row?.seed_overlap
+  )
+  const standardError = numberFrom(
+    percentFromFraction(row?.standard_error),
+    percentFromFraction(row?.standardError),
+    percentFromFraction(row?.win_rate_standard_error),
+    percentFromFraction(row?.winRateStandardError),
+    percentFromFraction(row?.se)
+  )
+  const pairedDelta = numberFrom(
+    percentFromFraction(row?.paired_delta),
+    percentFromFraction(row?.pairedDelta),
+    percentFromFraction(row?.paired_win_rate_delta),
+    percentFromFraction(row?.pairedWinRateDelta),
+    percentFromFraction(row?.paired_delta_pct)
+  )
+  const significant = booleanFrom(row?.significant)
+  const warnings = normalizeWarnings(row, sampleSize)
   return {
     raw: row,
     key: rowKey(row, index, currentMode),
@@ -423,6 +471,17 @@ function normalizeRow(row, index, currentMode) {
     rankable,
     rankableLabel: rankable == null ? '--' : (rankable ? '可入榜' : '未入榜'),
     rankableReason: String(row?.rankable_reason || row?.reason || row?.gate_reason || '').trim(),
+    sampleSize,
+    pairedSampleSize,
+    apiInterval: normalizeWinRateInterval(row, winRate, standardError),
+    standardErrorValue: standardError,
+    pairedDeltaValue: pairedDelta,
+    significantValue: significant,
+    significanceLabel: normalizeSignificanceLabel(row, significant),
+    warningCodes: warnings.codes,
+    warningLabels: warnings.labels,
+    warningText: warnings.text,
+    hasWarnings: warnings.codes.length > 0,
     isBaseline: Boolean(
       row?.is_reference ||
       row?.is_baseline ||
@@ -430,7 +489,7 @@ function normalizeRow(row, index, currentMode) {
       String(row?.source || '').toLowerCase() === 'baseline' ||
       String(row?.recommendation || '').toLowerCase() === 'baseline'
     ),
-    games: numberFrom(row?.games, row?.game_count, row?.games_played, row?.total_games, row?.completed) || 0
+    games: sampleSize
   }
 }
 
@@ -680,14 +739,114 @@ function percentFromFraction(value) {
   return Math.abs(number) <= 1 ? number * 100 : number
 }
 
+function booleanFrom(value) {
+  if (typeof value === 'boolean') return value
+  const text = String(value ?? '').trim().toLowerCase()
+  if (['true', '1', 'yes', 'significant'].includes(text)) return true
+  if (['false', '0', 'no', 'not_significant', 'insignificant'].includes(text)) return false
+  return null
+}
+
+function normalizeWinRateInterval(row, winRateValue, standardErrorValue = null) {
+  const direct = row?.win_rate_ci || row?.winRateCi || row?.winRateCI || row?.confidence_interval || row?.confidenceInterval || row?.ci
+  let low = null
+  let high = null
+  if (Array.isArray(direct)) {
+    low = direct[0]
+    high = direct[1]
+  } else if (direct && typeof direct === 'object') {
+    low = direct.low ?? direct.lower ?? direct.ci_low ?? direct.ciLow
+    high = direct.high ?? direct.upper ?? direct.ci_high ?? direct.ciHigh
+  }
+  low = numberFrom(
+    percentFromFraction(low),
+    percentFromFraction(row?.ci_low),
+    percentFromFraction(row?.ciLow),
+    percentFromFraction(row?.win_rate_ci_low),
+    percentFromFraction(row?.winRateCiLow)
+  )
+  high = numberFrom(
+    percentFromFraction(high),
+    percentFromFraction(row?.ci_high),
+    percentFromFraction(row?.ciHigh),
+    percentFromFraction(row?.win_rate_ci_high),
+    percentFromFraction(row?.winRateCiHigh)
+  )
+  if (low == null || high == null) return null
+  const orderedLow = Math.min(low, high)
+  const orderedHigh = Math.max(low, high)
+  const center = Number(winRateValue)
+  const margin = Number.isFinite(center)
+    ? Math.max(Math.abs(center - orderedLow), Math.abs(orderedHigh - center))
+    : (orderedHigh - orderedLow) / 2
+  return {
+    low: clampPercent(orderedLow),
+    high: clampPercent(orderedHigh),
+    margin,
+    se: standardErrorValue ?? (margin ? margin / 1.96 : null)
+  }
+}
+
+function normalizeSignificanceLabel(row, significant) {
+  const label = String(row?.significance_label || row?.significanceLabel || '').trim()
+  if (label) return label
+  if (significant === true) return '差异显著'
+  if (significant === false) return '差异不显著'
+  return ''
+}
+
+function normalizeWarnings(row, sampleSize) {
+  const codes = new Set([
+    ...warningCodesFrom(row?.warnings),
+    ...warningCodesFrom(row?.warning),
+    ...warningCodesFrom(row?.statistical_warnings),
+    ...warningCodesFrom(row?.statisticalWarnings),
+    ...warningCodesFrom(row?.confidence_warnings),
+    ...warningCodesFrom(row?.confidenceWarnings)
+  ])
+  if (sampleSize > 0 && sampleSize < MIN_CONFIDENT_GAMES) codes.add('low_sample')
+  const normalized = [...codes].map(normalizeWarningCode).filter(Boolean)
+  const labels = normalized.map((code) => WARNING_LABELS[code] || code)
+  return {
+    codes: normalized,
+    labels,
+    text: labels.join(' / ')
+  }
+}
+
+function warningCodesFrom(value) {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .filter(([, enabled]) => Boolean(enabled))
+      .map(([code]) => code)
+  }
+  const text = String(value || '').trim()
+  if (!text) return []
+  return text.split(/[,，\s/]+/).filter(Boolean)
+}
+
+function normalizeWarningCode(value) {
+  return String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+}
+
 function average(values) {
   if (!values.length) return 0
   return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
+function effectiveConfidenceInterval(row) {
+  if (!row) return null
+  return row.apiInterval || confidenceInterval(row)
+}
+
+function effectiveStandardError(row, interval) {
+  return row?.standardErrorValue ?? interval?.se ?? null
+}
+
 function confidenceInterval(row) {
   if (!row) return null
-  const games = Number(row.games)
+  const games = Number(row.sampleSize ?? row.games)
   const winRate = Number(row.winRateValue)
   if (!Number.isFinite(games) || games <= 0 || !Number.isFinite(winRate)) return null
   const p = Math.max(0, Math.min(1, winRate / 100))
@@ -703,14 +862,17 @@ function confidenceInterval(row) {
 
 function confidenceLabel(row, baseline, { isReference, likelyDifferent, enoughSamples }) {
   if (isReference) return '参考'
-  if (!row?.games) return '无样本'
-  if (row.games < MIN_CONFIDENT_GAMES || (baseline && baseline.games < MIN_CONFIDENT_GAMES)) return '小样本'
-  return likelyDifferent && enoughSamples ? '差异明显' : '未定'
+  if (row?.significanceLabel) return row.significanceLabel
+  if (!row?.sampleSize) return '无样本'
+  if (row.warningCodes?.includes('low_sample') || (baseline && baseline.sampleSize < MIN_CONFIDENT_GAMES)) return '小样本'
+  return likelyDifferent && enoughSamples ? '差异显著' : '差异不显著'
 }
 
 function confidenceTone(row, { isReference, likelyDifferent, enoughSamples }) {
   if (isReference) return 'reference'
-  if (!row?.games || row.games < MIN_CONFIDENT_GAMES) return 'warning'
+  if (!row?.sampleSize || row.warningCodes?.some((code) => ['low_sample', 'insufficient_overlap'].includes(code))) return 'warning'
+  if (row.significantValue === true) return 'strong'
+  if (row.significantValue === false) return 'muted'
   if (likelyDifferent && enoughSamples) return 'strong'
   return 'muted'
 }
@@ -724,6 +886,12 @@ function formatPct(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return '--'
   return `${Math.round(number)}%`
+}
+
+function formatStandardError(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return `${number < 10 ? number.toFixed(1) : Math.round(number)}%`
 }
 
 function formatSignedPct(value) {
@@ -741,6 +909,12 @@ function formatCount(value) {
 function valueOrDash(value) {
   const text = String(value || '').trim()
   return text || '--'
+}
+
+function clampPercent(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.max(0, Math.min(100, number))
 }
 
 watch(viewStorageKey, () => {
@@ -859,10 +1033,11 @@ watch(tableRows, (current) => {
         <div v-for="row in confidenceRows" :key="'confidence-' + row.key" class="confidence-row">
           <span>
             <b>{{ row.primary }}</b>
-            <small>{{ row.games }} 局 / 胜率区间 {{ formatInterval(row.interval) }}</small>
+            <small>样本量 {{ row.sampleSize }} / 配对样本 {{ row.pairedSampleSize ?? 0 }} / 胜率区间 {{ formatInterval(row.interval) }}</small>
+            <small>标准误 {{ formatStandardError(row.standardErrorValue) }} / paired delta {{ formatSignedPct(row.pairedDeltaValue) }}</small>
           </span>
           <em :class="'confidence-chip confidence-chip--' + row.confidenceTone">
-            {{ row.confidenceLabel }}
+            {{ row.warningText || row.confidenceLabel }}
           </em>
         </div>
       </div>
@@ -878,7 +1053,7 @@ watch(tableRows, (current) => {
       <div class="delta-panel">
         <div class="delta-panel-title">
           <span>相对差值</span>
-          <small>{{ baselineDeltaRows.length ? '相对固定基线的分差' : '暂无候选差值' }}</small>
+          <small>{{ baselineDeltaRows.length ? '优先展示 paired delta' : '暂无候选差值' }}</small>
         </div>
         <div v-if="baselineDeltaRows.length" class="delta-list">
           <div v-for="row in baselineDeltaRows" :key="'delta-' + row.key" class="delta-row">
@@ -886,7 +1061,10 @@ watch(tableRows, (current) => {
             <i :class="row.direction" aria-hidden="true">
               <b :style="{ width: row.barWidth + '%' }"></b>
             </i>
-            <span :class="row.direction">{{ formatSignedPct(row.relativeScoreDelta) }}</span>
+            <span :class="row.direction">
+              {{ formatSignedPct(row.displayDeltaValue) }}
+              <small>{{ row.displayDeltaSource }}</small>
+            </span>
           </div>
         </div>
         <div v-else class="compact-empty">至少需要两行才能比较相对差值。</div>
@@ -935,10 +1113,17 @@ watch(tableRows, (current) => {
             <span>{{ row.modelConfigHash }}</span>
             <span v-if="isColumnEnabled('score')">{{ formatPct(row.scoreValue) }}</span>
             <span v-if="isColumnEnabled('winRate')">{{ formatPct(row.winRateValue) }}</span>
-            <span v-if="isColumnEnabled('delta')" :class="row.relativeScoreDelta >= 0 ? 'positive' : 'negative'">
-              {{ formatSignedPct(row.relativeScoreDelta) }}
+            <span v-if="isColumnEnabled('delta')" :class="['delta-cell', row.displayDeltaValue >= 0 ? 'positive' : 'negative']">
+              <b>{{ formatSignedPct(row.displayDeltaValue) }}</b>
+              <small>{{ row.displayDeltaSource }}</small>
             </span>
-            <span v-if="isColumnEnabled('confidence')" class="ci-cell">{{ formatInterval(row.interval) }}</span>
+            <span v-if="isColumnEnabled('confidence')" class="ci-cell">
+              <b :class="'confidence-chip confidence-chip--' + row.confidenceTone">
+                {{ row.confidenceLabel }}
+              </b>
+              <small>{{ formatInterval(row.interval) }} / SE {{ formatStandardError(row.standardErrorValue) }}</small>
+              <small v-if="row.warningText">{{ row.warningText }}</small>
+            </span>
             <span v-if="isColumnEnabled('fallback')">{{ formatPct(row.fallbackRateValue) }}</span>
             <span v-if="isColumnEnabled('llmError')">{{ formatPct(row.llmErrorRateValue) }}</span>
             <span v-if="isColumnEnabled('policy')">{{ formatPct(row.policyAdjustedRateValue) }}</span>
@@ -947,7 +1132,10 @@ watch(tableRows, (current) => {
                 {{ row.rankableLabel }}
               </b>
             </span>
-            <span v-if="isColumnEnabled('games')">{{ row.games }}</span>
+            <span v-if="isColumnEnabled('games')" class="sample-cell">
+              <b>{{ row.sampleSize }} 样本</b>
+              <small>配对 {{ row.pairedSampleSize ?? 0 }}</small>
+            </span>
           </template>
 
           <template v-else>
@@ -958,20 +1146,26 @@ watch(tableRows, (current) => {
             <span>{{ row.source }}</span>
             <span v-if="isColumnEnabled('score')">{{ formatPct(row.scoreValue) }}</span>
             <span v-if="isColumnEnabled('winRate')">{{ formatPct(row.winRateValue) }}</span>
-            <span v-if="isColumnEnabled('delta')" :class="row.relativeScoreDelta >= 0 ? 'positive' : 'negative'">
-              {{ formatSignedPct(row.relativeScoreDelta) }}
+            <span v-if="isColumnEnabled('delta')" :class="['delta-cell', row.displayDeltaValue >= 0 ? 'positive' : 'negative']">
+              <b>{{ formatSignedPct(row.displayDeltaValue) }}</b>
+              <small>{{ row.displayDeltaSource }}</small>
             </span>
-            <span v-if="isColumnEnabled('confidence')">
+            <span v-if="isColumnEnabled('confidence')" class="ci-cell">
               <b :class="'confidence-chip confidence-chip--' + row.confidenceTone">
                 {{ row.confidenceLabel }}
               </b>
+              <small>{{ formatInterval(row.interval) }} / SE {{ formatStandardError(row.standardErrorValue) }}</small>
+              <small v-if="row.warningText">{{ row.warningText }}</small>
             </span>
             <span v-if="isColumnEnabled('rankable')">
               <b :class="['baseline-chip', { on: row.isBaseline }]">
                 {{ row.isBaseline ? '基线' : '候选' }}
               </b>
             </span>
-            <span v-if="isColumnEnabled('games')">{{ row.games }}</span>
+            <span v-if="isColumnEnabled('games')" class="sample-cell">
+              <b>{{ row.sampleSize }} 样本</b>
+              <small>配对 {{ row.pairedSampleSize ?? 0 }}</small>
+            </span>
           </template>
         </div>
       </div>
@@ -996,18 +1190,30 @@ watch(tableRows, (current) => {
           <dd>{{ mode === 'model' ? selectedLeaderboardRow.modelConfigHash : selectedLeaderboardRow.secondary }}</dd>
         </div>
         <div>
-          <dt>分差</dt>
-          <dd :class="selectedLeaderboardRow.relativeScoreDelta >= 0 ? 'positive' : 'negative'">
-            {{ formatSignedPct(selectedLeaderboardRow.relativeScoreDelta) }}
+          <dt>paired delta</dt>
+          <dd :class="selectedLeaderboardRow.displayDeltaValue >= 0 ? 'positive' : 'negative'">
+            {{ formatSignedPct(selectedLeaderboardRow.displayDeltaValue) }} / {{ selectedLeaderboardRow.displayDeltaSource }}
           </dd>
         </div>
         <div>
-          <dt>胜率区间</dt>
+          <dt>95% 置信区间</dt>
           <dd>{{ formatInterval(selectedLeaderboardRow.interval) }}</dd>
         </div>
         <div>
-          <dt>局数</dt>
-          <dd>{{ selectedLeaderboardRow.games }}</dd>
+          <dt>样本量</dt>
+          <dd>{{ selectedLeaderboardRow.sampleSize }} / 配对 {{ selectedLeaderboardRow.pairedSampleSize ?? 0 }}</dd>
+        </div>
+        <div>
+          <dt>标准误</dt>
+          <dd>{{ formatStandardError(selectedLeaderboardRow.standardErrorValue) }}</dd>
+        </div>
+        <div>
+          <dt>显著性</dt>
+          <dd>{{ selectedLeaderboardRow.significanceLabel || selectedLeaderboardRow.confidenceLabel }}</dd>
+        </div>
+        <div>
+          <dt>统计告警</dt>
+          <dd>{{ selectedLeaderboardRow.warningText || '无' }}</dd>
         </div>
         <div v-if="mode === 'model'">
           <dt>回退率</dt>
@@ -1023,7 +1229,7 @@ watch(tableRows, (current) => {
         </div>
       </dl>
       <p>
-        {{ selectedLeaderboardRow.rankableReason || (selectedLeaderboardRow.rankable === false ? '未入榜，但后端未返回原因。' : '该行未报告门禁失败。') }}
+        {{ selectedLeaderboardRow.warningText || selectedLeaderboardRow.rankableReason || (selectedLeaderboardRow.rankable === false ? '未入榜，但后端未返回原因。' : '差异不显著时不应作为晋级证据。') }}
       </p>
     </section>
 
@@ -1770,9 +1976,41 @@ watch(tableRows, (current) => {
   color: var(--comparison-muted);
 }
 
+.ci-cell,
+.sample-cell,
+.delta-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.15;
+}
+
 .ci-cell {
   color: var(--comparison-muted) !important;
   font-weight: 850 !important;
+}
+
+.ci-cell small,
+.sample-cell small,
+.delta-cell small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--comparison-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sample-cell b,
+.delta-cell b {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row-detail-panel {
