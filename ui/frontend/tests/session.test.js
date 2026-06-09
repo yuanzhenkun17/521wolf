@@ -1988,67 +1988,31 @@ test('logs hash deep link selects the requested benchmark replay game', () => wi
   assert.equal(state.selectedHistoryGame.value.logs[0].message, 'benchmark replay')
 }, { hash: '#logs?game_id=benchmark-game-2' }))
 
-test('evidence hash deep link selects a game and preloads archive and review assets', () => withWindow(async () => {
-  assert.equal(viewFromHash('#evidence?game_id=benchmark-game-2'), 'evidence')
+test('legacy evidence hash is ignored as an invalid route', () => withWindow(async () => {
+  assert.equal(viewFromHash('#evidence?game_id=benchmark-game-2'), 'lobby')
 
   const state = useGameState()
   const requests = []
-  const rows = [
-    game('history-first', { winner: 'villagers' }),
-    game('benchmark-game-2', { source: 'benchmark', winner: 'werewolves' })
-  ]
-  const apiFetch = async (path) => {
-    requests.push(path)
-    if (path === '/games?limit=3&offset=0') {
-      return {
-        games: rows,
-        pagination: { total: rows.length, offset: 0, limit: 3, returned: rows.length, has_more: false }
-      }
-    }
-    if (path === '/games/benchmark-game-2?view=history-shell') {
-      return game('benchmark-game-2', {
-        source: 'benchmark',
-        winner: 'werewolves',
-        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
-      })
-    }
-    if (path === historyPhasePath('benchmark-game-2')) {
-      return {
-        game_id: 'benchmark-game-2',
-        day: 1,
-        phase: 'setup',
-        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'benchmark evidence' }],
-        decisions: []
-      }
-    }
-    if (path === '/games/benchmark-game-2/archive') {
-      return { kind: 'game_trace_archive', game_id: 'benchmark-game-2', events: [], decisions: [] }
-    }
-    if (path === '/games/benchmark-game-2/review') {
-      return { kind: 'review_report', game_id: 'benchmark-game-2', decisions: [] }
-    }
-    throw new Error(`unexpected ${path}`)
-  }
   const history = useGameHistory(state, {
     installLifecycle: false,
     historyListLimit: 3,
-    apiFetch
+    apiFetch: async (path) => {
+      requests.push(path)
+      throw new Error(`unexpected ${path}`)
+    }
   })
 
   history.syncHashRoute()
-  await flushPromises(12)
+  await flushPromises(4)
 
-  assert.deepEqual(requests, [
-    '/games?limit=3&offset=0',
-    '/games/benchmark-game-2?view=history-shell',
-    historyPhasePath('benchmark-game-2'),
-    '/games/benchmark-game-2/archive',
-    '/games/benchmark-game-2/review'
-  ])
-  assert.equal(state.currentView.value, 'evidence')
-  assert.equal(state.selectedHistoryGameId.value, 'benchmark-game-2')
-  assert.equal(state.archiveByGameId.value['benchmark-game-2'].kind, 'game_trace_archive')
-  assert.equal(state.reviewByGameId.value['benchmark-game-2'].kind, 'review_report')
+  assert.deepEqual(requests, [])
+  assert.equal(state.currentView.value, 'lobby')
+  assert.equal(state.historyWorkspaceTab.value, 'phase')
+  assert.equal(state.selectedHistoryGameId.value, null)
+  assert.equal(state.selectedHistoryGame.value, null)
+  assert.equal(state.archiveByGameId.value['benchmark-game-2'], undefined)
+  assert.equal(state.reviewByGameId.value['benchmark-game-2'], undefined)
+  assert.equal(window.location.hash, '#evidence?game_id=benchmark-game-2')
 }, { hash: '#evidence?game_id=benchmark-game-2' }))
 
 test('evolution hash deep links keep query when the global router opens the page', () => withWindow(() => {
@@ -3675,7 +3639,7 @@ test('evolution workbench refreshes trust bundle audit from authority endpoint',
   assert.equal(workbench.trustBundleAudit.value.bundle_hash, 'hash_authority_1')
   assert.equal(workbench.trustBundleAudit.value.gate_report_id, 'gate_authority_1')
   assert.deepEqual(workbench.trustBundleAudit.value.training_game_ids, ['history_train_a'])
-  assert.equal(workbench.trustBundleAudit.value.training_evidence[0].href, '#evidence?game_id=history_train_a')
+  assert.equal(workbench.trustBundleAudit.value.training_evidence[0].href, '#logs?game_id=history_train_a&workspace=archive')
   assert.equal(workbench.trustBundleAudit.value.proposal_evidence[0].href, '#evolution?run_id=evo-trust-run&proposal_id=proposal_authority')
   assert.equal(workbench.trustBundleAudit.value.source_run_href, '#evolution?run_id=evo-trust-run')
   assert.equal(workbench.trustBundleAudit.value.gate_report_href, '#evolution?run_id=evo-trust-run&gate_report_id=gate_authority_1')

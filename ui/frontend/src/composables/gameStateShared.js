@@ -216,6 +216,7 @@ export function createRefs() {
     flowLoadingByGameId: ref({}),
     historyLoading: ref(false),
     historyPhase: ref('all'),
+    historyWorkspaceTab: ref('phase'),
     assessDimension: ref('speech'),
     selectedHistoryPageKey: ref(''),
     isReplayMode,

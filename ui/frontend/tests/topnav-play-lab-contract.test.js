@@ -11,7 +11,6 @@ test('TopNav exposes Play and Lab as primary work lines', () => {
 
   assert.match(source, /const navItems = \[[\s\S]*key: 'lobby'[\s\S]*line: 'play'[\s\S]*lineLabel: 'Play'[\s\S]*event: 'go-lobby'/)
   assert.match(source, /key: 'logs'[\s\S]*line: 'play'[\s\S]*lineLabel: 'Play'[\s\S]*event: 'open-logs'/)
-  assert.match(source, /key: 'evidence'[\s\S]*line: 'lab'[\s\S]*lineLabel: 'Lab'[\s\S]*event: 'open-evidence'/)
   assert.match(source, /key: 'benchmark'[\s\S]*line: 'lab'[\s\S]*lineLabel: 'Lab'[\s\S]*event: 'open-benchmark'/)
   assert.match(source, /key: 'evolution'[\s\S]*line: 'lab'[\s\S]*lineLabel: 'Lab'[\s\S]*event: 'open-evolution'/)
 })
@@ -27,7 +26,6 @@ test('TopNav buttons show current page state without changing App routing events
 
   assert.match(appSource, /@go-lobby="goLobby"/)
   assert.match(appSource, /@open-logs="openLogPage\(\)"/)
-  assert.match(appSource, /@open-evidence="openEvidencePage\(\)"/)
   assert.match(appSource, /@open-benchmark="openBenchmarkPage"/)
   assert.match(appSource, /@open-evolution="openEvolutionPage"/)
 })
@@ -37,6 +35,9 @@ test('TopNav Play and Lab segment styling stays compact on mobile', () => {
 
   assert.match(source, /\.topbar \.primary-nav button\[data-work-line="play"\]\s*\{[\s\S]*--nav-button-accent:\s*#ffb4a8/)
   assert.match(source, /\.topbar \.primary-nav button\[data-work-line="lab"\]\s*\{[\s\S]*--nav-button-accent:\s*#76c7a3/)
+  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]\s*\{[\s\S]*color:\s*var\(--nav-button-accent\)/)
+  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]:hover\s*\{[\s\S]*background:\s*rgba\(118,\s*199,\s*163,\s*0\.08\)/)
+  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]\.active:hover\s*\{[\s\S]*background:\s*rgba\(118,\s*199,\s*163,\s*0\.08\)/)
   assert.match(source, /\.nav-line\s*\{[\s\S]*text-transform:\s*uppercase/)
   assert.match(source, /\.nav-label\s*\{[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/)
   assert.match(source, /\.nav-state\s*\{[\s\S]*position:\s*absolute[\s\S]*pointer-events:\s*none/)

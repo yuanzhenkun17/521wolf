@@ -368,12 +368,11 @@ export function createLiveGameState(refs, helpers) {
 
   computedState.isNight = computed(() => game.value?.phase === 'night')
   computedState.inLogs = computed(() => currentView.value === 'logs')
-  computedState.inEvidence = computed(() => currentView.value === 'evidence')
   computedState.inBenchmark = computed(() => currentView.value === 'benchmark')
   computedState.inEvolution = computed(() => currentView.value === 'evolution')
   computedState.inLobby = computed(() =>
     currentView.value === 'lobby'
-    || (!game.value && currentView.value !== 'match' && !computedState.inLogs.value && !computedState.inEvidence.value && !computedState.inBenchmark.value && !computedState.inEvolution.value)
+    || (!game.value && currentView.value !== 'match' && !computedState.inLogs.value && !computedState.inBenchmark.value && !computedState.inEvolution.value)
   )
   computedState.inMatch = computed(() => currentView.value === 'match')
   computedState.isWatch = computed(() => game.value?.mode === 'watch')

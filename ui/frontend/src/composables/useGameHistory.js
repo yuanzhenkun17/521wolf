@@ -85,6 +85,7 @@ const DEFAULT_PHASE_LOG_LIMIT = 300
 const DEFAULT_PHASE_DECISION_LIMIT = 200
 const DEFAULT_REPLAY_LIMIT = 500
 const EMPTY_HISTORY_COUNTS = { all: 0, normal: 0, benchmark: 0, evolution: 0 }
+const HISTORY_WORKSPACE_TABS = new Set(['phase', 'review', 'archive'])
 
 function deleteHistoryNoticeFromError(err) {
   const message = String(err?.message || err || '').trim()
@@ -118,6 +119,25 @@ function historyLoadNotice(type, message, fallback) {
     type,
     message: String(message || '').trim() || fallback
   }
+}
+
+function normalizeHistoryWorkspaceTab(value, fallback = 'phase') {
+  const text = String(value || '').trim().toLowerCase()
+  return HISTORY_WORKSPACE_TABS.has(text) ? text : fallback
+}
+
+function logsHash({ gameId = '', workspace = '' } = {}) {
+  const query = new URLSearchParams()
+  if (gameId) query.set('game_id', String(gameId))
+  const tab = normalizeHistoryWorkspaceTab(workspace, '')
+  if (tab && tab !== 'phase') query.set('workspace', tab)
+  const queryString = query.toString()
+  return queryString ? `#logs?${queryString}` : '#logs'
+}
+
+function writeLogsHash(options = {}) {
+  if (typeof window === 'undefined') return
+  window.location.hash = logsHash(options)
 }
 
 function normalizeHistoryPhase(phase = 'setup') {
@@ -592,7 +612,6 @@ function useGameHistory(state, options = {}) {
   let replayTimer = null
   let replayAdvancePending = false
   const logOpenRequests = createLatestOnlyTracker()
-  const evidenceOpenRequests = createLatestOnlyTracker()
   const historySelectionRequests = createLatestOnlyTracker()
   const historyListRequests = createLatestOnlyTracker()
   const historyPhaseRequests = createLatestOnlyMap()
@@ -1322,13 +1341,15 @@ function useGameHistory(state, options = {}) {
     return refreshHistoryList({ silent })
   }
 
-  async function openLogPage(gameId = null, { rememberOrigin = true } = {}) {
+  async function openLogPage(gameId = null, { rememberOrigin = true, workspace = 'phase' } = {}) {
     const token = logOpenRequests.next()
     const targetGameId = gameId == null ? '' : String(gameId)
+    const targetWorkspace = normalizeHistoryWorkspaceTab(workspace)
     clearHistoryNotice()
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'logs'
-    writeViewHash('logs')
+    state.historyWorkspaceTab.value = targetWorkspace
+    writeLogsHash({ gameId: targetGameId, workspace: targetWorkspace })
     const listReady = await ensureHistoryList()
     if (!token.isLatest() || !listReady) return
     const selectedGameId = targetGameId || String(state.selectedHistoryGameId.value || '')
@@ -1336,30 +1357,6 @@ function useGameHistory(state, options = {}) {
     if (selectedGameId && (targetGameId || loadedGameId !== selectedGameId)) {
       await selectHistoryGame(selectedGameId, { fromOpenPage: true })
     }
-  }
-
-  async function openEvidencePage(gameId = null, { rememberOrigin = true } = {}) {
-    const token = evidenceOpenRequests.next()
-    const targetGameId = gameId == null ? '' : String(gameId)
-    clearHistoryNotice()
-    state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
-    state.currentView.value = 'evidence'
-    const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
-    if (hash.split('?')[0] !== '#evidence') writeViewHash('evidence')
-    const listReady = await ensureHistoryList()
-    if (!token.isLatest() || !listReady) return
-    const selectedGameId = targetGameId || String(state.selectedHistoryGameId.value || '')
-    const loadedGameId = String(state.selectedHistoryGame.value?.game_id || '')
-    if (selectedGameId && (targetGameId || loadedGameId !== selectedGameId)) {
-      await selectHistoryGame(selectedGameId, { fromOpenPage: true })
-    }
-    if (!token.isLatest()) return
-    const activeGameId = String(state.selectedHistoryGame.value?.game_id || state.selectedHistoryGameId.value || '')
-    if (!activeGameId) return
-    await Promise.allSettled([
-      loadArchive(activeGameId, { clearNotice: false }),
-      loadReview(activeGameId, { clearNotice: false })
-    ])
   }
 
   function openEvolutionPage({ rememberOrigin = true } = {}) {
@@ -1384,28 +1381,21 @@ function useGameHistory(state, options = {}) {
     const params = new URLSearchParams(queryString)
     return {
       routeHash,
-      gameId: params.get('game_id') || params.get('game') || ''
+      gameId: params.get('game_id') || params.get('game') || '',
+      workspace: normalizeHistoryWorkspaceTab(params.get('workspace') || params.get('tab') || '', '')
     }
   }
 
   function syncHashRoute({ rememberOrigin = false } = {}) {
     const route = hashRouteInfo()
     if (route.routeHash === '#logs') {
+      if (route.workspace) state.historyWorkspaceTab.value = route.workspace
       if (
         state.currentView.value === 'logs' &&
         state.selectedHistoryGame.value &&
         (!route.gameId || String(state.selectedHistoryGameId.value || '') === route.gameId)
       ) return
-      void openLogPage(route.gameId || null, { rememberOrigin })
-      return
-    }
-    if (route.routeHash === '#evidence') {
-      if (
-        state.currentView.value === 'evidence' &&
-        state.selectedHistoryGame.value &&
-        (!route.gameId || String(state.selectedHistoryGameId.value || '') === route.gameId)
-      ) return
-      void openEvidencePage(route.gameId || null, { rememberOrigin })
+      void openLogPage(route.gameId || null, { rememberOrigin, workspace: route.workspace || state.historyWorkspaceTab.value || 'phase' })
       return
     }
     if (route.routeHash === '#evolution') {
@@ -1879,7 +1869,7 @@ function useGameHistory(state, options = {}) {
     const handleHashChange = () => syncHashRoute({ rememberOrigin: false })
     onMounted(() => {
       const hash = typeof window === 'undefined' ? '' : window.location.hash
-      if (['#logs', '#evidence', '#evolution', '#benchmark', '#match'].includes(String(hash || '').split('?')[0])) {
+      if (['#logs', '#evolution', '#benchmark', '#match'].includes(String(hash || '').split('?')[0])) {
         syncHashRoute({ rememberOrigin: false })
       } else if (options.prefetchHistoryOnMount === true) {
         refreshHistoryList({ silent: true })
@@ -1915,7 +1905,6 @@ function useGameHistory(state, options = {}) {
     deleteHistoryGame,
     selectHistoryGame,
     openLogPage,
-    openEvidencePage,
     openEvolutionPage,
     openBenchmarkPage,
     syncHashRoute,

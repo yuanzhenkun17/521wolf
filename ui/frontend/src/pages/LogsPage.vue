@@ -38,6 +38,7 @@ const props = defineProps({
   historyTotalPages: { type: Number, default: 1 },
   historyPages: { type: Array, default: () => [] },
   selectedHistoryPageKey: { type: String, default: '' },
+  historyWorkspaceTab: { type: String, default: 'phase' },
   selectedHistoryPage: Object,
   phaseLoadingByKey: { type: Object, default: () => ({}) },
   historyLogs: { type: Array, default: () => [] },
@@ -91,6 +92,7 @@ const emit = defineEmits([
   'replay-game',
   'select-page',
   'update:selectedHistoryPageKey',
+  'update:historyWorkspaceTab',
   'update:assessDimension',
   'update:selectedDecision',
   'update:detailTab',
@@ -107,6 +109,7 @@ const selectedAssessPlayerId = ref(null)
 const workspaceTab = ref('phase')
 const rawLogFilter = ref('all')
 const expandedPhaseEvidenceKeys = ref(new Set())
+const WORKSPACE_TAB_KEYS = new Set(['phase', 'review', 'archive'])
 const NIGHT_PHASES = new Set(['night'])
 const SPEECH_PHASES = new Set(['speech', 'sheriff'])
 const VOTE_PHASES = new Set(['vote', 'exile_vote', 'pk_vote', 'sheriff_vote', 'sheriff_result'])
@@ -520,11 +523,36 @@ const workspaceTabs = computed(() => [
   { key: 'archive', label: '对局档案', ...archiveTabState.value }
 ])
 
+function normalizeWorkspaceTab(tab) {
+  const text = String(tab || '').trim().toLowerCase()
+  return WORKSPACE_TAB_KEYS.has(text) ? text : 'phase'
+}
+
+function setWorkspaceTab(tab, { emitUpdate = true, load = true } = {}) {
+  const next = normalizeWorkspaceTab(tab)
+  if (workspaceTab.value !== next) workspaceTab.value = next
+  if (emitUpdate && props.historyWorkspaceTab !== next) emit('update:historyWorkspaceTab', next)
+  if (!load || !props.selectedHistoryGame?.game_id) return
+  if (next === 'review' && !reviewLoaded.value && !props.reviewLoading) {
+    props.loadReview?.(props.selectedHistoryGame.game_id)
+  }
+  if (next === 'archive' && !archiveLoaded.value && !props.archiveLoading) {
+    props.loadArchive?.(props.selectedHistoryGame.game_id)
+  }
+}
+
 watch(() => props.selectedHistoryGameId, () => {
-  workspaceTab.value = 'phase'
   selectedAssessPlayerId.value = null
   rawLogFilter.value = 'all'
   expandedPhaseEvidenceKeys.value = new Set()
+})
+
+watch(() => props.historyWorkspaceTab, (tab) => {
+  setWorkspaceTab(tab, { emitUpdate: false })
+}, { immediate: true })
+
+watch(() => props.selectedHistoryGame?.game_id, () => {
+  setWorkspaceTab(props.historyWorkspaceTab, { emitUpdate: false })
 })
 
 watch(() => props.selectedHistoryPage?.key, () => {
@@ -808,6 +836,11 @@ function updateDetailTab(tab) {
   emit('update:detailTab', tab)
 }
 
+function selectHistoryGameFromList(gameId) {
+  setWorkspaceTab('phase')
+  emit('select-history-game', gameId)
+}
+
 function loadSelectedReview() {
   props.loadReview?.(props.selectedHistoryGame?.game_id)
 }
@@ -817,7 +850,7 @@ function loadSelectedFlowData() {
 }
 
 function loadSelectedArchive() {
-  workspaceTab.value = 'archive'
+  setWorkspaceTab('archive', { load: false })
   props.loadArchive?.(props.selectedHistoryGame?.game_id)
 }
 
@@ -836,13 +869,7 @@ function retrySelectedDetail() {
 }
 
 function selectWorkspaceTab(tab) {
-  workspaceTab.value = tab
-  if (tab === 'review' && props.selectedHistoryGame?.game_id && !reviewLoaded.value && !props.reviewLoading) {
-    props.loadReview?.(props.selectedHistoryGame.game_id)
-  }
-  if (tab === 'archive' && props.selectedHistoryGame?.game_id && !archiveLoaded.value && !props.archiveLoading) {
-    props.loadArchive?.(props.selectedHistoryGame.game_id)
-  }
+  setWorkspaceTab(tab)
 }
 
 function selectAssessPlayer(player) {
@@ -871,7 +898,7 @@ function clearPlayerFocus() {
         :counts="historyCounts"
         :facets="historyFacets"
         :notice="historyNotice"
-        @select-game="emit('select-history-game', $event)"
+        @select-game="selectHistoryGameFromList"
         @replay-game="emit('replay-game', $event)"
         @delete-game="deleteHistoryGame?.($event)"
         @change-source="setHistorySourceFilter?.($event)"
@@ -921,7 +948,7 @@ function clearPlayerFocus() {
               </small>
             </button>
           </nav>
-          <EvidenceContextBar :game="selectedHistoryGame" />
+          <EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" />
           <PhaseTabs
             v-if="workspaceTab === 'phase'"
             :pages="historyPages"

@@ -12,9 +12,12 @@ import {
   sourceEvidenceKey
 } from '../src/components/history/evidenceLinks.js'
 
-test('evidence hash links use stable archive and evolution routes', () => {
+test('evidence hash links use stable logs archive and evolution routes', () => {
   assert.equal(buildHashLink('logs', { game_id: 'game/1' }), '#logs?game_id=game%2F1')
-  assert.equal(buildHashLink('evidence', { game_id: 'game/1' }), '#evidence?game_id=game%2F1')
+  assert.equal(
+    buildHashLink('logs', { game_id: 'game/1', workspace: 'archive' }),
+    '#logs?game_id=game%2F1&workspace=archive'
+  )
   assert.equal(
     buildHashLink('evolution', { run_id: 'run 1', proposal_id: 'proposal+1' }),
     '#evolution?run_id=run+1&proposal_id=proposal%2B1'
@@ -29,7 +32,7 @@ test('game evidence prefers persisted history game id for archive jumps', () => 
 
   assert.equal(gameEvidenceId({ game_id: 'runtime-game', history_game_id: 'history-game' }), 'history-game')
   assert.equal(link.disabled, false)
-  assert.equal(link.href, '#evidence?game_id=history-game')
+  assert.equal(link.href, '#logs?game_id=history-game&workspace=archive')
   assert.equal(link.label, 'Archive')
   assert.equal(link.id, 'history-game')
 })
@@ -92,6 +95,7 @@ test('evidence links return disabled reasons when a target cannot be generated',
 
 test('buildEvidenceLinks returns the minimal archive/run/proposal bundle', () => {
   const links = buildEvidenceLinks({
+    log_source: 'evolution',
     history_game_id: 'history-a',
     source_run_id: 'run-a',
     proposal_id: 'proposal-a'
@@ -99,7 +103,7 @@ test('buildEvidenceLinks returns the minimal archive/run/proposal bundle', () =>
 
   assert.deepEqual(links.map((link) => link.kind), ['game', 'run', 'proposal'])
   assert.deepEqual(links.map((link) => link.href), [
-    '#evidence?game_id=history-a',
+    '#logs?game_id=history-a&workspace=archive',
     '#evolution?run_id=run-a',
     '#evolution?run_id=run-a&proposal_id=proposal-a'
   ])

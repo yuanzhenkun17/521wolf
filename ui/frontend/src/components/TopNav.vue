@@ -14,14 +14,13 @@ const props = defineProps({
   exitDisabled: Boolean
 })
 
-const emit = defineEmits(['go-lobby', 'open-logs', 'open-evidence', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
+const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
 const exitConfirming = ref(false)
 let exitConfirmTimer = 0
 
 const navItems = [
   { key: 'lobby', label: '大厅', line: 'play', lineLabel: 'Play', event: 'go-lobby' },
   { key: 'logs', label: '日志', line: 'play', lineLabel: 'Play', event: 'open-logs' },
-  { key: 'evidence', label: '证据', line: 'lab', lineLabel: 'Lab', event: 'open-evidence' },
   { key: 'benchmark', label: '评测', line: 'lab', lineLabel: 'Lab', event: 'open-benchmark' },
   { key: 'evolution', label: '自进化', line: 'lab', lineLabel: 'Lab', event: 'open-evolution' }
 ]
@@ -505,12 +504,22 @@ onBeforeUnmount(clearExitConfirm)
   text-shadow: 0 0 12px rgba(255, 180, 168, 0.14);
 }
 
+.topbar--lobby .primary-nav button[data-work-line="lab"] {
+  color: var(--nav-button-accent);
+  text-shadow: 0 0 14px rgba(118, 199, 163, 0.18);
+}
+
 .topbar--lobby .primary-nav button:hover {
   border: 0;
   color: var(--nav-accent);
   background: rgba(255, 180, 168, 0.08);
   box-shadow: none;
   transform: none;
+}
+
+.topbar--lobby .primary-nav button[data-work-line="lab"]:hover {
+  color: var(--nav-button-accent);
+  background: rgba(118, 199, 163, 0.08);
 }
 
 .topbar--lobby .primary-nav button.active,
@@ -545,6 +554,10 @@ onBeforeUnmount(clearExitConfirm)
 
 .topbar--lobby .primary-nav button.active:hover {
   background: rgba(255, 180, 168, 0.08);
+}
+
+.topbar--lobby .primary-nav button[data-work-line="lab"].active:hover {
+  background: rgba(118, 199, 163, 0.08);
 }
 
 .topbar--section .primary-nav button.active:hover {

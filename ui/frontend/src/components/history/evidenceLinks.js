@@ -120,7 +120,7 @@ function availabilityReason(source = {}, kind = '') {
   )
   if (genericReason) return genericReason
   if (kind === 'game' && (source.archive_available === false || existing.archive_available === false)) {
-    return firstText(source.archive_unavailable_reason, existing.archive_unavailable_reason, 'Evidence Archive 当前不可用。')
+    return firstText(source.archive_unavailable_reason, existing.archive_unavailable_reason, '对局档案当前不可用。')
   }
   if (kind === 'run' && sourceKey === 'benchmark' && (source.benchmark_available === false || existing.benchmark_available === false)) {
     return firstText(source.benchmark_unavailable_reason, existing.benchmark_unavailable_reason, '评测运行当前不可用。')
@@ -225,12 +225,12 @@ function buildGameEvidenceLink(source = {}, options = {}) {
   const gameId = gameEvidenceId(source)
   if (reason) return disabledEvidenceLink('game', reason, { ...options, id: gameId })
   if (!gameId) {
-    return disabledEvidenceLink('game', '缺少 game_id/history_game_id，无法跳转到 Evidence Archive。', options)
+    return disabledEvidenceLink('game', '缺少 game_id/history_game_id，无法跳转到对局档案。', options)
   }
-  return enabledEvidenceLink('game', buildHashLink('evidence', { game_id: gameId }), {
+  return enabledEvidenceLink('game', buildHashLink('logs', { game_id: gameId, workspace: 'archive' }), {
     ...options,
     id: gameId,
-    params: { game_id: gameId }
+    params: { game_id: gameId, workspace: 'archive' }
   })
 }
 

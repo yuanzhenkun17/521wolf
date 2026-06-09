@@ -49,14 +49,14 @@ test('Proposal review falls back to run-scoped proposal evidence without empty l
   assert.match(missingProposal.unavailableReason, /proposal_id/)
 })
 
-test('Proposal review evidence game ids deep-link to Evidence Archive', () => {
+test('Proposal review evidence game ids deep-link to Logs archive workspace', () => {
   const gameLink = buildEvidenceLink({
     history_game_id: 'history-game-a',
     source_run_id: 'evo-run-a',
     proposal_id: 'proposal-a'
   }, { kind: 'game', label: 'Game' })
   assert.equal(gameLink.disabled, false)
-  assert.equal(gameLink.href, '#evidence?game_id=history-game-a')
+  assert.equal(gameLink.href, '#logs?game_id=history-game-a&workspace=archive')
   assert.equal(gameLink.id, 'history-game-a')
 })
 
