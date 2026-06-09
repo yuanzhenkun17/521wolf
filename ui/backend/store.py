@@ -1216,6 +1216,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "rankable": bool(payload.get("rankable")),
             "data_sufficient": bool(payload.get("data_sufficient")),
             "summary": summary,
+            "model_runtime": _json_clone(summary.get("model_runtime") or {}),
             "is_baseline": bool(summary.get("is_baseline", False)) if isinstance(summary, dict) else False,
             "delta_vs_baseline": {},
             "source_run_id": source_run_id,
@@ -1518,6 +1519,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "status": batch.get("status"),
             "benchmark": batch.get("benchmark"),
             "target_type": batch.get("target_type"),
+            "model_runtime": _json_clone(batch.get("model_runtime") or {}),
             "roles": list(batch.get("roles", []) or []),
             "run_plan": batch.get("run_plan"),
             "result_count": len(results),
@@ -1626,23 +1628,35 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         if normalized_format in {"json", ""}:
             return report
         if normalized_format in {"markdown", "md"}:
+            content = _benchmark_run_report_markdown(report)
+            export_content_hash = _text_content_hash(content)
             return {
                 "kind": "benchmark_run_report_export",
                 "schema_version": 1,
                 "run_id": report["run_id"],
+                "report_id": report["report_id"],
                 "format": "markdown",
-                "content": _benchmark_run_report_markdown(report),
+                "content": content,
                 "content_type": "text/markdown",
+                "content_hash": report["content_hash"],
+                "export_content_hash": export_content_hash,
+                "artifact_hash": export_content_hash,
                 "report": report,
             }
         if normalized_format == "csv":
+            content = _benchmark_run_report_csv(report)
+            export_content_hash = _text_content_hash(content)
             return {
                 "kind": "benchmark_run_report_export",
                 "schema_version": 1,
                 "run_id": report["run_id"],
+                "report_id": report["report_id"],
                 "format": "csv",
-                "content": _benchmark_run_report_csv(report),
+                "content": content,
                 "content_type": "text/csv",
+                "content_hash": report["content_hash"],
+                "export_content_hash": export_content_hash,
+                "artifact_hash": export_content_hash,
                 "report": report,
             }
         raise HTTPException(status_code=422, detail="unsupported benchmark report format")
@@ -1829,31 +1843,42 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             _log.warning("LLM config missing; UI backend is using fallback model", exc_info=True)
             return _FakeModel()
 
-    def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, str | None]:
+    def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
         """Return model identity used to attribute model-scope benchmark runs."""
         request_model_id = str(getattr(request, "model_id", "") or "").strip() if request else ""
         request_config_hash = str(getattr(request, "model_config_hash", "") or "").strip() if request else ""
         if request_model_id and request_config_hash:
-            return {"model_id": request_model_id, "model_config_hash": request_config_hash}
+            return _benchmark_model_runtime_payload(
+                source="request",
+                model_id=request_model_id,
+                model_config_hash=request_config_hash,
+                hash_input=None,
+                hash_provided=True,
+            )
 
         if self.model is not None:
             model_id = request_model_id or _model_identifier(self.model) or self.model.__class__.__name__
-            runtime_hash = request_config_hash or _stable_runtime_hash(
-                {
-                    "source": "injected_model",
-                    "model_id": model_id,
-                    "class": f"{self.model.__class__.__module__}.{self.model.__class__.__qualname__}",
-                }
+            hash_input = _injected_model_runtime_hash_input(self.model, model_id=model_id)
+            runtime_hash = request_config_hash or _stable_runtime_hash(hash_input)
+            return _benchmark_model_runtime_payload(
+                source="injected_model",
+                model_id=model_id,
+                model_config_hash=runtime_hash,
+                hash_input=hash_input,
+                hash_provided=bool(request_config_hash),
             )
-            return {"model_id": model_id, "model_config_hash": runtime_hash}
 
         use_fake = os.environ.get("UI_BACKEND_USE_FAKE_LLM", "").lower() in {"1", "true", "yes"}
         if use_fake:
             model_id = request_model_id or "ui-backend-fake-llm"
-            return {
-                "model_id": model_id,
-                "model_config_hash": request_config_hash or _stable_runtime_hash({"source": "fake", "model_id": model_id}),
-            }
+            hash_input = {"source": "fake", "model_id": model_id}
+            return _benchmark_model_runtime_payload(
+                source="fake",
+                model_id=model_id,
+                model_config_hash=request_config_hash or _stable_runtime_hash(hash_input),
+                hash_input=hash_input,
+                hash_provided=bool(request_config_hash),
+            )
 
         try:
             cfg = load_llm_config()
@@ -1876,13 +1901,24 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             }
             model_id = request_model_id or str(cfg.get("model") or "configured-llm")
             public_cfg["model"] = model_id
-            return {"model_id": model_id, "model_config_hash": request_config_hash or _stable_runtime_hash(public_cfg)}
+            public_cfg["source"] = "configured_llm"
+            return _benchmark_model_runtime_payload(
+                source="configured_llm",
+                model_id=model_id,
+                model_config_hash=request_config_hash or _stable_runtime_hash(public_cfg),
+                hash_input=public_cfg,
+                hash_provided=bool(request_config_hash),
+            )
         except RuntimeError:
             model_id = request_model_id or "ui-backend-fallback-llm"
-            return {
-                "model_id": model_id,
-                "model_config_hash": request_config_hash or _stable_runtime_hash({"source": "fallback", "model_id": model_id}),
-            }
+            hash_input = {"source": "fallback", "model_id": model_id}
+            return _benchmark_model_runtime_payload(
+                source="fallback",
+                model_id=model_id,
+                model_config_hash=request_config_hash or _stable_runtime_hash(hash_input),
+                hash_input=hash_input,
+                hash_provided=bool(request_config_hash),
+            )
 
     def llm_status(self) -> str:
         if self.model is not None:
@@ -2337,6 +2373,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         spec, seed_set = self._resolve_benchmark_spec(request)
         benchmark_meta = self._benchmark_metadata(spec, seed_set) if spec else None
         roles = self._benchmark_roles(request, spec)
+        model_runtime = self.benchmark_model_runtime(request)
+        request_config = self._benchmark_request_config(request, spec)
+        if spec is not None or request.target_type == "model" or request.model_id or request.model_config_hash:
+            request_config["model_id"] = model_runtime["model_id"]
+            request_config["model_config_hash"] = model_runtime["model_config_hash"]
+            request_config["model_runtime"] = _json_clone(model_runtime["model_runtime"])
         batch_id = f"bench_{uuid.uuid4().hex[:10]}"
         now = beijing_now_iso()
         batch = {
@@ -2345,6 +2387,9 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "batch_id": batch_id,
             "benchmark": benchmark_meta,
             "target_type": spec.target_type if spec else request.target_type,
+            "model_id": model_runtime["model_id"],
+            "model_config_hash": model_runtime["model_config_hash"],
+            "model_runtime": _json_clone(model_runtime["model_runtime"]),
             "roles": roles,
             "status": "running",
             "stop_requested": False,
@@ -2364,7 +2409,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 "updated_at": now,
             },
             "diagnostics": [],
-            "config": self._benchmark_request_config(request, spec),
+            "config": request_config,
             "run_plan": run_plan,
             "result": None,
             "error": None,
@@ -2581,9 +2626,31 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "max_days": max_days,
             "paired_seed": paired_seed,
         }
-        model_runtime = self.benchmark_model_runtime(request)
-        cfg["model_id"] = model_runtime["model_id"]
-        cfg["model_config_hash"] = model_runtime["model_config_hash"]
+        frozen_config = batch.get("config") if isinstance(batch.get("config"), dict) else {}
+        frozen_runtime = batch.get("model_runtime")
+        if not isinstance(frozen_runtime, dict) or not frozen_runtime:
+            frozen_runtime = frozen_config.get("model_runtime")
+        if isinstance(frozen_runtime, dict) and frozen_runtime:
+            cfg["model_id"] = batch.get("model_id") or frozen_config.get("model_id") or frozen_runtime.get("model_id")
+            cfg["model_config_hash"] = (
+                batch.get("model_config_hash")
+                or frozen_config.get("model_config_hash")
+                or frozen_runtime.get("model_config_hash")
+            )
+            cfg["model_runtime"] = _json_clone(frozen_runtime)
+        else:
+            model_runtime = self.benchmark_model_runtime(request)
+            cfg["model_id"] = model_runtime["model_id"]
+            cfg["model_config_hash"] = model_runtime["model_config_hash"]
+            cfg["model_runtime"] = model_runtime["model_runtime"]
+            if isinstance(batch, dict):
+                batch["model_id"] = model_runtime["model_id"]
+                batch["model_config_hash"] = model_runtime["model_config_hash"]
+                batch["model_runtime"] = _json_clone(model_runtime["model_runtime"])
+                if isinstance(batch.get("config"), dict):
+                    batch["config"]["model_id"] = model_runtime["model_id"]
+                    batch["config"]["model_config_hash"] = model_runtime["model_config_hash"]
+                    batch["config"]["model_runtime"] = _json_clone(model_runtime["model_runtime"])
         for key, value in (
             ("evaluation_set_id", benchmark_meta.get("evaluation_set_id")),
             ("seed_set_id", benchmark_meta.get("seed_set_id")),
@@ -3231,6 +3298,7 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
     diagnostic_groups = _benchmark_report_diagnostic_groups(diagnostics)
     top_tags = _benchmark_report_top_tags(results, diagnostics)
     subject = _benchmark_report_subject(results, config, meta)
+    model_runtime = _benchmark_report_model_runtime(batch, results, config, meta)
     evaluation_set_id = meta.get("evaluation_set_id") or str(benchmark.get("evaluation_set_id") or "")
     seed_set_id = meta.get("seed_set_id") or str(benchmark.get("seed_set_id") or config.get("seed_set_id") or "")
     benchmark_config_hash = str(
@@ -3249,9 +3317,11 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
         "diagnostic_summary": _benchmark_diagnostic_summary(diagnostics),
         "diagnostic_group_count": len(diagnostic_groups),
     }
-    return {
+    report_id = f"benchmark_report:{batch_id}"
+    payload = {
         "kind": "benchmark_run_report",
         "schema_version": 1,
+        "report_id": report_id,
         "generated_at": beijing_now_iso(),
         "run_id": batch_id,
         "batch_id": batch_id,
@@ -3269,6 +3339,7 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
             "benchmark_config_hash": benchmark_config_hash,
         },
         "subject": subject,
+        "model_runtime": model_runtime,
         "summary": summary,
         "results": result_rows,
         "gates": _benchmark_report_gate_rows(result_rows, diagnostic_groups),
@@ -3296,6 +3367,7 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
             "Config Hash": benchmark_config_hash or "未上报",
             "模型 ID": subject.get("model_id") or "未上报",
             "模型配置 Hash": subject.get("model_config_hash") or "未上报",
+            "模型运行来源": model_runtime.get("source") or "未上报",
             "目标角色": subject.get("target_role") or "未上报",
             "目标版本": subject.get("target_version_id") or "基线版本",
         },
@@ -3305,6 +3377,18 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
             "target_role": subject.get("target_role"),
         },
     }
+    payload["content_hash"] = _benchmark_report_content_hash(payload)
+    payload["artifacts"] = {
+        "schema_version": 1,
+        "report_id": report_id,
+        "content_hash": payload["content_hash"],
+        "exports": {
+            "json": f"/api/benchmark/batch/{batch_id}/report",
+            "markdown": f"/api/benchmark/batch/{batch_id}/report?format=markdown",
+            "csv": f"/api/benchmark/batch/{batch_id}/report?format=csv",
+        },
+    }
+    return payload
 
 
 def _benchmark_run_report_summary(
@@ -3317,12 +3401,10 @@ def _benchmark_run_report_summary(
     diagnostic_summary = summary.get("diagnostic_summary") if isinstance(summary.get("diagnostic_summary"), dict) else {}
     suite = report.get("suite") if isinstance(report.get("suite"), dict) else {}
     subject = report.get("subject") if isinstance(report.get("subject"), dict) else {}
-    stable_report = dict(report)
-    stable_report.pop("generated_at", None)
     return {
         "kind": "benchmark_run_report_summary",
         "schema_version": 1,
-        "report_id": f"benchmark_report:{batch_id}",
+        "report_id": str(report.get("report_id") or f"benchmark_report:{batch_id}"),
         "run_id": str(report.get("run_id") or batch_id),
         "batch_id": batch_id,
         "status": report.get("status") or meta.get("status"),
@@ -3339,13 +3421,14 @@ def _benchmark_run_report_summary(
         "benchmark_config_hash": report.get("benchmark_config_hash") or suite.get("benchmark_config_hash"),
         "suite": _json_clone(suite),
         "subject": _json_clone(subject),
+        "model_runtime": _json_clone(report.get("model_runtime") or {}),
         "summary": _json_clone(summary),
         "result_count": int(summary.get("result_count") or 0),
         "rankable_count": int(summary.get("rankable_count") or 0),
         "unrankable_count": int(summary.get("unrankable_count") or 0),
         "problem_game_count": int(summary.get("problem_game_count") or 0),
         "diagnostic_count": int(diagnostic_summary.get("total") or 0),
-        "content_hash": _stable_payload_hash(stable_report),
+        "content_hash": report.get("content_hash") or _benchmark_report_content_hash(report),
         "links": {
             "json": f"/api/benchmark/batch/{batch_id}/report",
             "markdown": f"/api/benchmark/batch/{batch_id}/report?format=markdown",
@@ -3400,6 +3483,53 @@ def _benchmark_report_subject(
         "model_id": model_id,
         "model_config_hash": model_config_hash,
     }
+
+
+def _benchmark_report_model_runtime(
+    batch: dict[str, Any],
+    results: list[dict[str, Any]],
+    batch_config: dict[str, Any],
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    first_result = results[0] if results else {}
+    result_config = first_result.get("config") if isinstance(first_result.get("config"), dict) else {}
+    candidates = (
+        batch.get("model_runtime"),
+        batch_config.get("model_runtime"),
+        first_result.get("model_runtime"),
+        result_config.get("model_runtime"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            runtime = _json_clone(candidate)
+            runtime.setdefault("model_id", meta.get("model_id") or first_result.get("model_id") or result_config.get("model_id"))
+            runtime.setdefault(
+                "model_config_hash",
+                meta.get("model_config_hash") or first_result.get("model_config_hash") or result_config.get("model_config_hash"),
+            )
+            return runtime
+    return {
+        "schema_version": 1,
+        "source": "unknown",
+        "model_id": meta.get("model_id") or first_result.get("model_id") or result_config.get("model_id") or "",
+        "model_config_hash": (
+            meta.get("model_config_hash")
+            or first_result.get("model_config_hash")
+            or result_config.get("model_config_hash")
+            or ""
+        ),
+        "hash_provided": False,
+        "hash_input": {},
+    }
+
+
+def _benchmark_report_content_hash(report: dict[str, Any]) -> str:
+    stable_report = _json_clone(report)
+    if isinstance(stable_report, dict):
+        stable_report.pop("generated_at", None)
+        stable_report.pop("content_hash", None)
+        stable_report.pop("artifacts", None)
+    return _stable_payload_hash(stable_report if isinstance(stable_report, dict) else {})
 
 
 def _benchmark_report_gate_rows(
@@ -3522,6 +3652,7 @@ def _benchmark_run_report_markdown(report: dict[str, Any]) -> str:
         f"# 评测运行报告：{_markdown_value(report.get('run_id'))}",
         "",
         "## 报告头",
+        f"- 报告 ID: {_markdown_value(report.get('report_id'))}",
         f"- 运行 ID: {_markdown_value(report.get('run_id'))}",
         f"- 套件: {_markdown_value(report.get('suite', {}).get('label'))}",
         f"- 状态: {_markdown_value(report.get('status'))}",
@@ -3529,6 +3660,7 @@ def _benchmark_run_report_markdown(report: dict[str, Any]) -> str:
         f"- 评测集: {_markdown_value(report.get('suite', {}).get('evaluation_set_id'))}",
         f"- 种子集: {_markdown_value(report.get('suite', {}).get('seed_set_id'))}",
         f"- 评测对象: {_markdown_value(report.get('subject', {}).get('label'))}",
+        f"- 内容 Hash: {_markdown_value(report.get('content_hash'))}",
         "",
         "## 摘要",
     ]
@@ -3582,6 +3714,18 @@ def _benchmark_run_report_markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## 复现包"])
     reproducibility = report.get("reproducibility") if isinstance(report.get("reproducibility"), dict) else {}
     lines.extend(f"- {_markdown_value(key)}: {_markdown_value(value)}" for key, value in reproducibility.items())
+    model_runtime = report.get("model_runtime") if isinstance(report.get("model_runtime"), dict) else {}
+    if model_runtime:
+        lines.extend(
+            [
+                "",
+                "## 模型运行配置",
+                f"- 来源: {_markdown_value(model_runtime.get('source'))}",
+                f"- 模型 ID: {_markdown_value(model_runtime.get('model_id'))}",
+                f"- 配置 Hash: {_markdown_value(model_runtime.get('model_config_hash'))}",
+                f"- Hash 来源: {'请求提供' if model_runtime.get('hash_provided') else '后端自动生成'}",
+            ]
+        )
     return "\n".join(lines)
 
 
@@ -3592,12 +3736,14 @@ def _benchmark_run_report_csv(report: dict[str, Any]) -> str:
     rows.extend(
         [
             ["报告头", "运行 ID", report.get("run_id"), ""],
+            ["报告头", "报告 ID", report.get("report_id"), ""],
             ["报告头", "套件", suite.get("label"), ""],
             ["报告头", "状态", report.get("status"), ""],
             ["报告头", "对象类型", suite.get("target_type"), ""],
             ["报告头", "评测集", suite.get("evaluation_set_id"), ""],
             ["报告头", "种子集", suite.get("seed_set_id"), ""],
             ["报告头", "评测对象", subject.get("label"), ""],
+            ["报告头", "内容 Hash", report.get("content_hash"), ""],
         ]
     )
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
@@ -3624,6 +3770,16 @@ def _benchmark_run_report_csv(report: dict[str, Any]) -> str:
             rows.append(["诊断", group.get("label"), group.get("total"), group.get("level")])
     reproducibility = report.get("reproducibility") if isinstance(report.get("reproducibility"), dict) else {}
     rows.extend(["复现包", key, value, ""] for key, value in reproducibility.items())
+    model_runtime = report.get("model_runtime") if isinstance(report.get("model_runtime"), dict) else {}
+    if model_runtime:
+        rows.extend(
+            [
+                ["模型运行配置", "来源", model_runtime.get("source"), ""],
+                ["模型运行配置", "模型 ID", model_runtime.get("model_id"), ""],
+                ["模型运行配置", "配置 Hash", model_runtime.get("model_config_hash"), ""],
+                ["模型运行配置", "Hash 来源", "请求提供" if model_runtime.get("hash_provided") else "后端自动生成", ""],
+            ]
+        )
     return "\n".join(",".join(_csv_value(value) for value in row) for row in rows)
 
 
@@ -5429,6 +5585,78 @@ def _model_identifier(model: Any) -> str | None:
         if value:
             return str(value)
     return None
+
+
+def _runtime_public_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        values: list[Any] = []
+        for item in value:
+            public_item = _runtime_public_value(item)
+            if public_item is not None:
+                values.append(public_item)
+        return values
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key or "").strip()
+            if not key_text or any(secret in key_text.lower() for secret in ("key", "secret", "token", "password")):
+                continue
+            public_item = _runtime_public_value(item)
+            if public_item is not None:
+                sanitized[key_text] = public_item
+        return sanitized
+    return str(value)
+
+
+def _injected_model_runtime_hash_input(model: Any, *, model_id: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "source": "injected_model",
+        "model_id": model_id,
+        "class": f"{model.__class__.__module__}.{model.__class__.__qualname__}",
+    }
+    for attr in (
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "timeout",
+        "request_timeout",
+        "max_retries",
+        "model_kwargs",
+    ):
+        value = getattr(model, attr, None)
+        public_value = _runtime_public_value(value)
+        if public_value not in (None, "", {}, []):
+            payload[attr] = public_value
+    return payload
+
+
+def _benchmark_model_runtime_payload(
+    *,
+    source: str,
+    model_id: str,
+    model_config_hash: str,
+    hash_input: dict[str, Any] | None,
+    hash_provided: bool,
+) -> dict[str, Any]:
+    runtime = {
+        "schema_version": 1,
+        "source": source,
+        "hash_source": source,
+        "hash_algorithm": "sha256",
+        "hash_input_schema_version": 1,
+        "model_id": model_id,
+        "model_config_hash": model_config_hash,
+        "hash_provided": bool(hash_provided),
+        "externally_provided": bool(hash_provided),
+        "hash_input": _json_clone(hash_input or {}),
+    }
+    return {
+        "model_id": model_id,
+        "model_config_hash": model_config_hash,
+        "model_runtime": runtime,
+    }
 
 
 def _stable_runtime_hash(payload: dict[str, Any]) -> str:

@@ -1403,6 +1403,7 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
             "benchmark_config_hash",
             "evaluation_set_id",
             "seed_set_id",
+            "model_runtime",
         ):
             if cfg.get(key) is not None:
                 leaderboard_summary.setdefault(key, cfg.get(key))
@@ -1417,6 +1418,7 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
             "comparison_group_id": cfg.get("comparison_group_id"),
             "model_id": cfg.get("model_id"),
             "model_config_hash": cfg.get("model_config_hash"),
+            "model_runtime": cfg.get("model_runtime"),
             "evaluation_set_id": cfg.get("evaluation_set_id"),
             "seed_set_id": cfg.get("seed_set_id"),
             "rankable": result.get("rankable"),

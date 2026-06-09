@@ -2572,6 +2572,7 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
                 "llm_error_rate": 0.01,
                 "policy_adjusted_rate": 0.0,
                 "rankable": True,
+                "model_runtime": batch_config["model_runtime"],
                 "summary": {"source_run_id": batch_config["comparison_group_id"]},
                 "updated_at": "2026-06-09T10:00:00+08:00",
             },
@@ -2597,6 +2598,7 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
             "rankable_reason": "ok",
             "model_id": batch_config["model_id"],
             "model_config_hash": batch_config["model_config_hash"],
+            "model_runtime": batch_config["model_runtime"],
             "started_at": "2026-01-01T00:00:00+08:00",
             "finished_at": "2026-01-01T00:00:00+08:00",
         }
@@ -2617,6 +2619,8 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
         batch_id = batch["batch_id"]
         detail_response = client.get(f"/api/benchmark/batch/{batch_id}")
         report_response = client.get(f"/api/benchmark/batch/{batch_id}/report")
+        markdown_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=markdown")
+        csv_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=csv")
         leaderboard_response = client.get("/api/models/leaderboard?evaluation_set_id=model-baseline-v1%40v1&limit=10")
 
     assert response.status_code == 200
@@ -2627,12 +2631,23 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
     assert benchmark["seed_preview"] == [270600, 270611, 270623]
     assert benchmark["spec_snapshot"]["target_type"] == "model"
     assert benchmark["spec_snapshot"]["seeds"] == [270600, 270611, 270623]
+    queued_runtime = batch["config"]["model_runtime"]
+    assert queued_runtime["source"] == "request"
+    assert queued_runtime["hash_source"] == "request"
+    assert queued_runtime["hash_algorithm"] == "sha256"
+    assert queued_runtime["hash_input_schema_version"] == 1
+    assert queued_runtime["externally_provided"] is True
+    assert queued_runtime["hash_provided"] is True
+    assert queued_runtime["hash_input"] == {}
+    assert queued_runtime["model_id"] == "qwen-max"
+    assert queued_runtime["model_config_hash"] == "runtime_hash_v1"
 
     assert len(calls) == 1
     config = calls[0]
     assert config["comparison_type"] == "model"
     assert config["model_id"] == "qwen-max"
     assert config["model_config_hash"] == "runtime_hash_v1"
+    assert config["model_runtime"] == queued_runtime
     assert config["evaluation_set_id"] == "model-baseline-v1@v1"
     assert config["seed_set_id"] == "model-baseline-quick-202606"
     assert config["seeds"] == [270600, 270611, 270623]
@@ -2644,21 +2659,42 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
     assert detail["kind"] == "benchmark_batch_detail"
     assert detail["batch_id"] == batch_id
     assert detail["target_type"] == "model"
+    assert detail["model_runtime"] == queued_runtime
     assert detail["result_count"] == 1
     assert detail["results"][0]["config"]["comparison_type"] == "model"
     assert detail["results"][0]["config"]["model_id"] == "qwen-max"
     assert detail["results"][0]["config"]["model_config_hash"] == "runtime_hash_v1"
+    assert detail["results"][0]["config"]["model_runtime"] == queued_runtime
     assert detail["results"][0]["target_role"] is None
 
     assert report_response.status_code == 200
     report = report_response.json()
     assert report["kind"] == "benchmark_run_report"
+    assert report["report_id"] == f"benchmark_report:{batch_id}"
+    assert report["content_hash"].startswith("sha256:")
+    assert report["artifacts"]["content_hash"] == report["content_hash"]
     assert report["leaderboard"]["scope"] == "model"
     assert report["leaderboard"]["evaluation_set_id"] == "model-baseline-v1@v1"
     assert report["leaderboard"]["target_role"] is None
     assert report["subject"]["model_id"] == "qwen-max"
     assert report["subject"]["model_config_hash"] == "runtime_hash_v1"
+    assert report["model_runtime"] == queued_runtime
     assert report["summary"]["rankable_count"] == 1
+
+    assert markdown_response.status_code == 200
+    markdown = markdown_response.json()
+    assert markdown["report_id"] == report["report_id"]
+    assert markdown["content_hash"] == report["content_hash"]
+    assert markdown["export_content_hash"].startswith("sha256:")
+    assert markdown["artifact_hash"] == markdown["export_content_hash"]
+    assert "## 模型运行配置" in markdown["content"]
+
+    assert csv_response.status_code == 200
+    csv = csv_response.json()
+    assert csv["report_id"] == report["report_id"]
+    assert csv["content_hash"] == report["content_hash"]
+    assert csv["export_content_hash"].startswith("sha256:")
+    assert "模型运行配置,来源,request" in csv["content"]
 
     assert leaderboard_response.status_code == 200
     leaderboard = leaderboard_response.json()
@@ -2671,12 +2707,111 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
     assert entry["subject_id"] == "runtime_hash_v1"
     assert entry["model_id"] == "qwen-max"
     assert entry["model_config_hash"] == "runtime_hash_v1"
+    assert entry["model_runtime"] == queued_runtime
     assert entry["evaluation_set_id"] == "model-baseline-v1@v1"
     assert entry["seed_set_id"] == "model-baseline-quick-202606"
     assert entry["rankable"] is True
     assert entry["target_role"] is None
     assert entry["target_version_id"] is None
     assert entry["strength_score"] == 6.8
+
+
+def test_model_benchmark_queue_freezes_auto_runtime_provenance(tmp_path: Path, monkeypatch) -> None:
+    class RuntimeModel(FakeModel):
+        model_id = "runtime-model"
+
+        def __init__(self) -> None:
+            self.temperature = 0.2
+            self.timeout = 11.0
+            self.model_kwargs = {
+                "top_p": 0.7,
+                "public_label": "queued",
+                "api_key": "secret-value",
+                "nested": {"token": "hidden-token", "visible": "kept"},
+            }
+
+    _write_model_benchmark_spec(tmp_path)
+    model = RuntimeModel()
+    app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=model)
+    store = app.state.backend_store
+    captured: dict[str, Any] = {}
+
+    async def fake_run_evaluation(*, batch_config: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        captured.update(batch_config)
+        return {
+            "batch_id": batch_config["batch_id"],
+            "config": batch_config,
+            "game_count": batch_config["game_count"],
+            "completed": batch_config["game_count"],
+            "errored": 0,
+            "games": [],
+            "score_summary": {"strength_score": 1.0, "avg_role_score": 1.0},
+            "fairness": {"is_fair": True},
+            "rankable": True,
+            "rankable_reason": "ok",
+            "model_id": batch_config["model_id"],
+            "model_config_hash": batch_config["model_config_hash"],
+            "model_runtime": batch_config["model_runtime"],
+        }
+
+    monkeypatch.setattr(ui_backend_store, "run_evaluation", fake_run_evaluation)
+
+    request = BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model")
+    batch = store.queue_benchmark(request)
+    queued_runtime = batch["model_runtime"]
+    queued_hash = queued_runtime["model_config_hash"]
+    model.temperature = 0.9
+    model.model_kwargs["public_label"] = "mutated"
+    model.model_kwargs["new_public"] = "after-queue"
+
+    asyncio.run(store.run_queued_benchmark(batch["batch_id"], request))
+
+    assert queued_runtime["source"] == "injected_model"
+    assert queued_runtime["hash_source"] == "injected_model"
+    assert queued_runtime["externally_provided"] is False
+    assert queued_runtime["hash_input"]["temperature"] == 0.2
+    assert queued_runtime["hash_input"]["timeout"] == 11.0
+    assert queued_runtime["hash_input"]["model_kwargs"]["public_label"] == "queued"
+    assert queued_runtime["hash_input"]["model_kwargs"]["nested"] == {"visible": "kept"}
+    runtime_text = json.dumps(queued_runtime, ensure_ascii=False)
+    assert "secret-value" not in runtime_text
+    assert "hidden-token" not in runtime_text
+    assert "api_key" not in runtime_text
+    assert "token" not in runtime_text
+    assert captured["model_runtime"] == queued_runtime
+    assert captured["model_config_hash"] == queued_hash
+    assert "new_public" not in captured["model_runtime"]["hash_input"]["model_kwargs"]
+    result_runtime = store.evolution_batches[batch["batch_id"]]["results"][0]["config"]["model_runtime"]
+    assert result_runtime == queued_runtime
+
+
+def test_model_runtime_hash_uses_public_config_and_ignores_secrets(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("UI_BACKEND_USE_FAKE_LLM", raising=False)
+    monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "secret-a")
+    monkeypatch.setenv("WEREWOLF_LLM_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("WEREWOLF_LLM_MODEL", "qwen-runtime-a")
+    monkeypatch.setenv("WEREWOLF_LLM_TEMPERATURE", "0.2")
+    app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=None)
+    store = app.state.backend_store
+    request = BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model")
+
+    first = store.benchmark_model_runtime(request)["model_runtime"]
+    monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "secret-b")
+    same_public_config = store.benchmark_model_runtime(request)["model_runtime"]
+    monkeypatch.setenv("WEREWOLF_LLM_TEMPERATURE", "0.9")
+    changed_public_config = store.benchmark_model_runtime(request)["model_runtime"]
+
+    assert first["source"] == "configured_llm"
+    assert first["hash_input"]["model"] == "qwen-runtime-a"
+    assert first["hash_input"]["base_url"] == "https://example.test/v1"
+    assert first["hash_input"]["temperature"] == 0.2
+    assert first["model_config_hash"] == same_public_config["model_config_hash"]
+    assert first["model_config_hash"] != changed_public_config["model_config_hash"]
+    runtime_text = json.dumps(first, ensure_ascii=False)
+    assert "secret-a" not in runtime_text
+    assert "secret-b" not in runtime_text
+    assert "api_key" not in runtime_text
 
 
 def test_benchmark_product_ci_smoke_covers_release_chain(tmp_path: Path, monkeypatch) -> None:

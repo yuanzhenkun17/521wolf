@@ -2376,6 +2376,7 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
         batch["result"] = batch["results"][0]
 
         json_response = client.get(f"/api/benchmark/batch/{batch_id}/report")
+        second_json_response = client.get(f"/api/benchmark/batch/{batch_id}/report")
         markdown_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=markdown")
         csv_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=csv")
         unsupported_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=xml")
@@ -2387,6 +2388,7 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
         {
             "kind": str,
             "schema_version": int,
+            "report_id": str,
             "generated_at": str,
             "run_id": str,
             "batch_id": str,
@@ -2396,6 +2398,7 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
             "benchmark_config_hash": str,
             "suite": dict,
             "subject": dict,
+            "model_runtime": dict,
             "summary": dict,
             "results": list,
             "gates": list,
@@ -2404,9 +2407,18 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
             "tags": list,
             "reproducibility": dict,
             "leaderboard": dict,
+            "content_hash": str,
+            "artifacts": dict,
         },
     )
     assert payload["kind"] == "benchmark_run_report"
+    assert payload["report_id"] == f"benchmark_report:{batch_id}"
+    assert payload["content_hash"].startswith("sha256:")
+    assert payload["artifacts"]["content_hash"] == payload["content_hash"]
+    assert second_json_response.status_code == 200
+    second_payload = second_json_response.json()
+    assert second_payload["report_id"] == payload["report_id"]
+    assert second_payload["content_hash"] == payload["content_hash"]
     assert payload["run_id"] == batch_id
     assert payload["evaluation_set_id"] == "role-baseline-v1@v1"
     assert payload["seed_set_id"] == "role-baseline-quick-202606"
@@ -2433,6 +2445,10 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
     markdown_payload = markdown_response.json()
     assert markdown_payload["kind"] == "benchmark_run_report_export"
     assert markdown_payload["format"] == "markdown"
+    assert markdown_payload["report_id"] == payload["report_id"]
+    assert markdown_payload["content_hash"] == payload["content_hash"]
+    assert markdown_payload["export_content_hash"].startswith("sha256:")
+    assert markdown_payload["artifact_hash"] == markdown_payload["export_content_hash"]
     assert "# 评测运行报告" in markdown_payload["content"]
     assert "## 门禁摘要" in markdown_payload["content"]
     assert "role-baseline-v1@v1" in markdown_payload["content"]
@@ -2441,6 +2457,10 @@ def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
     assert csv_response.status_code == 200
     csv_payload = csv_response.json()
     assert csv_payload["format"] == "csv"
+    assert csv_payload["report_id"] == payload["report_id"]
+    assert csv_payload["content_hash"] == payload["content_hash"]
+    assert csv_payload["export_content_hash"].startswith("sha256:")
+    assert csv_payload["artifact_hash"] == csv_payload["export_content_hash"]
     assert csv_payload["content"].splitlines()[0] == "区段,标签,值,详情"
     assert "摘要,可入榜" in csv_payload["content"]
     assert "bench_report_game_timeout" in csv_payload["content"]

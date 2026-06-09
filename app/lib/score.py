@@ -401,7 +401,7 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
     row_id = entry.get("id") or f"{scope}:{subject_id}:{group_id or entry.get('batch_id', '')}" or uuid.uuid4().hex
     by_role = entry.get("by_role_category_scores")
     summary = dict(entry.get("summary") or {})
-    for key in ("benchmark_id", "benchmark_version", "benchmark_config_hash", "config_hash"):
+    for key in ("benchmark_id", "benchmark_version", "benchmark_config_hash", "config_hash", "model_runtime"):
         if entry.get(key) not in (None, ""):
             summary.setdefault(key, entry.get(key))
     source_run_id = (
