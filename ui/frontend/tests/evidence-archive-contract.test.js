@@ -56,12 +56,16 @@ test('legacy #evidence links are not routed or recognized', () => {
 
 test('LogsPage owns archive and review workspaces for evidence details', () => {
   const app = readSource('../src/App.vue')
+  const appRuntimeProps = readSource('../src/composables/appRuntimeProps.ts')
   const refs = readSource('../src/composables/gameStateShared.ts')
   const logs = readSource('../src/pages/LogsPage.vue')
 
   assertSourceContract(app, [
-    ['App passes the shared logs workspace model', /'historyWorkspaceTab'/],
+    ['App passes logs props through the runtime props helper', /v-bind="logsProps"/],
     ['LogsPage binds history workspace tab through v-model', /v-model:history-workspace-tab="historyWorkspaceTab"/],
+  ])
+  assertSourceContract(appRuntimeProps, [
+    ['logs runtime props include the shared logs workspace model', /const logsPropKeys = \[[\s\S]*'historyWorkspaceTab'[\s\S]*\]/],
   ])
   assertSourceContract(refs, [
     ['runtime stores the selected logs workspace', /historyWorkspaceTab:\s*ref\('phase'\)/],

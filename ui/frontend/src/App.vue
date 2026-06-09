@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // @ts-nocheck
-import { computed, defineAsyncComponent, isRef, watchEffect } from 'vue'
+import { computed, defineAsyncComponent, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import TopNav from './components/TopNav.vue'
 import { useGameState } from './composables/useGameState.ts'
@@ -8,8 +8,9 @@ import { useMatchUtils } from './composables/useMatchUtils.ts'
 import { useGameActions } from './composables/useGameActions.ts'
 import { useGameAudio } from './composables/useGameAudio.ts'
 import { useGameHistory } from './composables/useGameHistory.ts'
+import { useAppRuntimeProps } from './composables/appRuntimeProps'
 import { isReturnableGame } from './composables/gameSession.ts'
-import { appViewFromRoute, isAppView } from './router/appViews'
+import { appViewFromRoute } from './router/appViews'
 import {
   hydrateStoresFromRuntime,
   useGameStore,
@@ -46,18 +47,6 @@ function registerCouncilScene(sceneApi) {
   history.setSceneApi?.(sceneApi)
 }
 
-function bindValue(value) {
-  return isRef(value) ? value.value : value
-}
-
-function readRuntime(key) {
-  return bindValue(runtime[key])
-}
-
-function pickRuntime(keys) {
-  return Object.fromEntries(keys.map((key) => [key, readRuntime(key)]))
-}
-
 watchEffect(() => {
   hydrateStoresFromRuntime(runtime, {
     session: sessionStore,
@@ -68,147 +57,19 @@ watchEffect(() => {
   })
 })
 
-const logsPropKeys = [
-  'returnToMatchAvailable',
-  'gameHistory',
-  'selectedHistoryGameId',
-  'selectedHistoryGame',
-  'historyLoading',
-  'historyPagination',
-  'historyLoadingMore',
-  'historySourceFilter',
-  'historyStatusFilter',
-  'historyCounts',
-  'historyFacets',
-  'historyNotice',
-  'historyHasMore',
-  'historyCurrentPage',
-  'historyTotalPages',
-  'historyPages',
-  'selectedHistoryPageKey',
-  'historyWorkspaceTab',
-  'selectedHistoryPage',
-  'phaseLoadingByKey',
-  'historyLogs',
-  'pageNightActions',
-  'pageSpeechDecisions',
-  'sheriffVotes',
-  'voteDecisions',
-  'currentVoteTally',
-  'sheriffVoteTally',
-  'pageLastWords',
-  'nightResult',
-  'sheriffResult',
-  'isReplayMode',
-  'replayCursor',
-  'replayPlaying',
-  'replaySpeed',
-  'replayTotal',
-  'replayEventLabel',
-  'assessDimension',
-  'playerAssessmentScores',
-  'activeAssessScores',
-  'selectedDecision',
-  'detailTab',
-  'roleIconImage',
-  'historyPageTitle',
-  'historyPhaseName',
-  'historyLogSpeaker',
-  'historyNormalizeText',
-  'nightActionDetail',
-  'playerAliveAtPage',
-  'archiveByGameId',
-  'reviewByGameId',
-  'flowDataByGameId',
-  'flowLoadingByGameId',
-  'archiveLoading',
-  'reviewLoading',
-  'loadMoreHistory',
-  'loadMoreHistoryPhaseDetail',
-  'goHistoryPage',
-  'setHistorySourceFilter',
-  'setHistoryStatusFilter',
-  'deleteHistoryGame',
-  'loadArchive',
-  'loadReview',
-  'loadFlowData',
-  'formatJson'
-]
-
-const matchPropKeys = [
-  'game',
-  'loading',
-  'matchNotice',
-  'backendMode',
-  'isNight',
-  'isWatch',
-  'isReplayMode',
-  'replayCursor',
-  'replayPlaying',
-  'replaySpeed',
-  'replayTotal',
-  'replayEventLabel',
-  'watchRunning',
-  'skipIntroGameId',
-  'roleAssignmentComplete',
-  'judgeBoardStarted',
-  'judgeBoardStarting',
-  'promptText',
-  'judgeStripMessage',
-  'playerIdentityList',
-  'chatLogExpanded',
-  'chatLogs',
-  'matchRecordLogs',
-  'groupedJudgeLogs',
-  'displayPhase',
-  'livingPlayers',
-  'roleStats',
-  'speakerCarousel',
-  'speakerMessage',
-  'humanPlayer',
-  'roleName',
-  'skillState',
-  'isHumanWitch',
-  'isHumanWhiteWolf',
-  'canUseWitchAntidote',
-  'canUseWitchPoison',
-  'canWhiteWolfBurst',
-  'pendingActionType',
-  'pendingChoiceOptions',
-  'actionInstruction',
-  'speechCountdownText',
-  'canVotePlayers',
-  'actionCandidates',
-  'whiteWolfTargets',
-  'needsTarget',
-  'speech',
-  'witchChoice',
-  'actionChoice',
-  'burstArmed',
-  'actionTarget',
-  'sceneVoteTally',
-  'sceneEffects',
-  'playerLabel',
-  'roleIconImage',
-  'logSpeaker',
-  'logMessage',
-  'historyPhaseName',
-  'chooseScenePlayer'
-]
-
-const logsProps = computed(() => pickRuntime(logsPropKeys))
-const benchmarkProps = computed(() => pickRuntime(['returnToMatchAvailable']))
-const evolutionProps = computed(() => pickRuntime(['returnToMatchAvailable']))
-const lobbyProps = computed(() => pickRuntime(['backendMode', 'externalStatus', 'loading', 'playerCount', 'apiFetch']))
-const matchProps = computed(() => pickRuntime(matchPropKeys))
-const activeSession = computed(() => readRuntime('activeSession'))
-const audioEnabled = computed(() => readRuntime('audioEnabled'))
-const ttsEnabled = computed(() => readRuntime('ttsEnabled'))
-const ttsAvailable = computed(() => readRuntime('ttsAvailable'))
-const runtimeCurrentView = computed(() => {
-  const view = String(readRuntime('currentView') || '')
-  return isAppView(view) ? view : 'lobby'
-})
+const {
+  readRuntime,
+  logsProps,
+  benchmarkProps,
+  evolutionProps,
+  lobbyProps,
+  matchProps,
+  activeSession,
+  audioEnabled,
+  ttsEnabled,
+  ttsAvailable,
+  runtimeCurrentView
+} = useAppRuntimeProps(runtime)
 const routeAppView = computed(() => appViewFromRoute(route))
 const activeAppView = computed(() => {
   if (route.path === '/' && runtimeCurrentView.value !== 'lobby') return runtimeCurrentView.value
