@@ -20,9 +20,12 @@ from app.lib.benchmark_spec import (
     BenchmarkSeedSet,
     BenchmarkSpec,
     BenchmarkSpecError,
+    benchmark_seed_registry_summary,
     benchmark_seed_set_summary,
     benchmark_config_hash,
     benchmark_spec_summary,
+    list_benchmark_seed_sets,
+    load_benchmark_seed_set,
     materialize_benchmark_spec,
     load_benchmark_spec,
     seed_set_config_hash,
@@ -1076,6 +1079,35 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         except BenchmarkSpecError as exc:
             status = 404 if "not found" in str(exc) else 422
             detail = "benchmark not found" if status == 404 else str(exc)
+            raise HTTPException(status_code=status, detail=detail) from exc
+
+    def list_benchmark_seed_sets(self) -> dict[str, Any]:
+        """Return configured benchmark seed-set registry summaries for API/UI use."""
+        seed_sets = list_benchmark_seed_sets(self.paths, include_disabled=True)
+        return benchmark_seed_registry_summary(seed_sets)
+
+    def get_benchmark_seed_set(self, seed_set_id: str) -> dict[str, Any]:
+        """Return one benchmark seed set with full seeds for audit views."""
+        try:
+            seed_set = load_benchmark_seed_set(seed_set_id, self.paths, include_disabled=True)
+            registry = benchmark_seed_registry_summary(
+                list_benchmark_seed_sets(self.paths, include_disabled=True)
+            )
+            registry_item = next(
+                (item for item in registry["items"] if item.get("id") == seed_set.id),
+                {},
+            )
+            item = benchmark_seed_set_summary(seed_set)
+            item["seeds"] = list(seed_set.seeds)
+            item["overlap_warnings"] = list(registry_item.get("overlap_warnings") or [])
+            return {
+                "kind": "benchmark_seed_set",
+                "schema_version": 1,
+                "item": item,
+            }
+        except BenchmarkSpecError as exc:
+            status = 404 if "not found" in str(exc) else 422
+            detail = "benchmark seed set not found" if status == 404 else str(exc)
             raise HTTPException(status_code=status, detail=detail) from exc
 
     def _benchmark_suite_activity(self, summary: dict[str, Any]) -> dict[str, Any]:
@@ -2372,7 +2404,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         if seed_set is not None:
             seed_snapshot = seed_set.model_dump(mode="json")
             meta["seed_set"] = benchmark_seed_set_summary(seed_set)
+            meta["seed_set_version"] = seed_set.version
             meta["seed_set_config_hash"] = seed_set_config_hash(seed_snapshot)
+            meta["seed_set_tier"] = seed_set.tier
+            meta["seed_set_usage_boundary"] = seed_set.usage_boundary
+            meta["seed_set_immutable"] = seed_set.immutable
+            meta["seed_set_non_overlap_group"] = seed_set.non_overlap_group
             meta["seed_set_snapshot"] = seed_snapshot
         return meta
 

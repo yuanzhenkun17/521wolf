@@ -113,6 +113,9 @@ function normalizeBenchmarkSeedSet(raw) {
   if (!id) return null
   const seedPreview = normalizeSeedPreview(raw)
   const seedCount = normalizeSeedCount(raw, seedPreview)
+  const overlapWarnings = Array.isArray(raw?.overlap_warnings)
+    ? raw.overlap_warnings.filter((item) => item && typeof item === 'object')
+    : []
   return {
     ...raw,
     id,
@@ -130,16 +133,17 @@ function normalizeBenchmarkSeedSet(raw) {
     seed_preview: seedPreview,
     config_hash: String(raw?.config_hash || '').trim(),
     enabled: raw?.enabled !== false,
-    overlap_warnings: Array.isArray(raw?.overlap_warnings) ? raw.overlap_warnings : []
+    overlap_warnings: overlapWarnings
   }
 }
 
 function normalizeBenchmarkSeedRegistry(data) {
   const items = Array.isArray(data) ? data : (data?.items || data?.seed_sets || [])
+  const normalizedItems = items.map(normalizeBenchmarkSeedSet).filter(Boolean)
   const summary = objectOrEmpty(data?.summary)
-  const warnings = Array.isArray(summary.overlap_warnings) ? summary.overlap_warnings : []
+  const overlapWarnings = Array.isArray(summary.overlap_warnings) ? summary.overlap_warnings : []
   const warningsById = new Map()
-  for (const warning of warnings) {
+  for (const warning of overlapWarnings) {
     if (!warning || typeof warning !== 'object') continue
     const ids = [
       warning.left_seed_set_id,
@@ -153,17 +157,20 @@ function normalizeBenchmarkSeedRegistry(data) {
     }
   }
   return {
-    items: items
-      .map(normalizeBenchmarkSeedSet)
-      .filter(Boolean)
-      .map((item) => ({
-        ...item,
-        overlap_warnings: [
-          ...(Array.isArray(item.overlap_warnings) ? item.overlap_warnings : []),
-          ...(warningsById.get(item.id) || [])
-        ]
-      })),
-    summary
+    items: normalizedItems.map((item) => ({
+      ...item,
+      overlap_warnings: [
+        ...(Array.isArray(item.overlap_warnings) ? item.overlap_warnings : []),
+        ...(warningsById.get(item.id) || [])
+      ]
+    })),
+    summary: {
+      ...summary,
+      total: Number.isFinite(Number(summary.total)) ? Number(summary.total) : normalizedItems.length,
+      by_target_type: objectOrEmpty(summary.by_target_type),
+      by_tier: objectOrEmpty(summary.by_tier),
+      overlap_warnings: overlapWarnings
+    }
   }
 }
 
@@ -213,10 +220,10 @@ function normalizeBenchmarkSuite(raw, seedRegistryById = new Map()) {
   const rawSeedSet = objectOrEmpty(raw?.seed_set)
   const seedSetId = String(raw?.seed_set_id || rawSeedSet.id || rawSeedSet.seed_set_id || '').trim()
   const registrySeedSet = seedRegistryById?.get?.(seedSetId) || null
-  const seedSet = {
+  const seedSet = objectOrEmpty({
     ...objectOrEmpty(registrySeedSet),
     ...rawSeedSet
-  }
+  })
   const seedSource = { ...raw, seed_set_id: seedSetId, seed_set: seedSet }
   const seedPreview = normalizeSeedPreview(seedSource)
   const seedCount = normalizeSeedCount(seedSource, seedPreview)

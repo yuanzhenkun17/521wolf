@@ -40,6 +40,14 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     def get_benchmark(benchmark_id: str) -> dict[str, Any]:
         return store.get_benchmark_spec_summary(benchmark_id)
 
+    @api.get("/api/benchmark/seed-sets")
+    def list_benchmark_seed_sets() -> dict[str, Any]:
+        return store.list_benchmark_seed_sets()
+
+    @api.get("/api/benchmark/seed-sets/{seed_set_id}")
+    def get_benchmark_seed_set(seed_set_id: str) -> dict[str, Any]:
+        return store.get_benchmark_seed_set(seed_set_id)
+
     @api.post("/api/benchmark/plan")
     def plan_benchmark(request: BenchmarkRequest) -> dict[str, Any]:
         return store.plan_benchmark(request)

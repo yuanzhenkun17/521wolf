@@ -201,6 +201,146 @@ enabled: true
     assert summary["seed_set"]["config_hash"].startswith("sha256:")
 
 
+def test_disabled_seed_set_is_hidden_by_default_and_blocks_materialization(tmp_path: Path) -> None:
+    spec_mod = _benchmark_spec_module()
+    _write_spec(tmp_path, "role-baseline-v1.yaml", VALID_ROLE_BASELINE_SPEC)
+    _write_seed_set(
+        tmp_path,
+        "role-baseline-quick-202606.yaml",
+        """
+id: role-baseline-quick-202606
+purpose: disabled_contract
+version: 1
+target_type: role_version
+created_at: "2026-06-09T00:00:00+08:00"
+tier: quick
+usage_boundary: disabled seed set must remain audit-only
+non_overlap_group: benchmark-disabled-contract
+immutable: true
+seeds: [260600, 260607, 260619]
+enabled: false
+""",
+    )
+
+    active_ids = {
+        seed_set.id
+        for seed_set in spec_mod.list_benchmark_seed_sets(paths=PathConfig(root=tmp_path))
+    }
+    all_seed_sets = {
+        seed_set.id: seed_set
+        for seed_set in spec_mod.list_benchmark_seed_sets(paths=PathConfig(root=tmp_path), include_disabled=True)
+    }
+
+    assert "role-baseline-quick-202606" not in active_ids
+    assert all_seed_sets["role-baseline-quick-202606"].enabled is False
+    assert spec_mod.load_benchmark_seed_set(
+        "role-baseline-quick-202606",
+        paths=PathConfig(root=tmp_path),
+        include_disabled=True,
+    ).purpose == "disabled_contract"
+    with pytest.raises(ValueError, match="disabled"):
+        spec_mod.load_benchmark_seed_set("role-baseline-quick-202606", paths=PathConfig(root=tmp_path))
+
+    spec = spec_mod.load_benchmark_spec("role-baseline-v1", paths=PathConfig(root=tmp_path))
+    with pytest.raises(ValueError, match="disabled"):
+        spec_mod.materialize_benchmark_spec(spec, paths=PathConfig(root=tmp_path))
+
+
+def test_benchmark_seed_registry_summary_exposes_boundary_metadata_and_overlap_warnings(tmp_path: Path) -> None:
+    spec_mod = _benchmark_spec_module()
+    _write_seed_set(
+        tmp_path,
+        "role-registry-a.yaml",
+        """
+id: role-registry-a
+purpose: registry_contract
+version: 1
+description: Primary registry contract seed set
+target_type: role_version
+created_at: "2026-06-09T00:00:00+08:00"
+tier: Standard
+usage_boundary: release boundary only
+non_overlap_group: registry-contract
+immutable: false
+seeds: [900001, 900002, 900003]
+enabled: true
+""",
+    )
+    _write_seed_set(
+        tmp_path,
+        "role-registry-b.yaml",
+        """
+id: role-registry-b
+purpose: registry_contract_disabled
+version: 1
+target_type: role_version
+created_at: "2026-06-09T00:00:00+08:00"
+tier: standard
+usage_boundary: disabled audit boundary
+non_overlap_group: registry-contract
+immutable: true
+seeds: [900002, 900010, 900011]
+enabled: false
+""",
+    )
+    _write_seed_set(
+        tmp_path,
+        "role-registry-c.yaml",
+        """
+id: role-registry-c
+purpose: registry_contract_other_boundary
+version: 1
+target_type: role_version
+created_at: "2026-06-09T00:00:00+08:00"
+tier: quick
+usage_boundary: separate smoke boundary
+non_overlap_group: registry-contract-smoke
+immutable: true
+seeds: [900002, 900020, 900021]
+enabled: true
+""",
+    )
+
+    seed_sets = [
+        spec_mod.load_benchmark_seed_set(seed_set_id, paths=PathConfig(root=tmp_path), include_disabled=True)
+        for seed_set_id in ("role-registry-a", "role-registry-b", "role-registry-c")
+    ]
+    payload = spec_mod.benchmark_seed_registry_summary(seed_sets)
+    items = {item["id"]: item for item in payload["items"]}
+
+    assert payload["kind"] == "benchmark_seed_set_registry"
+    assert payload["summary"]["total"] == 3
+    assert payload["summary"]["disabled"] == 1
+    assert payload["summary"]["by_non_overlap_group"]["registry-contract"] == 2
+    assert items["role-registry-a"]["tier"] == "standard"
+    assert items["role-registry-a"]["immutable"] is False
+    assert items["role-registry-a"]["seed_count"] == 3
+    assert items["role-registry-a"]["seed_preview"] == [900001, 900002, 900003]
+    assert items["role-registry-a"]["config_hash"].startswith("sha256:")
+    assert items["role-registry-a"]["boundary"] == {
+        "target_type": "role_version",
+        "created_at": "2026-06-09T00:00:00+08:00",
+        "tier": "standard",
+        "usage_boundary": "release boundary only",
+        "non_overlap_group": "registry-contract",
+        "immutable": False,
+    }
+
+    warnings = payload["summary"]["overlap_warnings"]
+    assert len(warnings) == 1
+    assert warnings[0]["kind"] == "seed_overlap"
+    assert warnings[0]["non_overlap_group"] == "registry-contract"
+    assert {warnings[0]["left_seed_set_id"], warnings[0]["right_seed_set_id"]} == {
+        "role-registry-a",
+        "role-registry-b",
+    }
+    assert warnings[0]["overlap_count"] == 1
+    assert warnings[0]["overlap_seed_preview"] == [900002]
+    assert items["role-registry-a"]["overlap_warnings"] == warnings
+    assert items["role-registry-b"]["overlap_warnings"] == warnings
+    assert items["role-registry-c"]["overlap_warnings"] == []
+
+
 def test_materialize_benchmark_spec_rejects_seed_set_target_mismatch(tmp_path: Path) -> None:
     spec_mod = _benchmark_spec_module()
     _write_spec(tmp_path, "role-baseline-v1.yaml", VALID_ROLE_BASELINE_SPEC)
