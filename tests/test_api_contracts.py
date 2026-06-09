@@ -476,6 +476,13 @@ def _assert_snapshot_release_gate_error(response: Any, detail_fragment: str) -> 
     assert detail_fragment in payload["detail"]
     _assert_shape(payload["error"], {"code": str, "message": str, "diagnostics": list})
     assert detail_fragment in payload["error"]["message"]
+    assert payload["error"]["code"] == "benchmark_snapshot_release_gate_failed"
+    assert payload["error"]["diagnostics"]
+    diagnostic = payload["error"]["diagnostics"][0]
+    assert diagnostic["kind"] == "benchmark_snapshot_release_gate_failed"
+    assert diagnostic["release_gate_ok"] is False
+    assert diagnostic["blockers"]
+    assert detail_fragment in diagnostic["blockers"][0]["message"]
 
 
 def _assert_domain_error(
@@ -5532,6 +5539,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
             "source_run_count": int,
             "source_report_count": int,
             "source_result_batch_count": int,
+            "release_gate": dict,
             "release_manifest": dict,
             "content_hash": str,
             "created_at": str,
@@ -5567,7 +5575,13 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert created["rows"][1]["subject_id"] == "seer_unrankable_v1"
     assert created["rows"][1]["rankable"] is False
     assert created["content_hash"].startswith("sha256:")
+    assert created["release_gate"]["ok"] is True
+    assert created["release_gate"]["summary"]["blocker_count"] == 0
+    assert created["summary"]["release_gate_ok"] is True
+    assert created["summary"]["release_gate_blocker_count"] == 0
     assert created["release_manifest"]["boundaries"]["benchmark_config_hash"] == "sha256:contract"
+    assert created["release_manifest"]["release_gate"]["ok"] is True
+    assert created["release_manifest"]["release_gate"]["blocker_count"] == 0
     assert created["release_manifest"]["source"]["linked_run_ids"] == ["bench_snapshot_run_a", "bench_snapshot_run_b"]
 
     assert detail_response.status_code == 200
@@ -5582,6 +5596,8 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert detail["rows"][0]["summary"] == {"source": "first", "benchmark_config_hash": "sha256:contract"}
     assert detail["rows"][1]["subject_id"] == "seer_unrankable_v1"
     assert detail["rows"][1]["summary"] == {"source": "unrankable", "benchmark_config_hash": "sha256:contract"}
+    assert detail["release_gate"]["ok"] is True
+    assert detail["release_manifest"]["release_gate"]["ok"] is True
 
     assert json_export_response.status_code == 200
     json_export = json_export_response.json()
@@ -5593,6 +5609,8 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert json_export["artifact_hash"] == json_export["export_content_hash"]
     assert json_export["export_content_hash"] != json_export["content_hash"]
     assert '"snapshot_id": "' + snapshot_id + '"' in json_export["content"]
+    assert json_export["release_gate"]["ok"] is True
+    assert json_export["release_manifest"]["release_gate"]["ok"] is True
     assert json_export["snapshot"]["rows"][0]["subject_id"] == "seer_candidate_v2"
 
     assert markdown_export_response.status_code == 200
@@ -5601,6 +5619,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert markdown_export["export_content_hash"].startswith("sha256:")
     assert markdown_export["export_content_hash"] != json_export["export_content_hash"]
     assert "# 榜单快照：Role release 2026-06-09" in markdown_export["content"]
+    assert "发布门禁: 通过 / 阻断 0 / 警告 0" in markdown_export["content"]
     assert "seer_candidate_v2" in markdown_export["content"]
     assert "benchmark_report:bench_snapshot_run_a" in markdown_export["content"]
 
@@ -5611,6 +5630,7 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
     assert csv_export["export_content_hash"] != json_export["export_content_hash"]
     assert csv_export["content"].splitlines()[0] == "区段,标签,值,详情"
     assert "快照头,快照 ID," + snapshot_id in csv_export["content"]
+    assert "发布门禁,状态,通过,阻断 0 / 警告 0" in csv_export["content"]
     assert "冻结行,seer_candidate_v2" in csv_export["content"]
 
     _assert_error_detail(unsupported_export_response, 422, "unsupported benchmark snapshot export format")
@@ -5624,6 +5644,8 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
         assert listed_item[key] == expected
         assert listed_item["summary"][key] == expected
     assert listed_item["content_hash"] == created["content_hash"]
+    assert listed_item["release_gate"]["ok"] is True
+    assert listed_item["release_manifest"]["release_gate"]["ok"] is True
     assert "rows" not in listed_item
 
     _assert_error_detail(missing_response, 404, "benchmark snapshot not found")

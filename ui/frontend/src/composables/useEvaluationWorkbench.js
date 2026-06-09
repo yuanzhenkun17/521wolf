@@ -627,6 +627,8 @@ function metricNumberOrNull(value) {
 
 function normalizeBenchmarkSnapshotSummary(snapshot, rows = []) {
   const summary = objectOrEmpty(snapshot?.summary)
+  const releaseGate = objectOrEmpty(snapshot?.release_gate || summary.release_gate)
+  const releaseGateSummary = objectOrEmpty(releaseGate.summary)
   const linkedRunIds = normalizeBenchmarkSnapshotIdList(snapshot?.linked_run_ids, summary.linked_run_ids)
   const linkedReportIds = normalizeBenchmarkSnapshotIdList(snapshot?.linked_report_ids, summary.linked_report_ids)
   const linkedResultBatchIds = normalizeBenchmarkSnapshotIdList(
@@ -667,7 +669,19 @@ function normalizeBenchmarkSnapshotSummary(snapshot, rows = []) {
     rankable_count: rankableCount,
     unrankable_count: unrankableCount,
     row_count: rowCount,
-    content_hash: String(snapshot?.content_hash || summary.content_hash || '')
+    content_hash: String(snapshot?.content_hash || summary.content_hash || ''),
+    release_gate: releaseGate,
+    release_gate_ok: typeof releaseGate.ok === 'boolean' ? releaseGate.ok : Boolean(summary.release_gate_ok),
+    release_gate_blocker_count: metricNumberOrNull(
+      summary.release_gate_blocker_count ??
+      releaseGateSummary.blocker_count ??
+      (Array.isArray(releaseGate.blockers) ? releaseGate.blockers.length : null)
+    ) ?? 0,
+    release_gate_warning_count: metricNumberOrNull(
+      summary.release_gate_warning_count ??
+      releaseGateSummary.warning_count ??
+      (Array.isArray(releaseGate.warnings) ? releaseGate.warnings.length : null)
+    ) ?? 0
   }
 }
 
@@ -695,6 +709,8 @@ function normalizeBenchmarkSnapshot(snapshot, scopeFallback = 'role_version') {
     source_filter: objectOrEmpty(snapshot.source_filter),
     view_config: objectOrEmpty(snapshot.view_config),
     summary,
+    release_gate: objectOrEmpty(snapshot.release_gate || summary.release_gate),
+    release_manifest: objectOrEmpty(snapshot.release_manifest),
     linked_run_ids: summary.linked_run_ids,
     linked_report_ids: summary.linked_report_ids,
     linked_result_batch_ids: summary.linked_result_batch_ids,

@@ -56,6 +56,103 @@ const currentReleaseAudit = computed(() => ({
     row?.total_games
   ) || 0), 0)
 }))
+const selectedSnapshotReleaseGate = computed(() =>
+  objectValue(selectedSnapshot.value?.release_gate || selectedSnapshot.value?.summary?.release_gate)
+)
+const selectedSnapshotGateSummary = computed(() => objectValue(selectedSnapshotReleaseGate.value.summary))
+const selectedSnapshotManifest = computed(() => objectValue(selectedSnapshot.value?.release_manifest))
+const selectedSnapshotManifestGate = computed(() => objectValue(selectedSnapshotManifest.value.release_gate))
+const selectedSnapshotSource = computed(() => objectValue(selectedSnapshotManifest.value.source))
+const selectedSnapshotBoundaries = computed(() => objectValue(selectedSnapshotManifest.value.boundaries))
+const selectedSnapshotGateStatus = computed(() => {
+  const gate = selectedSnapshotReleaseGate.value
+  const manifestGate = selectedSnapshotManifestGate.value
+  const ok = typeof gate.ok === 'boolean'
+    ? gate.ok
+    : (typeof manifestGate.ok === 'boolean' ? manifestGate.ok : null)
+  return {
+    ok,
+    label: ok === true ? '通过' : (ok === false ? '阻断' : '未上报'),
+    tone: ok === true ? 'ready' : (ok === false ? 'blocked' : 'unknown')
+  }
+})
+const selectedSnapshotGateIssues = computed(() => [
+  ...issueRows(selectedSnapshotReleaseGate.value.blockers, '阻断'),
+  ...issueRows(selectedSnapshotReleaseGate.value.warnings, '警告')
+].slice(0, 5))
+const selectedSnapshotEvidenceRows = computed(() => {
+  if (!selectedSnapshot.value) return []
+  const audit = selectedSnapshotAudit.value
+  const gateSummary = selectedSnapshotGateSummary.value
+  const manifestGate = selectedSnapshotManifestGate.value
+  const thresholds = objectValue(gateSummary.thresholds || manifestGate.thresholds)
+  const lifecycle = objectValue(gateSummary.suite_lifecycle || manifestGate.suite_lifecycle)
+  const source = selectedSnapshotSource.value
+  const boundaries = selectedSnapshotBoundaries.value
+  const blockerCount = firstFiniteNumber(
+    gateSummary.blocker_count,
+    manifestGate.blocker_count,
+    selectedSnapshot.value?.summary?.release_gate_blocker_count,
+    selectedSnapshotReleaseGate.value.blockers?.length
+  ) || 0
+  const warningCount = firstFiniteNumber(
+    gateSummary.warning_count,
+    manifestGate.warning_count,
+    selectedSnapshot.value?.summary?.release_gate_warning_count,
+    selectedSnapshotReleaseGate.value.warnings?.length
+  ) || 0
+  return [
+    {
+      key: 'server-gate',
+      label: '服务端门禁',
+      value: selectedSnapshotGateStatus.value.label,
+      caption: `阻断 ${formatNumber(blockerCount)} / 警告 ${formatNumber(warningCount)}`,
+      tone: selectedSnapshotGateStatus.value.tone
+    },
+    {
+      key: 'lifecycle',
+      label: '套件状态',
+      value: lifecycle.status ? `${lifecycle.status}${lifecycle.launchable ? ' / 可发布' : ' / 不可发布'}` : '未上报',
+      caption: 'release gate lifecycle'
+    },
+    {
+      key: 'thresholds',
+      label: '门禁阈值',
+      value: thresholdLabel(thresholds),
+      caption: 'sample / completed / paired'
+    },
+    {
+      key: 'content-hash',
+      label: 'Content Hash',
+      value: audit.contentHash ? shortHash(audit.contentHash) : '未上报',
+      caption: audit.contentHash || '服务端未返回内容 hash'
+    },
+    {
+      key: 'source-runs',
+      label: '来源运行',
+      value: sourceCountLabel(source.linked_run_ids, audit.runCount, '运行'),
+      caption: sourceIdsPreview(audit.runIds)
+    },
+    {
+      key: 'source-reports',
+      label: '来源报告',
+      value: sourceCountLabel(source.linked_report_ids, audit.reportCount, '报告'),
+      caption: sourceIdsPreview(audit.reportIds)
+    },
+    {
+      key: 'source-results',
+      label: '结果批次',
+      value: sourceCountLabel(source.linked_result_batch_ids, audit.resultBatchCount, '批次'),
+      caption: sourceIdsPreview(audit.resultBatchIds)
+    },
+    {
+      key: 'boundary',
+      label: '评测边界',
+      value: `${boundaries.scope || selectedSnapshot.value.scope || '--'} / ${boundaries.seed_set_id || selectedSnapshot.value.seed_set_id || '--'}`,
+      caption: boundaries.benchmark_config_hash || selectedSnapshot.value.benchmark_config_hash || 'Config Hash 未上报'
+    }
+  ]
+})
 const boundaryWarningSummary = computed(() =>
   boundaryWarningLabels.value.length ? `${formatNumber(boundaryWarningLabels.value.length)} 条告警` : '无边界告警'
 )
@@ -332,7 +429,9 @@ function snapshotPayload() {
       target_role: snapshot.target_role || '',
       content_hash: snapshot.content_hash,
       created_at: snapshot.created_at,
-      summary: snapshot.summary || {}
+      summary: snapshot.summary || {},
+      release_gate: snapshot.release_gate || {},
+      release_manifest: snapshot.release_manifest || {}
     },
     rows: snapshotRows.value,
     current_vs_frozen: {
@@ -419,6 +518,44 @@ function snapshotSourceCount(snapshot, ids, countKey) {
   const reported = firstFiniteNumber(snapshot?.[countKey], summary[countKey])
   if (reported != null) return reported
   return ids.length ? ids.length : null
+}
+
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+function issueRows(items, label) {
+  if (!Array.isArray(items)) return []
+  return items
+    .filter((item) => item && typeof item === 'object')
+    .map((item, index) => ({
+      key: `${label}-${item.code || item.message || index}`,
+      label,
+      code: String(item.code || item.kind || label),
+      message: String(item.message || item.detail || item.reason || '无说明'),
+      affected: normalizedIdList(item.affected_ids).slice(0, 3).join(', ')
+    }))
+}
+
+function thresholdLabel(thresholds) {
+  const sample = thresholds.min_sample_size ?? '--'
+  const completed = thresholds.min_completed_games ?? '--'
+  const paired = thresholds.min_paired_overlap ?? '--'
+  return `${sample} / ${completed} / ${paired}`
+}
+
+function sourceCountLabel(ids, fallbackCount, label) {
+  const count = normalizedIdList(ids).length || fallbackCount
+  if (count == null || count === '') return '未上报'
+  return `${formatNumber(count)} ${label}`
+}
+
+function sourceIdsPreview(ids) {
+  const values = normalizedIdList(ids)
+  if (!values.length) return '关联 ID 未上报'
+  const shown = values.slice(0, 3).map(shortHash)
+  const remaining = values.length - shown.length
+  return remaining > 0 ? `${shown.join(', ')} +${remaining}` : shown.join(', ')
 }
 
 function snapshotHistoryCountLabel(snapshot) {
@@ -657,6 +794,24 @@ function clearTransientState() {
           <button type="button" :disabled="!selectedSnapshot" @click="downloadSnapshot('delta-csv')">差值 CSV</button>
           <em>{{ exportState }}</em>
         </div>
+        <div v-if="selectedSnapshot" class="snapshot-evidence-grid" aria-label="发布证据">
+          <span
+            v-for="item in selectedSnapshotEvidenceRows"
+            :key="item.key"
+            :class="['snapshot-evidence-item', item.tone ? 'is-' + item.tone : '']"
+          >
+            <small>{{ item.label }}</small>
+            <b :title="String(item.value || '')">{{ item.value }}</b>
+            <em :title="String(item.caption || '')">{{ item.caption }}</em>
+          </span>
+        </div>
+        <div v-if="selectedSnapshotGateIssues.length" class="snapshot-gate-issues" aria-label="服务端门禁问题">
+          <span v-for="issue in selectedSnapshotGateIssues" :key="issue.key">
+            <small>{{ issue.label }}</small>
+            <b :title="issue.code">{{ issue.code }}</b>
+            <em :title="issue.message">{{ issue.message }}</em>
+          </span>
+        </div>
         <div class="snapshot-compare-picker">
           <label>
             <small>对照快照</small>
@@ -814,6 +969,8 @@ function clearTransientState() {
 .snapshot-disable-reasons small,
 .snapshot-attention-reasons small,
 .snapshot-release-card label span,
+.snapshot-evidence-grid small,
+.snapshot-gate-issues small,
 .snapshot-list-row small,
 .snapshot-metrics small,
 .snapshot-delta-row small,
@@ -1090,6 +1247,82 @@ function clearTransientState() {
   font-size: 12px;
   font-weight: 850;
   line-height: 1.45;
+}
+
+.snapshot-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.snapshot-evidence-item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 9px;
+  border: 1px solid var(--snapshot-border);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.56);
+}
+
+.snapshot-evidence-item.is-ready {
+  border-color: rgba(139, 94, 52, 0.32);
+  background: rgba(139, 94, 52, 0.07);
+}
+
+.snapshot-evidence-item.is-blocked {
+  border-color: rgba(90, 51, 25, 0.34);
+  background: rgba(90, 51, 25, 0.08);
+}
+
+.snapshot-evidence-item b,
+.snapshot-evidence-item em,
+.snapshot-gate-issues b,
+.snapshot-gate-issues em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-evidence-item b {
+  color: var(--snapshot-ink);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.snapshot-evidence-item em,
+.snapshot-gate-issues em {
+  color: var(--snapshot-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.snapshot-gate-issues {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(90, 51, 25, 0.24);
+  border-radius: 7px;
+  background: rgba(90, 51, 25, 0.07);
+}
+
+.snapshot-gate-issues span {
+  display: grid;
+  grid-template-columns: 44px minmax(86px, 0.32fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.snapshot-gate-issues b {
+  color: var(--snapshot-strong);
+  font-size: 11px;
+  font-weight: 950;
 }
 
 .snapshot-disable-reasons,

@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.config import PathConfig, load_llm_config, load_tts_config
+from app.lib.benchmark_release_gate import evaluate_benchmark_release_gate
 from app.lib.benchmark_reproducibility import build_benchmark_reproducibility_manifest
 from app.lib.benchmark_spec import (
     BenchmarkSeedSet,
@@ -632,16 +633,18 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
         now = beijing_now_iso()
         frozen_rows = [_json_clone(row) for row in rows]
-        release_gate_error = _benchmark_snapshot_release_gate_error(
+        release_gate = _benchmark_snapshot_release_gate(
             frozen_rows,
+            request=request,
             scope=scope,
             evaluation_set_id=evaluation_set_id,
             seed_set_id=request.seed_set_id,
             benchmark_config_hash=request.benchmark_config_hash,
             target_role=target_role,
+            config=self._benchmark_snapshot_release_gate_config(request),
         )
-        if release_gate_error:
-            raise HTTPException(status_code=422, detail=release_gate_error)
+        if not release_gate.get("ok"):
+            raise HTTPException(status_code=422, detail=_benchmark_snapshot_release_gate_error_detail(release_gate))
         rankable_count = sum(1 for row in frozen_rows if row.get("rankable") is not False)
         summary = {
             "row_count": len(frozen_rows),
@@ -651,6 +654,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "evaluation_set_id": evaluation_set_id,
             "target_role": target_role,
             "source_filter_applied": _benchmark_snapshot_source_filter_summary(request.source_filter),
+            "release_gate_ok": bool(release_gate.get("ok")),
+            "release_gate_blocker_count": len(release_gate.get("blockers") or []),
+            "release_gate_warning_count": len(release_gate.get("warnings") or []),
+            "release_gate": _json_clone(release_gate),
         }
         source_summary = _benchmark_snapshot_source_summary(frozen_rows)
         summary.update(source_summary)
@@ -666,6 +673,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "view_config": request.view_config,
             "rows": frozen_rows,
             "summary": summary,
+            "release_gate": release_gate,
             **source_summary,
         }
         content_hash = _stable_payload_hash(content_payload)
@@ -687,6 +695,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "view_config": _json_clone(request.view_config),
             "rows": frozen_rows,
             "summary": summary,
+            "release_gate": release_gate,
             "row_count": len(frozen_rows),
             **source_summary,
             "content_hash": content_hash,
@@ -698,6 +707,25 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         except Exception:  # noqa: BLE001 - keep API usable if snapshot persistence is temporarily unavailable
             _log.warning("persist benchmark leaderboard snapshot failed", exc_info=True)
         return _benchmark_snapshot_detail_payload(snapshot)
+
+    def _benchmark_snapshot_release_gate_config(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
+        benchmark_id = str(request.benchmark_id or "").strip()
+        if not benchmark_id:
+            return {"thresholds": {"require_suite_lifecycle": False}}
+        try:
+            summary = self.get_benchmark_spec_summary(benchmark_id)
+        except HTTPException:
+            return {
+                "benchmark_id": benchmark_id,
+                "benchmark_config_hash": request.benchmark_config_hash,
+                "thresholds": {"require_suite_lifecycle": False},
+            }
+        return {
+            **summary,
+            "suite": _json_clone(summary),
+            "benchmark_id": benchmark_id,
+            "benchmark_config_hash": request.benchmark_config_hash or summary.get("config_hash"),
+        }
 
     def list_benchmark_snapshots(
         self,
@@ -762,6 +790,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "content_hash": snapshot.get("content_hash"),
             "export_content_hash": export_content_hash,
             "artifact_hash": export_content_hash,
+            "release_gate": _json_clone(snapshot.get("release_gate") or {}),
+            "release_manifest": _json_clone(snapshot.get("release_manifest") or {}),
             "snapshot": snapshot,
         }
 
@@ -5066,6 +5096,124 @@ def _benchmark_snapshot_release_gate_error(
     return None
 
 
+def _benchmark_snapshot_release_gate(
+    rows: list[dict[str, Any]],
+    *,
+    request: BenchmarkSnapshotRequest,
+    scope: str,
+    evaluation_set_id: str,
+    seed_set_id: Any,
+    benchmark_config_hash: Any,
+    target_role: str | None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    config_payload = _json_clone(config or {})
+    legacy_error = _benchmark_snapshot_release_gate_error(
+        rows,
+        scope=scope,
+        evaluation_set_id=evaluation_set_id,
+        seed_set_id=seed_set_id,
+        benchmark_config_hash=benchmark_config_hash,
+        target_role=target_role,
+    )
+    request_payload = {
+        "scope": scope,
+        "benchmark_id": request.benchmark_id,
+        "benchmark_version": request.benchmark_version,
+        "evaluation_set_id": evaluation_set_id,
+        "seed_set_id": seed_set_id,
+        "benchmark_config_hash": benchmark_config_hash,
+        "target_role": target_role,
+        "source_filter": _json_clone(request.source_filter),
+        "view_config": _json_clone(request.view_config),
+        "rows": rows,
+    }
+    gate = evaluate_benchmark_release_gate(
+        request=request_payload,
+        rows=rows,
+        config=config_payload,
+    )
+    if legacy_error:
+        legacy_issue = {
+            "code": _benchmark_snapshot_release_gate_legacy_code(legacy_error),
+            "severity": "error",
+            "message": legacy_error,
+            "evidence": {
+                "scope": scope,
+                "evaluation_set_id": evaluation_set_id,
+                "seed_set_id": seed_set_id,
+                "benchmark_config_hash": benchmark_config_hash,
+                "target_role": target_role,
+            },
+            "affected_ids": [
+                str(value)
+                for value in (request.benchmark_id, evaluation_set_id, seed_set_id, target_role)
+                if str(value or "").strip()
+            ],
+        }
+        blockers = [legacy_issue, *[dict(item) for item in gate.get("blockers") or [] if isinstance(item, dict)]]
+        gate = {
+            **gate,
+            "ok": False,
+            "blockers": blockers,
+        }
+    summary = dict(gate.get("summary") if isinstance(gate.get("summary"), dict) else {})
+    summary.update(
+        {
+            "blocker_count": len(gate.get("blockers") or []),
+            "warning_count": len(gate.get("warnings") or []),
+        }
+    )
+    gate["summary"] = summary
+    return _json_clone(gate)
+
+
+def _benchmark_snapshot_release_gate_legacy_code(message: str) -> str:
+    text = str(message or "").lower()
+    if "seed_set_id" in text:
+        return "seed_set_id_missing_or_mismatch"
+    if "benchmark_config_hash" in text or "config_hash" in text:
+        return "benchmark_config_hash_missing_or_mismatch"
+    if "source_run_id" in text:
+        return "source_run_id_missing"
+    if "report_id" in text:
+        return "report_id_missing"
+    if "result_batch_id" in text:
+        return "result_batch_id_missing"
+    if "model_config_hash" in text:
+        return "model_config_hash_missing"
+    if "model_id" in text:
+        return "model_id_missing"
+    if "scope" in text:
+        return "scope_missing_or_mismatch"
+    if "target_role" in text:
+        return "target_role_missing_or_mismatch"
+    if "evaluation_set_id" in text:
+        return "evaluation_set_id_missing_or_mismatch"
+    return "snapshot_release_gate_failed"
+
+
+def _benchmark_snapshot_release_gate_error_detail(release_gate: dict[str, Any]) -> dict[str, Any]:
+    blockers = [dict(item) for item in release_gate.get("blockers") or [] if isinstance(item, dict)]
+    warnings = [dict(item) for item in release_gate.get("warnings") or [] if isinstance(item, dict)]
+    first_blocker = blockers[0] if blockers else {}
+    message = str(first_blocker.get("message") or "benchmark snapshot release gate failed")
+    return domain_error_detail(
+        code="benchmark_snapshot_release_gate_failed",
+        message=message,
+        detail=message,
+        diagnostics=[
+            {
+                "kind": "benchmark_snapshot_release_gate_failed",
+                "release_gate_ok": bool(release_gate.get("ok")),
+                "blockers": blockers,
+                "warnings": warnings,
+                "summary": _json_clone(release_gate.get("summary") or {}),
+            }
+        ],
+    )
+
+
 def _benchmark_snapshot_string_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple, set)):
         return sorted({str(item).strip() for item in value if str(item or "").strip()})
@@ -5151,6 +5299,28 @@ def _benchmark_snapshot_summary_payload(snapshot: dict[str, Any]) -> dict[str, A
             "source_result_batch_count": source_result_batch_count,
         }
     )
+    release_gate = snapshot.get("release_gate")
+    if not isinstance(release_gate, dict):
+        release_gate = summary.get("release_gate") if isinstance(summary.get("release_gate"), dict) else {}
+    release_gate = _json_clone(release_gate or {})
+    if release_gate:
+        gate_summary = release_gate.get("summary") if isinstance(release_gate.get("summary"), dict) else {}
+        summary.update(
+            {
+                "release_gate_ok": bool(release_gate.get("ok")),
+                "release_gate_blocker_count": _benchmark_snapshot_int(
+                    summary.get("release_gate_blocker_count"),
+                    gate_summary.get("blocker_count"),
+                    len(release_gate.get("blockers") or []),
+                ),
+                "release_gate_warning_count": _benchmark_snapshot_int(
+                    summary.get("release_gate_warning_count"),
+                    gate_summary.get("warning_count"),
+                    len(release_gate.get("warnings") or []),
+                ),
+                "release_gate": release_gate,
+            }
+        )
     release_manifest = _benchmark_snapshot_release_manifest(snapshot, summary=summary)
     return {
         "kind": "benchmark_leaderboard_snapshot",
@@ -5177,6 +5347,7 @@ def _benchmark_snapshot_summary_payload(snapshot: dict[str, Any]) -> dict[str, A
         "source_run_count": source_run_count,
         "source_report_count": source_report_count,
         "source_result_batch_count": source_result_batch_count,
+        "release_gate": release_gate,
         "release_manifest": release_manifest,
         "content_hash": snapshot.get("content_hash"),
         "created_at": snapshot.get("created_at"),
@@ -5190,6 +5361,8 @@ def _benchmark_snapshot_release_manifest(snapshot: dict[str, Any], *, summary: d
     linked_result_batch_ids = _benchmark_snapshot_string_list(
         summary.get("linked_result_batch_ids") or snapshot.get("linked_result_batch_ids")
     )
+    release_gate = summary.get("release_gate") if isinstance(summary.get("release_gate"), dict) else {}
+    gate_summary = release_gate.get("summary") if isinstance(release_gate.get("summary"), dict) else {}
     return {
         "schema_version": 1,
         "snapshot_id": snapshot_id,
@@ -5203,6 +5376,22 @@ def _benchmark_snapshot_release_manifest(snapshot: dict[str, Any], *, summary: d
             "seed_set_id": snapshot.get("seed_set_id"),
             "benchmark_config_hash": snapshot.get("benchmark_config_hash"),
             "target_role": snapshot.get("target_role"),
+        },
+        "release_gate": {
+            "ok": bool(release_gate.get("ok")) if release_gate else None,
+            "blocker_count": _benchmark_snapshot_int(
+                summary.get("release_gate_blocker_count"),
+                gate_summary.get("blocker_count"),
+                len(release_gate.get("blockers") or []),
+            ),
+            "warning_count": _benchmark_snapshot_int(
+                summary.get("release_gate_warning_count"),
+                gate_summary.get("warning_count"),
+                len(release_gate.get("warnings") or []),
+            ),
+            "thresholds": _json_clone(gate_summary.get("thresholds") or {}),
+            "suite_lifecycle": _json_clone(gate_summary.get("suite_lifecycle") or {}),
+            "diagnostics": _json_clone(gate_summary.get("diagnostics") or {}),
         },
         "source": {
             "row_count": summary.get("row_count", 0),
@@ -5227,6 +5416,41 @@ def _benchmark_snapshot_release_manifest(snapshot: dict[str, Any], *, summary: d
     }
 
 
+def _benchmark_snapshot_release_gate_export_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    release_gate = snapshot.get("release_gate") if isinstance(snapshot.get("release_gate"), dict) else {}
+    if not release_gate and isinstance(summary.get("release_gate"), dict):
+        release_gate = summary["release_gate"]
+    manifest = snapshot.get("release_manifest") if isinstance(snapshot.get("release_manifest"), dict) else {}
+    manifest_gate = manifest.get("release_gate") if isinstance(manifest.get("release_gate"), dict) else {}
+    gate_summary = release_gate.get("summary") if isinstance(release_gate.get("summary"), dict) else {}
+    ok_value = release_gate.get("ok")
+    if not isinstance(ok_value, bool):
+        ok_value = manifest_gate.get("ok") if isinstance(manifest_gate.get("ok"), bool) else None
+    blocker_count = _benchmark_snapshot_int(
+        summary.get("release_gate_blocker_count"),
+        gate_summary.get("blocker_count"),
+        manifest_gate.get("blocker_count"),
+        len(release_gate.get("blockers") or []),
+    )
+    warning_count = _benchmark_snapshot_int(
+        summary.get("release_gate_warning_count"),
+        gate_summary.get("warning_count"),
+        manifest_gate.get("warning_count"),
+        len(release_gate.get("warnings") or []),
+    )
+    return {
+        "ok": ok_value,
+        "label": "通过" if ok_value is True else ("阻断" if ok_value is False else "未上报"),
+        "blocker_count": blocker_count,
+        "warning_count": warning_count,
+        "thresholds": _json_clone(gate_summary.get("thresholds") or manifest_gate.get("thresholds") or {}),
+        "suite_lifecycle": _json_clone(
+            gate_summary.get("suite_lifecycle") or manifest_gate.get("suite_lifecycle") or {}
+        ),
+    }
+
+
 def _benchmark_snapshot_detail_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     payload = _benchmark_snapshot_summary_payload(snapshot)
     rows = snapshot.get("rows") if isinstance(snapshot.get("rows"), list) else []
@@ -5238,6 +5462,9 @@ def _benchmark_snapshot_markdown(snapshot: dict[str, Any]) -> str:
     summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
     manifest = snapshot.get("release_manifest") if isinstance(snapshot.get("release_manifest"), dict) else {}
     source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+    release_gate = _benchmark_snapshot_release_gate_export_summary(snapshot)
+    thresholds = release_gate["thresholds"]
+    lifecycle = release_gate["suite_lifecycle"]
     rows = snapshot.get("rows") if isinstance(snapshot.get("rows"), list) else []
     lines = [
         f"# 榜单快照：{_markdown_value(snapshot.get('title'))}",
@@ -5252,6 +5479,9 @@ def _benchmark_snapshot_markdown(snapshot: dict[str, Any]) -> str:
         f"- 目标角色: {_markdown_value(snapshot.get('target_role'))}",
         f"- 内容 Hash: {_markdown_value(snapshot.get('content_hash'))}",
         f"- 创建时间: {_markdown_value(snapshot.get('created_at'))}",
+        f"- 发布门禁: {release_gate['label']} / 阻断 {release_gate['blocker_count']} / 警告 {release_gate['warning_count']}",
+        f"- 套件状态: {_markdown_value(lifecycle.get('status') or '未上报')} / launchable={_markdown_value(lifecycle.get('launchable'))}",
+        f"- 门禁阈值: sample={_markdown_value(thresholds.get('min_sample_size'))}, completed={_markdown_value(thresholds.get('min_completed_games'))}, paired={_markdown_value(thresholds.get('min_paired_overlap'))}",
         "",
         "## 发布说明",
         _markdown_value(snapshot.get("release_notes") or "未填写"),
@@ -5289,6 +5519,9 @@ def _benchmark_snapshot_csv(snapshot: dict[str, Any]) -> str:
     summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
     manifest = snapshot.get("release_manifest") if isinstance(snapshot.get("release_manifest"), dict) else {}
     source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+    release_gate = _benchmark_snapshot_release_gate_export_summary(snapshot)
+    thresholds = release_gate["thresholds"]
+    lifecycle = release_gate["suite_lifecycle"]
     rows: list[list[Any]] = [
         ["区段", "标签", "值", "详情"],
         ["快照头", "快照 ID", snapshot.get("snapshot_id"), ""],
@@ -5299,6 +5532,14 @@ def _benchmark_snapshot_csv(snapshot: dict[str, Any]) -> str:
         ["快照头", "种子集", snapshot.get("seed_set_id"), ""],
         ["快照头", "Config Hash", snapshot.get("benchmark_config_hash"), ""],
         ["快照头", "内容 Hash", snapshot.get("content_hash"), ""],
+        ["发布门禁", "状态", release_gate["label"], f"阻断 {release_gate['blocker_count']} / 警告 {release_gate['warning_count']}"],
+        ["发布门禁", "套件状态", lifecycle.get("status") or "未上报", f"launchable={lifecycle.get('launchable')}"],
+        [
+            "发布门禁",
+            "阈值",
+            json.dumps(thresholds, ensure_ascii=False),
+            "min_sample_size / min_completed_games / min_paired_overlap",
+        ],
         ["发布说明", "说明", snapshot.get("release_notes"), ""],
         ["摘要", "行数", summary.get("row_count", snapshot.get("row_count", 0)), ""],
         ["摘要", "可入榜", summary.get("rankable_count", snapshot.get("rankable_count", 0)), ""],

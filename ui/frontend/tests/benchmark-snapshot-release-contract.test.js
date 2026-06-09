@@ -19,6 +19,9 @@ test('BenchmarkSnapshotReleasePanel exposes release readiness and disabled reaso
   assert.match(source, /const releaseReadinessChecks = computed\(\(\) =>/)
   assert.match(source, /const releaseBlockingReasons = computed\(\(\) =>/)
   assert.match(source, /const releaseGateDetail = computed\(\(\) =>/)
+  assert.match(source, /const selectedSnapshotReleaseGate = computed\(\(\) =>/)
+  assert.match(source, /const selectedSnapshotEvidenceRows = computed\(\(\) =>/)
+  assert.match(source, /const selectedSnapshotGateIssues = computed\(\(\) =>/)
   assert.match(source, /const boundaryWarningSummary = computed\(\(\) =>/)
   assert.match(source, /:aria-label="'冻结快照：' \+ releaseGateLabel"/)
   assert.match(source, /:aria-disabled="String\(!canCreate\)"/)
@@ -32,7 +35,7 @@ test('BenchmarkSnapshotReleasePanel exposes release readiness and disabled reaso
   assert.doesNotMatch(source, /snapshot-freeze-reason|snapshot-gate-check|snapshot-secondary-button|refreshSnapshots/)
 })
 
-test('BenchmarkSnapshotReleasePanel keeps release blockers while removing repeated visible audit blocks', () => {
+test('BenchmarkSnapshotReleasePanel shows compact server release evidence after snapshot selection', () => {
   const source = snapshotReleaseSource()
 
   assert.match(source, /Evaluation Set/)
@@ -44,8 +47,16 @@ test('BenchmarkSnapshotReleasePanel keeps release blockers while removing repeat
   assert.match(source, /随快照保留/)
   assert.match(source, /不会进入正式排名/)
   assert.match(source, /scope/)
-  assert.doesNotMatch(source, /来源 run|来源 report|来源 result|缺少来源 run ID|缺少来源 report ID|缺少来源 result ID/)
-  assert.doesNotMatch(source, /snapshot-boundary|snapshot-audit|snapshot-list-meta|snapshot-source-line|compare-boundary|snapshot-code-value/)
+  assert.match(source, /aria-label="发布证据"/)
+  assert.match(source, /服务端门禁/)
+  assert.match(source, /门禁阈值/)
+  assert.match(source, /Content Hash/)
+  assert.match(source, /来源运行/)
+  assert.match(source, /来源报告/)
+  assert.match(source, /结果批次/)
+  assert.match(source, /aria-label="服务端门禁问题"/)
+  assert.match(source, /snapshot-evidence-grid/)
+  assert.doesNotMatch(source, /snapshot-audit|snapshot-list-meta|snapshot-source-line|compare-boundary|snapshot-code-value/)
   assert.doesNotMatch(source, />Readiness</)
   assert.doesNotMatch(source, />Release Gate</)
 })
@@ -58,6 +69,8 @@ test('BenchmarkSnapshotReleasePanel keeps release identity and boundary warnings
   assert.match(source, /key: 'boundary-warning'[\s\S]*required: true[\s\S]*blockedReason: '存在评测边界告警/)
   assert.match(source, /key: 'unrankable'[\s\S]*required: false[\s\S]*attentionReason: '不可排名证据会保留，但不进入正式排名'/)
   assert.doesNotMatch(source, /key: 'source-run'|key: 'source-report'|key: 'source-result'/)
+  assert.match(source, /release_gate/)
+  assert.match(source, /release_manifest/)
 })
 
 test('BenchmarkSnapshotReleasePanel keeps warm snapshot release styling', () => {
@@ -84,6 +97,7 @@ test('BenchmarkSnapshotReleasePanel SFC compiles after release gate wiring', () 
   assert.deepEqual(errors, [])
   const script = compileScript(descriptor, { id: 'benchmark-snapshot-release-test' })
   assert.match(script.content, /releaseReadinessChecks/)
+  assert.match(script.content, /selectedSnapshotEvidenceRows/)
   assert.doesNotMatch(script.content, /currentRowSourceAudit/)
   const template = compileTemplate({
     source: descriptor.template.content,
