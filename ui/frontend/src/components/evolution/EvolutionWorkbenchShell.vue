@@ -25,6 +25,8 @@ const activeTabLabel = computed(() =>
 )
 
 const runSummary = computed(() => props.selectedRunSummary || {})
+const refreshRetrying = computed(() => Boolean(runSummary.value.loading))
+const refreshRetryDisabled = computed(() => Boolean(runSummary.value.loading || runSummary.value.actionLoading))
 const pageNotice = computed(() => {
   if (props.notice?.message) return props.notice
   if (props.error) return { type: 'error', message: props.error?.message || props.error, error: props.error }
@@ -37,6 +39,11 @@ function progressPercent(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
   return Math.max(0, Math.min(100, Math.round(number)))
+}
+
+function retryRefresh() {
+  if (refreshRetryDisabled.value) return
+  emit('refresh')
 }
 </script>
 
@@ -108,7 +115,12 @@ function progressPercent(value) {
             class="evo-error-panel"
             :error="errorNotice"
             title="自进化操作失败"
+            retry-label="重试刷新"
+            retry-busy-label="刷新中"
+            :retrying="refreshRetrying"
+            :retry-disabled="refreshRetryDisabled"
             compact
+            @retry="retryRefresh"
           />
           <div v-else-if="inlineNotice" :class="['evo-alert', inlineNotice.type]">{{ inlineNotice.message }}</div>
           <slot />

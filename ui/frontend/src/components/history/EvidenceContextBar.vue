@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import EvidenceLink from './EvidenceLink.vue'
 import { displayRoleLabel, normalizeHistoryDisplayText } from './historyDisplay.js'
 
 const props = defineProps({
@@ -44,6 +45,12 @@ const seedLabel = computed(() =>
 const runLabel = computed(() =>
   firstText(context.value.existing.source_run_id, props.game?.source_run_id, context.value.config.source_run_id, '未记录')
 )
+const sourceRunId = computed(() =>
+  firstText(context.value.existing.source_run_id, props.game?.source_run_id, context.value.config.source_run_id, props.game?.run_id)
+)
+const proposalId = computed(() =>
+  firstText(context.value.existing.proposal_id, props.game?.proposal_id, context.value.config.proposal_id)
+)
 const phaseLabel = computed(() =>
   firstText(
     context.value.existing.source_phase_label,
@@ -73,45 +80,104 @@ const roleVersions = computed(() => {
 })
 const visibleRoleVersions = computed(() => roleVersions.value.slice(0, 4))
 const hiddenRoleVersionCount = computed(() => Math.max(0, roleVersions.value.length - visibleRoleVersions.value.length))
+const roleVersionTitle = computed(() =>
+  roleVersions.value.length
+    ? roleVersions.value.map((item) => `${item.role}: ${item.version}`).join(' / ')
+    : '默认基线'
+)
+const evidenceLinkTargets = computed(() => {
+  const game = props.game || {}
+  const rows = [
+    {
+      key: 'archive',
+      kind: 'game',
+      label: 'Archive',
+      target: game
+    }
+  ]
+  if (sourceRunId.value || sourceKey.value !== 'normal') {
+    rows.push({
+      key: 'run',
+      kind: 'run',
+      label: 'Run',
+      target: {
+        ...game,
+        source_run_id: sourceRunId.value
+      }
+    })
+  }
+  if (proposalId.value || sourceKey.value === 'evolution') {
+    rows.push({
+      key: 'proposal',
+      kind: 'proposal',
+      label: 'Proposal',
+      target: {
+        ...game,
+        source_run_id: sourceRunId.value,
+        proposal_id: proposalId.value
+      }
+    })
+  }
+  return rows
+})
 </script>
 
 <template>
   <section v-if="game" class="evidence-context-bar" :data-source="sourceKey" aria-label="证据上下文">
-    <div class="evidence-context-title">
-      <small>证据上下文</small>
-      <b>{{ sourceLabel }}</b>
-    </div>
-    <dl class="evidence-context-meta">
-      <div>
-        <dt>Seed</dt>
-        <dd>{{ seedLabel }}</dd>
+    <dl class="evidence-context-summary">
+      <div class="evidence-context-item evidence-context-item--source">
+        <dt>证据上下文</dt>
+        <dd :title="sourceLabel">{{ sourceLabel }}</dd>
       </div>
-      <div>
+      <div class="evidence-context-item evidence-context-item--run">
         <dt>Run</dt>
         <dd :title="runLabel">{{ runLabel }}</dd>
       </div>
-      <div>
+      <div class="evidence-context-item evidence-context-item--phase">
         <dt>阶段</dt>
-        <dd>{{ phaseLabel }}</dd>
+        <dd :title="phaseLabel">{{ phaseLabel }}</dd>
+      </div>
+      <div class="evidence-context-item evidence-context-item--seed">
+        <dt>Seed</dt>
+        <dd :title="seedLabel">{{ seedLabel }}</dd>
+      </div>
+      <div
+        class="evidence-context-item evidence-context-item--versions"
+        :aria-label="`角色版本 ${roleVersions.length} 项`"
+      >
+        <dt>角色版本</dt>
+        <dd class="evidence-context-version-value" :title="roleVersionTitle">
+          <span v-if="!roleVersions.length" class="version-baseline">默认基线</span>
+          <template v-else>
+            <span
+              v-for="item in visibleRoleVersions"
+              :key="`${item.role}-${item.version}`"
+              class="version-chip"
+            >
+              <small>{{ item.role }}</small>
+              <b>{{ item.version }}</b>
+            </span>
+          </template>
+          <span v-if="hiddenRoleVersionCount" class="version-more">+{{ hiddenRoleVersionCount }}</span>
+        </dd>
       </div>
     </dl>
-    <div class="evidence-context-versions" :aria-label="`角色版本 ${roleVersions.length} 项`">
-      <span v-if="!roleVersions.length">角色版本：默认基线</span>
-      <span v-for="item in visibleRoleVersions" :key="`${item.role}-${item.version}`">
-        <small>{{ item.role }}</small>
-        <b :title="item.version">{{ item.version }}</b>
-      </span>
-      <span v-if="hiddenRoleVersionCount">+{{ hiddenRoleVersionCount }}</span>
-    </div>
+    <nav v-if="evidenceLinkTargets.length" class="evidence-context-links" aria-label="证据跳转">
+      <EvidenceLink
+        v-for="item in evidenceLinkTargets"
+        :key="item.key"
+        :kind="item.kind"
+        :label="item.label"
+        :target="item.target"
+        compact
+      />
+    </nav>
   </section>
 </template>
 
 <style scoped>
 .evidence-context-bar {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.8fr) minmax(220px, 1.2fr) minmax(220px, 1.4fr);
-  gap: 8px;
-  align-items: stretch;
+  display: block;
   width: 100%;
   min-width: 0;
   padding: 8px;
@@ -132,24 +198,33 @@ const hiddenRoleVersionCount = computed(() => Math.max(0, roleVersions.value.len
   background: rgba(239, 236, 248, 0.78);
 }
 
-.evidence-context-title,
-.evidence-context-meta > div,
-.evidence-context-versions > span {
+.evidence-context-summary {
+  display: grid;
+  grid-template-columns:
+    minmax(160px, 1.25fr)
+    minmax(220px, 1.3fr)
+    minmax(120px, 0.75fr)
+    minmax(74px, 0.45fr)
+    minmax(150px, 1fr);
+  gap: 8px;
   min-width: 0;
+  margin: 0;
+}
+
+.evidence-context-item {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
   border: 1px solid rgba(92, 54, 20, 0.1);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.48);
 }
 
-.evidence-context-title {
-  display: grid;
-  gap: 3px;
-  padding: 8px 10px;
-}
-
-.evidence-context-title small,
-.evidence-context-meta dt,
-.evidence-context-versions small {
+.evidence-context-item dt,
+.version-chip small {
   color: rgba(61, 40, 24, 0.58);
   font-size: 10px;
   font-weight: 800;
@@ -157,32 +232,7 @@ const hiddenRoleVersionCount = computed(() => Math.max(0, roleVersions.value.len
   text-transform: uppercase;
 }
 
-.evidence-context-title b {
-  min-width: 0;
-  overflow: hidden;
-  color: #2f2116;
-  font-size: 14px;
-  font-weight: 900;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.evidence-context-meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  min-width: 0;
-  margin: 0;
-}
-
-.evidence-context-meta > div {
-  display: grid;
-  gap: 4px;
-  padding: 8px;
-}
-
-.evidence-context-meta dd {
+.evidence-context-item dd {
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -193,50 +243,93 @@ const hiddenRoleVersionCount = computed(() => Math.max(0, roleVersions.value.len
   white-space: nowrap;
 }
 
-.evidence-context-versions {
+.evidence-context-item--source dd {
+  font-size: 14px;
+}
+
+.evidence-context-version-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.1;
+}
+
+.version-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.version-chip small {
+  flex: 0 0 auto;
+}
+
+.version-chip b,
+.version-baseline,
+.version-more {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-chip b {
+  min-width: 0;
+  max-width: 88px;
+}
+
+.version-more {
+  flex: 0 0 auto;
+  color: rgba(61, 40, 24, 0.68);
+}
+
+.evidence-context-links {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  align-items: stretch;
   min-width: 0;
+  margin-top: 8px;
 }
 
-.evidence-context-versions > span {
-  display: inline-grid;
-  min-width: 0;
-  max-width: 160px;
-  gap: 3px;
-  justify-content: center;
-  padding: 7px 9px;
-  font-size: 12px;
-  font-weight: 850;
-  line-height: 1.15;
+.evidence-context-links :deep(.evidence-link) {
+  flex: 0 1 190px;
 }
 
-.evidence-context-versions b {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+@media (max-width: 1080px) {
+  .evidence-context-summary {
+    grid-template-columns:
+      minmax(150px, 1.2fr)
+      minmax(180px, 1.2fr)
+      minmax(110px, 0.8fr)
+      minmax(74px, 0.5fr)
+      minmax(140px, 1fr);
+  }
 }
 
 @media (max-width: 860px) {
-  .evidence-context-bar {
-    grid-template-columns: 1fr;
+  .evidence-context-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .evidence-context-meta {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .evidence-context-item--source,
+  .evidence-context-item--run,
+  .evidence-context-item--versions {
+    grid-column: span 2;
   }
 }
 
 @media (max-width: 560px) {
-  .evidence-context-meta {
+  .evidence-context-summary {
     grid-template-columns: 1fr;
   }
 
-  .evidence-context-versions > span {
-    max-width: 100%;
+  .evidence-context-item--source,
+  .evidence-context-item--run,
+  .evidence-context-item--versions {
+    grid-column: auto;
   }
 }
 </style>

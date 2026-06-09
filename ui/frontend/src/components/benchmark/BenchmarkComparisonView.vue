@@ -3,6 +3,11 @@ import { computed, ref, watch } from 'vue'
 
 const MIN_CONFIDENT_GAMES = 30
 const STORAGE_PREFIX = 'benchmark-comparison-view'
+const RANK_FILTER_LABELS = {
+  all: '全部',
+  rankable: '可入榜',
+  unrankable: '未入榜'
+}
 
 const props = defineProps({
   benchmark: {
@@ -11,21 +16,65 @@ const props = defineProps({
   }
 })
 
-const selectedMetricColumns = ref([])
-const rankFilter = ref('all')
-const savedViewName = ref('Default view')
 const savedViewState = ref('')
 const selectedRowKey = ref('')
-let viewLoadSequence = 0
 
 const mode = computed(() =>
   props.benchmark.selectedBenchmarkIsModelSuite.value ? 'model' : 'role_version'
 )
 
+const currentViewConfig = computed(() => props.benchmark.activeBenchmarkViewConfig?.value || {})
+const selectedMetricColumns = computed({
+  get() {
+    const columns = Array.isArray(currentViewConfig.value.columns) ? currentViewConfig.value.columns : []
+    return columns.length ? columns : defaultMetricColumns(mode.value).map((column) => column.key)
+  },
+  set(value) {
+    props.benchmark.setBenchmarkViewPreference?.({
+      mode: mode.value,
+      columns: Array.isArray(value) ? value : []
+    })
+  }
+})
+const rankFilter = computed({
+  get() {
+    return ['all', 'rankable', 'unrankable'].includes(currentViewConfig.value.rank_filter)
+      ? currentViewConfig.value.rank_filter
+      : 'all'
+  },
+  set(value) {
+    props.benchmark.setBenchmarkViewPreference?.({
+      mode: mode.value,
+      rank_filter: ['all', 'rankable', 'unrankable'].includes(value) ? value : 'all'
+    })
+  }
+})
+const savedViewName = computed({
+  get() {
+    return props.benchmark.benchmarkViewPreferences?.value?.name || '默认视图'
+  },
+  set(value) {
+    props.benchmark.setBenchmarkViewPreference?.({ name: value || '默认视图' })
+  }
+})
+const savedViewRows = computed(() => props.benchmark.benchmarkSavedViews?.value || [])
+const selectedSavedViewKey = computed(() =>
+  props.benchmark.selectedBenchmarkViewKey?.value || props.benchmark.currentBenchmarkViewKey?.value || ''
+)
+const viewDirty = computed(() => Boolean(props.benchmark.benchmarkViewDirty?.value))
+
+const apiCompareRows = computed(() => {
+  const compare = props.benchmark.benchmarkLeaderboardCompare?.value
+  if (!compare || compare.scope !== mode.value || !Array.isArray(compare.rows)) return []
+  return compare.rows
+})
+
 const rawRows = computed(() =>
-  mode.value === 'model'
-    ? props.benchmark.modelLeaderboardRows.value
-    : props.benchmark.roleLeaderboardRows.value
+  apiCompareRows.value.length
+    ? apiCompareRows.value
+    : (mode.value === 'model'
+      ? props.benchmark.modelLeaderboardRows.value
+      : props.benchmark.roleLeaderboardRows.value)
 )
 
 const rows = computed(() =>
@@ -84,14 +133,22 @@ const comparisonRows = computed(() => {
 
 const metricColumnDefs = computed(() => {
   const confidenceWidth = mode.value === 'model' ? '92px' : '118px'
-  const rankableLabel = mode.value === 'model' ? 'Rankable' : 'Baseline'
-  return [
-    { key: 'score', label: 'Score', width: '70px' },
-    { key: 'winRate', label: 'Win Rate', width: '76px' },
-    { key: 'delta', label: 'Delta', width: '70px' },
-    { key: 'confidence', label: mode.value === 'model' ? '95% CI' : 'Confidence', width: confidenceWidth },
+  const rankableLabel = mode.value === 'model' ? '入榜' : '基线'
+  const baseColumns = [
+    { key: 'score', label: '分数', width: '70px' },
+    { key: 'winRate', label: '胜率', width: '76px' },
+    { key: 'delta', label: '差值', width: '70px' },
+    { key: 'confidence', label: mode.value === 'model' ? '95% CI' : '置信度', width: confidenceWidth },
     { key: 'rankable', label: rankableLabel, width: '96px' },
-    { key: 'games', label: 'Games', width: '70px' }
+    { key: 'games', label: '局数', width: '70px' }
+  ]
+  if (mode.value !== 'model') return baseColumns
+  return [
+    ...baseColumns.slice(0, 4),
+    { key: 'fallback', label: 'Fallback率', width: '78px' },
+    { key: 'llmError', label: 'LLM错误', width: '82px' },
+    { key: 'policy', label: '策略修正', width: '86px' },
+    ...baseColumns.slice(4)
   ]
 })
 
@@ -124,10 +181,7 @@ const comparisonGridStyle = computed(() => {
 })
 
 const viewStorageKey = computed(() => {
-  const suite = props.benchmark.selectedBenchmarkId.value || 'ad-hoc'
-  const evaluationSet = props.benchmark.selectedBenchmarkEvaluationSetId.value || 'no-eval-set'
-  const subject = mode.value === 'model' ? 'model' : (props.benchmark.selectedRole.value || 'role')
-  return `${STORAGE_PREFIX}:${mode.value}:${suite}:${evaluationSet}:${subject}`
+  return props.benchmark.currentBenchmarkViewKey?.value || `${STORAGE_PREFIX}:${mode.value}`
 })
 
 const selectedLeaderboardRow = computed(() =>
@@ -146,7 +200,7 @@ const boundaryMismatchRows = computed(() => {
 })
 
 const tableViewSummary = computed(() =>
-  `${rankFilter.value} / ${enabledMetricColumnDefs.value.map((column) => column.label).join(', ')}`
+  `${RANK_FILTER_LABELS[rankFilter.value] || '全部'} / ${enabledMetricColumnDefs.value.map((column) => column.label).join(', ')}`
 )
 
 const topRow = computed(() => rankableRows.value[0] || null)
@@ -162,24 +216,24 @@ const summary = computed(() => {
   const lowSampleCount = ranked.filter((row) => row.games < MIN_CONFIDENT_GAMES).length
   return [
     {
-      label: 'Ranked',
+      label: '入榜数',
       value: ranked.length.toLocaleString('zh-CN'),
-      caption: `${unrankableRows.value.length} unrankable`
+      caption: `${unrankableRows.value.length} 条未入榜`
     },
     {
-      label: 'Best Score',
+      label: '最高分',
       value: topRow.value ? formatPct(topRow.value.scoreValue) : '--',
-      caption: topRow.value ? topRow.value.primary : 'no ranked row'
+      caption: topRow.value ? topRow.value.primary : '暂无入榜行'
     },
     {
-      label: 'Average Win',
+      label: '平均胜率',
       value: winRates.length ? formatPct(average(winRates)) : '--',
-      caption: 'rankable rows'
+      caption: '入榜行'
     },
     {
-      label: 'Confidence',
-      value: lowSampleCount ? `${lowSampleCount} low n` : 'CI ok',
-      caption: topDelta == null ? 'baseline pending' : `${formatSignedPct(topDelta)} top score delta`
+      label: '置信度',
+      value: lowSampleCount ? `${lowSampleCount} 小样本` : 'CI 正常',
+      caption: topDelta == null ? '基线待定' : `${formatSignedPct(topDelta)} 最高分差`
     }
   ]
 })
@@ -187,17 +241,17 @@ const summary = computed(() => {
 const boundaryRows = computed(() => {
   if (mode.value === 'model') {
     return [
-      { label: 'Scope', value: 'model' },
-      { label: 'Suite', value: props.benchmark.selectedBenchmarkSuiteLabel.value || '--' },
-      { label: 'Evaluation Set', value: props.benchmark.selectedBenchmarkEvaluationSetId.value || '--' },
-      { label: 'Ranking Unit', value: 'model_id / model_config_hash' }
+      { label: '范围', value: 'scope=model' },
+      { label: '套件', value: props.benchmark.selectedBenchmarkSuiteLabel.value || '--' },
+      { label: '评测集', value: props.benchmark.selectedBenchmarkEvaluationSetId.value || '--' },
+      { label: '排行单位', value: 'model_id / model_config_hash' }
     ]
   }
   return [
-    { label: 'Scope', value: 'role_version' },
-    { label: 'Target Role', value: props.benchmark.selectedRoleLabel.value || '--' },
-    { label: 'Suite', value: props.benchmark.selectedBenchmarkSuiteLabel.value || '--' },
-    { label: 'Evaluation Set', value: props.benchmark.selectedBenchmarkEvaluationSetId.value || '--' }
+    { label: '范围', value: 'scope=role_version' },
+    { label: '目标角色', value: props.benchmark.selectedRoleLabel.value || '--' },
+    { label: '套件', value: props.benchmark.selectedBenchmarkSuiteLabel.value || '--' },
+    { label: '评测集', value: props.benchmark.selectedBenchmarkEvaluationSetId.value || '--' }
   ]
 })
 
@@ -221,13 +275,13 @@ const confidenceRows = computed(() =>
 )
 
 const emptyTitle = computed(() =>
-  mode.value === 'model' ? 'No model benchmark rows' : 'No role-version benchmark rows'
+  mode.value === 'model' ? '暂无模型评测行' : '暂无角色版本评测行'
 )
 
 const emptyCaption = computed(() =>
   mode.value === 'model'
-    ? 'Run a model benchmark suite to populate scope=model leaderboard entries.'
-    : 'Select a role and run a role-version benchmark suite to populate this comparison.'
+    ? '运行模型套件后会生成 scope=model 榜单行。'
+    : '选择角色并运行角色版本套件后会生成比较数据。'
 )
 
 function normalizeRow(row, index, currentMode) {
@@ -267,12 +321,16 @@ function normalizeRow(row, index, currentMode) {
     source: sourceLabel(row?.source),
     scoreValue: score ?? 0,
     winRateValue: winRate ?? 0,
+    fallbackRateValue: numberFrom(percentFromFraction(row?.fallback_rate), percentFromFraction(row?.target_role_fallback_rate)) ?? 0,
+    llmErrorRateValue: numberFrom(percentFromFraction(row?.llm_error_rate)) ?? 0,
+    policyAdjustedRateValue: numberFrom(percentFromFraction(row?.policy_adjusted_rate)) ?? 0,
     deltaValue: hasDelta ? delta : 0,
     hasDelta,
     rankable,
-    rankableLabel: rankable == null ? '--' : (rankable ? 'Rankable' : 'Unrankable'),
+    rankableLabel: rankable == null ? '--' : (rankable ? '可入榜' : '未入榜'),
     rankableReason: String(row?.rankable_reason || row?.reason || row?.gate_reason || '').trim(),
     isBaseline: Boolean(
+      row?.is_reference ||
       row?.is_baseline ||
       row?.isBaseline ||
       String(row?.source || '').toLowerCase() === 'baseline' ||
@@ -284,7 +342,7 @@ function normalizeRow(row, index, currentMode) {
 
 function defaultMetricColumns(currentMode) {
   const keys = currentMode === 'model'
-    ? ['score', 'winRate', 'delta', 'confidence', 'rankable', 'games']
+    ? ['score', 'winRate', 'delta', 'confidence', 'fallback', 'llmError', 'policy', 'rankable', 'games']
     : ['score', 'winRate', 'delta', 'confidence', 'rankable', 'games']
   return metricColumnDefs.value.filter((column) => keys.includes(column.key))
 }
@@ -295,109 +353,55 @@ function isColumnEnabled(key) {
 
 async function saveView() {
   const payload = {
-    name: savedViewName.value || 'Default view',
-    mode: mode.value,
-    rank_filter: rankFilter.value,
-    columns: enabledMetricColumnDefs.value.map((column) => column.key),
-    saved_at: new Date().toISOString()
-  }
-  writeLocalView(payload)
-  savedViewState.value = 'Saved locally'
-  try {
-    if (typeof props.benchmark.saveBenchmarkView === 'function') {
-      await props.benchmark.saveBenchmarkView(serverViewPayload(payload))
-      savedViewState.value = 'Saved'
+    name: savedViewName.value || '默认视图',
+    view_config: {
+      mode: mode.value,
+      rank_filter: rankFilter.value,
+      columns: enabledMetricColumnDefs.value.map((column) => column.key)
     }
+  }
+  savedViewState.value = '保存中'
+  try {
+    if (typeof props.benchmark.saveCurrentBenchmarkView === 'function') {
+      await props.benchmark.saveCurrentBenchmarkView(payload)
+    }
+    savedViewState.value = '已保存'
   } catch {
-    savedViewState.value = 'Saved locally'
+    savedViewState.value = '本地已保存'
   }
   clearSavedViewState()
 }
 
 async function loadSavedView() {
-  const sequence = ++viewLoadSequence
-  const defaults = defaultMetricColumns(mode.value).map((column) => column.key)
-  applySavedViewPayload(readLocalView(), defaults)
-  if (typeof props.benchmark.loadBenchmarkView !== 'function') return
-  try {
-    const serverView = await props.benchmark.loadBenchmarkView(viewStorageKey.value)
-    if (sequence !== viewLoadSequence || !serverView) return
-    applySavedViewPayload(serverView, defaults)
-  } catch {
-    // Local fallback already applied.
+  if (typeof props.benchmark.loadCurrentBenchmarkView === 'function') {
+    await props.benchmark.loadCurrentBenchmarkView(viewStorageKey.value)
   }
 }
 
 async function resetView() {
-  selectedMetricColumns.value = defaultMetricColumns(mode.value).map((column) => column.key)
-  rankFilter.value = 'all'
-  savedViewName.value = 'Default view'
-  const storage = localStorageApi()
-  if (storage) storage.removeItem(viewStorageKey.value)
-  savedViewState.value = 'Reset'
-  if (typeof props.benchmark.deleteBenchmarkView === 'function') {
-    await props.benchmark.deleteBenchmarkView(viewStorageKey.value)
+  savedViewState.value = '已重置'
+  if (typeof props.benchmark.resetCurrentBenchmarkView === 'function') {
+    await props.benchmark.resetCurrentBenchmarkView({
+      mode: mode.value,
+      rank_filter: 'all',
+      columns: defaultMetricColumns(mode.value).map((column) => column.key)
+    })
   }
   clearSavedViewState()
 }
 
+async function selectSavedView(event) {
+  const key = String(event?.target?.value || '').trim()
+  if (!key || key === selectedSavedViewKey.value) return
+  savedViewState.value = '加载中'
+  if (typeof props.benchmark.selectBenchmarkView === 'function') {
+    await props.benchmark.selectBenchmarkView(key)
+  }
+  savedViewState.value = ''
+}
+
 function selectRow(row) {
   selectedRowKey.value = row?.key || ''
-}
-
-function localStorageApi() {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage
-  } catch {
-    return null
-  }
-}
-
-function writeLocalView(payload) {
-  const storage = localStorageApi()
-  if (!storage) return
-  try {
-    storage.setItem(viewStorageKey.value, JSON.stringify(payload))
-  } catch {}
-}
-
-function readLocalView() {
-  const storage = localStorageApi()
-  if (!storage) return null
-  try {
-    return JSON.parse(storage.getItem(viewStorageKey.value) || 'null')
-  } catch {
-    return null
-  }
-}
-
-function serverViewPayload(payload) {
-  return {
-    view_key: viewStorageKey.value,
-    name: payload.name || 'Default view',
-    scope: mode.value,
-    benchmark_id: props.benchmark.selectedBenchmarkId.value || null,
-    evaluation_set_id: props.benchmark.selectedBenchmarkEvaluationSetId.value || null,
-    target_role: mode.value === 'model' ? null : (props.benchmark.selectedRole.value || null),
-    view_config: {
-      mode: payload.mode,
-      rank_filter: payload.rank_filter,
-      columns: payload.columns
-    }
-  }
-}
-
-function applySavedViewPayload(raw, defaults) {
-  const parsed = raw?.view_config && typeof raw.view_config === 'object' ? raw.view_config : raw
-  const validKeys = new Set(metricColumnDefs.value.map((column) => column.key))
-  const columns = Array.isArray(parsed?.columns)
-    ? parsed.columns.filter((key) => validKeys.has(key))
-    : []
-  selectedMetricColumns.value = columns.length ? columns : defaults
-  rankFilter.value = ['all', 'rankable', 'unrankable'].includes(parsed?.rank_filter)
-    ? parsed.rank_filter
-    : 'all'
-  savedViewName.value = String(raw?.name || parsed?.name || 'Default view')
 }
 
 function clearSavedViewState() {
@@ -430,26 +434,26 @@ function modelSecondary(row) {
     row?.provider,
     row?.runtime || row?.runtime_id
   ].map((value) => String(value || '').trim()).filter(Boolean)
-  return parts.length ? parts.join(' / ') : 'model benchmark subject'
+  return parts.length ? parts.join(' / ') : '模型评测对象'
 }
 
 function rolePrimary(row, index) {
-  if (row?.is_baseline) return 'Baseline Version'
+  if (row?.is_baseline) return '基线版本'
   return String(row?.short || row?.version_id || row?.target_version_id || `version-${index + 1}`)
 }
 
 function roleSecondary(row) {
-  return String(row?.version_id || row?.target_version_id || row?.hash || 'role-version subject')
+  return String(row?.version_id || row?.target_version_id || row?.hash || '角色版本对象')
 }
 
 function sourceLabel(source) {
   const labels = {
-    baseline: 'Baseline',
-    evolution: 'Evolution',
-    version: 'Version',
-    candidate: 'Candidate',
-    manual: 'Manual',
-    default_baseline: 'Default'
+    baseline: '基线',
+    evolution: '进化',
+    version: '版本',
+    candidate: '候选',
+    manual: '手动',
+    default_baseline: '默认'
   }
   const key = String(source || '').trim().toLowerCase()
   return labels[key] || (key ? source : '--')
@@ -491,10 +495,10 @@ function confidenceInterval(row) {
 }
 
 function confidenceLabel(row, baseline, { isReference, likelyDifferent, enoughSamples }) {
-  if (isReference) return 'Reference'
-  if (!row?.games) return 'No sample'
-  if (row.games < MIN_CONFIDENT_GAMES || (baseline && baseline.games < MIN_CONFIDENT_GAMES)) return 'Low sample'
-  return likelyDifferent && enoughSamples ? 'Likely different' : 'Inconclusive'
+  if (isReference) return '参考'
+  if (!row?.games) return '无样本'
+  if (row.games < MIN_CONFIDENT_GAMES || (baseline && baseline.games < MIN_CONFIDENT_GAMES)) return '小样本'
+  return likelyDifferent && enoughSamples ? '差异明显' : '未定'
 }
 
 function confidenceTone(row, { isReference, likelyDifferent, enoughSamples }) {
@@ -538,26 +542,26 @@ watch(tableRows, (current) => {
 </script>
 
 <template>
-  <section class="benchmark-comparison-view" aria-label="Benchmark leaderboard comparison">
+  <section class="benchmark-comparison-view" aria-label="评测榜单比较">
     <header class="comparison-header">
       <div>
-        <small>Leaderboard Comparison</small>
-        <h2 v-if="mode === 'model'">Model Benchmark</h2>
-        <h2 v-else>{{ benchmark.selectedRoleLabel.value }} Role-Version Benchmark</h2>
+        <small>榜单比较</small>
+        <h2 v-if="mode === 'model'">模型评测榜单</h2>
+        <h2 v-else>{{ benchmark.selectedRoleLabel.value }} 角色版本榜单</h2>
       </div>
       <span :class="['mode-badge', 'mode-badge--' + mode]">
-        {{ mode === 'model' ? 'scope=model' : 'target_role boundary' }}
+        {{ mode === 'model' ? 'scope=model' : 'target_role 边界' }}
       </span>
     </header>
 
-    <section class="boundary-strip" aria-label="Comparison boundary">
+    <section class="boundary-strip" aria-label="比较边界">
       <span v-for="item in boundaryRows" :key="item.label">
         <small>{{ item.label }}</small>
         <b>{{ item.value }}</b>
       </span>
     </section>
 
-    <section class="metric-summary" aria-label="Metric summary">
+    <section class="metric-summary" aria-label="指标汇总">
       <span v-for="item in summary" :key="item.label">
         <small>{{ item.label }}</small>
         <b>{{ item.value }}</b>
@@ -565,17 +569,17 @@ watch(tableRows, (current) => {
       </span>
     </section>
 
-    <section class="comparison-controls" aria-label="Leaderboard view controls">
+    <section class="comparison-controls" aria-label="榜单视图控制">
       <div class="view-filter">
-        <small>Rank Filter</small>
+        <small>入榜筛选</small>
         <div class="segmented-control">
-          <button type="button" :class="{ active: rankFilter === 'all' }" @click="rankFilter = 'all'">All</button>
-          <button type="button" :class="{ active: rankFilter === 'rankable' }" @click="rankFilter = 'rankable'">Rankable</button>
-          <button type="button" :class="{ active: rankFilter === 'unrankable' }" @click="rankFilter = 'unrankable'">Unrankable</button>
+          <button type="button" :class="{ active: rankFilter === 'all' }" @click="rankFilter = 'all'">全部</button>
+          <button type="button" :class="{ active: rankFilter === 'rankable' }" @click="rankFilter = 'rankable'">可入榜</button>
+          <button type="button" :class="{ active: rankFilter === 'unrankable' }" @click="rankFilter = 'unrankable'">未入榜</button>
         </div>
       </div>
       <div class="metric-toggle-panel">
-        <small>Metric Columns</small>
+        <small>指标列</small>
         <div class="metric-toggle-list">
           <label v-for="column in metricColumnDefs" :key="column.key">
             <input v-model="selectedMetricColumns" type="checkbox" :value="column.key" />
@@ -584,31 +588,41 @@ watch(tableRows, (current) => {
         </div>
       </div>
       <div class="saved-view-panel">
-        <small>Saved View</small>
+        <small>保存视图</small>
         <div>
+          <select :value="selectedSavedViewKey" @change="selectSavedView">
+            <option :value="viewStorageKey">当前边界</option>
+            <option
+              v-for="view in savedViewRows"
+              :key="view.view_key"
+              :value="view.view_key"
+            >
+              {{ view.name }}
+            </option>
+          </select>
           <input v-model.trim="savedViewName" type="text" autocomplete="off" />
-          <button type="button" @click="saveView">Save</button>
-          <button type="button" @click="resetView">Reset</button>
+          <button type="button" @click="saveView">保存</button>
+          <button type="button" @click="resetView">重置</button>
         </div>
-        <em>{{ savedViewState || tableViewSummary }}</em>
+        <em>{{ savedViewState || (viewDirty ? '未保存 / ' : '') + tableViewSummary }}</em>
       </div>
     </section>
 
-    <section v-if="boundaryMismatchRows.length" class="boundary-mismatch-alert" aria-label="Boundary mismatch warning">
-      <b>Boundary mismatch</b>
-      <span>{{ boundaryMismatchRows.length }} rows report a different evaluation set and should not be compared as formal evidence.</span>
+    <section v-if="boundaryMismatchRows.length" class="boundary-mismatch-alert" aria-label="边界不一致警告">
+      <b>边界不一致</b>
+      <span>{{ boundaryMismatchRows.length }} 行使用了不同 Evaluation Set，不应作为正式证据比较。</span>
     </section>
 
-    <section v-if="confidenceRows.length" class="confidence-panel" aria-label="Statistical confidence">
+    <section v-if="confidenceRows.length" class="confidence-panel" aria-label="统计置信度">
       <div class="confidence-title">
-        <span>Statistical Confidence</span>
-        <small>95% CI estimated from win rate and completed games</small>
+        <span>统计置信度</span>
+        <small>基于胜率和完成局数估算 95% CI</small>
       </div>
       <div class="confidence-list">
         <div v-for="row in confidenceRows" :key="'confidence-' + row.key" class="confidence-row">
           <span>
             <b>{{ row.primary }}</b>
-            <small>{{ row.games }} games / {{ formatInterval(row.interval) }} win CI</small>
+            <small>{{ row.games }} 局 / 胜率 CI {{ formatInterval(row.interval) }}</small>
           </span>
           <em :class="'confidence-chip confidence-chip--' + row.confidenceTone">
             {{ row.confidenceLabel }}
@@ -617,17 +631,17 @@ watch(tableRows, (current) => {
       </div>
     </section>
 
-    <section v-if="baselineRow" class="baseline-panel" aria-label="Baseline comparison">
+    <section v-if="baselineRow" class="baseline-panel" aria-label="基线比较">
       <div class="baseline-pin">
-        <small>{{ baselineRow.isBaseline ? 'Pinned Baseline' : 'Reference Baseline' }}</small>
+        <small>{{ baselineRow.isBaseline ? '固定基线' : '参考基线' }}</small>
         <strong>{{ baselineRow.primary }}</strong>
         <span>{{ baselineRow.secondary }}</span>
-        <b>{{ formatPct(baselineRow.scoreValue) }} score / {{ formatPct(baselineRow.winRateValue) }} win</b>
+        <b>{{ formatPct(baselineRow.scoreValue) }} 分 / {{ formatPct(baselineRow.winRateValue) }} 胜率</b>
       </div>
       <div class="delta-panel">
         <div class="delta-panel-title">
-          <span>Relative Delta</span>
-          <small>{{ baselineDeltaRows.length ? 'score delta vs pinned baseline' : 'no candidate delta yet' }}</small>
+          <span>相对差值</span>
+          <small>{{ baselineDeltaRows.length ? '相对固定基线的分差' : '暂无候选差值' }}</small>
         </div>
         <div v-if="baselineDeltaRows.length" class="delta-list">
           <div v-for="row in baselineDeltaRows" :key="'delta-' + row.key" class="delta-row">
@@ -638,7 +652,7 @@ watch(tableRows, (current) => {
             <span :class="row.direction">{{ formatSignedPct(row.relativeScoreDelta) }}</span>
           </div>
         </div>
-        <div v-else class="compact-empty">Need at least two rows for relative comparison.</div>
+        <div v-else class="compact-empty">至少需要两行才能比较相对差值。</div>
       </div>
     </section>
 
@@ -646,12 +660,12 @@ watch(tableRows, (current) => {
       <div :class="['comparison-table', 'comparison-table--' + mode]">
         <div class="comparison-row comparison-row--header" :style="comparisonGridStyle">
           <template v-if="mode === 'model'">
-            <span>Model</span>
-            <span>Config Hash</span>
+            <span>模型</span>
+            <span>配置 Hash</span>
           </template>
           <template v-else>
-            <span>Version</span>
-            <span>Source</span>
+            <span>版本</span>
+            <span>来源</span>
           </template>
           <span v-for="column in enabledMetricColumnDefs" :key="'head-' + column.key">
             {{ column.label }}
@@ -688,6 +702,9 @@ watch(tableRows, (current) => {
               {{ formatSignedPct(row.relativeScoreDelta) }}
             </span>
             <span v-if="isColumnEnabled('confidence')" class="ci-cell">{{ formatInterval(row.interval) }}</span>
+            <span v-if="isColumnEnabled('fallback')">{{ formatPct(row.fallbackRateValue) }}</span>
+            <span v-if="isColumnEnabled('llmError')">{{ formatPct(row.llmErrorRateValue) }}</span>
+            <span v-if="isColumnEnabled('policy')">{{ formatPct(row.policyAdjustedRateValue) }}</span>
             <span v-if="isColumnEnabled('rankable')">
               <b :class="['rankable-chip', { off: row.rankable === false, unknown: row.rankable == null }]">
                 {{ row.rankableLabel }}
@@ -714,7 +731,7 @@ watch(tableRows, (current) => {
             </span>
             <span v-if="isColumnEnabled('rankable')">
               <b :class="['baseline-chip', { on: row.isBaseline }]">
-                {{ row.isBaseline ? 'Baseline' : 'Candidate' }}
+                {{ row.isBaseline ? '基线' : '候选' }}
               </b>
             </span>
             <span v-if="isColumnEnabled('games')">{{ row.games }}</span>
@@ -728,76 +745,91 @@ watch(tableRows, (current) => {
       <span>{{ emptyCaption }}</span>
     </section>
 
-    <section v-if="selectedLeaderboardRow" class="row-detail-panel" aria-label="Leaderboard row detail">
+    <section v-if="selectedLeaderboardRow" class="row-detail-panel" aria-label="榜单行详情">
       <div class="row-detail-heading">
         <span>
-          <small>Row Detail</small>
+          <small>行详情</small>
           <b>{{ selectedLeaderboardRow.primary }}</b>
         </span>
         <em>{{ selectedLeaderboardRow.rankableLabel }}</em>
       </div>
       <dl>
         <div>
-          <dt>{{ mode === 'model' ? 'Config Hash' : 'Subject' }}</dt>
+          <dt>{{ mode === 'model' ? '配置 Hash' : '对象' }}</dt>
           <dd>{{ mode === 'model' ? selectedLeaderboardRow.modelConfigHash : selectedLeaderboardRow.secondary }}</dd>
         </div>
         <div>
-          <dt>Score Delta</dt>
+          <dt>分差</dt>
           <dd :class="selectedLeaderboardRow.relativeScoreDelta >= 0 ? 'positive' : 'negative'">
             {{ formatSignedPct(selectedLeaderboardRow.relativeScoreDelta) }}
           </dd>
         </div>
         <div>
-          <dt>Win CI</dt>
+          <dt>胜率 CI</dt>
           <dd>{{ formatInterval(selectedLeaderboardRow.interval) }}</dd>
         </div>
         <div>
-          <dt>Games</dt>
+          <dt>局数</dt>
           <dd>{{ selectedLeaderboardRow.games }}</dd>
+        </div>
+        <div v-if="mode === 'model'">
+          <dt>Fallback 率</dt>
+          <dd>{{ formatPct(selectedLeaderboardRow.fallbackRateValue) }}</dd>
+        </div>
+        <div v-if="mode === 'model'">
+          <dt>LLM 错误</dt>
+          <dd>{{ formatPct(selectedLeaderboardRow.llmErrorRateValue) }}</dd>
+        </div>
+        <div v-if="mode === 'model'">
+          <dt>策略修正</dt>
+          <dd>{{ formatPct(selectedLeaderboardRow.policyAdjustedRateValue) }}</dd>
         </div>
       </dl>
       <p>
-        {{ selectedLeaderboardRow.rankableReason || (selectedLeaderboardRow.rankable === false ? 'Unrankable without a reported reason.' : 'No gate failure reported for this row.') }}
+        {{ selectedLeaderboardRow.rankableReason || (selectedLeaderboardRow.rankable === false ? '未入榜，但后端未返回原因。' : '该行未报告门禁失败。') }}
       </p>
     </section>
 
-    <section class="unrankable-panel" aria-label="Unrankable entries">
+    <section class="unrankable-panel" aria-label="未入榜条目">
       <div class="unrankable-title">
-        <span>Unrankable</span>
-        <small>{{ unrankableRows.length }} rows excluded from formal ranking</small>
+        <span>未入榜</span>
+        <small>{{ unrankableRows.length }} 行被排除在正式排名外</small>
       </div>
       <div v-if="unrankableRows.length" class="unrankable-list">
         <div v-for="row in unrankableRows" :key="'unrankable-' + row.key" class="unrankable-row">
           <b>{{ row.primary }}</b>
-          <span>{{ row.rankableReason || 'rankable=false without reason' }}</span>
+          <span>{{ row.rankableReason || 'rankable=false，但未返回原因' }}</span>
           <em>{{ formatPct(row.scoreValue) }}</em>
         </div>
       </div>
-      <div v-else class="compact-empty">No explicit unrankable rows in the current leaderboard payload.</div>
+      <div v-else class="compact-empty">当前榜单数据没有明确的未入榜行。</div>
     </section>
   </section>
 </template>
 
 <style scoped>
 .benchmark-comparison-view {
-  --comparison-bg: #f6f8f7;
-  --comparison-panel: #ffffff;
-  --comparison-panel-soft: #eef2f0;
-  --comparison-line: #d8dedb;
-  --comparison-line-strong: #aebbb5;
-  --comparison-text: #1f2a27;
-  --comparison-muted: #66736d;
-  --comparison-green: #24704d;
-  --comparison-blue: #256b8f;
-  --comparison-red: #a13d36;
-  --comparison-amber: #8b641f;
+  --comparison-bg: #f8f0e0;
+  --comparison-panel: rgba(255, 252, 245, 0.82);
+  --comparison-panel-solid: #fffaf0;
+  --comparison-panel-soft: rgba(255, 242, 210, 0.58);
+  --comparison-line: rgba(139, 94, 52, 0.18);
+  --comparison-line-strong: rgba(90, 51, 25, 0.34);
+  --comparison-text: #3a2a18;
+  --comparison-muted: #8b6b4a;
+  --comparison-green: #8b5e34;
+  --comparison-blue: #6d4a2a;
+  --comparison-red: #993026;
+  --comparison-amber: #9a6518;
   display: grid;
   gap: 10px;
   min-width: 980px;
   padding: 12px;
   border: 1px solid var(--comparison-line);
   border-radius: 8px;
-  background: var(--comparison-bg);
+  background:
+    linear-gradient(135deg, rgba(255, 252, 245, 0.72), rgba(235, 199, 136, 0.2)),
+    var(--comparison-bg);
   color: var(--comparison-text);
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
 }
@@ -857,7 +889,7 @@ watch(tableRows, (current) => {
   border: 1px solid var(--comparison-line-strong);
   border-radius: 6px;
   background: var(--comparison-panel-soft);
-  color: #30413b;
+  color: var(--comparison-text);
   font-size: 12px;
   font-weight: 900;
 }
@@ -973,9 +1005,9 @@ watch(tableRows, (current) => {
 .saved-view-panel button {
   min-height: 28px;
   padding: 0 9px;
-  border: 1px solid #cfd8d4;
+  border: 1px solid var(--comparison-line);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--comparison-panel-solid);
   color: var(--comparison-text);
   font-size: 11px;
   font-weight: 900;
@@ -984,7 +1016,7 @@ watch(tableRows, (current) => {
 
 .segmented-control button.active {
   border-color: var(--comparison-green);
-  background: rgba(36, 112, 77, 0.08);
+  background: rgba(139, 94, 52, 0.12);
   color: var(--comparison-green);
 }
 
@@ -994,9 +1026,9 @@ watch(tableRows, (current) => {
   gap: 5px;
   min-height: 28px;
   padding: 0 8px;
-  border: 1px solid #dbe3df;
+  border: 1px solid var(--comparison-line);
   border-radius: 6px;
-  background: #f9fbfa;
+  background: rgba(255, 250, 240, 0.82);
   color: var(--comparison-text);
   font-size: 11px;
   font-weight: 850;
@@ -1009,17 +1041,22 @@ watch(tableRows, (current) => {
   accent-color: var(--comparison-green);
 }
 
-.saved-view-panel input {
+.saved-view-panel input,
+.saved-view-panel select {
   width: 132px;
   height: 28px;
   min-width: 0;
   padding: 0 8px;
-  border: 1px solid #cfd8d4;
+  border: 1px solid var(--comparison-line);
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--comparison-panel-solid);
   color: var(--comparison-text);
   font-size: 11px;
   font-weight: 850;
+}
+
+.saved-view-panel select {
+  width: 158px;
 }
 
 .saved-view-panel em {
@@ -1039,8 +1076,8 @@ watch(tableRows, (current) => {
   gap: 10px;
   align-items: center;
   padding: 9px 12px;
-  border-color: rgba(161, 61, 54, 0.28);
-  background: rgba(161, 61, 54, 0.06);
+  border-color: rgba(153, 48, 38, 0.26);
+  background: rgba(153, 48, 38, 0.06);
 }
 
 .boundary-mismatch-alert b,
@@ -1089,9 +1126,9 @@ watch(tableRows, (current) => {
   gap: 10px;
   min-height: 38px;
   padding: 7px 9px;
-  border: 1px solid #dde5e1;
+  border: 1px solid var(--comparison-line);
   border-radius: 6px;
-  background: #f9fbfa;
+  background: rgba(255, 250, 240, 0.68);
 }
 
 .confidence-row span {
@@ -1135,7 +1172,7 @@ watch(tableRows, (current) => {
   padding: 14px;
   border-left: 4px solid var(--comparison-amber);
   border-right: 1px solid var(--comparison-line);
-  background: #fbfaf5;
+  background: rgba(255, 245, 221, 0.78);
 }
 
 .baseline-pin strong {
@@ -1207,7 +1244,7 @@ watch(tableRows, (current) => {
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e3e8e5;
+  background: rgba(139, 94, 52, 0.16);
 }
 
 .delta-row i b {
@@ -1246,7 +1283,7 @@ watch(tableRows, (current) => {
   gap: 10px;
   min-height: 42px;
   padding: 7px 9px;
-  border-bottom: 1px solid rgba(216, 222, 219, 0.76);
+  border-bottom: 1px solid var(--comparison-line);
   border-radius: 5px;
 }
 
@@ -1255,7 +1292,7 @@ watch(tableRows, (current) => {
 }
 
 .comparison-row:not(.comparison-row--header):hover {
-  background: #f8faf9;
+  background: rgba(139, 94, 52, 0.07);
   cursor: pointer;
 }
 
@@ -1268,18 +1305,18 @@ watch(tableRows, (current) => {
 }
 
 .comparison-row--baseline {
-  background: #fbfaf5;
+  background: rgba(255, 245, 221, 0.78);
   box-shadow: inset 3px 0 0 var(--comparison-amber);
 }
 
 .comparison-row--unrankable {
   color: var(--comparison-muted);
-  background: #f7f7f6;
+  background: rgba(255, 252, 245, 0.48);
 }
 
 .comparison-row--selected {
-  outline: 2px solid rgba(36, 112, 77, 0.28);
-  background: #eef7f3;
+  outline: 2px solid rgba(139, 94, 52, 0.28);
+  background: rgba(255, 226, 157, 0.32);
 }
 
 .comparison-row span {
@@ -1320,17 +1357,17 @@ watch(tableRows, (current) => {
   align-items: center;
   min-height: 22px;
   padding: 0 7px;
-  border: 1px solid rgba(36, 112, 77, 0.32);
+  border: 1px solid rgba(139, 94, 52, 0.32);
   border-radius: 5px;
-  background: rgba(36, 112, 77, 0.08);
+  background: rgba(139, 94, 52, 0.1);
   color: var(--comparison-green);
   font-size: 11px;
   font-weight: 900;
 }
 
 .rankable-chip.off {
-  border-color: rgba(161, 61, 54, 0.3);
-  background: rgba(161, 61, 54, 0.07);
+  border-color: rgba(153, 48, 38, 0.3);
+  background: rgba(153, 48, 38, 0.07);
   color: var(--comparison-red);
 }
 
@@ -1338,13 +1375,13 @@ watch(tableRows, (current) => {
 .baseline-chip {
   border-color: var(--comparison-line);
   background: var(--comparison-panel-soft);
-  color: #43524d;
+  color: var(--comparison-muted);
 }
 
 .confidence-chip {
   border-color: var(--comparison-line);
   background: var(--comparison-panel-soft);
-  color: #43524d;
+  color: var(--comparison-muted);
   white-space: nowrap;
 }
 
@@ -1355,8 +1392,8 @@ watch(tableRows, (current) => {
 }
 
 .confidence-chip--strong {
-  border-color: rgba(36, 112, 77, 0.32);
-  background: rgba(36, 112, 77, 0.08);
+  border-color: rgba(139, 94, 52, 0.32);
+  background: rgba(139, 94, 52, 0.1);
   color: var(--comparison-green);
 }
 
@@ -1367,8 +1404,8 @@ watch(tableRows, (current) => {
 }
 
 .confidence-chip--muted {
-  border-color: #d6dfda;
-  background: #f4f7f6;
+  border-color: var(--comparison-line);
+  background: rgba(255, 252, 245, 0.54);
   color: var(--comparison-muted);
 }
 
@@ -1412,9 +1449,9 @@ watch(tableRows, (current) => {
 
 .row-detail-heading em {
   padding: 4px 8px;
-  border: 1px solid #d6dfda;
+  border: 1px solid var(--comparison-line);
   border-radius: 999px;
-  background: #f4f7f6;
+  background: rgba(255, 250, 240, 0.72);
   color: var(--comparison-text);
   font-size: 11px;
   font-style: normal;
@@ -1433,9 +1470,9 @@ watch(tableRows, (current) => {
   gap: 3px;
   min-width: 0;
   padding: 8px 9px;
-  border: 1px solid #dbe3df;
+  border: 1px solid var(--comparison-line);
   border-radius: 7px;
-  background: #f9fbfa;
+  background: rgba(255, 250, 240, 0.68);
 }
 
 .row-detail-panel dd {
@@ -1481,9 +1518,9 @@ watch(tableRows, (current) => {
   align-items: center;
   min-height: 32px;
   padding: 7px 8px;
-  border: 1px solid rgba(161, 61, 54, 0.16);
+  border: 1px solid rgba(153, 48, 38, 0.16);
   border-radius: 6px;
-  background: rgba(161, 61, 54, 0.04);
+  background: rgba(153, 48, 38, 0.04);
 }
 
 .unrankable-row b {
@@ -1533,7 +1570,7 @@ watch(tableRows, (current) => {
   padding: 8px 10px;
   border: 1px dashed var(--comparison-line);
   border-radius: 6px;
-  background: #fbfcfb;
+  background: rgba(255, 250, 240, 0.68);
 }
 
 .positive {

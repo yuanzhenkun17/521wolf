@@ -14,19 +14,31 @@ const isModel = computed(() => props.benchmark.selectedBenchmarkIsModelSuite.val
 const selectedRoleLabel = computed(() => props.benchmark.selectedRoleLabel.value)
 const selectedTargetVersion = computed(() => props.benchmark.selectedRoleTargetVersion.value || null)
 const selectedTargetBlockedReason = computed(() => props.benchmark.selectedRoleTargetVersionBlockedReason.value || '')
-const targetModeLabel = computed(() => isModel.value ? 'Model Benchmark' : 'Role-Version Benchmark')
+const targetModeLabel = computed(() => isModel.value ? '模型评测' : '角色版本评测')
 const subjectLabel = computed(() => {
   if (isModel.value) return props.benchmark.form.value.model_id || '当前后端模型'
   if (!props.benchmark.form.value.target_version_id) return '当前基线版本'
   return selectedTargetVersion.value?.short || props.benchmark.form.value.target_version_id
 })
 
+const versionStageLabels = {
+  baseline: '基线',
+  canary: 'Canary',
+  shadow: 'Shadow',
+  draft: '草稿',
+  released: '已发布',
+  production: '生产',
+  deprecated: '废弃'
+}
+
 function versionStageClass(version) {
   return String(version?.release_stage || version?.releaseStage || 'unknown').trim().toLowerCase() || 'unknown'
 }
 
 function versionStageLabel(version) {
-  return version?.releaseStageLabel || version?.release_stage || version?.releaseStage || '未标记'
+  const stage = String(version?.release_stage || version?.releaseStage || '').trim().toLowerCase()
+  const explicit = String(version?.releaseStageLabel || '').trim()
+  return versionStageLabels[stage] || versionStageLabels[explicit.toLowerCase()] || explicit || version?.release_stage || version?.releaseStage || '未标记'
 }
 
 function versionOptionText(version) {
@@ -41,10 +53,10 @@ function versionOptionText(version) {
 </script>
 
 <template>
-  <article class="benchmark-target-selector" aria-label="Benchmark target selector">
+  <article class="benchmark-target-selector" aria-label="评测目标选择器">
     <header>
       <div>
-        <small>Target</small>
+        <small>被测对象</small>
         <h2>{{ targetModeLabel }}</h2>
       </div>
       <b>{{ subjectLabel }}</b>
@@ -70,12 +82,12 @@ function versionOptionText(version) {
         />
       </label>
       <p class="target-note">
-        Model benchmark 比较的是 model/runtime config，启动 payload 不携带 roles 或 target_versions。
+        模型评测比较 model/runtime config；启动 payload 不携带 roles 或 target_versions。
       </p>
     </section>
 
     <section v-else class="target-fields target-fields--role">
-      <div class="role-target-list" aria-label="Role selector">
+      <div class="role-target-list" aria-label="角色选择器">
         <button
           v-for="role in roleRows"
           :key="role.key"
@@ -88,7 +100,7 @@ function versionOptionText(version) {
         </button>
       </div>
       <label class="target-version-field">
-        <span>Target Version</span>
+        <span>目标版本</span>
         <select
           v-model.trim="benchmark.form.value.target_version_id"
           :aria-invalid="selectedTargetBlockedReason ? 'true' : 'false'"
@@ -104,7 +116,7 @@ function versionOptionText(version) {
           </option>
         </select>
       </label>
-      <div v-if="roleVersionRows.length" class="target-version-list" aria-label="Version release stages">
+      <div v-if="roleVersionRows.length" class="target-version-list" aria-label="版本发布阶段">
         <button
           v-for="version in roleVersionRows"
           :key="'version-row-' + version.version_id"
@@ -116,7 +128,7 @@ function versionOptionText(version) {
           @click="benchmark.form.value.target_version_id = version.version_id"
         >
           <b>{{ version.short || version.version_id }}</b>
-          <span>{{ version.is_baseline ? 'baseline' : versionStageLabel(version) }}</span>
+          <span>{{ version.is_baseline ? '基线' : versionStageLabel(version) }}</span>
         </button>
       </div>
       <p v-if="selectedTargetBlockedReason" class="target-warning" role="status">
@@ -126,7 +138,7 @@ function versionOptionText(version) {
         暂无可列出的版本，启动时将使用当前基线。
       </p>
       <p class="target-note">
-        Role-version benchmark 只比较当前角色的目标版本；baseline 与 canary 可评测，shadow 需先晋升 canary。
+        角色版本评测只比较当前角色的目标版本；baseline 与 canary 可评测，shadow 需先晋升 canary。
       </p>
     </section>
   </article>
@@ -134,12 +146,20 @@ function versionOptionText(version) {
 
 <style scoped>
 .benchmark-target-selector {
+  --target-bg: #f8f0e0;
+  --target-surface: rgba(255, 252, 245, 0.7);
+  --target-border: rgba(139, 94, 52, 0.15);
+  --target-text: #3a2a18;
+  --target-muted: #8b6b4a;
+  --target-accent: #5a3319;
+  --target-soft: rgba(139, 94, 52, 0.08);
+  --target-soft-strong: rgba(90, 51, 25, 0.12);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
-  border: 1px solid var(--bench-border);
+  border: 1px solid var(--target-border);
   border-radius: 8px;
-  background: var(--bench-surface);
+  background: var(--target-bg);
   overflow: hidden;
 }
 
@@ -150,8 +170,8 @@ function versionOptionText(version) {
   gap: 12px;
   min-height: 52px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--bench-border);
-  background: #ffffff;
+  border-bottom: 1px solid var(--target-border);
+  background: var(--target-surface);
 }
 
 .benchmark-target-selector h2,
@@ -162,14 +182,14 @@ function versionOptionText(version) {
 .benchmark-target-selector small,
 .target-fields label span,
 .target-note {
-  color: var(--bench-text-secondary);
+  color: var(--target-muted);
   font-size: 11px;
   font-weight: 800;
 }
 
 .benchmark-target-selector h2 {
   margin-top: 2px;
-  color: var(--bench-text);
+  color: var(--target-text);
   font-size: 15px;
   font-weight: 900;
 }
@@ -178,10 +198,10 @@ function versionOptionText(version) {
   max-width: 220px;
   overflow: hidden;
   padding: 3px 8px;
-  border: 1px solid var(--bench-border);
+  border: 1px solid var(--target-border);
   border-radius: 6px;
-  background: #f7f8f8;
-  color: var(--bench-text);
+  background: var(--target-soft);
+  color: var(--target-text);
   font-size: 12px;
   font-weight: 900;
   text-overflow: ellipsis;
@@ -210,10 +230,10 @@ function versionOptionText(version) {
   height: 34px;
   min-width: 0;
   padding: 0 10px;
-  border: 1px solid var(--bench-input-border);
+  border: 1px solid var(--target-border);
   border-radius: 6px;
-  background: var(--bench-input-bg);
-  color: var(--bench-text);
+  background: var(--target-surface);
+  color: var(--target-text);
   font-size: 13px;
   font-weight: 800;
 }
@@ -224,24 +244,24 @@ function versionOptionText(version) {
   height: 34px;
   min-width: 0;
   padding: 0 10px;
-  border: 1px solid var(--bench-input-border);
+  border: 1px solid var(--target-border);
   border-radius: 6px;
-  background: var(--bench-input-bg);
-  color: var(--bench-text);
+  background: var(--target-surface);
+  color: var(--target-text);
   font-size: 13px;
   font-weight: 800;
 }
 
 .target-fields input:focus,
 .target-fields select:focus {
-  border-color: #1f6f54;
+  border-color: var(--target-accent);
   outline: none;
-  box-shadow: 0 0 0 2px rgba(31, 111, 84, 0.12);
+  box-shadow: 0 0 0 2px rgba(139, 94, 52, 0.12);
 }
 
 .target-fields select[aria-invalid='true'] {
-  border-color: var(--bench-danger);
-  box-shadow: 0 0 0 2px rgba(161, 61, 54, 0.12);
+  border-color: var(--target-accent);
+  box-shadow: 0 0 0 2px rgba(90, 51, 25, 0.12);
 }
 
 .target-note {
@@ -262,23 +282,23 @@ function versionOptionText(version) {
   gap: 6px;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--bench-input-border);
+  border: 1px solid var(--target-border);
   border-radius: 6px;
-  background: #ffffff;
-  color: var(--bench-text);
+  background: var(--target-surface);
+  color: var(--target-text);
   font-size: 12px;
   font-weight: 900;
   cursor: pointer;
 }
 
 .role-target-chip:hover {
-  border-color: #1f6f54;
+  border-color: var(--target-accent);
 }
 
 .role-target-chip.selected {
-  border-color: #1f6f54;
-  background: #e6f2ee;
-  box-shadow: inset 0 0 0 1px #1f6f54;
+  border-color: var(--target-accent);
+  background: var(--target-soft-strong);
+  box-shadow: inset 0 0 0 1px var(--target-accent);
 }
 
 .role-target-chip img {
@@ -306,10 +326,10 @@ function versionOptionText(version) {
   max-width: 100%;
   height: 30px;
   padding: 0 8px;
-  border: 1px solid var(--bench-input-border);
+  border: 1px solid var(--target-border);
   border-radius: 6px;
-  background: #ffffff;
-  color: var(--bench-text);
+  background: var(--target-surface);
+  color: var(--target-text);
   font-size: 11px;
   font-weight: 900;
   cursor: pointer;
@@ -328,25 +348,25 @@ function versionOptionText(version) {
 }
 
 .target-version-chip span {
-  color: var(--bench-text-secondary);
+  color: var(--target-muted);
 }
 
 .target-version-chip.baseline,
 .target-version-chip.selected {
-  border-color: #1f6f54;
-  background: #e6f2ee;
+  border-color: var(--target-accent);
+  background: var(--target-soft-strong);
 }
 
 .target-version-chip.canary {
-  border-color: rgba(37, 107, 143, 0.34);
-  background: rgba(226, 240, 248, 0.92);
+  border-color: rgba(90, 51, 25, 0.32);
+  background: rgba(255, 252, 245, 0.7);
 }
 
 .target-version-chip.shadow,
 .target-version-chip.disabled {
-  border-color: rgba(102, 115, 109, 0.22);
-  background: #f2f5f3;
-  color: rgba(31, 42, 39, 0.54);
+  border-color: rgba(139, 94, 52, 0.15);
+  background: rgba(139, 94, 52, 0.08);
+  color: rgba(58, 42, 24, 0.54);
   cursor: not-allowed;
 }
 
@@ -354,18 +374,18 @@ function versionOptionText(version) {
   grid-column: 1 / -1;
   margin: 0;
   padding: 7px 9px;
-  border: 1px solid rgba(161, 61, 54, 0.18);
+  border: 1px solid rgba(90, 51, 25, 0.24);
   border-radius: 6px;
-  background: rgba(161, 61, 54, 0.08);
-  color: var(--bench-danger);
+  background: rgba(90, 51, 25, 0.08);
+  color: var(--target-accent);
   font-size: 12px;
   font-weight: 800;
   line-height: 1.35;
 }
 
 .target-warning.neutral {
-  border-color: rgba(102, 115, 109, 0.18);
-  background: rgba(102, 115, 109, 0.08);
-  color: var(--bench-text-secondary);
+  border-color: var(--target-border);
+  background: var(--target-soft);
+  color: var(--target-muted);
 }
 </style>

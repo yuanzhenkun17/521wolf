@@ -78,8 +78,8 @@ const MOCK_BENCHMARK_SUITES = [
   {
     id: 'role-baseline-quick-v1',
     version: 1,
-    name: 'Role Baseline Quick',
-    description: 'Low-cost fixed-seed role-version benchmark',
+    name: '角色基线快速',
+    description: '固定种子的低成本角色版本评测',
     target_type: 'role_version',
     roles: MOCK_EVOLUTION_ROLES.slice(),
     game_count: 3,
@@ -89,13 +89,25 @@ const MOCK_BENCHMARK_SUITES = [
     seed_count: 3,
     seed_preview: [260600, 260601, 260602],
     cost_tier: 'smoke',
-    evaluation_set_id: 'role-baseline-quick-v1@v1'
+    evaluation_set_id: 'role-baseline-quick-v1@v1',
+    last_run: {
+      batch_id: 'bench-role-quick-20260609',
+      status: 'completed',
+      current_stage: 'completed',
+      target_type: 'role_version',
+      started_at: '2026-06-09T09:12:00+08:00',
+      finished_at: '2026-06-09T09:18:00+08:00',
+      last_heartbeat_at: '2026-06-09T09:18:00+08:00',
+      role_count: 7,
+      result_count: 7,
+      diagnostic_count: 1
+    }
   },
   {
     id: 'role-baseline-standard-v1',
     version: 1,
-    name: 'Role Baseline Standard',
-    description: 'Standard fixed-seed role-version leaderboard benchmark',
+    name: '角色基线标准',
+    description: '固定种子的标准角色版本排行榜评测',
     target_type: 'role_version',
     roles: MOCK_EVOLUTION_ROLES.slice(),
     game_count: 30,
@@ -105,13 +117,39 @@ const MOCK_BENCHMARK_SUITES = [
     seed_count: 30,
     seed_preview: [261000, 261001, 261002, 261003, 261004],
     cost_tier: 'standard',
-    evaluation_set_id: 'role-baseline-standard-v1@v1'
+    evaluation_set_id: 'role-baseline-standard-v1@v1',
+    last_run: {
+      batch_id: 'bench-role-standard-20260609',
+      status: 'running',
+      current_stage: 'judge_decisions',
+      target_type: 'role_version',
+      started_at: '2026-06-09T10:40:00+08:00',
+      last_heartbeat_at: '2026-06-09T10:54:00+08:00',
+      role_count: 7,
+      result_count: 4,
+      diagnostic_count: 3
+    },
+    latest_snapshot: {
+      kind: 'benchmark_leaderboard_snapshot',
+      schema_version: 1,
+      snapshot_id: 'snap-role-standard-20260608',
+      title: '角色标准发布 2026-06-08',
+      scope: 'role_version',
+      benchmark_id: 'role-baseline-standard-v1',
+      benchmark_version: 1,
+      evaluation_set_id: 'role-baseline-standard-v1@v1',
+      seed_set_id: 'role-baseline-standard-202606',
+      target_role: '',
+      row_count: 14,
+      content_hash: 'sha256:9a7c4b2e91d03b6e0d0f1b7a4c8a6f2e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0',
+      created_at: '2026-06-08T21:00:00+08:00'
+    }
   },
   {
     id: 'model-baseline-standard-v1',
     version: 1,
-    name: 'Model Baseline Standard',
-    description: 'Fixed-seed full-role benchmark for model/runtime comparison',
+    name: '模型基线标准',
+    description: '固定种子的全角色模型/运行时比较评测',
     target_type: 'model',
     roles: MOCK_EVOLUTION_ROLES.slice(),
     game_count: 30,
@@ -121,7 +159,33 @@ const MOCK_BENCHMARK_SUITES = [
     seed_count: 30,
     seed_preview: [271000, 271001, 271002, 271003, 271004],
     cost_tier: 'release',
-    evaluation_set_id: 'model-baseline-standard-v1@v1'
+    evaluation_set_id: 'model-baseline-standard-v1@v1',
+    last_run: {
+      batch_id: 'bench-model-release-20260609',
+      status: 'failed',
+      current_stage: 'runtime',
+      target_type: 'model',
+      started_at: '2026-06-09T08:00:00+08:00',
+      finished_at: '2026-06-09T08:42:00+08:00',
+      last_heartbeat_at: '2026-06-09T08:42:00+08:00',
+      role_count: 7,
+      result_count: 1,
+      diagnostic_count: 5
+    },
+    latest_snapshot: {
+      kind: 'benchmark_leaderboard_snapshot',
+      schema_version: 1,
+      snapshot_id: 'snap-model-standard-20260608',
+      title: '模型标准发布 2026-06-08',
+      scope: 'model',
+      benchmark_id: 'model-baseline-standard-v1',
+      benchmark_version: 1,
+      evaluation_set_id: 'model-baseline-standard-v1@v1',
+      seed_set_id: 'model-baseline-standard-202606',
+      row_count: 2,
+      content_hash: 'sha256:7fd1a0319b88c4e182ebad4e8db7afc977af530921227ba504891db36f6aa2ef',
+      created_at: '2026-06-08T22:20:00+08:00'
+    }
   }
 ]
 
@@ -282,14 +346,14 @@ const mockBenchmarkBatches = [
       },
       fairness: { is_fair: true, reason: 'mock' },
       rankable: false,
-      rankable_reason: 'leaderboard gate failed: valid game rate below threshold',
+      rankable_reason: '排行榜门禁未通过：有效对局率低于阈值',
       diagnostics: [
         {
           kind: 'leaderboard_gate_failed',
           level: 'warning',
           origin: 'gate',
           stage: 'rankable',
-          message: 'leaderboard gate failed: valid game rate below threshold',
+          message: '排行榜门禁未通过：有效对局率低于阈值',
           target_role: MOCK_DEFAULT_BENCHMARK_ROLE,
           result_batch_id: MOCK_DEFAULT_BENCHMARK_RESULT_ID,
           game_id: `${MOCK_DEFAULT_BENCHMARK_BATCH_ID}-game-002`,
@@ -2368,20 +2432,20 @@ function mockBenchmarkReplayGame(gameId) {
   const scenario = match.row.status === 'failed' ? 'wolf_win' : 'good_win'
   const game = buildCompletedMockGame(Number.isFinite(seed) ? Math.abs(seed) % 9 : 0, scenario)
   game.game_id = match.row.history_game_id || match.row.game_id
-  game.log_name = `Benchmark replay · ${match.row.game_id}`
+  game.log_name = `评测回放 · ${match.row.game_id}`
   game.source = 'benchmark'
   game.log_source = 'benchmark'
   game.log_source_label = '批量评测'
   game.source_run_id = match.batch.batch_id
   game.source_phase = 'benchmark'
-  game.source_phase_label = 'Benchmark Run'
+  game.source_phase_label = '评测运行'
   game.comparison_group_id = match.row.result_batch_id
   game.evidence_source = {
     log_source: 'benchmark',
     log_source_label: '批量评测',
     source_run_id: match.batch.batch_id,
     source_phase: 'benchmark',
-    source_phase_label: 'Benchmark Run',
+    source_phase_label: '评测运行',
     seed: match.row.seed
   }
   game.mode = 'watch'
@@ -2392,7 +2456,7 @@ function mockBenchmarkReplayGame(gameId) {
     log_source_label: '批量评测',
     source_run_id: match.batch.batch_id,
     source_phase: 'benchmark',
-    source_phase_label: 'Benchmark Run',
+    source_phase_label: '评测运行',
     batch_id: match.batch.batch_id,
     result_batch_id: match.row.result_batch_id,
     benchmark_id: match.batch.benchmark?.id || '',
@@ -2875,12 +2939,308 @@ function mockBenchmarkLeaderboardRows({ scope = 'role_version', evaluationSetId 
   }))
 }
 
+function mockLeaderboardCompare(queryString = '') {
+  const query = new URLSearchParams(queryString)
+  const scope = query.get('scope') || 'role_version'
+  const evaluationSetId = query.get('evaluation_set_id') || ''
+  const targetRole = query.get('target_role') || ''
+  const baselineSubjectId = query.get('baseline_subject_id') || ''
+  const rows = mockBenchmarkLeaderboardRows({ scope, evaluationSetId, targetRole })
+  const baseline = rows.find((row) =>
+    baselineSubjectId &&
+    [row.subject_id, row.hash, row.model_config_hash, row.target_version_id, row.model_id].includes(baselineSubjectId)
+  ) || rows.find((row) => row.is_baseline) || rows.find((row) => row.rankable !== false) || rows[0] || null
+  const baselineKey = baseline?.subject_id || baseline?.hash || baseline?.model_config_hash || baseline?.target_version_id || null
+  const baselineScore = Number(baseline?.strength_score ?? baseline?.avg_role_score ?? baseline?.target_role_role_weighted_score ?? 0)
+  const baselineWinRate = Number(baseline?.target_side_win_rate ?? 0)
+  const compareRows = rows.map((row) => {
+    const key = row.subject_id || row.hash || row.model_config_hash || row.target_version_id || row.model_id
+    const score = Number(row.strength_score ?? row.avg_role_score ?? row.target_role_role_weighted_score ?? 0)
+    const winRate = Number(row.target_side_win_rate ?? 0)
+    const boundaryWarnings = []
+    if (baseline?.evaluation_set_id && row.evaluation_set_id && row.evaluation_set_id !== baseline.evaluation_set_id) {
+      boundaryWarnings.push('evaluation_set_mismatch')
+    }
+    if (baseline?.seed_set_id && row.seed_set_id && row.seed_set_id !== baseline.seed_set_id) {
+      boundaryWarnings.push('seed_set_mismatch')
+    }
+    const isReference = Boolean(baselineKey && key === baselineKey)
+    const comparable = Boolean(baseline && !boundaryWarnings.length)
+    const scoreDelta = score - baselineScore
+    return {
+      ...row,
+      is_reference: isReference,
+      baseline_subject_id: baselineKey,
+      comparable,
+      boundary_warnings: boundaryWarnings,
+      change: isReference ? 'reference' : (!comparable ? 'incomparable' : (scoreDelta > 0 ? 'improvement' : (scoreDelta < 0 ? 'regression' : 'stable'))),
+      confidence: Number(row.games_played || row.game_count || 0) < 30 ? 'low_sample' : 'comparable',
+      delta_vs_baseline: {
+        score: scoreDelta,
+        target_role_role_weighted_score: scoreDelta,
+        strength_score: scoreDelta,
+        target_side_win_rate: winRate - baselineWinRate
+      },
+      delta: {
+        score: scoreDelta,
+        target_side_win_rate: winRate - baselineWinRate
+      }
+    }
+  })
+  const byChange = countBy(compareRows, (row) => row.change)
+  return {
+    kind: 'benchmark_leaderboard_compare',
+    schema_version: 1,
+    scope,
+    evaluation_set_id: evaluationSetId || null,
+    target_role: targetRole || null,
+    baseline_subject_id: baselineKey,
+    baseline: clone(baseline),
+    rows: clone(compareRows),
+    summary: {
+      row_count: compareRows.length,
+      rankable_count: compareRows.filter((row) => row.rankable !== false).length,
+      unrankable_count: compareRows.filter((row) => row.rankable === false).length,
+      improvement_count: byChange.improvement || 0,
+      regression_count: byChange.regression || 0,
+      stable_count: byChange.stable || 0,
+      incomparable_count: byChange.incomparable || 0,
+      reference_count: byChange.reference || 0,
+      boundary_mismatch_count: compareRows.filter((row) => row.boundary_warnings.length).length,
+      by_change: byChange
+    }
+  }
+}
+
+function mockSnapshotStringList(values = []) {
+  const input = Array.isArray(values) ? values : [values]
+  const seen = new Set()
+  const output = []
+  for (const value of input) {
+    const text = String(value || '').trim()
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    output.push(text)
+  }
+  return output
+}
+
+function mockSnapshotCount(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : fallback
+}
+
+function mockSnapshotMatchingRunIds(snapshot = {}) {
+  const benchmarkId = String(snapshot.benchmark_id || '').trim()
+  const evaluationSetId = String(snapshot.evaluation_set_id || '').trim()
+  const targetRole = String(snapshot.target_role || '').trim()
+  const fromBatches = mockBenchmarkBatches
+    .filter((batch) => {
+      const batchBenchmarkId = String(batch.benchmark?.id || batch.config?.benchmark_id || '').trim()
+      const batchEvaluationSetId = String(batch.benchmark?.evaluation_set_id || batch.config?.evaluation_set_id || '').trim()
+      const batchRoles = Array.isArray(batch.roles) ? batch.roles : []
+      if (benchmarkId && batchBenchmarkId && batchBenchmarkId !== benchmarkId) return false
+      if (evaluationSetId && batchEvaluationSetId && batchEvaluationSetId !== evaluationSetId) return false
+      if (targetRole && batchRoles.length && !batchRoles.includes(targetRole)) return false
+      return true
+    })
+    .map((batch) => batch.batch_id)
+  const suiteRunId = MOCK_BENCHMARK_SUITES.find((suite) =>
+    (!benchmarkId || suite.id === benchmarkId) &&
+    (!evaluationSetId || suite.evaluation_set_id === evaluationSetId)
+  )?.last_run?.batch_id
+  return mockSnapshotStringList([...fromBatches, suiteRunId])
+}
+
+function mockSnapshotAuditFields(snapshot = {}, rowsInput = null) {
+  const rows = Array.isArray(rowsInput)
+    ? rowsInput
+    : (Array.isArray(snapshot.rows) ? snapshot.rows : [])
+  const summary = snapshot.summary && typeof snapshot.summary === 'object' ? snapshot.summary : {}
+  const rowCount = mockSnapshotCount(snapshot.row_count ?? summary.row_count, rows.length)
+  const rankableFromRows = rows.filter((row) => row?.rankable !== false).length
+  const rankableCount = mockSnapshotCount(
+    snapshot.rankable_count ?? summary.rankable_count,
+    rows.length ? rankableFromRows : 0
+  )
+  const unrankableCount = mockSnapshotCount(
+    snapshot.unrankable_count ?? summary.unrankable_count,
+    Math.max(0, rowCount - rankableCount)
+  )
+  const rowRunIds = mockSnapshotStringList(rows.flatMap((row) => [
+    row?.run_id,
+    row?.batch_id,
+    row?.benchmark_batch_id,
+    row?.source_run_id,
+    row?.source_batch_id,
+    row?.result_batch_id ? String(row.result_batch_id).split(':')[0] : ''
+  ]))
+  const summaryRunIds = mockSnapshotStringList(summary.linked_run_ids)
+  const explicitRunIds = mockSnapshotStringList(snapshot.linked_run_ids)
+  const linkedRunIds = explicitRunIds.length
+    ? explicitRunIds
+    : summaryRunIds.length
+      ? summaryRunIds
+      : (
+          rowRunIds.length
+            ? rowRunIds
+            : mockSnapshotMatchingRunIds(snapshot)
+        )
+  const rowReportIds = mockSnapshotStringList(rows.flatMap((row) => [row?.report_id, row?.source_report_id]))
+  const explicitReportIds = mockSnapshotStringList(snapshot.linked_report_ids)
+  const summaryReportIds = mockSnapshotStringList(summary.linked_report_ids)
+  const linkedReportIds = explicitReportIds.length
+    ? explicitReportIds
+    : summaryReportIds.length
+      ? summaryReportIds
+      : mockSnapshotStringList([
+          ...rowReportIds,
+          ...linkedRunIds.map((runId) => `benchmark_report:${runId}`)
+        ])
+  const rowResultBatchIds = mockSnapshotStringList(rows.flatMap((row) => [
+    row?.result_batch_id,
+    row?.evaluation_batch_id
+  ]))
+  const explicitResultBatchIds = mockSnapshotStringList(snapshot.linked_result_batch_ids)
+  const summaryResultBatchIds = mockSnapshotStringList(summary.linked_result_batch_ids)
+  const linkedResultBatchIds = explicitResultBatchIds.length
+    ? explicitResultBatchIds
+    : summaryResultBatchIds.length
+      ? summaryResultBatchIds
+      : rowResultBatchIds
+  const sourceRunCount = mockSnapshotCount(snapshot.source_run_count ?? summary.source_run_count, linkedRunIds.length)
+  const sourceReportCount = mockSnapshotCount(snapshot.source_report_count ?? summary.source_report_count, linkedReportIds.length)
+  const sourceResultBatchCount = mockSnapshotCount(
+    snapshot.source_result_batch_count ?? summary.source_result_batch_count,
+    linkedResultBatchIds.length
+  )
+
+  return {
+    ...snapshot,
+    linked_run_ids: linkedRunIds,
+    linked_report_ids: linkedReportIds,
+    linked_result_batch_ids: linkedResultBatchIds,
+    source_run_count: sourceRunCount,
+    source_report_count: sourceReportCount,
+    source_result_batch_count: sourceResultBatchCount,
+    row_count: rowCount,
+    rankable_count: rankableCount,
+    unrankable_count: unrankableCount,
+    content_hash: String(
+      snapshot.content_hash ||
+      `sha256:mock-${snapshot.snapshot_id || snapshot.benchmark_id || 'snapshot'}-${rowCount}`
+    ),
+    summary: {
+      ...summary,
+      row_count: rowCount,
+      rankable_count: rankableCount,
+      unrankable_count: unrankableCount,
+      linked_run_ids: linkedRunIds,
+      linked_report_ids: linkedReportIds,
+      linked_result_batch_ids: linkedResultBatchIds,
+      source_run_count: sourceRunCount,
+      source_report_count: sourceReportCount,
+      source_result_batch_count: sourceResultBatchCount
+    }
+  }
+}
+
+function ensureMockBenchmarkSnapshots() {
+  if (mockBenchmarkSnapshots.length) return
+  const role = MOCK_DEFAULT_BENCHMARK_ROLE
+  const quickRows = mockBenchmarkLeaderboardRows({
+    scope: 'role_version',
+    evaluationSetId: 'role-baseline-quick-v1@v1',
+    targetRole: role
+  })
+  mockBenchmarkSnapshots.push(mockSnapshotAuditFields({
+    kind: 'benchmark_leaderboard_snapshot',
+    schema_version: 1,
+    snapshot_id: 'snap-role-quick-20260608',
+    title: '角色快速发布 2026-06-08',
+    release_notes: '用于快照历史审计复核的固定种子模拟快照。',
+    scope: 'role_version',
+    benchmark_id: 'role-baseline-quick-v1',
+    benchmark_version: 1,
+    evaluation_set_id: 'role-baseline-quick-v1@v1',
+    seed_set_id: 'role-baseline-quick-202606',
+    benchmark_config_hash: 'sha256:quick-history',
+    target_role: role,
+    source_filter: {
+      rankable: 'all',
+      target_role: role,
+      evaluation_set_id: 'role-baseline-quick-v1@v1'
+    },
+    view_config: { view: 'leaderboard', mode: 'role_version', role },
+    linked_run_ids: [MOCK_DEFAULT_BENCHMARK_BATCH_ID],
+    linked_report_ids: [`${MOCK_DEFAULT_BENCHMARK_BATCH_ID}:report`],
+    rows: clone(quickRows),
+    created_at: '2026-06-08T20:30:00+08:00'
+  }, quickRows))
+
+  const standardRows = mockBenchmarkLeaderboardRows({
+    scope: 'role_version',
+    evaluationSetId: 'role-baseline-standard-v1@v1',
+    targetRole: role
+  })
+  mockBenchmarkSnapshots.push(mockSnapshotAuditFields({
+    kind: 'benchmark_leaderboard_snapshot',
+    schema_version: 1,
+    snapshot_id: 'snap-role-standard-20260608',
+    title: '角色标准发布 2026-06-08',
+    scope: 'role_version',
+    benchmark_id: 'role-baseline-standard-v1',
+    benchmark_version: 1,
+    evaluation_set_id: 'role-baseline-standard-v1@v1',
+    seed_set_id: 'role-baseline-standard-202606',
+    benchmark_config_hash: 'sha256:standard-history',
+    target_role: role,
+    source_filter: {
+      rankable: 'all',
+      target_role: role,
+      evaluation_set_id: 'role-baseline-standard-v1@v1'
+    },
+    view_config: { view: 'leaderboard', mode: 'role_version', role },
+    linked_run_ids: ['bench-role-standard-20260609'],
+    linked_report_ids: ['bench-role-standard-20260609:report'],
+    rows: clone(standardRows),
+    created_at: '2026-06-08T21:00:00+08:00'
+  }, standardRows))
+
+  const modelRows = mockBenchmarkLeaderboardRows({
+    scope: 'model',
+    evaluationSetId: 'model-baseline-standard-v1@v1'
+  })
+  mockBenchmarkSnapshots.push(mockSnapshotAuditFields({
+    kind: 'benchmark_leaderboard_snapshot',
+    schema_version: 1,
+    snapshot_id: 'snap-model-standard-20260608',
+    title: '模型标准发布 2026-06-08',
+    scope: 'model',
+    benchmark_id: 'model-baseline-standard-v1',
+    benchmark_version: 1,
+    evaluation_set_id: 'model-baseline-standard-v1@v1',
+    seed_set_id: 'model-baseline-standard-202606',
+    benchmark_config_hash: 'sha256:model-history',
+    source_filter: {
+      rankable: 'all',
+      evaluation_set_id: 'model-baseline-standard-v1@v1'
+    },
+    view_config: { view: 'leaderboard', mode: 'model' },
+    linked_run_ids: ['bench-model-release-20260609'],
+    linked_report_ids: ['bench-model-release-20260609:report'],
+    rows: clone(modelRows),
+    created_at: '2026-06-08T22:20:00+08:00'
+  }, modelRows))
+}
+
 function mockSnapshotSummary(snapshot) {
-  const { rows, ...summary } = snapshot
+  const { rows, ...summary } = mockSnapshotAuditFields(snapshot)
   return clone(summary)
 }
 
 function listMockBenchmarkSnapshots(queryString = '') {
+  ensureMockBenchmarkSnapshots()
   const query = new URLSearchParams(queryString)
   const scope = query.get('scope') || ''
   const evaluationSetId = query.get('evaluation_set_id') || ''
@@ -2915,7 +3275,7 @@ function createMockBenchmarkSnapshot(body = {}) {
   if (!rows.length) throw new Error('cannot snapshot empty leaderboard')
   const rowCount = rows.length
   const rankableCount = rows.filter((row) => row.rankable !== false).length
-  const snapshot = {
+  const snapshot = mockSnapshotAuditFields({
     kind: 'benchmark_leaderboard_snapshot',
     schema_version: 1,
     snapshot_id: `mock-bench-snapshot-${++mockBenchmarkSnapshotCounter}`,
@@ -2942,15 +3302,287 @@ function createMockBenchmarkSnapshot(body = {}) {
     row_count: rowCount,
     content_hash: `sha256:mock-${Date.now()}-${rowCount}`,
     created_at: new Date().toISOString()
-  }
+  }, rows)
   mockBenchmarkSnapshots.unshift(snapshot)
   return clone(snapshot)
 }
 
 function getMockBenchmarkSnapshot(snapshotId) {
+  ensureMockBenchmarkSnapshots()
   const snapshot = mockBenchmarkSnapshots.find((item) => item.snapshot_id === snapshotId)
   if (!snapshot) throw new Error('benchmark snapshot not found')
-  return clone(snapshot)
+  return clone(mockSnapshotAuditFields(snapshot))
+}
+
+function mockSnapshotCompareNumber(...values) {
+  for (const value of values) {
+    const number = Number(value)
+    if (Number.isFinite(number)) return number
+  }
+  return 0
+}
+
+function mockSnapshotCompareRowKey(row, index, scope) {
+  const value = scope === 'model'
+    ? row?.model_config_hash || row?.subject_id || row?.hash || row?.model_id
+    : row?.target_version_id || row?.version_id || row?.subject_id || row?.hash
+  return String(value || `${scope}-${index + 1}`)
+}
+
+function mockSnapshotCompareRow(row = {}, index = 0, scope = 'role_version') {
+  const key = mockSnapshotCompareRowKey(row, index, scope)
+  const score = mockSnapshotCompareNumber(
+    row.score,
+    row.strength_score,
+    row.avg_role_score,
+    row.target_role_role_weighted_score
+  )
+  const winRate = mockSnapshotCompareNumber(
+    row.winRate,
+    row.target_side_win_rate,
+    row.summary?.target_side_win_rate,
+    row.summary?.win_rate
+  )
+  const games = mockSnapshotCompareNumber(row.games, row.game_count, row.games_played, row.total_games)
+  const primary = scope === 'model'
+    ? String(row.model_id || row.model_config_hash || row.subject_id || row.hash || key)
+    : String(row.short || row.target_version_id || row.version_id || row.subject_id || row.hash || key)
+  const secondary = scope === 'model'
+    ? [row.model_config_hash || row.subject_id || row.hash, row.provider, row.runtime || row.runtime_id]
+    : [row.target_version_id || row.version_id || row.subject_id || row.hash, row.source]
+  const rankable = row.rankable == null
+    ? (row.data_sufficient == null ? null : row.data_sufficient !== false)
+    : row.rankable !== false
+  return {
+    ...row,
+    key,
+    primary,
+    secondary: secondary.map((value) => String(value || '').trim()).filter(Boolean).join(' / '),
+    score,
+    winRate,
+    games,
+    game_count: games,
+    rankable,
+    rankableReason: String(row.rankable_reason || row.reason || row.gate_reason || '').trim()
+  }
+}
+
+function mockSnapshotCompareChange(current, previous) {
+  return {
+    key: current.key,
+    current,
+    snapshot: previous,
+    scoreDelta: current.score - previous.score,
+    winRateDelta: current.winRate - previous.winRate,
+    gamesDelta: current.games - previous.games,
+    rankableChanged: current.rankable !== previous.rankable
+  }
+}
+
+function mockBenchmarkSnapshotCompare(snapshotId, queryString = '') {
+  const snapshot = getMockBenchmarkSnapshot(snapshotId)
+  const query = new URLSearchParams(queryString)
+  const againstSnapshotId = query.get('against_snapshot_id') || ''
+  const againstSnapshot = againstSnapshotId ? getMockBenchmarkSnapshot(againstSnapshotId) : null
+  const scope = query.get('scope') || snapshot.scope || 'role_version'
+  const evaluationSetId = query.get('evaluation_set_id') || snapshot.evaluation_set_id || ''
+  const benchmarkId = query.get('benchmark_id') || snapshot.benchmark_id || ''
+  const targetRole = query.get('target_role') || snapshot.target_role || ''
+  const currentSourceRows = mockBenchmarkLeaderboardRows({ scope, evaluationSetId, targetRole })
+  const frozenRows = (snapshot.rows?.length ? snapshot.rows : currentSourceRows)
+    .map((row, index) => mockSnapshotCompareRow(row, index, scope))
+  let currentRows = (againstSnapshot
+    ? (againstSnapshot.rows?.length ? againstSnapshot.rows : currentSourceRows)
+    : currentSourceRows
+  )
+    .map((row, index) => mockSnapshotCompareRow(row, index, scope))
+
+  if (!currentRows.length && frozenRows.length) {
+    currentRows = [mockSnapshotCompareRow(frozenRows[0], 0, scope)]
+  }
+
+  const frozenByKey = new Map(frozenRows.map((row) => [row.key, row]))
+  const currentByKey = new Map(currentRows.map((row) => [row.key, row]))
+  const changed = []
+  const added = []
+  const removed = []
+
+  for (const row of currentRows) {
+    const previous = frozenByKey.get(row.key)
+    if (!previous) {
+      added.push(row)
+      continue
+    }
+    const change = mockSnapshotCompareChange(row, previous)
+    if (
+      Math.abs(change.scoreDelta) > 0.000001 ||
+      Math.abs(change.winRateDelta) > 0.000001 ||
+      change.gamesDelta !== 0 ||
+      change.rankableChanged
+    ) {
+      changed.push(change)
+    }
+  }
+
+  for (const row of frozenRows) {
+    if (!currentByKey.has(row.key)) removed.push(row)
+  }
+
+  if (!changed.length && frozenRows.length) {
+    const previous = frozenRows[0]
+    const current = {
+      ...previous,
+      score: previous.score + 0.03,
+      target_role_role_weighted_score: previous.score + 0.03,
+      strength_score: previous.score + 0.03,
+      winRate: previous.winRate + 0.02,
+      target_side_win_rate: previous.winRate + 0.02,
+      games: previous.games + 2,
+      game_count: previous.games + 2
+    }
+    currentRows = [current, ...currentRows.filter((row) => row.key !== current.key)]
+    changed.push(mockSnapshotCompareChange(current, previous))
+  }
+
+  if (!added.length) {
+    const row = mockSnapshotCompareRow(
+      scope === 'model'
+        ? {
+            scope,
+            subject_id: 'mock-added-model-runtime',
+            model_id: 'mock-added-model',
+            model_config_hash: 'mock-added-model-runtime',
+            strength_score: 0.64,
+            target_side_win_rate: 0.55,
+            game_count: 30,
+            rankable: true
+          }
+        : {
+            scope,
+            subject_id: `${targetRole || MOCK_DEFAULT_BENCHMARK_ROLE}_mock_added_v2`,
+            target_role: targetRole || MOCK_DEFAULT_BENCHMARK_ROLE,
+            target_version_id: `${targetRole || MOCK_DEFAULT_BENCHMARK_ROLE}_mock_added_v2`,
+            target_role_role_weighted_score: 0.64,
+            target_side_win_rate: 0.55,
+            game_count: 30,
+            rankable: true
+          },
+      currentRows.length,
+      scope
+    )
+    currentRows.push(row)
+    added.push(row)
+  }
+
+  if (!removed.length) {
+    const row = mockSnapshotCompareRow(
+      scope === 'model'
+        ? {
+            scope,
+            subject_id: 'mock-removed-model-runtime',
+            model_id: 'mock-removed-model',
+            model_config_hash: 'mock-removed-model-runtime',
+            strength_score: 0.58,
+            target_side_win_rate: 0.49,
+            game_count: 24,
+            rankable: true
+          }
+        : {
+            scope,
+            subject_id: `${targetRole || MOCK_DEFAULT_BENCHMARK_ROLE}_mock_removed_v1`,
+            target_role: targetRole || MOCK_DEFAULT_BENCHMARK_ROLE,
+            target_version_id: `${targetRole || MOCK_DEFAULT_BENCHMARK_ROLE}_mock_removed_v1`,
+            target_role_role_weighted_score: 0.58,
+            target_side_win_rate: 0.49,
+            game_count: 24,
+            rankable: true
+          },
+      frozenRows.length,
+      scope
+    )
+    frozenRows.push(row)
+    removed.push(row)
+  }
+
+  const boundaryWarnings = []
+  if (snapshot.evaluation_set_id && evaluationSetId && snapshot.evaluation_set_id !== evaluationSetId) {
+    boundaryWarnings.push({
+      kind: 'evaluation_set_mismatch',
+      level: 'warning',
+      snapshot_value: snapshot.evaluation_set_id,
+      current_value: evaluationSetId,
+      message: '快照评测集与当前排行榜不同。'
+    })
+  }
+  if (snapshot.benchmark_id && benchmarkId && snapshot.benchmark_id !== benchmarkId) {
+    boundaryWarnings.push({
+      kind: 'benchmark_id_mismatch',
+      level: 'warning',
+      snapshot_value: snapshot.benchmark_id,
+      current_value: benchmarkId,
+      message: '快照基准与当前套件不同。'
+    })
+  }
+  if (againstSnapshot) {
+    if (snapshot.scope && againstSnapshot.scope && snapshot.scope !== againstSnapshot.scope) {
+      boundaryWarnings.push({
+        kind: 'scope_mismatch',
+        level: 'warning',
+        snapshot_value: snapshot.scope,
+        current_value: againstSnapshot.scope,
+        message: '快照 scope 不一致。'
+      })
+    }
+    if (snapshot.evaluation_set_id && againstSnapshot.evaluation_set_id && snapshot.evaluation_set_id !== againstSnapshot.evaluation_set_id) {
+      boundaryWarnings.push({
+        kind: 'evaluation_set_mismatch',
+        level: 'warning',
+        snapshot_value: snapshot.evaluation_set_id,
+        current_value: againstSnapshot.evaluation_set_id,
+        message: 'Snapshot evaluation sets differ.'
+      })
+    }
+  }
+  const benchmarkConfigHash = query.get('benchmark_config_hash') || 'sha256:frontend-current'
+  if (snapshot.benchmark_config_hash && benchmarkConfigHash !== snapshot.benchmark_config_hash) {
+    boundaryWarnings.push({
+      kind: 'benchmark_config_hash_mismatch',
+      level: 'info',
+      snapshot_value: snapshot.benchmark_config_hash,
+      current_value: benchmarkConfigHash,
+      message: 'Current leaderboard config hash is not identical to the frozen snapshot.'
+    })
+  }
+
+  return {
+    kind: 'benchmark_snapshot_compare',
+    schema_version: 1,
+    compare_mode: againstSnapshot ? 'snapshot_to_snapshot' : 'current_vs_snapshot',
+    snapshot_id: snapshot.snapshot_id,
+    scope,
+    evaluation_set_id: evaluationSetId || null,
+    benchmark_id: benchmarkId || null,
+    target_role: targetRole || null,
+    snapshot: clone(frozenRows),
+    snapshot_meta: mockSnapshotSummary(snapshot),
+    ...(againstSnapshot ? { against_snapshot: mockSnapshotSummary(againstSnapshot) } : {}),
+    current: clone(currentRows),
+    summary: {
+      compare_mode: againstSnapshot ? 'snapshot_to_snapshot' : 'current_vs_snapshot',
+      snapshot_id: snapshot.snapshot_id,
+      ...(againstSnapshot ? { against_snapshot_id: againstSnapshot.snapshot_id } : {}),
+      snapshot_row_count: frozenRows.length,
+      current_row_count: currentRows.length,
+      changed_count: changed.length,
+      added_count: added.length,
+      removed_count: removed.length,
+      boundary_warning_count: boundaryWarnings.length
+    },
+    changed: clone(changed),
+    added: clone(added),
+    removed: clone(removed),
+    boundary_warnings: clone(boundaryWarnings)
+  }
 }
 
 function mockBenchmarkViewPayload(view) {
@@ -2958,7 +3590,7 @@ function mockBenchmarkViewPayload(view) {
     kind: 'benchmark_saved_view',
     schema_version: 1,
     view_key: view.view_key,
-    name: view.name || 'Default view',
+    name: view.name || '默认视图',
     scope: view.scope || 'role_version',
     benchmark_id: view.benchmark_id || null,
     evaluation_set_id: view.evaluation_set_id || null,
@@ -3004,7 +3636,7 @@ function saveMockBenchmarkView(body = {}) {
   const now = new Date().toISOString()
   const view = {
     view_key: viewKey,
-    name: body.name || 'Default view',
+    name: body.name || '默认视图',
     scope: body.scope === 'model' ? 'model' : 'role_version',
     benchmark_id: body.benchmark_id || null,
     evaluation_set_id: body.evaluation_set_id || null,
@@ -3399,6 +4031,367 @@ function mockBenchmarkBatchDiagnostics(batchId) {
   }
 }
 
+function mockBenchmarkBatchReport(batchId, queryString = '') {
+  const query = new URLSearchParams(queryString)
+  const format = String(query.get('format') || 'json').toLowerCase()
+  const report = mockBenchmarkBatchReportPayload(batchId)
+
+  if (!format || format === 'json') return clone(report)
+  if (format === 'markdown') {
+    return {
+      kind: 'benchmark_run_report_export',
+      schema_version: 1,
+      format,
+      content_type: 'text/markdown; charset=utf-8',
+      content: mockBenchmarkBatchReportMarkdown(report),
+      report: clone(report)
+    }
+  }
+  if (format === 'csv') {
+    return {
+      kind: 'benchmark_run_report_export',
+      schema_version: 1,
+      format,
+      content_type: 'text/csv; charset=utf-8',
+      content: mockBenchmarkBatchReportCsv(report),
+      report: clone(report)
+    }
+  }
+  throw new Error(`Unsupported benchmark report format: ${format}`)
+}
+
+function mockBenchmarkBatchReportPayload(batchId) {
+  const batch = findMockBenchmarkBatch(batchId)
+  const detail = mockBenchmarkBatchDetail(batchId)
+  const problemGames = mockBenchmarkBatchGames(batchId, 'status=failed,timeout,abnormal&limit=20&offset=0')
+  const diagnostics = mockBenchmarkBatchDiagnostics(batchId)
+  const results = Array.isArray(detail.results) ? detail.results : []
+  const firstResult = results[0] || {}
+  const targetType = detail.target_type || batch.benchmark?.target_type || batch.config?.target_type || 'role_version'
+  const evaluationSetId = detail.benchmark?.evaluation_set_id || batch.config?.evaluation_set_id || null
+  const seedSetId = detail.benchmark?.seed_set_id || batch.config?.seed_set_id || null
+  const benchmarkConfigHash = detail.benchmark?.config_hash ||
+    batch.config?.benchmark_config_hash ||
+    batch.config?.config_hash ||
+    batch.config_hash ||
+    `mock:${batch.batch_id}`
+  const runId = batch.run_id || batch.batch_id
+  const subject = targetType === 'model'
+    ? {
+        type: 'model',
+        model_id: firstResult.model_id || batch.config?.model_id || null,
+        model_config_hash: firstResult.model_config_hash || batch.config?.model_config_hash || null
+      }
+    : {
+        type: 'role_version',
+        target_role: firstResult.target_role || batch.roles?.[0] || null,
+        target_version_id: firstResult.target_version_id || firstResult.config?.target_version_id || null
+      }
+  const topTags = results
+    .flatMap((row) => row.score_summary?.decision_judge_aggregate?.top_mistake_tags || [])
+    .filter(Boolean)
+
+  return {
+    kind: 'benchmark_run_report',
+    schema_version: 1,
+    generated_at: new Date().toISOString(),
+    run_id: runId,
+    batch_id: batch.batch_id,
+    status: detail.status || batch.status,
+    evaluation_set_id: evaluationSetId,
+    seed_set_id: seedSetId,
+    benchmark_config_hash: benchmarkConfigHash,
+    suite: {
+      id: detail.benchmark?.id || batch.config?.benchmark_id || null,
+      version: detail.benchmark?.version || null,
+      target_type: targetType,
+      evaluation_set_id: evaluationSetId,
+      seed_set_id: seedSetId,
+      config_hash: benchmarkConfigHash
+    },
+    subject,
+    summary: {
+      result_count: detail.result_count || results.length,
+      game_summary: clone(detail.game_summary || {}),
+      diagnostic_summary: clone(detail.diagnostic_summary || diagnostics.summary || {}),
+      problem_game_count: problemGames.pagination?.total ?? problemGames.games.length,
+      diagnostic_count: diagnostics.summary?.total ?? diagnostics.diagnostics.length
+    },
+    results: clone(results),
+    gates: results.map((row) => ({
+      result_batch_id: row.result_batch_id,
+      target_role: row.target_role || null,
+      rankable: row.rankable !== false,
+      reason: row.rankable_reason || ''
+    })),
+    problem_games: clone(problemGames.games),
+    diagnostics: clone(diagnostics.diagnostics),
+    tags: clone(topTags),
+    reproducibility: {
+      run_id: runId,
+      batch_id: batch.batch_id,
+      benchmark_id: detail.benchmark?.id || batch.config?.benchmark_id || null,
+      evaluation_set_id: evaluationSetId,
+      seed_set_id: seedSetId,
+      benchmark_config_hash: benchmarkConfigHash,
+      roles: clone(batch.roles || []),
+      target_type: targetType
+    },
+    leaderboard: {
+      rankable_count: results.filter((row) => row.rankable !== false).length,
+      unrankable_count: results.filter((row) => row.rankable === false).length,
+      rows: results.map((row) => ({
+        result_batch_id: row.result_batch_id,
+        target_role: row.target_role || null,
+        rankable: row.rankable !== false,
+        rankable_reason: row.rankable_reason || ''
+      }))
+    }
+  }
+}
+
+function mockBenchmarkBatchReportMarkdown(report) {
+  const lines = [
+    '# Benchmark Run Report',
+    '',
+    `- Run: ${report.run_id}`,
+    `- Evaluation set: ${report.evaluation_set_id || ''}`,
+    `- Seed set: ${report.seed_set_id || ''}`,
+    `- Config hash: ${report.benchmark_config_hash || ''}`,
+    `- Status: ${report.status || ''}`,
+    '',
+    '## Results',
+    '',
+    '| Result batch | Target | Rankable | Reason |',
+    '| --- | --- | --- | --- |',
+    ...report.results.map((row) => `| ${row.result_batch_id || ''} | ${row.target_role || row.model_id || ''} | ${row.rankable !== false ? 'yes' : 'no'} | ${row.rankable_reason || ''} |`),
+    '',
+    '## Problem Games',
+    '',
+    '| Game | Status | Seed | Diagnostics |',
+    '| --- | --- | --- | --- |',
+    ...report.problem_games.map((game) => `| ${game.game_id || ''} | ${game.status || ''} | ${game.seed ?? ''} | ${game.diagnostic_count ?? 0} |`),
+    '',
+    '## Diagnostics',
+    '',
+    '| Kind | Level | Stage | Message |',
+    '| --- | --- | --- | --- |',
+    ...report.diagnostics.map((item) => `| ${item.kind || ''} | ${item.level || ''} | ${item.stage || ''} | ${item.message || ''} |`)
+  ]
+  return `${lines.join('\n')}\n`
+}
+
+function mockBenchmarkBatchReportCsv(report) {
+  const rows = [
+    ['section', 'key', 'value'],
+    ['run', 'run_id', report.run_id],
+    ['run', 'evaluation_set_id', report.evaluation_set_id],
+    ['run', 'seed_set_id', report.seed_set_id],
+    ['run', 'benchmark_config_hash', report.benchmark_config_hash],
+    ...report.results.map((row) => ['result', row.result_batch_id, row.rankable !== false ? 'rankable' : row.rankable_reason || 'unrankable']),
+    ...report.problem_games.map((game) => ['problem_game', game.game_id, game.status]),
+    ...report.diagnostics.map((item) => ['diagnostic', item.kind, item.message])
+  ]
+  return `${rows.map((row) => row.map(mockReportCsvCell).join(',')).join('\n')}\n`
+}
+
+function mockReportCsvCell(value) {
+  const text = value == null ? '' : String(value)
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+function mockBenchmarkReportSummary(report, batch) {
+  const results = Array.isArray(report.results) ? report.results : []
+  const leaderboardRows = Array.isArray(report.leaderboard?.rows) ? report.leaderboard.rows : results
+  const rankableCount = report.leaderboard?.rankable_count ??
+    leaderboardRows.filter((row) => row.rankable !== false).length
+  const unrankableCount = report.leaderboard?.unrankable_count ??
+    leaderboardRows.filter((row) => row.rankable === false).length
+
+  return {
+    kind: 'benchmark_run_report_summary',
+    schema_version: 1,
+    report_id: report.report_id || `${report.run_id || report.batch_id}:report`,
+    run_id: report.run_id || batch?.run_id || batch?.batch_id || '',
+    batch_id: report.batch_id || batch?.batch_id || '',
+    status: report.status || batch?.status || '',
+    suite: clone(report.suite || {}),
+    subject: clone(report.subject || {}),
+    summary: clone(report.summary || {}),
+    evaluation_set_id: report.evaluation_set_id || report.suite?.evaluation_set_id || null,
+    seed_set_id: report.seed_set_id || report.suite?.seed_set_id || null,
+    benchmark_config_hash: report.benchmark_config_hash || report.suite?.config_hash || null,
+    problem_game_count: report.summary?.problem_game_count ?? report.problem_games?.length ?? 0,
+    diagnostic_count: report.summary?.diagnostic_count ?? report.diagnostics?.length ?? 0,
+    rankable_count: rankableCount,
+    unrankable_count: unrankableCount,
+    generated_at: report.generated_at || batch?.finished_at || batch?.completed_at || batch?.started_at || null,
+    created_at: batch?.finished_at || batch?.completed_at || batch?.started_at || report.generated_at || null
+  }
+}
+
+function mockBenchmarkReports(queryString = '') {
+  const query = new URLSearchParams(queryString)
+  const scope = String(query.get('scope') || '').trim()
+  const benchmarkId = String(query.get('benchmark_id') || '').trim()
+  const evaluationSetId = String(query.get('evaluation_set_id') || '').trim()
+  const targetRole = String(query.get('target_role') || '').trim()
+  const offset = Math.max(0, Number(query.get('offset') || 0))
+  const limit = Math.max(1, Math.min(200, Number(query.get('limit') || 50)))
+  const summaries = []
+
+  for (const batch of mockBenchmarkBatches) {
+    const report = mockBenchmarkBatchReportPayload(batch.batch_id)
+    const reportScope = report.suite?.target_type || report.subject?.type || 'role_version'
+    const reportBenchmarkId = report.suite?.id || batch.benchmark?.id || batch.config?.benchmark_id || ''
+    const reportEvaluationSetId = report.evaluation_set_id || report.suite?.evaluation_set_id || ''
+    const reportTargetRole = report.subject?.target_role || report.results?.[0]?.target_role || batch.roles?.[0] || ''
+
+    if (scope && reportScope !== scope) continue
+    if (benchmarkId && reportBenchmarkId !== benchmarkId) continue
+    if (evaluationSetId && reportEvaluationSetId !== evaluationSetId) continue
+    if (targetRole && reportTargetRole !== targetRole) continue
+    summaries.push(mockBenchmarkReportSummary(report, batch))
+  }
+
+  summaries.sort((a, b) =>
+    String(b.generated_at || b.created_at || '').localeCompare(String(a.generated_at || a.created_at || ''))
+  )
+  const page = summaries.slice(offset, offset + limit)
+
+  return {
+    kind: 'benchmark_run_reports',
+    schema_version: 1,
+    scope: scope || null,
+    evaluation_set_id: evaluationSetId || null,
+    benchmark_id: benchmarkId || null,
+    target_role: targetRole || null,
+    items: clone(page),
+    pagination: {
+      total: summaries.length,
+      offset,
+      limit,
+      returned: page.length,
+      has_more: offset + page.length < summaries.length
+    }
+  }
+}
+
+function mockBenchmarkDiagnosticsAggregate(queryString = '') {
+  const query = new URLSearchParams(queryString)
+  const scope = String(query.get('scope') || '').trim()
+  const benchmarkId = String(query.get('benchmark_id') || '').trim()
+  const evaluationSetId = String(query.get('evaluation_set_id') || '').trim()
+  const targetRole = String(query.get('target_role') || '').trim()
+  const kindFilter = filterSet(query.get('kind'))
+  const levelFilter = filterSet(query.get('level'))
+  const statusFilter = filterSet(query.get('status'))
+  const stageFilter = filterSet(query.get('stage'))
+  const seedFilter = filterSet(query.get('seed'))
+  const offset = Math.max(0, Number(query.get('offset') || 0))
+  const limit = Math.max(1, Math.min(1000, Number(query.get('limit') || 200)))
+  const matched = []
+  const diagnostics = []
+  const affectedGames = []
+
+  for (const batch of mockBenchmarkBatches) {
+    const batchScope = batch.benchmark?.target_type || batch.config?.target_type || 'role_version'
+    const batchBenchmarkId = batch.benchmark?.id || batch.config?.benchmark_id || ''
+    const batchEvaluationSetId = batch.benchmark?.evaluation_set_id || batch.config?.evaluation_set_id || ''
+    if (scope && batchScope !== scope) continue
+    if (benchmarkId && batchBenchmarkId !== benchmarkId) continue
+    if (evaluationSetId && batchEvaluationSetId !== evaluationSetId) continue
+    if (statusFilter && !statusFilter.has(String(batch.status || '').toLowerCase())) continue
+
+    const rows = mockBenchmarkDiagnosticEntries(batch)
+      .filter((item) => {
+        if (targetRole && item.target_role && item.target_role !== targetRole) return false
+        if (targetRole && !item.target_role && !batch.roles?.includes(targetRole)) return false
+        if (kindFilter && !kindFilter.has(String(item.kind || '').toLowerCase())) return false
+        if (levelFilter && !levelFilter.has(String(item.level || '').toLowerCase())) return false
+        if (stageFilter && !stageFilter.has(String(item.stage || '').toLowerCase())) return false
+        if (seedFilter && !seedFilter.has(String(item.seed || '').toLowerCase())) return false
+        return true
+      })
+      .map((item) => ({
+        ...item,
+        batch_status: batch.status,
+        target_type: batchScope,
+        benchmark_id: batchBenchmarkId,
+        evaluation_set_id: batchEvaluationSetId,
+        seed_set_id: batch.benchmark?.seed_set_id || ''
+      }))
+    if (!rows.length) continue
+    diagnostics.push(...rows)
+    matched.push({ batch, rows })
+    const countsByGame = countBy(rows.filter((item) => item.game_id), (item) => item.game_id)
+    for (const game of mockBenchmarkGameRows(batch)) {
+      if (countsByGame[game.game_id]) {
+        affectedGames.push({
+          ...game,
+          batch_id: batch.batch_id,
+          diagnostic_count: countsByGame[game.game_id]
+        })
+      }
+    }
+  }
+
+  const page = diagnostics.slice(offset, offset + limit)
+  return {
+    kind: 'benchmark_diagnostics',
+    schema_version: 1,
+    scope: scope || null,
+    evaluation_set_id: evaluationSetId || null,
+    benchmark_id: benchmarkId || null,
+    target_role: targetRole || null,
+    filters: {
+      kind: query.get('kind'),
+      level: query.get('level'),
+      status: query.get('status'),
+      stage: query.get('stage'),
+      seed: query.get('seed')
+    },
+    diagnostics: clone(page),
+    affected_runs: clone(matched.map(({ batch, rows }) => ({
+      id: batch.batch_id,
+      batch_id: batch.batch_id,
+      status: batch.status,
+      started_at: batch.started_at,
+      finished_at: batch.finished_at,
+      current_stage: batch.current_stage || batch.stage || batch.status,
+      benchmark_id: batch.benchmark?.id || batch.config?.benchmark_id || '',
+      evaluation_set_id: batch.benchmark?.evaluation_set_id || batch.config?.evaluation_set_id || '',
+      seed_set_id: batch.benchmark?.seed_set_id || '',
+      target_type: batch.benchmark?.target_type || batch.config?.target_type || 'role_version',
+      roles: batch.roles || [],
+      diagnostic_count: rows.length,
+      diagnostic_summary: mockBenchmarkDiagnosticSummary(rows)
+    }))),
+    affected_games: clone(affectedGames),
+    summary: {
+      ...mockBenchmarkDiagnosticSummary(diagnostics),
+      by_stage: countBy(diagnostics, (item) => item.stage || 'unknown'),
+      by_target_role: countBy(diagnostics, (item) => item.target_role || 'all'),
+      by_batch: countBy(diagnostics, (item) => item.batch_id || 'unknown'),
+      by_seed: countBy(diagnostics.filter((item) => item.seed != null), (item) => item.seed),
+      affected_run_count: matched.length,
+      affected_game_count: new Set(diagnostics.map((item) => item.game_id).filter(Boolean)).size
+    },
+    pagination: {
+      total: diagnostics.length,
+      offset,
+      limit,
+      returned: page.length,
+      has_more: offset + page.length < diagnostics.length
+    }
+  }
+}
+
+function filterSet(value) {
+  const items = String(value || '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean)
+  return items.length ? new Set(items) : null
+}
+
 function createMockBenchmarkPlan(body = {}) {
   const suite = MOCK_BENCHMARK_SUITES.find((item) => item.id === body.benchmark_id) || null
   const isModelBenchmark = body.target_type === 'model' || suite?.target_type === 'model'
@@ -3455,7 +4448,7 @@ function createMockBenchmarkPlan(body = {}) {
     },
     launchable: !budgetExceeded,
     warnings: budgetExceeded
-      ? [{ kind: 'budget_exceeded', message: 'estimated benchmark cost exceeds budget limit' }]
+      ? [{ kind: 'budget_exceeded', message: '预计评测成本超过预算上限' }]
       : []
   }
 }
@@ -3858,6 +4851,10 @@ export async function mockApiFetch(path, options = {}) {
     }
   }
 
+  if (routePath === '/leaderboards/compare') {
+    return mockLeaderboardCompare(queryString)
+  }
+
   if (routePath === '/selfplay') {
     if (method === 'POST') return createMockSelfplayRun(body)
     advanceMockSelfplayRuns()
@@ -3926,6 +4923,11 @@ export async function mockApiFetch(path, options = {}) {
     const viewKey = decodeURIComponent(benchmarkViewMatch[1])
     if (method === 'DELETE') return deleteMockBenchmarkView(viewKey)
     return getMockBenchmarkView(viewKey)
+  }
+
+  const benchmarkSnapshotCompareMatch = routePath.match(/^\/benchmark\/snapshots\/([^/]+)\/compare$/)
+  if (benchmarkSnapshotCompareMatch) {
+    return mockBenchmarkSnapshotCompare(decodeURIComponent(benchmarkSnapshotCompareMatch[1]), queryString)
   }
 
   const benchmarkSnapshotMatch = routePath.match(/^\/benchmark\/snapshots\/([^/]+)$/)
@@ -3997,6 +4999,14 @@ export async function mockApiFetch(path, options = {}) {
     return createMockBenchmarkBatch(body)
   }
 
+  if (routePath === '/benchmark/diagnostics') {
+    return mockBenchmarkDiagnosticsAggregate(queryString)
+  }
+
+  if (routePath === '/benchmark/reports') {
+    return mockBenchmarkReports(queryString)
+  }
+
   const benchmarkBatchGamesMatch = routePath.match(/^\/benchmark\/batch\/([^/]+)\/games$/)
   if (benchmarkBatchGamesMatch) {
     return mockBenchmarkBatchGames(decodeURIComponent(benchmarkBatchGamesMatch[1]), queryString)
@@ -4005,6 +5015,11 @@ export async function mockApiFetch(path, options = {}) {
   const benchmarkBatchDiagnosticsMatch = routePath.match(/^\/benchmark\/batch\/([^/]+)\/diagnostics$/)
   if (benchmarkBatchDiagnosticsMatch) {
     return mockBenchmarkBatchDiagnostics(decodeURIComponent(benchmarkBatchDiagnosticsMatch[1]))
+  }
+
+  const benchmarkBatchReportMatch = routePath.match(/^\/benchmark\/batch\/([^/]+)\/report$/)
+  if (benchmarkBatchReportMatch) {
+    return mockBenchmarkBatchReport(decodeURIComponent(benchmarkBatchReportMatch[1]), queryString)
   }
 
   const benchmarkBatchDetailMatch = routePath.match(/^\/benchmark\/batch\/([^/]+)$/)

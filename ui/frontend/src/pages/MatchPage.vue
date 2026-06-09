@@ -5,6 +5,7 @@ const settledIntroGameIds = new Set()
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ActionPanel from '../components/ActionPanel.vue'
+import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import ChatLog from '../components/ChatLog.vue'
 import CouncilScene from '../components/CouncilScene.vue'
 import GameOverBoard from '../components/GameOverBoard.vue'
@@ -13,7 +14,9 @@ import MobileTaskShell from '../components/MobileTaskShell.vue'
 import PlayerCarousel from '../components/PlayerCarousel.vue'
 import PlayerIdentityBoard from '../components/PlayerIdentityBoard.vue'
 import ReplayControls from '../components/ReplayControls.vue'
+import EvidenceContextBar from '../components/history/EvidenceContextBar.vue'
 import { displayPhaseLabel } from '../components/history/historyDisplay.js'
+import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
 
 const props = defineProps({
   game: Object,
@@ -174,11 +177,20 @@ const replayPhaseText = computed(() => `第${props.game?.day ?? '-'}天 · ${pha
 const replayJudgeStripMessage = computed(() => [
   { message: props.replayEventLabel || '准备回放' }
 ])
-const matchNoticeMessage = computed(() => String(props.matchNotice?.message || '').trim())
-const matchNoticeType = computed(() => {
-  const type = String(props.matchNotice?.type || '').trim()
-  return ['success', 'warning', 'error'].includes(type) ? type : 'info'
-})
+function matchPanelErrorForNotice(notice) {
+  const error = noticeErrorForPanel(notice)
+  if (!error || error instanceof Error || typeof error !== 'object' || Array.isArray(error)) return error
+  if (error.requestId || !error.request_id) return error
+  return {
+    ...error,
+    requestId: error.request_id
+  }
+}
+
+const inlineMatchNotice = computed(() => inlineNoticeForDisplay(props.matchNotice))
+const matchErrorNotice = computed(() => matchPanelErrorForNotice(props.matchNotice))
+const matchNoticeMessage = computed(() => String(inlineMatchNotice.value?.message || '').trim())
+const matchNoticeType = computed(() => inlineMatchNotice.value?.type || 'info')
 const hasMobileTask = computed(() => (
   props.roleAssignmentComplete &&
   !props.isWatch &&
@@ -373,6 +385,16 @@ onBeforeUnmount(() => {
     </section>
 
     <Transition name="match-notice">
+      <ApiErrorPanel
+        v-if="matchErrorNotice"
+        class="match-error-notice"
+        :error="matchErrorNotice"
+        title="对局操作失败"
+        compact
+      />
+    </Transition>
+
+    <Transition name="match-notice">
       <aside
         v-if="matchNoticeMessage"
         :class="['match-action-notice', matchNoticeType]"
@@ -401,6 +423,12 @@ onBeforeUnmount(() => {
         @reset-game="emit('reset-game')"
         @exit-game="emit('exit-game')"
         @start-from-judge-board="emit('start-from-judge-board')"
+      />
+
+      <EvidenceContextBar
+        v-if="isReplayMode && game"
+        class="match-replay-evidence-context"
+        :game="game"
       />
 
       <ReplayControls
@@ -700,6 +728,35 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+.match-error-notice {
+  --status-danger: #9a2e21;
+  --text-main: #3f2714;
+  --text-muted: rgba(63, 39, 20, 0.72);
+  --match-error-bottom-clearance: calc(288px + var(--match-safe-bottom, 0px));
+  position: fixed;
+  top: var(--match-toast-top, calc(158px + var(--match-safe-top, 0px)));
+  left: 50%;
+  z-index: 92;
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - var(--match-toast-gutter, 32px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
+  max-height: clamp(144px, calc(100dvh - var(--match-toast-top, 158px) - var(--match-error-bottom-clearance)), 340px);
+  overflow-y: auto;
+  border-width: 2px;
+  background:
+    linear-gradient(180deg, rgba(255, 239, 194, 0.98), rgba(245, 218, 164, 0.98)),
+    repeating-linear-gradient(90deg, rgba(88, 42, 14, 0.08) 0 1px, transparent 1px 18px);
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.36),
+    inset 0 0 0 1px rgba(255, 250, 218, 0.48);
+  transform: translateX(-50%);
+  pointer-events: auto;
+  scrollbar-gutter: stable;
+}
+
+.match-error-notice :deep(details) {
+  min-width: 0;
+}
+
 .match-action-notice span {
   display: block;
   width: 9px;
@@ -721,11 +778,6 @@ onBeforeUnmount(() => {
 .match-action-notice.warning span {
   background: #b9802d;
   box-shadow: 0 0 0 3px rgba(185, 128, 45, 0.2);
-}
-
-.match-action-notice.error span {
-  background: #9a2e21;
-  box-shadow: 0 0 0 3px rgba(154, 46, 33, 0.18);
 }
 
 .match-notice-enter-active,
@@ -750,13 +802,61 @@ onBeforeUnmount(() => {
   pointer-events: auto;
 }
 
+.match-replay-evidence-context {
+  position: fixed;
+  top: var(--match-replay-context-top, calc(164px + var(--match-safe-top, 0px)));
+  left: 50%;
+  z-index: 23;
+  box-sizing: border-box;
+  width: min(740px, calc(100vw - var(--match-replay-gutter, 52px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
+  max-height: min(154px, calc(100dvh - var(--match-replay-context-top, 164px) - 150px - var(--match-safe-bottom, 0px)));
+  overflow-y: auto;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  scrollbar-gutter: stable;
+}
+
+.match-replay-evidence-context :deep(.evidence-context-summary) {
+  grid-template-columns:
+    minmax(120px, 0.9fr)
+    minmax(160px, 1.2fr)
+    minmax(100px, 0.75fr)
+    minmax(70px, 0.5fr)
+    minmax(130px, 1fr);
+}
+
+.match-replay-evidence-context :deep(.evidence-context-item) {
+  min-height: 38px;
+  padding: 6px 8px;
+}
+
 :deep(.player-command-panel) {
   bottom: var(--match-action-bottom, clamp(18px, 4vh, 42px));
   width: min(720px, calc(100vw - var(--match-action-gutter, 64px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px)));
   max-height: min(224px, var(--match-action-max-height, calc(100vh - 112px)));
 }
 
+@supports not (height: 100dvh) {
+  .match-replay-evidence-context {
+    max-height: min(154px, calc(100vh - var(--match-replay-context-top, 164px) - 150px - var(--match-safe-bottom, 0px)));
+  }
+
+  .match-error-notice {
+    max-height: clamp(144px, calc(100vh - var(--match-toast-top, 158px) - var(--match-error-bottom-clearance)), 340px);
+  }
+}
+
 @media (max-width: 760px) {
+  .match-replay-evidence-context {
+    top: var(--match-replay-context-top, calc(318px + var(--match-safe-top, 0px)));
+    width: calc(100vw - var(--match-replay-gutter, 18px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
+    max-height: min(168px, calc(100dvh - var(--match-replay-context-top, 318px) - 132px - var(--match-safe-bottom, 0px)));
+  }
+
+  .match-replay-evidence-context :deep(.evidence-context-summary) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .match-replay-controls {
     bottom: var(--match-replay-bottom, 12px);
     width: calc(100vw - var(--match-replay-gutter, 18px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
@@ -768,10 +868,30 @@ onBeforeUnmount(() => {
     padding-inline: 10px;
   }
 
+  .match-error-notice {
+    --match-error-bottom-clearance: calc(306px + var(--match-safe-bottom, 0px));
+    top: var(--match-toast-top, calc(146px + var(--match-safe-top, 0px)));
+    width: calc(100vw - var(--match-toast-gutter, 22px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
+    max-height: clamp(144px, calc(100dvh - var(--match-toast-top, 146px) - var(--match-error-bottom-clearance)), 260px);
+    padding: 10px 11px;
+  }
+
   :deep(.player-command-panel) {
     bottom: var(--match-action-bottom, 12px);
     width: calc(100vw - var(--match-action-gutter, 18px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
     max-height: min(260px, var(--match-action-max-height, calc(100vh - 96px)));
+  }
+}
+
+@supports not (height: 100dvh) {
+  @media (max-width: 760px) {
+    .match-replay-evidence-context {
+      max-height: min(168px, calc(100vh - var(--match-replay-context-top, 318px) - 132px - var(--match-safe-bottom, 0px)));
+    }
+
+    .match-error-notice {
+      max-height: clamp(144px, calc(100vh - var(--match-toast-top, 146px) - var(--match-error-bottom-clearance)), 260px);
+    }
   }
 }
 </style>

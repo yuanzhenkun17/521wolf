@@ -1033,6 +1033,13 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 [("snapshot_id", "path", True)],
             ),
         },
+        "/api/benchmark/snapshots/{snapshot_id}/compare": {
+            "get": (
+                "compare_benchmark_snapshot_api_benchmark_snapshots__snapshot_id__compare_get",
+                None,
+                [("snapshot_id", "path", True), ("against_snapshot_id", "query", False), ("limit", "query", False)],
+            ),
+        },
         "/api/benchmark/views": {
             "get": (
                 "list_benchmark_views_api_benchmark_views_get",
@@ -1060,6 +1067,27 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 [("view_key", "path", True)],
             ),
         },
+        "/api/benchmark/diagnostics": {
+            "get": (
+                "benchmark_diagnostics_api_benchmark_diagnostics_get",
+                None,
+                [
+                    ("scope", "query", False),
+                    ("evaluation_set_id", "query", False),
+                    ("benchmark_id", "query", False),
+                    ("target_role", "query", False),
+                    ("model_id", "query", False),
+                    ("model_config_hash", "query", False),
+                    ("kind", "query", False),
+                    ("level", "query", False),
+                    ("status", "query", False),
+                    ("stage", "query", False),
+                    ("seed", "query", False),
+                    ("limit", "query", False),
+                    ("offset", "query", False),
+                ],
+            ),
+        },
         "/api/benchmark/batch": {
             "post": ("start_benchmark_batch_api_benchmark_batch_post", "BenchmarkRequest", []),
         },
@@ -1075,6 +1103,30 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 "benchmark_batch_diagnostics_api_benchmark_batch__batch_id__diagnostics_get",
                 None,
                 [("batch_id", "path", True)],
+            ),
+        },
+        "/api/benchmark/batch/{batch_id}/report": {
+            "get": (
+                "benchmark_batch_report_api_benchmark_batch__batch_id__report_get",
+                None,
+                [("batch_id", "path", True), ("format", "query", False)],
+            ),
+        },
+        "/api/benchmark/reports": {
+            "get": (
+                "benchmark_reports_api_benchmark_reports_get",
+                None,
+                [
+                    ("scope", "query", False),
+                    ("evaluation_set_id", "query", False),
+                    ("benchmark_id", "query", False),
+                    ("target_role", "query", False),
+                    ("model_id", "query", False),
+                    ("model_config_hash", "query", False),
+                    ("status", "query", False),
+                    ("limit", "query", False),
+                    ("offset", "query", False),
+                ],
             ),
         },
         "/api/benchmark/batch/{batch_id}/stop": {
@@ -1283,6 +1335,19 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 ],
             ),
         },
+        "/api/leaderboards/compare": {
+            "get": (
+                "leaderboard_compare_api_leaderboards_compare_get",
+                None,
+                [
+                    ("scope", "query", False),
+                    ("evaluation_set_id", "query", False),
+                    ("target_role", "query", False),
+                    ("baseline_subject_id", "query", False),
+                    ("limit", "query", False),
+                ],
+            ),
+        },
         "/api/models/leaderboard": {
             "get": (
                 "model_leaderboard_api_models_leaderboard_get",
@@ -1435,6 +1500,8 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
 
     proposal_reject = _schema_properties(doc, "EvolutionProposalRejectRequest")
     assert proposal_reject["reason"]["default"] == ""
+    assert proposal_reject["reason"]["maxLength"] == 2000
+    assert proposal_reject["tags"]["maxItems"] == 12
     assert proposal_reject["tags"]["items"] == {"type": "string"}
 
     tts = _schema_properties(doc, "TtsSpeechRequest")
@@ -2084,6 +2151,470 @@ def test_benchmark_batch_detail_games_diagnostics_api_contract(tmp_path: Path) -
     assert diagnostics["summary"]["by_origin"]["game"] >= 1
 
 
+def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        _, batch_id = _seed_evolution(store)
+        batch = store.evolution_batches[batch_id]
+        result_batch_id = f"{batch_id}_witch"
+        batch["benchmark"] = {
+            "id": "role-baseline-v1",
+            "version": 1,
+            "name": "Role Baseline Benchmark",
+            "target_type": "role_version",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "config_hash": "sha256:report-contract",
+        }
+        batch["target_type"] = "role_version"
+        batch["config"] = {
+            "benchmark_id": "role-baseline-v1",
+            "evaluation_set_id": "role-baseline-v1@v1",
+            "seed_set_id": "role-baseline-quick-202606",
+            "benchmark_config_hash": "sha256:report-contract",
+            "roles": ["witch"],
+        }
+        batch["results"] = [
+            {
+                "batch_id": result_batch_id,
+                "config": {
+                    "batch_id": result_batch_id,
+                    "target_role": "witch",
+                    "target_version_id": "witch_candidate_v2",
+                    "evaluation_set_id": "role-baseline-v1@v1",
+                    "seed_set_id": "role-baseline-quick-202606",
+                    "benchmark_config_hash": "sha256:report-contract",
+                },
+                "game_count": 2,
+                "attempted_game_count": 2,
+                "completed": 1,
+                "errored": 1,
+                "rankable": False,
+                "rankable_reason": "valid_game_rate below threshold",
+                "leaderboard_gate": {
+                    "accepted": False,
+                    "reason": "quality_gate_failed",
+                },
+                "score_summary": {
+                    "decision_judge_aggregate": {
+                        "status": "degraded",
+                        "reason": "judge timeout",
+                        "top_mistake_tags": [{"tag": "low_information_gain", "count": 2}],
+                    },
+                },
+                "games": [
+                    {
+                        "game_id": "bench_report_game_ok",
+                        "status": "completed",
+                        "seed": 260600,
+                        "events": [{"event_type": "game_init"}],
+                        "decisions": [{"decision_id": "d1"}],
+                    },
+                    {
+                        "game_id": "bench_report_game_timeout",
+                        "history_game_id": "history_bench_report_game_timeout",
+                        "status": "timeout",
+                        "seed": 260607,
+                        "timeout": True,
+                        "error": "game timeout",
+                        "events": [],
+                        "decisions": [],
+                    },
+                ],
+            }
+        ]
+        batch["result"] = batch["results"][0]
+
+        json_response = client.get(f"/api/benchmark/batch/{batch_id}/report")
+        markdown_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=markdown")
+        csv_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=csv")
+        unsupported_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=xml")
+
+    assert json_response.status_code == 200
+    payload = json_response.json()
+    _assert_shape(
+        payload,
+        {
+            "kind": str,
+            "schema_version": int,
+            "generated_at": str,
+            "run_id": str,
+            "batch_id": str,
+            "status": str,
+            "evaluation_set_id": str,
+            "seed_set_id": str,
+            "benchmark_config_hash": str,
+            "suite": dict,
+            "subject": dict,
+            "summary": dict,
+            "results": list,
+            "gates": list,
+            "problem_games": list,
+            "diagnostics": list,
+            "tags": list,
+            "reproducibility": dict,
+            "leaderboard": dict,
+        },
+    )
+    assert payload["kind"] == "benchmark_run_report"
+    assert payload["run_id"] == batch_id
+    assert payload["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert payload["seed_set_id"] == "role-baseline-quick-202606"
+    assert payload["benchmark_config_hash"] == "sha256:report-contract"
+    assert payload["suite"]["benchmark_id"] == "role-baseline-v1"
+    assert payload["suite"]["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert payload["suite"]["benchmark_config_hash"] == "sha256:report-contract"
+    assert payload["subject"]["target_role"] == "witch"
+    assert payload["subject"]["target_version_id"] == "witch_candidate_v2"
+    assert payload["summary"]["result_count"] == 1
+    assert payload["summary"]["unrankable_count"] == 1
+    assert payload["summary"]["problem_game_count"] == 1
+    assert payload["summary"]["diagnostic_summary"]["by_kind"]["decision_judge_degraded"] == 1
+    assert payload["summary"]["diagnostic_summary"]["by_kind"]["game_failure"] == 1
+    assert payload["problem_games"][0]["game_id"] == "bench_report_game_timeout"
+    assert payload["problem_games"][0]["history_game_id"] == "history_bench_report_game_timeout"
+    assert payload["reproducibility"]["Evaluation Set"] == "role-baseline-v1@v1"
+    assert payload["reproducibility"]["Config Hash"] == "sha256:report-contract"
+    assert payload["tags"][0] == {"label": "low_information_gain", "count": 2}
+
+    assert markdown_response.status_code == 200
+    markdown_payload = markdown_response.json()
+    assert markdown_payload["kind"] == "benchmark_run_report_export"
+    assert markdown_payload["format"] == "markdown"
+    assert "# Benchmark Run Report" in markdown_payload["content"]
+    assert "role-baseline-v1@v1" in markdown_payload["content"]
+    assert "bench_report_game_timeout" in markdown_payload["content"]
+
+    assert csv_response.status_code == 200
+    csv_payload = csv_response.json()
+    assert csv_payload["format"] == "csv"
+    assert csv_payload["content"].splitlines()[0] == "section,label,value,detail"
+    assert "bench_report_game_timeout" in csv_payload["content"]
+
+    _assert_error_detail(unsupported_response, 422, "unsupported benchmark report format")
+
+
+def test_benchmark_report_history_api_contract(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        store.evolution_batches["bench_report_history_a"] = {
+            "kind": "benchmark_batch",
+            "schema_version": 1,
+            "batch_id": "bench_report_history_a",
+            "roles": ["seer"],
+            "status": "completed",
+            "started_at": "2026-06-08T10:00:00+08:00",
+            "finished_at": "2026-06-08T10:08:00+08:00",
+            "target_type": "role_version",
+            "benchmark": {
+                "id": "role-baseline-v1",
+                "version": 1,
+                "name": "Role Baseline",
+                "target_type": "role_version",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "config_hash": "sha256:history-role",
+            },
+            "config": {
+                "benchmark_id": "role-baseline-v1",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:history-role",
+            },
+            "result": {
+                "batch_id": "bench_report_history_a_seer",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate_v1",
+                "game_count": 2,
+                "completed": 1,
+                "errored": 1,
+                "rankable": False,
+                "rankable_reason": "valid_game_rate below threshold",
+                "games": [
+                    {"game_id": "history_game_ok", "status": "completed", "seed": 260600},
+                    {"game_id": "history_game_timeout", "status": "timeout", "seed": 260607, "error": "timeout"},
+                ],
+            },
+        }
+        store.evolution_batches["bench_report_history_model"] = {
+            "kind": "benchmark_batch",
+            "schema_version": 1,
+            "batch_id": "bench_report_history_model",
+            "roles": ["seer"],
+            "status": "completed",
+            "started_at": "2026-06-08T09:00:00+08:00",
+            "finished_at": "2026-06-08T09:06:00+08:00",
+            "target_type": "model",
+            "benchmark": {
+                "id": "model-baseline-v1",
+                "version": 1,
+                "name": "Model Baseline",
+                "target_type": "model",
+                "evaluation_set_id": "model-baseline-v1@v1",
+                "seed_set_id": "model-baseline-standard-202606",
+                "config_hash": "sha256:history-model",
+            },
+            "config": {
+                "benchmark_id": "model-baseline-v1",
+                "evaluation_set_id": "model-baseline-v1@v1",
+                "seed_set_id": "model-baseline-standard-202606",
+                "benchmark_config_hash": "sha256:history-model",
+                "model_id": "qwen-max",
+                "model_config_hash": "runtime-hash-v1",
+            },
+            "result": {
+                "batch_id": "bench_report_history_model_all",
+                "model_id": "qwen-max",
+                "model_config_hash": "runtime-hash-v1",
+                "game_count": 1,
+                "completed": 1,
+                "errored": 0,
+                "rankable": True,
+                "games": [{"game_id": "model_history_game", "status": "completed", "seed": 260600}],
+            },
+        }
+
+        role_response = client.get(
+            "/api/benchmark/reports?"
+            "scope=role_version&evaluation_set_id=role-baseline-v1%40v1&"
+            "benchmark_id=role-baseline-v1&target_role=seer&limit=10"
+        )
+        model_response = client.get(
+            "/api/benchmark/reports?"
+            "scope=model&evaluation_set_id=model-baseline-v1%40v1&"
+            "model_id=qwen-max&model_config_hash=runtime-hash-v1"
+        )
+        paged_response = client.get("/api/benchmark/reports?limit=1&offset=1")
+
+    assert role_response.status_code == 200
+    payload = role_response.json()
+    _assert_shape(
+        payload,
+        {
+            "kind": str,
+            "schema_version": int,
+            "scope": str,
+            "evaluation_set_id": str,
+            "benchmark_id": str,
+            "target_role": str,
+            "filters": dict,
+            "items": list,
+            "summary": dict,
+            "pagination": dict,
+        },
+    )
+    assert payload["kind"] == "benchmark_run_reports"
+    assert payload["pagination"]["total"] == 1
+    item = payload["items"][0]
+    _assert_shape(
+        item,
+        {
+            "kind": str,
+            "schema_version": int,
+            "report_id": str,
+            "run_id": str,
+            "batch_id": str,
+            "status": str,
+            "suite": dict,
+            "subject": dict,
+            "summary": dict,
+            "evaluation_set_id": str,
+            "seed_set_id": str,
+            "benchmark_config_hash": str,
+            "rankable_count": int,
+            "unrankable_count": int,
+            "problem_game_count": int,
+            "diagnostic_count": int,
+            "content_hash": str,
+            "links": dict,
+        },
+    )
+    assert item["kind"] == "benchmark_run_report_summary"
+    assert item["report_id"] == "benchmark_report:bench_report_history_a"
+    assert item["batch_id"] == "bench_report_history_a"
+    assert item["evaluation_set_id"] == "role-baseline-v1@v1"
+    assert item["seed_set_id"] == "role-baseline-quick-202606"
+    assert item["benchmark_config_hash"] == "sha256:history-role"
+    assert item["subject"]["target_role"] == "seer"
+    assert item["unrankable_count"] == 1
+    assert item["problem_game_count"] == 1
+    assert item["diagnostic_count"] >= 1
+    assert item["content_hash"].startswith("sha256:")
+    assert item["links"]["markdown"].endswith("?format=markdown")
+    assert payload["summary"]["total"] == 1
+    assert payload["summary"]["problem_game_count"] == 1
+
+    assert model_response.status_code == 200
+    model_payload = model_response.json()
+    assert model_payload["items"][0]["batch_id"] == "bench_report_history_model"
+    assert model_payload["items"][0]["subject"]["model_id"] == "qwen-max"
+    assert model_payload["items"][0]["subject"]["model_config_hash"] == "runtime-hash-v1"
+
+    assert paged_response.status_code == 200
+    paged = paged_response.json()
+    assert paged["pagination"]["limit"] == 1
+    assert paged["pagination"]["offset"] == 1
+    assert paged["pagination"]["returned"] == 1
+
+
+def test_benchmark_diagnostics_api_aggregates_across_runs(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        store.evolution_batches["bench_diag_a"] = {
+            "kind": "benchmark_batch",
+            "schema_version": 1,
+            "batch_id": "bench_diag_a",
+            "roles": ["seer"],
+            "status": "completed",
+            "started_at": "2026-06-08T09:00:00+08:00",
+            "finished_at": "2026-06-08T09:10:00+08:00",
+            "benchmark": {
+                "id": "role-baseline-v1",
+                "version": 1,
+                "target_type": "role_version",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+            },
+            "config": {"evaluation_set_id": "role-baseline-v1@v1"},
+            "result": {
+                "batch_id": "bench_diag_a_seer",
+                "target_role": "seer",
+                "rankable": False,
+                "rankable_reason": "completed_games 1 < required 2",
+                "leaderboard_gate": {
+                    "accepted": False,
+                    "reason": "valid_game_rate below threshold",
+                },
+                "score_summary": {
+                    "decision_judge_aggregate": {
+                        "status": "degraded",
+                        "reason": "judge timeout",
+                    },
+                },
+                "games": [
+                    {
+                        "game_id": "bench_diag_a_game_001",
+                        "status": "timeout",
+                        "seed": 260600,
+                        "timeout": True,
+                        "error": "game timeout",
+                    }
+                ],
+            },
+        }
+        store.evolution_batches["bench_diag_b"] = {
+            "kind": "benchmark_batch",
+            "schema_version": 1,
+            "batch_id": "bench_diag_b",
+            "roles": ["seer"],
+            "status": "failed",
+            "started_at": "2026-06-09T09:00:00+08:00",
+            "finished_at": "2026-06-09T09:05:00+08:00",
+            "benchmark": {
+                "id": "role-baseline-v1",
+                "version": 1,
+                "target_type": "role_version",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+            },
+            "config": {"evaluation_set_id": "role-baseline-v1@v1"},
+            "result": {
+                "batch_id": "bench_diag_b_seer",
+                "target_role": "seer",
+                "rankable": True,
+                "games": [
+                    {
+                        "game_id": "bench_diag_b_game_001",
+                        "status": "failed",
+                        "seed": 260607,
+                        "error": "persist failed",
+                    }
+                ],
+            },
+        }
+        store.evolution_batches["bench_diag_model"] = {
+            "kind": "benchmark_batch",
+            "schema_version": 1,
+            "batch_id": "bench_diag_model",
+            "roles": ["seer"],
+            "status": "completed",
+            "benchmark": {
+                "id": "model-baseline-v1",
+                "version": 1,
+                "target_type": "model",
+                "evaluation_set_id": "model-baseline-v1@v1",
+            },
+            "config": {
+                "target_type": "model",
+                "evaluation_set_id": "model-baseline-v1@v1",
+                "model_id": "qwen-max",
+                "model_config_hash": "runtime_hash_v1",
+            },
+            "result": {
+                "batch_id": "bench_diag_model",
+                "rankable": False,
+                "rankable_reason": "model gate failed",
+            },
+        }
+
+        aggregate_response = client.get(
+            "/api/benchmark/diagnostics?"
+            "scope=role_version&benchmark_id=role-baseline-v1&"
+            "evaluation_set_id=role-baseline-v1%40v1&target_role=seer&limit=10"
+        )
+        error_response = client.get(
+            "/api/benchmark/diagnostics?"
+            "benchmark_id=role-baseline-v1&evaluation_set_id=role-baseline-v1%40v1&"
+            "target_role=seer&level=error"
+        )
+        model_response = client.get(
+            "/api/benchmark/diagnostics?"
+            "scope=model&evaluation_set_id=model-baseline-v1%40v1&model_id=qwen-max"
+        )
+
+    assert aggregate_response.status_code == 200
+    aggregate = aggregate_response.json()
+    _assert_shape(
+        aggregate,
+        {
+            "kind": str,
+            "schema_version": int,
+            "scope": str,
+            "evaluation_set_id": str,
+            "benchmark_id": str,
+            "target_role": str,
+            "filters": dict,
+            "diagnostics": list,
+            "affected_runs": list,
+            "affected_games": list,
+            "summary": dict,
+            "pagination": dict,
+        },
+    )
+    assert aggregate["kind"] == "benchmark_diagnostics"
+    assert aggregate["summary"]["by_kind"]["decision_judge_degraded"] == 1
+    assert aggregate["summary"]["by_kind"]["game_failure"] == 2
+    assert aggregate["summary"]["by_kind"]["leaderboard_gate_failed"] == 1
+    assert aggregate["summary"]["affected_run_count"] == 2
+    assert aggregate["summary"]["affected_game_count"] == 2
+    assert {run["batch_id"] for run in aggregate["affected_runs"]} == {"bench_diag_a", "bench_diag_b"}
+    assert {game["game_id"] for game in aggregate["affected_games"]} == {
+        "bench_diag_a_game_001",
+        "bench_diag_b_game_001",
+    }
+    assert aggregate["affected_runs"][0]["diagnostic_summary"]["total"] >= 1
+
+    assert error_response.status_code == 200
+    error_payload = error_response.json()
+    assert error_payload["summary"]["by_level"] == {"error": 1}
+    assert error_payload["diagnostics"][0]["kind"] == "game_failure"
+
+    assert model_response.status_code == 200
+    model_payload = model_response.json()
+    assert model_payload["summary"]["by_kind"] == {"rankable_failed": 1}
+    assert model_payload["diagnostics"][0]["model_id"] == "qwen-max"
+
+
 def test_game_stop_cancel_api_contract(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         store = client.app.state.backend_store
@@ -2262,6 +2793,16 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
         store = client.app.state.backend_store
         run_id, batch_id = _seed_evolution(store)
         run = store.evolution_runs[run_id]
+        store.registry.publish_skills(
+            "seer",
+            {"baseline.md": _valid_seer_skill()},
+            version_id="baseline_seer",
+            source="fixture",
+            set_as_baseline=True,
+            expected_current=None,
+        )
+        run["parent_hash"] = "baseline_seer"
+        run["candidate_hash"] = "candidate_seer"
         run["proposals"] = [
             {
                 "proposal_id": "p1",
@@ -2332,6 +2873,7 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
         ]
         run["gate_report"] = {
             "schema_version": "trust_loop_gate_v1",
+            "gate_report_id": "gate_fixture",
             "decision": "review_required",
             "promote_allowed": False,
             "review_reasons": ["proposal_overfit_risk_high"],
@@ -2466,9 +3008,12 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
         accept_response = client.post(f"/api/evolution-runs/{run_id}/proposals/p1/accept")
         reject_response = client.post(
             f"/api/evolution-runs/{run_id}/proposals/p2/reject",
-            json={"reason": "overfit", "tags": ["seed_specific"]},
+            json={"reason": " overfit ", "tags": ["Seed Specific", "seed-specific", " overfit risk "]},
         )
         apply_response = client.post(f"/api/evolution-runs/{run_id}/proposals/apply-accepted")
+        promote_response = client.post(f"/api/evolution-runs/{run_id}/actions", json={"action": "promote"})
+        versions_response = client.get("/api/roles/seer/versions")
+        version_detail_response = client.get("/api/roles/seer/versions/candidate_seer")
         batch_response = client.get(f"/api/evolution-runs/{batch_id}/proposals")
         batch_trust_response = client.get(f"/api/evolution-runs/{batch_id}/trust-bundle")
         missing_response = client.get("/api/evolution-runs/missing_contract/proposals")
@@ -2526,6 +3071,7 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
     assert read_payload["proposals"][0]["preflight"]["status"] == "passed"
     assert read_payload["proposals"][2]["preflight"]["status"] == "failed"
     assert read_payload["gate_report"]["decision"] == "review_required"
+    assert read_payload["gate_report"]["raw"]["gate_report_id"] == "gate_fixture"
     assert read_payload["gate_report"]["release_gate"]["schema_version"] == "promotion_gate_v2"
     assert read_payload["gate_report"]["scenario_replay"]["execution_mode"] == "contract_only"
     assert read_payload["gate_report"]["metrics"]["scenario_count"] == 1
@@ -2537,6 +3083,7 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
     assert read_payload["proposal_attribution_report"]["rows"][1]["estimated_contribution"] is None
     assert read_payload["gate_report"]["proposal_attribution"]["status"] == "attribution_inconclusive"
     assert read_payload["trust_bundle"]["schema_version"] == "trust_bundle_v1"
+    assert read_payload["trust_bundle"]["gate_report_id"] == "gate_fixture"
     assert read_payload["trust_bundle"]["rollback_target"] == "baseline_seer"
     assert read_payload["run"]["trust_bundle"]["schema_version"] == "trust_bundle_v1"
     assert read_payload["run"]["proposal_attribution_report"]["review_required"] is True
@@ -2564,9 +3111,17 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
     assert trust_payload["trust_bundle_id"] == f"trust_bundle_{run_id}_fixture"
     assert trust_payload["run_id"] == run_id
     assert trust_payload["role"] == "seer"
+    assert trust_payload["baseline_version"] == "baseline_seer"
+    assert trust_payload["candidate_version"] == "candidate_seer"
     assert trust_payload["bundle_hash"] == "0" * 64
+    assert trust_payload["gate_report_id"] == "gate_fixture"
+    assert trust_payload["attribution_report_id"] == "attribution_fixture"
     assert trust_payload["trust_bundle"]["schema_version"] == "trust_bundle_v1"
     assert trust_payload["trust_bundle"]["rollback_target"] == "baseline_seer"
+    assert trust_payload["trust_bundle"]["proposal_ids"] == ["p1", "p2", "p3"]
+    assert trust_payload["trust_bundle"]["generated_proposal_ids"] == ["p1", "p2", "p3"]
+    assert trust_payload["trust_bundle"]["preflight_passed_proposal_ids"] == ["p1", "p2"]
+    assert trust_payload["trust_bundle"]["training_game_ids"] == ["training_001", "training_002"]
 
     assert accept_response.status_code == 200
     accepted = accept_response.json()
@@ -2589,14 +3144,35 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
     assert rejected_payload["proposal_review"]["preflight_passed_count"] == 2
     assert rejected_payload["action"]["proposal"]["status"] == "rejected"
     assert rejected_payload["action"]["proposal"]["rejection_reason"] == "overfit"
+    assert rejected_payload["action"]["proposal"]["rejection_tags"] == ["seed_specific", "overfit_risk"]
+    assert rejected_payload["action"]["proposal"]["rejection_metadata"]["reason"] == "overfit"
+    assert rejected_payload["action"]["proposal"]["rejection_metadata"]["tags"] == ["seed_specific", "overfit_risk"]
+    assert rejected_payload["action"]["proposal"]["rejection_metadata"]["review_source"] == "ui_api"
     assert rejected_payload["action"]["proposal"]["reject_buffer"]["saved"] is True
+    assert rejected_payload["action"]["proposal"]["reject_buffer"]["tags"] == ["seed_specific", "overfit_risk"]
+    assert rejected_payload["action"]["proposal"]["reject_buffer"]["rejection_metadata"]["tags"] == [
+        "seed_specific",
+        "overfit_risk",
+    ]
+    assert rejected_payload["action"]["review_action"]["action"] == "reject"
+    assert rejected_payload["action"]["review_action"]["tags"] == ["seed_specific", "overfit_risk"]
+    assert rejected_payload["action"]["rejection_metadata"]["tags"] == ["seed_specific", "overfit_risk"]
     assert rejected_payload["action"]["proposal"]["hypothesis"] == "Checking seat 3 improves this candidate on seed 101."
     assert rejected_payload["action"]["proposal"]["preflight"]["status"] == "passed"
+    assert rejected_payload["proposal_review"]["review_actions"][0]["proposal_id"] == "p2"
+    assert rejected_payload["proposal_review"]["review_actions"][0]["tags"] == ["seed_specific", "overfit_risk"]
+    assert rejected_payload["proposal_review"]["rejection_metadata"]["p2"]["tags"] == [
+        "seed_specific",
+        "overfit_risk",
+    ]
+    assert rejected_payload["proposal_review"]["rejection_metadata_by_proposal_id"]["p2"]["reason"] == "overfit"
     assert rejected[-1]["proposal_id"] == "p2"
     assert rejected[-1]["hypothesis"] == "Checking seat 3 improves this candidate on seed 101."
     assert rejected[-1]["preflight"]["status"] == "passed"
     assert rejected[-1]["dedupe_key"]
-    assert rejected[-1]["rejection_tags"] == ["seed_specific"]
+    assert rejected[-1]["rejection_tags"] == ["seed_specific", "overfit_risk"]
+    assert rejected[-1]["rejection_metadata"]["tags"] == ["seed_specific", "overfit_risk"]
+    assert rejected[-1]["reject_buffer"]["rejection_metadata"]["reason"] == "overfit"
 
     assert apply_response.status_code == 200
     applied = apply_response.json()
@@ -2607,6 +3183,51 @@ def test_evolution_proposal_review_api_contract(tmp_path: Path) -> None:
     assert applied["proposal_review"]["rejected_proposal_ids"] == ["p2"]
     assert applied["action"]["accepted_proposal_ids"] == ["p1"]
     assert applied["run"]["proposal_review"]["applied_proposal_ids"] == ["p1"]
+
+    assert promote_response.status_code == 200
+    promoted = promote_response.json()
+    assert promoted["status"] == "promoted"
+    assert promoted["published_version_id"] == "candidate_seer"
+    assert promoted["published_release_stage"] == "shadow"
+    assert promoted["promoted_proposal_ids"] == ["p1"]
+    assert promoted["trust_bundle"]["trust_bundle_id"] == trust_payload["trust_bundle_id"]
+    assert promoted["trust_bundle"]["bundle_hash"] == trust_payload["bundle_hash"]
+    assert promoted["trust_bundle"]["gate_report_id"] == trust_payload["gate_report_id"]
+
+    assert versions_response.status_code == 200
+    versions = {item["version_id"]: item for item in versions_response.json()["versions"]}
+    published = versions["candidate_seer"]
+    assert published["provenance"]["run_id"] == run_id
+    assert published["provenance"]["proposal_ids"] == ["p1"]
+    assert published["provenance"]["trust_bundle_id"] == trust_payload["trust_bundle_id"]
+    assert published["provenance"]["bundle_hash"] == trust_payload["bundle_hash"]
+    assert published["provenance"]["gate_report_id"] == trust_payload["gate_report_id"]
+    assert published["provenance"]["attribution_report_id"] == trust_payload["attribution_report_id"]
+
+    assert version_detail_response.status_code == 200
+    version_detail = version_detail_response.json()
+    assert version_detail["version_id"] == "candidate_seer"
+    assert version_detail["source_run_id"] == run_id
+    assert version_detail["trust_bundle_id"] == trust_payload["trust_bundle_id"]
+    assert version_detail["bundle_hash"] == trust_payload["bundle_hash"]
+    assert version_detail["gate_report_id"] == trust_payload["gate_report_id"]
+    assert version_detail["attribution_report_id"] == trust_payload["attribution_report_id"]
+    assert version_detail["provenance"]["proposal_ids"] == ["p1"]
+
+    restored_target = {
+        "run_id": read_payload["run_id"],
+        "proposal_id": read_payload["proposals"][0]["proposal_id"],
+        "gate_report_id": trust_payload["gate_report_id"],
+        "role": version_detail["role"],
+        "version_id": version_detail["version_id"],
+    }
+    assert restored_target == {
+        "run_id": run_id,
+        "proposal_id": "p1",
+        "gate_report_id": trust_payload["gate_report_id"],
+        "role": "seer",
+        "version_id": "candidate_seer",
+    }
 
     _assert_error_detail(batch_response, 400, "batch does not support proposals; select a child run")
     _assert_error_detail(batch_trust_response, 400, "batch does not support trust bundle; select a child run")
@@ -2948,6 +3569,39 @@ def test_evolution_actions_baseline_promote_trust_gate_error_contract(tmp_path: 
             "/api/evolution-runs/evolve_contract_missing_trust/actions",
             json={"action": "promote"},
         )
+        store.evolution_runs["evolve_contract_incomplete_trust"] = {
+            "kind": "role_evolution_run",
+            "schema_version": 1,
+            "run_id": "evolve_contract_incomplete_trust",
+            "role": "seer",
+            "status": "reviewing",
+            "parent_hash": "baseline_seer",
+            "candidate_hash": "candidate_incomplete_trust",
+            "proposals": [proposal],
+            "applied_proposal_ids": ["p1"],
+            "proposal_review": {"applied_proposal_ids": ["p1"]},
+            "release_decision": "baseline_promote",
+            "trust_bundle": {
+                "schema_version": "trust_bundle_v1",
+                "trust_bundle_id": "trust_bundle_contract_incomplete",
+                "run_id": "evolve_contract_incomplete_trust",
+                "role": "seer",
+                "baseline_version": "baseline_seer",
+                "candidate_version": "candidate_incomplete_trust",
+                "completeness": {
+                    "schema_version": "trust_bundle_completeness_v1",
+                    "complete": False,
+                    "score": 0.5,
+                    "missing": ["training_game_ids", "proposal_ids", "gate_report_id", "bundle_hash"],
+                },
+            },
+            "battle_result": {"release_decision": "baseline_promote"},
+        }
+        incomplete_response = client.post(
+            "/api/evolution-runs/evolve_contract_incomplete_trust/actions",
+            json={"action": "promote"},
+        )
+        baseline_version = store.registry.get_baseline("seer")
 
     payload = _assert_domain_error(
         response,
@@ -2959,6 +3613,23 @@ def test_evolution_actions_baseline_promote_trust_gate_error_contract(tmp_path: 
     diagnostic = payload["error"]["diagnostics"][0]
     assert diagnostic["release_stage"] == "baseline"
     assert diagnostic["release_decision"] == "baseline_promote"
+    incomplete_payload = _assert_domain_error(
+        incomplete_response,
+        409,
+        "evolution_trust_bundle_incomplete",
+        detail_contains="training_evidence",
+        kind="evolution_trust_bundle_incomplete",
+    )
+    incomplete_diagnostic = incomplete_payload["error"]["diagnostics"][0]
+    assert incomplete_diagnostic["release_stage"] == "baseline"
+    assert incomplete_diagnostic["release_decision"] == "baseline_promote"
+    assert set(incomplete_diagnostic["missing"]) == {
+        "training_evidence",
+        "proposals",
+        "gate_report",
+        "trust_bundle",
+    }
+    assert baseline_version == "baseline_seer"
 
 
 def test_benchmark_post_api_contract(tmp_path: Path) -> None:
@@ -3059,11 +3730,78 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
     _write_model_benchmark_spec(tmp_path)
 
     with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        store.evolution_batches["bench_role_contract_old"] = {
+            "kind": "benchmark_batch",
+            "schema_version": 1,
+            "batch_id": "bench_role_contract_old",
+            "roles": ["seer"],
+            "status": "completed",
+            "started_at": "2026-06-08T10:00:00+08:00",
+            "finished_at": "2026-06-08T10:05:00+08:00",
+            "last_heartbeat_at": "2026-06-08T10:05:00+08:00",
+            "current_stage": "completed",
+            "benchmark": {
+                "id": "role-baseline-v1",
+                "target_type": "role_version",
+                "evaluation_set_id": "role-baseline-v1@v1",
+            },
+            "config": {"evaluation_set_id": "role-baseline-v1@v1"},
+            "result": {"rankable": True},
+            "diagnostics": [],
+        }
+        store.evolution_batches["bench_role_contract_new"] = {
+            "kind": "benchmark_batch",
+            "schema_version": 1,
+            "batch_id": "bench_role_contract_new",
+            "roles": ["seer", "witch"],
+            "status": "running",
+            "started_at": "2026-06-09T10:00:00+08:00",
+            "last_heartbeat_at": "2026-06-09T10:10:00+08:00",
+            "current_stage": "judge_decisions",
+            "progress": {"stage": "judge_decisions"},
+            "benchmark": {
+                "id": "role-baseline-v1",
+                "target_type": "role_version",
+                "evaluation_set_id": "role-baseline-v1@v1",
+            },
+            "config": {"evaluation_set_id": "role-baseline-v1@v1"},
+            "results": [{"target_role": "seer"}, {"target_role": "witch"}],
+            "diagnostics": [{"kind": "rankable_failed", "level": "warning"}],
+        }
+        store.leaderboard_entries = lambda **_: [
+            {
+                "scope": "role_version",
+                "subject_id": "seer_candidate_v2",
+                "hash": "seer_candidate_v2",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate_v2",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "avg_role_score": 0.7,
+                "target_side_win_rate": 0.6,
+                "rankable": True,
+            }
+        ]
+        snapshot_response = client.post(
+            "/api/benchmark/snapshots",
+            json={
+                "title": "Role contract release",
+                "scope": "role_version",
+                "benchmark_id": "role-baseline-v1",
+                "benchmark_version": 1,
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
+                "target_role": "seer",
+                "limit": 10,
+            },
+        )
         list_response = client.get("/api/benchmarks")
         detail_response = client.get("/api/benchmarks/role-baseline-v1")
         model_detail_response = client.get("/api/benchmarks/model-baseline-v1")
         missing_response = client.get("/api/benchmarks/missing-suite")
 
+    assert snapshot_response.status_code == 200
     assert list_response.status_code == 200
     list_payload = list_response.json()
     _assert_shape(list_payload, {"items": list})
@@ -3084,6 +3822,8 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
             "seed_preview": list,
             "seed_set": dict,
             "cost_tier": str,
+            "last_run": dict,
+            "latest_snapshot": dict,
         },
     )
     assert item["id"] == "role-baseline-v1"
@@ -3092,12 +3832,29 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
     assert item["seed_preview"] == [260600, 260607, 260619]
     assert item["seed_set"]["purpose"] == "role_leaderboard_smoke"
     assert item["seed_set"]["config_hash"].startswith("sha256:")
+    assert item["last_run"] == {
+        "batch_id": "bench_role_contract_new",
+        "status": "running",
+        "current_stage": "judge_decisions",
+        "target_type": "role_version",
+        "started_at": "2026-06-09T10:00:00+08:00",
+        "finished_at": None,
+        "last_heartbeat_at": "2026-06-09T10:10:00+08:00",
+        "role_count": 2,
+        "result_count": 2,
+        "diagnostic_count": 1,
+    }
+    assert item["latest_snapshot"]["title"] == "Role contract release"
+    assert item["latest_snapshot"]["row_count"] == 1
+    assert item["latest_snapshot"]["content_hash"].startswith("sha256:")
     model_item = next(item for item in list_payload["items"] if item["id"] == "model-baseline-v1")
     assert model_item["target_type"] == "model"
     assert model_item["evaluation_set_id"] == "model-baseline-v1@v1"
     assert model_item["seed_set_id"] == "model-baseline-quick-202606"
     assert model_item["seed_preview"] == [270600, 270611, 270623]
     assert model_item["seed_set"]["purpose"] == "model_leaderboard_smoke"
+    assert model_item["last_run"] is None
+    assert model_item["latest_snapshot"] is None
 
     assert detail_response.status_code == 200
     detail = detail_response.json()
@@ -3241,6 +3998,133 @@ def test_leaderboards_api_contract_preserves_scope_isolation_params(tmp_path: Pa
     assert payload["entries"][0]["evaluation_set_id"] == "role-baseline-v1@v1"
 
 
+def test_leaderboard_compare_api_pins_baseline_and_reports_boundary(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        rows = [
+            {
+                "scope": "role_version",
+                "hash": "seer_baseline",
+                "subject_id": "seer_baseline",
+                "target_role": "seer",
+                "target_version_id": "seer_baseline",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "game_count": 40,
+                "games_played": 40,
+                "avg_role_score": 0.6,
+                "target_role_role_weighted_score": 0.6,
+                "target_side_win_rate": 0.55,
+                "fallback_rate": 0.02,
+                "llm_error_rate": 0.01,
+                "policy_adjusted_rate": 0.03,
+                "rankable": True,
+                "is_baseline": True,
+                "summary": {"is_baseline": True},
+            },
+            {
+                "scope": "role_version",
+                "hash": "seer_candidate",
+                "subject_id": "seer_candidate",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "game_count": 40,
+                "games_played": 40,
+                "avg_role_score": 0.66,
+                "target_role_role_weighted_score": 0.66,
+                "target_side_win_rate": 0.58,
+                "fallback_rate": 0.03,
+                "llm_error_rate": 0.01,
+                "policy_adjusted_rate": 0.02,
+                "rankable": True,
+                "summary": {},
+            },
+            {
+                "scope": "role_version",
+                "hash": "seer_mismatch",
+                "subject_id": "seer_mismatch",
+                "target_role": "seer",
+                "target_version_id": "seer_mismatch",
+                "evaluation_set_id": "role-baseline-v2@v1",
+                "seed_set_id": "role-baseline-other-202606",
+                "game_count": 40,
+                "games_played": 40,
+                "avg_role_score": 0.7,
+                "target_role_role_weighted_score": 0.7,
+                "target_side_win_rate": 0.62,
+                "fallback_rate": 0.02,
+                "llm_error_rate": 0.01,
+                "policy_adjusted_rate": 0.03,
+                "rankable": True,
+                "summary": {},
+            },
+        ]
+        captured: dict[str, Any] = {}
+
+        def fake_leaderboard_entries(
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, Any]]:
+            captured.update(
+                {
+                    "scope": scope,
+                    "evaluation_set_id": evaluation_set_id,
+                    "target_role": target_role,
+                    "limit": limit,
+                }
+            )
+            return [dict(row) for row in rows]
+
+        store.leaderboard_entries = fake_leaderboard_entries
+        response = client.get(
+            "/api/leaderboards/compare?"
+            "scope=role_version&evaluation_set_id=role-baseline-v1%40v1&"
+            "target_role=seer&baseline_subject_id=seer_baseline&limit=25"
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    _assert_shape(
+        payload,
+        {
+            "kind": str,
+            "schema_version": int,
+            "scope": str,
+            "evaluation_set_id": str,
+            "target_role": str,
+            "baseline_subject_id": str,
+            "baseline": dict,
+            "rows": list,
+            "summary": dict,
+        },
+    )
+    assert captured == {
+        "scope": "role_version",
+        "evaluation_set_id": "role-baseline-v1@v1",
+        "target_role": "seer",
+        "limit": 25,
+    }
+    assert payload["kind"] == "benchmark_leaderboard_compare"
+    assert payload["baseline_subject_id"] == "seer_baseline"
+    rows_by_subject = {row["subject_id"]: row for row in payload["rows"]}
+    assert rows_by_subject["seer_baseline"]["change"] == "reference"
+    assert rows_by_subject["seer_candidate"]["change"] == "improvement"
+    assert abs(rows_by_subject["seer_candidate"]["delta_vs_baseline"]["score"] - 0.06) < 0.000001
+    assert abs(rows_by_subject["seer_candidate"]["delta_vs_baseline"]["target_side_win_rate"] - 0.03) < 0.000001
+    assert rows_by_subject["seer_mismatch"]["change"] == "incomparable"
+    assert rows_by_subject["seer_mismatch"]["boundary_warnings"] == [
+        "evaluation_set_mismatch",
+        "seed_set_mismatch",
+    ]
+    assert payload["summary"]["improvement_count"] == 1
+    assert payload["summary"]["boundary_mismatch_count"] == 1
+
+
 def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         store = client.app.state.backend_store
@@ -3262,8 +4146,37 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
                 "target_role_role_weighted_score": 0.7,
                 "rankable": True,
                 "data_sufficient": True,
+                "batch_id": "bench_snapshot_run_a",
+                "source_run_id": "bench_snapshot_run_a",
+                "result_batch_id": "bench_snapshot_run_a_seer",
+                "report_id": "benchmark_report:bench_snapshot_run_a",
                 "summary": {"source": "first"},
                 "updated_at": "2026-06-09T10:00:00+08:00",
+            },
+            {
+                "scope": "role_version",
+                "hash": "seer_unrankable_v1",
+                "subject_id": "seer_unrankable_v1",
+                "target_role": "seer",
+                "target_version_id": "seer_unrankable_v1",
+                "comparison_group_id": "bench_role",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "game_count": 3,
+                "games_played": 1,
+                "valid_game_rate": 0.33,
+                "strength_score": 0.2,
+                "avg_role_score": 0.2,
+                "target_role_role_weighted_score": 0.2,
+                "rankable": False,
+                "rankable_reason": "valid_game_rate below threshold",
+                "data_sufficient": False,
+                "batch_id": "bench_snapshot_run_b",
+                "source_run_id": "bench_snapshot_run_b",
+                "result_batch_id": "bench_snapshot_run_b_seer",
+                "report_id": "benchmark_report:bench_snapshot_run_b",
+                "summary": {"source": "unrankable"},
+                "updated_at": "2026-06-09T10:05:00+08:00",
             }
         ]
         captured: dict[str, Any] = {}
@@ -3346,30 +4259,409 @@ def test_benchmark_snapshot_api_freezes_current_leaderboard_rows(tmp_path: Path)
             "view_config": dict,
             "summary": dict,
             "row_count": int,
+            "rankable_count": int,
+            "unrankable_count": int,
+            "linked_run_ids": list,
+            "linked_report_ids": list,
+            "linked_result_batch_ids": list,
+            "source_run_count": int,
+            "source_report_count": int,
+            "source_result_batch_count": int,
             "content_hash": str,
             "created_at": str,
             "rows": list,
         },
     )
-    assert created["row_count"] == 1
+    expected_audit_metadata = {
+        "row_count": 2,
+        "rankable_count": 1,
+        "unrankable_count": 1,
+        "linked_run_ids": ["bench_snapshot_run_a", "bench_snapshot_run_b"],
+        "linked_report_ids": [
+            "benchmark_report:bench_snapshot_run_a",
+            "benchmark_report:bench_snapshot_run_b",
+        ],
+        "linked_result_batch_ids": [
+            "bench_snapshot_run_a_seer",
+            "bench_snapshot_run_b_seer",
+        ],
+        "source_run_count": 2,
+        "source_report_count": 2,
+        "source_result_batch_count": 2,
+    }
+    for key, expected in expected_audit_metadata.items():
+        assert created[key] == expected
+        assert created["summary"][key] == expected
     assert created["rows"][0]["subject_id"] == "seer_candidate_v2"
     assert created["rows"][0]["avg_role_score"] == 0.7
+    assert created["rows"][0]["batch_id"] == "bench_snapshot_run_a"
+    assert created["rows"][0]["source_run_id"] == "bench_snapshot_run_a"
+    assert created["rows"][0]["result_batch_id"] == "bench_snapshot_run_a_seer"
+    assert created["rows"][0]["report_id"] == "benchmark_report:bench_snapshot_run_a"
+    assert created["rows"][1]["subject_id"] == "seer_unrankable_v1"
+    assert created["rows"][1]["rankable"] is False
     assert created["content_hash"].startswith("sha256:")
 
     assert detail_response.status_code == 200
     detail = detail_response.json()
     assert detail["snapshot_id"] == snapshot_id
+    for key, expected in expected_audit_metadata.items():
+        assert detail[key] == expected
+        assert detail["summary"][key] == expected
+    assert detail["content_hash"] == created["content_hash"]
     assert detail["rows"][0]["subject_id"] == "seer_candidate_v2"
     assert detail["rows"][0]["avg_role_score"] == 0.7
     assert detail["rows"][0]["summary"] == {"source": "first"}
+    assert detail["rows"][1]["subject_id"] == "seer_unrankable_v1"
+    assert detail["rows"][1]["summary"] == {"source": "unrankable"}
 
     assert list_response.status_code == 200
     listed = list_response.json()
     assert listed["kind"] == "benchmark_leaderboard_snapshots"
-    assert listed["items"][0]["snapshot_id"] == snapshot_id
-    assert "rows" not in listed["items"][0]
+    listed_item = listed["items"][0]
+    assert listed_item["snapshot_id"] == snapshot_id
+    for key, expected in expected_audit_metadata.items():
+        assert listed_item[key] == expected
+        assert listed_item["summary"][key] == expected
+    assert listed_item["content_hash"] == created["content_hash"]
+    assert "rows" not in listed_item
 
     _assert_error_detail(missing_response, 404, "benchmark snapshot not found")
+
+
+def test_benchmark_snapshot_compare_api_reports_current_vs_frozen_delta(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        current_rows = [
+            {
+                "scope": "role_version",
+                "hash": "seer_candidate_v2",
+                "subject_id": "seer_candidate_v2",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate_v2",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
+                "games_played": 3,
+                "avg_role_score": 0.7,
+                "target_side_win_rate": 0.55,
+                "rankable": True,
+                "batch_id": "bench_compare_run_a",
+                "source_run_id": "bench_compare_run_a",
+                "result_batch_id": "bench_compare_run_a_seer",
+                "report_id": "benchmark_report:bench_compare_run_a",
+            },
+            {
+                "scope": "role_version",
+                "hash": "seer_removed_v1",
+                "subject_id": "seer_removed_v1",
+                "target_role": "seer",
+                "target_version_id": "seer_removed_v1",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
+                "games_played": 3,
+                "avg_role_score": 0.62,
+                "target_side_win_rate": 0.5,
+                "rankable": True,
+                "batch_id": "bench_compare_run_b",
+                "source_run_id": "bench_compare_run_b",
+                "result_batch_id": "bench_compare_run_b_seer",
+                "report_id": "benchmark_report:bench_compare_run_b",
+            },
+        ]
+        captured: list[dict[str, Any]] = []
+
+        def fake_leaderboard_entries(
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, Any]]:
+            captured.append(
+                {
+                    "scope": scope,
+                    "evaluation_set_id": evaluation_set_id,
+                    "target_role": target_role,
+                    "limit": limit,
+                }
+            )
+            return [dict(row) for row in current_rows]
+
+        store.leaderboard_entries = fake_leaderboard_entries
+        create_response = client.post(
+            "/api/benchmark/snapshots",
+            json={
+                "title": "Role release",
+                "scope": "role_version",
+                "benchmark_id": "role-baseline-v1",
+                "benchmark_version": 1,
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
+                "target_role": "seer",
+                "limit": 25,
+            },
+        )
+        snapshot_id = create_response.json()["snapshot_id"]
+        current_rows[:] = [
+            {
+                **current_rows[0],
+                "seed_set_id": "role-baseline-different-seeds",
+                "games_played": 4,
+                "avg_role_score": 0.76,
+                "target_side_win_rate": 0.61,
+            },
+            {
+                "scope": "role_version",
+                "hash": "seer_candidate_v3",
+                "subject_id": "seer_candidate_v3",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate_v3",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
+                "games_played": 3,
+                "avg_role_score": 0.8,
+                "target_side_win_rate": 0.66,
+                "rankable": True,
+                "batch_id": "bench_compare_run_c",
+                "source_run_id": "bench_compare_run_c",
+                "result_batch_id": "bench_compare_run_c_seer",
+                "report_id": "benchmark_report:bench_compare_run_c",
+            },
+        ]
+        compare_response = client.get(f"/api/benchmark/snapshots/{snapshot_id}/compare?limit=50")
+        missing_response = client.get("/api/benchmark/snapshots/missing-snapshot/compare")
+
+    assert create_response.status_code == 200
+    assert compare_response.status_code == 200
+    payload = compare_response.json()
+    _assert_shape(
+        payload,
+        {
+            "kind": str,
+            "schema_version": int,
+            "snapshot": dict,
+            "current": dict,
+            "frozen": dict,
+            "summary": dict,
+            "changed": list,
+            "added": list,
+            "removed": list,
+            "boundary_warnings": list,
+        },
+    )
+    assert captured[-1] == {
+        "scope": "role_version",
+        "evaluation_set_id": "role-baseline-v1@v1",
+        "target_role": "seer",
+        "limit": 50,
+    }
+    assert payload["kind"] == "benchmark_snapshot_compare"
+    assert payload["snapshot"]["snapshot_id"] == snapshot_id
+    _assert_shape(
+        payload["snapshot"],
+        {
+            "row_count": int,
+            "rankable_count": int,
+            "unrankable_count": int,
+            "linked_run_ids": list,
+            "linked_report_ids": list,
+            "linked_result_batch_ids": list,
+            "source_run_count": int,
+            "source_report_count": int,
+            "source_result_batch_count": int,
+            "content_hash": str,
+            "summary": dict,
+        },
+    )
+    expected_snapshot_audit = {
+        "row_count": 2,
+        "rankable_count": 2,
+        "unrankable_count": 0,
+        "linked_run_ids": ["bench_compare_run_a", "bench_compare_run_b"],
+        "linked_report_ids": [
+            "benchmark_report:bench_compare_run_a",
+            "benchmark_report:bench_compare_run_b",
+        ],
+        "linked_result_batch_ids": [
+            "bench_compare_run_a_seer",
+            "bench_compare_run_b_seer",
+        ],
+        "source_run_count": 2,
+        "source_report_count": 2,
+        "source_result_batch_count": 2,
+    }
+    for key, expected in expected_snapshot_audit.items():
+        assert payload["snapshot"][key] == expected
+        assert payload["snapshot"]["summary"][key] == expected
+    assert payload["snapshot"]["content_hash"].startswith("sha256:")
+    assert payload["summary"]["current_row_count"] == 2
+    assert payload["summary"]["snapshot_row_count"] == 2
+    assert payload["current"]["row_count"] == 2
+    assert payload["frozen"]["row_count"] == 2
+    assert payload["summary"]["rankable_current_count"] == 2
+    assert payload["summary"]["rankable_snapshot_count"] == 2
+    assert payload["summary"]["changed_count"] == 1
+    assert payload["summary"]["added_count"] == 1
+    assert payload["summary"]["removed_count"] == 1
+    assert payload["changed"][0]["key"] == "seer_candidate_v2"
+    assert payload["changed"][0]["snapshot"]["source_run_id"] == "bench_compare_run_a"
+    assert payload["changed"][0]["current"]["source_run_id"] == "bench_compare_run_a"
+    assert abs(payload["changed"][0]["score_delta"] - 0.06) < 0.000001
+    assert abs(payload["changed"][0]["win_rate_delta"] - 0.06) < 0.000001
+    assert payload["changed"][0]["games_delta"] == 1
+    assert payload["changed"][0]["boundary_warnings"] == ["seed_set_mismatch"]
+    assert payload["added"][0]["key"] == "seer_candidate_v3"
+    assert payload["added"][0]["source_run_id"] == "bench_compare_run_c"
+    assert payload["removed"][0]["key"] == "seer_removed_v1"
+    assert payload["removed"][0]["source_run_id"] == "bench_compare_run_b"
+    assert payload["boundary_warnings"] == ["seed_set_mismatch"]
+
+    _assert_error_detail(missing_response, 404, "benchmark snapshot not found")
+
+
+def test_benchmark_snapshot_compare_api_supports_frozen_snapshot_pair(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        leaderboard_calls: list[dict[str, Any]] = []
+        current_rows = [
+            {
+                "scope": "role_version",
+                "hash": "seer_candidate_v2",
+                "subject_id": "seer_candidate_v2",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate_v2",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:base",
+                "games_played": 6,
+                "avg_role_score": 0.66,
+                "target_side_win_rate": 0.52,
+                "rankable": True,
+                "source_run_id": "release_a_run",
+            },
+            {
+                "scope": "role_version",
+                "hash": "seer_removed_v1",
+                "subject_id": "seer_removed_v1",
+                "target_role": "seer",
+                "target_version_id": "seer_removed_v1",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:base",
+                "games_played": 6,
+                "avg_role_score": 0.61,
+                "target_side_win_rate": 0.48,
+                "rankable": True,
+                "source_run_id": "release_a_run",
+            },
+        ]
+
+        def fake_leaderboard_entries(
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, Any]]:
+            leaderboard_calls.append(
+                {
+                    "scope": scope,
+                    "evaluation_set_id": evaluation_set_id,
+                    "target_role": target_role,
+                    "limit": limit,
+                }
+            )
+            return [dict(row) for row in current_rows]
+
+        store.leaderboard_entries = fake_leaderboard_entries
+        base_response = client.post(
+            "/api/benchmark/snapshots",
+            json={
+                "title": "Release A",
+                "scope": "role_version",
+                "benchmark_id": "role-baseline-v1",
+                "benchmark_version": 1,
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:base",
+                "target_role": "seer",
+                "limit": 25,
+            },
+        )
+        base_snapshot_id = base_response.json()["snapshot_id"]
+        current_rows[:] = [
+            {
+                **current_rows[0],
+                "benchmark_config_hash": "sha256:next",
+                "games_played": 8,
+                "avg_role_score": 0.72,
+                "target_side_win_rate": 0.58,
+                "source_run_id": "release_b_run",
+            },
+            {
+                "scope": "role_version",
+                "hash": "seer_added_v3",
+                "subject_id": "seer_added_v3",
+                "target_role": "seer",
+                "target_version_id": "seer_added_v3",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:next",
+                "games_played": 8,
+                "avg_role_score": 0.77,
+                "target_side_win_rate": 0.63,
+                "rankable": True,
+                "source_run_id": "release_b_run",
+            },
+        ]
+        against_response = client.post(
+            "/api/benchmark/snapshots",
+            json={
+                "title": "Release B",
+                "scope": "role_version",
+                "benchmark_id": "role-baseline-v1",
+                "benchmark_version": 1,
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:next",
+                "target_role": "seer",
+                "limit": 25,
+            },
+        )
+        against_snapshot_id = against_response.json()["snapshot_id"]
+        calls_after_create = len(leaderboard_calls)
+        compare_response = client.get(
+            f"/api/benchmark/snapshots/{base_snapshot_id}/compare?"
+            f"against_snapshot_id={against_snapshot_id}&limit=5"
+        )
+
+    assert base_response.status_code == 200
+    assert against_response.status_code == 200
+    assert compare_response.status_code == 200
+    assert len(leaderboard_calls) == calls_after_create
+    payload = compare_response.json()
+    assert payload["kind"] == "benchmark_snapshot_compare"
+    assert payload["compare_mode"] == "snapshot_to_snapshot"
+    assert payload["snapshot"]["snapshot_id"] == base_snapshot_id
+    assert payload["against_snapshot"]["snapshot_id"] == against_snapshot_id
+    assert payload["current"]["snapshot_id"] == against_snapshot_id
+    assert payload["summary"]["snapshot_id"] == base_snapshot_id
+    assert payload["summary"]["against_snapshot_id"] == against_snapshot_id
+    assert payload["summary"]["changed_count"] == 1
+    assert payload["summary"]["added_count"] == 1
+    assert payload["summary"]["removed_count"] == 1
+    assert payload["changed"][0]["key"] == "seer_candidate_v2"
+    assert payload["changed"][0]["current"]["source_run_id"] == "release_b_run"
+    assert payload["changed"][0]["snapshot"]["source_run_id"] == "release_a_run"
+    assert abs(payload["changed"][0]["score_delta"] - 0.06) < 0.000001
+    assert payload["changed"][0]["games_delta"] == 2
+    assert payload["added"][0]["key"] == "seer_added_v3"
+    assert payload["removed"][0]["key"] == "seer_removed_v1"
+    assert "benchmark_config_hash_mismatch" in payload["boundary_warnings"]
 
 
 def test_benchmark_saved_view_api_persists_filter_config(tmp_path: Path) -> None:

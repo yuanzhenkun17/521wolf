@@ -400,6 +400,21 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
     # Stable id so re-runs replace rather than duplicate.
     row_id = entry.get("id") or f"{scope}:{subject_id}:{group_id or entry.get('batch_id', '')}" or uuid.uuid4().hex
     by_role = entry.get("by_role_category_scores")
+    summary = dict(entry.get("summary") or {})
+    source_run_id = (
+        entry.get("source_run_id")
+        or entry.get("run_id")
+        or entry.get("benchmark_batch_id")
+        or entry.get("comparison_group_id")
+        or entry.get("batch_id")
+    )
+    result_batch_id = entry.get("result_batch_id") or entry.get("batch_id")
+    if source_run_id:
+        summary.setdefault("source_run_id", str(source_run_id))
+        summary.setdefault("batch_id", str(source_run_id))
+        summary.setdefault("report_id", f"benchmark_report:{source_run_id}")
+    if result_batch_id:
+        summary.setdefault("result_batch_id", str(result_batch_id))
     updated_at = str(entry.get("updated_at") or beijing_now_iso())
     try:
         conn.execute(
@@ -468,7 +483,7 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
                 entry.get("target_side_win_rate", 0.0),
                 1 if entry.get("rankable") else 0,
                 1 if entry.get("rankable") else 0,
-                json.dumps(entry.get("summary", {}), ensure_ascii=False),
+                json.dumps(summary, ensure_ascii=False),
                 updated_at,
             ),
         )

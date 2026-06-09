@@ -18,6 +18,7 @@ const BENCHMARK_ACTIVE_STATUSES = new Set(['queued', 'running', 'rate_limited'])
 const MODEL_LEADERBOARD_KEY = '__model__'
 const BENCHMARK_TARGET_BLOCKED_RELEASE_STAGES = new Set(['shadow'])
 const BENCHMARK_FORMAL_BLOCKED_RELEASE_STAGES = new Set(['shadow', 'canary'])
+const BENCHMARK_VIEW_STORAGE_PREFIX = 'benchmark-comparison-view'
 
 const DIAGNOSTIC_LEVEL_LABELS = {
   error: '错误',
@@ -322,8 +323,72 @@ function normalizeBenchmarkLeaderboardRow(row, index, scope) {
     games,
     game_count: games,
     rankable,
-    rankableLabel: rankable == null ? 'Unknown' : (rankable ? 'Rankable' : 'Unrankable'),
+    rankableLabel: rankable == null ? '未知' : (rankable ? '可入榜' : '未入榜'),
     rankableReason: String(row?.rankable_reason || row?.reason || row?.gate_reason || '').trim()
+  }
+}
+
+function normalizeBenchmarkSnapshotIdList(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || '').trim()).filter(Boolean)
+    }
+    if (typeof value === 'string') {
+      return value.split(/[,\s]+/).map((item) => item.trim()).filter(Boolean)
+    }
+  }
+  return []
+}
+
+function metricNumberOrNull(value) {
+  if (value == null || value === '') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function normalizeBenchmarkSnapshotSummary(snapshot, rows = []) {
+  const summary = objectOrEmpty(snapshot?.summary)
+  const linkedRunIds = normalizeBenchmarkSnapshotIdList(snapshot?.linked_run_ids, summary.linked_run_ids)
+  const linkedReportIds = normalizeBenchmarkSnapshotIdList(snapshot?.linked_report_ids, summary.linked_report_ids)
+  const linkedResultBatchIds = normalizeBenchmarkSnapshotIdList(
+    snapshot?.linked_result_batch_ids,
+    summary.linked_result_batch_ids
+  )
+  const rawRankableCount = metricNumberOrNull(snapshot?.rankable_count ?? summary.rankable_count)
+  const rawUnrankableCount = metricNumberOrNull(snapshot?.unrankable_count ?? summary.unrankable_count)
+  const rawRowCount = metricNumberOrNull(snapshot?.row_count ?? summary.row_count)
+  const countedRowTotal = rawRankableCount != null && rawUnrankableCount != null
+    ? rawRankableCount + rawUnrankableCount
+    : rows.length
+  const rowCount = rawRowCount ?? countedRowTotal
+  const rankableCount = rawRankableCount ?? (
+    rawUnrankableCount != null
+      ? Math.max(rowCount - rawUnrankableCount, 0)
+      : (rows.length ? rows.filter((row) => row.rankable !== false).length : rowCount)
+  )
+  const unrankableCount = rawUnrankableCount ?? (
+    rawRankableCount != null
+      ? Math.max(rowCount - rawRankableCount, 0)
+      : (rows.length ? rows.filter((row) => row.rankable === false).length : 0)
+  )
+  return {
+    ...summary,
+    linked_run_ids: linkedRunIds,
+    linked_report_ids: linkedReportIds,
+    linked_result_batch_ids: linkedResultBatchIds,
+    source_run_count: metricNumberOrNull(
+      snapshot?.source_run_count ?? summary.source_run_count
+    ) ?? linkedRunIds.length,
+    source_report_count: metricNumberOrNull(
+      snapshot?.source_report_count ?? summary.source_report_count
+    ) ?? linkedReportIds.length,
+    source_result_batch_count: metricNumberOrNull(
+      snapshot?.source_result_batch_count ?? summary.source_result_batch_count
+    ) ?? linkedResultBatchIds.length,
+    rankable_count: rankableCount,
+    unrankable_count: unrankableCount,
+    row_count: rowCount,
+    content_hash: String(snapshot?.content_hash || summary.content_hash || '')
   }
 }
 
@@ -333,7 +398,7 @@ function normalizeBenchmarkSnapshot(snapshot, scopeFallback = 'role_version') {
   const rows = Array.isArray(snapshot.rows)
     ? snapshot.rows.map((row, index) => normalizeBenchmarkLeaderboardRow(row, index, scope))
     : []
-  const summary = objectOrEmpty(snapshot.summary)
+  const summary = normalizeBenchmarkSnapshotSummary(snapshot, rows)
   const snapshotId = String(snapshot.snapshot_id || snapshot.id || '').trim()
   if (!snapshotId) return null
   return {
@@ -351,9 +416,16 @@ function normalizeBenchmarkSnapshot(snapshot, scopeFallback = 'role_version') {
     source_filter: objectOrEmpty(snapshot.source_filter),
     view_config: objectOrEmpty(snapshot.view_config),
     summary,
-    row_count: metricNumber(snapshot.row_count ?? summary.row_count ?? rows.length),
-    rankable_count: metricNumber(summary.rankable_count ?? rows.filter((row) => row.rankable !== false).length),
-    content_hash: String(snapshot.content_hash || ''),
+    linked_run_ids: summary.linked_run_ids,
+    linked_report_ids: summary.linked_report_ids,
+    linked_result_batch_ids: summary.linked_result_batch_ids,
+    source_run_count: summary.source_run_count,
+    source_report_count: summary.source_report_count,
+    source_result_batch_count: summary.source_result_batch_count,
+    row_count: summary.row_count,
+    rankable_count: summary.rankable_count,
+    unrankable_count: summary.unrankable_count,
+    content_hash: summary.content_hash,
     created_at: String(snapshot.created_at || ''),
     rows
   }
@@ -399,6 +471,77 @@ function compareBenchmarkSnapshotRows(currentRows, snapshotRows, scope) {
         row.rankableChanged
       )
       .sort((a, b) => Math.abs(b.scoreDelta) - Math.abs(a.scoreDelta) || a.current.primary.localeCompare(b.current.primary))
+  }
+}
+
+function normalizeBenchmarkSnapshotServerCompare(compare, scopeFallback = 'role_version') {
+  if (!compare || typeof compare !== 'object' || compare.kind !== 'benchmark_snapshot_compare') return null
+  const snapshotMeta = Array.isArray(compare.snapshot)
+    ? objectOrEmpty(compare.snapshot_meta || {
+      snapshot_id: compare.snapshot_id,
+      scope: compare.scope,
+      benchmark_id: compare.benchmark_id,
+      evaluation_set_id: compare.evaluation_set_id,
+      target_role: compare.target_role,
+      summary: compare.summary
+    })
+    : objectOrEmpty(compare.snapshot)
+  const snapshot = normalizeBenchmarkSnapshot(
+    Array.isArray(compare.snapshot) && !Array.isArray(snapshotMeta.rows)
+      ? { ...snapshotMeta, rows: compare.snapshot }
+      : snapshotMeta,
+    scopeFallback
+  )
+  const againstSnapshot = normalizeBenchmarkSnapshot(compare.against_snapshot, snapshot?.scope || scopeFallback)
+  const scope = normalizeBenchmarkTargetType(snapshot?.scope || compare.scope || compare.summary?.scope || scopeFallback)
+  const normalizeRow = (row, index) => normalizeBenchmarkLeaderboardRow(row || {}, index, scope)
+  const normalizeDelta = (row, index) => {
+    const current = normalizeRow(row?.current || {}, index)
+    const frozen = normalizeRow(row?.snapshot || row?.frozen || {}, index)
+    return {
+      ...row,
+      key: String(row?.key || current.key || frozen.key || `changed-${index}`),
+      current,
+      snapshot: frozen,
+      scoreDelta: metricNumber(row?.scoreDelta ?? row?.score_delta),
+      winRateDelta: metricNumber(row?.winRateDelta ?? row?.win_rate_delta),
+      gamesDelta: metricNumber(row?.gamesDelta ?? row?.games_delta),
+      rankableChanged: Boolean(row?.rankableChanged ?? row?.rankable_changed),
+      boundary_warnings: Array.isArray(row?.boundary_warnings) ? row.boundary_warnings : []
+    }
+  }
+  const changed = Array.isArray(compare.changed) ? compare.changed.map(normalizeDelta) : []
+  const added = Array.isArray(compare.added) ? compare.added.map(normalizeRow) : []
+  const removed = Array.isArray(compare.removed) ? compare.removed.map(normalizeRow) : []
+  const rawCurrentRows = Array.isArray(compare.current)
+    ? compare.current
+    : (Array.isArray(compare.current?.rows) ? compare.current.rows : [])
+  const currentRows = rawCurrentRows.map(normalizeRow)
+  const frozenRows = Array.isArray(compare.frozen?.rows)
+    ? compare.frozen.rows.map(normalizeRow)
+    : (Array.isArray(compare.snapshot) ? compare.snapshot.map(normalizeRow) : (snapshot?.rows || []))
+  const summary = {
+    ...objectOrEmpty(compare.summary),
+    ...objectOrEmpty(snapshot?.summary),
+    snapshot_id: String(snapshot?.snapshot_id || compare.summary?.snapshot_id || ''),
+    snapshot_row_count: metricNumber(
+      compare.summary?.snapshot_row_count ?? snapshot?.summary?.row_count,
+      frozenRows.length
+    )
+  }
+  return {
+    ...compare,
+    compare_mode: String(compare.compare_mode || compare.summary?.compare_mode || (againstSnapshot ? 'snapshot_to_snapshot' : 'current_vs_snapshot')),
+    snapshot_meta: snapshot,
+    against_snapshot_meta: againstSnapshot,
+    scope,
+    current: currentRows,
+    snapshot: frozenRows,
+    changed,
+    added,
+    removed,
+    boundary_warnings: Array.isArray(compare.boundary_warnings) ? compare.boundary_warnings : [],
+    summary
   }
 }
 
@@ -472,7 +615,7 @@ function normalizeBenchmarkBatchDetail(detail) {
     batch_id: String(detail.batch_id || detail.batch?.batch_id || ''),
     benchmark: benchmarkMeta,
     target_type: targetType,
-    targetTypeLabel: targetType === 'model' ? 'Model Benchmark' : 'Role Version',
+    targetTypeLabel: targetType === 'model' ? '模型评测' : '角色版本',
     benchmarkLabel: benchmarkId ? `${benchmarkId}${benchmarkVersion ? `@v${benchmarkVersion}` : ''}` : '临时评测',
     statusLabel: statusText(detail.status),
     resultRows: results,
@@ -577,7 +720,7 @@ function normalizeBatchRun(run) {
     benchmarkTargetType,
     evaluationSetId,
     benchmarkLabel: benchmarkId ? `${benchmarkId}${benchmarkVersion ? `@v${benchmarkVersion}` : ''}` : '临时评测',
-    benchmarkTargetTypeLabel: benchmarkTargetType === 'model' ? 'Model Benchmark' : 'Role Version',
+    benchmarkTargetTypeLabel: benchmarkTargetType === 'model' ? '模型评测' : '角色版本',
     statusLabel: statusText(run?.status),
     isActive: BENCHMARK_ACTIVE_STATUSES.has(run?.status),
     isTerminal: BENCHMARK_TERMINAL_STATUSES.has(run?.status)
@@ -597,6 +740,54 @@ function upsertBatchRun(runs, patch) {
   return next
 }
 
+function defaultBenchmarkViewPreferences(overrides = {}) {
+  const viewConfig = normalizeBenchmarkViewConfig(overrides.view_config || overrides)
+  return {
+    kind: 'benchmark_saved_view',
+    schema_version: 1,
+    view_key: String(overrides.view_key || ''),
+    name: String(overrides.name || '默认视图'),
+    scope: normalizeBenchmarkTargetType(overrides.scope),
+    benchmark_id: overrides.benchmark_id || null,
+    evaluation_set_id: overrides.evaluation_set_id || null,
+    target_role: overrides.target_role || null,
+    view_config: viewConfig,
+    created_at: overrides.created_at || null,
+    updated_at: overrides.updated_at || null
+  }
+}
+
+function normalizeBenchmarkViewConfig(raw = {}) {
+  const config = raw && typeof raw === 'object' ? raw : {}
+  const columns = Array.isArray(config.columns)
+    ? config.columns.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+  const rankFilter = ['all', 'rankable', 'unrankable'].includes(config.rank_filter)
+    ? config.rank_filter
+    : 'all'
+  return {
+    mode: normalizeBenchmarkTargetType(config.mode || config.scope),
+    rank_filter: rankFilter,
+    columns,
+    sort: String(config.sort || 'score_desc'),
+    search: String(config.search || ''),
+    density: String(config.density || 'standard')
+  }
+}
+
+function normalizeBenchmarkView(raw, scopeFallback = 'role_version') {
+  if (!raw || typeof raw !== 'object') return null
+  const viewKey = String(raw.view_key || '').trim()
+  if (!viewKey) return null
+  return defaultBenchmarkViewPreferences({
+    ...raw,
+    view_key: viewKey,
+    name: String(raw.name || '默认视图'),
+    scope: normalizeBenchmarkTargetType(raw.scope || scopeFallback),
+    view_config: normalizeBenchmarkViewConfig(raw.view_config || {})
+  })
+}
+
 function useEvaluationWorkbench(options = {}) {
   const { apiFetch, apiBase } = options.apiFetch
     ? { apiFetch: options.apiFetch, apiBase: options.apiBase || '/api' }
@@ -613,6 +804,7 @@ function useEvaluationWorkbench(options = {}) {
   const selectedBenchmarkId = ref('')
   const selectedBenchmarkBatchId = ref('')
   const preferLegacyBenchmark = ref(false)
+  const legacyBenchmarkTargetType = ref('role_version')
   const selectedRole = ref('')
   const error = ref('')
   const notice = ref({ type: '', message: '' })
@@ -633,24 +825,60 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkBatchGamePagination = ref({ total: 0, offset: 0, limit: 20, returned: 0, has_more: false })
   const benchmarkBatchDiagnostics = ref([])
   const benchmarkBatchDiagnosticSummary = ref({})
+  const benchmarkBatchReport = ref(null)
+  const benchmarkBatchReportLoading = ref(false)
+  const benchmarkBatchReportError = ref('')
+  const benchmarkBatchReportExports = ref({})
+  const benchmarkReportHistory = ref([])
+  const benchmarkReportHistoryLoading = ref(false)
+  const benchmarkReportHistoryError = ref('')
+  const benchmarkReportHistorySummary = ref({})
+  const benchmarkReportHistoryPagination = ref({ total: 0, offset: 0, limit: 50, returned: 0, has_more: false })
+  const benchmarkDiagnosticAggregateLoading = ref(false)
+  const benchmarkDiagnosticAggregateError = ref('')
+  const benchmarkDiagnosticAggregateDiagnostics = ref([])
+  const benchmarkDiagnosticAggregateSummary = ref({})
+  const benchmarkDiagnosticAggregateRuns = ref([])
+  const benchmarkDiagnosticAggregateGames = ref([])
+  const benchmarkDiagnosticAggregatePagination = ref({ total: 0, offset: 0, limit: 200, returned: 0, has_more: false })
   const benchmarkGameStatusFilter = ref('problem')
   const benchmarkSnapshots = ref([])
   const benchmarkSnapshotDetail = ref(null)
   const benchmarkSnapshotDetails = ref({})
   const benchmarkSnapshotLoading = ref(false)
   const benchmarkSnapshotError = ref('')
+  const benchmarkSnapshotServerCompare = ref(null)
+  const benchmarkSnapshotCompareLoading = ref(false)
+  const benchmarkSnapshotCompareError = ref('')
   const selectedBenchmarkSnapshotId = ref('')
+  const benchmarkLeaderboardCompare = ref(null)
+  const benchmarkLeaderboardCompareLoading = ref(false)
+  const benchmarkLeaderboardCompareError = ref('')
+  const benchmarkSavedViews = ref([])
+  const benchmarkSavedViewsLoading = ref(false)
+  const benchmarkSavedViewsError = ref('')
+  const benchmarkViewPreferences = ref(defaultBenchmarkViewPreferences())
+  const benchmarkViewDirty = ref(false)
+  const selectedBenchmarkViewKey = ref('')
   const suiteRequests = createLatestOnlyTracker()
   const roleRequests = createLatestOnlyTracker()
   const roleBoardRequests = createLatestOnlyMap()
   const planRequests = createLatestOnlyTracker()
   const runRequests = createLatestOnlyTracker()
   const detailRequests = createLatestOnlyTracker()
+  const reportRequests = createLatestOnlyTracker()
+  const reportExportRequests = createLatestOnlyTracker()
+  const reportHistoryRequests = createLatestOnlyTracker()
+  const diagnosticAggregateRequests = createLatestOnlyTracker()
   const refreshRequests = createLatestOnlyTracker()
   const actionRequests = createLatestOnlyTracker()
   const snapshotRequests = createLatestOnlyTracker()
   const snapshotDetailRequests = createLatestOnlyTracker()
+  const snapshotCompareRequests = createLatestOnlyTracker()
   const snapshotActionRequests = createLatestOnlyTracker()
+  const leaderboardCompareRequests = createLatestOnlyTracker()
+  const benchmarkViewRequests = createLatestOnlyTracker()
+  const benchmarkViewActionRequests = createLatestOnlyTracker()
   let lastRunsError = null
 
   const form = ref({
@@ -666,12 +894,15 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkSuites.value.find((suite) => suite.id === selectedBenchmarkId.value) || null
   )
   const selectedBenchmarkTargetType = computed(() =>
-    selectedBenchmarkSuite.value?.target_type || 'role_version'
+    selectedBenchmarkSuite.value?.target_type || legacyBenchmarkTargetType.value || 'role_version'
   )
   const selectedBenchmarkIsModelSuite = computed(() => selectedBenchmarkTargetType.value === 'model')
   const benchmarkPlanBudgetExceeded = computed(() => Boolean(benchmarkPlan.value?.budget?.exceeded))
   const selectedBenchmarkEvaluationSetId = computed(() => selectedBenchmarkSuite.value?.evaluation_set_id || '')
-  const selectedBenchmarkSuiteLabel = computed(() => selectedBenchmarkSuite.value?.label || '临时评测')
+  const selectedBenchmarkSuiteLabel = computed(() => {
+    if (selectedBenchmarkSuite.value?.label) return selectedBenchmarkSuite.value.label
+    return selectedBenchmarkIsModelSuite.value ? '临时模型评测' : '临时角色评测'
+  })
   const selectedSuiteRoleKeys = computed(() => selectedBenchmarkSuite.value?.roles || [])
   const leaderboardQuery = computed(() => {
     const evaluationSetId = selectedBenchmarkEvaluationSetId.value
@@ -734,6 +965,15 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkSnapshotScope = computed(() =>
     selectedBenchmarkIsModelSuite.value ? 'model' : 'role_version'
   )
+  const currentBenchmarkViewKey = computed(() => {
+    const suite = selectedBenchmarkId.value || 'ad-hoc'
+    const evaluationSet = selectedBenchmarkEvaluationSetId.value || 'no-eval-set'
+    const subject = benchmarkSnapshotScope.value === 'model' ? 'model' : (selectedRole.value || 'role')
+    return `${BENCHMARK_VIEW_STORAGE_PREFIX}:${benchmarkSnapshotScope.value}:${suite}:${evaluationSet}:${subject}`
+  })
+  const activeBenchmarkViewConfig = computed(() =>
+    normalizeBenchmarkViewConfig(benchmarkViewPreferences.value?.view_config || {})
+  )
   const normalizedCurrentBenchmarkLeaderboardRows = computed(() =>
     currentBenchmarkLeaderboardRows.value.map((row, index) =>
       normalizeBenchmarkLeaderboardRow(row, index, benchmarkSnapshotScope.value)
@@ -746,6 +986,12 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkSnapshotDetail.value || selectedBenchmarkSnapshot.value
   )
   const benchmarkSnapshotCompare = computed(() => {
+    const serverCompare = benchmarkSnapshotServerCompare.value
+    const activeSnapshotId = String(activeBenchmarkSnapshotDetail.value?.snapshot_id || selectedBenchmarkSnapshotId.value || '')
+    const serverSnapshotId = String(serverCompare?.snapshot_meta?.snapshot_id || serverCompare?.summary?.snapshot_id || '')
+    if (serverCompare && (!activeSnapshotId || !serverSnapshotId || activeSnapshotId === serverSnapshotId)) {
+      return serverCompare
+    }
     const detail = activeBenchmarkSnapshotDetail.value
     if (!detail?.rows?.length) {
       return {
@@ -769,15 +1015,29 @@ function useEvaluationWorkbench(options = {}) {
     )
   )
 
-  const filteredBatchRunRows = computed(() => {
-    let rows = batchRunRows.value
+  const unscopedBenchmarkRunRows = computed(() =>
+    batchRunRows.value.filter((run) => !run.benchmarkId && !run.evaluationSetId)
+  )
+
+  const selectedSuiteBatchRunRows = computed(() => {
     const suite = selectedBenchmarkSuite.value
-    if (suite) {
-      rows = rows.filter((run) =>
-        run.benchmarkId === suite.id ||
-        (suite.evaluation_set_id && run.evaluationSetId === suite.evaluation_set_id)
-      )
-    }
+    if (!suite) return batchRunRows.value
+    return batchRunRows.value.filter((run) =>
+      run.benchmarkId === suite.id ||
+      (suite.evaluation_set_id && run.evaluationSetId === suite.evaluation_set_id)
+    )
+  })
+
+  const selectedBenchmarkUsingLegacyRuns = computed(() =>
+    Boolean(selectedBenchmarkSuite.value) &&
+    selectedSuiteBatchRunRows.value.length === 0 &&
+    unscopedBenchmarkRunRows.value.length > 0
+  )
+
+  const filteredBatchRunRows = computed(() => {
+    let rows = selectedBenchmarkUsingLegacyRuns.value
+      ? unscopedBenchmarkRunRows.value
+      : selectedSuiteBatchRunRows.value
     if (selectedBenchmarkIsModelSuite.value || !selectedRole.value) return rows
     return rows.filter((run) => run.roleKeys?.includes(selectedRole.value))
   })
@@ -831,6 +1091,15 @@ function useEvaluationWorkbench(options = {}) {
     const benchmarkVersion = Number(suite.version)
     const evaluationSetId = selectedBenchmarkEvaluationSetId.value
     const scope = benchmarkSnapshotScope.value
+    const activeView = normalizeBenchmarkViewConfig({
+      ...activeBenchmarkViewConfig.value,
+      ...(overrides.view_config || overrides.viewConfig || {}),
+      mode: scope
+    })
+    const defaultColumns = scope === 'model'
+      ? ['model_id', 'model_config_hash', 'strength_score', 'target_side_win_rate', 'rankable']
+      : ['target_version_id', 'avg_role_score', 'target_side_win_rate', 'rankable']
+    const snapshotColumns = activeView.columns.length ? activeView.columns : defaultColumns
     return {
       title: String(overrides.title || '').trim() || defaultSnapshotTitle(),
       release_notes: String(overrides.release_notes || overrides.releaseNotes || '').trim(),
@@ -854,20 +1123,24 @@ function useEvaluationWorkbench(options = {}) {
       view_config: {
         view: 'leaderboard',
         mode: scope,
+        view_key: selectedBenchmarkViewKey.value || currentBenchmarkViewKey.value,
+        view_name: benchmarkViewPreferences.value?.name || '默认视图',
+        rank_filter: activeView.rank_filter,
+        sort: activeView.sort,
+        search: activeView.search,
+        density: activeView.density,
         suite_id: selectedBenchmarkId.value || '',
         role: scope === 'role_version' ? selectedRole.value : '',
-        columns: scope === 'model'
-          ? ['model_id', 'model_config_hash', 'strength_score', 'target_side_win_rate', 'rankable']
-          : ['target_version_id', 'avg_role_score', 'target_side_win_rate', 'rankable']
+        columns: snapshotColumns
       },
       limit: Number(overrides.limit || 100)
     }
   }
 
   function defaultSnapshotTitle() {
-    const suite = selectedBenchmarkSuiteLabel.value || 'Benchmark'
-    const scope = benchmarkSnapshotScope.value === 'model' ? 'Model' : selectedRoleLabel.value
-    return `${suite} / ${scope} snapshot`
+    const suite = selectedBenchmarkSuiteLabel.value || '评测'
+    const scope = benchmarkSnapshotScope.value === 'model' ? '模型' : selectedRoleLabel.value
+    return `${suite} / ${scope} 快照`
   }
 
   function benchmarkSnapshotListPath(limit = 50) {
@@ -884,6 +1157,161 @@ function useEvaluationWorkbench(options = {}) {
     }
     query.set('limit', String(limit))
     return `/benchmark/snapshots?${query.toString()}`
+  }
+
+  function benchmarkSnapshotComparePath(snapshotId, limit = 100, againstSnapshotId = '') {
+    const query = new URLSearchParams()
+    if (againstSnapshotId) query.set('against_snapshot_id', String(againstSnapshotId))
+    query.set('limit', String(limit))
+    return `/benchmark/snapshots/${encodeURIComponent(snapshotId)}/compare?${query.toString()}`
+  }
+
+  function benchmarkLeaderboardComparePath(limit = 100) {
+    const query = new URLSearchParams()
+    query.set('scope', benchmarkSnapshotScope.value)
+    if (selectedBenchmarkEvaluationSetId.value) {
+      query.set('evaluation_set_id', selectedBenchmarkEvaluationSetId.value)
+    }
+    if (benchmarkSnapshotScope.value === 'role_version' && selectedRole.value) {
+      query.set('target_role', selectedRole.value)
+    }
+    query.set('limit', String(limit))
+    return `/leaderboards/compare?${query.toString()}`
+  }
+
+  function benchmarkViewBoundaryPayload() {
+    return {
+      scope: benchmarkSnapshotScope.value,
+      benchmark_id: selectedBenchmarkId.value || null,
+      evaluation_set_id: selectedBenchmarkEvaluationSetId.value || null,
+      target_role: benchmarkSnapshotScope.value === 'model' ? null : (selectedRole.value || null)
+    }
+  }
+
+  function currentDefaultBenchmarkView() {
+    return defaultBenchmarkViewPreferences({
+      ...benchmarkViewBoundaryPayload(),
+      view_key: currentBenchmarkViewKey.value,
+      name: '默认视图',
+      view_config: {
+        mode: benchmarkSnapshotScope.value,
+        rank_filter: 'all',
+        columns: []
+      }
+    })
+  }
+
+  function benchmarkViewListPath(limit = 50) {
+    const query = new URLSearchParams()
+    const boundary = benchmarkViewBoundaryPayload()
+    query.set('scope', boundary.scope)
+    if (boundary.evaluation_set_id) query.set('evaluation_set_id', boundary.evaluation_set_id)
+    if (boundary.benchmark_id) query.set('benchmark_id', boundary.benchmark_id)
+    if (boundary.target_role) query.set('target_role', boundary.target_role)
+    query.set('limit', String(limit))
+    return `/benchmark/views?${query.toString()}`
+  }
+
+  function benchmarkViewStorage() {
+    try {
+      return typeof window === 'undefined' ? null : window.localStorage
+    } catch {
+      return null
+    }
+  }
+
+  function writeLocalBenchmarkView(view) {
+    const storage = benchmarkViewStorage()
+    if (!storage || !view?.view_key) return
+    try {
+      storage.setItem(view.view_key, JSON.stringify(view))
+    } catch {}
+  }
+
+  function readLocalBenchmarkView(viewKey = currentBenchmarkViewKey.value) {
+    const key = String(viewKey || '').trim()
+    const storage = benchmarkViewStorage()
+    if (!storage || !key) return null
+    try {
+      return normalizeBenchmarkView(JSON.parse(storage.getItem(key) || 'null'), benchmarkSnapshotScope.value)
+    } catch {
+      return null
+    }
+  }
+
+  function removeLocalBenchmarkView(viewKey = currentBenchmarkViewKey.value) {
+    const key = String(viewKey || '').trim()
+    const storage = benchmarkViewStorage()
+    if (!storage || !key) return
+    try {
+      storage.removeItem(key)
+    } catch {}
+  }
+
+  function applyBenchmarkViewPreferences(raw, { dirty = false } = {}) {
+    const view = normalizeBenchmarkView(raw, benchmarkSnapshotScope.value) || currentDefaultBenchmarkView()
+    const boundary = benchmarkViewBoundaryPayload()
+    selectedBenchmarkViewKey.value = view.view_key || currentBenchmarkViewKey.value
+    benchmarkViewPreferences.value = {
+      ...view,
+      ...boundary,
+      view_key: selectedBenchmarkViewKey.value,
+      view_config: {
+        ...normalizeBenchmarkViewConfig(view.view_config || {}),
+        mode: boundary.scope
+      }
+    }
+    benchmarkViewDirty.value = dirty
+    return benchmarkViewPreferences.value
+  }
+
+  function setBenchmarkViewPreference(patch = {}) {
+    const current = benchmarkViewPreferences.value?.view_key
+      ? benchmarkViewPreferences.value
+      : currentDefaultBenchmarkView()
+    const boundary = benchmarkViewBoundaryPayload()
+    const { name, view_config: viewConfigPatch, ...configPatch } = patch || {}
+    const nextConfig = normalizeBenchmarkViewConfig({
+      ...current.view_config,
+      ...configPatch,
+      ...(viewConfigPatch && typeof viewConfigPatch === 'object' ? viewConfigPatch : {}),
+      mode: boundary.scope
+    })
+    benchmarkViewPreferences.value = {
+      ...current,
+      ...boundary,
+      view_key: selectedBenchmarkViewKey.value || currentBenchmarkViewKey.value,
+      name: name == null ? current.name : String(name || '默认视图'),
+      view_config: nextConfig
+    }
+    selectedBenchmarkViewKey.value = benchmarkViewPreferences.value.view_key
+    benchmarkViewDirty.value = true
+    return benchmarkViewPreferences.value
+  }
+
+  async function loadBenchmarkLeaderboardCompare({ limit = 100, silent = false } = {}) {
+    if (benchmarkSnapshotScope.value === 'role_version' && !selectedRole.value) {
+      benchmarkLeaderboardCompare.value = null
+      benchmarkLeaderboardCompareError.value = ''
+      return false
+    }
+    const token = leaderboardCompareRequests.next()
+    if (!silent) benchmarkLeaderboardCompareLoading.value = true
+    benchmarkLeaderboardCompareError.value = ''
+    try {
+      const data = await apiFetch(benchmarkLeaderboardComparePath(limit))
+      if (!token.isLatest()) return false
+      benchmarkLeaderboardCompare.value = data?.kind === 'benchmark_leaderboard_compare' ? data : null
+      return Boolean(benchmarkLeaderboardCompare.value)
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkLeaderboardCompare.value = null
+        benchmarkLeaderboardCompareError.value = benchmarkErrorMessage(err, 'Leaderboard compare API 不可用，已使用本地比较。')
+      }
+      return false
+    } finally {
+      if (token.isLatest() && !silent) benchmarkLeaderboardCompareLoading.value = false
+    }
   }
 
   function upsertBenchmarkSnapshot(snapshot) {
@@ -932,6 +1360,235 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkBatchGamePagination.value = { total: 0, offset: 0, limit: 20, returned: 0, has_more: false }
     benchmarkBatchDiagnostics.value = []
     benchmarkBatchDiagnosticSummary.value = {}
+    benchmarkBatchReport.value = null
+    benchmarkBatchReportLoading.value = false
+    benchmarkBatchReportError.value = ''
+    benchmarkBatchReportExports.value = {}
+  }
+
+  function benchmarkBatchReportPath(batchId, format = 'json') {
+    const path = `/benchmark/batch/${encodeURIComponent(batchId)}/report`
+    const normalized = String(format || 'json').toLowerCase()
+    if (!normalized || normalized === 'json') return path
+    const query = new URLSearchParams()
+    query.set('format', normalized)
+    return `${path}?${query.toString()}`
+  }
+
+  function normalizeBenchmarkBatchReport(report) {
+    if (!report || typeof report !== 'object' || Array.isArray(report)) return null
+    if (report.kind && report.kind !== 'benchmark_run_report') return null
+    return report
+  }
+
+  function reportExportCacheKey(batchId, format) {
+    return `${batchId}:${String(format || 'markdown').toLowerCase()}`
+  }
+
+  function benchmarkReportHistoryPath(limit = 50, offset = 0) {
+    const query = new URLSearchParams()
+    query.set('scope', selectedBenchmarkTargetType.value)
+    if (selectedBenchmarkEvaluationSetId.value) {
+      query.set('evaluation_set_id', selectedBenchmarkEvaluationSetId.value)
+    }
+    if (selectedBenchmarkId.value) {
+      query.set('benchmark_id', selectedBenchmarkId.value)
+    }
+    if (!selectedBenchmarkIsModelSuite.value && selectedRole.value) {
+      query.set('target_role', selectedRole.value)
+    }
+    if (selectedBenchmarkIsModelSuite.value && form.value.model_id) {
+      query.set('model_id', form.value.model_id)
+    }
+    if (selectedBenchmarkIsModelSuite.value && form.value.model_config_hash) {
+      query.set('model_config_hash', form.value.model_config_hash)
+    }
+    query.set('limit', String(limit))
+    query.set('offset', String(offset))
+    return `/benchmark/reports?${query.toString()}`
+  }
+
+  function normalizeBenchmarkReportSummary(item) {
+    if (!item || typeof item !== 'object') return null
+    const batchId = String(item.batch_id || item.run_id || '').trim()
+    if (!batchId) return null
+    const suite = objectOrEmpty(item.suite)
+    const subject = objectOrEmpty(item.subject)
+    const summary = objectOrEmpty(item.summary)
+    return {
+      ...item,
+      report_id: String(item.report_id || `benchmark_report:${batchId}`),
+      run_id: String(item.run_id || batchId),
+      batch_id: batchId,
+      id: batchId,
+      status: String(item.status || '').trim(),
+      statusLabel: statusText(item.status),
+      scope: normalizeBenchmarkTargetType(item.scope || item.target_type || suite.target_type),
+      target_type: normalizeBenchmarkTargetType(item.target_type || item.scope || suite.target_type),
+      benchmark_id: String(item.benchmark_id || suite.benchmark_id || ''),
+      evaluation_set_id: String(item.evaluation_set_id || suite.evaluation_set_id || ''),
+      seed_set_id: String(item.seed_set_id || suite.seed_set_id || ''),
+      benchmark_config_hash: String(item.benchmark_config_hash || suite.benchmark_config_hash || ''),
+      suite,
+      subject,
+      subjectLabel: String(subject.label || subject.model_id || subject.target_version_id || subject.target_role || 'benchmark subject'),
+      suiteLabel: String(suite.label || item.benchmark_id || item.evaluation_set_id || 'ad-hoc benchmark'),
+      summary,
+      result_count: metricNumber(item.result_count ?? summary.result_count),
+      rankable_count: metricNumber(item.rankable_count ?? summary.rankable_count),
+      unrankable_count: metricNumber(item.unrankable_count ?? summary.unrankable_count),
+      problem_game_count: metricNumber(item.problem_game_count ?? summary.problem_game_count),
+      diagnostic_count: metricNumber(item.diagnostic_count ?? summary.diagnostic_summary?.total),
+      content_hash: String(item.content_hash || ''),
+      created_at: String(item.created_at || item.generated_at || item.finished_at || item.started_at || ''),
+      generated_at: String(item.generated_at || '')
+    }
+  }
+
+  async function loadBenchmarkBatchReport(batchId = selectedBenchmarkBatchId.value, { silent = false } = {}) {
+    const id = String(batchId || '').trim()
+    if (!id) {
+      benchmarkBatchReport.value = null
+      benchmarkBatchReportError.value = ''
+      benchmarkBatchReportExports.value = {}
+      return false
+    }
+    const token = reportRequests.next()
+    if (!silent) benchmarkBatchReportLoading.value = true
+    benchmarkBatchReportError.value = ''
+    try {
+      const report = normalizeBenchmarkBatchReport(await apiFetch(benchmarkBatchReportPath(id)))
+      if (!token.isLatest()) return false
+      if (!report) throw new Error('invalid benchmark report payload')
+      benchmarkBatchReport.value = report
+      benchmarkBatchReportExports.value = {}
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkBatchReport.value = null
+        benchmarkBatchReportExports.value = {}
+        benchmarkBatchReportError.value = benchmarkErrorMessage(err, 'Benchmark 报告读取失败，已使用本地报告。')
+      }
+      return false
+    } finally {
+      if (token.isLatest() && !silent) benchmarkBatchReportLoading.value = false
+    }
+  }
+
+  async function loadBenchmarkBatchReportExport(format = 'markdown', batchId = selectedBenchmarkBatchId.value) {
+    const id = String(batchId || '').trim()
+    const normalized = String(format || 'markdown').toLowerCase()
+    if (!id) return ''
+    if (normalized === 'json') {
+      if (!benchmarkBatchReport.value || String(benchmarkBatchReport.value.batch_id || benchmarkBatchReport.value.run_id || '') !== id) {
+        await loadBenchmarkBatchReport(id, { silent: true })
+      }
+      return benchmarkBatchReport.value ? JSON.stringify(benchmarkBatchReport.value, null, 2) : ''
+    }
+    if (!['markdown', 'csv'].includes(normalized)) return ''
+    const cacheKey = reportExportCacheKey(id, normalized)
+    if (benchmarkBatchReportExports.value[cacheKey]) return benchmarkBatchReportExports.value[cacheKey]
+    const token = reportExportRequests.next()
+    try {
+      const data = await apiFetch(benchmarkBatchReportPath(id, normalized))
+      if (!token.isLatest()) return ''
+      const content = typeof data?.content === 'string' ? data.content : ''
+      if (!content) throw new Error('invalid benchmark report export payload')
+      benchmarkBatchReportExports.value = {
+        ...benchmarkBatchReportExports.value,
+        [cacheKey]: content
+      }
+      if (data?.report) benchmarkBatchReport.value = normalizeBenchmarkBatchReport(data.report) || benchmarkBatchReport.value
+      benchmarkBatchReportError.value = ''
+      return content
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkBatchReportError.value = benchmarkErrorMessage(err, 'Benchmark 报告导出失败，已使用本地导出。')
+      }
+      return ''
+    }
+  }
+
+  async function loadBenchmarkReportHistory({ limit = 50, offset = 0, silent = false } = {}) {
+    const token = reportHistoryRequests.next()
+    if (!silent) benchmarkReportHistoryLoading.value = true
+    benchmarkReportHistoryError.value = ''
+    try {
+      const data = await apiFetch(benchmarkReportHistoryPath(limit, offset))
+      if (!token.isLatest()) return false
+      const items = Array.isArray(data?.items) ? data.items : []
+      benchmarkReportHistory.value = items.map(normalizeBenchmarkReportSummary).filter(Boolean)
+      benchmarkReportHistorySummary.value = objectOrEmpty(data?.summary)
+      benchmarkReportHistoryPagination.value = data?.pagination || {
+        total: benchmarkReportHistory.value.length,
+        offset,
+        limit,
+        returned: benchmarkReportHistory.value.length,
+        has_more: false
+      }
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkReportHistory.value = []
+        benchmarkReportHistorySummary.value = {}
+        benchmarkReportHistoryPagination.value = { total: 0, offset, limit, returned: 0, has_more: false }
+        benchmarkReportHistoryError.value = benchmarkErrorMessage(err, '评测报告历史不可用。')
+      }
+      return false
+    } finally {
+      if (token.isLatest() && !silent) benchmarkReportHistoryLoading.value = false
+    }
+  }
+
+  function benchmarkDiagnosticsAggregatePath(limit = 200) {
+    const query = new URLSearchParams()
+    query.set('scope', selectedBenchmarkTargetType.value)
+    if (selectedBenchmarkEvaluationSetId.value) {
+      query.set('evaluation_set_id', selectedBenchmarkEvaluationSetId.value)
+    }
+    if (selectedBenchmarkId.value) {
+      query.set('benchmark_id', selectedBenchmarkId.value)
+    }
+    if (!selectedBenchmarkIsModelSuite.value && selectedRole.value) {
+      query.set('target_role', selectedRole.value)
+    }
+    query.set('limit', String(limit))
+    query.set('offset', '0')
+    return `/benchmark/diagnostics?${query.toString()}`
+  }
+
+  async function loadBenchmarkDiagnosticsAggregate({ limit = 200, silent = false } = {}) {
+    const token = diagnosticAggregateRequests.next()
+    if (!silent) benchmarkDiagnosticAggregateLoading.value = true
+    benchmarkDiagnosticAggregateError.value = ''
+    try {
+      const data = await apiFetch(benchmarkDiagnosticsAggregatePath(limit))
+      if (!token.isLatest()) return false
+      benchmarkDiagnosticAggregateDiagnostics.value = (data?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
+      benchmarkDiagnosticAggregateSummary.value = data?.summary || {}
+      benchmarkDiagnosticAggregateRuns.value = (data?.affected_runs || []).map(normalizeBatchRun)
+      benchmarkDiagnosticAggregateGames.value = (data?.affected_games || []).map(normalizeBenchmarkGame)
+      benchmarkDiagnosticAggregatePagination.value = data?.pagination || {
+        total: benchmarkDiagnosticAggregateDiagnostics.value.length,
+        offset: 0,
+        limit,
+        returned: benchmarkDiagnosticAggregateDiagnostics.value.length,
+        has_more: false
+      }
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkDiagnosticAggregateDiagnostics.value = []
+        benchmarkDiagnosticAggregateSummary.value = {}
+        benchmarkDiagnosticAggregateRuns.value = []
+        benchmarkDiagnosticAggregateGames.value = []
+        benchmarkDiagnosticAggregatePagination.value = { total: 0, offset: 0, limit, returned: 0, has_more: false }
+        benchmarkDiagnosticAggregateError.value = benchmarkErrorMessage(err, 'Benchmark diagnostics 聚合不可用。')
+      }
+      return false
+    } finally {
+      if (token.isLatest() && !silent) benchmarkDiagnosticAggregateLoading.value = false
+    }
   }
 
   async function loadBenchmarkSuites() {
@@ -1135,10 +1792,16 @@ function useEvaluationWorkbench(options = {}) {
       query.set('limit', '20')
       query.set('offset', '0')
       const gamesPath = `/benchmark/batch/${encodeURIComponent(id)}/games?${query.toString()}`
-      const [detail, games, diagnostics] = await Promise.all([
+      benchmarkBatchReportLoading.value = true
+      benchmarkBatchReportError.value = ''
+      const reportRequest = apiFetch(benchmarkBatchReportPath(id))
+        .then((report) => ({ ok: true, report: normalizeBenchmarkBatchReport(report) }))
+        .catch((err) => ({ ok: false, err }))
+      const [detail, games, diagnostics, reportResult] = await Promise.all([
         apiFetch(`/benchmark/batch/${encodeURIComponent(id)}`),
         apiFetch(gamesPath),
-        apiFetch(`/benchmark/batch/${encodeURIComponent(id)}/diagnostics`)
+        apiFetch(`/benchmark/batch/${encodeURIComponent(id)}/diagnostics`),
+        reportRequest
       ])
       if (!token.isLatest()) return false
       benchmarkBatchDetail.value = normalizeBenchmarkBatchDetail(detail)
@@ -1146,6 +1809,15 @@ function useEvaluationWorkbench(options = {}) {
       benchmarkBatchGamePagination.value = games?.pagination || { total: 0, offset: 0, limit: 20, returned: 0, has_more: false }
       benchmarkBatchDiagnostics.value = (diagnostics?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
       benchmarkBatchDiagnosticSummary.value = diagnostics?.summary || {}
+      if (reportResult?.ok && reportResult.report) {
+        benchmarkBatchReport.value = reportResult.report
+        benchmarkBatchReportError.value = ''
+        benchmarkBatchReportExports.value = {}
+      } else {
+        benchmarkBatchReport.value = null
+        benchmarkBatchReportExports.value = {}
+        benchmarkBatchReportError.value = benchmarkErrorMessage(reportResult?.err, 'Benchmark 报告读取失败，已使用本地报告。')
+      }
       return true
     } catch (err) {
       if (token.isLatest()) {
@@ -1155,10 +1827,16 @@ function useEvaluationWorkbench(options = {}) {
         benchmarkBatchGamePagination.value = { total: 0, offset: 0, limit: 20, returned: 0, has_more: false }
         benchmarkBatchDiagnostics.value = []
         benchmarkBatchDiagnosticSummary.value = {}
+        benchmarkBatchReport.value = null
+        benchmarkBatchReportError.value = ''
+        benchmarkBatchReportExports.value = {}
       }
       return false
     } finally {
-      if (token.isLatest()) benchmarkDetailLoading.value = false
+      if (token.isLatest()) {
+        benchmarkDetailLoading.value = false
+        benchmarkBatchReportLoading.value = false
+      }
     }
   }
 
@@ -1184,6 +1862,8 @@ function useEvaluationWorkbench(options = {}) {
       benchmarkSnapshots.value = []
       selectedBenchmarkSnapshotId.value = ''
       benchmarkSnapshotDetail.value = null
+      benchmarkSnapshotServerCompare.value = null
+      benchmarkSnapshotCompareError.value = ''
       benchmarkSnapshotError.value = ''
       return false
     }
@@ -1203,6 +1883,8 @@ function useEvaluationWorkbench(options = {}) {
       ) {
         selectedBenchmarkSnapshotId.value = ''
         benchmarkSnapshotDetail.value = null
+        benchmarkSnapshotServerCompare.value = null
+        benchmarkSnapshotCompareError.value = ''
       }
       return true
     } catch (err) {
@@ -1210,7 +1892,9 @@ function useEvaluationWorkbench(options = {}) {
         benchmarkSnapshots.value = []
         selectedBenchmarkSnapshotId.value = ''
         benchmarkSnapshotDetail.value = null
-        benchmarkSnapshotError.value = benchmarkErrorMessage(err, 'Benchmark snapshot 列表不可用。')
+        benchmarkSnapshotServerCompare.value = null
+        benchmarkSnapshotCompareError.value = ''
+        benchmarkSnapshotError.value = benchmarkErrorMessage(err, '评测快照列表不可用。')
       }
       return false
     } finally {
@@ -1223,12 +1907,15 @@ function useEvaluationWorkbench(options = {}) {
     if (!id) {
       selectedBenchmarkSnapshotId.value = ''
       benchmarkSnapshotDetail.value = null
+      benchmarkSnapshotServerCompare.value = null
+      benchmarkSnapshotCompareError.value = ''
       return false
     }
     const cached = benchmarkSnapshotDetails.value[id]
     selectedBenchmarkSnapshotId.value = id
     if (!force && cached?.rows?.length) {
       benchmarkSnapshotDetail.value = cached
+      await loadBenchmarkSnapshotCompare(id, { silent: true })
       return true
     }
     const token = snapshotDetailRequests.next()
@@ -1246,11 +1933,14 @@ function useEvaluationWorkbench(options = {}) {
       upsertBenchmarkSnapshot(detail)
       selectedBenchmarkSnapshotId.value = detail.snapshot_id
       benchmarkSnapshotDetail.value = detail
+      await loadBenchmarkSnapshotCompare(detail.snapshot_id, { silent: true })
       return true
     } catch (err) {
       if (token.isLatest()) {
-        benchmarkSnapshotError.value = benchmarkErrorMessage(err, 'Benchmark snapshot 详情读取失败。')
+        benchmarkSnapshotError.value = benchmarkErrorMessage(err, '评测快照详情读取失败。')
         benchmarkSnapshotDetail.value = null
+        benchmarkSnapshotServerCompare.value = null
+        benchmarkSnapshotCompareError.value = ''
       }
       return false
     } finally {
@@ -1262,9 +1952,37 @@ function useEvaluationWorkbench(options = {}) {
     return loadBenchmarkSnapshotDetail(snapshotId, { force: true })
   }
 
+  async function loadBenchmarkSnapshotCompare(snapshotId = selectedBenchmarkSnapshotId.value, { againstSnapshotId = '', limit = 100, silent = false } = {}) {
+    const id = String(snapshotId || '').trim()
+    if (!id) {
+      benchmarkSnapshotServerCompare.value = null
+      benchmarkSnapshotCompareError.value = ''
+      return false
+    }
+    const token = snapshotCompareRequests.next()
+    if (!silent) benchmarkSnapshotCompareLoading.value = true
+    benchmarkSnapshotCompareError.value = ''
+    try {
+      const data = await apiFetch(benchmarkSnapshotComparePath(id, limit, againstSnapshotId))
+      if (!token.isLatest()) return false
+      const compare = normalizeBenchmarkSnapshotServerCompare(data, benchmarkSnapshotScope.value)
+      benchmarkSnapshotServerCompare.value = compare
+      if (!compare) throw new Error('invalid benchmark snapshot compare payload')
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkSnapshotServerCompare.value = null
+        benchmarkSnapshotCompareError.value = benchmarkErrorMessage(err, '评测快照对比 API 不可用，已使用本地比较。')
+      }
+      return false
+    } finally {
+      if (token.isLatest() && !silent) benchmarkSnapshotCompareLoading.value = false
+    }
+  }
+
   async function createBenchmarkSnapshot(overrides = {}) {
     if (benchmarkSnapshotScope.value === 'role_version' && !selectedRole.value) {
-      const message = '请选择一个角色后再创建 snapshot。'
+      const message = '请选择一个角色后再创建快照。'
       benchmarkSnapshotError.value = message
       setNotice('warning', message)
       return null
@@ -1288,11 +2006,12 @@ function useEvaluationWorkbench(options = {}) {
       upsertBenchmarkSnapshot(detail)
       selectedBenchmarkSnapshotId.value = detail.snapshot_id
       benchmarkSnapshotDetail.value = detail
-      setNotice('success', 'Benchmark snapshot 已创建。')
+      await loadBenchmarkSnapshotCompare(detail.snapshot_id, { silent: true })
+      setNotice('success', '评测快照已创建。')
       return detail
     } catch (err) {
       if (token.isLatest()) {
-        const message = benchmarkErrorMessage(err, '创建 Benchmark snapshot 失败。')
+        const message = benchmarkErrorMessage(err, '创建评测快照失败。')
         benchmarkSnapshotError.value = message
         setNotice('error', message)
       }
@@ -1306,19 +2025,98 @@ function useEvaluationWorkbench(options = {}) {
     const key = String(viewKey || '').trim()
     if (!key) return null
     try {
-      return await apiFetch(`/benchmark/views/${encodeURIComponent(key)}`)
+      return normalizeBenchmarkView(await apiFetch(`/benchmark/views/${encodeURIComponent(key)}`), benchmarkSnapshotScope.value)
     } catch {
       return null
     }
   }
 
+  async function loadBenchmarkViews({ limit = 50, silent = false } = {}) {
+    const token = benchmarkViewRequests.next()
+    if (!silent) benchmarkSavedViewsLoading.value = true
+    benchmarkSavedViewsError.value = ''
+    try {
+      const data = await apiFetch(benchmarkViewListPath(limit))
+      if (!token.isLatest()) return false
+      const items = Array.isArray(data?.items) ? data.items : []
+      benchmarkSavedViews.value = items.map((item) => normalizeBenchmarkView(item, benchmarkSnapshotScope.value)).filter(Boolean)
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        benchmarkSavedViews.value = []
+        benchmarkSavedViewsError.value = benchmarkErrorMessage(err, '评测保存视图不可用。')
+      }
+      return false
+    } finally {
+      if (token.isLatest() && !silent) benchmarkSavedViewsLoading.value = false
+    }
+  }
+
+  async function loadCurrentBenchmarkView(viewKey = currentBenchmarkViewKey.value) {
+    const key = String(viewKey || '').trim() || currentBenchmarkViewKey.value
+    selectedBenchmarkViewKey.value = key
+    applyBenchmarkViewPreferences(readLocalBenchmarkView(key) || { ...currentDefaultBenchmarkView(), view_key: key })
+    const serverView = await loadBenchmarkView(key)
+    if (serverView) {
+      applyBenchmarkViewPreferences(serverView)
+      writeLocalBenchmarkView(serverView)
+      return serverView
+    }
+    return benchmarkViewPreferences.value
+  }
+
+  async function selectBenchmarkView(viewKey) {
+    return loadCurrentBenchmarkView(viewKey)
+  }
+
   async function saveBenchmarkView(payload = {}) {
     const viewKey = String(payload.view_key || '').trim()
     if (!viewKey) return null
-    return apiFetch('/benchmark/views', {
+    const saved = normalizeBenchmarkView(await apiFetch('/benchmark/views', {
       method: 'POST',
       body: JSON.stringify(payload)
+    }), benchmarkSnapshotScope.value)
+    if (saved) {
+      writeLocalBenchmarkView(saved)
+      benchmarkSavedViews.value = [
+        saved,
+        ...benchmarkSavedViews.value.filter((view) => view.view_key !== saved.view_key)
+      ]
+      if (selectedBenchmarkViewKey.value === saved.view_key || currentBenchmarkViewKey.value === saved.view_key) {
+        applyBenchmarkViewPreferences(saved)
+      }
+    }
+    return saved
+  }
+
+  async function saveCurrentBenchmarkView(overrides = {}) {
+    const token = benchmarkViewActionRequests.next()
+    const boundary = benchmarkViewBoundaryPayload()
+    const current = setBenchmarkViewPreference({
+      ...(overrides.name == null ? {} : { name: overrides.name }),
+      ...(overrides.view_config || {})
     })
+    const viewKey = String(overrides.view_key || current.view_key || currentBenchmarkViewKey.value).trim()
+    const payload = {
+      view_key: viewKey,
+      name: String(overrides.name || current.name || '默认视图'),
+      ...boundary,
+      view_config: normalizeBenchmarkViewConfig({
+        ...current.view_config,
+        ...(overrides.view_config || {}),
+        mode: boundary.scope
+      })
+    }
+    writeLocalBenchmarkView(payload)
+    try {
+      const saved = await saveBenchmarkView(payload)
+      if (!token.isLatest() || !saved) return payload
+      benchmarkViewDirty.value = false
+      return saved
+    } catch {
+      benchmarkViewDirty.value = true
+      return payload
+    }
   }
 
   async function deleteBenchmarkView(viewKey) {
@@ -1329,6 +2127,24 @@ function useEvaluationWorkbench(options = {}) {
     } catch {
       return null
     }
+  }
+
+  async function resetCurrentBenchmarkView(defaultConfig = {}) {
+    const key = selectedBenchmarkViewKey.value || currentBenchmarkViewKey.value
+    removeLocalBenchmarkView(key)
+    await deleteBenchmarkView(key)
+    const defaults = currentDefaultBenchmarkView()
+    applyBenchmarkViewPreferences({
+      ...defaults,
+      view_config: {
+        ...defaults.view_config,
+        ...normalizeBenchmarkViewConfig(defaultConfig),
+        mode: benchmarkSnapshotScope.value
+      }
+    })
+    benchmarkSavedViews.value = benchmarkSavedViews.value.filter((view) => view.view_key !== key)
+    benchmarkViewDirty.value = false
+    return benchmarkViewPreferences.value
   }
 
   async function refreshAll({ silent = false, notify = false } = {}) {
@@ -1343,7 +2159,17 @@ function useEvaluationWorkbench(options = {}) {
       if (!token.isLatest()) return false
       await loadBenchmarkPlan()
       if (!token.isLatest()) return false
+      await loadBenchmarkLeaderboardCompare({ silent: true })
+      if (!token.isLatest()) return false
+      await loadBenchmarkViews({ silent: true })
+      if (!token.isLatest()) return false
+      await loadCurrentBenchmarkView()
+      if (!token.isLatest()) return false
       const runsLoaded = await loadRuns()
+      if (!token.isLatest()) return false
+      await loadBenchmarkReportHistory({ silent: true })
+      if (!token.isLatest()) return false
+      await loadBenchmarkDiagnosticsAggregate({ silent: true })
       if (!token.isLatest()) return false
       await loadBenchmarkSnapshots({ silent: true })
       if (!token.isLatest()) return false
@@ -1394,6 +2220,11 @@ function useEvaluationWorkbench(options = {}) {
     selectedBenchmarkBatchId.value = ''
     clearBenchmarkBatchDetail()
     void refreshAll({ silent: true })
+  }
+
+  function selectLegacyBenchmarkScope(targetType = 'role_version') {
+    legacyBenchmarkTargetType.value = normalizeBenchmarkTargetType(targetType)
+    selectBenchmarkSuite('')
   }
 
   function numberField(name, fallback, min = 1) {
@@ -1575,6 +2406,7 @@ function useEvaluationWorkbench(options = {}) {
     roleRows,
     launchableRoles,
     selectedBenchmarkId,
+    legacyBenchmarkTargetType,
     selectedBenchmarkSuite,
     selectedBenchmarkTargetType,
     selectedBenchmarkIsModelSuite,
@@ -1582,6 +2414,7 @@ function useEvaluationWorkbench(options = {}) {
     selectedBenchmarkSuiteLabel,
     selectedBenchmarkEvaluationSetId,
     selectBenchmarkSuite,
+    selectLegacyBenchmarkScope,
     launchBattleGames,
     launchMaxDays,
     selectedRole,
@@ -1601,13 +2434,35 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkSnapshotDetails,
     benchmarkSnapshotLoading,
     benchmarkSnapshotError,
+    benchmarkSnapshotServerCompare,
+    benchmarkSnapshotCompareLoading,
+    benchmarkSnapshotCompareError,
     selectedBenchmarkSnapshotId,
     selectedBenchmarkSnapshot,
     activeBenchmarkSnapshotDetail,
     benchmarkSnapshotCompare,
     benchmarkSnapshotScope,
+    benchmarkLeaderboardCompare,
+    benchmarkLeaderboardCompareLoading,
+    benchmarkLeaderboardCompareError,
+    loadBenchmarkLeaderboardCompare,
+    benchmarkSavedViews,
+    benchmarkSavedViewsLoading,
+    benchmarkSavedViewsError,
+    benchmarkViewPreferences,
+    benchmarkViewDirty,
+    selectedBenchmarkViewKey,
+    currentBenchmarkViewKey,
+    activeBenchmarkViewConfig,
+    loadBenchmarkViews,
+    loadCurrentBenchmarkView,
+    selectBenchmarkView,
+    saveCurrentBenchmarkView,
+    resetCurrentBenchmarkView,
+    setBenchmarkViewPreference,
     loadBenchmarkSnapshots,
     loadBenchmarkSnapshotDetail,
+    loadBenchmarkSnapshotCompare,
     selectBenchmarkSnapshot,
     createBenchmarkSnapshot,
     loadBenchmarkView,
@@ -1616,6 +2471,9 @@ function useEvaluationWorkbench(options = {}) {
     batchRuns,
     benchmarkEvents,
     batchRunRows,
+    unscopedBenchmarkRunRows,
+    selectedSuiteBatchRunRows,
+    selectedBenchmarkUsingLegacyRuns,
     filteredBatchRunRows,
     visibleBatchRunRows,
     selectedBenchmarkBatchId,
@@ -1627,9 +2485,28 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkBatchGamePagination,
     benchmarkBatchDiagnostics,
     benchmarkBatchDiagnosticSummary,
+    benchmarkBatchReport,
+    benchmarkBatchReportLoading,
+    benchmarkBatchReportError,
+    benchmarkReportHistory,
+    benchmarkReportHistoryLoading,
+    benchmarkReportHistoryError,
+    benchmarkReportHistorySummary,
+    benchmarkReportHistoryPagination,
+    loadBenchmarkReportHistory,
+    benchmarkDiagnosticAggregateLoading,
+    benchmarkDiagnosticAggregateError,
+    benchmarkDiagnosticAggregateDiagnostics,
+    benchmarkDiagnosticAggregateSummary,
+    benchmarkDiagnosticAggregateRuns,
+    benchmarkDiagnosticAggregateGames,
+    benchmarkDiagnosticAggregatePagination,
+    loadBenchmarkDiagnosticsAggregate,
     benchmarkGameStatusFilter,
     selectBenchmarkBatch,
     loadBenchmarkBatchDetail,
+    loadBenchmarkBatchReport,
+    loadBenchmarkBatchReportExport,
     setBenchmarkGameStatusFilter,
     form,
     error,

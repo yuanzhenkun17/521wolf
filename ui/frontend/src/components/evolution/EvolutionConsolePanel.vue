@@ -239,13 +239,11 @@ function childRunKey(run, index) {
         <label>训练局数<input v-model.number="evo.form.value.training_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>对战局数<input v-model.number="evo.form.value.battle_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>最大天数<input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" /></label>
-        <label>
-          自动晋升
-          <select v-model="evo.form.value.auto_promote">
-            <option :value="true">是</option>
-            <option :value="false">否</option>
-          </select>
-        </label>
+        <div class="evo-policy-note">
+          <small>发布策略</small>
+          <b>评审门禁</b>
+          <span>晋升必须经过 proposal review、gate 与 trust bundle。</span>
+        </div>
       </div>
 
       <div class="evo-batch-role-grid">
@@ -347,7 +345,7 @@ function childRunKey(run, index) {
         <div class="evo-config-grid">
           <span><small>类型</small><b>{{ evo.selectedRun.value.entityLabel }}</b></span>
           <span><small>最大天数</small><b>{{ evo.selectedRun.value.config?.max_days || 5 }}</b></span>
-          <span><small>自动晋升</small><b>{{ evo.selectedRun.value.config?.auto_promote ? '开启' : '关闭' }}</b></span>
+          <span><small>发布策略</small><b>{{ evo.selectedRun.value.config?.auto_promote ? '评审门禁' : '仅训练记录' }}</b></span>
           <span><small>阶段</small><b>{{ stageLabel(evo) }}</b></span>
           <span><small>推荐</small><b>{{ selectedIsBatch ? '—' : recommendationLabel(evo.selectedRun.value) }}</b></span>
           <span><small>开始</small><b>{{ timeLabel(evo.selectedRun.value.startedLabel) }}</b></span>

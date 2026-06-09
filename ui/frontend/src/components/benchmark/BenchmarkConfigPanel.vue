@@ -45,26 +45,26 @@ const suiteModeLabel = computed(() =>
   props.benchmark.selectedBenchmarkId.value ? '正式 suite' : '临时评测'
 )
 const suiteTargetTypeLabel = computed(() =>
-  props.benchmark.selectedBenchmarkIsModelSuite.value ? 'Model Benchmark' : 'Role Version'
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型评测' : '角色版本'
 )
 const suiteCostTierLabel = computed(() => {
   const tier = props.benchmark.selectedBenchmarkSuite.value?.cost_tier || ''
   const labels = {
-    smoke: 'Smoke',
-    low: 'Low',
-    medium: 'Medium',
-    standard: 'Standard',
-    release: 'Release',
-    high: 'High'
+    smoke: '冒烟',
+    low: '低',
+    medium: '中',
+    standard: '标准',
+    release: '发布',
+    high: '高'
   }
   return labels[tier] || (tier ? tier : '未标注')
 })
 const suiteSeedSummary = computed(() => {
   const suite = props.benchmark.selectedBenchmarkSuite.value
-  if (!suite) return 'ad-hoc'
+  if (!suite) return '临时'
   if (suite.seed_count != null) {
     const count = Number(suite.seed_count)
-    if (Number.isFinite(count)) return `${count} seeds`
+    if (Number.isFinite(count)) return `${count} 个 seed`
   }
   return suite.seed_set_id || '固定 seed'
 })
@@ -82,7 +82,7 @@ const launchSubjectLabel = computed(() => {
   return props.benchmark.form.value.target_version_id || '当前基线版本'
 })
 const boardTitle = computed(() =>
-  props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型 Benchmark' : '模型与版本'
+  props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型评测' : '模型与版本'
 )
 const modelBoardTitle = computed(() =>
   props.benchmark.selectedBenchmarkIsModelSuite.value ? '模型配置榜' : '模型榜'
@@ -138,7 +138,7 @@ function sourceLabel(source) {
         </header>
         <div class="bench-setup-grid">
           <div class="bench-form bench-form--suite">
-            <label>Benchmark Suite
+            <label>评测套件
               <select
                 :value="benchmark.selectedBenchmarkId.value"
                 @change="benchmark.selectBenchmarkSuite($event.target.value)"
@@ -234,7 +234,7 @@ function sourceLabel(source) {
             </span>
             <span>
               <small>Seed Set</small>
-              <b>{{ benchmark.selectedBenchmarkSuite.value?.seed_set_id || 'ad-hoc' }}</b>
+              <b>{{ benchmark.selectedBenchmarkSuite.value?.seed_set_id || '临时' }}</b>
               <em v-if="suiteSeedPreview">{{ suiteSeedPreview }}</em>
             </span>
             <span>
@@ -262,7 +262,7 @@ function sourceLabel(source) {
               <b>{{ runPlan?.total_games ?? '--' }}</b>
             </span>
             <span>
-              <small>Eval 批次</small>
+              <small>评测批次</small>
               <b>{{ runPlan?.eval_batch_count ?? '--' }}</b>
             </span>
             <span>

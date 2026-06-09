@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from app.lib.version import ReleaseStageNotAllowedError
 from app.util.time import beijing_now_iso
 from ui.backend.errors import domain_error_detail
+from ui.backend.schemas import normalize_rejection_tags
 
 _ACCEPTED_STATUS = "accepted"
 _REJECTED_STATUS = "rejected"
@@ -210,18 +211,69 @@ def _trust_bundle_missing_items(
     trust_bundle: dict[str, Any],
     completeness: dict[str, Any],
 ) -> list[str]:
-    missing = _merge_id_lists(_clean_id_list(completeness.get("missing")))
+    missing = _merge_id_lists([
+        _trust_missing_item_name(item)
+        for item in _clean_id_list(completeness.get("missing"))
+    ])
     if not completeness:
-        missing.append("completeness")
-    if not trust_bundle.get("trust_bundle_id"):
-        missing.append("trust_bundle_id")
-    if not trust_bundle.get("bundle_hash"):
-        missing.append("bundle_hash")
+        missing.append("trust_bundle")
+    if not trust_bundle.get("trust_bundle_id") or not trust_bundle.get("bundle_hash"):
+        missing.append("trust_bundle")
     if not _has_gate_reference(run, trust_bundle):
         missing.append("gate_report")
-    if not _has_evidence_reference(trust_bundle):
-        missing.append("evidence")
+    if not _has_training_evidence_reference(trust_bundle):
+        missing.append("training_evidence")
+    if not _has_proposal_reference(trust_bundle):
+        missing.append("proposals")
     return _merge_id_lists(missing)
+
+
+def _trust_missing_item_name(value: Any) -> str:
+    name = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if name in {
+        "evidence",
+        "training_evidence",
+        "training_game",
+        "training_games",
+        "training_game_ids",
+        "training_evidence_ids",
+        "evidence_ids",
+        "paired_seed_table",
+        "paired_seed_pairs",
+        "battle_pair_seeds",
+    }:
+        return "training_evidence"
+    if name in {
+        "proposal",
+        "proposals",
+        "proposal_ids",
+        "accepted_proposal_ids",
+        "applied_proposal_ids",
+        "generated_proposal_ids",
+        "preflight_passed_proposal_ids",
+        "rejected_proposal_ids",
+    }:
+        return "proposals"
+    if name in {
+        "gate",
+        "release_gate",
+        "promotion_gate",
+        "gate_report",
+        "gate_report_id",
+        "promotion_gate_report",
+    }:
+        return "gate_report"
+    if name in {
+        "bundle",
+        "bundle_hash",
+        "trust_bundle",
+        "trust_bundle_id",
+        "completeness",
+        "trust_completeness",
+        "trust_bundle_completeness",
+    }:
+        return "trust_bundle"
+    return name
 
 
 def _has_gate_reference(run: dict[str, Any], trust_bundle: dict[str, Any]) -> bool:
@@ -234,10 +286,17 @@ def _has_gate_reference(run: dict[str, Any], trust_bundle: dict[str, Any]) -> bo
     return isinstance(release_gate, dict) and bool(release_gate.get("decision") or release_gate.get("release_decision"))
 
 
-def _has_evidence_reference(trust_bundle: dict[str, Any]) -> bool:
-    return bool(
-        _clean_id_list(trust_bundle.get("training_game_ids"))
-        and _clean_id_list(trust_bundle.get("proposal_ids"))
+def _has_training_evidence_reference(trust_bundle: dict[str, Any]) -> bool:
+    return any(
+        _clean_id_list(trust_bundle.get(field))
+        for field in ("training_game_ids", "training_evidence_ids", "evidence_ids")
+    )
+
+
+def _has_proposal_reference(trust_bundle: dict[str, Any]) -> bool:
+    return any(
+        _clean_id_list(trust_bundle.get(field))
+        for field in ("proposal_ids", "accepted_proposal_ids", "applied_proposal_ids")
     )
 
 
@@ -296,7 +355,7 @@ def _reject_evolution_run(store: Any, run: dict[str, Any]) -> None:
     now = beijing_now_iso()
     for proposal in proposals:
         if _proposal_status(proposal) != _REJECTED_STATUS:
-            _mark_proposal_rejected(proposal, reason="run rejected", tags=[], timestamp=now)
+            _mark_proposal_rejected(proposal, reason="run rejected", tags=[], timestamp=now, run=run)
     if proposals:
         store.registry.save_rejected(role, proposals, run.get("battle_result") if isinstance(run.get("battle_result"), dict) else None)
     run["proposal_review"] = _proposal_review_summary(run)
@@ -315,6 +374,8 @@ def accept_evolution_proposal(store: Any, run: dict[str, Any], proposal_id: str)
     proposal["reviewed_at"] = now
     proposal.pop("rejection_reason", None)
     proposal.pop("rejection_tags", None)
+    proposal.pop("rejection_metadata", None)
+    proposal.pop("reject_buffer", None)
     run["proposal_review"] = _proposal_review_summary(run)
     return _proposal_action_payload(run, proposal)
 
@@ -332,9 +393,10 @@ def reject_evolution_proposal(
         raise HTTPException(status_code=400, detail="evolution run has no role")
     proposal = _find_proposal(run, proposal_id)
     now = beijing_now_iso()
-    clean_tags = [str(item).strip() for item in tags or [] if str(item).strip()]
-    _mark_proposal_rejected(proposal, reason=reason, tags=clean_tags, timestamp=now)
-    rejected_row = _rejected_buffer_row(run, proposal, reason=reason, tags=clean_tags, timestamp=now)
+    clean_reason = str(reason or "").strip()
+    clean_tags = normalize_rejection_tags(tags)
+    _mark_proposal_rejected(proposal, reason=clean_reason, tags=clean_tags, timestamp=now, run=run)
+    rejected_row = _rejected_buffer_row(run, proposal, reason=clean_reason, tags=clean_tags, timestamp=now)
     reject_buffer = dict(rejected_row.get("reject_buffer") or {})
     try:
         store.registry.save_rejected(
@@ -706,12 +768,21 @@ def _mark_proposal_rejected(
     reason: str,
     tags: list[str],
     timestamp: str,
+    run: dict[str, Any] | None = None,
 ) -> None:
+    metadata = _proposal_rejection_metadata(
+        proposal,
+        reason=reason,
+        tags=tags,
+        timestamp=timestamp,
+        run=run,
+    )
     proposal["status"] = _REJECTED_STATUS
     proposal["rejected_at"] = proposal.get("rejected_at") or timestamp
     proposal["reviewed_at"] = timestamp
     proposal["rejection_reason"] = reason
     proposal["rejection_tags"] = list(tags)
+    proposal["rejection_metadata"] = metadata
     proposal.pop("accepted_at", None)
 
 
@@ -725,12 +796,20 @@ def _rejected_buffer_row(
 ) -> dict[str, Any]:
     row = dict(proposal)
     dedupe_key = _proposal_dedupe_key(row)
+    metadata = _proposal_rejection_metadata(
+        proposal,
+        reason=reason,
+        tags=tags,
+        timestamp=timestamp,
+        run=run,
+    )
     row.update(
         {
             "source_run_id": run.get("run_id"),
             "source_proposal_id": proposal.get("proposal_id"),
             "rejection_reason": reason,
             "rejection_tags": list(tags),
+            "rejection_metadata": metadata,
             "rejected_at": timestamp,
             "dedupe_key": dedupe_key,
             "reject_buffer": {
@@ -741,11 +820,103 @@ def _rejected_buffer_row(
                 "dedupe_key": dedupe_key,
                 "reason": reason,
                 "tags": list(tags),
+                "rejection_metadata": metadata,
                 "rejected_at": timestamp,
             },
         }
     )
     return row
+
+
+def _proposal_rejection_metadata(
+    proposal: dict[str, Any],
+    *,
+    reason: str,
+    tags: list[str],
+    timestamp: str,
+    run: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "action": "reject",
+        "status": _REJECTED_STATUS,
+        "proposal_id": str(proposal.get("proposal_id") or ""),
+        "source_run_id": run.get("run_id") if isinstance(run, dict) else proposal.get("source_run_id"),
+        "role": run.get("role") if isinstance(run, dict) else proposal.get("role"),
+        "reason": str(reason or "").strip(),
+        "tags": normalize_rejection_tags(tags),
+        "reviewed_at": timestamp,
+        "rejected_at": timestamp,
+        "review_source": "ui_api",
+    }
+
+
+def _stored_rejection_metadata(proposal: dict[str, Any]) -> dict[str, Any]:
+    raw = proposal.get("rejection_metadata")
+    metadata = dict(raw) if isinstance(raw, dict) else {}
+    tags = normalize_rejection_tags(
+        metadata.get("tags")
+        if "tags" in metadata
+        else proposal.get("rejection_tags") or proposal.get("reject_buffer_tags") or []
+    )
+    reason = str(metadata.get("reason") or proposal.get("rejection_reason") or "").strip()
+    timestamp = str(
+        metadata.get("reviewed_at")
+        or proposal.get("reviewed_at")
+        or proposal.get("rejected_at")
+        or ""
+    )
+    if not metadata and not (reason or tags or timestamp):
+        return {}
+    metadata.update(
+        {
+            "schema_version": int(metadata.get("schema_version") or 1),
+            "action": str(metadata.get("action") or "reject"),
+            "status": str(metadata.get("status") or _REJECTED_STATUS),
+            "proposal_id": str(metadata.get("proposal_id") or proposal.get("proposal_id") or ""),
+            "reason": reason,
+            "tags": tags,
+            "reviewed_at": timestamp,
+            "rejected_at": str(metadata.get("rejected_at") or proposal.get("rejected_at") or timestamp),
+            "review_source": str(metadata.get("review_source") or "ui_api"),
+        }
+    )
+    return metadata
+
+
+def _proposal_review_actions(proposals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for proposal in proposals:
+        if _proposal_status(proposal) != _REJECTED_STATUS:
+            continue
+        metadata = _stored_rejection_metadata(proposal)
+        if not metadata:
+            continue
+        actions.append(
+            {
+                "schema_version": 1,
+                "action": "reject",
+                "status": _REJECTED_STATUS,
+                "proposal_id": metadata.get("proposal_id"),
+                "reason": metadata.get("reason", ""),
+                "tags": list(metadata.get("tags") or []),
+                "reviewed_at": metadata.get("reviewed_at", ""),
+                "rejection_metadata": metadata,
+            }
+        )
+    return actions
+
+
+def _rejection_metadata_by_proposal_id(proposals: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for proposal in proposals:
+        if _proposal_status(proposal) != _REJECTED_STATUS:
+            continue
+        metadata = _stored_rejection_metadata(proposal)
+        proposal_id = str(metadata.get("proposal_id") or proposal.get("proposal_id") or "").strip()
+        if proposal_id and metadata:
+            result[proposal_id] = metadata
+    return result
 
 
 def _proposal_dedupe_key(proposal: dict[str, Any]) -> str:
@@ -800,6 +971,8 @@ def _proposal_review_summary(run: dict[str, Any]) -> dict[str, Any]:
         review_status = "rejected"
     if applied_ids:
         review_status = "applied"
+    review_actions = _proposal_review_actions(proposals)
+    rejection_metadata = _rejection_metadata_by_proposal_id(proposals)
     return {
         "schema_version": 1,
         "status": review_status,
@@ -816,13 +989,16 @@ def _proposal_review_summary(run: dict[str, Any]) -> dict[str, Any]:
         "rejected_proposal_ids": rejected_ids,
         "pending_proposal_ids": pending_ids,
         "applied_proposal_ids": applied_ids,
+        "review_actions": review_actions,
+        "rejection_metadata": rejection_metadata,
+        "rejection_metadata_by_proposal_id": rejection_metadata,
         "counts": dict(counts),
         "updated_at": stored.get("updated_at") or run.get("last_heartbeat_at") or run.get("finished_at"),
     }
 
 
 def _proposal_action_payload(run: dict[str, Any], proposal: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "kind": "role_evolution_proposal",
         "schema_version": 1,
         "run_id": run.get("run_id"),
@@ -830,3 +1006,17 @@ def _proposal_action_payload(run: dict[str, Any], proposal: dict[str, Any]) -> d
         "proposal": dict(proposal),
         "proposal_review": _proposal_review_summary(run),
     }
+    if _proposal_status(proposal) == _REJECTED_STATUS:
+        metadata = _stored_rejection_metadata(proposal)
+        payload["review_action"] = {
+            "schema_version": 1,
+            "action": "reject",
+            "status": _REJECTED_STATUS,
+            "proposal_id": metadata.get("proposal_id"),
+            "reason": metadata.get("reason", ""),
+            "tags": list(metadata.get("tags") or []),
+            "reviewed_at": metadata.get("reviewed_at", ""),
+            "rejection_metadata": metadata,
+        }
+        payload["rejection_metadata"] = metadata
+    return payload

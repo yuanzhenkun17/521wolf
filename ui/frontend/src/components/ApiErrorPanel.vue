@@ -5,24 +5,48 @@ import { formatApiErrorForDisplay } from '../composables/apiErrorDisplay.js'
 const props = defineProps({
   error: { type: [Object, String, Error], default: null },
   title: { type: String, default: '请求失败' },
-  compact: Boolean
+  compact: Boolean,
+  retryLabel: { type: String, default: '' },
+  retryBusyLabel: { type: String, default: '重试中' },
+  retrying: Boolean,
+  retryDisabled: Boolean
 })
+
+const emit = defineEmits(['retry'])
 
 const view = computed(() => formatApiErrorForDisplay(props.error, props.title))
 const rootClass = computed(() => ['api-error-panel', { 'api-error-panel--compact': props.compact }])
+const canRetry = computed(() => Boolean(props.retryLabel))
+const retryText = computed(() => (props.retrying || props.retryDisabled) ? props.retryBusyLabel : props.retryLabel)
+
+function handleRetry() {
+  if (props.retryDisabled || props.retrying) return
+  emit('retry')
+}
 </script>
 
 <template>
   <section :class="rootClass" role="alert" aria-live="polite">
     <header>
-      <div>
+      <div class="api-error-panel__heading">
         <strong>{{ view.message }}</strong>
         <small v-if="view.code || view.status">
           <span v-if="view.code">{{ view.code }}</span>
           <span v-if="view.status">HTTP {{ view.status }}</span>
         </small>
       </div>
-      <code v-if="view.requestId">request {{ view.requestId }}</code>
+      <div v-if="view.requestId || canRetry" class="api-error-panel__actions">
+        <code v-if="view.requestId">request {{ view.requestId }}</code>
+        <button
+          v-if="canRetry"
+          type="button"
+          class="api-error-panel__retry"
+          :disabled="retryDisabled || retrying"
+          @click="handleRetry"
+        >
+          {{ retryText }}
+        </button>
+      </div>
     </header>
 
     <p v-if="view.detail && view.detail !== view.message">{{ view.detail }}</p>
@@ -65,9 +89,19 @@ const rootClass = computed(() => ['api-error-panel', { 'api-error-panel--compact
   min-width: 0;
 }
 
-.api-error-panel header div {
+.api-error-panel__heading {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.api-error-panel__actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -102,6 +136,28 @@ const rootClass = computed(() => ['api-error-panel', { 'api-error-panel--compact
   background: rgba(0, 0, 0, 0.06);
   color: var(--text-muted, #6b5d54);
   font-size: 11px;
+}
+
+.api-error-panel__retry {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--status-danger, #a13d36) 84%, #1f1f1f);
+  border-radius: 6px;
+  background: var(--status-danger, #a13d36);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.api-error-panel__retry:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger, #a13d36) 86%, #1f1f1f);
+}
+
+.api-error-panel__retry:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
 }
 
 .api-error-panel p {

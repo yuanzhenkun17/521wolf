@@ -592,6 +592,7 @@ function useGameHistory(state, options = {}) {
   let replayTimer = null
   let replayAdvancePending = false
   const logOpenRequests = createLatestOnlyTracker()
+  const evidenceOpenRequests = createLatestOnlyTracker()
   const historySelectionRequests = createLatestOnlyTracker()
   const historyListRequests = createLatestOnlyTracker()
   const historyPhaseRequests = createLatestOnlyMap()
@@ -614,6 +615,7 @@ function useGameHistory(state, options = {}) {
   const historyPagination = ref(createPagination(historyPageSize))
   const historyLoadingMore = ref(false)
   const historySourceFilter = ref('all')
+  const historyStatusFilter = ref('all')
   const historyCounts = ref({ ...EMPTY_HISTORY_COUNTS })
   const historyFacets = ref({ source: { ...EMPTY_HISTORY_COUNTS }, status: {} })
   const historyNotice = ref({ type: '', message: '' })
@@ -1063,6 +1065,9 @@ function useGameHistory(state, options = {}) {
     if (historySourceFilter.value && historySourceFilter.value !== 'all') {
       params.set('source', historySourceFilter.value)
     }
+    if (historyStatusFilter.value && historyStatusFilter.value !== 'all') {
+      params.set('status', historyStatusFilter.value)
+    }
     return `?${params.toString()}`
   }
 
@@ -1164,6 +1169,13 @@ function useGameHistory(state, options = {}) {
     const next = ['normal', 'benchmark', 'evolution'].includes(source) ? source : 'all'
     if (historySourceFilter.value === next) return
     historySourceFilter.value = next
+    await goHistoryPage(1, { resetSelection: true })
+  }
+
+  async function setHistoryStatusFilter(status = 'all') {
+    const next = String(status || '').trim().toLowerCase() || 'all'
+    if (historyStatusFilter.value === next) return
+    historyStatusFilter.value = next
     await goHistoryPage(1, { resetSelection: true })
   }
 
@@ -1326,9 +1338,35 @@ function useGameHistory(state, options = {}) {
     }
   }
 
+  async function openEvidencePage(gameId = null, { rememberOrigin = true } = {}) {
+    const token = evidenceOpenRequests.next()
+    const targetGameId = gameId == null ? '' : String(gameId)
+    clearHistoryNotice()
+    state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
+    state.currentView.value = 'evidence'
+    const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
+    if (hash.split('?')[0] !== '#evidence') writeViewHash('evidence')
+    const listReady = await ensureHistoryList()
+    if (!token.isLatest() || !listReady) return
+    const selectedGameId = targetGameId || String(state.selectedHistoryGameId.value || '')
+    const loadedGameId = String(state.selectedHistoryGame.value?.game_id || '')
+    if (selectedGameId && (targetGameId || loadedGameId !== selectedGameId)) {
+      await selectHistoryGame(selectedGameId, { fromOpenPage: true })
+    }
+    if (!token.isLatest()) return
+    const activeGameId = String(state.selectedHistoryGame.value?.game_id || state.selectedHistoryGameId.value || '')
+    if (!activeGameId) return
+    await Promise.allSettled([
+      loadArchive(activeGameId, { clearNotice: false }),
+      loadReview(activeGameId, { clearNotice: false })
+    ])
+  }
+
   function openEvolutionPage({ rememberOrigin = true } = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'evolution'
+    const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
+    if (hash.split('?')[0] === '#evolution') return
     writeViewHash('evolution')
   }
 
@@ -1357,6 +1395,15 @@ function useGameHistory(state, options = {}) {
         (!route.gameId || String(state.selectedHistoryGameId.value || '') === route.gameId)
       ) return
       void openLogPage(route.gameId || null, { rememberOrigin })
+      return
+    }
+    if (route.routeHash === '#evidence') {
+      if (
+        state.currentView.value === 'evidence' &&
+        state.selectedHistoryGame.value &&
+        (!route.gameId || String(state.selectedHistoryGameId.value || '') === route.gameId)
+      ) return
+      void openEvidencePage(route.gameId || null, { rememberOrigin })
       return
     }
     if (route.routeHash === '#evolution') {
@@ -1830,7 +1877,7 @@ function useGameHistory(state, options = {}) {
     const handleHashChange = () => syncHashRoute({ rememberOrigin: false })
     onMounted(() => {
       const hash = typeof window === 'undefined' ? '' : window.location.hash
-      if (['#logs', '#evolution', '#benchmark', '#match'].includes(hash)) {
+      if (['#logs', '#evidence', '#evolution', '#benchmark', '#match'].includes(String(hash || '').split('?')[0])) {
         syncHashRoute({ rememberOrigin: false })
       } else if (options.prefetchHistoryOnMount === true) {
         refreshHistoryList({ silent: true })
@@ -1850,6 +1897,7 @@ function useGameHistory(state, options = {}) {
     historyPagination,
     historyLoadingMore,
     historySourceFilter,
+    historyStatusFilter,
     historyCounts,
     historyFacets,
     historyNotice,
@@ -1861,9 +1909,11 @@ function useGameHistory(state, options = {}) {
     loadMoreHistoryPhaseDetail,
     goHistoryPage,
     setHistorySourceFilter,
+    setHistoryStatusFilter,
     deleteHistoryGame,
     selectHistoryGame,
     openLogPage,
+    openEvidencePage,
     openEvolutionPage,
     openBenchmarkPage,
     syncHashRoute,

@@ -1,6 +1,8 @@
 <script setup>
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { buildAssessmentScores } from '../../composables/assessmentScores.js'
+import EvidenceContextBar from './EvidenceContextBar.vue'
+import JudgeEvidencePanel from './JudgeEvidencePanel.vue'
 import {
   displayActionLabel,
   displayDayLabel,
@@ -183,6 +185,13 @@ const decisionJudgeJudgments = computed(() => {
   const rows = decisionJudgeData.value?.judgments
   return Array.isArray(rows) ? rows.filter((item) => item && typeof item === 'object') : []
 })
+const decisionJudgeCards = computed(() =>
+  decisionJudgeJudgments.value.map((item, index) => ({
+    key: `judge-item-${item.decision_id || item.id || index}`,
+    item,
+    evidence: buildJudgeEvidenceDetails(item)
+  }))
+)
 const decisionJudgeLowestRows = computed(() => {
   const lowest = decisionJudgeSummary.value?.lowest_decisions
   if (Array.isArray(lowest) && lowest.length) return lowest.filter((item) => item && typeof item === 'object').slice(0, 3)
@@ -371,6 +380,96 @@ function judgeStatusLabel(status) {
   }[key] || formatReviewText(status)
 }
 
+function valueRows(value) {
+  if (value == null || value === '') return []
+  if (Array.isArray(value)) return value.flatMap(valueRows)
+  if (typeof value === 'object') return Object.keys(value).length ? [value] : []
+  const text = String(value).trim()
+  return text ? [value] : []
+}
+
+function fieldRows(item, names) {
+  if (!item || typeof item !== 'object') return []
+  return uniqueRows(names.flatMap((name) => valueRows(item[name])))
+}
+
+function rowIdentity(value) {
+  if (value && typeof value === 'object') {
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return Object.prototype.toString.call(value)
+    }
+  }
+  return String(value)
+}
+
+function uniqueRows(rows) {
+  const seen = new Set()
+  return rows.filter((row) => {
+    const key = rowIdentity(row)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function judgeDecisionId(item) {
+  const id = item?.decision_id ?? item?.decisionId ?? item?.id
+  return id == null ? '' : String(id)
+}
+
+function rowMatchesDecision(row, item) {
+  const id = judgeDecisionId(item)
+  if (!id) return false
+  if (row && typeof row === 'object') {
+    const rowId = row.decision_id ?? row.decisionId ?? row.id ?? row.target_id
+    if (rowId != null && String(rowId) === id) return true
+    return [
+      row.message,
+      row.reason,
+      row.exception_message,
+      row.detail,
+      row.summary
+    ].some((value) => value != null && String(value).includes(id))
+  }
+  return String(row).includes(id)
+}
+
+function decisionJudgeScopedRows(field, item) {
+  const localRows = fieldRows(item, [field, field.slice(0, -1)])
+  const reportRows = valueRows(decisionJudgeData.value?.[field])
+    .filter((row) => rowMatchesDecision(row, item))
+  return uniqueRows([...localRows, ...reportRows])
+}
+
+function diagnosticReason(row) {
+  if (!row || typeof row !== 'object') return ''
+  return String(row.reason || row.kind || row.message || '').trim()
+}
+
+function buildJudgeEvidenceDetails(item) {
+  const diagnostics = decisionJudgeScopedRows('diagnostics', item)
+  const degradedReasons = uniqueRows([
+    ...fieldRows(item, ['degraded_reasons', 'degraded_reason', 'failure_reason', 'error']),
+    ...decisionJudgeScopedRows('degraded_reasons', item),
+    ...diagnostics.map(diagnosticReason).filter(Boolean)
+  ])
+  const details = {
+    evidenceRefs: fieldRows(item, ['evidence_refs', 'evidence_ref']),
+    counterfactuals: fieldRows(item, ['counterfactual', 'counterfactuals']),
+    rubricMisses: fieldRows(item, ['rubric_misses', 'rubric_miss']),
+    diagnostics,
+    degradedReasons,
+    warnings: decisionJudgeScopedRows('warnings', item)
+  }
+  details.total = Object.values(details).reduce((sum, rows) => (
+    Array.isArray(rows) ? sum + rows.length : sum
+  ), 0)
+  details.hasAny = details.total > 0
+  return details
+}
+
 function jsonText(value) {
   if (props.formatJson) return props.formatJson(value)
   return JSON.stringify(value, null, 2)
@@ -380,6 +479,7 @@ function jsonText(value) {
 <template>
   <section class="archive-review-panel">
     <h3>复盘报告</h3>
+    <EvidenceContextBar v-if="game" class="review-evidence-context" :game="game" />
     <template v-if="hasReviewContent">
       <div v-if="reviewGameSummary" class="review-summary-strip">
         <span class="review-summary-item review-winner">
@@ -480,22 +580,23 @@ function jsonText(value) {
 
         <div v-if="decisionJudgeJudgments.length" class="review-judge-list">
           <article
-            v-for="item in decisionJudgeJudgments"
-            :key="'judge-item-' + item.decision_id"
+            v-for="row in decisionJudgeCards"
+            :key="row.key"
             class="review-judge-card"
           >
             <header>
               <div>
-                <span>{{ item.player_id ?? '—' }}号</span>
-                <em>{{ roleLabel(item.role) }}</em>
-                <strong>{{ actionLabel(item.action_type) }}</strong>
+                <span>{{ row.item.player_id ?? '—' }}号</span>
+                <em>{{ roleLabel(row.item.role) }}</em>
+                <strong>{{ actionLabel(row.item.action_type) }}</strong>
               </div>
-              <b :class="['review-judge-score', qualityClass(item.quality)]">
-                {{ scoreText(item.score) }}
+              <b :class="['review-judge-score', qualityClass(row.item.quality)]">
+                {{ scoreText(row.item.score) }}
               </b>
             </header>
-            <p>{{ formatReviewText(item.reason) }}</p>
-            <p v-if="item.suggestion" class="review-judge-suggestion">{{ formatReviewText(item.suggestion) }}</p>
+            <p>{{ formatReviewText(row.item.reason) }}</p>
+            <p v-if="row.item.suggestion" class="review-judge-suggestion">{{ formatReviewText(row.item.suggestion) }}</p>
+            <JudgeEvidencePanel :evidence="row.evidence" :row-key="row.key" :format-json="formatJson" />
           </article>
         </div>
 
@@ -566,6 +667,19 @@ function jsonText(value) {
   font-weight: 900;
 }
 
+.review-evidence-context {
+  margin: 10px 0 12px;
+}
+
+.review-evidence-context :deep(.evidence-context-summary) {
+  grid-template-columns:
+    minmax(140px, 1fr)
+    minmax(160px, 1.1fr)
+    minmax(110px, 0.75fr)
+    minmax(74px, 0.5fr)
+    minmax(140px, 1fr);
+}
+
 .archive-review-panel h4 {
   margin: 14px 0 8px;
   color: var(--log-text);
@@ -590,6 +704,12 @@ function jsonText(value) {
   font-size: 12px;
   white-space: pre-wrap;
   line-height: 1.5;
+}
+
+@media (max-width: 860px) {
+  .review-evidence-context :deep(.evidence-context-summary) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .empty-log {
@@ -1198,6 +1318,11 @@ function jsonText(value) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .review-judge-summary,
+  .review-judge-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .review-cf-confidence {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1205,6 +1330,16 @@ function jsonText(value) {
 }
 
 @media (max-width: 420px) {
+  .review-judge-summary,
+  .review-judge-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .review-judge-card header,
+  .review-judge-card header div {
+    flex-wrap: wrap;
+  }
+
   .review-tl-item {
     grid-template-columns: minmax(0, 1fr);
   }

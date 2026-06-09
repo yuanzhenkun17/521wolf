@@ -4160,35 +4160,21 @@ def test_evolution_actions_baseline_promote_requires_complete_trust_bundle(tmp_p
             "applied_proposal_ids": ["p1"],
             "proposal_review": {"applied_proposal_ids": ["p1"]},
             "release_decision": "baseline_promote",
-            "release_gate": release_gate,
-            "gate_report": {
-                "gate_report_id": "gate_incomplete",
-                "release_gate": release_gate,
-                "trust_bundle_completeness": {
-                    "schema_version": "trust_bundle_completeness_v1",
-                    "complete": False,
-                    "score": 0.8,
-                    "missing": ["training_evidence"],
-                },
-            },
             "trust_bundle": {
                 "schema_version": "trust_bundle_v1",
                 "trust_bundle_id": "trust_bundle_incomplete",
-                "bundle_hash": "b" * 64,
                 "run_id": "evolve_baseline_incomplete_trust",
                 "role": "seer",
                 "baseline_version": "baseline_seer",
                 "candidate_version": "candidate_incomplete_trust",
-                "gate_report_id": "gate_incomplete",
-                "proposal_ids": ["p1"],
                 "completeness": {
                     "schema_version": "trust_bundle_completeness_v1",
                     "complete": False,
                     "score": 0.8,
-                    "missing": ["training_evidence"],
+                    "missing": ["evidence", "accepted_proposal_ids", "bundle_hash", "release_gate"],
                 },
             },
-            "battle_result": {"release_decision": "baseline_promote", "release_gate": release_gate},
+            "battle_result": {"release_decision": "baseline_promote"},
         }
         incomplete_response = client.post(
             "/api/evolution-runs/evolve_baseline_incomplete_trust/actions",
@@ -4208,8 +4194,12 @@ def test_evolution_actions_baseline_promote_requires_complete_trust_bundle(tmp_p
         release_stage="baseline",
         kind="evolution_trust_bundle_incomplete",
     )
+    missing_items = set(incomplete_payload["error"]["diagnostics"][0]["missing"])
+    assert missing_items == {"training_evidence", "proposals", "trust_bundle", "gate_report"}
     assert "training_evidence" in incomplete_payload["detail"]
-    assert "evidence" in incomplete_payload["error"]["diagnostics"][0]["missing"]
+    assert "proposals" in incomplete_payload["detail"]
+    assert "evidence" not in missing_items
+    assert "accepted_proposal_ids" not in missing_items
     assert baseline_version == "baseline_seer"
 
 

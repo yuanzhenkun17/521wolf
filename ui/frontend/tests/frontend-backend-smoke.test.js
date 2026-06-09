@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -12,6 +12,15 @@ import { chromium } from 'playwright'
 
 const frontendRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const repoRoot = path.resolve(frontendRoot, '../..')
+const matchPageSourceUrl = new URL('../src/pages/MatchPage.vue', import.meta.url)
+const mobileTaskShellSourceUrl = new URL('../src/components/MobileTaskShell.vue', import.meta.url)
+const apiErrorPanelSourceUrl = new URL('../src/components/ApiErrorPanel.vue', import.meta.url)
+const trustBundleDrawerSourceUrl = new URL('../src/components/evolution/TrustBundleDrawer.vue', import.meta.url)
+const evolutionConsolePanelSourceUrl = new URL('../src/components/evolution/EvolutionConsolePanel.vue', import.meta.url)
+const evolutionProposalReviewPanelSourceUrl = new URL('../src/components/evolution/EvolutionProposalReviewPanel.vue', import.meta.url)
+const evolutionWorkbenchSourceUrl = new URL('../src/composables/useEvolutionWorkbench.js', import.meta.url)
+const reviewReportPanelSourceUrl = new URL('../src/components/history/ReviewReportPanel.vue', import.meta.url)
+const logsPageSourceUrl = new URL('../src/pages/LogsPage.vue', import.meta.url)
 
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -101,6 +110,20 @@ function chromiumIsInstalled() {
   } catch {
     return false
   }
+}
+
+function readSource(url) {
+  return readFileSync(url, 'utf8')
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function firstCssBlock(source, selector) {
+  const match = source.match(new RegExp(`${escapeRegExp(selector)}\\s*\\{([\\s\\S]*?)\\n\\}`, 'm'))
+  assert.ok(match, `${selector} CSS block should exist`)
+  return match[1]
 }
 
 function serviceLogs(backend, frontend) {
@@ -253,6 +276,771 @@ async function pageDomSummary(page) {
     canvasCount: document.querySelectorAll('main.lycan-app .council-scene canvas').length,
   }))
 }
+
+test('MatchPage mobile safe-area source contract keeps errors on ApiErrorPanel', () => {
+  const matchPage = readSource(matchPageSourceUrl)
+  const mobileTaskShell = readSource(mobileTaskShellSourceUrl)
+  const apiErrorPanel = readSource(apiErrorPanelSourceUrl)
+  const errorNoticeBlock = firstCssBlock(matchPage, '.match-error-notice')
+  const toastNoticeBlock = firstCssBlock(matchPage, '.match-action-notice')
+
+  assert.match(matchPage, /import ApiErrorPanel from '\.\.\/components\/ApiErrorPanel\.vue'/)
+  assert.match(matchPage, /import MobileTaskShell from '\.\.\/components\/MobileTaskShell\.vue'/)
+  assert.match(matchPage, /import \{ inlineNoticeForDisplay, noticeErrorForPanel \} from '\.\.\/composables\/apiErrorDisplay\.js'/)
+  assert.match(matchPage, /<MobileTaskShell\s+mode="match"\s+:has-task="hasMobileTask"\s+:replay="isReplayMode">/)
+  assert.match(matchPage, /inlineMatchNotice = computed\(\(\) => inlineNoticeForDisplay\(props\.matchNotice\)\)/)
+  assert.match(matchPage, /matchErrorNotice = computed\(\(\) => matchPanelErrorForNotice\(props\.matchNotice\)\)/)
+  assert.match(matchPage, /requestId:\s*error\.request_id/)
+  assert.match(matchPage, /<ApiErrorPanel[\s\S]*v-if="matchErrorNotice"[\s\S]*class="match-error-notice"[\s\S]*title="对局操作失败"[\s\S]*compact/)
+  assert.match(matchPage, /<aside[\s\S]*v-if="matchNoticeMessage"[\s\S]*:class="\['match-action-notice', matchNoticeType\]"/)
+  assert.equal(matchPage.includes('.match-action-notice.error'), false)
+
+  assert.match(errorNoticeBlock, /--match-error-bottom-clearance:\s*calc\(288px \+ var\(--match-safe-bottom,\s*0px\)\)/)
+  assert.match(errorNoticeBlock, /top:\s*var\(--match-toast-top,\s*calc\(158px \+ var\(--match-safe-top,\s*0px\)\)\)/)
+  assert.match(errorNoticeBlock, /width:\s*min\(520px,\s*calc\(100vw - var\(--match-toast-gutter,\s*32px\) - var\(--match-safe-left,\s*0px\) - var\(--match-safe-right,\s*0px\)\)\)/)
+  assert.match(errorNoticeBlock, /max-height:\s*clamp\(144px,\s*calc\(100dvh - var\(--match-toast-top,\s*158px\) - var\(--match-error-bottom-clearance\)\),\s*340px\)/)
+  assert.match(errorNoticeBlock, /overflow-y:\s*auto/)
+  assert.match(errorNoticeBlock, /pointer-events:\s*auto/)
+  assert.match(toastNoticeBlock, /pointer-events:\s*none/)
+  assert.match(matchPage, /@media \(max-width: 760px\)[\s\S]*\.match-error-notice[\s\S]*--match-error-bottom-clearance:\s*calc\(306px \+ var\(--match-safe-bottom,\s*0px\)\)/)
+  assert.match(matchPage, /@media \(max-width: 760px\)[\s\S]*\.match-error-notice[\s\S]*max-height:\s*clamp\(144px,\s*calc\(100dvh - var\(--match-toast-top,\s*146px\) - var\(--match-error-bottom-clearance\)\),\s*260px\)/)
+
+  for (const edge of ['top', 'right', 'bottom', 'left']) {
+    assert.match(mobileTaskShell, new RegExp(`--match-safe-${edge}: env\\(safe-area-inset-${edge}, 0px\\)`))
+  }
+  assert.match(mobileTaskShell, /display:\s*contents/)
+  assert.match(mobileTaskShell, /@media \(max-width: 760px\)[\s\S]*--match-action-bottom:\s*max\(12px,\s*calc\(12px \+ var\(--match-safe-bottom\)\)\)/)
+  assert.match(mobileTaskShell, /@media \(max-width: 760px\)[\s\S]*--match-toast-top:\s*calc\(146px \+ var\(--match-safe-top\)\)/)
+  assert.match(apiErrorPanel, /<section :class="rootClass" role="alert" aria-live="polite">/)
+})
+
+test('EvidenceContextBar source contract is present in replay and review surfaces', () => {
+  const matchPage = readSource(matchPageSourceUrl)
+  const reviewPanel = readSource(reviewReportPanelSourceUrl)
+  const replayContextBlock = firstCssBlock(matchPage, '.match-replay-evidence-context')
+  const reviewContextBlock = firstCssBlock(reviewPanel, '.review-evidence-context')
+
+  assert.match(matchPage, /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'/)
+  assert.match(matchPage, /<EvidenceContextBar[\s\S]*v-if="isReplayMode && game"[\s\S]*class="match-replay-evidence-context"[\s\S]*:game="game"/)
+  assert.match(matchPage, /<ReplayControls[\s\S]*v-if="isReplayMode"[\s\S]*class="match-replay-controls"/)
+  assert.match(replayContextBlock, /position:\s*fixed/)
+  assert.match(replayContextBlock, /top:\s*var\(--match-replay-context-top,\s*calc\(164px \+ var\(--match-safe-top,\s*0px\)\)\)/)
+  assert.match(replayContextBlock, /width:\s*min\(740px,\s*calc\(100vw - var\(--match-replay-gutter,\s*52px\) - var\(--match-safe-left,\s*0px\) - var\(--match-safe-right,\s*0px\)\)\)/)
+  assert.match(replayContextBlock, /overflow-y:\s*auto/)
+  assert.match(matchPage, /\.match-replay-evidence-context :deep\(\.evidence-context-summary\)[\s\S]*grid-template-columns:/)
+  assert.match(matchPage, /@media \(max-width: 760px\)[\s\S]*\.match-replay-evidence-context[\s\S]*top:\s*var\(--match-replay-context-top,\s*calc\(318px \+ var\(--match-safe-top,\s*0px\)\)\)/)
+
+  assert.match(reviewPanel, /import EvidenceContextBar from '\.\/EvidenceContextBar\.vue'/)
+  assert.match(reviewPanel, /<EvidenceContextBar v-if="game" class="review-evidence-context" :game="game" \/>/)
+  assert.match(reviewContextBlock, /margin:\s*10px 0 12px/)
+  assert.match(reviewPanel, /\.review-evidence-context :deep\(\.evidence-context-summary\)[\s\S]*grid-template-columns:/)
+  assert.match(reviewPanel, /@media \(max-width: 860px\)[\s\S]*\.review-evidence-context :deep\(\.evidence-context-summary\)[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
+})
+
+test('History phase summary and Evolution publish policy avoid misleading evidence or auto-promote controls', () => {
+  const logsPage = readSource(logsPageSourceUrl)
+  const consolePanel = readSource(evolutionConsolePanelSourceUrl)
+  const workbench = readSource(evolutionWorkbenchSourceUrl)
+
+  assert.match(logsPage, /class="phase-evidence-title">阶段摘要<\/span>/)
+  assert.doesNotMatch(logsPage, /class="phase-evidence-title">关键证据<\/span>/)
+
+  assert.match(consolePanel, /class="evo-policy-note"[\s\S]*<small>发布策略<\/small>[\s\S]*<b>评审门禁<\/b>[\s\S]*proposal review、gate 与 trust bundle/)
+  assert.match(consolePanel, /<small>发布策略<\/small><b>\{\{ evo\.selectedRun\.value\.config\?\.auto_promote \? '评审门禁' : '仅训练记录' \}\}<\/b>/)
+  assert.doesNotMatch(consolePanel, /<select v-model="evo\.form\.value\.auto_promote">/)
+  assert.match(workbench, /function autoPromoteField\(\)[\s\S]*return Boolean\(form\.value\.auto_promote\)/)
+  assert.match(workbench, /auto_promote:\s*autoPromoteField\(\)/)
+  assert.doesNotMatch(workbench, /body:\s*JSON\.stringify\([\s\S]*auto_promote:\s*true/)
+})
+
+test('mobile viewport Match error panel fixture renders non-empty when Chromium is available', { timeout: 30000 }, async (t) => {
+  if (!chromiumIsInstalled()) {
+    t.skip('Playwright Chromium is not installed; source-level mobile Match error panel contract is still covered.')
+    return
+  }
+
+  let browser = null
+  try {
+    browser = await chromium.launch()
+    const page = await browser.newPage({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      deviceScaleFactor: 2,
+    })
+
+    await page.setContent(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            body {
+              min-height: 100vh;
+              margin: 0;
+              color: #fff0c6;
+              background:
+                linear-gradient(180deg, #080503, #1f1208 52%, #090604),
+                repeating-linear-gradient(90deg, rgba(255, 238, 196, 0.08) 0 1px, transparent 1px 18px);
+              font-family: system-ui, sans-serif;
+            }
+            .mobile-task-shell {
+              --match-safe-top: 24px;
+              --match-safe-right: 10px;
+              --match-safe-bottom: 34px;
+              --match-safe-left: 6px;
+              --match-toast-gutter: 22px;
+              --match-toast-top: calc(146px + var(--match-safe-top));
+              display: contents;
+            }
+            .council-scene {
+              min-height: 100dvh;
+              display: grid;
+              place-items: center;
+              background: radial-gradient(circle at 50% 45%, rgba(242, 202, 80, 0.18), transparent 36%);
+            }
+            .api-error-panel {
+              display: grid;
+              gap: 6px;
+              min-width: 0;
+              padding: 10px 11px;
+              border: 2px solid var(--status-danger, #9a2e21);
+              border-radius: 8px;
+              color: var(--text-main, #3f2714);
+            }
+            .api-error-panel header {
+              display: flex;
+              align-items: flex-start;
+              justify-content: space-between;
+              gap: 12px;
+            }
+            .api-error-panel strong,
+            .api-error-panel code,
+            .api-error-panel p {
+              overflow-wrap: anywhere;
+            }
+            .match-error-notice {
+              --status-danger: #9a2e21;
+              --text-main: #3f2714;
+              --text-muted: rgba(63, 39, 20, 0.72);
+              --match-error-bottom-clearance: calc(306px + var(--match-safe-bottom, 0px));
+              position: fixed;
+              top: var(--match-toast-top, calc(146px + var(--match-safe-top, 0px)));
+              left: 50%;
+              z-index: 92;
+              box-sizing: border-box;
+              width: calc(100vw - var(--match-toast-gutter, 22px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
+              max-height: clamp(144px, calc(100dvh - var(--match-toast-top, 146px) - var(--match-error-bottom-clearance)), 260px);
+              overflow-y: auto;
+              background:
+                linear-gradient(180deg, rgba(255, 239, 194, 0.98), rgba(245, 218, 164, 0.98)),
+                repeating-linear-gradient(90deg, rgba(88, 42, 14, 0.08) 0 1px, transparent 1px 18px);
+              box-shadow: 0 14px 30px rgba(0, 0, 0, 0.36);
+              transform: translateX(-50%);
+              pointer-events: auto;
+            }
+            .match-action-notice {
+              position: fixed;
+              top: var(--match-toast-top, 146px);
+              left: 50%;
+              width: calc(100vw - var(--match-toast-gutter, 22px) - var(--match-safe-left, 0px) - var(--match-safe-right, 0px));
+              transform: translateX(-50%);
+              pointer-events: none;
+            }
+          </style>
+        </head>
+        <body>
+          <section class="mobile-task-shell" data-mode="match">
+            <main class="council-scene">mobile match fixture</main>
+            <section class="api-error-panel api-error-panel--compact match-error-notice" role="alert" aria-live="polite">
+              <header>
+                <div>
+                  <strong>提交行动失败</strong>
+                  <small><span>match_action_invalid</span><span>HTTP 409</span></small>
+                </div>
+                <code>request req-mobile-409</code>
+              </header>
+              <p>目标已出局，等待重新选择。</p>
+            </section>
+            <aside class="match-action-notice success" role="status" aria-live="polite">行动已提交</aside>
+          </section>
+        </body>
+      </html>
+    `, { waitUntil: 'load' })
+
+    const summary = await page.evaluate(() => {
+      const alert = document.querySelector('.match-error-notice')
+      const toast = document.querySelector('.match-action-notice')
+      const rect = alert.getBoundingClientRect()
+      const style = getComputedStyle(alert)
+      return {
+        mode: document.querySelector('.mobile-task-shell')?.dataset.mode,
+        alertRole: alert?.getAttribute('role') || '',
+        alertText: alert?.innerText || '',
+        toastClass: toast?.className || '',
+        toastErrorCount: document.querySelectorAll('.match-action-notice.error').length,
+        bodyTextLength: document.body.innerText.trim().length,
+        pointerEvents: style.pointerEvents,
+        overflowY: style.overflowY,
+        maxHeightPx: Number.parseFloat(style.maxHeight),
+        topPx: Number.parseFloat(style.top),
+        rect: {
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+          height: rect.height,
+        },
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        },
+      }
+    })
+
+    assert.equal(summary.mode, 'match')
+    assert.equal(summary.alertRole, 'alert')
+    assert.match(summary.alertText, /request req-mobile-409/)
+    assert.equal(summary.toastClass.includes('success'), true)
+    assert.equal(summary.toastErrorCount, 0)
+    assert.ok(summary.bodyTextLength > 40)
+    assert.equal(summary.pointerEvents, 'auto')
+    assert.equal(summary.overflowY, 'auto')
+    assert.ok(summary.topPx >= 160, `expected safe-area top offset, got ${summary.topPx}`)
+    assert.ok(summary.maxHeightPx >= 144 && summary.maxHeightPx <= 260)
+    assert.ok(summary.rect.width >= 320)
+    assert.ok(summary.rect.left >= 0)
+    assert.ok(summary.rect.right <= summary.viewport.width)
+
+    const screenshot = await page.screenshot({ scale: 'css', timeout: 3000 })
+    const stats = parsePngPixelStats(screenshot)
+    assert.equal(stats.width, summary.viewport.width)
+    assert.equal(stats.height, summary.viewport.height)
+    assert.ok(stats.litSamples >= 5)
+    assert.ok(stats.distinctColorBuckets >= 3)
+    t.diagnostic(`mobile screenshot ${stats.width}x${stats.height}; colors=${stats.distinctColorBuckets}; alertTop=${summary.topPx}`)
+  } finally {
+    await browser?.close()
+  }
+})
+
+test('EvolutionProposalReviewPanel source contract highlights proposal and gate deep link targets', () => {
+  const panel = readSource(evolutionProposalReviewPanelSourceUrl)
+  const gateTargetBlock = firstCssBlock(panel, '.evo-gate-strip--deep-link-target')
+  const proposalTargetBlock = firstCssBlock(panel, '.evo-proposal-row--deep-link-target')
+  const inlineBlock = firstCssBlock(panel, '.evo-deep-link-inline')
+
+  assert.match(panel, /const deepLinkTarget = computed\(\(\) => props\.evo\.evolutionDeepLinkTarget\?\.value \|\| null\)/)
+  assert.match(panel, /const deepLinkProposalId = computed\(\(\) => textValue\(deepLinkTarget\.value\?\.proposal_id\)\)/)
+  assert.match(panel, /const deepLinkGateReportId = computed\(\(\) => textValue\(deepLinkTarget\.value\?\.gate_report_id\)\)/)
+  assert.match(panel, /function deepLinkState\(scope, matched, hasTarget\)/)
+  assert.match(panel, /matched:\s*'链接目标'/)
+  assert.match(panel, /pending:\s*'待恢复'/)
+  assert.match(panel, /unmatched:\s*'未匹配'/)
+
+  assert.match(panel, /:class="\['evo-gate-strip', \.\.\.gateDeepLinkClass\]"/)
+  assert.match(panel, /:data-gate-report-id="gateReportId \|\| null"/)
+  assert.match(panel, /:data-deep-link-target="deepLinkGateReportId \? 'gate' : null"/)
+  assert.match(panel, /:data-deep-link-gate-id="deepLinkGateReportId \|\| null"/)
+  assert.match(panel, /data-deep-link-marker="gate"/)
+  assert.match(panel, /class="evo-deep-link-badge evo-gate-deep-link-marker"/)
+
+  assert.match(panel, /:class="\['evo-proposal-row', \.\.\.proposalDeepLinkClass\(proposal\)\]"/)
+  assert.match(panel, /:data-proposal-id="proposalId\(proposal\) \|\| null"/)
+  assert.match(panel, /:data-deep-link-target="proposalDeepLinkMatched\(proposal\) \? 'proposal' : null"/)
+  assert.match(panel, /:data-deep-link-proposal-id="proposalDeepLinkMatched\(proposal\) \? deepLinkProposalId : null"/)
+  assert.match(panel, /data-deep-link-marker="proposal"/)
+  assert.match(panel, /class="evo-deep-link-inline"/)
+  assert.match(panel, /Proposal \$\{deepLinkStateLabel\(proposalDeepLinkState\.value\)\}: \$\{deepLinkProposalId\.value\}/)
+  assert.match(panel, /Gate \$\{deepLinkStateLabel\(gateDeepLinkState\.value\)\}: \$\{deepLinkGateReportId\.value\}/)
+
+  assert.match(gateTargetBlock, /border:\s*1px solid rgba\(139,\s*108,\s*50,\s*0\.26\)/)
+  assert.match(gateTargetBlock, /background:\s*rgba\(139,\s*108,\s*50,\s*0\.045\)/)
+  assert.match(proposalTargetBlock, /box-shadow:\s*inset 3px 0 0 rgba\(139,\s*108,\s*50,\s*0\.36\)/)
+  assert.match(inlineBlock, /flex-wrap:\s*wrap/)
+  assert.match(panel, /\.evo-deep-link-inline\[data-deep-link-state="unmatched"\] span/)
+  assert.match(panel, /\.evo-deep-link-badge\[data-deep-link-state="pending"\]/)
+})
+
+test('EvolutionProposalReviewPanel source contract supports bulk proposal review without new APIs', () => {
+  const panel = readSource(evolutionProposalReviewPanelSourceUrl)
+  const bulkToolsBlock = firstCssBlock(panel, '.evo-proposal-bulk-tools')
+  const bulkCountsBlock = firstCssBlock(panel, '.evo-proposal-bulk-counts')
+  const bulkActionsBlock = firstCssBlock(panel, '.evo-proposal-bulk-actions')
+
+  assert.match(panel, /import \{ computed, reactive, ref \} from 'vue'/)
+  assert.match(panel, /const bulkRejectReason = ref\(''\)/)
+  assert.match(panel, /const bulkReviewAction = ref\(''\)/)
+  assert.match(panel, /import RejectDialog from '\.\/RejectDialog\.vue'/)
+  assert.match(panel, /const rejectDialogOpen = ref\(false\)/)
+  assert.match(panel, /const rejectReviewMetadata = reactive\(\{\}\)/)
+  assert.match(panel, /const pendingReviewProposals = computed\(\(\) => proposals\.value\.filter\(isPendingReviewProposal\)\)/)
+  assert.match(panel, /const acceptableProposals = computed\(\(\) => pendingReviewProposals\.value\.filter\(canBulkAcceptProposal\)\)/)
+  assert.match(panel, /const rejectableProposals = computed\(\(\) => pendingReviewProposals\.value\.filter\(canBulkRejectProposal\)\)/)
+  assert.match(panel, /const canBulkAccept = computed\(\(\) => acceptableCount\.value > 0 && !isProposalActionBusy\.value\)/)
+  assert.match(panel, /const canBulkReject = computed\(\(\) => rejectableCount\.value > 0 && !isProposalActionBusy\.value\)/)
+
+  assert.match(panel, /function isPendingReviewProposal\(proposal\)[\s\S]*!isAccepted\(proposal\) && !isRejected\(proposal\)/)
+  assert.match(panel, /function rowActionDisabled\(proposal, action\)[\s\S]*if \(isBulkReviewing\.value\) return true[\s\S]*if \(actionLoading\.value && !rowActionLoading\(proposal, action\)\) return true/)
+  assert.match(panel, /function rejectDialogActionDisabled\(proposal\)[\s\S]*if \(actionLoading\.value && !rowActionLoading\(proposal, 'reject'\)\) return true/)
+  assert.match(panel, /function confirmRejectDialog\(payload\)[\s\S]*const reason = textValue\(payload\?\.reason\)[\s\S]*await props\.evo\.rejectProposal\(proposal, props\.evo\.selectedRunId\.value, reason\)/)
+  assert.match(panel, /function hasBlockingReviewError\(\)[\s\S]*notice\.type === 'error' \|\| Boolean\(props\.evo\.error\?\.value\)/)
+  assert.match(panel, /async function runBulkReview\(action, items\)[\s\S]*for \(const proposal of items\)[\s\S]*await props\.evo\.acceptProposal\(proposal, runId\)[\s\S]*await props\.evo\.rejectProposal\(proposal, runId, bulkRejectReason\.value\)[\s\S]*if \(hasBlockingReviewError\(\)\) break/)
+  assert.match(panel, /async function bulkAcceptProposals\(\)[\s\S]*runBulkReview\('accept', \[\.\.\.acceptableProposals\.value\]\)/)
+  assert.match(panel, /async function bulkRejectProposals\(\)[\s\S]*runBulkReview\('reject', \[\.\.\.rejectableProposals\.value\]\)/)
+  assert.doesNotMatch(panel, /\/proposals\/bulk|bulkProposal|acceptProposals|rejectProposals/)
+
+  assert.match(panel, /class="evo-proposal-bulk-tools"[\s\S]*data-bulk-review-tools/)
+  assert.match(panel, /<small>待处理<\/small><b>\{\{ pendingReviewCount \}\}<\/b>/)
+  assert.match(panel, /<small>可接受<\/small><b>\{\{ acceptableCount \}\}<\/b>/)
+  assert.match(panel, /<small>可拒绝<\/small><b>\{\{ rejectableCount \}\}<\/b>/)
+  assert.match(panel, /v-model="bulkRejectReason"[\s\S]*placeholder="批量拒绝原因"[\s\S]*:disabled="isProposalActionBusy"/)
+  assert.match(panel, /:disabled="!canBulkAccept"[\s\S]*@click="bulkAcceptProposals"[\s\S]*接受全部可处理/)
+  assert.match(panel, /:disabled="!canBulkReject"[\s\S]*@click="bulkRejectProposals"[\s\S]*拒绝全部可处理/)
+  assert.match(panel, /:disabled="rowActionDisabled\(proposal, 'accept'\)"/)
+  assert.match(panel, /data-open-reject-dialog/)
+  assert.match(panel, /@click="openRejectDialog\(proposal, index\)"/)
+  assert.match(panel, /:disabled="rowActionDisabled\(proposal, 'reject'\)"/)
+  assert.match(panel, /<RejectDialog[\s\S]*:reject-buffer="rejectDialogProposal\?\.rejectBuffer \|\| \{\}"[\s\S]*@confirm="confirmRejectDialog"/)
+  assert.doesNotMatch(panel, /placeholder="拒绝原因"/)
+
+  assert.match(bulkToolsBlock, /grid-template-columns:\s*minmax\(190px,\s*0\.8fr\) minmax\(180px,\s*1fr\) auto/)
+  assert.match(bulkToolsBlock, /border:\s*1px solid rgba\(58,\s*42,\s*24,\s*0\.12\)/)
+  assert.match(bulkCountsBlock, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/)
+  assert.match(bulkActionsBlock, /justify-content:\s*flex-end/)
+})
+
+test('TrustBundleDrawer mobile source contract keeps authority and evidence deep links', () => {
+  const drawer = readSource(trustBundleDrawerSourceUrl)
+  const drawerBlock = firstCssBlock(drawer, '.evo-trust-drawer')
+  const authorityBlock = firstCssBlock(drawer, '.evo-trust-authority')
+
+  assert.match(drawer, /<Teleport to="body">/)
+  assert.match(drawer, /class="evo-trust-drawer"[\s\S]*role="dialog"[\s\S]*aria-modal="true"[\s\S]*aria-label="Trust Bundle 审计"/)
+  assert.match(drawer, /const authorityClass = computed\(\(\) => `status-\$\{audit\.value\.authorityStatus \|\| 'cached'\}`\)/)
+  assert.match(drawer, /cached:\s*'缓存'/)
+  assert.match(drawer, /loading:\s*'读取中'/)
+  assert.match(drawer, /verified:\s*'已校验'/)
+  assert.match(drawer, /mismatch:\s*'不一致'/)
+  assert.match(drawer, /unavailable:\s*'不可用'/)
+  assert.match(drawer, /<div :class="\['evo-trust-authority', authorityClass\]">/)
+  assert.match(drawer, /<em v-if="mismatchLabels\.length">\{\{ mismatchLabels\.join\(' \/ '\) \}\}<\/em>/)
+  assert.match(drawer, /<button type="button" class="evo-ghost-action" :disabled="loading" @click="refresh">/)
+
+  for (const hrefField of ['gate_report_href', 'source_run_href', 'version_href']) {
+    assert.match(drawer, new RegExp(`<a v-if="audit\\.${hrefField}" :href="audit\\.${hrefField}">`))
+  }
+  assert.equal((drawer.match(/<a v-if="row\.href" :href="row\.href">\{\{ row\.id \}\}<\/a>/g) || []).length, 2)
+  assert.match(drawer, /Training Evidence/)
+  assert.match(drawer, /Proposal Evidence/)
+  assert.match(drawer, /Paired Seeds/)
+
+  assert.match(drawerBlock, /width:\s*min\(540px,\s*100vw\)/)
+  assert.match(drawerBlock, /max-height:\s*100vh/)
+  assert.match(drawerBlock, /overflow:\s*auto/)
+  assert.match(authorityBlock, /grid-template-columns:\s*auto minmax\(0,\s*1fr\)/)
+  assert.match(authorityBlock, /min-width:\s*0/)
+  assert.match(drawer, /\.evo-trust-field-grid a,\s*\.evo-trust-id-grid a,\s*\.evo-trust-seed-table a\s*\{[\s\S]*text-decoration:\s*none/)
+  assert.match(drawer, /\.evo-trust-chip-row span,[\s\S]*\.evo-trust-id-grid a,[\s\S]*padding:\s*3px 7px[\s\S]*border-radius:\s*6px[\s\S]*text-overflow:\s*ellipsis/)
+  assert.match(drawer, /\.evo-trust-seed-table > \*\s*\{[\s\S]*padding:\s*6px 7px[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/)
+  assert.match(drawer, /@media \(max-width: 760px\)[\s\S]*\.evo-trust-drawer[\s\S]*width:\s*100vw[\s\S]*min-height:\s*100vh/)
+  assert.match(drawer, /@media \(max-width: 760px\)[\s\S]*\.evo-trust-field-grid,[\s\S]*\.evo-trust-completeness,[\s\S]*\.evo-trust-authority[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/)
+  assert.match(drawer, /@media \(max-width: 760px\)[\s\S]*\.evo-trust-seed-table[\s\S]*overflow-x:\s*auto/)
+})
+
+test('mobile viewport TrustBundleDrawer fixture renders authority and evidence links non-empty when Chromium is available', { timeout: 30000 }, async (t) => {
+  if (!chromiumIsInstalled()) {
+    t.skip('Playwright Chromium is not installed; source-level mobile TrustBundleDrawer contract is still covered.')
+    return
+  }
+
+  let browser = null
+  try {
+    browser = await chromium.launch()
+    const page = await browser.newPage({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      deviceScaleFactor: 2,
+    })
+
+    await page.setContent(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            body {
+              min-height: 100vh;
+              margin: 0;
+              background:
+                linear-gradient(180deg, #2f261c, #15100b),
+                repeating-linear-gradient(90deg, rgba(255, 253, 250, 0.1) 0 1px, transparent 1px 18px);
+              font-family: system-ui, sans-serif;
+            }
+            .evo-trust-drawer-backdrop {
+              position: fixed;
+              inset: 0;
+              z-index: 1200;
+              display: flex;
+              justify-content: flex-end;
+              background: rgba(38, 29, 19, 0.34);
+            }
+            .evo-trust-drawer {
+              box-sizing: border-box;
+              display: grid;
+              align-content: start;
+              gap: 14px;
+              width: min(540px, 100vw);
+              max-height: 100vh;
+              overflow: auto;
+              padding: 18px;
+              border-left: 1px solid rgba(58, 42, 24, 0.16);
+              background: #fffdfa;
+              box-shadow: -18px 0 42px rgba(38, 29, 19, 0.2);
+            }
+            .evo-trust-drawer-head,
+            .evo-trust-section header {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 12px;
+              min-width: 0;
+            }
+            .evo-trust-drawer-head span,
+            .evo-trust-field-grid span,
+            .evo-trust-completeness > span,
+            .evo-trust-completeness > div {
+              min-width: 0;
+            }
+            .evo-trust-drawer-actions {
+              display: flex;
+              flex: 0 0 auto;
+              align-items: center;
+              gap: 8px;
+            }
+            .evo-ghost-action {
+              padding: 6px 9px;
+              border: 1px solid rgba(58, 42, 24, 0.18);
+              border-radius: 7px;
+              background: rgba(255, 255, 250, 0.76);
+              color: #2f261c;
+              font-weight: 800;
+            }
+            .evo-trust-drawer-head small,
+            .evo-trust-field-grid small,
+            .evo-trust-completeness small,
+            .evo-trust-section header b {
+              color: #756957;
+              font-size: 10px;
+              font-weight: 800;
+              letter-spacing: 0;
+              text-transform: uppercase;
+            }
+            .evo-trust-drawer-head h2,
+            .evo-trust-section h3 {
+              margin: 0;
+              color: #2f261c;
+              font-size: 16px;
+              font-weight: 850;
+            }
+            .evo-trust-section h3 {
+              font-size: 12px;
+            }
+            .evo-trust-authority {
+              display: grid;
+              grid-template-columns: auto minmax(0, 1fr);
+              gap: 4px 8px;
+              align-items: center;
+              min-width: 0;
+              padding: 8px 10px;
+              border: 1px solid rgba(139, 108, 50, 0.22);
+              border-radius: 8px;
+              background: rgba(139, 108, 50, 0.055);
+            }
+            .evo-trust-authority.status-mismatch {
+              border-color: rgba(139, 58, 42, 0.24);
+              background: rgba(139, 58, 42, 0.055);
+            }
+            .evo-trust-authority b {
+              color: #7b4d1f;
+              font-size: 11px;
+              font-weight: 850;
+            }
+            .evo-trust-authority span,
+            .evo-trust-authority em {
+              min-width: 0;
+              overflow-wrap: anywhere;
+              color: #756957;
+              font-size: 12px;
+              font-style: normal;
+            }
+            .evo-trust-authority em {
+              grid-column: 2;
+              font-size: 11px;
+              font-weight: 800;
+            }
+            .evo-trust-field-grid {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 8px;
+            }
+            .evo-trust-field-grid span,
+            .evo-trust-completeness,
+            .evo-trust-section {
+              min-width: 0;
+              padding: 10px;
+              border: 1px solid rgba(58, 42, 24, 0.14);
+              border-radius: 8px;
+              background: rgba(255, 255, 250, 0.68);
+            }
+            .evo-trust-field-grid span,
+            .evo-trust-section {
+              display: grid;
+              gap: 9px;
+            }
+            .evo-trust-completeness {
+              display: grid;
+              grid-template-columns: 0.55fr 0.45fr minmax(0, 1fr);
+              gap: 10px;
+              border-color: rgba(74, 124, 68, 0.28);
+              background: rgba(74, 124, 68, 0.06);
+            }
+            .evo-trust-field-grid code,
+            .evo-trust-field-grid a,
+            .evo-trust-id-grid code,
+            .evo-trust-id-grid a,
+            .evo-trust-seed-table code {
+              min-width: 0;
+              overflow: hidden;
+              color: #2f261c;
+              font-family: "Cascadia Code", Consolas, monospace;
+              font-size: 11px;
+              font-weight: 800;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            .evo-trust-field-grid a,
+            .evo-trust-id-grid a {
+              text-decoration: none;
+            }
+            .evo-trust-chip-row,
+            .evo-trust-id-grid {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 6px;
+              min-width: 0;
+            }
+            .evo-trust-chip-row span,
+            .evo-trust-id-grid code,
+            .evo-trust-id-grid a,
+            .evo-trust-id-grid span {
+              max-width: 100%;
+              overflow: hidden;
+              padding: 3px 7px;
+              border-radius: 6px;
+              background: rgba(58, 42, 24, 0.07);
+              color: #756957;
+              font-size: 10px;
+              font-weight: 800;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            .evo-trust-seed-table {
+              display: grid;
+              grid-template-columns: repeat(5, minmax(72px, 1fr));
+              gap: 1px;
+              overflow-x: auto;
+              border: 1px solid rgba(58, 42, 24, 0.14);
+              border-radius: 7px;
+              background: rgba(58, 42, 24, 0.14);
+            }
+            .evo-trust-seed-table > * {
+              min-width: 0;
+              overflow: hidden;
+              padding: 6px 7px;
+              background: #fffdfa;
+              color: #756957;
+              font-size: 11px;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+            @media (max-width: 760px) {
+              .evo-trust-drawer {
+                width: 100vw;
+                min-height: 100vh;
+                padding: 14px;
+                border-left: 0;
+              }
+              .evo-trust-field-grid,
+              .evo-trust-completeness,
+              .evo-trust-authority {
+                grid-template-columns: minmax(0, 1fr);
+              }
+              .evo-trust-authority em {
+                grid-column: auto;
+              }
+              .evo-trust-seed-table {
+                grid-template-columns: repeat(5, minmax(72px, 1fr));
+                overflow-x: auto;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="evo-trust-drawer-backdrop">
+            <aside class="evo-trust-drawer" role="dialog" aria-modal="true" aria-label="Trust Bundle 审计">
+              <header class="evo-trust-drawer-head">
+                <span>
+                  <small>Authority Bundle</small>
+                  <h2>Trust Bundle</h2>
+                </span>
+                <div class="evo-trust-drawer-actions">
+                  <button type="button" class="evo-ghost-action">刷新</button>
+                  <button type="button" class="evo-ghost-action">关闭</button>
+                </div>
+              </header>
+              <div class="evo-trust-authority status-mismatch">
+                <b>不一致</b>
+                <span>Authority Bundle 与页面缓存不一致。</span>
+                <em>trust_bundle_id / bundle_hash / gate_report_id</em>
+              </div>
+              <section class="evo-trust-field-grid">
+                <span><small>trust_bundle_id</small><code>tb_mobile_authority</code></span>
+                <span><small>bundle_hash</small><code>sha256:authority-mobile-hash</code></span>
+                <span><small>gate_report_id</small><a href="#evolution?run_id=evo_mobile&gate_report_id=gate_mobile">gate_mobile</a></span>
+                <span><small>rollback_target</small><code>baseline_mobile</code></span>
+                <span><small>source_run_id</small><a href="#evolution?run_id=evo_mobile">evo_mobile</a></span>
+                <span><small>version_id</small><a href="#evolution?role=seer&version_id=version_mobile">version_mobile</a></span>
+              </section>
+              <section class="evo-trust-completeness" data-status="complete">
+                <span><small>Completeness</small><b>完整</b></span>
+                <span><small>Score</small><b>98%</b></span>
+                <div><small>Missing</small><b>—</b></div>
+              </section>
+              <section class="evo-trust-section">
+                <header><h3>Training Evidence</h3><b>2</b></header>
+                <div class="evo-trust-id-grid">
+                  <a href="#evidence?game_id=train_mobile_a">train_mobile_a</a>
+                  <a href="#evidence?game_id=train_mobile_b">train_mobile_b</a>
+                </div>
+              </section>
+              <section class="evo-trust-section">
+                <header><h3>Proposal Evidence</h3><b>2</b></header>
+                <div class="evo-trust-id-grid">
+                  <a href="#evolution?run_id=evo_mobile&proposal_id=proposal_mobile_a">proposal_mobile_a</a>
+                  <a href="#evolution?run_id=evo_mobile&proposal_id=proposal_mobile_b">proposal_mobile_b</a>
+                </div>
+              </section>
+              <section class="evo-trust-section">
+                <header><h3>Paired Seeds</h3><b>1</b></header>
+                <div class="evo-trust-seed-table">
+                  <span>Seed</span><span>基线</span><span>候选</span><span>差值</span><span>胜方</span>
+                  <code>260607</code><span>0.48</span><span>0.57</span><b>0.09</b><span>candidate</span>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </body>
+      </html>
+    `, { waitUntil: 'load' })
+
+    const summary = await page.evaluate(() => {
+      const drawer = document.querySelector('.evo-trust-drawer')
+      const authority = document.querySelector('.evo-trust-authority')
+      const firstEvidenceLink = document.querySelector('.evo-trust-id-grid a')
+      const fieldLinks = [...document.querySelectorAll('.evo-trust-field-grid a')].map((link) => ({
+        text: link.textContent.trim(),
+        href: link.getAttribute('href'),
+        rect: link.getBoundingClientRect().toJSON(),
+      }))
+      const evidenceLinks = [...document.querySelectorAll('.evo-trust-id-grid a')].map((link) => ({
+        text: link.textContent.trim(),
+        href: link.getAttribute('href'),
+        rect: link.getBoundingClientRect().toJSON(),
+      }))
+      const drawerRect = drawer.getBoundingClientRect()
+      const authorityRect = authority.getBoundingClientRect()
+      const evidenceStyle = getComputedStyle(firstEvidenceLink)
+      const drawerStyle = getComputedStyle(drawer)
+
+      return {
+        role: drawer?.getAttribute('role') || '',
+        modal: drawer?.getAttribute('aria-modal') || '',
+        label: drawer?.getAttribute('aria-label') || '',
+        authorityText: authority?.innerText || '',
+        bodyTextLength: document.body.innerText.trim().length,
+        fieldLinks,
+        evidenceLinks,
+        chipStyle: {
+          backgroundColor: evidenceStyle.backgroundColor,
+          borderRadius: evidenceStyle.borderRadius,
+          textOverflow: evidenceStyle.textOverflow,
+          whiteSpace: evidenceStyle.whiteSpace,
+        },
+        overflowY: drawerStyle.overflowY,
+        rect: {
+          left: drawerRect.left,
+          right: drawerRect.right,
+          width: drawerRect.width,
+          height: drawerRect.height,
+        },
+        authorityRect: {
+          top: authorityRect.top,
+          width: authorityRect.width,
+          height: authorityRect.height,
+        },
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        },
+      }
+    })
+
+    const hrefs = [...summary.fieldLinks, ...summary.evidenceLinks].map((link) => link.href)
+    assert.equal(summary.role, 'dialog')
+    assert.equal(summary.modal, 'true')
+    assert.equal(summary.label, 'Trust Bundle 审计')
+    assert.match(summary.authorityText, /不一致/)
+    assert.match(summary.authorityText, /trust_bundle_id \/ bundle_hash \/ gate_report_id/)
+    assert.ok(summary.bodyTextLength > 260)
+    assert.equal(summary.fieldLinks.length, 3)
+    assert.equal(summary.evidenceLinks.length, 4)
+    assert.ok(hrefs.includes('#evolution?run_id=evo_mobile&gate_report_id=gate_mobile'))
+    assert.ok(hrefs.includes('#evolution?run_id=evo_mobile'))
+    assert.ok(hrefs.includes('#evolution?role=seer&version_id=version_mobile'))
+    assert.ok(hrefs.includes('#evidence?game_id=train_mobile_a'))
+    assert.ok(hrefs.includes('#evolution?run_id=evo_mobile&proposal_id=proposal_mobile_a'))
+    assert.equal(summary.chipStyle.textOverflow, 'ellipsis')
+    assert.equal(summary.chipStyle.whiteSpace, 'nowrap')
+    assert.notEqual(summary.chipStyle.backgroundColor, 'rgba(0, 0, 0, 0)')
+    assert.ok(Number.parseFloat(summary.chipStyle.borderRadius) >= 6)
+    assert.equal(summary.overflowY, 'auto')
+    assert.ok(summary.rect.width >= 360)
+    assert.ok(summary.rect.left >= 0)
+    assert.ok(summary.rect.right <= summary.viewport.width)
+    assert.ok(summary.rect.height >= summary.viewport.height)
+    assert.ok(summary.authorityRect.top > 40)
+    assert.ok(summary.authorityRect.width >= 340)
+    for (const link of [...summary.fieldLinks, ...summary.evidenceLinks]) {
+      assert.ok(link.text, 'link text should not be blank')
+      assert.ok(link.href?.startsWith('#'), `expected hash href, got ${link.href}`)
+      assert.ok(link.rect.width > 20, `${link.text} should have visible width`)
+      assert.ok(link.rect.height > 10, `${link.text} should have visible height`)
+      assert.ok(link.rect.left >= 0, `${link.text} should not overflow left`)
+      assert.ok(link.rect.right <= summary.viewport.width, `${link.text} should not overflow right`)
+    }
+
+    const screenshot = await page.screenshot({ scale: 'css', timeout: 3000 })
+    const stats = parsePngPixelStats(screenshot)
+    assert.equal(stats.width, summary.viewport.width)
+    assert.equal(stats.height, summary.viewport.height)
+    assert.ok(stats.litSamples >= 5)
+    assert.ok(stats.distinctColorBuckets >= 3)
+    t.diagnostic(`trust drawer mobile screenshot ${stats.width}x${stats.height}; colors=${stats.distinctColorBuckets}; links=${hrefs.length}`)
+  } finally {
+    await browser?.close()
+  }
+})
 
 test('frontend creates a fake LLM game and renders a non-empty 3D canvas through the Vite proxy', { timeout: 120000 }, async (t) => {
   if (process.env.RUN_FRONTEND_BACKEND_SMOKE !== '1') {

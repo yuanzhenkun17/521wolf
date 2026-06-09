@@ -19,25 +19,25 @@ const scopeLabel = computed(() =>
 )
 const subjectLabel = computed(() => {
   if (targetType.value === 'model') {
-    return props.benchmark.form.value.model_config_hash || props.benchmark.form.value.model_id || 'current backend model'
+    return props.benchmark.form.value.model_config_hash || props.benchmark.form.value.model_id || '当前后端模型'
   }
-  return props.benchmark.form.value.target_version_id || 'baseline version'
+  return props.benchmark.form.value.target_version_id || '当前基线版本'
 })
 const gateLabel = computed(() => {
   const minGames = gates.value?.min_completed_games ?? gates.value?.min_rankable_games
   const validRate = gates.value?.min_valid_game_rate
   const fallback = gates.value?.max_fallback_rate
   const parts = []
-  if (minGames != null) parts.push(`min ${minGames} games`)
-  if (validRate != null) parts.push(`valid >= ${Math.round(Number(validRate) * 100)}%`)
-  if (fallback != null) parts.push(`fallback <= ${Math.round(Number(fallback) * 100)}%`)
-  return parts.length ? parts.join(' / ') : 'default gates'
+  if (minGames != null) parts.push(`至少 ${minGames} 局`)
+  if (validRate != null) parts.push(`有效率 >= ${Math.round(Number(validRate) * 100)}%`)
+  if (fallback != null) parts.push(`回退率 <= ${Math.round(Number(fallback) * 100)}%`)
+  return parts.length ? parts.join(' / ') : '默认门禁'
 })
 const budgetLabel = computed(() => {
-  if (!plan.value) return 'plan pending'
-  if (budget.value?.exceeded) return 'budget exceeded'
+  if (!plan.value) return '计划待生成'
+  if (budget.value?.exceeded) return '预算超限'
   const units = budget.value?.estimated_units ?? plan.value?.estimates?.estimated_llm_call_units
-  return units == null ? 'budget ok' : `${Number(units).toLocaleString('zh-CN')} units`
+  return units == null ? '预算正常' : `${Number(units).toLocaleString('zh-CN')} 单位`
 })
 const configHash = computed(() =>
   suite.value?.config_hash || suite.value?.benchmark_config_hash || suite.value?.benchmark?.config_hash || ''
@@ -45,45 +45,52 @@ const configHash = computed(() =>
 </script>
 
 <template>
-  <section class="benchmark-boundary-bar" aria-label="Benchmark boundary">
+  <section class="benchmark-boundary-bar" aria-label="评测边界">
     <div class="boundary-cell boundary-cell--suite">
-      <small>Suite</small>
+      <small>套件</small>
       <b>{{ benchmark.selectedBenchmarkSuiteLabel.value }}</b>
-      <em>{{ suite?.id || 'ad-hoc' }}</em>
+      <em>{{ suite?.id || '临时' }}</em>
     </div>
     <div class="boundary-cell">
-      <small>Comparison</small>
+      <small>比较边界</small>
       <b>{{ scopeLabel }}</b>
       <em>{{ subjectLabel }}</em>
     </div>
     <div class="boundary-cell">
-      <small>Evaluation Set</small>
-      <b>{{ benchmark.selectedBenchmarkEvaluationSetId.value || 'ad-hoc' }}</b>
-      <em>{{ suite?.seed_set_id || 'ad-hoc seed set' }}</em>
+      <small>评测集</small>
+      <b>{{ benchmark.selectedBenchmarkEvaluationSetId.value || '临时' }}</b>
+      <em>{{ suite?.seed_set_id || '临时种子集' }}</em>
     </div>
     <div class="boundary-cell">
-      <small>Rankable Gate</small>
+      <small>入榜门禁</small>
       <b>{{ gateLabel }}</b>
-      <em>{{ configHash || 'config hash pending' }}</em>
+      <em>{{ configHash || 'Config Hash 待生成' }}</em>
     </div>
     <div :class="['boundary-cell', 'boundary-cell--budget', { danger: benchmark.benchmarkPlanBudgetExceeded.value }]">
-      <small>Budget</small>
+      <small>预算</small>
       <b>{{ budgetLabel }}</b>
-      <em>{{ benchmark.selectedBenchmarkCanLaunch.value ? 'launchable' : 'not launchable' }}</em>
+      <em>{{ benchmark.selectedBenchmarkCanLaunch.value ? '可启动' : '不可启动' }}</em>
     </div>
   </section>
 </template>
 
 <style scoped>
 .benchmark-boundary-bar {
+  --boundary-bg: #f8f0e0;
+  --boundary-surface: rgba(255, 252, 245, 0.7);
+  --boundary-border: rgba(139, 94, 52, 0.15);
+  --boundary-text: #3a2a18;
+  --boundary-muted: #8b6b4a;
+  --boundary-accent: #5a3319;
+  --boundary-soft: rgba(90, 51, 25, 0.12);
   display: grid;
   grid-template-columns: minmax(190px, 1.05fr) minmax(190px, 1fr) minmax(220px, 1.15fr) minmax(220px, 1.2fr) minmax(150px, 0.8fr);
   gap: 8px;
   min-width: 0;
   padding: 8px;
-  border: 1px solid var(--bench-border);
+  border: 1px solid var(--boundary-border);
   border-radius: 8px;
-  background: #f7f8f8;
+  background: var(--boundary-bg);
 }
 
 .boundary-cell {
@@ -92,22 +99,22 @@ const configHash = computed(() =>
   min-width: 0;
   min-height: 58px;
   padding: 9px 10px;
-  border: 1px solid #d8dedb;
+  border: 1px solid var(--boundary-border);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--boundary-surface);
 }
 
 .boundary-cell--suite {
-  border-left: 4px solid #1f6f54;
+  border-left: 4px solid var(--boundary-accent);
 }
 
 .boundary-cell--budget {
-  border-left: 4px solid #256b8f;
+  border-left: 4px solid rgba(139, 94, 52, 0.72);
 }
 
 .boundary-cell--budget.danger {
-  border-left-color: #a13d36;
-  background: #fff6f5;
+  border-left-color: var(--boundary-accent);
+  background: var(--boundary-soft);
 }
 
 .boundary-cell small,
@@ -120,7 +127,7 @@ const configHash = computed(() =>
 }
 
 .boundary-cell small {
-  color: #66736d;
+  color: var(--boundary-muted);
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0;
@@ -128,13 +135,13 @@ const configHash = computed(() =>
 }
 
 .boundary-cell b {
-  color: #1f2a27;
+  color: var(--boundary-text);
   font-size: 12px;
   font-weight: 900;
 }
 
 .boundary-cell em {
-  color: #66736d;
+  color: var(--boundary-muted);
   font-size: 11px;
   font-style: normal;
   font-weight: 700;

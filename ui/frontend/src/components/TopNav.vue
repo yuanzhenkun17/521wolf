@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps({
   brand: { type: String, default: 'NightCouncil' },
@@ -14,16 +14,113 @@ const props = defineProps({
   exitDisabled: Boolean
 })
 
-const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
+const emit = defineEmits(['go-lobby', 'open-logs', 'open-evidence', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
 const exitConfirming = ref(false)
 let exitConfirmTimer = 0
 
 const navItems = [
-  { key: 'lobby', label: '大厅', event: 'go-lobby' },
-  { key: 'logs', label: '日志', event: 'open-logs' },
-  { key: 'benchmark', label: '评测', event: 'open-benchmark' },
-  { key: 'evolution', label: '自进化', event: 'open-evolution' }
+  { key: 'lobby', label: '大厅', line: 'play', lineLabel: 'Play', event: 'go-lobby' },
+  { key: 'logs', label: '日志', line: 'play', lineLabel: 'Play', event: 'open-logs' },
+  { key: 'evidence', label: '证据', line: 'lab', lineLabel: 'Lab', event: 'open-evidence' },
+  { key: 'benchmark', label: '评测', line: 'lab', lineLabel: 'Lab', event: 'open-benchmark' },
+  { key: 'evolution', label: '自进化', line: 'lab', lineLabel: 'Lab', event: 'open-evolution' }
 ]
+
+const RECONNECTING_STREAM_STATUSES = new Set(['connecting', 'reconnect', 'reconnecting', 'retrying'])
+const POLLING_STREAM_STATUSES = new Set(['degraded', 'fallback', 'polling', 'polling_fallback', 'long_polling'])
+const BACKGROUND_STREAM_STATUSES = new Set(['background', 'background_running', 'detached'])
+const STOPPED_STREAM_STATUSES = new Set(['closed', 'done', 'stopped', 'terminal'])
+
+function truthy(value) {
+  return value === true || value === 1 || value === '1' || value === 'true'
+}
+
+function anyTruthy(...values) {
+  return values.some((value) => truthy(value))
+}
+
+function normalizedStatus(value) {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+function firstValue(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== '')
+}
+
+function formatStreamTime(value) {
+  const raw = firstValue(value)
+  if (!raw) return ''
+  const date = raw instanceof Date ? raw : new Date(raw)
+  if (Number.isNaN(date.getTime())) return String(raw)
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+}
+
+function navItemAriaLabel(item) {
+  const label = `${item.lineLabel} 工作线：${item.label}`
+  return props.activeView === item.key ? `${label}，当前页面` : label
+}
+
+const streamStatusBadge = computed(() => {
+  const session = props.activeSession || {}
+  const running = Boolean(session.running)
+  const connected = anyTruthy(session.sseConnected, session.sse_connected, session.connected)
+  const explicitStatus = normalizedStatus(firstValue(
+    session.streamStatus,
+    session.stream_status,
+    session.sseStatus,
+    session.sse_status,
+    session.connectionStatus,
+    session.connection_status
+  ))
+  const polling = POLLING_STREAM_STATUSES.has(explicitStatus)
+    || anyTruthy(session.polling, session.pollingFallback, session.polling_fallback, session.streamPolling, session.streamDegraded, session.stream_degraded)
+  const reconnecting = RECONNECTING_STREAM_STATUSES.has(explicitStatus)
+    || anyTruthy(session.reconnecting, session.sseReconnecting, session.sse_reconnecting, session.streamReconnecting, session.stream_reconnecting)
+  const background = BACKGROUND_STREAM_STATUSES.has(explicitStatus)
+    || anyTruthy(session.backgroundRunning, session.background_running, session.detached)
+  const stopped = STOPPED_STREAM_STATUSES.has(explicitStatus) || !running
+  const recoveredAt = formatStreamTime(firstValue(
+    session.lastRecoveredAt,
+    session.last_recovered_at,
+    session.recoveredAt,
+    session.recovered_at,
+    session.lastConnectedAt,
+    session.last_connected_at
+  ))
+
+  let status = 'stopped'
+  let label = '已停止'
+  let detail = '实时流已停止'
+
+  if (polling) {
+    status = 'polling'
+    label = '轮询降级'
+    detail = 'SSE 不可用，正在使用轮询降级'
+  } else if (reconnecting || (running && !connected && !background)) {
+    status = 'reconnecting'
+    label = '重连中'
+    detail = '实时流中断，正在尝试重连；对局仍在后台运行'
+  } else if (connected) {
+    status = 'live'
+    label = '实时流'
+    detail = recoveredAt ? `实时流已连接，最近恢复 ${recoveredAt}` : '实时流已连接'
+  } else if (background || running) {
+    status = 'background'
+    label = '后台运行'
+    detail = '未连接实时流，对局仍在后台运行'
+  } else if (!session.gameId && !session.game_id) {
+    status = 'idle'
+    label = '可查看'
+    detail = '没有正在运行的实时流'
+  }
+
+  return {
+    status,
+    label,
+    title: detail,
+    ariaLabel: `返回对局：${label}。${detail}`
+  }
+})
 
 function clearExitConfirm() {
   if (exitConfirmTimer) {
@@ -62,10 +159,16 @@ onBeforeUnmount(clearExitConfirm)
         v-for="item in navItems"
         :key="item.key"
         type="button"
+        class="nav-button"
         :class="{ active: activeView === item.key }"
+        :data-work-line="item.line"
+        :aria-current="activeView === item.key ? 'page' : undefined"
+        :aria-label="navItemAriaLabel(item)"
         @click="emit(item.event)"
       >
-        {{ item.label }}
+        <span class="nav-line">{{ item.lineLabel }}</span>
+        <span class="nav-label">{{ item.label }}</span>
+        <span v-if="activeView === item.key" class="nav-state">当前</span>
       </button>
     </nav>
     <div v-if="variant === 'match'" class="topbar-actions">
@@ -118,12 +221,21 @@ onBeforeUnmount(clearExitConfirm)
         v-if="hasActiveGame"
         class="active-session-pill"
         type="button"
+        :title="streamStatusBadge.title"
+        :aria-label="streamStatusBadge.ariaLabel"
         @click="emit('back-to-match')"
       >
-        <span class="session-dot" :class="{ live: activeSession?.sseConnected }"></span>
+        <span class="session-dot" :data-stream-status="streamStatusBadge.status"></span>
         <span class="session-copy">
           <b>{{ activeSession?.running ? '对局进行中' : '返回对局' }}</b>
-          <small>{{ activeSession?.sseConnected ? '实时流' : (activeSession?.running ? '后台运行' : '可查看') }}</small>
+          <small
+            class="stream-status-badge"
+            :data-stream-status="streamStatusBadge.status"
+            :title="streamStatusBadge.title"
+            :aria-label="streamStatusBadge.ariaLabel"
+          >
+            {{ streamStatusBadge.label }}
+          </small>
         </span>
       </button>
       <button
@@ -258,10 +370,14 @@ onBeforeUnmount(clearExitConfirm)
 }
 
 .topbar .primary-nav button {
-  position: static;
-  display: inline-flex;
+  --nav-button-accent: var(--nav-accent);
+  position: relative;
+  display: inline-grid;
+  grid-template-rows: 11px 17px;
   align-items: center;
+  align-content: center;
   justify-content: center;
+  gap: 1px;
   min-width: 72px;
   height: 32px;
   padding: 0 13px;
@@ -278,6 +394,14 @@ onBeforeUnmount(clearExitConfirm)
   transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
 }
 
+.topbar .primary-nav button[data-work-line="play"] {
+  --nav-button-accent: #ffb4a8;
+}
+
+.topbar .primary-nav button[data-work-line="lab"] {
+  --nav-button-accent: #76c7a3;
+}
+
 .topbar .primary-nav button:hover {
   border-color: rgba(255, 240, 185, 0.12);
   background: rgba(255, 255, 255, 0.04);
@@ -286,9 +410,56 @@ onBeforeUnmount(clearExitConfirm)
 }
 
 .topbar .primary-nav button.active {
-  border-color: color-mix(in srgb, var(--nav-accent) 36%, transparent);
-  background: color-mix(in srgb, var(--nav-accent) 16%, transparent);
-  color: color-mix(in srgb, var(--nav-accent) 84%, #fff 16%);
+  border-color: color-mix(in srgb, var(--nav-button-accent) 36%, transparent);
+  background: color-mix(in srgb, var(--nav-button-accent) 16%, transparent);
+  color: color-mix(in srgb, var(--nav-button-accent) 84%, #fff 16%);
+}
+
+.nav-line,
+.nav-label {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-line {
+  color: var(--nav-button-accent);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  opacity: 0.78;
+  text-transform: uppercase;
+}
+
+.nav-label {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.nav-state {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 14px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--nav-button-accent) 42%, transparent);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--nav-button-accent);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: none;
 }
 
 /* ---- lobby variant ---- */
@@ -308,7 +479,7 @@ onBeforeUnmount(clearExitConfirm)
   position: absolute;
   right: 8px;
   justify-self: auto;
-  width: 344px;
+  width: 430px;
   height: 48px;
   gap: 0;
   padding: 0;
@@ -320,6 +491,7 @@ onBeforeUnmount(clearExitConfirm)
 
 .topbar--lobby .primary-nav button,
 .topbar--section .primary-nav button {
+  position: relative;
   flex: 1 1 0;
   width: auto;
   min-width: 0;
@@ -344,7 +516,7 @@ onBeforeUnmount(clearExitConfirm)
 .topbar--lobby .primary-nav button.active,
 .topbar--section .primary-nav button.active {
   border: 0;
-  color: var(--nav-accent);
+  color: var(--nav-button-accent);
   background: transparent;
   box-shadow: none;
   transform: none;
@@ -359,13 +531,13 @@ onBeforeUnmount(clearExitConfirm)
 }
 
 .topbar--section .primary-nav button {
-  color: #f2ca50;
+  color: var(--nav-button-accent);
   text-shadow: 0 0 14px rgba(242, 202, 80, 0.18);
 }
 
 .topbar--section .primary-nav button:hover {
   border: 0;
-  color: #f2ca50;
+  color: var(--nav-button-accent);
   background: rgba(242, 202, 80, 0.08);
   box-shadow: none;
   transform: none;
@@ -565,9 +737,30 @@ onBeforeUnmount(clearExitConfirm)
   box-shadow: 0 0 0 3px rgba(140, 125, 91, 0.18);
 }
 
-.session-dot.live {
+.session-dot[data-stream-status="live"] {
   background: #52d273;
   box-shadow: 0 0 0 3px rgba(82, 210, 115, 0.18), 0 0 14px rgba(82, 210, 115, 0.55);
+}
+
+.session-dot[data-stream-status="reconnecting"] {
+  background: #f2ca50;
+  box-shadow: 0 0 0 3px rgba(242, 202, 80, 0.2), 0 0 14px rgba(242, 202, 80, 0.48);
+}
+
+.session-dot[data-stream-status="polling"] {
+  background: #62b6cb;
+  box-shadow: 0 0 0 3px rgba(98, 182, 203, 0.18), 0 0 14px rgba(98, 182, 203, 0.42);
+}
+
+.session-dot[data-stream-status="background"] {
+  background: #b89762;
+  box-shadow: 0 0 0 3px rgba(184, 151, 98, 0.18);
+}
+
+.session-dot[data-stream-status="stopped"],
+.session-dot[data-stream-status="idle"] {
+  background: #8c7d5b;
+  box-shadow: 0 0 0 3px rgba(140, 125, 91, 0.16);
 }
 
 .session-copy {
@@ -597,6 +790,35 @@ onBeforeUnmount(clearExitConfirm)
   line-height: 1;
 }
 
+.stream-status-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stream-status-badge[data-stream-status="polling"] {
+  color: #9edfeb;
+}
+
+.stream-status-badge[data-stream-status="reconnecting"] {
+  color: #f5d77a;
+}
+
+.stream-status-badge[data-stream-status="background"] {
+  color: #d8bd87;
+}
+
+.stream-status-badge[data-stream-status="stopped"],
+.stream-status-badge[data-stream-status="idle"] {
+  color: var(--nav-muted);
+}
+
 @media (max-width: 980px) {
   .topbar {
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -616,6 +838,11 @@ onBeforeUnmount(clearExitConfirm)
     flex: 1 1 0;
     min-width: 0;
     padding: 0 8px;
+  }
+
+  .nav-state {
+    min-width: 20px;
+    padding: 0 4px;
   }
 
   .audio-toggle {
@@ -652,11 +879,34 @@ onBeforeUnmount(clearExitConfirm)
   }
 
   .topbar .primary-nav button {
-    position: static;
+    position: relative;
+    grid-template-rows: 9px 14px;
     width: auto;
     height: 30px;
     padding: 0 5px;
     font-size: 11px;
+  }
+
+  .nav-line {
+    font-size: 8px;
+  }
+
+  .nav-label {
+    font-size: 11px;
+  }
+
+  .nav-state {
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    min-width: 6px;
+    height: 6px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--nav-button-accent);
+    color: transparent;
+    font-size: 0;
   }
 
   .topbar-actions {

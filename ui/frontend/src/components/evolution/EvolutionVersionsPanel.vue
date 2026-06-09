@@ -1,6 +1,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { roleLabel, sourceText } from '../../composables/workbenchShared.js'
+import TrustBundleDrawer from './TrustBundleDrawer.vue'
 
 const props = defineProps({
   evo: { type: Object, required: true }
@@ -9,6 +10,8 @@ const props = defineProps({
 const patternRoleFilter = ref('')
 const patternStatusFilter = ref('')
 const expandedPatterns = reactive(new Set())
+
+const versionDetail = computed(() => props.evo.selectedVersionDetail.value?.data || null)
 
 const PATTERN_STATUS_COLORS = {
   candidate: '#666',
@@ -27,7 +30,7 @@ const PATTERN_STATUS_LABELS = {
 }
 
 const versionPatterns = computed(() => {
-  const data = props.evo.selectedVersionDetail.value?.data
+  const data = versionDetail.value
   if (!data?.patterns?.length) return []
   return data.patterns.map((pattern) => ({
     pattern_id: pattern.pattern_id || pattern.id || pattern.pattern || '未知模式',
@@ -46,6 +49,19 @@ const versionPatterns = computed(() => {
         : []
   }))
 })
+
+const versionAuditFields = computed(() => {
+  const data = versionDetail.value || {}
+  const provenance = data.provenance || {}
+  return [
+    { key: 'trust', label: 'Trust', value: data.trust_bundle_id || data.trustBundleId || provenance.trust_bundle_id || provenance.trustBundleId },
+    { key: 'hash', label: 'Hash', value: data.bundle_hash || data.bundleHash || provenance.bundle_hash || provenance.bundleHash },
+    { key: 'gate', label: 'Gate', value: data.gate_report_id || data.gateReportId || provenance.gate_report_id || provenance.gateReportId },
+    { key: 'source', label: 'Source Run', value: data.source_run_id || data.sourceRunId || provenance.source_run_id || provenance.sourceRunId }
+  ].filter((field) => String(field.value || '').trim())
+})
+
+const hasVersionAudit = computed(() => versionAuditFields.value.length > 0)
 
 const patternRoles = computed(() => {
   const roles = new Set(versionPatterns.value.map((pattern) => pattern.role).filter(Boolean))
@@ -129,6 +145,15 @@ function togglePatternSource(patternId) {
 function confidenceWidth(value) {
   return `${Math.round((Number(value) || 0) * 100)}%`
 }
+
+function auditFieldText(value) {
+  const text = String(value ?? '').trim()
+  return text || '—'
+}
+
+function openVersionTrustAudit() {
+  props.evo.openTrustBundleDrawer?.('version', { version: versionDetail.value || {} })
+}
 </script>
 
 <template>
@@ -188,6 +213,14 @@ function confidenceWidth(value) {
             <span><small>胜率</small><b>{{ versionMetric(evo.selectedVersionDetail.value.data.metrics?.win_rate) }}</b></span>
             <span><small>评分</small><b>{{ versionMetric(evo.selectedVersionDetail.value.data.metrics?.score) }}</b></span>
             <span><small>局数</small><b>{{ evo.selectedVersionDetail.value.data.metrics?.games_played || 0 }}</b></span>
+          </div>
+
+          <div v-if="hasVersionAudit" class="evo-version-audit-strip">
+            <span v-for="field in versionAuditFields" :key="field.key">
+              <small>{{ field.label }}</small>
+              <code>{{ auditFieldText(field.value) }}</code>
+            </span>
+            <button type="button" class="evo-ghost-action" @click="openVersionTrustAudit">Trust 审计</button>
           </div>
 
           <ul v-if="evo.selectedVersionDetail.value.data.skills?.length" class="evo-version-skill-list">
@@ -277,5 +310,57 @@ function confidenceWidth(value) {
         <div v-else class="evo-empty compact">选择一个版本查看包内容</div>
       </div>
     </article>
+    <TrustBundleDrawer :evo="evo" />
   </div>
 </template>
+
+<style scoped>
+.evo-version-audit-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: stretch;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.evo-version-audit-strip span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--evo-border);
+  border-radius: 7px;
+  background: var(--evo-input-bg);
+}
+
+.evo-version-audit-strip small {
+  overflow: hidden;
+  color: var(--evo-text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.evo-version-audit-strip code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--evo-text);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .evo-version-audit-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .evo-version-audit-strip > button {
+    grid-column: 1 / -1;
+  }
+}
+</style>

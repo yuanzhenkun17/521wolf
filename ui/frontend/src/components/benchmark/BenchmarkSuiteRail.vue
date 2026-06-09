@@ -9,26 +9,54 @@ const props = defineProps({
 })
 
 const targetTypeLabels = {
-  model: 'Model',
-  role_version: 'Role-Version'
+  model: '模型',
+  role_version: '角色版本'
 }
 
 const costTierLabels = {
-  smoke: 'Smoke',
-  low: 'Low',
-  medium: 'Medium',
-  standard: 'Standard',
-  release: 'Release',
-  high: 'High'
+  smoke: '冒烟',
+  low: '低成本',
+  medium: '中等',
+  standard: '标准',
+  release: '发布',
+  high: '高成本'
 }
 
 const statusLabels = {
-  enabled: 'Enabled',
-  active: 'Enabled',
-  draft: 'Draft',
-  deprecated: 'Deprecated',
-  disabled: 'Disabled',
-  archived: 'Archived'
+  enabled: '启用',
+  active: '启用',
+  draft: '草稿',
+  deprecated: '废弃',
+  disabled: '停用',
+  archived: '归档'
+}
+
+const runStatusLabels = {
+  queued: '排队中',
+  running: '运行中',
+  rate_limited: '限速中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  interrupted: '已中断'
+}
+
+const runStageLabels = {
+  planning: '规划中',
+  queued: '排队中',
+  launching: '启动中',
+  running: '运行中',
+  collecting: '采集中',
+  scoring: '计分中',
+  aggregating: '汇总中',
+  judge_decisions: 'Judge 判定',
+  judge_decision: 'Judge 判定',
+  runtime: '运行时',
+  diagnostics: '诊断中',
+  reporting: '生成报告',
+  snapshot: '生成快照',
+  completed: '已完成',
+  failed: '失败'
 }
 
 const suites = computed(() =>
@@ -36,6 +64,22 @@ const suites = computed(() =>
 )
 
 const selectedSuiteId = computed(() => props.benchmark.selectedBenchmarkId.value)
+const legacyTargetType = computed(() => props.benchmark.legacyBenchmarkTargetType?.value || 'role_version')
+const legacyRows = computed(() => props.benchmark.unscopedBenchmarkRunRows?.value || [])
+const legacyScopes = computed(() => [
+  {
+    targetType: 'role_version',
+    label: '临时角色',
+    caption: '未绑定套件的角色评测',
+    count: legacyRows.value.filter((run) => run.benchmarkTargetType !== 'model').length
+  },
+  {
+    targetType: 'model',
+    label: '临时模型',
+    caption: '未绑定套件的模型评测',
+    count: legacyRows.value.filter((run) => run.benchmarkTargetType === 'model').length
+  }
+])
 
 const suiteCounts = computed(() => {
   const counts = {
@@ -56,10 +100,10 @@ const suiteCounts = computed(() => {
 
 const suiteGroups = computed(() => {
   const groups = [
-    { key: 'quick', label: 'Quick / Smoke', caption: '低成本验证', rows: [] },
-    { key: 'standard', label: 'Standard', caption: '正式比较', rows: [] },
-    { key: 'release', label: 'Release', caption: '发布口径', rows: [] },
-    { key: 'other', label: 'Other', caption: '未归类', rows: [] }
+    { key: 'quick', label: '快速 / 冒烟', caption: '低成本验证', rows: [] },
+    { key: 'standard', label: '标准', caption: '正式比较', rows: [] },
+    { key: 'release', label: '发布', caption: '发布口径', rows: [] },
+    { key: 'other', label: '其他', caption: '未归类', rows: [] }
   ]
   const byKey = new Map(groups.map((group) => [group.key, group]))
   for (const suite of suites.value) {
@@ -90,7 +134,7 @@ function normalizeSuite(raw) {
     targetType,
     targetTypeLabel: targetTypeLabels[targetType] || targetType,
     costTier,
-    costTierLabel: costTierLabels[costTier] || (costTier ? titleCase(costTier) : 'Unmarked'),
+    costTierLabel: costTierLabels[costTier] || (costTier ? titleCase(costTier) : '未标记'),
     status,
     statusLabel: statusLabels[status] || titleCase(status),
     evaluationSetId: String(raw?.evaluation_set_id || ''),
@@ -98,6 +142,8 @@ function normalizeSuite(raw) {
     gameCount,
     seedCount,
     roles: Array.isArray(raw?.roles) ? raw.roles : [],
+    lastRun: normalizeLastRun(raw?.last_run),
+    latestSnapshot: normalizeLatestSnapshot(raw?.latest_snapshot),
     isQuick: isQuickSuite(raw, costTier),
     isRelease: isReleaseSuite(raw, costTier),
     enabled: !['deprecated', 'disabled', 'archived'].includes(status)
@@ -122,6 +168,76 @@ function numberOrNull(value) {
   return Number.isFinite(number) ? number : null
 }
 
+function normalizeLastRun(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const id = String(raw.batch_id || raw.run_id || '').trim()
+  const status = String(raw.status || '').trim().toLowerCase()
+  const stage = String(raw.current_stage || raw.stage || '').trim()
+  const resultCount = numberOrNull(raw.result_count)
+  const diagnosticCount = numberOrNull(raw.diagnostic_count)
+  const time = raw.finished_at || raw.last_heartbeat_at || raw.started_at || ''
+  return {
+    id,
+    shortId: shortToken(id),
+    status,
+    statusLabel: runStatusLabels[status] || (status ? titleCase(status) : '未知'),
+    stage,
+    stageLabel: stage ? runStageLabels[stage] || titleCase(stage.replace(/_/g, ' ')) : '',
+    resultCount,
+    diagnosticCount,
+    timeLabel: formatDateTime(time),
+    tone: runTone(status)
+  }
+}
+
+function normalizeLatestSnapshot(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const id = String(raw.snapshot_id || raw.id || '').trim()
+  const rowCount = numberOrNull(raw.row_count)
+  const contentHash = String(raw.content_hash || '').trim()
+  return {
+    id,
+    shortId: shortToken(id),
+    title: String(raw.title || id || '未命名快照'),
+    rowCount,
+    contentHash,
+    shortHash: shortHash(contentHash),
+    createdAtLabel: formatDateTime(raw.created_at || '')
+  }
+}
+
+function runTone(status) {
+  if (['completed'].includes(status)) return 'ok'
+  if (['queued', 'running', 'rate_limited'].includes(status)) return 'live'
+  if (['failed', 'cancelled', 'interrupted'].includes(status)) return 'bad'
+  return 'idle'
+}
+
+function shortToken(value, size = 12) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text.length > size ? `${text.slice(0, size - 1)}...` : text
+}
+
+function shortHash(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const hash = text.includes(':') ? text.split(':').pop() : text
+  return hash.length > 10 ? hash.slice(0, 10) : hash
+}
+
+function formatDateTime(value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const date = new Date(text)
+  if (!Number.isFinite(date.getTime())) return text
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hour = String(date.getHours()).padStart(2, '0')
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  return `${month}-${day} ${hour}:${minute}`
+}
+
 function isQuickSuite(raw, costTier) {
   const id = String(raw?.id || '').toLowerCase()
   const name = String(raw?.name || raw?.label || '').toLowerCase()
@@ -143,20 +259,20 @@ function groupKey(suite) {
 
 function titleCase(value) {
   const text = String(value || '').trim()
-  if (!text) return 'Unknown'
+  if (!text) return '未知'
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function roleScopeLabel(suite) {
-  if (suite.targetType === 'model') return 'all-role coverage'
-  if (!suite.roles.length) return 'all roles'
-  return `${suite.roles.length} roles`
+  if (suite.targetType === 'model') return '全角色覆盖'
+  if (!suite.roles.length) return '全角色'
+  return `${suite.roles.length} 个角色`
 }
 
 function suiteMetaLine(suite) {
   const parts = []
-  if (suite.gameCount != null) parts.push(`${suite.gameCount} games`)
-  if (suite.seedCount != null) parts.push(`${suite.seedCount} seeds`)
+  if (suite.gameCount != null) parts.push(`${suite.gameCount} 局`)
+  if (suite.seedCount != null) parts.push(`${suite.seedCount} 个种子`)
   parts.push(roleScopeLabel(suite))
   return parts.join(' / ')
 }
@@ -164,33 +280,37 @@ function suiteMetaLine(suite) {
 function selectSuite(id) {
   props.benchmark.selectBenchmarkSuite(id)
 }
+
+function selectLegacyScope(targetType) {
+  props.benchmark.selectLegacyBenchmarkScope(targetType)
+}
 </script>
 
 <template>
-  <aside class="benchmark-suite-rail" aria-label="Benchmark suite library">
+  <aside class="benchmark-suite-rail" aria-label="评测套件库">
     <header class="suite-rail-header">
       <div>
-        <p>Suite Library</p>
-        <h2>Benchmark Suites</h2>
+        <p>套件索引</p>
+        <h2>评测套件</h2>
       </div>
       <span>{{ suiteCounts.total }}</span>
     </header>
 
-    <section class="suite-rail-summary" aria-label="Suite counts">
+    <section class="suite-rail-summary" aria-label="套件计数">
       <span>
-        <small>Model</small>
+        <small>模型</small>
         <b>{{ suiteCounts.model }}</b>
       </span>
       <span>
-        <small>Role</small>
+        <small>角色</small>
         <b>{{ suiteCounts.role_version }}</b>
       </span>
       <span>
-        <small>Quick</small>
+        <small>快速</small>
         <b>{{ suiteCounts.quick }}</b>
       </span>
       <span>
-        <small>Release</small>
+        <small>发布</small>
         <b>{{ suiteCounts.release }}</b>
       </span>
     </section>
@@ -199,56 +319,100 @@ function selectSuite(id) {
       {{ benchmark.benchmarkSuiteError.value }}
     </div>
 
-    <section v-if="!suites.length" class="suite-rail-empty">
-      <strong>No benchmark suites</strong>
-      <span>正式 suite 加载后会显示在这里。</span>
-    </section>
-
-    <section
-      v-for="group in suiteGroups"
-      :key="group.key"
-      class="suite-group"
-      :aria-label="group.label"
-    >
+    <section class="legacy-scope-group" aria-label="临时评测范围">
       <div class="suite-group-title">
-        <span>{{ group.label }}</span>
-        <small>{{ group.caption }}</small>
+        <span>临时 / 历史</span>
+        <small>历史无边界数据</small>
       </div>
-
       <button
-        v-for="suite in group.rows"
-        :key="suite.id"
+        v-for="scope in legacyScopes"
+        :key="scope.targetType"
         type="button"
         :class="[
-          'suite-row',
-          'suite-row--' + suite.targetType,
-          'suite-row--' + suite.status,
-          { selected: suite.id === selectedSuiteId, muted: !suite.enabled }
+          'legacy-scope-row',
+          'legacy-scope-row--' + scope.targetType,
+          { selected: !selectedSuiteId && legacyTargetType === scope.targetType }
         ]"
-        @click="selectSuite(suite.id)"
+        @click="selectLegacyScope(scope.targetType)"
       >
-        <span class="suite-row-main">
-          <strong>{{ suite.label }}</strong>
-          <em>{{ suite.id }}</em>
+        <span>
+          <strong>{{ scope.label }}</strong>
+          <em>{{ scope.caption }}</em>
         </span>
-        <span class="suite-row-tags">
-          <b>{{ suite.targetTypeLabel }}</b>
-          <b>{{ suite.costTierLabel }}</b>
-          <b>{{ suite.statusLabel }}</b>
-        </span>
-        <span class="suite-row-meta">
-          <small>{{ suite.evaluationSetId || 'ad-hoc evaluation set' }}</small>
-          <small>{{ suite.seedSetId || 'ad-hoc seed set' }}</small>
-        </span>
-        <span class="suite-row-foot">
-          <small>{{ suiteMetaLine(suite) }}</small>
-          <small v-if="suite.version">{{ suite.version }}</small>
-        </span>
+        <b>{{ scope.count }}</b>
       </button>
     </section>
 
+    <div class="suite-rail-list">
+      <section v-if="!suites.length" class="suite-rail-empty">
+        <strong>暂无评测套件</strong>
+        <span>正式套件加载后会显示在这里。</span>
+      </section>
+
+      <section
+        v-for="group in suiteGroups"
+        :key="group.key"
+        class="suite-group"
+        :aria-label="group.label"
+      >
+        <div class="suite-group-title">
+          <span>{{ group.label }}</span>
+          <small>{{ group.caption }}</small>
+        </div>
+
+        <button
+          v-for="suite in group.rows"
+          :key="suite.id"
+          type="button"
+          :class="[
+            'suite-row',
+            'suite-row--' + suite.targetType,
+            'suite-row--' + suite.status,
+            { selected: suite.id === selectedSuiteId, muted: !suite.enabled }
+          ]"
+          @click="selectSuite(suite.id)"
+        >
+          <span class="suite-row-main">
+            <strong>{{ suite.label }}</strong>
+            <em>{{ suite.id }}</em>
+          </span>
+          <span class="suite-row-tags">
+            <b>{{ suite.targetTypeLabel }}</b>
+            <b>{{ suite.costTierLabel }}</b>
+            <b>{{ suite.statusLabel }}</b>
+          </span>
+          <span class="suite-row-meta">
+            <small>{{ suite.evaluationSetId || '临时评测集' }}</small>
+            <small>{{ suite.seedSetId || '临时种子集' }}</small>
+          </span>
+          <span class="suite-row-foot">
+            <small>{{ suiteMetaLine(suite) }}</small>
+            <small v-if="suite.version">{{ suite.version }}</small>
+          </span>
+          <span class="suite-row-activity" aria-label="套件活动">
+            <span :class="['suite-activity-line', suite.lastRun ? `suite-activity-line--${suite.lastRun.tone}` : 'suite-activity-line--empty']">
+              <small>运行</small>
+              <b>{{ suite.lastRun?.statusLabel || '暂无运行' }}</b>
+              <em>
+                {{ suite.lastRun?.stageLabel || suite.lastRun?.shortId || '等待启动' }}
+                <template v-if="suite.lastRun?.timeLabel"> · {{ suite.lastRun.timeLabel }}</template>
+              </em>
+            </span>
+            <span :class="['suite-activity-line', suite.latestSnapshot ? 'suite-activity-line--snapshot' : 'suite-activity-line--empty']">
+              <small>快照</small>
+              <b>{{ suite.latestSnapshot ? `${suite.latestSnapshot.rowCount ?? 0} 行` : '无' }}</b>
+              <em>
+                {{ suite.latestSnapshot?.shortHash || suite.latestSnapshot?.shortId || '未发布' }}
+                <template v-if="suite.latestSnapshot?.createdAtLabel"> · {{ suite.latestSnapshot.createdAtLabel }}</template>
+              </em>
+            </span>
+          </span>
+        </button>
+      </section>
+    </div>
+
     <footer v-if="selectedSuite" class="suite-rail-selected">
-      <small>Selected</small>
+      <small>已选择</small>
       <b>{{ selectedSuite.label }}</b>
       <span>{{ selectedSuite.targetTypeLabel }} / {{ selectedSuite.costTierLabel }}</span>
     </footer>
@@ -257,21 +421,21 @@ function selectSuite(id) {
 
 <style scoped>
 .benchmark-suite-rail {
-  --rail-bg: #f7f8f8;
-  --rail-panel: #ffffff;
-  --rail-line: #d8dedb;
-  --rail-line-strong: #aebbb5;
-  --rail-text: #1f2a27;
-  --rail-muted: #66736d;
-  --rail-soft: #eef2f0;
-  --rail-blue: #256b8f;
-  --rail-green: #24704d;
-  --rail-amber: #8b641f;
-  --rail-red: #a13d36;
-  display: grid;
-  grid-template-rows: auto auto auto 1fr auto;
+  --rail-bg: #f8f0e0;
+  --rail-panel: rgba(255, 252, 245, 0.7);
+  --rail-line: rgba(139, 94, 52, 0.15);
+  --rail-line-strong: rgba(90, 51, 25, 0.34);
+  --rail-text: #3a2a18;
+  --rail-muted: #8b6b4a;
+  --rail-soft: rgba(139, 94, 52, 0.08);
+  --rail-soft-strong: rgba(90, 51, 25, 0.12);
+  --rail-accent: #5a3319;
+  --rail-danger: #5a3319;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   width: 292px;
+  height: 100%;
   min-height: 0;
   padding: 12px;
   background: var(--rail-bg);
@@ -350,10 +514,10 @@ function selectSuite(id) {
 .suite-rail-alert,
 .suite-rail-empty {
   padding: 9px 10px;
-  border: 1px solid rgba(161, 61, 54, 0.24);
+  border: 1px solid rgba(90, 51, 25, 0.24);
   border-radius: 6px;
-  background: rgba(161, 61, 54, 0.06);
-  color: var(--rail-red);
+  background: rgba(90, 51, 25, 0.08);
+  color: var(--rail-danger);
   font-size: 12px;
   font-weight: 700;
 }
@@ -371,10 +535,27 @@ function selectSuite(id) {
   font-weight: 600;
 }
 
+.suite-rail-list {
+  flex: 1 1 auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .suite-group {
   display: grid;
   gap: 7px;
   min-height: 0;
+}
+
+.legacy-scope-group {
+  display: grid;
+  gap: 7px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rail-line);
 }
 
 .suite-group-title {
@@ -415,9 +596,10 @@ function selectSuite(id) {
 }
 
 .suite-row.selected {
-  border-color: #35433e;
-  border-left-color: #111b18;
-  box-shadow: inset 0 0 0 1px #35433e;
+  border-color: var(--rail-accent);
+  border-left-color: var(--rail-accent);
+  background: var(--rail-soft-strong);
+  box-shadow: inset 0 0 0 1px var(--rail-accent);
 }
 
 .suite-row.muted {
@@ -425,17 +607,90 @@ function selectSuite(id) {
 }
 
 .suite-row--model {
-  border-left-color: var(--rail-blue);
+  border-left-color: rgba(90, 51, 25, 0.72);
 }
 
 .suite-row--role_version {
-  border-left-color: var(--rail-green);
+  border-left-color: rgba(139, 94, 52, 0.58);
+}
+
+.legacy-scope-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px;
+  text-align: left;
+  color: inherit;
+  background: var(--rail-panel);
+  border: 1px solid var(--rail-line);
+  border-left: 4px solid var(--rail-line-strong);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.legacy-scope-row:hover {
+  border-color: var(--rail-line-strong);
+}
+
+.legacy-scope-row.selected {
+  border-color: var(--rail-accent);
+  border-left-color: var(--rail-accent);
+  background: var(--rail-soft-strong);
+  box-shadow: inset 0 0 0 1px var(--rail-accent);
+}
+
+.legacy-scope-row--model {
+  border-left-color: rgba(90, 51, 25, 0.72);
+}
+
+.legacy-scope-row--role_version {
+  border-left-color: rgba(139, 94, 52, 0.58);
+}
+
+.legacy-scope-row span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.legacy-scope-row strong,
+.legacy-scope-row em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legacy-scope-row strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.legacy-scope-row em {
+  color: var(--rail-muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.legacy-scope-row b {
+  min-width: 32px;
+  min-height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--rail-soft);
+  color: var(--rail-accent);
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .suite-row--deprecated,
 .suite-row--disabled,
 .suite-row--archived {
-  border-left-color: var(--rail-red);
+  border-left-color: var(--rail-danger);
 }
 
 .suite-row-main,
@@ -483,7 +738,7 @@ function selectSuite(id) {
   background: var(--rail-soft);
   border: 1px solid var(--rail-line);
   border-radius: 5px;
-  color: #30413b;
+  color: var(--rail-accent);
   font-size: 10px;
   font-weight: 900;
   line-height: 1.2;
@@ -499,9 +754,87 @@ function selectSuite(id) {
 .suite-row-foot {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  color: #43524d;
+  color: var(--rail-muted);
   font-size: 11px;
   font-weight: 800;
+}
+
+.suite-row-activity {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 2px;
+  border-top: 1px solid var(--rail-line);
+}
+
+.suite-activity-line {
+  display: grid;
+  grid-template-columns: 52px 78px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--rail-text);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.suite-activity-line small,
+.suite-activity-line b,
+.suite-activity-line em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suite-activity-line small {
+  color: var(--rail-muted);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.suite-activity-line b {
+  position: relative;
+  padding-left: 9px;
+  font-weight: 900;
+}
+
+.suite-activity-line b::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--rail-line-strong);
+  transform: translateY(-50%);
+}
+
+.suite-activity-line em {
+  color: var(--rail-muted);
+  font-style: normal;
+  font-weight: 750;
+}
+
+.suite-activity-line--ok b::before,
+.suite-activity-line--snapshot b::before {
+  background: var(--rail-accent);
+}
+
+.suite-activity-line--live b::before {
+  background: rgba(90, 51, 25, 0.72);
+}
+
+.suite-activity-line--bad b::before {
+  background: var(--rail-danger);
+}
+
+.suite-activity-line--empty {
+  color: var(--rail-muted);
+}
+
+.suite-activity-line--empty b::before {
+  background: rgba(139, 94, 52, 0.28);
 }
 
 .suite-rail-selected {
@@ -511,7 +844,7 @@ function selectSuite(id) {
   padding: 9px 10px;
   border: 1px solid var(--rail-line-strong);
   border-radius: 7px;
-  background: #e9eeeb;
+  background: var(--rail-soft-strong);
 }
 
 .suite-rail-selected small {

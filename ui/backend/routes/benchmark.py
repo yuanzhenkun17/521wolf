@@ -68,6 +68,14 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     def get_benchmark_snapshot(snapshot_id: str) -> dict[str, Any]:
         return store.get_benchmark_snapshot(snapshot_id)
 
+    @api.get("/api/benchmark/snapshots/{snapshot_id}/compare")
+    def compare_benchmark_snapshot(
+        snapshot_id: str,
+        against_snapshot_id: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> dict[str, Any]:
+        return store.benchmark_snapshot_compare(snapshot_id, against_snapshot_id=against_snapshot_id, limit=limit)
+
     @api.post("/api/benchmark/views")
     def save_benchmark_view(request: BenchmarkViewRequest) -> dict[str, Any]:
         return store.save_benchmark_view(request)
@@ -135,6 +143,69 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     @api.get("/api/benchmark/batch/{batch_id}/diagnostics")
     def benchmark_batch_diagnostics(batch_id: str) -> dict[str, Any]:
         return store.benchmark_batch_diagnostics(batch_id)
+
+    @api.get("/api/benchmark/batch/{batch_id}/report")
+    def benchmark_batch_report(
+        batch_id: str,
+        format: str = Query(default="json"),
+    ) -> dict[str, Any]:
+        return store.benchmark_batch_report(batch_id, format=format)
+
+    @api.get("/api/benchmark/reports")
+    def benchmark_reports(
+        scope: str | None = Query(default=None),
+        evaluation_set_id: str | None = Query(default=None),
+        benchmark_id: str | None = Query(default=None),
+        target_role: str | None = Query(default=None),
+        model_id: str | None = Query(default=None),
+        model_config_hash: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
+        return store.benchmark_reports(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            model_id=model_id,
+            model_config_hash=model_config_hash,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    @api.get("/api/benchmark/diagnostics")
+    def benchmark_diagnostics(
+        scope: str | None = Query(default=None),
+        evaluation_set_id: str | None = Query(default=None),
+        benchmark_id: str | None = Query(default=None),
+        target_role: str | None = Query(default=None),
+        model_id: str | None = Query(default=None),
+        model_config_hash: str | None = Query(default=None),
+        kind: str | None = Query(default=None),
+        level: str | None = Query(default=None),
+        status: str | None = Query(default=None),
+        stage: str | None = Query(default=None),
+        seed: str | None = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
+        return store.benchmark_diagnostics(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            model_id=model_id,
+            model_config_hash=model_config_hash,
+            kind=kind,
+            level=level,
+            status=status,
+            stage=stage,
+            seed=seed,
+            limit=limit,
+            offset=offset,
+        )
 
     @api.post("/api/benchmark/batch/{batch_id}/stop")
     def stop_benchmark(batch_id: str) -> dict[str, Any]:

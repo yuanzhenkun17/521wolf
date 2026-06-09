@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.js'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
+import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
 import BenchmarkBatchRunsTable from '../components/benchmark/BenchmarkBatchRunsTable.vue'
 import BenchmarkBoundaryBar from '../components/benchmark/BenchmarkBoundaryBar.vue'
 import BenchmarkComparisonView from '../components/benchmark/BenchmarkComparisonView.vue'
@@ -25,11 +26,11 @@ const activeView = ref('overview')
 const launchConfirmationOpen = ref(false)
 
 const navTabs = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'leaderboards', label: 'Leaderboards' },
-  { key: 'runs', label: 'Runs' },
-  { key: 'diagnostics', label: 'Diagnostics' },
-  { key: 'reports', label: 'Reports' }
+  { key: 'overview', label: '总览' },
+  { key: 'leaderboards', label: '榜单' },
+  { key: 'runs', label: '运行' },
+  { key: 'diagnostics', label: '诊断' },
+  { key: 'reports', label: '报告' }
 ]
 
 const benchNotice = computed(() => {
@@ -48,12 +49,22 @@ const activeRuns = computed(() => benchmark.filteredBatchRunRows.value.filter((r
 const recentRuns = computed(() => benchmark.visibleBatchRunRows.value.slice(0, 5))
 const selectedSuite = computed(() => benchmark.selectedBenchmarkSuite.value || null)
 const selectedModeLabel = computed(() =>
-  benchmark.selectedBenchmarkIsModelSuite.value ? 'Model Benchmark' : 'Role-Version Benchmark'
+  benchmark.selectedBenchmarkIsModelSuite.value ? '模型评测' : '角色版本评测'
 )
 const budgetStatusLabel = computed(() => {
-  if (!plan.value) return 'Plan pending'
-  return benchmark.benchmarkPlanBudgetExceeded.value ? 'Budget exceeded' : 'Budget ok'
+  if (!plan.value) return '计划待生成'
+  return benchmark.benchmarkPlanBudgetExceeded.value ? '预算超限' : '预算正常'
 })
+const labHeaderMeta = computed(() => [
+  { key: 'mode', label: '模式', value: selectedModeLabel.value },
+  { key: 'suite', label: '套件', value: benchmark.selectedBenchmarkSuiteLabel.value },
+  {
+    key: 'budget',
+    label: '预算',
+    value: budgetStatusLabel.value,
+    tone: benchmark.benchmarkPlanBudgetExceeded.value ? 'danger' : 'neutral'
+  }
+])
 const estimatedUnitsLabel = computed(() => {
   const value = planBudget.value.estimated_units ?? planEstimates.value.estimated_llm_call_units
   return formatNumber(value)
@@ -67,14 +78,14 @@ const budgetDeltaUnits = computed(() => {
   return budgetLimitUnits.value - estimatedUnits.value
 })
 const budgetDeltaLabel = computed(() => {
-  if (budgetDeltaUnits.value == null) return 'No launch limit'
+  if (budgetDeltaUnits.value == null) return '未设置启动上限'
   const prefix = budgetDeltaUnits.value >= 0 ? '+' : '-'
-  return `${prefix}${formatNumber(Math.abs(budgetDeltaUnits.value))} units`
+  return `${prefix}${formatNumber(Math.abs(budgetDeltaUnits.value))} 单位`
 })
 const budgetDeltaCaption = computed(() =>
   budgetDeltaUnits.value == null
-    ? 'set a limit to enforce stop-before-launch'
-    : (budgetDeltaUnits.value >= 0 ? 'remaining before launch' : 'over limit; launch blocked')
+    ? '设置上限可在启动前拦截'
+    : (budgetDeltaUnits.value >= 0 ? '启动前剩余额度' : '已超限，禁止启动')
 )
 const gameDecisionUnitsLabel = computed(() => formatNumber(planEstimates.value.game_decision_units))
 const judgeUnitValue = computed(() =>
@@ -88,7 +99,7 @@ const requiresLaunchConfirmation = computed(() =>
   ['standard', 'release'].includes(suiteCostTier.value)
 )
 const formalLaunchLabel = computed(() =>
-  benchmark.selectedBenchmarkId.value ? `${suiteCostTier.value || 'suite'} / official boundary` : 'ad-hoc / not official'
+  benchmark.selectedBenchmarkId.value ? `${suiteCostTier.value || '套件'} / 正式边界` : '临时评测 / 不入正式证据'
 )
 const expectedDurationLabel = computed(() => {
   const explicitSeconds = numberOrNull(
@@ -99,35 +110,35 @@ const expectedDurationLabel = computed(() => {
   if (explicitSeconds != null) return formatDuration(explicitSeconds)
   const totalGames = numberOrNull(plan.value?.total_games)
   const maxDays = numberOrNull(plan.value?.max_days)
-  if (totalGames != null && maxDays != null) return `${formatNumber(totalGames * maxDays)} game-days`
-  return 'Plan pending'
+  if (totalGames != null && maxDays != null) return `${formatNumber(totalGames * maxDays)} 局日`
+  return '计划待生成'
 })
 const concurrencyLabel = computed(() => {
   const value = numberOrNull(planJudge.value.concurrency ?? plan.value?.concurrency)
-  return value == null ? 'Backend default' : `${formatNumber(value)} judge workers`
+  return value == null ? '后端默认' : `${formatNumber(value)} 个 judge worker`
 })
 const planCostRows = computed(() => [
   {
     key: 'game',
-    label: 'Game Units',
+    label: '对局单位',
     value: gameDecisionUnitsLabel.value,
-    caption: `${formatNumber(planEstimates.value.player_count || 12)} players x days x games`
+    caption: `${formatNumber(planEstimates.value.player_count || 12)} 人 x 天数 x 局数`
   },
   {
     key: 'judge',
-    label: 'Judge Units',
+    label: 'Judge 单位',
     value: judgeDecisionLabel.value,
-    caption: planJudge.value.enabled ? `${formatNumber(planJudge.value.max_decisions_per_game)} max decisions/game` : 'decision judge disabled'
+    caption: planJudge.value.enabled ? `每局最多 ${formatNumber(planJudge.value.max_decisions_per_game)} 次判定` : '判定 Judge 未启用'
   },
   {
     key: 'limit',
-    label: 'Budget Limit',
-    value: budgetLimitUnits.value == null ? 'No limit' : `${formatNumber(budgetLimitUnits.value)} units`,
-    caption: 'checked before launch'
+    label: '预算上限',
+    value: budgetLimitUnits.value == null ? '未设置' : `${formatNumber(budgetLimitUnits.value)} units`,
+    caption: '启动前校验'
   },
   {
     key: 'remaining',
-    label: budgetDeltaUnits.value == null || budgetDeltaUnits.value >= 0 ? 'Remaining' : 'Over Limit',
+    label: budgetDeltaUnits.value == null || budgetDeltaUnits.value >= 0 ? '剩余额度' : '超出预算',
     value: budgetDeltaLabel.value,
     caption: budgetDeltaCaption.value,
     danger: budgetDeltaUnits.value != null && budgetDeltaUnits.value < 0
@@ -136,34 +147,135 @@ const planCostRows = computed(() => [
 const planPolicyRows = computed(() => [
   {
     key: 'duration',
-    label: 'Expected Duration',
+    label: '预计耗时',
     value: expectedDurationLabel.value,
-    caption: 'workload band before launch'
+    caption: '启动前工作量估计'
   },
   {
     key: 'concurrency',
-    label: 'Concurrency',
+    label: '并发策略',
     value: concurrencyLabel.value,
-    caption: planJudge.value.timeout_seconds ? `${formatNumber(planJudge.value.timeout_seconds)}s judge timeout` : 'runtime policy'
+    caption: planJudge.value.timeout_seconds ? `${formatNumber(planJudge.value.timeout_seconds)}s Judge 超时` : '运行策略'
   },
   {
     key: 'formality',
-    label: 'Formality',
+    label: '证据边界',
     value: formalLaunchLabel.value,
-    caption: benchmark.selectedBenchmarkId.value ? 'eligible for isolated leaderboard' : 'ad-hoc runs do not freeze official evidence'
+    caption: benchmark.selectedBenchmarkId.value ? '可进入隔离榜单' : '临时评测不冻结正式证据'
   },
   {
     key: 'confirmation',
-    label: 'Launch Gate',
-    value: requiresLaunchConfirmation.value ? 'Confirm required' : 'Direct launch',
-    caption: requiresLaunchConfirmation.value ? 'standard/release guardrail' : 'quick suite or ad-hoc'
+    label: '启动门禁',
+    value: requiresLaunchConfirmation.value ? '需要确认' : '可直接启动',
+    caption: requiresLaunchConfirmation.value ? 'standard/release 门禁' : 'quick suite 或临时评测'
   }
 ])
 const launchSubjectLabel = computed(() => {
   if (benchmark.selectedBenchmarkIsModelSuite.value) {
-    return benchmark.form.value.model_config_hash || benchmark.form.value.model_id || 'current backend model'
+    return benchmark.form.value.model_config_hash || benchmark.form.value.model_id || '当前后端模型'
   }
-  return `${benchmark.selectedRoleLabel.value} / ${benchmark.form.value.target_version_id || 'baseline'}`
+  return `${benchmark.selectedRoleLabel.value} / ${benchmark.form.value.target_version_id || '基线'}`
+})
+const selectedContextRun = computed(() => benchmark.selectedBenchmarkBatchRun.value || null)
+const contextRun = computed(() =>
+  selectedContextRun.value || activeRuns.value[0] || recentRuns.value[0] || null
+)
+const contextRunProgressLabel = computed(() => {
+  const progress = contextRun.value?.progress || {}
+  const percent = Number(progress.percent)
+  if (Number.isFinite(percent)) return `${Math.round(percent * 100)}%`
+  const completed = numberOrNull(progress.completed ?? contextRun.value?.completed)
+  const total = numberOrNull(progress.total ?? contextRun.value?.total_games)
+  if (completed != null && total != null && total > 0) return `${formatNumber(completed)}/${formatNumber(total)}`
+  return contextRun.value?.isActive ? '进度待回传' : '已结束或待详情'
+})
+const contextDiagnosticSummary = computed(() => benchmark.benchmarkDiagnosticAggregateSummary.value || {})
+const contextDiagnosticTotal = computed(() => {
+  const value = numberOrNull(contextDiagnosticSummary.value.total)
+  return value == null ? benchmark.benchmarkDiagnosticAggregateDiagnostics.value.length : value
+})
+const contextDiagnosticRows = computed(() => {
+  const rows = countSummaryRows(contextDiagnosticSummary.value.by_kind).slice(0, 4)
+  if (rows.length) return rows
+  return benchmark.benchmarkDiagnosticAggregateDiagnostics.value
+    .slice(0, 4)
+    .map((item) => ({
+      label: item.kindLabel || item.kind || '诊断',
+      value: item.levelLabel || item.level || '信息',
+      caption: item.message || item.stage || '无详情'
+    }))
+})
+const contextBoundaryRows = computed(() => [
+  { key: 'mode', label: '模式', value: selectedModeLabel.value },
+  { key: 'scope', label: 'Scope', value: benchmark.benchmarkSnapshotScope.value || (benchmark.selectedBenchmarkIsModelSuite.value ? 'model' : 'role_version') },
+  { key: 'evaluation', label: 'Evaluation Set', value: benchmark.selectedBenchmarkEvaluationSetId.value || '临时' },
+  { key: 'seed', label: 'Seed Set', value: selectedSuite.value?.seed_set_id || plan.value?.seed_set_id || '临时' },
+  {
+    key: 'hash',
+    label: 'Config Hash',
+    value: shortValue(
+      selectedSuite.value?.config_hash ||
+      selectedSuite.value?.benchmark_config_hash ||
+      plan.value?.benchmark?.config_hash ||
+      plan.value?.benchmark_config_hash ||
+      ''
+    )
+  },
+  { key: 'subject', label: '被测对象', value: launchSubjectLabel.value }
+])
+const contextSuiteRows = computed(() => [
+  { key: 'cost', label: '成本等级', value: suiteCostTier.value || '临时' },
+  { key: 'games', label: '局数', value: selectedSuite.value?.game_count ?? plan.value?.total_games ?? '未生成' },
+  { key: 'days', label: '最大天数', value: selectedSuite.value?.max_days ?? plan.value?.max_days ?? '未生成' },
+  { key: 'roles', label: '覆盖角色', value: suiteRoleCoverageLabel.value }
+])
+const suiteRoleCoverageLabel = computed(() => {
+  const roles = selectedSuite.value?.roles || []
+  if (!roles.length) return benchmark.selectedBenchmarkIsModelSuite.value ? '全角色模型套件' : '临时角色范围'
+  return roles.length > 4 ? `${roles.length} 个角色` : roles.join('、')
+})
+const contextGateRows = computed(() => {
+  const gates = selectedSuite.value?.gates || plan.value?.gates || {}
+  const rows = [
+    ['min_completed_games', '最少完成局'],
+    ['min_valid_game_rate', '有效局率'],
+    ['max_fallback_rate', '最大回退率'],
+    ['max_llm_error_rate', '最大 LLM 错误率']
+  ].map(([key, label]) => ({ key, label, value: gates[key] }))
+    .filter((row) => row.value != null && row.value !== '')
+  return rows.length ? rows : [{ key: 'empty', label: '门禁', value: '计划生成后显示' }]
+})
+const contextArtifactRows = computed(() => {
+  const snapshot = benchmark.activeBenchmarkSnapshotDetail.value || benchmark.selectedBenchmarkSnapshot.value || benchmark.benchmarkSnapshots.value[0] || null
+  const report = benchmark.benchmarkReportHistory.value[0] || null
+  return [
+    {
+      key: 'snapshot',
+      label: '快照',
+      value: benchmark.benchmarkSnapshots.value.length ? `${benchmark.benchmarkSnapshots.value.length} 个` : '未冻结',
+      caption: snapshot?.title || '冻结后可对比历史榜单'
+    },
+    {
+      key: 'report',
+      label: '报告',
+      value: benchmark.benchmarkReportHistory.value.length ? `${benchmark.benchmarkReportHistory.value.length} 份` : '暂无',
+      caption: report?.subjectLabel || report?.suiteLabel || '完成运行后生成'
+    },
+    {
+      key: 'view',
+      label: '视图',
+      value: benchmark.benchmarkViewDirty.value ? '有未保存修改' : (benchmark.activeBenchmarkViewConfig.value?.density || '默认'),
+      caption: benchmark.benchmarkViewPreferences.value?.name || '榜单列与筛选'
+    }
+  ]
+})
+const contextRecentRows = computed(() => {
+  const selectedId = selectedContextRun.value?.id || ''
+  const rows = activeRuns.value.length ? activeRuns.value : recentRuns.value
+  return rows.slice(0, 5).map((run) => ({
+    ...run,
+    isSelected: selectedId && run.id === selectedId
+  }))
 })
 
 function numberOrNull(value) {
@@ -175,6 +287,24 @@ function numberOrNull(value) {
 function formatNumber(value, fallback = '--') {
   const number = Number(value)
   return Number.isFinite(number) ? number.toLocaleString('zh-CN') : fallback
+}
+
+function countSummaryRows(source) {
+  if (!source || typeof source !== 'object') return []
+  return Object.entries(source)
+    .map(([label, count]) => ({
+      label: String(label || '诊断'),
+      value: formatNumber(count),
+      caption: '诊断类型'
+    }))
+    .filter((row) => row.value !== '--')
+    .sort((a, b) => Number(b.value.replace(/,/g, '')) - Number(a.value.replace(/,/g, '')))
+}
+
+function shortValue(value, fallback = '未上报') {
+  const text = String(value || '').trim()
+  if (!text) return fallback
+  return text.length > 22 ? `${text.slice(0, 22)}...` : text
 }
 
 function refresh() {
@@ -189,7 +319,7 @@ function selectRun(run) {
 
 function formatDuration(seconds) {
   const value = Number(seconds)
-  if (!Number.isFinite(value) || value < 0) return 'Plan pending'
+  if (!Number.isFinite(value) || value < 0) return '计划待生成'
   if (value < 90) return `${Math.round(value)}s`
   const minutes = Math.round(value / 60)
   if (minutes < 90) return `${minutes}m`
@@ -218,53 +348,45 @@ onMounted(() => benchmark.refreshAll())
 </script>
 
 <template>
-  <section class="bench-page" aria-label="Benchmark Workbench">
-    <div class="bench-workbench-shell">
-      <BenchmarkSuiteRail :benchmark="benchmark" />
+  <section class="bench-page" aria-label="评测工作台">
+    <LabWorkbenchShell
+      v-model:active-tab="activeView"
+      class="bench-workbench-shell"
+      workbench-key="benchmark"
+      title="评测工作台"
+      eyebrow="评测控制台"
+      :tabs="navTabs"
+      :meta="labHeaderMeta"
+      tabs-label="评测工作台视图"
+      boundary-label="评测边界"
+      rail-label="评测套件栏"
+      context-label="评测上下文"
+      action-label="刷新"
+      action-busy-label="刷新中"
+      :action-busy="Boolean(benchmark.loading.value)"
+      @action="refresh"
+    >
+      <template #rail>
+        <BenchmarkSuiteRail :benchmark="benchmark" />
+      </template>
 
-      <main class="bench-workbench-main">
-        <header class="bench-workbench-header">
-          <div class="bench-title-block">
-            <small>Evaluation Console</small>
-            <h1>Benchmark Workbench</h1>
-          </div>
-          <div class="bench-header-meta">
-            <span>
-              <small>Mode</small>
-              <b>{{ selectedModeLabel }}</b>
-            </span>
-            <span>
-              <small>Suite</small>
-              <b>{{ benchmark.selectedBenchmarkSuiteLabel.value }}</b>
-            </span>
-            <span :class="{ danger: benchmark.benchmarkPlanBudgetExceeded.value }">
-              <small>Budget</small>
-              <b>{{ budgetStatusLabel }}</b>
-            </span>
-          </div>
-          <button type="button" class="bench-refresh-button" @click="refresh">
-            Refresh
-          </button>
-        </header>
-
+      <template #boundary>
         <BenchmarkBoundaryBar :benchmark="benchmark" />
+        <div v-if="benchmark.selectedBenchmarkUsingLegacyRuns.value" class="bench-inline-warning">
+          当前套件暂无匹配批次，已展示未绑定评测套件/评测集的历史评测批次。
+        </div>
+      </template>
 
-        <nav class="bench-view-tabs" aria-label="Benchmark workbench views">
-          <button
-            v-for="tab in navTabs"
-            :key="tab.key"
-            type="button"
-            :class="{ active: activeView === tab.key }"
-            @click="activeView = tab.key"
-          >
-            {{ tab.label }}
-          </button>
-        </nav>
-
+      <template #notice>
         <ApiErrorPanel
           v-if="benchErrorNotice"
           :error="benchErrorNotice"
           title="评测操作失败"
+          retry-label="重试刷新"
+          retry-busy-label="刷新中"
+          :retrying="Boolean(benchmark.loading.value)"
+          :retry-disabled="Boolean(benchmark.loading.value || benchmark.actionLoading.value)"
+          @retry="refresh"
           compact
         />
         <div
@@ -273,6 +395,125 @@ onMounted(() => benchmark.refreshAll())
         >
           {{ benchInlineNotice.message }}
         </div>
+      </template>
+
+      <template #context>
+        <section class="bench-context-panel" aria-label="评测上下文">
+          <article class="bench-context-section bench-context-section--suite">
+            <header>
+              <div>
+                <small>当前套件</small>
+                <h2>{{ benchmark.selectedBenchmarkSuiteLabel.value }}</h2>
+              </div>
+              <b>{{ benchmark.selectedBenchmarkId.value ? '正式' : '临时' }}</b>
+            </header>
+            <div class="bench-context-kv-list">
+              <span v-for="item in contextSuiteRows" :key="item.key">
+                <small>{{ item.label }}</small>
+                <b>{{ item.value }}</b>
+              </span>
+            </div>
+            <div class="bench-context-gates">
+              <div class="bench-context-subtitle">
+                <span>门禁</span>
+                <small>{{ budgetStatusLabel }}</small>
+              </div>
+              <span v-for="item in contextGateRows" :key="item.key">
+                <small>{{ item.label }}</small>
+                <b>{{ item.value }}</b>
+              </span>
+            </div>
+          </article>
+
+          <article class="bench-context-section">
+            <header>
+              <div>
+                <small>运行上下文</small>
+                <h2>{{ contextRun ? '选中运行' : '运行状态' }}</h2>
+              </div>
+              <b>{{ activeRuns.length }} 运行中</b>
+            </header>
+            <div v-if="contextRun" class="bench-context-run-detail">
+              <strong>{{ contextRun.benchmarkLabel }}</strong>
+              <span>{{ contextRun.displayRole }} / {{ contextRun.statusLabel }}</span>
+              <em>{{ contextRunProgressLabel }}</em>
+            </div>
+            <div v-else class="bench-context-empty">暂无运行记录。</div>
+            <div v-if="contextRecentRows.length" class="bench-context-run-list">
+              <button
+                v-for="run in contextRecentRows"
+                :key="run.id"
+                type="button"
+                :class="['bench-context-run-button', { active: run.isSelected }]"
+                @click="selectRun(run)"
+              >
+                <span>
+                  <b>{{ run.benchmarkLabel }}</b>
+                  <small>{{ run.displayRole }} / {{ run.statusLabel }}</small>
+                </span>
+                <em>{{ run.judgeScoreLabel || '--' }}</em>
+              </button>
+            </div>
+          </article>
+
+          <article class="bench-context-section">
+            <header>
+              <div>
+                <small>诊断概览</small>
+                <h2>失败信号</h2>
+              </div>
+              <b>{{ formatNumber(contextDiagnosticTotal) }}</b>
+            </header>
+            <div v-if="benchmark.benchmarkDiagnosticAggregateLoading.value" class="bench-context-empty">
+              正在读取诊断汇总。
+            </div>
+            <div v-else-if="benchmark.benchmarkDiagnosticAggregateError.value" class="bench-context-warning">
+              {{ benchmark.benchmarkDiagnosticAggregateError.value }}
+            </div>
+            <div v-else-if="contextDiagnosticRows.length" class="bench-context-diagnostics">
+              <span v-for="item in contextDiagnosticRows" :key="item.label + item.caption">
+                <small>{{ item.label }}</small>
+                <b>{{ item.value }}</b>
+                <em>{{ item.caption }}</em>
+              </span>
+            </div>
+            <div v-else class="bench-context-empty">当前套件边界暂无诊断。</div>
+          </article>
+
+          <article class="bench-context-section">
+            <header>
+              <div>
+                <small>审计边界</small>
+                <h2>复现信息</h2>
+              </div>
+              <b>{{ benchmark.benchmarkSnapshotScope.value }}</b>
+            </header>
+            <div class="bench-context-boundary">
+              <span v-for="item in contextBoundaryRows" :key="item.key">
+                <small>{{ item.label }}</small>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
+              </span>
+            </div>
+          </article>
+
+          <article class="bench-context-section">
+            <header>
+              <div>
+                <small>产物</small>
+                <h2>发布材料</h2>
+              </div>
+              <b>{{ benchmark.benchmarkSnapshots.value.length + benchmark.benchmarkReportHistory.value.length }}</b>
+            </header>
+            <div class="bench-context-artifacts">
+              <span v-for="item in contextArtifactRows" :key="item.key">
+                <small>{{ item.label }}</small>
+                <b>{{ item.value }}</b>
+                <em>{{ item.caption }}</em>
+              </span>
+            </div>
+          </article>
+        </section>
+      </template>
 
         <section v-if="activeView === 'overview'" class="bench-overview">
           <div class="bench-overview-primary">
@@ -281,32 +522,32 @@ onMounted(() => benchmark.refreshAll())
             <article class="bench-panel bench-planner-panel">
               <header>
                 <div>
-                  <small>Run Planner</small>
-                  <h2>Launch Plan</h2>
+                  <small>运行计划</small>
+                  <h2>启动计划</h2>
                 </div>
                 <b>{{ budgetStatusLabel }}</b>
               </header>
               <div class="bench-plan-grid">
                 <span>
-                  <small>Total Games</small>
+                  <small>总局数</small>
                   <b>{{ totalGamesLabel }}</b>
                 </span>
                 <span>
-                  <small>Eval Batches</small>
+                  <small>评测批次</small>
                   <b>{{ evalBatchLabel }}</b>
                 </span>
                 <span>
-                  <small>Judge Decisions</small>
+                  <small>Judge 判定</small>
                   <b>{{ judgeDecisionLabel }}</b>
                 </span>
                 <span :class="{ danger: benchmark.benchmarkPlanBudgetExceeded.value }">
-                  <small>Estimated Units</small>
+                  <small>预计单位</small>
                   <b>{{ estimatedUnitsLabel }}</b>
                 </span>
               </div>
               <div class="bench-plan-controls">
                 <label>
-                  <span>Games</span>
+                  <span>局数</span>
                   <input
                     v-model.number="benchmark.form.value.battle_games"
                     type="number"
@@ -316,7 +557,7 @@ onMounted(() => benchmark.refreshAll())
                   />
                 </label>
                 <label>
-                  <span>Max Days</span>
+                  <span>最大天数</span>
                   <input
                     v-model.number="benchmark.form.value.max_days"
                     type="number"
@@ -326,7 +567,7 @@ onMounted(() => benchmark.refreshAll())
                   />
                 </label>
                 <label>
-                  <span>Budget Limit</span>
+                  <span>预算上限</span>
                   <input
                     v-model.number="benchmark.form.value.budget_limit_units"
                     type="number"
@@ -335,7 +576,7 @@ onMounted(() => benchmark.refreshAll())
                   />
                 </label>
               </div>
-              <div class="bench-cost-breakdown" aria-label="Benchmark cost breakdown">
+              <div class="bench-cost-breakdown" aria-label="评测成本拆分">
                 <span
                   v-for="item in planCostRows"
                   :key="item.key"
@@ -346,7 +587,7 @@ onMounted(() => benchmark.refreshAll())
                   <em>{{ item.caption }}</em>
                 </span>
               </div>
-              <div class="bench-policy-breakdown" aria-label="Benchmark execution policy">
+              <div class="bench-policy-breakdown" aria-label="评测执行策略">
                 <span v-for="item in planPolicyRows" :key="item.key">
                   <small>{{ item.label }}</small>
                   <b>{{ item.value }}</b>
@@ -355,8 +596,8 @@ onMounted(() => benchmark.refreshAll())
               </div>
               <div v-if="planWarnings.length" class="bench-plan-warnings">
                 <span v-for="warning in planWarnings" :key="warning.kind || warning.message">
-                  <b>{{ warning.kind || 'warning' }}</b>
-                  <em>{{ warning.message || 'Plan warning' }}</em>
+                  <b>{{ warning.kind || '警告' }}</b>
+                  <em>{{ warning.message || '计划警告' }}</em>
                 </span>
               </div>
               <div v-if="benchmark.benchmarkPlanError.value" class="bench-inline-warning">
@@ -364,9 +605,9 @@ onMounted(() => benchmark.refreshAll())
               </div>
               <footer class="bench-launch-strip">
                 <span>
-                  <small>Subject</small>
+                  <small>被测对象</small>
                   <b>{{ launchSubjectLabel }}</b>
-                  <em>{{ selectedSuite?.evaluation_set_id || 'ad-hoc evaluation' }}</em>
+                  <em>{{ selectedSuite?.evaluation_set_id || '临时评测' }}</em>
                 </span>
                 <button
                   type="button"
@@ -374,30 +615,30 @@ onMounted(() => benchmark.refreshAll())
                   :disabled="Boolean(benchmark.actionLoading.value) || !benchmark.selectedBenchmarkCanLaunch.value"
                   @click="requestLaunch"
                 >
-                  <template v-if="requiresLaunchConfirmation && !launchConfirmationOpen">Review Launch</template>
-                  <template v-else>{{ benchmark.selectedBenchmarkIsModelSuite.value ? 'Run Model Benchmark' : 'Run Role Benchmark' }}</template>
+                  <template v-if="requiresLaunchConfirmation && !launchConfirmationOpen">检查启动</template>
+                  <template v-else>{{ benchmark.selectedBenchmarkIsModelSuite.value ? '运行模型评测' : '运行角色评测' }}</template>
                 </button>
               </footer>
-              <section v-if="launchConfirmationOpen" class="bench-launch-confirmation" aria-label="Benchmark launch confirmation">
+              <section v-if="launchConfirmationOpen" class="bench-launch-confirmation" aria-label="评测启动确认">
                 <div>
-                  <small>{{ suiteCostTier }} suite confirmation</small>
-                  <b>Confirm launch boundary and budget before execution.</b>
+                  <small>{{ suiteCostTier }} 套件启动确认</small>
+                  <b>执行前确认边界和预算。</b>
                 </div>
                 <dl>
                   <div>
-                    <dt>Games</dt>
+                    <dt>局数</dt>
                     <dd>{{ totalGamesLabel }}</dd>
                   </div>
                   <div>
-                    <dt>Judge Decisions</dt>
+                    <dt>Judge 判定</dt>
                     <dd>{{ judgeDecisionLabel }}</dd>
                   </div>
                   <div>
-                    <dt>Estimated Units</dt>
+                    <dt>预计单位</dt>
                     <dd>{{ estimatedUnitsLabel }}</dd>
                   </div>
                   <div>
-                    <dt>Concurrency</dt>
+                    <dt>并发</dt>
                     <dd>{{ concurrencyLabel }}</dd>
                   </div>
                   <div>
@@ -411,7 +652,7 @@ onMounted(() => benchmark.refreshAll())
                 </dl>
                 <footer>
                   <button type="button" class="bench-confirm-secondary" @click="cancelLaunchConfirmation">
-                    Cancel
+                    取消
                   </button>
                   <button
                     type="button"
@@ -419,63 +660,15 @@ onMounted(() => benchmark.refreshAll())
                     :disabled="Boolean(benchmark.actionLoading.value) || !benchmark.selectedBenchmarkCanLaunch.value"
                     @click="launchBenchmark"
                   >
-                    Confirm Launch
+                    确认启动
                   </button>
                 </footer>
               </section>
               <span v-if="benchmark.loading.value || benchmark.actionLoading.value" class="bench-loading">
-                {{ benchmark.actionLoading.value === 'start' ? 'Launching benchmark' : 'Loading benchmark data' }}
+                {{ benchmark.actionLoading.value === 'start' ? '正在启动评测' : '正在加载评测数据' }}
               </span>
             </article>
           </div>
-
-          <aside class="bench-overview-side">
-            <article class="bench-panel">
-              <header>
-                <div>
-                  <small>Active Runs</small>
-                  <h2>Execution</h2>
-                </div>
-                <b>{{ activeRuns.length }}</b>
-              </header>
-              <div v-if="activeRuns.length" class="bench-run-stack">
-                <button
-                  v-for="run in activeRuns"
-                  :key="run.id"
-                  type="button"
-                  class="bench-run-card"
-                  @click="selectRun(run)"
-                >
-                  <strong>{{ run.benchmarkLabel }}</strong>
-                  <span>{{ run.statusLabel }} / {{ run.progress?.percent ? Math.round(run.progress.percent * 100) + '%' : 'progress pending' }}</span>
-                </button>
-              </div>
-              <div v-else class="bench-empty-compact">No active benchmark runs.</div>
-            </article>
-
-            <article class="bench-panel">
-              <header>
-                <div>
-                  <small>Recent Runs</small>
-                  <h2>Latest Evidence</h2>
-                </div>
-                <b>{{ recentRuns.length }}</b>
-              </header>
-              <div v-if="recentRuns.length" class="bench-run-stack">
-                <button
-                  v-for="run in recentRuns"
-                  :key="run.id"
-                  type="button"
-                  class="bench-run-card"
-                  @click="selectRun(run)"
-                >
-                  <strong>{{ run.benchmarkLabel }}</strong>
-                  <span>{{ run.displayRole }} / {{ run.statusLabel }} / {{ run.rankableLabel }}</span>
-                </button>
-              </div>
-              <div v-else class="bench-empty-compact">No benchmark runs yet.</div>
-            </article>
-          </aside>
         </section>
 
         <BenchmarkComparisonView
@@ -500,25 +693,26 @@ onMounted(() => benchmark.refreshAll())
           <BenchmarkSnapshotReleasePanel :benchmark="benchmark" />
           <BenchmarkRunReportPanel :benchmark="benchmark" />
         </section>
-      </main>
-    </div>
+    </LabWorkbenchShell>
   </section>
 </template>
 
 <style scoped>
 .bench-page {
-  --bench-surface: #ffffff;
-  --bench-border: #d8dedb;
-  --bench-text: #1f2a27;
-  --bench-text-secondary: #66736d;
-  --bench-accent: #256b8f;
-  --bench-accent-strong: #1f6f54;
-  --bench-input-bg: #ffffff;
-  --bench-input-border: #cbd5d0;
-  --bench-hover: #f2f5f3;
-  --bench-active-bg: #e6f2ee;
-  --bench-danger: #a13d36;
-  --bench-warning: #8b641f;
+  --bench-surface: rgba(255, 252, 245, 0.76);
+  --bench-panel: rgba(255, 252, 245, 0.86);
+  --bench-border: rgba(139, 94, 52, 0.18);
+  --bench-border-strong: rgba(90, 51, 25, 0.34);
+  --bench-text: #3a2a18;
+  --bench-text-secondary: #8b6b4a;
+  --bench-accent: #8b5e34;
+  --bench-accent-strong: #5a3319;
+  --bench-input-bg: rgba(255, 255, 250, 0.86);
+  --bench-input-border: rgba(139, 94, 52, 0.22);
+  --bench-hover: rgba(139, 94, 52, 0.07);
+  --bench-active-bg: rgba(255, 226, 157, 0.36);
+  --bench-danger: #993026;
+  --bench-warning: #9a6518;
   --bench-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
   --status-danger: var(--bench-danger);
   --text-main: var(--bench-text);
@@ -530,7 +724,9 @@ onMounted(() => benchmark.refreshAll())
   bottom: 0;
   left: 0;
   overflow: hidden;
-  background: #eef2f0;
+  background:
+    linear-gradient(135deg, rgba(255, 252, 245, 0.42), rgba(232, 196, 132, 0.24)),
+    #f8f0e0;
   color: var(--bench-text);
   font-family: var(--bench-font);
 }
@@ -541,8 +737,10 @@ onMounted(() => benchmark.refreshAll())
 }
 
 .bench-workbench-shell {
+  --lab-rail-width: 316px;
+  --lab-context-width: 320px;
   display: grid;
-  grid-template-columns: 316px minmax(0, 1fr);
+  grid-template-columns: 316px minmax(0, 1fr) 320px;
   gap: 14px;
   height: 100%;
   min-height: 0;
@@ -566,7 +764,8 @@ onMounted(() => benchmark.refreshAll())
   padding: 10px 12px;
   border: 1px solid var(--bench-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--bench-panel);
+  box-shadow: 0 2px 8px rgba(91, 47, 18, 0.08);
 }
 
 .bench-title-block {
@@ -580,8 +779,7 @@ onMounted(() => benchmark.refreshAll())
 .bench-panel header small,
 .bench-plan-grid small,
 .bench-plan-controls span,
-.bench-launch-strip small,
-.bench-run-card span {
+.bench-launch-strip small {
   color: var(--bench-text-secondary);
   font-size: 11px;
   font-weight: 800;
@@ -615,12 +813,12 @@ onMounted(() => benchmark.refreshAll())
   padding: 7px 9px;
   border: 1px solid var(--bench-border);
   border-radius: 6px;
-  background: #f7f8f8;
+  background: rgba(255, 248, 226, 0.58);
 }
 
 .bench-header-meta span.danger {
-  border-color: rgba(161, 61, 54, 0.32);
-  background: #fff6f5;
+  border-color: rgba(153, 48, 38, 0.32);
+  background: rgba(153, 48, 38, 0.06);
 }
 
 .bench-header-meta b,
@@ -647,10 +845,10 @@ onMounted(() => benchmark.refreshAll())
   justify-content: center;
   height: 36px;
   padding: 0 14px;
-  border: 1px solid #1a5944;
+  border: 1px solid var(--bench-accent-strong);
   border-radius: 6px;
-  background: #1f6f54;
-  color: #ffffff;
+  background: var(--bench-accent-strong);
+  color: #fff7dc;
   font-size: 13px;
   font-weight: 900;
   cursor: pointer;
@@ -658,7 +856,7 @@ onMounted(() => benchmark.refreshAll())
 
 .bench-refresh-button:hover,
 .bench-launch-button:hover {
-  background: #185a43;
+  background: #3f2412;
 }
 
 .bench-launch-button:disabled {
@@ -673,7 +871,7 @@ onMounted(() => benchmark.refreshAll())
   padding: 4px;
   border: 1px solid var(--bench-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--bench-panel);
 }
 
 .bench-view-tabs button {
@@ -689,25 +887,25 @@ onMounted(() => benchmark.refreshAll())
 }
 
 .bench-view-tabs button.active {
-  border-color: #1f6f54;
-  background: #e6f2ee;
-  color: #153f31;
+  border-color: var(--bench-border-strong);
+  background: var(--bench-active-bg);
+  color: var(--bench-accent-strong);
 }
 
 .bench-alert {
   padding: 9px 12px;
-  border: 1px solid rgba(161, 61, 54, 0.26);
+  border: 1px solid rgba(153, 48, 38, 0.26);
   border-radius: 8px;
-  background: rgba(161, 61, 54, 0.06);
+  background: rgba(153, 48, 38, 0.06);
   color: var(--bench-danger);
   font-size: 12px;
   font-weight: 800;
 }
 
 .bench-alert--success {
-  border-color: rgba(31, 111, 84, 0.28);
-  background: rgba(31, 111, 84, 0.08);
-  color: #1f6f54;
+  border-color: rgba(139, 94, 52, 0.28);
+  background: rgba(255, 226, 157, 0.18);
+  color: var(--bench-accent-strong);
 }
 
 .bench-alert--warning {
@@ -716,10 +914,9 @@ onMounted(() => benchmark.refreshAll())
   color: var(--bench-warning);
 }
 
-.bench-overview,
-.bench-diagnostics-view {
+.bench-overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
   min-height: 0;
@@ -727,15 +924,12 @@ onMounted(() => benchmark.refreshAll())
 }
 
 .bench-overview-primary,
-.bench-overview-side,
-.bench-leaderboard-stack,
-.bench-diagnostics-view {
+.bench-leaderboard-stack {
   min-width: 0;
   min-height: 0;
 }
 
 .bench-overview-primary,
-.bench-overview-side,
 .bench-leaderboard-stack {
   display: grid;
   align-content: start;
@@ -751,7 +945,7 @@ onMounted(() => benchmark.refreshAll())
   min-width: 0;
   border: 1px solid var(--bench-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--bench-panel);
   overflow: hidden;
 }
 
@@ -763,7 +957,7 @@ onMounted(() => benchmark.refreshAll())
   min-height: 52px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--bench-border);
-  background: #ffffff;
+  background: rgba(255, 252, 245, 0.9);
 }
 
 .bench-panel header h2,
@@ -783,10 +977,265 @@ onMounted(() => benchmark.refreshAll())
   padding: 3px 8px;
   border: 1px solid var(--bench-border);
   border-radius: 6px;
-  background: #f7f8f8;
+  background: rgba(255, 242, 210, 0.56);
   color: var(--bench-text);
   font-size: 12px;
   font-weight: 900;
+}
+
+.bench-context-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.bench-context-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--bench-border);
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.78);
+}
+
+.bench-context-section header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--bench-border);
+  background: rgba(255, 248, 226, 0.58);
+}
+
+.bench-context-section header div,
+.bench-context-section header h2,
+.bench-context-section header b {
+  min-width: 0;
+}
+
+.bench-context-section header small,
+.bench-context-kv-list small,
+.bench-context-gates small,
+.bench-context-run-button small,
+.bench-context-diagnostics small,
+.bench-context-boundary small,
+.bench-context-artifacts small,
+.bench-context-subtitle small {
+  color: var(--bench-text-secondary);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.bench-context-section header h2 {
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: var(--bench-text);
+  font-size: 13px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-context-section header b {
+  max-width: 96px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid var(--bench-border);
+  border-radius: 6px;
+  background: rgba(255, 242, 210, 0.6);
+  color: var(--bench-accent-strong);
+  font-size: 11px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-context-kv-list,
+.bench-context-gates,
+.bench-context-diagnostics,
+.bench-context-boundary,
+.bench-context-artifacts {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 0 10px 10px;
+}
+
+.bench-context-kv-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding-top: 10px;
+}
+
+.bench-context-boundary,
+.bench-context-artifacts {
+  padding-top: 10px;
+}
+
+.bench-context-kv-list span,
+.bench-context-gates span,
+.bench-context-diagnostics span,
+.bench-context-boundary span,
+.bench-context-artifacts span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(139, 94, 52, 0.13);
+  border-radius: 7px;
+  background: rgba(255, 250, 240, 0.68);
+}
+
+.bench-context-kv-list b,
+.bench-context-gates b,
+.bench-context-run-detail strong,
+.bench-context-run-detail span,
+.bench-context-run-detail em,
+.bench-context-run-button b,
+.bench-context-run-button small,
+.bench-context-run-button em,
+.bench-context-diagnostics b,
+.bench-context-diagnostics em,
+.bench-context-boundary b,
+.bench-context-artifacts b,
+.bench-context-artifacts em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-context-kv-list b,
+.bench-context-gates b,
+.bench-context-diagnostics b,
+.bench-context-boundary b,
+.bench-context-artifacts b {
+  color: var(--bench-text);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.bench-context-diagnostics em,
+.bench-context-artifacts em {
+  color: var(--bench-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.bench-context-subtitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.bench-context-subtitle span {
+  color: var(--bench-text);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.bench-context-run-detail {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 10px 10px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--bench-border);
+  border-left: 4px solid var(--bench-accent);
+  border-radius: 7px;
+  background: rgba(255, 242, 210, 0.48);
+}
+
+.bench-context-run-detail strong {
+  color: var(--bench-text);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.bench-context-run-detail span,
+.bench-context-run-detail em {
+  color: var(--bench-text-secondary);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.bench-context-run-list {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 0 10px 10px;
+}
+
+.bench-context-run-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--bench-border);
+  border-radius: 7px;
+  background: rgba(255, 250, 240, 0.64);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bench-context-run-button:hover,
+.bench-context-run-button.active {
+  border-color: var(--bench-border-strong);
+  background: rgba(255, 226, 157, 0.24);
+}
+
+.bench-context-run-button span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bench-context-run-button b {
+  color: var(--bench-text);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.bench-context-run-button em {
+  color: var(--bench-accent-strong);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 950;
+}
+
+.bench-context-empty,
+.bench-context-warning {
+  margin: 10px;
+  padding: 12px 10px;
+  border: 1px dashed rgba(139, 94, 52, 0.24);
+  border-radius: 7px;
+  background: rgba(255, 250, 240, 0.58);
+  color: var(--bench-text-secondary);
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.bench-context-warning {
+  border-style: solid;
+  color: var(--bench-warning);
 }
 
 .bench-plan-grid,
@@ -810,12 +1259,12 @@ onMounted(() => benchmark.refreshAll())
   padding: 9px 10px;
   border: 1px solid var(--bench-border);
   border-radius: 7px;
-  background: #f7f8f8;
+  background: rgba(255, 242, 210, 0.48);
 }
 
 .bench-plan-grid span.danger {
-  border-color: rgba(161, 61, 54, 0.3);
-  background: #fff6f5;
+  border-color: rgba(153, 48, 38, 0.3);
+  background: rgba(153, 48, 38, 0.06);
 }
 
 .bench-plan-grid b,
@@ -876,14 +1325,14 @@ onMounted(() => benchmark.refreshAll())
   min-width: 0;
   min-height: 62px;
   padding: 9px 10px;
-  border: 1px solid #d6dfda;
+  border: 1px solid var(--bench-border);
   border-radius: 7px;
-  background: #fbfcfb;
+  background: rgba(255, 250, 240, 0.72);
 }
 
 .bench-cost-breakdown span.danger {
-  border-color: rgba(161, 61, 54, 0.32);
-  background: #fff6f5;
+  border-color: rgba(153, 48, 38, 0.32);
+  background: rgba(153, 48, 38, 0.06);
 }
 
 .bench-cost-breakdown small,
@@ -965,7 +1414,7 @@ onMounted(() => benchmark.refreshAll())
   padding: 10px;
   border: 1px solid var(--bench-border);
   border-radius: 7px;
-  background: #f7f8f8;
+  background: rgba(255, 242, 210, 0.5);
 }
 
 .bench-launch-strip span {
@@ -994,7 +1443,7 @@ onMounted(() => benchmark.refreshAll())
   padding: 12px;
   border: 1px solid rgba(139, 100, 31, 0.34);
   border-radius: 8px;
-  background: #fffaf0;
+  background: rgba(255, 245, 221, 0.74);
 }
 
 .bench-launch-confirmation small,
@@ -1028,7 +1477,7 @@ onMounted(() => benchmark.refreshAll())
   padding: 8px 9px;
   border: 1px solid rgba(139, 100, 31, 0.18);
   border-radius: 7px;
-  background: #ffffff;
+  background: rgba(255, 252, 245, 0.86);
 }
 
 .bench-launch-confirmation dd {
@@ -1059,14 +1508,14 @@ onMounted(() => benchmark.refreshAll())
 }
 
 .bench-confirm-primary {
-  border: 1px solid #1a5944;
-  background: #1f6f54;
-  color: #ffffff;
+  border: 1px solid var(--bench-accent-strong);
+  background: var(--bench-accent-strong);
+  color: #fff7dc;
 }
 
 .bench-confirm-secondary {
   border: 1px solid var(--bench-border);
-  background: #ffffff;
+  background: rgba(255, 252, 245, 0.9);
   color: var(--bench-text);
 }
 
@@ -1095,16 +1544,17 @@ onMounted(() => benchmark.refreshAll())
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--bench-border);
-  border-left: 4px solid #256b8f;
+  border-left: 4px solid var(--bench-accent);
   border-radius: 7px;
-  background: #f7f8f8;
+  background: rgba(255, 242, 210, 0.46);
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .bench-run-card:hover {
-  border-color: #9cadb5;
+  border-color: var(--bench-border-strong);
+  background: rgba(255, 226, 157, 0.26);
 }
 
 .bench-run-card strong,

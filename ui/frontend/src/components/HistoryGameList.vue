@@ -229,7 +229,7 @@ function selectSource(source) {
               <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 12H7L6 9Zm4 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
             </svg>
           </button>
-          <button class="history-game-replay" title="事件回放" aria-label="事件回放" @click="emit('replay-game', item)">复盘</button>
+          <button class="history-game-replay" title="事件回放" aria-label="事件回放" @click="emit('replay-game', item)">回放</button>
         </span>
       </div>
     </div>

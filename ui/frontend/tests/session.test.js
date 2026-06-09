@@ -1988,6 +1988,80 @@ test('logs hash deep link selects the requested benchmark replay game', () => wi
   assert.equal(state.selectedHistoryGame.value.logs[0].message, 'benchmark replay')
 }, { hash: '#logs?game_id=benchmark-game-2' }))
 
+test('evidence hash deep link selects a game and preloads archive and review assets', () => withWindow(async () => {
+  assert.equal(viewFromHash('#evidence?game_id=benchmark-game-2'), 'evidence')
+
+  const state = useGameState()
+  const requests = []
+  const rows = [
+    game('history-first', { winner: 'villagers' }),
+    game('benchmark-game-2', { source: 'benchmark', winner: 'werewolves' })
+  ]
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games?limit=3&offset=0') {
+      return {
+        games: rows,
+        pagination: { total: rows.length, offset: 0, limit: 3, returned: rows.length, has_more: false }
+      }
+    }
+    if (path === '/games/benchmark-game-2?view=history-shell') {
+      return game('benchmark-game-2', {
+        source: 'benchmark',
+        winner: 'werewolves',
+        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
+      })
+    }
+    if (path === historyPhasePath('benchmark-game-2')) {
+      return {
+        game_id: 'benchmark-game-2',
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'benchmark evidence' }],
+        decisions: []
+      }
+    }
+    if (path === '/games/benchmark-game-2/archive') {
+      return { kind: 'game_trace_archive', game_id: 'benchmark-game-2', events: [], decisions: [] }
+    }
+    if (path === '/games/benchmark-game-2/review') {
+      return { kind: 'review_report', game_id: 'benchmark-game-2', decisions: [] }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 3,
+    apiFetch
+  })
+
+  history.syncHashRoute()
+  await flushPromises(12)
+
+  assert.deepEqual(requests, [
+    '/games?limit=3&offset=0',
+    '/games/benchmark-game-2?view=history-shell',
+    historyPhasePath('benchmark-game-2'),
+    '/games/benchmark-game-2/archive',
+    '/games/benchmark-game-2/review'
+  ])
+  assert.equal(state.currentView.value, 'evidence')
+  assert.equal(state.selectedHistoryGameId.value, 'benchmark-game-2')
+  assert.equal(state.archiveByGameId.value['benchmark-game-2'].kind, 'game_trace_archive')
+  assert.equal(state.reviewByGameId.value['benchmark-game-2'].kind, 'review_report')
+}, { hash: '#evidence?game_id=benchmark-game-2' }))
+
+test('evolution hash deep links keep query when the global router opens the page', () => withWindow(() => {
+  const state = useGameState()
+  const history = useGameHistory(state, { installLifecycle: false, apiFetch: async () => ({}) })
+
+  window.location.hash = '#evolution?run_id=deep-run&proposal_id=proposal-b'
+  history.openEvolutionPage({ rememberOrigin: false })
+
+  assert.equal(state.currentView.value, 'evolution')
+  assert.equal(window.location.hash, '#evolution?run_id=deep-run&proposal_id=proposal-b')
+}))
+
 test('history list uses paginated API and load more appends without changing selection', () => withWindow(async () => {
   const state = useGameState()
   const requests = []
@@ -3270,6 +3344,7 @@ test('evolution workbench shows success notice after starting a single run', asy
 
   const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
   workbench.selectedRole.value = 'seer'
+  workbench.form.value.auto_promote = false
   await workbench.startSingle()
 
   assert.deepEqual(requests.find((item) => item.path === '/evolution-runs')?.body, {
@@ -3277,7 +3352,7 @@ test('evolution workbench shows success notice after starting a single run', asy
     training_games: 5,
     battle_games: 4,
     max_days: 5,
-    auto_promote: true
+    auto_promote: false
   })
   assert.deepEqual(workbench.notice.value, { type: 'success', message: '单角色进化已启动。' })
   assert.equal(workbench.error.value, '')
@@ -3351,6 +3426,7 @@ test('evolution workbench gates promote on explicit proposal review state', () =
   }
   assert.equal(workbench.selectedCanPromote.value, true)
   assert.equal(workbench.selectedPromoteDisabledReason.value, '')
+  assert.equal(workbench.baselinePromoteTrustDisabledReason.value, '')
 
   workbench.selectedProposalReview.value = {
     loading: false,
@@ -3386,6 +3462,7 @@ test('evolution workbench requires complete trust bundle for baseline promote on
   }
   assert.equal(workbench.selectedCanPromote.value, false)
   assert.equal(workbench.selectedPromoteDisabledReason.value, '缺少完整信任包，不能晋升为基线。')
+  assert.equal(workbench.baselinePromoteTrustDisabledReason.value, '缺少完整信任包，不能晋升为基线。')
 
   workbench.selectedProposalReview.value = {
     loading: false,
@@ -3407,7 +3484,38 @@ test('evolution workbench requires complete trust bundle for baseline promote on
   assert.equal(workbench.selectedCanPromote.value, false)
   assert.equal(
     workbench.selectedPromoteDisabledReason.value,
-    '信任包不完整，不能晋升为基线。缺失：training_evidence、evidence。'
+    '信任包不完整，不能晋升为基线。缺失：训练证据。'
+  )
+  assert.equal(
+    workbench.baselinePromoteTrustDisabledReason.value,
+    '信任包不完整，不能晋升为基线。缺失：训练证据。'
+  )
+
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 },
+    trustBundle: {
+      trust_bundle_id: 'trust_bundle_without_gate',
+      bundle_hash: 'c'.repeat(64),
+      training_game_ids: ['train_1'],
+      proposal_ids: ['p1'],
+      completeness: {
+        complete: true,
+        score: 1,
+        missing: []
+      }
+    }
+  }
+  assert.equal(workbench.selectedCanPromote.value, false)
+  assert.equal(
+    workbench.selectedPromoteDisabledReason.value,
+    '信任包不完整，不能晋升为基线。缺失：门禁报告。'
+  )
+  assert.equal(
+    workbench.baselinePromoteTrustDisabledReason.value,
+    '信任包不完整，不能晋升为基线。缺失：门禁报告。'
   )
 
   workbench.selectedProposalReview.value = {
@@ -3430,6 +3538,316 @@ test('evolution workbench requires complete trust bundle for baseline promote on
   }
   assert.equal(workbench.selectedCanPromote.value, true)
   assert.equal(workbench.selectedPromoteDisabledReason.value, '')
+  assert.equal(workbench.baselinePromoteTrustDisabledReason.value, '')
+})
+
+test('evolution workbench opens normalized trust bundle audit from proposal review', () => {
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch: async () => ({}) })
+  workbench.selectedRunId.value = 'evo-trust-run'
+  workbench.selectedRun.value = {
+    id: 'evo-trust-run',
+    run_id: 'evo-trust-run',
+    entityType: 'run',
+    role: 'seer',
+    status: 'reviewing'
+  }
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 },
+    trustBundle: {
+      trust_bundle_id: 'trust_review_1',
+      bundle_hash: 'hash_review_1',
+      gate_report_id: 'gate_review_1',
+      rollback_target: 'seer_baseline_0',
+      training_game_ids: ['train_a', 'train_b'],
+      proposal_ids: ['proposal_a'],
+      battle_pair_seeds: [260607],
+      completeness: {
+        complete: true,
+        score: 1,
+        missing: []
+      }
+    }
+  }
+
+  workbench.openTrustBundleDrawer('review')
+
+  assert.equal(workbench.trustBundleDrawerOpen.value, true)
+  assert.equal(workbench.trustBundleAudit.value.source, 'review')
+  assert.equal(workbench.trustBundleAudit.value.hasTrustBundle, true)
+  assert.equal(workbench.trustBundleAudit.value.trust_bundle_id, 'trust_review_1')
+  assert.equal(workbench.trustBundleAudit.value.bundle_hash, 'hash_review_1')
+  assert.equal(workbench.trustBundleAudit.value.gate_report_id, 'gate_review_1')
+  assert.equal(workbench.trustBundleAudit.value.rollback_target, 'seer_baseline_0')
+  assert.deepEqual(workbench.trustBundleAudit.value.training_game_ids, ['train_a', 'train_b'])
+  assert.deepEqual(workbench.trustBundleAudit.value.proposal_ids, ['proposal_a'])
+  assert.equal(workbench.trustBundleAudit.value.completeness.status, 'complete')
+  assert.equal(workbench.trustBundleAudit.value.paired_seeds[0].seed, '260607')
+
+  workbench.closeTrustBundleDrawer()
+  assert.equal(workbench.trustBundleDrawerOpen.value, false)
+})
+
+test('evolution workbench refreshes trust bundle audit from authority endpoint', async () => {
+  const requests = []
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/evolution-runs/evo-trust-run/trust-bundle') {
+      return {
+        kind: 'evolution_trust_bundle',
+        run_id: 'evo-trust-run',
+        role: 'seer',
+        version_id: 'seer_v2',
+        trust_bundle_id: 'trust_authority_1',
+        bundle_hash: 'hash_authority_1',
+        gate_report_id: 'gate_authority_1',
+        trust_bundle: {
+          trust_bundle_id: 'trust_authority_1',
+          bundle_hash: 'hash_authority_1',
+          gate_report_id: 'gate_authority_1',
+          rollback_target: 'seer_baseline_0',
+          training_game_ids: ['history_train_a'],
+          proposal_ids: ['proposal_authority'],
+          battle_pair_seeds: [260700],
+          completeness: {
+            complete: true,
+            score: 1,
+            missing: []
+          }
+        }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  workbench.selectedRunId.value = 'evo-trust-run'
+  workbench.selectedRun.value = {
+    id: 'evo-trust-run',
+    run_id: 'evo-trust-run',
+    entityType: 'run',
+    role: 'seer',
+    status: 'reviewing'
+  }
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 },
+    trustBundle: {
+      trust_bundle_id: 'trust_cached_1',
+      bundle_hash: 'hash_cached_1',
+      gate_report_id: 'gate_cached_1',
+      rollback_target: 'seer_baseline_0',
+      training_game_ids: ['history_train_cached'],
+      proposal_ids: ['proposal_cached'],
+      completeness: { complete: true, score: 1, missing: [] }
+    }
+  }
+
+  await workbench.openTrustBundleDrawer('review', {
+    version: {
+      role: 'seer',
+      version_id: 'seer_v2'
+    }
+  })
+
+  assert.deepEqual(requests, ['/evolution-runs/evo-trust-run/trust-bundle'])
+  assert.equal(workbench.trustBundleDrawerOpen.value, true)
+  assert.equal(workbench.trustBundleAuditLoading.value, false)
+  assert.equal(workbench.trustBundleAudit.value.source, 'authority')
+  assert.equal(workbench.trustBundleAudit.value.authorityStatus, 'mismatch')
+  assert.equal(workbench.trustBundleAudit.value.authorityMessage, '权威 Trust Bundle 与当前页面缓存不一致。')
+  assert.deepEqual(workbench.trustBundleAudit.value.mismatchLabels, ['trust_bundle_id', 'bundle_hash', 'gate_report_id'])
+  assert.equal(workbench.trustBundleAudit.value.trust_bundle_id, 'trust_authority_1')
+  assert.equal(workbench.trustBundleAudit.value.bundle_hash, 'hash_authority_1')
+  assert.equal(workbench.trustBundleAudit.value.gate_report_id, 'gate_authority_1')
+  assert.deepEqual(workbench.trustBundleAudit.value.training_game_ids, ['history_train_a'])
+  assert.equal(workbench.trustBundleAudit.value.training_evidence[0].href, '#evidence?game_id=history_train_a')
+  assert.equal(workbench.trustBundleAudit.value.proposal_evidence[0].href, '#evolution?run_id=evo-trust-run&proposal_id=proposal_authority')
+  assert.equal(workbench.trustBundleAudit.value.source_run_href, '#evolution?run_id=evo-trust-run')
+  assert.equal(workbench.trustBundleAudit.value.gate_report_href, '#evolution?run_id=evo-trust-run&gate_report_id=gate_authority_1')
+  assert.equal(workbench.trustBundleAudit.value.paired_seeds[0].seed, '260700')
+  assert.ok(workbench.trustBundleAudit.value.consistency_checks.every((item) => (
+    item.field && item.label && item.status && item.message
+  )))
+  const checksByField = Object.fromEntries(
+    workbench.trustBundleAudit.value.consistency_checks.map((item) => [item.field, item])
+  )
+  assert.equal(checksByField.trust_bundle_id.status, 'mismatch')
+  assert.equal(checksByField.trust_bundle_id.cached_value, 'trust_cached_1')
+  assert.equal(checksByField.trust_bundle_id.authority_value, 'trust_authority_1')
+  assert.match(checksByField.trust_bundle_id.message, /authority bundle/)
+  assert.equal(checksByField.bundle_hash.status, 'mismatch')
+  assert.equal(checksByField.gate_report_id.status, 'mismatch')
+  assert.equal(checksByField.source_run_id.status, 'match')
+  assert.equal(checksByField.source_run_id.authority_value, 'evo-trust-run')
+  assert.equal(checksByField.role.status, 'match')
+  assert.equal(checksByField.version_id.status, 'match')
+  assert.equal(checksByField.version_id.authority_value, 'seer_v2')
+})
+
+test('evolution workbench consumes run proposal and gate hash deep links', () => withWindow(async () => {
+  const requests = []
+  const run = {
+    run_id: 'deep-run',
+    role: 'seer',
+    status: 'reviewing',
+    started_at: '2026-06-08T10:00:00'
+  }
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/roles/overview') throw new Error('overview unavailable')
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/evolution-runs?limit=80&offset=0&source=evolution') {
+      return {
+        runs: [],
+        batches: [],
+        pagination: { total: 0, offset: 0, limit: 80, returned: 0, has_more: false }
+      }
+    }
+    if (path === '/evolution-runs/deep-run') return run
+    if (path === '/evolution-runs/deep-run/diff') return { diffs: [] }
+    if (/^\/evolution-runs\/deep-run\/games\?/.test(path)) {
+      return { games: [], pagination: { total: 0, offset: 0, limit: 80, returned: 0, has_more: false } }
+    }
+    if (path === '/evolution-runs/deep-run/proposals') {
+      return {
+        run_id: 'deep-run',
+        role: 'seer',
+        proposals: [{ proposal_id: 'proposal-b', status: 'pending', target_file: 'seer.md', summary: 'update seer plan' }],
+        gate_report: { gate_report_id: 'gate-1', decision: 'review_required' },
+        trust_bundle: {
+          trust_bundle_id: 'trust-deep-1',
+          bundle_hash: 'hash-deep-1',
+          gate_report_id: 'gate-1',
+          training_game_ids: ['train-deep-1'],
+          proposal_ids: ['proposal-b'],
+          completeness: { complete: true, score: 1, missing: [] }
+        }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedRunId.value, 'deep-run')
+  assert.equal(workbench.selectedRun.value.role, 'seer')
+  assert.deepEqual(workbench.runRows.value.map((item) => item.id), ['deep-run'])
+  assert.equal(workbench.selectedProposalRows.value[0].apiId, 'proposal-b')
+  assert.equal(workbench.trustBundleDrawerOpen.value, true)
+  assert.equal(workbench.trustBundleAudit.value.trust_bundle_id, 'trust-deep-1')
+  assert.equal(workbench.trustBundleAudit.value.gate_report_id, 'gate-1')
+  assert.equal(workbench.evolutionDeepLinkTarget.value.status, 'applied')
+  assert.equal(workbench.evolutionDeepLinkTarget.value.panel, 'review')
+  assert.deepEqual(workbench.evolutionDeepLinkTarget.value.pending, [])
+  assert.equal(workbench.evolutionDeepLinkTarget.value.selected_run_id, 'deep-run')
+  assert.equal(requests.includes('/evolution-runs/deep-run/trust-bundle'), false)
+}, { hash: '#evolution?run_id=deep-run&proposal_id=proposal-b&gate_report_id=gate-1' }))
+
+test('evolution workbench consumes role version hash deep links without defaulting to first run', () => withWindow(async () => {
+  const requests = []
+  const visibleRun = {
+    run_id: 'other-run',
+    role: 'witch',
+    status: 'completed',
+    started_at: '2026-06-08T09:00:00'
+  }
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/roles/overview') throw new Error('overview unavailable')
+    if (path === '/roles') return { roles: ['seer', 'witch'] }
+    if (path === '/roles/seer/versions') return { versions: [{ version_id: 'seer_v2', source: 'candidate' }] }
+    if (path === '/roles/witch/versions') return { versions: [] }
+    if (/^\/roles\/[^/]+\/leaderboard$/.test(path)) return { entries: [] }
+    if (path === '/roles/seer/versions/seer_v2') {
+      return {
+        role: 'seer',
+        version_id: 'seer_v2',
+        trust_bundle_id: 'trust-version',
+        source_run_id: 'deep-run',
+        metrics: { win_rate: 0.61 }
+      }
+    }
+    if (path === '/evolution-runs?limit=80&offset=0&source=evolution') {
+      return {
+        runs: [visibleRun],
+        batches: [],
+        pagination: { total: 1, offset: 0, limit: 80, returned: 1, has_more: false }
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedRole.value, 'seer')
+  assert.equal(workbench.selectedVersionId.value, 'seer_v2')
+  assert.equal(workbench.selectedVersionDetail.value.data.version_id, 'seer_v2')
+  assert.equal(workbench.selectedRunId.value, '')
+  assert.equal(workbench.evolutionDeepLinkTarget.value.status, 'applied')
+  assert.equal(workbench.evolutionDeepLinkTarget.value.panel, 'versions')
+  assert.equal(requests.includes('/evolution-runs/other-run'), false)
+}, { hash: '#evolution?role=seer&version_id=seer_v2' }))
+
+test('evolution workbench trust bundle audit exposes missing empty state', () => {
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch: async () => ({}) })
+  workbench.selectedRunId.value = 'evo-missing-trust'
+  workbench.selectedRun.value = {
+    id: 'evo-missing-trust',
+    run_id: 'evo-missing-trust',
+    entityType: 'run',
+    role: 'seer',
+    status: 'reviewing',
+    gate_report_id: 'gate_without_trust'
+  }
+  workbench.selectedProposalReview.value = {
+    loading: false,
+    error: '',
+    unsupported: false,
+    summary: { accepted: 1, applied: 0 }
+  }
+
+  workbench.openTrustBundleDrawer('review')
+
+  assert.equal(workbench.trustBundleAudit.value.hasTrustBundle, false)
+  assert.match(workbench.trustBundleAudit.value.emptyMessage, /缺少 Trust Bundle/)
+  assert.equal(workbench.trustBundleAudit.value.completeness.status, 'missing')
+  assert.deepEqual(workbench.trustBundleAudit.value.missingKeys, ['trust_bundle'])
+})
+
+test('evolution workbench opens trust audit from version detail metadata', () => {
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch: async () => ({}) })
+  workbench.selectedVersionDetail.value = {
+    loading: false,
+    error: '',
+    data: {
+      role: 'seer',
+      version_id: 'seer_v2',
+      trust_bundle_id: 'trust_version_2',
+      bundle_hash: 'hash_version_2',
+      gate_report_id: 'gate_version_2',
+      source_run_id: 'evo-source-run',
+      rollback_target: 'seer_v1'
+    }
+  }
+
+  workbench.openTrustBundleDrawer('version')
+
+  assert.equal(workbench.trustBundleAudit.value.source, 'version')
+  assert.equal(workbench.trustBundleAudit.value.sourceLabel, 'Version Detail')
+  assert.equal(workbench.trustBundleAudit.value.version_id, 'seer_v2')
+  assert.equal(workbench.trustBundleAudit.value.trust_bundle_id, 'trust_version_2')
+  assert.equal(workbench.trustBundleAudit.value.gate_report_id, 'gate_version_2')
+  assert.equal(workbench.trustBundleAudit.value.source_run_id, 'evo-source-run')
+  assert.equal(workbench.trustBundleAudit.value.rollback_target, 'seer_v1')
+  assert.equal(workbench.trustBundleAudit.value.completeness.status, 'unknown')
 })
 
 test('evolution workbench maps proposal action failures to warning notices', async () => {
@@ -3640,7 +4058,21 @@ test('evaluation workbench starts selected benchmark suite and filters leaderboa
     seed_count: 3,
     seed_preview: [260600, 260601, 260602],
     cost_tier: 'smoke',
-    evaluation_set_id: 'role-baseline-quick-v1@v1'
+    evaluation_set_id: 'role-baseline-quick-v1@v1',
+    last_run: {
+      batch_id: 'bench-suite-last-run',
+      status: 'completed',
+      current_stage: 'completed',
+      result_count: 1,
+      diagnostic_count: 0
+    },
+    latest_snapshot: {
+      snapshot_id: 'snap-suite-latest',
+      title: 'Quick suite release',
+      row_count: 2,
+      content_hash: 'sha256:abcdef',
+      created_at: '2026-06-09T10:00:00+08:00'
+    }
   }
   let batches = []
   const apiFetch = async (path, options = {}) => {
@@ -3683,6 +4115,8 @@ test('evaluation workbench starts selected benchmark suite and filters leaderboa
   assert.equal(workbench.selectedBenchmarkSuite.value.seed_count, 3)
   assert.deepEqual(workbench.selectedBenchmarkSuite.value.seed_preview, ['260600', '260601', '260602'])
   assert.equal(workbench.selectedBenchmarkSuite.value.cost_tier, 'smoke')
+  assert.equal(workbench.selectedBenchmarkSuite.value.last_run.batch_id, 'bench-suite-last-run')
+  assert.equal(workbench.selectedBenchmarkSuite.value.latest_snapshot.snapshot_id, 'snap-suite-latest')
   assert.equal(
     requests.some((item) => item.path === '/roles/seer/leaderboard?evaluation_set_id=role-baseline-quick-v1%40v1'),
     true
@@ -3697,6 +4131,99 @@ test('evaluation workbench starts selected benchmark suite and filters leaderboa
     max_days: 5
   })
   assert.equal(workbench.filteredBatchRunRows.value[0].id, 'bench-suite-new')
+}))
+
+test('evaluation workbench falls back to legacy benchmark runs when suite has no scoped batches', () => withWindow(async () => {
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  }
+  const legacyBatch = {
+    kind: 'benchmark_batch',
+    batch_id: 'bench-legacy-run',
+    roles: ['seer'],
+    status: 'completed',
+    started_at: '2026-06-07T10:00:00'
+  }
+  const apiFetch = async (path) => {
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (/^\/roles\/[^/]+\/leaderboard/.test(path)) return { entries: [] }
+    if (/^\/roles\/[^/]+\/versions$/.test(path)) return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [legacyBatch] }
+    if (path === '/benchmark/plan') return { budget: {}, estimates: {}, warnings: [] }
+    if (path.startsWith('/benchmark/diagnostics')) return { diagnostics: [], summary: {} }
+    if (path.startsWith('/benchmark/snapshots')) return { snapshots: [] }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedBenchmarkId.value, 'role-baseline-quick-v1')
+  assert.equal(workbench.selectedSuiteBatchRunRows.value.length, 0)
+  assert.equal(workbench.unscopedBenchmarkRunRows.value.length, 1)
+  assert.equal(workbench.selectedBenchmarkUsingLegacyRuns.value, true)
+  assert.equal(workbench.filteredBatchRunRows.value[0].id, 'bench-legacy-run')
+}))
+
+test('evaluation workbench can switch to ad-hoc model scope without evaluation set filtering', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'model-baseline-standard-v1',
+    version: 1,
+    name: 'Model Baseline Standard',
+    target_type: 'model',
+    roles: ['seer'],
+    game_count: 30,
+    max_days: 5,
+    evaluation_set_id: 'model-baseline-standard-v1@v1'
+  }
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/models/leaderboard?evaluation_set_id=model-baseline-standard-v1%40v1') return { entries: [] }
+    if (path === '/models/leaderboard') {
+      return {
+        entries: [{
+          scope: 'model',
+          model_id: 'qwen-max',
+          model_config_hash: 'runtime-hash',
+          strength_score: 0.81,
+          avg_role_score: 0.81,
+          target_side_win_rate: 0.64,
+          rankable: true
+        }]
+      }
+    }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark/plan') return { budget: {}, estimates: {}, warnings: [] }
+    if (path.startsWith('/benchmark/diagnostics')) return { diagnostics: [], summary: {} }
+    if (path.startsWith('/benchmark/snapshots')) return { snapshots: [] }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedBenchmarkId.value, 'model-baseline-standard-v1')
+  assert.equal(workbench.modelLeaderboardRows.value.length, 0)
+
+  workbench.selectLegacyBenchmarkScope('model')
+  await flushPromises(20)
+
+  assert.equal(workbench.selectedBenchmarkId.value, '')
+  assert.equal(workbench.selectedBenchmarkIsModelSuite.value, true)
+  assert.equal(workbench.selectedBenchmarkSuiteLabel.value, '临时模型评测')
+  assert.equal(workbench.modelLeaderboardRows.value[0].model_id, 'qwen-max')
+  assert.equal(requests.some((item) => item.path === '/models/leaderboard'), true)
 }))
 
 test('evaluation workbench sends selected role target version for role-version benchmark suite', () => withWindow(async () => {
@@ -4215,6 +4742,223 @@ test('evaluation workbench loads benchmark batch detail games and diagnostics', 
   )
 }))
 
+test('evaluation workbench loads aggregate benchmark diagnostics without selected run', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  }
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard?evaluation_set_id=role-baseline-quick-v1%40v1') return { entries: [] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/benchmark/snapshots?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&benchmark_id=role-baseline-quick-v1&target_role=seer&limit=50') {
+      return { items: [] }
+    }
+    if (path === '/benchmark/diagnostics?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&benchmark_id=role-baseline-quick-v1&target_role=seer&limit=200&offset=0') {
+      return {
+        kind: 'benchmark_diagnostics',
+        schema_version: 1,
+        scope: 'role_version',
+        evaluation_set_id: 'role-baseline-quick-v1@v1',
+        benchmark_id: 'role-baseline-quick-v1',
+        target_role: 'seer',
+        diagnostics: [
+          {
+            batch_id: 'bench-a',
+            origin: 'result',
+            kind: 'rankable_failed',
+            level: 'warning',
+            stage: 'leaderboard.rankable',
+            message: 'completed_games 1 < required 2',
+            target_role: 'seer',
+            result_batch_id: 'bench-a_seer'
+          },
+          {
+            batch_id: 'bench-b',
+            origin: 'game',
+            kind: 'game_failure',
+            level: 'error',
+            stage: 'game.run',
+            message: 'game timeout',
+            target_role: 'seer',
+            result_batch_id: 'bench-b_seer',
+            game_id: 'bench-b-game-001',
+            seed: 260600
+          }
+        ],
+        affected_runs: [
+          {
+            batch_id: 'bench-a',
+            status: 'completed',
+            benchmark_id: 'role-baseline-quick-v1',
+            evaluation_set_id: 'role-baseline-quick-v1@v1',
+            target_type: 'role_version',
+            roles: ['seer'],
+            diagnostic_count: 1,
+            diagnostic_summary: { total: 1, by_kind: { rankable_failed: 1 } }
+          },
+          {
+            batch_id: 'bench-b',
+            status: 'failed',
+            benchmark_id: 'role-baseline-quick-v1',
+            evaluation_set_id: 'role-baseline-quick-v1@v1',
+            target_type: 'role_version',
+            roles: ['seer'],
+            diagnostic_count: 1,
+            diagnostic_summary: { total: 1, by_kind: { game_failure: 1 } }
+          }
+        ],
+        affected_games: [
+          {
+            batch_id: 'bench-b',
+            result_batch_id: 'bench-b_seer',
+            target_role: 'seer',
+            game_id: 'bench-b-game-001',
+            status: 'timeout',
+            seed: 260600,
+            diagnostic_count: 1,
+            replay_available: true,
+            history_game_id: 'bench-b-game-001'
+          }
+        ],
+        summary: {
+          total: 2,
+          by_kind: { game_failure: 1, rankable_failed: 1 },
+          by_level: { error: 1, warning: 1 },
+          by_origin: { game: 1, result: 1 },
+          affected_run_count: 2,
+          affected_game_count: 1
+        },
+        pagination: { total: 2, offset: 0, limit: 200, returned: 2, has_more: false }
+      }
+    }
+    if (path.startsWith('/roles/overview?')) throw new Error('overview unsupported')
+    if (path.startsWith('/benchmark/plan')) return { budget: {}, estimates: {}, warnings: [] }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.selectedBenchmarkBatchId.value, '')
+  assert.equal(workbench.benchmarkDiagnosticAggregateDiagnostics.value.length, 2)
+  assert.equal(workbench.benchmarkDiagnosticAggregateDiagnostics.value[1].kindLabel, '失败局')
+  assert.equal(workbench.benchmarkDiagnosticAggregateSummary.value.affected_run_count, 2)
+  assert.deepEqual(workbench.benchmarkDiagnosticAggregateRuns.value.map((run) => run.id), ['bench-a', 'bench-b'])
+  assert.equal(workbench.benchmarkDiagnosticAggregateGames.value[0].replayHash, '#logs?game_id=bench-b-game-001')
+  assert.equal(
+    requests.includes('/benchmark/diagnostics?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&benchmark_id=role-baseline-quick-v1&target_role=seer&limit=200&offset=0'),
+    true
+  )
+}))
+
+test('evaluation workbench loads server leaderboard compare rows', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'role-baseline-quick-v1',
+    version: 1,
+    name: 'Role Baseline Quick',
+    target_type: 'role_version',
+    roles: ['seer'],
+    game_count: 3,
+    max_days: 5,
+    seed_set_id: 'role-baseline-quick-202606',
+    evaluation_set_id: 'role-baseline-quick-v1@v1'
+  }
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/leaderboard?evaluation_set_id=role-baseline-quick-v1%40v1') {
+      return {
+        entries: [
+          {
+            scope: 'role_version',
+            subject_id: 'seer_baseline',
+            target_role: 'seer',
+            target_version_id: 'seer_baseline',
+            evaluation_set_id: 'role-baseline-quick-v1@v1',
+            avg_role_score: 0.6,
+            target_side_win_rate: 0.55,
+            rankable: true,
+            is_baseline: true
+          }
+        ]
+      }
+    }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/evolution-runs') return { runs: [], batches: [] }
+    if (path === '/leaderboards/compare?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&target_role=seer&limit=100') {
+      return {
+        kind: 'benchmark_leaderboard_compare',
+        schema_version: 1,
+        scope: 'role_version',
+        evaluation_set_id: 'role-baseline-quick-v1@v1',
+        target_role: 'seer',
+        baseline_subject_id: 'seer_baseline',
+        baseline: { subject_id: 'seer_baseline' },
+        rows: [
+          {
+            scope: 'role_version',
+            subject_id: 'seer_baseline',
+            target_role: 'seer',
+            target_version_id: 'seer_baseline',
+            evaluation_set_id: 'role-baseline-quick-v1@v1',
+            avg_role_score: 0.6,
+            target_side_win_rate: 0.55,
+            rankable: true,
+            is_reference: true,
+            change: 'reference',
+            delta_vs_baseline: { score: 0, target_side_win_rate: 0 }
+          },
+          {
+            scope: 'role_version',
+            subject_id: 'seer_candidate',
+            target_role: 'seer',
+            target_version_id: 'seer_candidate',
+            evaluation_set_id: 'role-baseline-quick-v1@v1',
+            avg_role_score: 0.66,
+            target_side_win_rate: 0.58,
+            rankable: true,
+            change: 'improvement',
+            delta_vs_baseline: { score: 0.06, target_side_win_rate: 0.03 }
+          }
+        ],
+        summary: { row_count: 2, improvement_count: 1, reference_count: 1 }
+      }
+    }
+    if (path === '/benchmark/snapshots?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&benchmark_id=role-baseline-quick-v1&target_role=seer&limit=50') return { items: [] }
+    if (path === '/benchmark/diagnostics?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&benchmark_id=role-baseline-quick-v1&target_role=seer&limit=200&offset=0') {
+      return { diagnostics: [], affected_runs: [], affected_games: [], summary: {}, pagination: { total: 0, offset: 0, limit: 200, returned: 0, has_more: false } }
+    }
+    if (path.startsWith('/roles/overview?')) throw new Error('overview unsupported')
+    if (path === '/benchmark/plan') return { budget: {}, estimates: {}, warnings: [] }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.benchmarkLeaderboardCompare.value.kind, 'benchmark_leaderboard_compare')
+  assert.equal(workbench.benchmarkLeaderboardCompare.value.rows[1].change, 'improvement')
+  assert.equal(workbench.benchmarkLeaderboardCompare.value.rows[1].delta_vs_baseline.score, 0.06)
+  assert.equal(
+    requests.includes('/leaderboards/compare?scope=role_version&evaluation_set_id=role-baseline-quick-v1%40v1&target_role=seer&limit=100'),
+    true
+  )
+}))
+
 test('evaluation workbench composes reportable benchmark run data from detail games and diagnostics', () => withWindow(async () => {
   const requests = []
   const batch = {
@@ -4325,6 +5069,68 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
       by_level: { error: 1, warning: 1 }
     }
   }
+  const reportResponse = {
+    kind: 'benchmark_run_report',
+    schema_version: 1,
+    generated_at: '2026-06-07T12:09:00Z',
+    run_id: 'bench-report',
+    batch_id: 'bench-report',
+    status: 'completed',
+    evaluation_set_id: 'role-baseline-standard-v1@v2',
+    seed_set_id: 'role-standard-202606',
+    benchmark_config_hash: 'sha256:reportable',
+    suite: {
+      id: 'role-baseline-standard-v1',
+      version: 2,
+      target_type: 'role_version',
+      evaluation_set_id: 'role-baseline-standard-v1@v2',
+      seed_set_id: 'role-standard-202606',
+      config_hash: 'sha256:reportable'
+    },
+    subject: {
+      type: 'role_version',
+      target_role: 'witch',
+      target_version_id: 'witch_candidate_v9'
+    },
+    summary: {
+      result_count: 1,
+      problem_game_count: 1,
+      diagnostic_count: 2,
+      game_summary: detailResponse.game_summary,
+      diagnostic_summary: diagnosticsResponse.summary
+    },
+    results: detailResponse.results,
+    gates: [{
+      result_batch_id: 'bench-report_witch',
+      target_role: 'witch',
+      rankable: false,
+      reason: 'leaderboard gate failed: errored games exceed threshold'
+    }],
+    problem_games: problemGames,
+    diagnostics: diagnosticsResponse.diagnostics,
+    tags: [],
+    reproducibility: {
+      run_id: 'bench-report',
+      batch_id: 'bench-report',
+      benchmark_id: 'role-baseline-standard-v1',
+      evaluation_set_id: 'role-baseline-standard-v1@v2',
+      seed_set_id: 'role-standard-202606',
+      benchmark_config_hash: 'sha256:reportable',
+      roles: ['witch'],
+      target_type: 'role_version'
+    },
+    leaderboard: {
+      rankable_count: 0,
+      unrankable_count: 1,
+      rows: [{
+        result_batch_id: 'bench-report_witch',
+        target_role: 'witch',
+        rankable: false,
+        rankable_reason: 'leaderboard gate failed: errored games exceed threshold'
+      }]
+    }
+  }
+  let reportShouldFail = false
   const apiFetch = async (path) => {
     requests.push({ path })
     if (path === '/benchmarks') return { items: [] }
@@ -4350,6 +5156,10 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
       }
     }
     if (path === '/benchmark/batch/bench-report/diagnostics') return diagnosticsResponse
+    if (path === '/benchmark/batch/bench-report/report' || path === '/benchmark/batch/bench-report/report?format=json') {
+      if (reportShouldFail) throw new Error('canonical report unavailable')
+      return reportResponse
+    }
     throw new Error(`unexpected ${path}`)
   }
 
@@ -4361,6 +5171,24 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
   assert.equal(workbench.selectedBenchmarkBatchRun.value.id, 'bench-report')
   assert.equal(workbench.selectedBenchmarkBatchRun.value.benchmarkLabel, 'role-baseline-standard-v1@v2')
   assert.equal(workbench.selectedBenchmarkBatchRun.value.evaluationSetId, 'role-baseline-standard-v1@v2')
+  assert.equal(requests.some((item) => item.path === '/benchmark/batch/bench-report/report'), true)
+  assert.equal(workbench.benchmarkBatchReport.value.kind, 'benchmark_run_report')
+  assert.equal(workbench.benchmarkBatchReport.value.run_id, 'bench-report')
+  assert.equal(workbench.benchmarkBatchReport.value.evaluation_set_id, 'role-baseline-standard-v1@v2')
+  assert.equal(workbench.benchmarkBatchReport.value.seed_set_id, 'role-standard-202606')
+  assert.equal(workbench.benchmarkBatchReport.value.benchmark_config_hash, 'sha256:reportable')
+  assert.equal(workbench.benchmarkBatchReport.value.problem_games[0].game_id, 'bench-report-game-019')
+  assert.equal(workbench.benchmarkBatchReport.value.diagnostics[1].stage, 'game.persist')
+  assert.deepEqual(workbench.benchmarkBatchReport.value.reproducibility, {
+    run_id: 'bench-report',
+    batch_id: 'bench-report',
+    benchmark_id: 'role-baseline-standard-v1',
+    evaluation_set_id: 'role-baseline-standard-v1@v2',
+    seed_set_id: 'role-standard-202606',
+    benchmark_config_hash: 'sha256:reportable',
+    roles: ['witch'],
+    target_type: 'role_version'
+  })
 
   const reportData = {
     selectedRun: workbench.selectedBenchmarkBatchRun.value,
@@ -4445,6 +5273,465 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
     requests.some((item) => item.path === '/benchmark/batch/bench-report/games?limit=20&offset=0'),
     true
   )
+
+  reportShouldFail = true
+  const loadedWithReportFailure = await workbench.loadBenchmarkBatchDetail('bench-report')
+  assert.equal(loadedWithReportFailure, true)
+  assert.equal(Boolean(workbench.benchmarkBatchReportError.value), true)
+  assert.equal(workbench.benchmarkBatchDetail.value.batch_id, 'bench-report')
+  assert.equal(workbench.benchmarkBatchDetail.value.benchmark.config_hash, 'sha256:reportable')
+  assert.equal(workbench.benchmarkBatchGames.value[0].status, 'failed')
+  assert.equal(workbench.benchmarkBatchDiagnostics.value[0].kind, 'leaderboard_gate_failed')
+}))
+
+test('evaluation workbench loads report history and keeps canonical report selectable', () => withWindow(async () => {
+  const createHarness = ({ historyShouldFail = false } = {}) => {
+    const requests = []
+    const suite = {
+      id: 'role-baseline-standard-v1',
+      version: 2,
+      name: 'Role Baseline Standard',
+      target_type: 'role_version',
+      roles: ['seer'],
+      game_count: 20,
+      max_days: 5,
+      evaluation_set_id: 'role-baseline-standard-v1@v2',
+      seed_set_id: 'role-standard-202606',
+      config_hash: 'sha256:history-suite'
+    }
+    const batch = {
+      kind: 'benchmark_batch',
+      batch_id: 'bench-history',
+      roles: ['seer'],
+      status: 'completed',
+      started_at: '2026-06-08T10:00:00Z',
+      finished_at: '2026-06-08T10:08:00Z',
+      benchmark: {
+        id: suite.id,
+        version: suite.version,
+        target_type: 'role_version',
+        evaluation_set_id: suite.evaluation_set_id,
+        seed_set_id: suite.seed_set_id,
+        config_hash: suite.config_hash
+      },
+      result: {
+        result_batch_id: 'bench-history_seer',
+        target_role: 'seer',
+        target_version_id: 'seer_candidate_history',
+        completed: 19,
+        errored: 1,
+        rankable: true,
+        score_summary: { avg_role_score: 0.63, target_side_win_rate: 0.56 }
+      }
+    }
+    const detailResponse = {
+      kind: 'benchmark_batch_detail',
+      schema_version: 1,
+      batch_id: 'bench-history',
+      status: 'completed',
+      benchmark: batch.benchmark,
+      target_type: 'role_version',
+      result_count: 1,
+      results: [{
+        result_batch_id: 'bench-history_seer',
+        target_role: 'seer',
+        target_version_id: 'seer_candidate_history',
+        completed: 19,
+        errored: 1,
+        attempted_game_count: 20,
+        rankable: true,
+        score_summary: { avg_role_score: 0.63, target_side_win_rate: 0.56 },
+        diagnostic_count: 1
+      }],
+      game_summary: {
+        total: 20,
+        completed: 19,
+        failed: 1,
+        timeout: 0,
+        abnormal: 0,
+        by_status: { completed: 19, failed: 1 }
+      },
+      diagnostic_summary: {
+        total: 1,
+        by_kind: { game_failure: 1 },
+        by_level: { warning: 1 },
+        by_origin: { game: 1 }
+      }
+    }
+    const problemGames = [{
+      result_batch_id: 'bench-history_seer',
+      target_role: 'seer',
+      game_id: 'bench-history-game-020',
+      status: 'failed',
+      seed: 260920,
+      event_count: 8,
+      decision_count: 3,
+      diagnostic_count: 1,
+      replay_available: true
+    }]
+    const diagnosticsResponse = {
+      kind: 'benchmark_batch_diagnostics',
+      schema_version: 1,
+      batch_id: 'bench-history',
+      diagnostics: [{
+        origin: 'game',
+        kind: 'game_failure',
+        level: 'warning',
+        stage: 'game.persist',
+        message: 'archive persisted after retry',
+        target_role: 'seer',
+        result_batch_id: 'bench-history_seer',
+        game_id: 'bench-history-game-020',
+        seed: 260920
+      }],
+      summary: detailResponse.diagnostic_summary
+    }
+    const reportPayload = {
+      kind: 'benchmark_run_report',
+      schema_version: 1,
+      generated_at: '2026-06-08T10:09:00Z',
+      run_id: 'bench-history',
+      batch_id: 'bench-history',
+      status: 'completed',
+      evaluation_set_id: suite.evaluation_set_id,
+      seed_set_id: suite.seed_set_id,
+      benchmark_config_hash: suite.config_hash,
+      suite: {
+        id: suite.id,
+        version: suite.version,
+        target_type: 'role_version',
+        evaluation_set_id: suite.evaluation_set_id,
+        seed_set_id: suite.seed_set_id,
+        config_hash: suite.config_hash
+      },
+      subject: {
+        type: 'role_version',
+        target_role: 'seer',
+        target_version_id: 'seer_candidate_history'
+      },
+      summary: {
+        result_count: 1,
+        problem_game_count: 1,
+        diagnostic_count: 1,
+        game_summary: detailResponse.game_summary,
+        diagnostic_summary: diagnosticsResponse.summary
+      },
+      results: detailResponse.results,
+      gates: [{
+        result_batch_id: 'bench-history_seer',
+        target_role: 'seer',
+        rankable: true,
+        reason: ''
+      }],
+      problem_games: problemGames,
+      diagnostics: diagnosticsResponse.diagnostics,
+      tags: [],
+      reproducibility: {
+        run_id: 'bench-history',
+        batch_id: 'bench-history',
+        benchmark_id: suite.id,
+        evaluation_set_id: suite.evaluation_set_id,
+        seed_set_id: suite.seed_set_id,
+        benchmark_config_hash: suite.config_hash,
+        roles: ['seer'],
+        target_type: 'role_version'
+      },
+      leaderboard: {
+        rankable_count: 1,
+        unrankable_count: 0,
+        rows: [{
+          result_batch_id: 'bench-history_seer',
+          target_role: 'seer',
+          rankable: true,
+          rankable_reason: ''
+        }]
+      }
+    }
+    const reportSummary = {
+      kind: 'benchmark_run_report_summary',
+      schema_version: 1,
+      report_id: 'report-bench-history',
+      run_id: 'bench-history',
+      batch_id: 'bench-history',
+      status: 'completed',
+      suite: reportPayload.suite,
+      subject: reportPayload.subject,
+      summary: reportPayload.summary,
+      evaluation_set_id: suite.evaluation_set_id,
+      seed_set_id: suite.seed_set_id,
+      benchmark_config_hash: suite.config_hash,
+      problem_game_count: 1,
+      diagnostic_count: 1,
+      rankable_count: 1,
+      unrankable_count: 0,
+      generated_at: '2026-06-08T10:09:00Z'
+    }
+    const apiFetch = async (path) => {
+      requests.push({ path })
+      if (path === '/benchmarks') return { items: [suite] }
+      if (path === '/roles') return { roles: ['seer'] }
+      if (path === '/roles/seer/leaderboard?evaluation_set_id=role-baseline-standard-v1%40v2') return { entries: [] }
+      if (path === '/roles/seer/versions') return { versions: [] }
+      if (path === '/evolution-runs') return { runs: [], batches: [batch] }
+      if (path === '/benchmark/plan') return { budget: {}, estimates: {}, warnings: [] }
+      if (path.startsWith('/leaderboards/compare?')) {
+        return { kind: 'benchmark_leaderboard_compare', schema_version: 1, rows: [], summary: { row_count: 0 } }
+      }
+      if (path.startsWith('/benchmark/diagnostics?')) {
+        return {
+          kind: 'benchmark_diagnostics',
+          schema_version: 1,
+          diagnostics: [],
+          affected_runs: [],
+          affected_games: [],
+          summary: {},
+          pagination: { total: 0, offset: 0, limit: 200, returned: 0, has_more: false }
+        }
+      }
+      if (path.startsWith('/benchmark/snapshots?')) {
+        return { kind: 'benchmark_snapshots', schema_version: 1, items: [], pagination: { total: 0, returned: 0 } }
+      }
+      if (path.startsWith('/benchmark/reports?')) {
+        if (historyShouldFail) throw new Error('report history unavailable')
+        return {
+          kind: 'benchmark_run_reports',
+          schema_version: 1,
+          items: [reportSummary],
+          pagination: { total: 1, offset: 0, limit: 50, returned: 1, has_more: false }
+        }
+      }
+      if (path === '/benchmark/batch/bench-history') return detailResponse
+      if (path === '/benchmark/batch/bench-history/games?status=failed%2Ctimeout%2Cabnormal&limit=20&offset=0') {
+        return {
+          kind: 'benchmark_batch_games',
+          schema_version: 1,
+          batch_id: 'bench-history',
+          games: problemGames,
+          pagination: { total: 1, offset: 0, limit: 20, returned: 1, has_more: false }
+        }
+      }
+      if (path === '/benchmark/batch/bench-history/diagnostics') return diagnosticsResponse
+      if (path === '/benchmark/batch/bench-history/report') return reportPayload
+      throw new Error(`unexpected ${path}`)
+    }
+
+    return { workbench: useEvaluationWorkbench({ installLifecycle: false, apiFetch }), requests }
+  }
+
+  const success = createHarness()
+  await success.workbench.refreshAll()
+  assert.equal(typeof success.workbench.loadBenchmarkReportHistory, 'function')
+  await success.workbench.loadBenchmarkReportHistory()
+
+  const historyRequest = success.requests.find((item) => item.path.startsWith('/benchmark/reports?'))
+  assert.equal(Boolean(historyRequest), true)
+  const historyQuery = new URLSearchParams(historyRequest.path.split('?')[1])
+  assert.equal(historyQuery.get('scope'), 'role_version')
+  assert.equal(historyQuery.get('evaluation_set_id'), 'role-baseline-standard-v1@v2')
+  assert.equal(historyQuery.get('benchmark_id'), 'role-baseline-standard-v1')
+  assert.equal(historyQuery.get('target_role'), 'seer')
+  assert.equal(historyQuery.has('limit'), true)
+  assert.equal(historyQuery.get('offset'), '0')
+  assert.equal(success.workbench.benchmarkReportHistory.value[0].kind, 'benchmark_run_report_summary')
+  assert.equal(success.workbench.benchmarkReportHistory.value[0].report_id, 'report-bench-history')
+  assert.equal(success.workbench.benchmarkReportHistory.value[0].run_id, 'bench-history')
+  assert.equal(success.workbench.benchmarkReportHistory.value[0].evaluation_set_id, 'role-baseline-standard-v1@v2')
+  assert.equal(success.workbench.benchmarkReportHistory.value[0].problem_game_count, 1)
+  assert.equal(success.workbench.benchmarkReportHistory.value[0].diagnostic_count, 1)
+  assert.equal(success.workbench.benchmarkReportHistory.value[0].rankable_count, 1)
+  assert.equal(success.workbench.benchmarkReportHistoryPagination.value.total, 1)
+  assert.equal(success.workbench.benchmarkReportHistoryError.value, '')
+  assert.equal(success.workbench.benchmarkReportHistoryLoading.value, false)
+
+  const loaded = await success.workbench.loadBenchmarkBatchDetail(success.workbench.benchmarkReportHistory.value[0].batch_id)
+  assert.equal(loaded, true)
+  assert.equal(success.workbench.selectedBenchmarkBatchRun.value.id, 'bench-history')
+  assert.equal(success.requests.some((item) => item.path === '/benchmark/batch/bench-history/report'), true)
+  assert.equal(success.workbench.benchmarkBatchReport.value.kind, 'benchmark_run_report')
+  assert.equal(success.workbench.benchmarkBatchReport.value.run_id, 'bench-history')
+  assert.equal(success.workbench.benchmarkBatchReport.value.evaluation_set_id, 'role-baseline-standard-v1@v2')
+
+  const failure = createHarness({ historyShouldFail: true })
+  await failure.workbench.refreshAll()
+  assert.equal(typeof failure.workbench.loadBenchmarkReportHistory, 'function')
+  await failure.workbench.loadBenchmarkReportHistory()
+  assert.equal(failure.workbench.benchmarkSuites.value[0].id, 'role-baseline-standard-v1')
+  assert.equal(failure.workbench.batchRunRows.value[0].id, 'bench-history')
+  assert.equal(failure.workbench.benchmarkDiagnosticAggregateDiagnostics.value.length, 0)
+  assert.equal(Boolean(failure.workbench.benchmarkReportHistoryError.value), true)
+  assert.equal(failure.workbench.benchmarkReportHistoryLoading.value, false)
+  assert.equal(failure.workbench.benchmarkReportHistory.value.length, 0)
+}))
+
+test('evaluation workbench refreshAll loads benchmark views without blocking primary data', () => withWindow(async ({ localStorage }) => {
+  const createHarness = ({ viewsShouldFail = false, currentViewShouldFail = false } = {}) => {
+    const requests = []
+    const suite = {
+      id: 'role-baseline-quick-v1',
+      version: 1,
+      label: 'Role Baseline Quick v1',
+      name: 'Role Baseline Quick',
+      target_type: 'role_version',
+      roles: ['seer'],
+      game_count: 3,
+      max_days: 5,
+      seed_set_id: 'role-baseline-quick-202606',
+      evaluation_set_id: 'role-baseline-quick-v1@v1',
+      config_hash: 'sha256:view-refresh'
+    }
+    const viewKey = 'benchmark-comparison-view:role_version:role-baseline-quick-v1:role-baseline-quick-v1@v1:seer'
+    const savedView = {
+      kind: 'benchmark_saved_view',
+      schema_version: 1,
+      view_key: `${viewKey}:release`,
+      name: '发布复核视图',
+      scope: 'role_version',
+      benchmark_id: suite.id,
+      evaluation_set_id: suite.evaluation_set_id,
+      target_role: 'seer',
+      view_config: { rank_filter: 'unrankable', columns: ['games'], search: 'gate' }
+    }
+    const currentView = {
+      ...savedView,
+      view_key: viewKey,
+      name: '当前榜单视图',
+      view_config: {
+        rank_filter: 'rankable',
+        columns: ['score', 'winRate'],
+        search: 'seer_candidate',
+        density: 'compact'
+      }
+    }
+    const leaderboardRows = [{
+      scope: 'role_version',
+      subject_id: 'seer_candidate_v1',
+      target_role: 'seer',
+      target_version_id: 'seer_candidate_v1',
+      target_role_role_weighted_score: 0.72,
+      target_side_win_rate: 0.6,
+      game_count: 30,
+      rankable: true
+    }]
+    const clone = (value) => JSON.parse(JSON.stringify(value))
+    const apiFetch = async (path, options = {}) => {
+      const method = options.method || 'GET'
+      const body = options.body ? JSON.parse(options.body) : null
+      requests.push({ path, method, body })
+      if (path === '/benchmarks') return { items: [suite] }
+      if (path === '/roles/overview?evaluation_set_id=role-baseline-quick-v1%40v1') {
+        return {
+          roles: ['seer'],
+          versions: { seer: [{ version_id: 'seer_candidate_v1', role: 'seer', source: 'candidate' }] },
+          leaderboards: { seer: { entries: clone(leaderboardRows) } }
+        }
+      }
+      if (path === '/benchmark/plan') {
+        return {
+          benchmark_id: suite.id,
+          target_type: 'role_version',
+          evaluation_set_id: suite.evaluation_set_id,
+          seed_set_id: suite.seed_set_id,
+          benchmark_config_hash: suite.config_hash,
+          total_games: 3,
+          budget: { estimated_units: 9, limit_units: 20, exceeded: false, status: 'ok' }
+        }
+      }
+      if (path.startsWith('/leaderboards/compare?')) {
+        return {
+          kind: 'benchmark_leaderboard_compare',
+          schema_version: 1,
+          rows: clone(leaderboardRows),
+          summary: { row_count: leaderboardRows.length }
+        }
+      }
+      if (path.startsWith('/benchmark/views?')) {
+        if (viewsShouldFail) throw new Error('saved views unavailable')
+        return { items: [savedView] }
+      }
+      if (path === `/benchmark/views/${encodeURIComponent(viewKey)}`) {
+        if (currentViewShouldFail) throw new Error('current view unavailable')
+        return currentView
+      }
+      if (path === '/evolution-runs') {
+        return {
+          runs: [],
+          batches: [{
+            kind: 'benchmark_batch',
+            batch_id: 'bench-view-refresh',
+            status: 'completed',
+            roles: ['seer'],
+            benchmark: {
+              id: suite.id,
+              version: 1,
+              target_type: 'role_version',
+              evaluation_set_id: suite.evaluation_set_id
+            }
+          }]
+        }
+      }
+      if (path.startsWith('/benchmark/reports?')) {
+        return {
+          kind: 'benchmark_run_reports',
+          items: [],
+          summary: {},
+          pagination: { total: 0, offset: 0, limit: 50, returned: 0, has_more: false }
+        }
+      }
+      if (path.startsWith('/benchmark/diagnostics?')) {
+        return {
+          kind: 'benchmark_diagnostics',
+          diagnostics: [],
+          affected_runs: [],
+          affected_games: [],
+          summary: {},
+          pagination: { total: 0, offset: 0, limit: 200, returned: 0, has_more: false }
+        }
+      }
+      if (path.startsWith('/benchmark/snapshots?')) {
+        return {
+          kind: 'benchmark_snapshots',
+          schema_version: 1,
+          items: [],
+          pagination: { total: 0, returned: 0 }
+        }
+      }
+      throw new Error(`unexpected ${method} ${path}`)
+    }
+    return { workbench: useEvaluationWorkbench({ installLifecycle: false, apiFetch }), requests, viewKey }
+  }
+
+  const success = createHarness()
+  const refreshed = await success.workbench.refreshAll()
+  assert.equal(refreshed, true)
+  assert.equal(success.workbench.benchmarkSuites.value[0].id, 'role-baseline-quick-v1')
+  assert.equal(success.workbench.roleLeaderboardRows.value[0].version_id, 'seer_candidate_v1')
+  assert.equal(success.workbench.batchRunRows.value[0].id, 'bench-view-refresh')
+  assert.equal(success.workbench.benchmarkSavedViews.value[0].view_key, `${success.viewKey}:release`)
+  assert.equal(success.workbench.selectedBenchmarkViewKey.value, success.viewKey)
+  assert.equal(success.workbench.benchmarkViewPreferences.value.name, '当前榜单视图')
+  assert.equal(success.workbench.activeBenchmarkViewConfig.value.rank_filter, 'rankable')
+  assert.deepEqual(success.workbench.activeBenchmarkViewConfig.value.columns, ['score', 'winRate'])
+  assert.equal(success.workbench.activeBenchmarkViewConfig.value.search, 'seer_candidate')
+  assert.equal(success.workbench.activeBenchmarkViewConfig.value.density, 'compact')
+  assert.equal(success.workbench.benchmarkViewDirty.value, false)
+  assert.equal(success.requests.some((item) => item.path.startsWith('/benchmark/views?')), true)
+  assert.equal(success.requests.some((item) => item.path === `/benchmark/views/${encodeURIComponent(success.viewKey)}`), true)
+
+  localStorage.clear()
+  const failure = createHarness({ viewsShouldFail: true, currentViewShouldFail: true })
+  const refreshedWithViewFailure = await failure.workbench.refreshAll()
+  assert.equal(refreshedWithViewFailure, true)
+  assert.equal(failure.workbench.error.value, '')
+  assert.equal(failure.workbench.benchmarkSuites.value[0].id, 'role-baseline-quick-v1')
+  assert.equal(failure.workbench.roleLeaderboardRows.value[0].version_id, 'seer_candidate_v1')
+  assert.equal(failure.workbench.batchRunRows.value[0].id, 'bench-view-refresh')
+  assert.equal(failure.workbench.benchmarkPlan.value.total_games, 3)
+  assert.equal(failure.workbench.benchmarkSavedViews.value.length, 0)
+  assert.equal(Boolean(failure.workbench.benchmarkSavedViewsError.value), true)
+  assert.equal(failure.workbench.selectedBenchmarkViewKey.value, failure.viewKey)
+  assert.equal(failure.workbench.benchmarkViewPreferences.value.name, '默认视图')
+  assert.equal(failure.workbench.activeBenchmarkViewConfig.value.rank_filter, 'all')
+  assert.deepEqual(failure.workbench.activeBenchmarkViewConfig.value.columns, [])
 }))
 
 test('evaluation workbench creates benchmark snapshots from frozen leaderboard rows', () => withWindow(async () => {
@@ -4520,6 +5807,9 @@ test('evaluation workbench creates benchmark snapshots from frozen leaderboard r
     }
     if (path === '/benchmark/snapshots' && method === 'POST') {
       const frozenRows = clone(liveLeaderboardRows)
+      const rankableCount = frozenRows.filter((row) => row.rankable !== false).length
+      const linkedRunIds = ['bench-snapshot-audit-run']
+      const linkedReportIds = ['report-bench-snapshot-audit-run']
       const snapshot = {
         kind: 'benchmark_leaderboard_snapshot',
         snapshot_id: 'snap-release-1',
@@ -4536,9 +5826,18 @@ test('evaluation workbench creates benchmark snapshots from frozen leaderboard r
         view_config: body.view_config,
         content_hash: 'sha256:frozen-v1',
         row_count: frozenRows.length,
+        rankable_count: rankableCount,
+        unrankable_count: frozenRows.length - rankableCount,
+        linked_run_ids: linkedRunIds,
+        linked_report_ids: linkedReportIds,
+        source_run_count: linkedRunIds.length,
+        source_report_count: linkedReportIds.length,
         summary: {
           row_count: frozenRows.length,
-          rankable_count: frozenRows.filter((row) => row.rankable).length
+          rankable_count: rankableCount,
+          unrankable_count: frozenRows.length - rankableCount,
+          source_run_count: linkedRunIds.length,
+          source_report_count: linkedReportIds.length
         },
         rows: frozenRows,
         created_at: '2026-06-09T10:00:00Z'
@@ -4565,6 +5864,15 @@ test('evaluation workbench creates benchmark snapshots from frozen leaderboard r
   assert.equal(listQuery.get('evaluation_set_id'), 'role-baseline-quick-v1@v1')
   assert.equal(listQuery.get('target_role'), 'seer')
 
+  workbench.setBenchmarkViewPreference({
+    name: '发布复核视图',
+    rank_filter: 'rankable',
+    columns: ['score', 'winRate', 'rankable'],
+    sort: 'score_desc',
+    search: 'seer_candidate',
+    density: 'compact'
+  })
+
   await workbench.createBenchmarkSnapshot({
     title: 'Release gate 2026-06-09',
     release_notes: 'candidate v1 accepted'
@@ -4581,11 +5889,25 @@ test('evaluation workbench creates benchmark snapshots from frozen leaderboard r
   assert.equal(createRequest.body.seed_set_id, 'role-baseline-quick-202606')
   assert.equal(createRequest.body.benchmark_config_hash, 'sha256:snapshot-suite')
   assert.equal(createRequest.body.target_role, 'seer')
+  assert.equal(createRequest.body.view_config.view_key, workbench.currentBenchmarkViewKey.value)
+  assert.equal(createRequest.body.view_config.view_name, '发布复核视图')
+  assert.equal(createRequest.body.view_config.rank_filter, 'rankable')
+  assert.equal(createRequest.body.view_config.search, 'seer_candidate')
+  assert.equal(createRequest.body.view_config.density, 'compact')
+  assert.deepEqual(createRequest.body.view_config.columns, ['score', 'winRate', 'rankable'])
   assert.deepEqual(createRequest.body.source_filter, {
     rankable: 'all',
     target_role: 'seer',
     evaluation_set_id: 'role-baseline-quick-v1@v1'
   })
+  assert.deepEqual(workbench.benchmarkSnapshots.value[0].linked_run_ids, ['bench-snapshot-audit-run'])
+  assert.deepEqual(workbench.benchmarkSnapshots.value[0].linked_report_ids, ['report-bench-snapshot-audit-run'])
+  assert.equal(workbench.benchmarkSnapshots.value[0].source_run_count, 1)
+  assert.equal(workbench.benchmarkSnapshots.value[0].source_report_count, 1)
+  assert.equal(workbench.benchmarkSnapshots.value[0].rankable_count, 1)
+  assert.equal(workbench.benchmarkSnapshots.value[0].unrankable_count, 0)
+  assert.equal(workbench.benchmarkSnapshots.value[0].row_count, 1)
+  assert.equal(workbench.benchmarkSnapshots.value[0].content_hash, 'sha256:frozen-v1')
 
   liveLeaderboardRows = [{
     scope: 'role_version',
@@ -4605,7 +5927,258 @@ test('evaluation workbench creates benchmark snapshots from frozen leaderboard r
   assert.equal(workbench.benchmarkSnapshotDetail.value.snapshot_id, 'snap-release-1')
   assert.equal(workbench.benchmarkSnapshotDetail.value.rows[0].target_version_id, 'seer_candidate_v1')
   assert.equal(workbench.benchmarkSnapshotDetail.value.rows[0].target_role_role_weighted_score, 0.72)
+  assert.deepEqual(workbench.benchmarkSnapshotDetail.value.linked_run_ids, ['bench-snapshot-audit-run'])
+  assert.deepEqual(workbench.benchmarkSnapshotDetail.value.linked_report_ids, ['report-bench-snapshot-audit-run'])
+  assert.equal(workbench.benchmarkSnapshotDetail.value.source_run_count, 1)
+  assert.equal(workbench.benchmarkSnapshotDetail.value.source_report_count, 1)
+  assert.equal(workbench.benchmarkSnapshotDetail.value.rankable_count, 1)
+  assert.equal(workbench.benchmarkSnapshotDetail.value.unrankable_count, 0)
+  assert.equal(workbench.benchmarkSnapshotDetail.value.row_count, 1)
+  assert.equal(workbench.benchmarkSnapshotDetail.value.content_hash, 'sha256:frozen-v1')
   assert.equal(workbench.roleLeaderboardRows.value[0].version_id, 'seer_candidate_v2')
+}))
+
+test('evaluation workbench loads canonical snapshot compare and keeps detail on compare failure', () => withWindow(async () => {
+  const createHarness = ({ compareShouldFail = false } = {}) => {
+    const requests = []
+    const clone = (value) => JSON.parse(JSON.stringify(value))
+    const suite = {
+      id: 'role-baseline-quick-v1',
+      version: 1,
+      label: 'Role Baseline Quick v1',
+      name: 'Role Baseline Quick',
+      target_type: 'role_version',
+      roles: ['seer'],
+      game_count: 3,
+      max_days: 5,
+      seed_set_id: 'role-baseline-quick-202606',
+      evaluation_set_id: 'role-baseline-quick-v1@v1',
+      config_hash: 'sha256:snapshot-current'
+    }
+    const currentRows = [
+      {
+        scope: 'role_version',
+        subject_id: 'seer_candidate_v1',
+        hash: 'seer_candidate_v1',
+        target_role: 'seer',
+        target_version_id: 'seer_candidate_v1',
+        evaluation_set_id: 'role-baseline-quick-v1@v1',
+        seed_set_id: 'role-baseline-quick-202606',
+        target_role_role_weighted_score: 0.74,
+        target_side_win_rate: 0.62,
+        game_count: 34,
+        rankable: true
+      },
+      {
+        scope: 'role_version',
+        subject_id: 'seer_candidate_v2',
+        hash: 'seer_candidate_v2',
+        target_role: 'seer',
+        target_version_id: 'seer_candidate_v2',
+        evaluation_set_id: 'role-baseline-quick-v1@v1',
+        seed_set_id: 'role-baseline-quick-202606',
+        target_role_role_weighted_score: 0.68,
+        target_side_win_rate: 0.58,
+        game_count: 30,
+        rankable: true
+      }
+    ]
+    const frozenRows = [
+      {
+        scope: 'role_version',
+        subject_id: 'seer_candidate_v1',
+        hash: 'seer_candidate_v1',
+        target_role: 'seer',
+        target_version_id: 'seer_candidate_v1',
+        evaluation_set_id: 'role-baseline-quick-v1@v1',
+        seed_set_id: 'role-baseline-quick-202606',
+        target_role_role_weighted_score: 0.7,
+        target_side_win_rate: 0.59,
+        game_count: 30,
+        rankable: true
+      },
+      {
+        scope: 'role_version',
+        subject_id: 'seer_candidate_removed',
+        hash: 'seer_candidate_removed',
+        target_role: 'seer',
+        target_version_id: 'seer_candidate_removed',
+        evaluation_set_id: 'role-baseline-quick-v1@v1',
+        seed_set_id: 'role-baseline-quick-202606',
+        target_role_role_weighted_score: 0.57,
+        target_side_win_rate: 0.5,
+        game_count: 24,
+        rankable: false,
+        rankable_reason: 'leaderboard gate failed: low sample'
+      }
+    ]
+    const versions = [
+      { version_id: 'seer_candidate_v1', role: 'seer', source: 'candidate' },
+      { version_id: 'seer_candidate_v2', role: 'seer', source: 'candidate' },
+      { version_id: 'seer_candidate_removed', role: 'seer', source: 'candidate' }
+    ]
+    const snapshot = {
+      kind: 'benchmark_leaderboard_snapshot',
+      schema_version: 1,
+      snapshot_id: 'snap-release',
+      title: 'Release gate 2026-06-09',
+      release_notes: 'frozen before candidate v2',
+      scope: 'role_version',
+      benchmark_id: 'role-baseline-quick-v1',
+      benchmark_version: 1,
+      evaluation_set_id: 'role-baseline-quick-v1@v1',
+      seed_set_id: 'role-baseline-quick-202606',
+      benchmark_config_hash: 'sha256:snapshot-frozen',
+      target_role: 'seer',
+      source_filter: {
+        rankable: 'all',
+        target_role: 'seer',
+        evaluation_set_id: 'role-baseline-quick-v1@v1'
+      },
+      view_config: {},
+      content_hash: 'sha256:frozen-release',
+      row_count: frozenRows.length,
+      summary: { row_count: frozenRows.length, rankable_count: 1, unrankable_count: 1 },
+      rows: frozenRows,
+      created_at: '2026-06-09T10:00:00Z'
+    }
+    const snapshotSummary = (() => {
+      const { rows, ...summary } = snapshot
+      return summary
+    })()
+    const canonicalCompare = {
+      kind: 'benchmark_snapshot_compare',
+      schema_version: 1,
+      snapshot_id: 'snap-release',
+      scope: 'role_version',
+      benchmark_id: 'role-baseline-quick-v1',
+      evaluation_set_id: 'role-baseline-quick-v1@v1',
+      target_role: 'seer',
+      snapshot: clone(frozenRows),
+      current: clone(currentRows),
+      summary: {
+        snapshot_row_count: 2,
+        current_row_count: 2,
+        changed_count: 1,
+        added_count: 1,
+        removed_count: 1,
+        boundary_warning_count: 1
+      },
+      changed: [{
+        key: 'seer_candidate_v1',
+        current: clone(currentRows[0]),
+        snapshot: clone(frozenRows[0]),
+        scoreDelta: 0.04,
+        winRateDelta: 0.03,
+        gamesDelta: 4,
+        rankableChanged: false
+      }],
+      added: [clone(currentRows[1])],
+      removed: [clone(frozenRows[1])],
+      boundary_warnings: [{
+        kind: 'benchmark_config_hash_mismatch',
+        level: 'info',
+        snapshot_value: 'sha256:snapshot-frozen',
+        current_value: 'sha256:snapshot-current',
+        message: 'Current benchmark config hash differs from the frozen snapshot.'
+      }]
+    }
+    const apiFetch = async (path, options = {}) => {
+      const method = options.method || 'GET'
+      requests.push({ path, method })
+      if (path === '/benchmarks') return { items: [suite] }
+      if (path === '/roles') return { roles: ['seer'] }
+      if (path === '/roles/overview?evaluation_set_id=role-baseline-quick-v1%40v1') {
+        return {
+          roles: ['seer'],
+          versions: { seer: clone(versions) },
+          leaderboards: { seer: { entries: clone(currentRows) } }
+        }
+      }
+      if (path === '/roles/seer/leaderboard?evaluation_set_id=role-baseline-quick-v1%40v1') {
+        return { entries: clone(currentRows) }
+      }
+      if (path === '/roles/seer/versions') return { versions: clone(versions) }
+      if (path === '/evolution-runs') return { runs: [], batches: [] }
+      if (path.startsWith('/leaderboards/compare?')) {
+        return {
+          kind: 'benchmark_leaderboard_compare',
+          schema_version: 1,
+          rows: clone(currentRows),
+          summary: { row_count: currentRows.length }
+        }
+      }
+      if (path === '/benchmark/plan') {
+        return {
+          benchmark_id: suite.id,
+          target_type: 'role_version',
+          evaluation_set_id: suite.evaluation_set_id,
+          seed_set_id: suite.seed_set_id,
+          benchmark_config_hash: suite.config_hash,
+          total_games: 3,
+          budget: { estimated_units: 9, limit_units: 20, exceeded: false, status: 'ok' },
+          rankable: { eligible: true, gate_count: 3 }
+        }
+      }
+      if (path.startsWith('/benchmark/snapshots?')) return { items: [clone(snapshotSummary)] }
+      if (path === '/benchmark/snapshots/snap-release') return clone(snapshot)
+      if (path.startsWith('/benchmark/snapshots/snap-release/compare?')) {
+        if (compareShouldFail) throw new Error('snapshot compare unavailable')
+        return clone(canonicalCompare)
+      }
+      if (path.startsWith('/benchmark/diagnostics?')) {
+        return {
+          diagnostics: [],
+          affected_runs: [],
+          affected_games: [],
+          summary: {},
+          pagination: { total: 0, offset: 0, limit: 200, returned: 0, has_more: false }
+        }
+      }
+      throw new Error(`unexpected ${method} ${path}`)
+    }
+    return { workbench: useEvaluationWorkbench({ installLifecycle: false, apiFetch }), requests }
+  }
+
+  const success = createHarness()
+  await success.workbench.refreshAll()
+  await success.workbench.selectBenchmarkSnapshot('snap-release')
+
+  const compareRequest = success.requests.find((item) =>
+    item.path.startsWith('/benchmark/snapshots/snap-release/compare?')
+  )
+  assert.equal(Boolean(compareRequest), true)
+  const compareQuery = new URLSearchParams(compareRequest.path.split('?')[1])
+  assert.equal(compareQuery.get('limit'), '100')
+  assert.equal(success.workbench.benchmarkSnapshotServerCompare.value.kind, 'benchmark_snapshot_compare')
+  assert.equal(success.workbench.benchmarkSnapshotServerCompare.value.changed[0].key, 'seer_candidate_v1')
+  assert.equal(success.workbench.benchmarkSnapshotServerCompare.value.added[0].target_version_id, 'seer_candidate_v2')
+  assert.equal(success.workbench.benchmarkSnapshotServerCompare.value.removed[0].target_version_id, 'seer_candidate_removed')
+  assert.equal(success.workbench.benchmarkSnapshotServerCompare.value.boundary_warnings[0].kind, 'benchmark_config_hash_mismatch')
+  assert.equal(success.workbench.benchmarkSnapshotCompareError.value, '')
+  assert.equal(success.workbench.benchmarkSnapshotCompareLoading.value, false)
+
+  await success.workbench.loadBenchmarkSnapshotCompare('snap-release', {
+    againstSnapshotId: 'snap-against',
+    limit: 7
+  })
+  const pairCompareRequest = success.requests
+    .filter((item) => item.path.startsWith('/benchmark/snapshots/snap-release/compare?'))
+    .at(-1)
+  const pairCompareQuery = new URLSearchParams(pairCompareRequest.path.split('?')[1])
+  assert.equal(pairCompareQuery.get('against_snapshot_id'), 'snap-against')
+  assert.equal(pairCompareQuery.get('limit'), '7')
+
+  const failure = createHarness({ compareShouldFail: true })
+  await failure.workbench.refreshAll()
+  const loaded = await failure.workbench.selectBenchmarkSnapshot('snap-release')
+  assert.equal(loaded, true)
+  assert.equal(failure.workbench.benchmarkSnapshotDetail.value.snapshot_id, 'snap-release')
+  assert.equal(failure.workbench.benchmarkSnapshotDetail.value.rows[0].target_version_id, 'seer_candidate_v1')
+  assert.equal(Boolean(failure.workbench.benchmarkSnapshotCompareError.value), true)
+  assert.equal(failure.workbench.benchmarkSnapshotCompareLoading.value, false)
+  assert.notEqual(failure.workbench.benchmarkSnapshotServerCompare.value?.kind, 'benchmark_snapshot_compare')
+  assert.equal((failure.workbench.benchmarkSnapshotCompare.value.changed || []).length, 1)
 }))
 
 test('evaluation workbench persists benchmark comparison saved views through API', () => withWindow(async () => {
@@ -4628,6 +6201,7 @@ test('evaluation workbench persists benchmark comparison saved views through API
     const method = options.method || 'GET'
     const body = options.body ? JSON.parse(options.body) : null
     requests.push({ path, method, body })
+    if (path.startsWith('/benchmark/views?') && method === 'GET') return { items: [savedView] }
     if (path === '/benchmark/views' && method === 'POST') return { ...savedView, ...body }
     if (path === `/benchmark/views/${encodeURIComponent(viewKey)}` && method === 'GET') return savedView
     if (path === `/benchmark/views/${encodeURIComponent(viewKey)}` && method === 'DELETE') {
@@ -4637,6 +6211,23 @@ test('evaluation workbench persists benchmark comparison saved views through API
   }
 
   const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  const listed = await workbench.loadBenchmarkViews()
+  assert.equal(listed, true)
+  assert.equal(workbench.benchmarkSavedViews.value[0].view_key, viewKey)
+
+  workbench.setBenchmarkViewPreference({
+    name: '本地复核',
+    rank_filter: 'unrankable',
+    columns: ['games']
+  })
+  assert.equal(workbench.benchmarkViewDirty.value, true)
+  assert.equal(workbench.activeBenchmarkViewConfig.value.rank_filter, 'unrankable')
+  assert.deepEqual(workbench.activeBenchmarkViewConfig.value.columns, ['games'])
+
+  const currentSaved = await workbench.saveCurrentBenchmarkView({ view_key: viewKey })
+  assert.equal(currentSaved.view_key, viewKey)
+  assert.equal(workbench.benchmarkViewDirty.value, false)
+
   const created = await workbench.saveBenchmarkView({
     view_key: viewKey,
     name: 'Release reviewer',
@@ -4652,12 +6243,14 @@ test('evaluation workbench persists benchmark comparison saved views through API
   assert.equal(created.view_key, viewKey)
   assert.equal(loaded.view_config.rank_filter, 'rankable')
   assert.equal(deleted.deleted, true)
-  assert.deepEqual(requests.map((item) => [item.method, item.path]), [
-    ['POST', '/benchmark/views'],
-    ['GET', `/benchmark/views/${encodeURIComponent(viewKey)}`],
-    ['DELETE', `/benchmark/views/${encodeURIComponent(viewKey)}`]
-  ])
-  assert.deepEqual(requests[0].body.view_config.columns, ['score', 'winRate'])
+  assert.equal(requests.some((item) => item.method === 'GET' && item.path.startsWith('/benchmark/views?')), true)
+  const currentSaveRequest = requests.find((item) => item.method === 'POST' && item.body?.name === '本地复核')
+  assert.deepEqual(currentSaveRequest.body.view_config.columns, ['games'])
+  assert.equal(currentSaveRequest.body.view_config.rank_filter, 'unrankable')
+  const directSaveRequest = requests.find((item) => item.method === 'POST' && item.body?.name === 'Release reviewer')
+  assert.deepEqual(directSaveRequest.body.view_config.columns, ['score', 'winRate'])
+  assert.equal(requests.some((item) => item.method === 'GET' && item.path === `/benchmark/views/${encodeURIComponent(viewKey)}`), true)
+  assert.equal(requests.some((item) => item.method === 'DELETE' && item.path === `/benchmark/views/${encodeURIComponent(viewKey)}`), true)
 }))
 
 test('evaluation workbench shows success notice after starting a benchmark', () => withWindow(async () => {

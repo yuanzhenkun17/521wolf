@@ -4,6 +4,7 @@ const VIEW_HASHES = {
   lobby: '',
   match: 'match',
   logs: 'logs',
+  evidence: 'evidence',
   benchmark: 'benchmark',
   evolution: 'evolution'
 }

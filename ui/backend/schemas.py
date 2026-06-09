@@ -12,6 +12,8 @@ DEFAULT_EVOLUTION_TRAINING_GAMES = 5
 DEFAULT_EVOLUTION_BATTLE_GAMES = 4
 LEGACY_EVOLUTION_TRAINING_GAMES = 20
 LEGACY_EVOLUTION_BATTLE_GAMES = 10
+REJECTION_TAG_LIMIT = 12
+REJECTION_TAG_MAX_LENGTH = 64
 
 
 def _normalize_requested_roles(raw: Any) -> list[str]:
@@ -33,6 +35,31 @@ def _normalize_requested_roles(raw: Any) -> list[str]:
         seen.add(role)
         roles.append(role)
     return roles
+
+
+def normalize_rejection_tags(raw: Any, *, limit: int = REJECTION_TAG_LIMIT) -> list[str]:
+    if raw in (None, ""):
+        return []
+    values = raw if isinstance(raw, list) else [raw]
+    tags: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        tag = _normalize_rejection_tag(item)
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        tags.append(tag)
+        if len(tags) >= limit:
+            break
+    return tags
+
+
+def _normalize_rejection_tag(raw: Any) -> str:
+    text = str(raw or "").strip().lower().replace(" ", "_").replace("-", "_")
+    safe = "".join(ch for ch in text if ch.isalnum() or ch in {"_", "."})
+    while "__" in safe:
+        safe = safe.replace("__", "_")
+    return safe.strip("_.")[:REJECTION_TAG_MAX_LENGTH]
 
 
 class GameStartRequest(BaseModel):
@@ -84,8 +111,18 @@ class EvolutionActionRequest(BaseModel):
 
 
 class EvolutionProposalRejectRequest(BaseModel):
-    reason: str = ""
-    tags: list[str] = Field(default_factory=list)
+    reason: str = Field(default="", max_length=2000)
+    tags: list[str] = Field(default_factory=list, max_length=REJECTION_TAG_LIMIT)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, value: Any) -> list[str]:
+        return normalize_rejection_tags(value)
 
 
 class BenchmarkRequest(BaseModel):

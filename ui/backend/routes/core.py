@@ -83,6 +83,22 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
             "source_type": "app",
         }
 
+    @api.get("/api/leaderboards/compare")
+    def leaderboard_compare(
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        baseline_subject_id: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return store.leaderboard_compare(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            baseline_subject_id=baseline_subject_id,
+            limit=limit,
+        )
+
     @api.get("/api/models/leaderboard")
     def model_leaderboard(evaluation_set_id: str | None = None, limit: int = 100) -> dict[str, Any]:
         return {

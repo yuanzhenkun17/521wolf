@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.js'
 import EvolutionConsolePanel from '../components/evolution/EvolutionConsolePanel.vue'
 import EvolutionEventsPanel from '../components/evolution/EvolutionEventsPanel.vue'
@@ -9,6 +9,7 @@ import EvolutionRunsPanel from '../components/evolution/EvolutionRunsPanel.vue'
 import EvolutionSamplesPanel from '../components/evolution/EvolutionSamplesPanel.vue'
 import EvolutionVersionsPanel from '../components/evolution/EvolutionVersionsPanel.vue'
 import EvolutionWorkbenchShell from '../components/evolution/EvolutionWorkbenchShell.vue'
+import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
 
 defineOptions({
   inheritAttrs: false
@@ -42,44 +43,63 @@ const selectedCanTerminate = computed(() => {
   return Boolean(evo.selectedRun.value) && !evo.selectedRun.value.isTerminal
 })
 
+watch(
+  () => evo.evolutionDeepLinkTarget.value?.panel || '',
+  (panel) => {
+    if (panel && navTabs.some((tab) => tab.key === panel)) activeTab.value = panel
+  },
+  { immediate: true }
+)
+
 onMounted(() => evo.refreshAll())
 </script>
 
 <template>
   <section class="evo-page" aria-label="自进化">
-    <EvolutionWorkbenchShell
+    <LabWorkbenchShell
       v-model:active-tab="activeTab"
+      bridge
+      class="evo-lab-workbench-bridge"
+      workbench-key="evolution"
       title="自进化"
+      eyebrow="自进化实验室"
       :tabs="navTabs"
-      :roles="evo.roleRows.value"
-      :selected-role="evo.selectedRole.value"
-      :selected-run-summary="evo.selectedRunSummary.value"
-      :error="evo.error.value"
-      :notice="evo.notice.value"
-      @refresh="evo.refreshAll()"
-      @select-role="evo.selectRole"
+      aria-label="自进化 LabWorkbenchShell migration bridge"
     >
-      <EvolutionConsolePanel
-        v-if="activeTab === 'console'"
-        :evo="evo"
-        :selected-is-batch="selectedIsBatch"
-        :selected-can-review="selectedCanReview"
-        :selected-can-promote="selectedCanPromote"
-        :selected-promote-disabled-reason="selectedPromoteDisabledReason"
-        :selected-can-terminate="selectedCanTerminate"
-      />
-      <EvolutionRunsPanel v-if="activeTab === 'runs'" :evo="evo" />
-      <EvolutionProposalReviewPanel v-if="activeTab === 'review'" :evo="evo" />
-      <EvolutionLeaderboardPanel v-if="activeTab === 'leaderboard'" :evo="evo" />
-      <EvolutionVersionsPanel v-if="activeTab === 'versions'" :evo="evo" />
-      <EvolutionEventsPanel v-if="activeTab === 'events'" :evo="evo" />
-      <EvolutionSamplesPanel
-        v-if="activeTab === 'samples'"
-        :evo="evo"
-        @open-sample-log="emit('open-sample-log', $event)"
-        @replay-sample-game="emit('replay-sample-game', $event)"
-      />
-    </EvolutionWorkbenchShell>
+      <EvolutionWorkbenchShell
+        v-model:active-tab="activeTab"
+        title="自进化"
+        :tabs="navTabs"
+        :roles="evo.roleRows.value"
+        :selected-role="evo.selectedRole.value"
+        :selected-run-summary="evo.selectedRunSummary.value"
+        :error="evo.error.value"
+        :notice="evo.notice.value"
+        @refresh="evo.refreshAll()"
+        @select-role="evo.selectRole"
+      >
+        <EvolutionConsolePanel
+          v-if="activeTab === 'console'"
+          :evo="evo"
+          :selected-is-batch="selectedIsBatch"
+          :selected-can-review="selectedCanReview"
+          :selected-can-promote="selectedCanPromote"
+          :selected-promote-disabled-reason="selectedPromoteDisabledReason"
+          :selected-can-terminate="selectedCanTerminate"
+        />
+        <EvolutionRunsPanel v-if="activeTab === 'runs'" :evo="evo" />
+        <EvolutionProposalReviewPanel v-if="activeTab === 'review'" :evo="evo" />
+        <EvolutionLeaderboardPanel v-if="activeTab === 'leaderboard'" :evo="evo" />
+        <EvolutionVersionsPanel v-if="activeTab === 'versions'" :evo="evo" />
+        <EvolutionEventsPanel v-if="activeTab === 'events'" :evo="evo" />
+        <EvolutionSamplesPanel
+          v-if="activeTab === 'samples'"
+          :evo="evo"
+          @open-sample-log="emit('open-sample-log', $event)"
+          @replay-sample-game="emit('replay-sample-game', $event)"
+        />
+      </EvolutionWorkbenchShell>
+    </LabWorkbenchShell>
   </section>
 </template>
 
@@ -734,6 +754,47 @@ onMounted(() => evo.refreshAll())
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+.evo-policy-note {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 1px solid rgba(92, 70, 40, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 252, 245, 0.62);
+  color: var(--evo-text);
+}
+
+.evo-policy-note small {
+  color: var(--evo-text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.evo-policy-note b {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-policy-note span {
+  min-width: 0;
+  color: var(--evo-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .evo-form-grid input,

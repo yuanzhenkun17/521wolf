@@ -14,7 +14,6 @@ import {
   displayActionLabel,
   displayPhaseLabel,
   displayRoleLabel,
-  displaySkillDirLabel,
   displayWinnerLabel,
   normalizeHistoryDisplayText
 } from '../components/history/historyDisplay.js'
@@ -164,20 +163,6 @@ const selectedGameConfig = computed(() => {
     human_player_id: game.human_player_id ?? config.human_player_id
   }
 })
-const historyConfigItems = computed(() => {
-  const config = selectedGameConfig.value
-  const roleSkillDirs = config.role_skill_dirs && typeof config.role_skill_dirs === 'object'
-    ? config.role_skill_dirs
-    : {}
-  const roleOverrideCount = Object.values(roleSkillDirs).filter(Boolean).length
-  return [
-    { label: '随机种子', value: config.seed ?? '随机' },
-    { label: '人数', value: config.player_count || props.selectedHistoryGame?.players?.length || 12 },
-    { label: '最大天数', value: config.max_days || 20 },
-    { label: '技能目录', value: displaySkillDirLabel(config.skill_dir) },
-    { label: '角色覆盖', value: roleOverrideCount ? `${roleOverrideCount} 个` : '无' }
-  ]
-})
 const reviewLoaded = computed(() => Boolean(selectedReview.value && !selectedReview.value.error))
 const archiveLoaded = computed(() => Boolean(selectedArchive.value && !selectedArchive.value.error))
 const selectedPhasePagination = computed(() => props.selectedHistoryPage?.pagination || {})
@@ -192,6 +177,23 @@ const selectedPhaseLoadingKey = computed(() => {
 const selectedPhaseLoading = computed(() =>
   Boolean(props.phaseLoadingByKey[selectedPhaseLoadingKey.value])
 )
+const detailRetrying = computed(() =>
+  Boolean(
+    props.historyLoading ||
+    selectedPhaseLoading.value ||
+    props.archiveLoading ||
+    props.reviewLoading ||
+    selectedFlowLoading.value
+  )
+)
+const detailRetryAvailable = computed(() => {
+  const gameId = props.selectedHistoryGame?.game_id || props.selectedHistoryGameId
+  if (!gameId) return false
+  if (workspaceTab.value === 'review') return Boolean(props.loadReview)
+  if (workspaceTab.value === 'archive') return Boolean(props.loadArchive)
+  return Boolean(props.loadMoreHistoryPhaseDetail && (props.selectedHistoryPage?.key || props.selectedHistoryPageKey))
+})
+const detailRetryDisabled = computed(() => detailRetrying.value || !detailRetryAvailable.value)
 const phaseMoreMeta = computed(() => {
   const logs = selectedPhasePagination.value.logs || {}
   const decisions = selectedPhasePagination.value.decisions || {}
@@ -493,10 +495,29 @@ const archiveButtonText = computed(() => {
   if (archiveLoaded.value) return '档案已载入'
   return selectedArchive.value?.error ? '重试档案' : '对局档案'
 })
+function asyncTabState({ loading = false, loaded = false, error = false, missing = false } = {}) {
+  if (loading) return { state: 'loading', badge: '读取中' }
+  if (error) return { state: 'error', badge: '错误' }
+  if (missing) return { state: 'missing', badge: '缺失' }
+  if (loaded) return { state: 'loaded', badge: '已载入' }
+  return { state: 'idle', badge: '未载入' }
+}
+const reviewTabState = computed(() => asyncTabState({
+  loading: props.reviewLoading,
+  loaded: reviewLoaded.value,
+  error: Boolean(selectedReview.value?.error),
+  missing: selectedReview.value?.missing === true || selectedReview.value?.status === 'missing'
+}))
+const archiveTabState = computed(() => asyncTabState({
+  loading: props.archiveLoading,
+  loaded: archiveLoaded.value,
+  error: Boolean(selectedArchive.value?.error),
+  missing: selectedArchive.value?.missing === true || selectedArchive.value?.status === 'missing'
+}))
 const workspaceTabs = computed(() => [
-  { key: 'phase', label: '阶段详情', badge: props.historyLogs.length ? String(props.historyLogs.length) : '' },
-  { key: 'review', label: '复盘报告', badge: '' },
-  { key: 'archive', label: '对局档案', badge: props.archiveLoading ? '读取中' : (archiveLoaded.value ? '已载入' : '') }
+  { key: 'phase', label: '阶段详情', badge: props.historyLogs.length ? String(props.historyLogs.length) : '', state: 'loaded' },
+  { key: 'review', label: '复盘报告', ...reviewTabState.value },
+  { key: 'archive', label: '对局档案', ...archiveTabState.value }
 ])
 
 watch(() => props.selectedHistoryGameId, () => {
@@ -807,6 +828,13 @@ function loadMoreSelectedPhase() {
   )
 }
 
+function retrySelectedDetail() {
+  if (detailRetryDisabled.value) return null
+  if (workspaceTab.value === 'review') return loadSelectedReview()
+  if (workspaceTab.value === 'archive') return loadSelectedArchive()
+  return loadMoreSelectedPhase()
+}
+
 function selectWorkspaceTab(tab) {
   workspaceTab.value = tab
   if (tab === 'review' && props.selectedHistoryGame?.game_id && !reviewLoaded.value && !props.reviewLoading) {
@@ -857,7 +885,12 @@ function clearPlayerFocus() {
           class="detail-error-panel"
           :error="detailErrorNotice"
           title="历史记录读取失败"
+          retry-label="重试读取"
+          retry-busy-label="读取中"
+          :retrying="detailRetrying"
+          :retry-disabled="detailRetryDisabled"
           compact
+          @retry="retrySelectedDetail"
         />
         <div
           v-else-if="detailInlineNotice"
@@ -879,14 +912,16 @@ function clearPlayerFocus() {
               @click="selectWorkspaceTab(item.key)"
             >
               <span>{{ item.label }}</span>
+              <small
+                v-if="item.badge"
+                class="detail-workspace-badge"
+                :data-state="item.state"
+              >
+                {{ item.badge }}
+              </small>
             </button>
           </nav>
           <EvidenceContextBar :game="selectedHistoryGame" />
-          <div class="detail-config-pills">
-            <span v-for="item in historyConfigItems" :key="item.label" class="config-pill">
-              <small>{{ item.label }}</small><b :title="String(item.value)">{{ item.value }}</b>
-            </span>
-          </div>
           <PhaseTabs
             v-if="workspaceTab === 'phase'"
             :pages="historyPages"
@@ -933,7 +968,7 @@ function clearPlayerFocus() {
                     @click="togglePhaseEvidence"
                   >
                     <span class="phase-evidence-heading">
-                      <span class="phase-evidence-title">关键证据</span>
+                      <span class="phase-evidence-title">阶段摘要</span>
                       <small>{{ phaseEvidenceCountLabel }}</small>
                     </span>
                     <span class="phase-evidence-meta">
@@ -1424,11 +1459,11 @@ function clearPlayerFocus() {
 /* ── Detail top bar ── */
 .detail-topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    "workspace config"
-    "context context"
-    "phases phases";
+    "workspace"
+    "context"
+    "phases";
   align-items: center;
   gap: 10px 14px;
   margin: 0;
@@ -1479,6 +1514,7 @@ function clearPlayerFocus() {
 
 .detail-workspace-tabs small {
   display: inline-grid;
+  max-width: 68px;
   min-width: 20px;
   height: 18px;
   place-items: center;
@@ -1488,59 +1524,35 @@ function clearPlayerFocus() {
   background: rgba(255, 255, 255, 0.18);
   font-size: 10px;
   font-weight: 950;
-}
-
-.detail-config-pills {
-  grid-area: config;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  max-width: min(58vw, 620px);
-  flex-wrap: wrap;
   overflow: hidden;
-}
-
-.config-pill {
-  display: inline-grid;
-  grid-template-columns: max-content max-content;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  height: 32px;
-  min-width: 0;
-  padding: 0 10px;
-  border: 1px solid var(--log-border);
-  border-radius: 6px;
-  color: var(--log-text);
-  background: rgba(255, 252, 245, 0.62);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.config-pill small {
-  display: inline-block;
-  color: var(--log-text-secondary);
-  font-size: 12px;
-  font-weight: 850;
-  line-height: 32px;
+.detail-workspace-badge[data-state="idle"] {
+  color: rgba(74, 37, 15, 0.72);
+  background: rgba(74, 37, 15, 0.08);
 }
 
-.config-pill small::after {
-  content: "：";
-  color: rgba(139, 107, 74, 0.78);
+.detail-workspace-badge[data-state="loading"] {
+  color: #6a461b;
+  background: rgba(212, 158, 56, 0.18);
 }
 
-.config-pill b {
-  display: inline-block;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--log-text);
-  font-size: 12px;
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
-  line-height: 32px;
-  text-overflow: ellipsis;
+.detail-workspace-badge[data-state="loaded"] {
+  color: #335d35;
+  background: rgba(80, 139, 73, 0.16);
+}
+
+.detail-workspace-badge[data-state="error"],
+.detail-workspace-badge[data-state="missing"] {
+  color: #8a2c21;
+  background: rgba(161, 57, 42, 0.14);
+}
+
+.detail-workspace-tabs button.active .detail-workspace-badge {
+  color: #fff7dc;
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .detail-topbar :deep(.history-phase-tabs) {
@@ -4148,15 +4160,8 @@ function clearPlayerFocus() {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "workspace"
-      "config"
       "context"
       "phases";
-  }
-
-  .detail-config-pills {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    max-width: 100%;
   }
 
   .detail-topbar :deep(.history-phase-tabs) {
@@ -4260,28 +4265,6 @@ function clearPlayerFocus() {
 
   .detail-workspace-tabs button {
     min-width: max-content;
-  }
-
-  .detail-config-pills {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 3px;
-    scrollbar-width: none;
-  }
-
-  .detail-config-pills::-webkit-scrollbar {
-    display: none;
-  }
-
-  .config-pill {
-    flex: 0 0 auto;
-    max-width: 150px;
-  }
-
-  .config-pill b {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .detail-topbar :deep(.history-phase-tabs) {
@@ -4481,12 +4464,6 @@ function clearPlayerFocus() {
   color: #fff4d2;
   background: linear-gradient(180deg, #81522b, #4a260f);
   box-shadow: 0 4px 10px rgba(58, 27, 9, 0.25), inset 0 1px 0 rgba(255, 226, 164, 0.32);
-}
-
-.config-pill {
-  border-color: rgba(104, 56, 22, 0.22);
-  background: linear-gradient(180deg, rgba(255, 250, 230, 0.82), rgba(225, 191, 132, 0.48));
-  box-shadow: 0 2px 6px rgba(74, 38, 15, 0.08), inset 0 1px 0 rgba(255, 252, 235, 0.86);
 }
 
 .battle-log-shell :deep(.history-source-tabs button) {
@@ -5311,13 +5288,6 @@ function clearPlayerFocus() {
   line-height: 1;
 }
 
-.config-pill {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
 .history-side-card {
   border-left: 1px solid rgba(93, 48, 17, 0.18);
 }
@@ -5902,8 +5872,8 @@ function clearPlayerFocus() {
 .detail-topbar.workspace-review,
 .detail-topbar.workspace-archive {
   grid-template-areas:
-    "workspace config"
-    "context context";
+    "workspace"
+    "context";
   grid-template-rows: auto auto;
   min-height: 0;
   row-gap: 8px;

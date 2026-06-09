@@ -11,24 +11,49 @@ const props = defineProps({
 const activeGroupKey = ref('all')
 const activeDiagnosticId = ref('')
 
+const selectedBatchId = computed(() => props.benchmark.selectedBenchmarkBatchId.value || '')
+const useAggregateDiagnostics = computed(() => !selectedBatchId.value)
 const diagnostics = computed(() =>
-  Array.isArray(props.benchmark.benchmarkBatchDiagnostics.value)
-    ? props.benchmark.benchmarkBatchDiagnostics.value
-    : []
+  useAggregateDiagnostics.value && Array.isArray(props.benchmark.benchmarkDiagnosticAggregateDiagnostics?.value)
+    ? props.benchmark.benchmarkDiagnosticAggregateDiagnostics.value
+    : (Array.isArray(props.benchmark.benchmarkBatchDiagnostics.value)
+      ? props.benchmark.benchmarkBatchDiagnostics.value
+      : [])
 )
-const diagnosticSummary = computed(() => props.benchmark.benchmarkBatchDiagnosticSummary.value || {})
+const diagnosticSummary = computed(() =>
+  useAggregateDiagnostics.value
+    ? (props.benchmark.benchmarkDiagnosticAggregateSummary?.value || {})
+    : (props.benchmark.benchmarkBatchDiagnosticSummary.value || {})
+)
 const runs = computed(() =>
-  Array.isArray(props.benchmark.filteredBatchRunRows.value)
-    ? props.benchmark.filteredBatchRunRows.value
-    : []
+  useAggregateDiagnostics.value && Array.isArray(props.benchmark.benchmarkDiagnosticAggregateRuns?.value)
+    ? props.benchmark.benchmarkDiagnosticAggregateRuns.value
+    : (Array.isArray(props.benchmark.filteredBatchRunRows.value)
+      ? props.benchmark.filteredBatchRunRows.value
+      : [])
 )
 const games = computed(() =>
-  Array.isArray(props.benchmark.benchmarkBatchGames.value)
-    ? props.benchmark.benchmarkBatchGames.value
-    : []
+  useAggregateDiagnostics.value && Array.isArray(props.benchmark.benchmarkDiagnosticAggregateGames?.value)
+    ? props.benchmark.benchmarkDiagnosticAggregateGames.value
+    : (Array.isArray(props.benchmark.benchmarkBatchGames.value)
+      ? props.benchmark.benchmarkBatchGames.value
+      : [])
 )
 const selectedRun = computed(() => props.benchmark.selectedBenchmarkBatchRun.value || null)
-const selectedBatchId = computed(() => props.benchmark.selectedBenchmarkBatchId.value || '')
+const aggregateError = computed(() => props.benchmark.benchmarkDiagnosticAggregateError?.value || '')
+const aggregateLoading = computed(() => Boolean(props.benchmark.benchmarkDiagnosticAggregateLoading?.value))
+const diagnosticScopeLabel = computed(() =>
+  `${props.benchmark.selectedBenchmarkSuiteLabel.value} / 汇总`
+)
+const emptyStateMessage = computed(() =>
+  aggregateError.value ||
+  (useAggregateDiagnostics.value
+    ? '当前套件边界暂无诊断。启动或选择运行后可查看更多证据。'
+    : '请选择带诊断的评测运行，查看类型、严重度、来源、问题对局和受影响运行。')
+)
+const emptyStateTitle = computed(() =>
+  aggregateLoading.value ? '正在加载诊断' : '暂无诊断'
+)
 
 const summaryRows = computed(() => {
   const summary = diagnosticSummary.value
@@ -38,11 +63,11 @@ const summaryRows = computed(() => {
   const severityRows = countRows(summary.severity || summary.by_severity || summary.by_level)
   const runsWithDiagnostics = runs.value.filter((run) => runDiagnosticCount(run) > 0).length
   return [
-    { key: 'total', label: 'Total', value: total, caption: 'diagnostics loaded' },
-    { key: 'kind', label: 'Kinds', value: byKind.length, caption: topCaption(byKind) },
-    { key: 'origin', label: 'Origins', value: byOrigin.length, caption: topCaption(byOrigin) },
-    { key: 'severity', label: 'Severity', value: severityRows.length, caption: topCaption(severityRows) },
-    { key: 'runs', label: 'Runs', value: runsWithDiagnostics, caption: 'with diagnostics' }
+    { key: 'total', label: '总数', value: total, caption: '已加载诊断' },
+    { key: 'kind', label: '类型', value: byKind.length, caption: topCaption(byKind) },
+    { key: 'origin', label: '来源', value: byOrigin.length, caption: topCaption(byOrigin) },
+    { key: 'severity', label: '严重度', value: severityRows.length, caption: topCaption(severityRows) },
+    { key: 'runs', label: '运行', value: runsWithDiagnostics, caption: '含诊断' }
   ]
 })
 
@@ -64,7 +89,7 @@ const diagnosticGroups = computed(() => {
     {
       key: 'all',
       type: 'all',
-      label: 'All diagnostics',
+      label: '全部诊断',
       count: diagnostics.value.length,
       problemGames: uniqueCount(diagnostics.value.map((item) => item.game_id).filter(Boolean)),
       stages: uniqueCount(diagnostics.value.map((item) => item.stage).filter(Boolean))
@@ -178,7 +203,8 @@ const affectedRuns = computed(() =>
 )
 
 const selectedRunLabel = computed(() => {
-  if (!selectedRun.value) return 'No run selected'
+  if (useAggregateDiagnostics.value) return diagnosticScopeLabel.value
+  if (!selectedRun.value) return '未选择运行'
   return selectedRun.value.benchmarkLabel || selectedRun.value.id || selectedBatchId.value
 })
 
@@ -220,7 +246,7 @@ function countRows(source) {
   return Object.entries(source)
     .map(([name, count]) => ({
       name: String(name || 'unknown'),
-      label: String(name || 'unknown'),
+      label: String(name || '未知'),
       count: numberOrZero(count)
     }))
     .filter((row) => row.count > 0)
@@ -228,7 +254,7 @@ function countRows(source) {
 }
 
 function topCaption(rows) {
-  if (!rows.length) return 'no breakdown'
+  if (!rows.length) return '无拆分'
   return `${rows[0].label}: ${rows[0].count}`
 }
 
@@ -251,21 +277,21 @@ function groupSortWeight(type) {
 function originLabel(value) {
   const text = String(value || 'run')
   const labels = {
-    run: 'Run',
-    game: 'Game',
+    run: '运行',
+    game: '对局',
     judge: 'Judge',
-    gate: 'Gate',
-    runtime: 'Runtime',
-    leaderboard: 'Leaderboard'
+    gate: '门禁',
+    runtime: '运行时',
+    leaderboard: '排行榜'
   }
   return labels[text] || text
 }
 
 function groupTypeLabel(type) {
-  if (type === 'kind') return 'Kind'
-  if (type === 'level') return 'Level'
-  if (type === 'origin') return 'Origin'
-  return 'Scope'
+  if (type === 'kind') return '类型'
+  if (type === 'level') return '等级'
+  if (type === 'origin') return '来源'
+  return '范围'
 }
 
 function runDiagnosticCount(run) {
@@ -274,7 +300,7 @@ function runDiagnosticCount(run) {
 }
 
 function runTitle(run) {
-  return run?.benchmarkLabel || run?.id || 'benchmark run'
+  return run?.benchmarkLabel || run?.id || '评测运行'
 }
 
 function runSubtitle(run) {
@@ -282,12 +308,12 @@ function runSubtitle(run) {
   if (run?.displayRole) parts.push(run.displayRole)
   if (run?.evaluationSetId) parts.push(run.evaluationSetId)
   if (run?.statusLabel) parts.push(run.statusLabel)
-  return parts.length ? parts.join(' / ') : 'no run metadata'
+  return parts.length ? parts.join(' / ') : '无运行元数据'
 }
 
 function gameMeta(game) {
   const parts = []
-  if (game?.seedLabel) parts.push(`seed ${game.seedLabel}`)
+  if (game?.seedLabel) parts.push(`种子 ${game.seedLabel}`)
   if (game?.targetRoleLabel) parts.push(game.targetRoleLabel)
   if (game?.statusLabel) parts.push(game.statusLabel)
   return parts.join(' / ')
@@ -317,7 +343,7 @@ function inspectSelectedGames() {
 function suggestedActionsForDiagnostic(item) {
   if (!item) {
     return [
-      { label: 'Select a diagnostic', detail: 'Choose an entry to see concrete next steps.' }
+      { label: '选择一条诊断', detail: '选择条目后查看具体处置建议。' }
     ]
   }
   const kind = String(item.kind || '').toLowerCase()
@@ -325,48 +351,48 @@ function suggestedActionsForDiagnostic(item) {
   const message = String(item.message || '').toLowerCase()
   if (kind.includes('rankable') || kind.includes('gate')) {
     return [
-      { label: 'Open problem games', detail: 'Inspect failed, timeout, and abnormal games before rerunning.' },
-      { label: 'Check gate thresholds', detail: 'Compare completed, fallback, error, and judge degraded rates against the suite gate.' },
-      { label: 'Rerun same suite boundary', detail: 'Keep evaluation set, seed set, and config hash unchanged for a comparable retry.' }
+      { label: '打开问题对局', detail: '重跑前先检查失败、超时和异常对局。' },
+      { label: '检查门禁阈值', detail: '对照套件门禁核对完成率、回退率、错误率和 Judge 降级率。' },
+      { label: '按同一套件边界重跑', detail: '保持评测集、种子集和配置 Hash 不变，确保重试可比较。' }
     ]
   }
   if (kind.includes('judge') || origin === 'judge') {
     return [
-      { label: 'Review judge aggregate', detail: 'Check bad rate, skipped decisions, and top mistake tags in the run report.' },
-      { label: 'Increase judge budget', detail: 'For release suites, confirm judge decisions and timeout before launch.' },
-      { label: 'Sample affected games', detail: 'Open games with judge diagnostics and inspect decision evidence.' }
+      { label: '复核 Judge 汇总', detail: '在运行报告中检查坏率、跳过决策和主要错误标签。' },
+      { label: '提高 Judge 预算', detail: '发布套件启动前确认 Judge 决策数和超时情况。' },
+      { label: '抽样受影响对局', detail: '打开带 Judge 诊断的对局，核查判定证据。' }
     ]
   }
   if (kind.includes('timeout') || kind.includes('game') || message.includes('timeout')) {
     return [
-      { label: 'Inspect affected games', detail: 'Use problem-game filter and compare seeds that timeout repeatedly.' },
-      { label: 'Check runtime limits', detail: 'Look for max-day, rate-limit, provider, or persistence errors in the same stage.' },
-      { label: 'Retry with same seeds', detail: 'Only compare the retry if suite, seed set, and target subject are unchanged.' }
+      { label: '检查受影响对局', detail: '使用问题局筛选，比较反复超时的种子。' },
+      { label: '检查运行时限制', detail: '在同一阶段查找 max-day、rate-limit、provider 或持久化错误。' },
+      { label: '用相同种子重试', detail: '只有套件、种子集和目标对象不变时，重试结果才可比较。' }
     ]
   }
   if (origin === 'runtime' || message.includes('fallback')) {
     return [
-      { label: 'Audit fallback rate', detail: 'Fallback or runtime degradation can make a result unrankable even if score is high.' },
-      { label: 'Check model/runtime hash', detail: 'Confirm provider, model id, config hash, and prompt version match the intended subject.' }
+      { label: '审计回退率', detail: '回退或运行时降级会让高分结果也变成不可排名。' },
+      { label: '检查模型/运行时 Hash', detail: '确认 provider、模型 ID、配置 Hash 和 prompt 版本匹配目标对象。' }
     ]
   }
   return [
-    { label: 'Open run report', detail: 'Use the report panel to export diagnostics, gates, problem games, and reproducibility bundle.' },
-    { label: 'Keep boundary fixed', detail: 'Do not compare rows across different evaluation set, seed set, or benchmark config hash.' }
+    { label: '打开运行报告', detail: '在报告面板导出诊断、门禁、问题对局和可复现包。' },
+    { label: '固定比较边界', detail: '不要跨评测集、种子集或 benchmark 配置 Hash 比较行。' }
   ]
 }
 </script>
 
 <template>
-  <section class="benchmark-diagnostics-explorer" aria-label="Benchmark diagnostics explorer">
+  <section class="benchmark-diagnostics-explorer" aria-label="评测诊断探索器">
     <header class="diagnostics-header">
       <div>
-        <small>Diagnostics Explorer</small>
-        <h2>Failure signal map</h2>
+        <small>诊断探索器</small>
+        <h2>失败信号图</h2>
         <p>{{ selectedRunLabel }}</p>
       </div>
       <button type="button" class="problem-filter-button" @click="setProblemGamesFilter">
-        Problem games
+        问题局
       </button>
     </header>
 
@@ -379,10 +405,10 @@ function suggestedActionsForDiagnostic(item) {
     </div>
 
     <div v-if="diagnostics.length" class="diagnostics-workspace">
-      <aside class="diagnostics-groups" aria-label="Diagnostic groups">
+      <aside class="diagnostics-groups" aria-label="诊断分组">
         <div class="panel-heading">
-          <small>Group by</small>
-          <b>Kind / level / origin</b>
+          <small>分组方式</small>
+          <b>类型 / 等级 / 来源</b>
         </div>
         <button
           v-for="group in diagnosticGroups"
@@ -402,10 +428,10 @@ function suggestedActionsForDiagnostic(item) {
       <main class="diagnostics-list-panel">
         <div class="panel-heading diagnostics-list-heading">
           <span>
-            <small>Diagnostics</small>
+            <small>诊断</small>
             <b>{{ activeGroup.label }}</b>
           </span>
-          <em>{{ visibleDiagnostics.length }} entries</em>
+          <em>{{ visibleDiagnostics.length }} 条</em>
         </div>
 
         <div class="diagnostics-list">
@@ -422,29 +448,29 @@ function suggestedActionsForDiagnostic(item) {
             <header>
               <span>
                 <small>{{ item.kindLabel }}</small>
-                <b>{{ item.message || 'No diagnostic message' }}</b>
+                <b>{{ item.message || '无诊断信息' }}</b>
               </span>
               <em>{{ item.levelLabel }}</em>
             </header>
             <dl>
               <div>
-                <dt>Stage</dt>
+                <dt>阶段</dt>
                 <dd>{{ item.stage || '—' }}</dd>
               </div>
               <div>
-                <dt>Origin</dt>
+                <dt>来源</dt>
                 <dd>{{ originLabel(item.origin) }}</dd>
               </div>
               <div>
-                <dt>Target</dt>
+                <dt>目标</dt>
                 <dd>{{ item.targetRoleLabel || '全部角色' }}</dd>
               </div>
               <div>
-                <dt>Game</dt>
+                <dt>对局</dt>
                 <dd>{{ item.game_id || '—' }}</dd>
               </div>
               <div>
-                <dt>Seed</dt>
+                <dt>种子</dt>
                 <dd>{{ item.seedLabel || '—' }}</dd>
               </div>
             </dl>
@@ -455,12 +481,12 @@ function suggestedActionsForDiagnostic(item) {
       <aside class="diagnostics-side-panel">
         <section class="side-section">
           <div class="panel-heading">
-            <small>Selected diagnostic</small>
-            <b>{{ selectedDiagnostic?.kindLabel || 'No selection' }}</b>
+            <small>已选诊断</small>
+            <b>{{ selectedDiagnostic?.kindLabel || '未选择' }}</b>
           </div>
           <article v-if="selectedDiagnostic" class="selected-diagnostic-card">
-            <strong>{{ selectedDiagnostic.message || 'No diagnostic message' }}</strong>
-            <span>{{ selectedDiagnostic.stage || 'no stage' }} / {{ originLabel(selectedDiagnostic.origin) }}</span>
+            <strong>{{ selectedDiagnostic.message || '无诊断信息' }}</strong>
+            <span>{{ selectedDiagnostic.stage || '无阶段' }} / {{ originLabel(selectedDiagnostic.origin) }}</span>
             <em>{{ selectedDiagnostic.levelLabel }}</em>
           </article>
           <div class="suggested-action-list">
@@ -470,33 +496,33 @@ function suggestedActionsForDiagnostic(item) {
             </article>
           </div>
           <button type="button" class="inspect-games-button" @click="inspectSelectedGames">
-            Inspect affected games
+            检查受影响对局
           </button>
         </section>
 
         <section class="side-section">
           <div class="panel-heading">
-            <small>Affected games</small>
-            <b>Selected diagnostic sample</b>
+            <small>受影响对局</small>
+            <b>所选诊断样本</b>
           </div>
           <div v-if="selectedDiagnosticGames.length" class="problem-game-list">
             <article v-for="game in selectedDiagnosticGames" :key="game.game_id || game.id" class="problem-game-card">
               <strong>{{ game.game_id || game.id }}</strong>
               <span>{{ gameMeta(game) }}</span>
-              <em>{{ game.diagnosticMatches || game.diagnostic_count || 0 }} diagnostics</em>
+              <em>{{ game.diagnosticMatches || game.diagnostic_count || 0 }} 条诊断</em>
               <small v-if="game.diagnosticKindLabel">{{ game.diagnosticKindLabel }}</small>
               <a v-if="game.replayHash" class="diagnostic-replay-link" :href="game.replayHash">
-                Replay
+                回放
               </a>
             </article>
           </div>
-          <p v-else class="empty-inline">No loaded problem games for this group.</p>
+          <p v-else class="empty-inline">当前分组暂无已加载问题局。</p>
         </section>
 
         <section class="side-section">
           <div class="panel-heading">
-            <small>Affected runs</small>
-            <b>Click to inspect</b>
+            <small>受影响运行</small>
+            <b>点击查看</b>
           </div>
           <div v-if="affectedRuns.length" class="affected-run-list">
             <button
@@ -513,29 +539,31 @@ function suggestedActionsForDiagnostic(item) {
               <em>{{ run.diagnosticTotal }}</em>
             </button>
           </div>
-          <p v-else class="empty-inline">No run has reported diagnostics.</p>
+          <p v-else class="empty-inline">暂无运行返回诊断。</p>
         </section>
       </aside>
     </div>
 
     <div v-else class="diagnostics-empty-state">
-      <small>Diagnostics Explorer</small>
-      <b>No diagnostics loaded</b>
-      <p>Select a benchmark run with diagnostics to inspect kind, severity, origin, problem games, and affected runs.</p>
+      <small>诊断探索器</small>
+      <b>{{ emptyStateTitle }}</b>
+      <p>{{ emptyStateMessage }}</p>
     </div>
   </section>
 </template>
 
 <style scoped>
 .benchmark-diagnostics-explorer {
-  --diag-ink: #1e2825;
-  --diag-muted: #65726d;
-  --diag-line: #d5ddd9;
-  --diag-panel: #ffffff;
-  --diag-soft: #f4f7f6;
-  --diag-accent: #11684f;
-  --diag-warning: #a76816;
-  --diag-error: #a53a35;
+  --diag-bg: #f8f0e0;
+  --diag-ink: #3a2a18;
+  --diag-muted: #8b6b4a;
+  --diag-line: rgba(139, 94, 52, 0.15);
+  --diag-panel: rgba(255, 252, 245, 0.7);
+  --diag-soft: rgba(255, 252, 245, 0.48);
+  --diag-accent: #8b5e34;
+  --diag-accent-strong: #5a3319;
+  --diag-warning: #8b5e34;
+  --diag-error: #5a3319;
   display: grid;
   gap: 12px;
   min-width: 0;
@@ -552,7 +580,7 @@ function suggestedActionsForDiagnostic(item) {
   border: 1px solid var(--diag-line);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(17, 104, 79, 0.08), rgba(255, 255, 255, 0) 44%),
+    linear-gradient(90deg, rgba(139, 94, 52, 0.08), rgba(255, 252, 245, 0) 44%),
     var(--diag-panel);
 }
 
@@ -602,17 +630,17 @@ function suggestedActionsForDiagnostic(item) {
   flex: 0 0 auto;
   min-height: 34px;
   padding: 0 12px;
-  border: 1px solid #1f6f54;
+  border: 1px solid var(--diag-accent-strong);
   border-radius: 7px;
-  background: #1f6f54;
-  color: #ffffff;
+  background: var(--diag-accent-strong);
+  color: #f8f0e0;
   font-size: 12px;
   font-weight: 900;
   cursor: pointer;
 }
 
 .problem-filter-button:hover {
-  background: #16563f;
+  background: var(--diag-accent);
 }
 
 .diagnostics-summary-grid {
@@ -727,13 +755,13 @@ function suggestedActionsForDiagnostic(item) {
 }
 
 .diagnostic-group-button:hover {
-  border-color: #abc1b9;
-  background: #edf3f1;
+  border-color: rgba(139, 94, 52, 0.28);
+  background: rgba(139, 94, 52, 0.06);
 }
 
 .diagnostic-group-button.active {
-  border-color: #1f6f54;
-  background: #e7f1ed;
+  border-color: var(--diag-accent);
+  background: rgba(139, 94, 52, 0.1);
 }
 
 .diagnostic-group-button span,
@@ -756,7 +784,7 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 26px;
   padding: 3px 6px;
   border-radius: 999px;
-  background: #ffffff;
+  background: var(--diag-panel);
   color: var(--diag-accent);
   font-size: 11px;
   font-style: normal;
@@ -790,28 +818,28 @@ function suggestedActionsForDiagnostic(item) {
   gap: 9px;
   min-width: 0;
   padding: 11px 12px;
-  border: 1px solid #dbe3e0;
-  border-left: 4px solid #77847f;
+  border: 1px solid var(--diag-line);
+  border-left: 4px solid rgba(139, 94, 52, 0.36);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--diag-panel);
   cursor: pointer;
 }
 
 .diagnostic-entry:hover,
 .diagnostic-entry.active {
-  border-color: #1f6f54;
-  box-shadow: inset 3px 0 0 #1f6f54;
+  border-color: var(--diag-accent);
+  box-shadow: inset 3px 0 0 var(--diag-accent);
 }
 
 .diagnostic-entry.level-warning {
   border-left-color: var(--diag-warning);
-  background: #fffaf0;
+  background: rgba(255, 252, 245, 0.78);
 }
 
 .diagnostic-entry.level-error,
 .diagnostic-entry.level-critical {
   border-left-color: var(--diag-error);
-  background: #fff6f5;
+  background: rgba(139, 94, 52, 0.08);
 }
 
 .diagnostic-entry header {
@@ -841,7 +869,7 @@ function suggestedActionsForDiagnostic(item) {
 .diagnostic-entry header em {
   padding: 3px 7px;
   border-radius: 999px;
-  background: #eef2f0;
+  background: rgba(139, 94, 52, 0.08);
   color: var(--diag-ink);
   font-size: 10px;
   font-style: normal;
@@ -861,7 +889,7 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 0;
   padding: 6px 7px;
   border-radius: 6px;
-  background: rgba(244, 247, 246, 0.9);
+  background: rgba(255, 252, 245, 0.7);
 }
 
 .diagnostic-entry dd {
@@ -892,7 +920,7 @@ function suggestedActionsForDiagnostic(item) {
   gap: 4px;
   min-width: 0;
   padding: 9px 10px;
-  border: 1px solid #dbe3e0;
+  border: 1px solid var(--diag-line);
   border-radius: 7px;
   background: var(--diag-soft);
 }
@@ -934,10 +962,10 @@ function suggestedActionsForDiagnostic(item) {
 
 .inspect-games-button {
   min-height: 32px;
-  border: 1px solid #1f6f54;
+  border: 1px solid var(--diag-accent-strong);
   border-radius: 7px;
-  background: #1f6f54;
-  color: #ffffff;
+  background: var(--diag-accent-strong);
+  color: #f8f0e0;
   font-size: 12px;
   font-weight: 900;
   cursor: pointer;
@@ -953,7 +981,7 @@ function suggestedActionsForDiagnostic(item) {
 .problem-game-card,
 .affected-run-button {
   min-width: 0;
-  border: 1px solid #dbe3e0;
+  border: 1px solid var(--diag-line);
   border-radius: 7px;
   background: var(--diag-soft);
 }
@@ -998,10 +1026,10 @@ function suggestedActionsForDiagnostic(item) {
   align-items: center;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid #1f6f54;
+  border: 1px solid var(--diag-accent);
   border-radius: 6px;
-  background: rgba(31, 111, 84, 0.08);
-  color: #1f6f54;
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--diag-accent);
   font-size: 11px;
   font-weight: 900;
   text-decoration: none;
@@ -1019,13 +1047,13 @@ function suggestedActionsForDiagnostic(item) {
 }
 
 .affected-run-button:hover {
-  border-color: #abc1b9;
-  background: #edf3f1;
+  border-color: rgba(139, 94, 52, 0.28);
+  background: rgba(139, 94, 52, 0.06);
 }
 
 .affected-run-button.active {
-  border-color: #1f6f54;
-  background: #e7f1ed;
+  border-color: var(--diag-accent);
+  background: rgba(139, 94, 52, 0.1);
 }
 
 .affected-run-button span,
@@ -1056,7 +1084,7 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 28px;
   padding: 4px 7px;
   border-radius: 999px;
-  background: #ffffff;
+  background: var(--diag-panel);
   color: var(--diag-accent);
   font-size: 11px;
   font-style: normal;
@@ -1079,7 +1107,7 @@ function suggestedActionsForDiagnostic(item) {
   min-height: 210px;
   place-content: center;
   padding: 28px;
-  border: 1px dashed #b9c8c2;
+  border: 1px dashed rgba(139, 94, 52, 0.28);
   border-radius: 8px;
   background: var(--diag-soft);
   text-align: center;

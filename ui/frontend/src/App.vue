@@ -9,6 +9,7 @@ import { useGameHistory } from './composables/useGameHistory.js'
 import { isReturnableGame } from './composables/gameSession.js'
 
 const LogsPage = defineAsyncComponent(() => import('./pages/LogsPage.vue'))
+const EvidencePage = defineAsyncComponent(() => import('./pages/EvidencePage.vue'))
 const BenchmarkPage = defineAsyncComponent(() => import('./pages/BenchmarkPage.vue'))
 const EvolutionPage = defineAsyncComponent(() => import('./pages/EvolutionPage.vue'))
 const LobbyPage = defineAsyncComponent(() => import('./pages/LobbyPage.vue'))
@@ -50,6 +51,7 @@ const logsPropKeys = [
   'historyPagination',
   'historyLoadingMore',
   'historySourceFilter',
+  'historyStatusFilter',
   'historyCounts',
   'historyFacets',
   'historyNotice',
@@ -98,6 +100,7 @@ const logsPropKeys = [
   'loadMoreHistoryPhaseDetail',
   'goHistoryPage',
   'setHistorySourceFilter',
+  'setHistoryStatusFilter',
   'deleteHistoryGame',
   'loadArchive',
   'loadReview',
@@ -167,6 +170,7 @@ const matchPropKeys = [
 ]
 
 const logsProps = computed(() => pickRuntime(logsPropKeys))
+const evidenceProps = computed(() => pickRuntime(logsPropKeys))
 const benchmarkProps = computed(() => pickRuntime(['returnToMatchAvailable']))
 const evolutionProps = computed(() => pickRuntime(['returnToMatchAvailable']))
 const lobbyProps = computed(() => pickRuntime(['backendMode', 'externalStatus', 'loading', 'playerCount', 'apiFetch']))
@@ -215,12 +219,14 @@ const {
   exitReplayMode,
   goLobby,
   inBenchmark,
+  inEvidence,
   inEvolution,
   inLobby,
   inLogs,
   inMatch,
   isNight,
   openBenchmarkPage,
+  openEvidencePage,
   openEvolutionPage,
   openLogPage,
   pauseReplay,
@@ -248,7 +254,7 @@ const {
 </script>
 
 <template>
-<main :class="['lycan-app', { night: isNight, day: !isNight, lobbying: inLobby && !inLogs && !inBenchmark, logbook: inLogs, benchmark: inBenchmark, evolution: inEvolution }]">
+<main :class="['lycan-app', { night: isNight, day: !isNight, lobbying: inLobby && !inLogs && !inEvidence && !inBenchmark, logbook: inLogs, evidence: inEvidence, benchmark: inBenchmark, evolution: inEvolution }]">
       <div class="atmosphere"></div>
       <div class="noise"></div>
 
@@ -265,6 +271,7 @@ const {
         :exit-disabled="topbarExitDisabled"
         @go-lobby="goLobby"
         @open-logs="openLogPage()"
+        @open-evidence="openEvidencePage()"
         @open-benchmark="openBenchmarkPage"
         @open-evolution="openEvolutionPage"
         @back-to-match="backToMatch"
@@ -295,6 +302,16 @@ const {
         v-if="inBenchmark"
         v-bind="benchmarkProps"
         @back-to-match="backToMatch"
+      />
+      <EvidencePage
+        v-if="inEvidence"
+        v-bind="evidenceProps"
+        v-model:selected-history-page-key="selectedHistoryPageKey"
+        v-model:detail-tab="detailTab"
+        @back-to-match="backToMatch"
+        @select-history-game="selectHistoryGame"
+        @open-logs="openLogPage($event)"
+        @replay-game="replayHistoryGame"
       />
       <EvolutionPage
         v-if="inEvolution"

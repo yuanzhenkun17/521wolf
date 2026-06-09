@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createGameApi } from './gameApi.js'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.js'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.js'
@@ -108,6 +108,19 @@ function firstFinite(...values) {
   for (const value of values) {
     const number = finiteNumber(value)
     if (number != null) return number
+  }
+  return null
+}
+
+function firstBoolean(...values) {
+  for (const value of values) {
+    if (typeof value === 'boolean') return value
+    if (typeof value === 'number' && Number.isFinite(value)) return value !== 0
+    if (typeof value === 'string') {
+      const key = value.trim().toLowerCase()
+      if (['true', 'yes', '1', 'saved', 'persisted'].includes(key)) return true
+      if (['false', 'no', '0', 'not_saved', 'unsaved', 'failed'].includes(key)) return false
+    }
   }
   return null
 }
@@ -661,27 +674,29 @@ function attributionStatusText(value, reviewRequired = false) {
 }
 
 function normalizePairedSeed(row, index = 0) {
-  const baseline = firstObject(row?.baseline, row?.baseline_result)
-  const candidate = firstObject(row?.candidate, row?.candidate_result)
-  const baselineScore = firstFinite(row?.baseline_score, row?.baseline_role_score, baseline.score, baseline.role_score)
-  const candidateScore = firstFinite(row?.candidate_score, row?.candidate_role_score, candidate.score, candidate.role_score)
+  const record = row && typeof row === 'object' ? row : {}
+  const primitiveSeed = row != null && typeof row !== 'object' ? row : ''
+  const baseline = firstObject(record.baseline, record.baseline_result)
+  const candidate = firstObject(record.candidate, record.candidate_result)
+  const baselineScore = firstFinite(record.baseline_score, record.baseline_role_score, baseline.score, baseline.role_score)
+  const candidateScore = firstFinite(record.candidate_score, record.candidate_role_score, candidate.score, candidate.role_score)
   const scoreDelta = firstFinite(
-    row?.score_delta,
-    row?.role_score_delta,
+    record.score_delta,
+    record.role_score_delta,
     baselineScore != null && candidateScore != null ? candidateScore - baselineScore : null
   )
   return {
-    ...row,
-    id: shortText(row?.id || row?.pair_id || row?.seed || row?.battle_seed || index, String(index)),
-    seed: shortText(row?.seed || row?.battle_seed || row?.paired_seed || index + 1),
+    ...record,
+    id: shortText(record.id || record.pair_id || record.seed || record.battle_seed || primitiveSeed || index, String(index)),
+    seed: shortText(record.seed || record.battle_seed || record.paired_seed || primitiveSeed || index + 1),
     baselineScore,
     candidateScore,
     scoreDelta,
-    winnerSide: shortText(row?.winner_side || row?.winner || row?.side, '—'),
-    status: shortText(row?.status || row?.result || (row?.rankable === false ? 'unrankable' : 'rankable'), '—'),
-    failureReason: shortText(row?.failure_reason || row?.reason || row?.error, ''),
-    baselineGameId: row?.baseline_game_id || baseline.game_id || '',
-    candidateGameId: row?.candidate_game_id || candidate.game_id || ''
+    winnerSide: shortText(record.winner_side || record.winner || record.side, '—'),
+    status: shortText(record.status || record.result || (record.rankable === false ? 'unrankable' : 'rankable'), '—'),
+    failureReason: shortText(record.failure_reason || record.reason || record.error, ''),
+    baselineGameId: record.baseline_game_id || baseline.game_id || '',
+    candidateGameId: record.candidate_game_id || candidate.game_id || ''
   }
 }
 
@@ -830,9 +845,143 @@ function proposalRiskTags(proposal) {
   )
 }
 
+function normalizeRejectBuffer(proposal, risk = {}) {
+  const buffer = firstObject(
+    proposal?.reject_buffer,
+    proposal?.rejectBuffer,
+    proposal?.reject_result,
+    proposal?.rejectResult,
+    proposal?.rejection_result,
+    proposal?.rejectionResult,
+    proposal?.rejection,
+    proposal?.rejected_proposal,
+    proposal?.rejectedProposal
+  )
+  const similarity = firstObject(
+    proposal?.reject_buffer_similarity,
+    proposal?.rejectBufferSimilarity,
+    proposal?.similarity,
+    buffer.similarity,
+    buffer.reject_buffer_similarity,
+    buffer.rejectBufferSimilarity,
+    risk.similarity
+  )
+  const matchedRejection = firstObject(
+    similarity.matched_rejection,
+    similarity.matchedRejection,
+    buffer.matched_rejection,
+    buffer.matchedRejection
+  )
+  const saved = firstBoolean(
+    buffer.saved,
+    buffer.saved_to_buffer,
+    buffer.savedToBuffer,
+    buffer.persisted,
+    proposal?.reject_buffer_saved,
+    proposal?.rejectBufferSaved
+  )
+  const duplicateRejected = firstBoolean(
+    similarity.duplicate_rejected,
+    similarity.duplicateRejected,
+    buffer.duplicate_rejected,
+    buffer.duplicateRejected
+  )
+  const status = shortText(
+    buffer.status ||
+      buffer.save_status ||
+      buffer.saveStatus ||
+      buffer.buffer_status ||
+      buffer.bufferStatus ||
+      (saved === true ? 'saved' : '') ||
+      (saved === false ? 'not_saved' : ''),
+    ''
+  )
+  const dedupeKey = shortText(buffer.dedupe_key || buffer.dedupeKey || buffer.key || proposal?.dedupe_key || proposal?.dedupeKey, '')
+  const reason = structuredText(
+    buffer.reason ||
+      buffer.rejection_reason ||
+      buffer.rejectionReason ||
+      proposal?.rejection_reason ||
+      proposal?.review_reason,
+    ''
+  )
+  const scope = shortText(buffer.rejection_scope || buffer.rejectionScope || proposal?.rejection_scope || proposal?.rejectionScope, '')
+  const similarityScore = firstFinite(
+    similarity.similarity,
+    similarity.score,
+    similarity.best_score,
+    similarity.bestScore,
+    buffer.similarity_score,
+    buffer.similarityScore
+  )
+  const overfitScore = firstFinite(
+    proposal?.overfit_risk_score,
+    proposal?.overfitRiskScore,
+    risk.overfit_risk_score,
+    risk.overfitRiskScore,
+    risk.score,
+    buffer.overfit_risk_score,
+    buffer.overfitRiskScore
+  )
+  const tags = textItems(
+    buffer.tags,
+    buffer.reject_tags,
+    buffer.rejectTags,
+    buffer.risk_tags,
+    buffer.riskTags,
+    proposal?.reject_buffer_tags,
+    proposal?.rejectBufferTags
+  )
+  const overfitEvidence = textItems(
+    proposal?.overfit_evidence,
+    proposal?.overfitEvidence,
+    risk.overfit_evidence,
+    risk.overfitEvidence,
+    buffer.overfit_evidence,
+    buffer.overfitEvidence
+  )
+  const matched = {
+    proposalId: shortText(matchedRejection.proposal_id || matchedRejection.proposalId || matchedRejection.id, ''),
+    sourceRunId: shortText(matchedRejection.source_run_id || matchedRejection.sourceRunId || matchedRejection.run_id || matchedRejection.runId, ''),
+    reason: structuredText(matchedRejection.reason || matchedRejection.rejection_reason || matchedRejection.rejectionReason, '')
+  }
+  const visible = Boolean(
+    status ||
+      dedupeKey ||
+      reason ||
+      scope ||
+      tags.length ||
+      overfitEvidence.length ||
+      saved !== null ||
+      duplicateRejected !== null ||
+      similarityScore !== null ||
+      overfitScore !== null ||
+      matched.proposalId ||
+      matched.sourceRunId ||
+      matched.reason
+  )
+  return {
+    visible,
+    saved,
+    savedLabel: saved === true ? '已保存' : (saved === false ? '未保存' : ''),
+    duplicateRejected,
+    duplicateLabel: duplicateRejected === true ? '命中 rejected buffer' : (duplicateRejected === false ? '未命中重复' : ''),
+    status,
+    dedupeKey,
+    reason,
+    scope,
+    similarityScore,
+    overfitScore,
+    tags,
+    overfitEvidence,
+    matched
+  }
+}
+
 function normalizeProposal(proposal, index = 0) {
   const gate = firstObject(proposal?.gate, proposal?.gate_report, proposal?.promotion_gate)
   const risk = firstObject(proposal?.risk, proposal?.risk_summary, proposal?.overfit_risk)
+  const rejectBuffer = normalizeRejectBuffer(proposal, risk)
   const preflight = firstObject(proposal?.preflight, proposal?.preflight_result, proposal?.preflight_check)
   const evidence = firstObject(proposal?.evidence, proposal?.evidence_summary)
   const counterEvidence = firstObject(proposal?.counter_evidence, proposal?.counterEvidence)
@@ -925,6 +1074,7 @@ function normalizeProposal(proposal, index = 0) {
     riskTags: proposalRiskTags(proposal),
     riskLevel: shortText(proposal?.risk_level || risk.level || risk.risk_level || risk.severity, ''),
     riskScore: firstFinite(proposal?.risk_score, proposal?.overfit_risk_score, risk.score, risk.overfit_risk_score),
+    rejectBuffer,
     gateDecision: shortText(proposal?.gate_decision || gate.decision || gate.status, ''),
     gateLabel: gateDecisionText(proposal?.gate_decision || gate.decision || gate.status),
     gateReasons: uniqueText(firstArray(proposal?.gate_reasons, gate.blocked_reasons, gate.reasons)),
@@ -1130,9 +1280,83 @@ function hasPromotionGateReference(run = {}, trustBundle = {}, gate = {}) {
   )
 }
 
-function hasPromotionEvidenceReference(trustBundle = {}) {
-  return firstArray(trustBundle.training_game_ids, trustBundle.trainingGameIds).length > 0 &&
-    firstArray(trustBundle.proposal_ids, trustBundle.proposalIds).length > 0
+function hasPromotionTrainingEvidenceReference(trustBundle = {}) {
+  return firstArray(
+    trustBundle.training_game_ids,
+    trustBundle.trainingGameIds,
+    trustBundle.training_evidence_ids,
+    trustBundle.trainingEvidenceIds,
+    trustBundle.evidence_ids,
+    trustBundle.evidenceIds
+  ).length > 0
+}
+
+function hasPromotionProposalReference(trustBundle = {}) {
+  return firstArray(
+    trustBundle.proposal_ids,
+    trustBundle.proposalIds,
+    trustBundle.accepted_proposal_ids,
+    trustBundle.acceptedProposalIds,
+    trustBundle.applied_proposal_ids,
+    trustBundle.appliedProposalIds
+  ).length > 0
+}
+
+const TRUST_MISSING_ITEM_LABELS = {
+  trust_bundle: '信任包',
+  gate_report: '门禁报告',
+  training_evidence: '训练证据',
+  proposals: '提案证据',
+  completeness: '完整性'
+}
+
+function trustMissingItemKey(item) {
+  const key = String(item || '').trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_')
+  if ([
+    'evidence',
+    'training_evidence',
+    'training_game',
+    'training_games',
+    'training_game_ids',
+    'training_evidence_ids',
+    'evidence_ids',
+    'paired_seed_table',
+    'paired_seed_pairs',
+    'battle_pair_seeds'
+  ].includes(key)) return 'training_evidence'
+  if ([
+    'proposal',
+    'proposals',
+    'proposal_ids',
+    'accepted_proposal_ids',
+    'applied_proposal_ids',
+    'generated_proposal_ids',
+    'preflight_passed_proposal_ids',
+    'rejected_proposal_ids'
+  ].includes(key)) return 'proposals'
+  if ([
+    'gate',
+    'release_gate',
+    'promotion_gate',
+    'gate_report',
+    'gate_report_id',
+    'promotion_gate_report'
+  ].includes(key)) return 'gate_report'
+  if ([
+    'bundle',
+    'bundle_hash',
+    'trust_bundle',
+    'trust_bundle_id',
+    'completeness',
+    'trust_completeness',
+    'trust_bundle_completeness'
+  ].includes(key)) return 'trust_bundle'
+  return key
+}
+
+function trustMissingItemLabel(item) {
+  const key = trustMissingItemKey(item)
+  return TRUST_MISSING_ITEM_LABELS[key] || key
 }
 
 function baselinePromoteTrustDisabledReason(run = {}, review = {}) {
@@ -1142,18 +1366,492 @@ function baselinePromoteTrustDisabledReason(run = {}, review = {}) {
   const gate = promotionGateReport(run, review)
   const completeness = promotionTrustCompleteness(run, review, trustBundle, gate)
   const missing = uniqueText([
-    ...firstArray(completeness.missing, completeness.missing_items, completeness.missingItems),
-    ...(!Object.keys(completeness).length ? ['completeness'] : []),
-    ...(!trustBundle.trust_bundle_id && !trustBundle.trustBundleId ? ['trust_bundle_id'] : []),
-    ...(!trustBundle.bundle_hash && !trustBundle.bundleHash ? ['bundle_hash'] : []),
+    ...firstArray(completeness.missing, completeness.missing_items, completeness.missingItems).map(trustMissingItemKey),
+    ...(!Object.keys(completeness).length ? ['trust_bundle'] : []),
+    ...(!(trustBundle.trust_bundle_id || trustBundle.trustBundleId) || !(trustBundle.bundle_hash || trustBundle.bundleHash) ? ['trust_bundle'] : []),
     ...(!hasPromotionGateReference(run, trustBundle, gate) ? ['gate_report'] : []),
-    ...(!hasPromotionEvidenceReference(trustBundle) ? ['evidence'] : [])
+    ...(!hasPromotionTrainingEvidenceReference(trustBundle) ? ['training_evidence'] : []),
+    ...(!hasPromotionProposalReference(trustBundle) ? ['proposals'] : [])
   ])
   if (completeness.complete !== true || missing.length) {
-    const suffix = missing.length ? `缺失：${missing.slice(0, 4).join('、')}。` : '完整性未通过。'
+    const suffix = missing.length ? `缺失：${missing.slice(0, 4).map(trustMissingItemLabel).join('、')}。` : '完整性未通过。'
     return `信任包不完整，不能晋升为基线。${suffix}`
   }
   return ''
+}
+
+function sourceRunIdFrom(run = {}, version = {}, input = {}) {
+  return firstTextValue(
+    input.run_id,
+    input.runId,
+    input.source_run_id,
+    input.sourceRunId,
+    version.source_run_id,
+    version.sourceRunId,
+    version.provenance?.source_run_id,
+    version.provenance?.sourceRunId,
+    run?.run_id,
+    run?.id,
+    run?.source_run_id,
+    run?.sourceRunId
+  )
+}
+
+function rollbackTargetFrom(...values) {
+  for (const value of values) {
+    if (value == null || value === '') continue
+    if (typeof value === 'object') {
+      const text = firstTextValue(
+        value.version_id,
+        value.versionId,
+        value.target_version_id,
+        value.targetVersionId,
+        value.rollback_version_id,
+        value.rollbackVersionId,
+        value.id,
+        value.hash,
+        value.target
+      )
+      if (text) return text
+      const structured = structuredText(value, '')
+      if (structured) return structured
+      continue
+    }
+    const text = String(value).trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function trustAuditSourceText(value) {
+  return {
+    authority: 'Authority Bundle',
+    review: 'Proposal Review',
+    run: 'Evolution Run',
+    version: 'Version Detail'
+  }[String(value || '').toLowerCase()] || shortText(value, 'Trust Bundle')
+}
+
+function hashHref(view, params = {}) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    const text = String(value ?? '').trim()
+    if (text) query.set(key, text)
+  }
+  const suffix = query.toString()
+  return suffix ? `#${view}?${suffix}` : `#${view}`
+}
+
+function evidenceHref(id) {
+  const value = String(id || '').trim()
+  return value ? hashHref('evidence', { game_id: value }) : ''
+}
+
+function evolutionHref(params = {}) {
+  return hashHref('evolution', params)
+}
+
+function hashFromRouteValue(value = '') {
+  const text = String(value || '')
+  const hashIndex = text.indexOf('#')
+  return hashIndex >= 0 ? text.slice(hashIndex) : text
+}
+
+function evolutionDeepLinkPanel(target = {}) {
+  if (target.version_id) return 'versions'
+  if (target.proposal_id || target.gate_report_id) return 'review'
+  if (target.run_id) return 'runs'
+  return ''
+}
+
+function evolutionDeepLinkFromHash(value = globalThis.window?.location?.hash || '') {
+  const hash = hashFromRouteValue(value)
+  const [routeHash, queryString = ''] = hash.split('?')
+  if (routeHash !== '#evolution' || !queryString) return null
+  const params = new URLSearchParams(queryString)
+  const target = {
+    run_id: firstTextValue(params.get('run_id'), params.get('run'), params.get('source_run_id'), params.get('sourceRunId')),
+    gate_report_id: firstTextValue(params.get('gate_report_id'), params.get('gate'), params.get('gateReportId')),
+    proposal_id: firstTextValue(params.get('proposal_id'), params.get('proposal'), params.get('proposalId')),
+    role: firstTextValue(params.get('role')),
+    version_id: firstTextValue(params.get('version_id'), params.get('version'), params.get('versionId'))
+  }
+  if (!Object.values(target).some(Boolean)) return null
+  const panel = evolutionDeepLinkPanel(target)
+  return {
+    ...target,
+    panel,
+    query: params.toString(),
+    status: 'pending',
+    pending: [],
+    message: panel ? '等待恢复 deep link 目标。' : '等待恢复 Evolution deep link。'
+  }
+}
+
+function auditEvidenceRows(ids, hrefForId) {
+  return ids.map((id) => ({
+    id,
+    href: hrefForId(id)
+  }))
+}
+
+const TRUST_CONSISTENCY_FIELDS = [
+  { field: 'trust_bundle_id', label: 'trust_bundle_id', required: true },
+  { field: 'bundle_hash', label: 'bundle_hash', required: true },
+  { field: 'gate_report_id', label: 'gate_report_id', required: true },
+  { field: 'source_run_id', label: 'source_run_id', required: true },
+  { field: 'version_id', label: 'version_id', required: false },
+  { field: 'role', label: 'role', required: false }
+]
+
+function auditText(value) {
+  return String(value ?? '').trim()
+}
+
+function auditFieldValue(audit = {}, field) {
+  return auditText(audit?.[field])
+}
+
+function trustConsistencyStatus(values = [], hasAuthority = false) {
+  const cached = auditText(values.find((item) => item.source === 'cached')?.value)
+  const authority = auditText(values.find((item) => item.source === 'authority')?.value)
+  if (hasAuthority) {
+    if (!cached || !authority) return 'missing'
+    const known = uniqueText(values.map((item) => auditText(item.value)).filter(Boolean))
+    return known.length > 1 ? 'mismatch' : 'match'
+  }
+  const known = values.map((item) => auditText(item.value)).filter(Boolean)
+  if (!known.length) return 'missing'
+  const unique = uniqueText(known)
+  if (unique.length > 1) return 'mismatch'
+  return known.length > 1 ? 'match' : 'unknown'
+}
+
+function trustConsistencyMessage(field, status, values = [], hasAuthority = false) {
+  const cached = auditText(values.find((item) => item.source === 'cached')?.value)
+  const authority = auditText(values.find((item) => item.source === 'authority')?.value)
+  const registry = auditText(values.find((item) => item.source === 'registry')?.value)
+  const sourceRun = auditText(values.find((item) => item.source === 'source_run')?.value)
+  if (status === 'match') {
+    return hasAuthority
+      ? '缓存、registry/source 已知值与 authority bundle 一致。'
+      : 'registry/source 已知值一致。'
+  }
+  if (status === 'mismatch') {
+    if (hasAuthority) {
+      return `缓存 ${cached || '—'}，registry metadata ${registry || '—'}，source run ${sourceRun || '—'}，authority bundle ${authority || '—'}。`
+    }
+    return `registry metadata ${registry || '—'}，source run ${sourceRun || '—'}。`
+  }
+  if (status === 'missing') {
+    if (hasAuthority && !authority) return 'authority bundle 缺少该字段。'
+    if (hasAuthority && !cached) return '缓存或 registry/source run 缺少该字段。'
+    return `${field} 缺少可校验值。`
+  }
+  return '等待 authority bundle 校验。'
+}
+
+function trustAuditConsistencyChecks(cached = {}, authority = null) {
+  const hasAuthority = Boolean(authority)
+  return TRUST_CONSISTENCY_FIELDS.flatMap(({ field, label, required }) => {
+    const cachedValue = auditFieldValue(cached, field)
+    const authorityValue = hasAuthority ? auditFieldValue(authority, field) : ''
+    const registryValue = auditText(authority?.registry_metadata?.[field] || cached?.registry_metadata?.[field])
+    const sourceRunValue = auditText(authority?.source_run_metadata?.[field] || cached?.source_run_metadata?.[field])
+    const bundleValue = auditText(authority?.bundle_metadata?.[field] || cached?.bundle_metadata?.[field])
+    if (!required && !cachedValue && !authorityValue && !registryValue && !sourceRunValue && !bundleValue) return []
+    const values = [
+      { source: 'cached', value: cachedValue },
+      { source: 'authority', value: authorityValue },
+      { source: 'registry', value: registryValue },
+      { source: 'source_run', value: sourceRunValue },
+      { source: 'bundle', value: bundleValue }
+    ]
+    const status = trustConsistencyStatus(values, hasAuthority)
+    return [{
+      field,
+      label,
+      status,
+      message: trustConsistencyMessage(label, status, values, hasAuthority),
+      cached_value: cachedValue,
+      authority_value: authorityValue,
+      registry_value: registryValue,
+      source_run_value: sourceRunValue,
+      bundle_value: bundleValue
+    }]
+  })
+}
+
+function trustAuditMismatches(cached = {}, authority = {}) {
+  return trustAuditConsistencyChecks(cached, authority)
+    .filter((item) => item.status === 'mismatch')
+    .map((item) => item.field)
+}
+
+function normalizeTrustCompleteness(completeness = {}, hasTrustBundle = false, explicitMissing = []) {
+  const explicitComplete = completeness.complete ?? completeness.is_complete ?? completeness.isComplete
+  const statusTextValue = firstTextValue(completeness.status, completeness.state, completeness.verdict).toLowerCase()
+  const complete = hasTrustBundle
+    ? (explicitComplete === true || ['complete', 'completed', 'pass', 'passed'].includes(statusTextValue)
+        ? true
+        : (explicitComplete === false || ['incomplete', 'missing', 'failed', 'fail'].includes(statusTextValue) ? false : null))
+    : false
+  const knownMissingKeys = uniqueText([
+    ...explicitMissing.map(trustMissingItemKey),
+    ...firstArray(completeness.missing, completeness.missing_items, completeness.missingItems).map(trustMissingItemKey),
+    ...(!hasTrustBundle ? ['trust_bundle'] : [])
+  ])
+  const missingKeys = uniqueText([
+    ...knownMissingKeys,
+    ...(hasTrustBundle && complete === false && !knownMissingKeys.length ? ['completeness'] : [])
+  ])
+  const status = !hasTrustBundle ? 'missing' : (complete === true ? 'complete' : (complete === false ? 'incomplete' : 'unknown'))
+  return {
+    ...completeness,
+    complete,
+    score: firstFinite(completeness.score, completeness.completeness_score, completeness.completenessScore),
+    status,
+    statusLabel: {
+      complete: '完整',
+      incomplete: '不完整',
+      missing: '缺失',
+      unknown: '未上报'
+    }[status],
+    missingKeys,
+    missingLabels: missingKeys.map(trustMissingItemLabel)
+  }
+}
+
+function normalizeTrustBundleAudit(input = {}) {
+  const run = firstObject(input.run)
+  const review = firstObject(input.review)
+  const version = firstObject(input.version)
+  const source = shortText(input.source || 'review', 'review')
+  const gate = firstObject(input.gate, promotionGateReport(run, review))
+  const trustBundle = firstObject(
+    input.trustBundle,
+    input.trust_bundle,
+    review.trustBundle,
+    review.trust_bundle,
+    run?.trust_bundle,
+    run?.trustBundle,
+    run?.result?.trust_bundle,
+    run?.result?.trustBundle,
+    run?.battle_result?.trust_bundle,
+    run?.battleResult?.trustBundle,
+    version.trust_bundle,
+    version.trustBundle,
+    version.provenance?.trust_bundle,
+    version.provenance?.trustBundle
+  )
+  const trustBundleId = firstTextValue(
+    input.trust_bundle_id,
+    input.trustBundleId,
+    trustBundle.trust_bundle_id,
+    trustBundle.trustBundleId,
+    version.trust_bundle_id,
+    version.trustBundleId,
+    version.provenance?.trust_bundle_id,
+    version.provenance?.trustBundleId,
+    run?.trust_bundle_id,
+    run?.trustBundleId
+  )
+  const bundleHash = firstTextValue(
+    input.bundle_hash,
+    input.bundleHash,
+    trustBundle.bundle_hash,
+    trustBundle.bundleHash,
+    trustBundle.hash,
+    version.bundle_hash,
+    version.bundleHash,
+    version.provenance?.bundle_hash,
+    version.provenance?.bundleHash,
+    run?.bundle_hash,
+    run?.bundleHash
+  )
+  const gateReportId = firstTextValue(
+    input.gate_report_id,
+    input.gateReportId,
+    trustBundle.gate_report_id,
+    trustBundle.gateReportId,
+    gate.gate_report_id,
+    gate.gateReportId,
+    version.gate_report_id,
+    version.gateReportId,
+    version.provenance?.gate_report_id,
+    version.provenance?.gateReportId,
+    run?.gate_report_id,
+    run?.gateReportId
+  )
+  const hasTrustBundle = Boolean(Object.keys(trustBundle).length || trustBundleId || bundleHash)
+  const completenessSource = firstObject(
+    input.completeness,
+    trustBundle.completeness,
+    trustBundle.trust_bundle_completeness,
+    trustBundle.trustBundleCompleteness,
+    promotionTrustCompleteness(run, review, trustBundle, gate)
+  )
+  const explicitMissing = textItems(
+    input.missing,
+    input.missing_items,
+    input.missingItems,
+    trustBundle.missing,
+    trustBundle.missing_items,
+    trustBundle.missingItems
+  )
+  const completeness = normalizeTrustCompleteness(completenessSource, hasTrustBundle, explicitMissing)
+  const trainingGameIds = textItems(
+    input.training_game_ids,
+    input.trainingGameIds,
+    trustBundle.training_game_ids,
+    trustBundle.trainingGameIds,
+    trustBundle.training_evidence_ids,
+    trustBundle.trainingEvidenceIds,
+    trustBundle.evidence_ids,
+    trustBundle.evidenceIds,
+    trustBundle.training_evidence?.game_ids,
+    trustBundle.trainingEvidence?.gameIds
+  )
+  const proposalIds = textItems(
+    input.proposal_ids,
+    input.proposalIds,
+    trustBundle.proposal_ids,
+    trustBundle.proposalIds,
+    trustBundle.accepted_proposal_ids,
+    trustBundle.acceptedProposalIds,
+    trustBundle.applied_proposal_ids,
+    trustBundle.appliedProposalIds
+  )
+  const pairedSeeds = firstArray(
+    input.pairedSeeds,
+    input.paired_seeds,
+    input.paired_seed_summary,
+    input.paired_seed_pairs,
+    input.pairedSeedPairs,
+    input.battle_pair_seeds,
+    input.battlePairSeeds,
+    trustBundle.pairedSeeds,
+    trustBundle.paired_seeds,
+    trustBundle.paired_seed_summary,
+    trustBundle.paired_seed_pairs,
+    trustBundle.pairedSeedPairs,
+    trustBundle.battle_pair_seeds,
+    trustBundle.battlePairSeeds,
+    trustBundle.seed_details,
+    trustBundle.seedDetails,
+    gate.pairedSeeds,
+    gate.paired_seeds,
+    gate.paired_seed_summary,
+    gate.paired_seed_pairs,
+    gate.battle_pair_seeds,
+    review.pairedSeeds,
+    review.paired_seeds,
+    review.paired_seed_pairs,
+    review.paired_seed_battle_table,
+    review.battlePairs,
+    run?.pairedSeeds,
+    run?.paired_seeds,
+    run?.paired_seed_pairs,
+    run?.paired_seed_battle_table,
+    run?.battle_pairs,
+    run?.battle_result?.paired_seeds,
+    run?.battle_result?.paired_seed_summary,
+    run?.battle_result?.paired_seed_pairs,
+    run?.battle_result?.battle_pair_seeds
+  ).map(normalizePairedSeed)
+  const sourceRunId = sourceRunIdFrom(run, version, input)
+  const proposalHrefForId = (proposalId) => sourceRunId ? evolutionHref({ run_id: sourceRunId, proposal_id: proposalId }) : ''
+  const role = firstTextValue(input.role, version.role, run?.role)
+  const versionId = firstTextValue(input.version_id, input.versionId, version.version_id, version.versionId)
+  const rollbackTarget = rollbackTargetFrom(
+    input.rollback_target,
+    input.rollbackTarget,
+    trustBundle.rollback_target,
+    trustBundle.rollbackTarget,
+    trustBundle.rollback_version_id,
+    trustBundle.rollbackVersionId,
+    version.rollback_target,
+    version.rollbackTarget,
+    version.rollback_version_id,
+    version.rollbackVersionId,
+    version.provenance?.rollback_target,
+    version.provenance?.rollbackTarget
+  )
+  const registryTrustBundle = firstObject(
+    version.trust_bundle,
+    version.trustBundle,
+    version.provenance?.trust_bundle,
+    version.provenance?.trustBundle
+  )
+  const sourceRunTrustBundle = firstObject(
+    run?.trust_bundle,
+    run?.trustBundle,
+    run?.result?.trust_bundle,
+    run?.result?.trustBundle,
+    run?.battle_result?.trust_bundle,
+    run?.battleResult?.trustBundle
+  )
+  const registryMetadata = {
+    trust_bundle_id: firstTextValue(version.trust_bundle_id, version.trustBundleId, version.provenance?.trust_bundle_id, version.provenance?.trustBundleId, registryTrustBundle.trust_bundle_id, registryTrustBundle.trustBundleId),
+    bundle_hash: firstTextValue(version.bundle_hash, version.bundleHash, version.provenance?.bundle_hash, version.provenance?.bundleHash, registryTrustBundle.bundle_hash, registryTrustBundle.bundleHash, registryTrustBundle.hash),
+    gate_report_id: firstTextValue(version.gate_report_id, version.gateReportId, version.provenance?.gate_report_id, version.provenance?.gateReportId, registryTrustBundle.gate_report_id, registryTrustBundle.gateReportId),
+    source_run_id: firstTextValue(version.source_run_id, version.sourceRunId, version.provenance?.source_run_id, version.provenance?.sourceRunId),
+    version_id: firstTextValue(version.version_id, version.versionId),
+    role: firstTextValue(version.role, version.provenance?.role)
+  }
+  const sourceRunMetadata = {
+    trust_bundle_id: firstTextValue(run?.trust_bundle_id, run?.trustBundleId, sourceRunTrustBundle.trust_bundle_id, sourceRunTrustBundle.trustBundleId),
+    bundle_hash: firstTextValue(run?.bundle_hash, run?.bundleHash, sourceRunTrustBundle.bundle_hash, sourceRunTrustBundle.bundleHash, sourceRunTrustBundle.hash),
+    gate_report_id: firstTextValue(run?.gate_report_id, run?.gateReportId, sourceRunTrustBundle.gate_report_id, sourceRunTrustBundle.gateReportId),
+    source_run_id: firstTextValue(run?.run_id, run?.id, run?.source_run_id, run?.sourceRunId),
+    version_id: firstTextValue(run?.version_id, run?.versionId, run?.published_version_id, run?.publishedVersionId, run?.promoted_version_id, run?.promotedVersionId),
+    role: firstTextValue(run?.role)
+  }
+  const bundleMetadata = {
+    trust_bundle_id: trustBundleId,
+    bundle_hash: bundleHash,
+    gate_report_id: gateReportId,
+    source_run_id: sourceRunId,
+    version_id: versionId,
+    role
+  }
+  const audit = {
+    source,
+    sourceLabel: trustAuditSourceText(source),
+    authorityStatus: shortText(input.authorityStatus || input.authority_status || '', ''),
+    authorityMessage: shortText(input.authorityMessage || input.authority_message || '', ''),
+    mismatchLabels: textItems(input.mismatchLabels, input.mismatch_labels),
+    hasTrustBundle,
+    emptyMessage: hasTrustBundle ? '' : '缺少 Trust Bundle：未收到 trust_bundle_id 或 bundle_hash。',
+    trust_bundle_id: trustBundleId,
+    bundle_hash: bundleHash,
+    gate_report_id: gateReportId,
+    gate_report_href: gateReportId && sourceRunId ? evolutionHref({ run_id: sourceRunId, gate_report_id: gateReportId }) : '',
+    rollback_target: rollbackTarget,
+    source_run_id: sourceRunId,
+    source_run_href: sourceRunId ? evolutionHref({ run_id: sourceRunId }) : '',
+    role,
+    version_id: versionId,
+    version_href: versionId
+      ? evolutionHref({ role, version_id: versionId })
+      : '',
+    registry_metadata: registryMetadata,
+    source_run_metadata: sourceRunMetadata,
+    bundle_metadata: bundleMetadata,
+    completeness,
+    missingKeys: completeness.missingKeys,
+    missingLabels: completeness.missingLabels,
+    training_game_ids: trainingGameIds,
+    training_evidence: auditEvidenceRows(trainingGameIds, evidenceHref),
+    proposal_ids: proposalIds,
+    proposal_evidence: auditEvidenceRows(proposalIds, proposalHrefForId),
+    paired_seeds: pairedSeeds,
+    raw: trustBundle
+  }
+  return {
+    ...audit,
+    consistency_checks: trustAuditConsistencyChecks(audit)
+  }
 }
 
 function isMissingProposalEndpoint(error) {
@@ -1248,6 +1946,14 @@ function useEvolutionWorkbench(options = {}) {
     error: '',
     data: null
   })
+  const trustBundleDrawerOpen = ref(false)
+  const trustBundleAudit = ref(normalizeTrustBundleAudit({ source: 'review' }))
+  const trustBundleAuditLoading = ref(false)
+  const trustBundleAuditError = ref('')
+  const initialDeepLinkHash = Object.prototype.hasOwnProperty.call(options, 'initialHash')
+    ? options.initialHash
+    : globalThis.window?.location?.hash
+  const evolutionDeepLinkTarget = ref(evolutionDeepLinkFromHash(initialDeepLinkHash || ''))
   const versionDetailCache = ref({})
   const selectedGameDetail = ref({
     loading: false,
@@ -1285,6 +1991,7 @@ function useEvolutionWorkbench(options = {}) {
   const sampleListRequests = createLatestOnlyTracker()
   const sampleDetailRequests = createLatestOnlyTracker()
   const versionDetailRequests = createLatestOnlyTracker()
+  const trustBundleRequests = createLatestOnlyTracker()
   const actionRequests = createLatestOnlyTracker()
 
   const form = ref({
@@ -1425,6 +2132,10 @@ function useEvolutionWorkbench(options = {}) {
     return ''
   })
   const selectedProposalRows = computed(() => selectedProposalReview.value.proposals || [])
+  const selectedBaselinePromoteTrustDisabledReason = computed(() => {
+    if (!selectedRun.value) return ''
+    return baselinePromoteTrustDisabledReason(selectedRun.value, selectedProposalReview.value || {})
+  })
   const selectedPromoteDisabledReason = computed(() => {
     if (!selectedRun.value) return '请选择一个运行。'
     if (selectedIsBatch.value) return '批量任务不能直接晋升，请选择子运行。'
@@ -1440,7 +2151,7 @@ function useEvolutionWorkbench(options = {}) {
     if ((Number.isFinite(accepted) ? accepted : 0) + (Number.isFinite(applied) ? applied : 0) <= 0) {
       return '至少接受或应用一个提案后才能晋升。'
     }
-    const trustReason = baselinePromoteTrustDisabledReason(selectedRun.value, review)
+    const trustReason = selectedBaselinePromoteTrustDisabledReason.value
     if (trustReason) return trustReason
     return ''
   })
@@ -1467,6 +2178,239 @@ function useEvolutionWorkbench(options = {}) {
   function clearVersionDetail() {
     selectedVersionId.value = ''
     selectedVersionDetail.value = { loading: false, error: '', data: null }
+  }
+
+  function currentTrustBundleAudit(source = 'review', payload = {}) {
+    const input = typeof source === 'object' && source !== null ? source : { ...payload, source }
+    const normalizedSource = shortText(input.source || source || 'review', 'review')
+    return normalizeTrustBundleAudit({
+      ...input,
+      source: normalizedSource,
+      run: input.run || selectedRun.value || {},
+      review: input.review || selectedProposalReview.value || {},
+      version: input.version || (normalizedSource === 'version' ? selectedVersionDetail.value.data : {}) || {}
+    })
+  }
+
+  function trustBundleAuthorityRunId(audit = {}, payload = {}) {
+    return firstTextValue(
+      payload.run_id,
+      payload.runId,
+      payload.source_run_id,
+      payload.sourceRunId,
+      audit.source_run_id,
+      selectedRun.value?.run_id,
+      selectedRun.value?.id,
+      selectedRunId.value
+    )
+  }
+
+  async function refreshTrustBundleAudit(source = trustBundleAudit.value.source || 'review', payload = {}) {
+    const baseAudit = payload.baseAudit || currentTrustBundleAudit(source, payload)
+    const runId = trustBundleAuthorityRunId(baseAudit, payload)
+    if (!runId) {
+      trustBundleAuditError.value = '缺少 source run，无法读取权威 Trust Bundle。'
+      trustBundleAudit.value = {
+        ...baseAudit,
+        authorityStatus: 'unavailable',
+        authorityMessage: trustBundleAuditError.value
+      }
+      return trustBundleAudit.value
+    }
+
+    const token = trustBundleRequests.next()
+    trustBundleAuditLoading.value = true
+    trustBundleAuditError.value = ''
+    trustBundleAudit.value = {
+      ...baseAudit,
+      authorityStatus: 'loading',
+      authorityMessage: '正在读取权威 Trust Bundle。'
+    }
+    try {
+      const data = await apiFetch(`/evolution-runs/${encodeURIComponent(runId)}/trust-bundle`)
+      if (!token.isLatest()) return trustBundleAudit.value
+      const authorityAudit = normalizeTrustBundleAudit({
+        ...data,
+        source: 'authority',
+        run: selectedRun.value || { run_id: runId },
+        review: selectedProposalReview.value || {},
+        version: selectedVersionDetail.value.data || {}
+      })
+      const consistencyChecks = trustAuditConsistencyChecks(baseAudit, authorityAudit)
+      const mismatchLabels = trustAuditMismatches(baseAudit, authorityAudit)
+      trustBundleAudit.value = {
+        ...authorityAudit,
+        cachedAudit: baseAudit,
+        authorityStatus: mismatchLabels.length ? 'mismatch' : 'verified',
+        authorityMessage: mismatchLabels.length
+          ? '权威 Trust Bundle 与当前页面缓存不一致。'
+          : '已读取权威 Trust Bundle。',
+        mismatchLabels,
+        consistency_checks: consistencyChecks
+      }
+      return trustBundleAudit.value
+    } catch (err) {
+      if (!token.isLatest()) return trustBundleAudit.value
+      trustBundleAuditError.value = err?.message || '权威 Trust Bundle 读取失败'
+      trustBundleAudit.value = {
+        ...baseAudit,
+        authorityStatus: 'unavailable',
+        authorityMessage: trustBundleAuditError.value
+      }
+      return trustBundleAudit.value
+    } finally {
+      if (token.isLatest()) trustBundleAuditLoading.value = false
+    }
+  }
+
+  function openTrustBundleDrawer(source = 'review', payload = {}) {
+    const baseAudit = currentTrustBundleAudit(source, payload)
+    trustBundleAudit.value = baseAudit
+    trustBundleDrawerOpen.value = true
+    const runId = trustBundleAuthorityRunId(baseAudit, payload)
+    if (!runId) return Promise.resolve(baseAudit)
+    return refreshTrustBundleAudit(source, { ...payload, baseAudit, run_id: runId })
+  }
+
+  function closeTrustBundleDrawer() {
+    trustBundleDrawerOpen.value = false
+  }
+
+  function setEvolutionDeepLinkTarget(target, patch = {}) {
+    if (!target) {
+      evolutionDeepLinkTarget.value = null
+      return null
+    }
+    const next = {
+      ...target,
+      panel: target.panel || evolutionDeepLinkPanel(target),
+      ...patch
+    }
+    evolutionDeepLinkTarget.value = next
+    return next
+  }
+
+  function consumeEvolutionDeepLink(value = globalThis.window?.location?.hash || '') {
+    const target = evolutionDeepLinkFromHash(value)
+    if (!target) return null
+    const current = evolutionDeepLinkTarget.value
+    if (!current || current.query !== target.query || current.status === 'applied') {
+      return setEvolutionDeepLinkTarget(target)
+    }
+    return current
+  }
+
+  function proposalDeepLinkResolved(proposalId) {
+    const id = String(proposalId || '').trim()
+    if (!id) return true
+    if (selectedProposalRows.value.some((proposal) =>
+      [proposal.apiId, proposal.proposal_id, proposal.id].some((value) => String(value || '') === id)
+    )) return true
+    return textItems(
+      selectedProposalReview.value?.trustBundle?.proposal_ids,
+      selectedProposalReview.value?.trustBundle?.proposalIds,
+      selectedProposalReview.value?.trust_bundle?.proposal_ids,
+      selectedRun.value?.trust_bundle?.proposal_ids,
+      selectedRun.value?.trustBundle?.proposalIds
+    ).includes(id)
+  }
+
+  function gateDeepLinkResolved(gateReportId) {
+    const id = String(gateReportId || '').trim()
+    if (!id) return true
+    const review = selectedProposalReview.value || {}
+    const gate = review.gate || {}
+    const trustBundle = review.trustBundle || review.trust_bundle || {}
+    return [
+      gate.gate_report_id,
+      gate.gateReportId,
+      trustBundle.gate_report_id,
+      trustBundle.gateReportId,
+      selectedRun.value?.gate_report_id,
+      selectedRun.value?.gateReportId,
+      selectedRun.value?.trust_bundle?.gate_report_id,
+      selectedRun.value?.trustBundle?.gateReportId
+    ].some((value) => String(value || '') === id)
+  }
+
+  async function applyEvolutionDeepLink(target = evolutionDeepLinkTarget.value) {
+    if (!target) return false
+    const runId = firstTextValue(target.run_id)
+    const explicitRole = firstTextValue(target.role)
+    const versionId = firstTextValue(target.version_id)
+    const proposalId = firstTextValue(target.proposal_id)
+    const gateReportId = firstTextValue(target.gate_report_id)
+    const pending = []
+    setEvolutionDeepLinkTarget(target, {
+      status: 'applying',
+      pending: [],
+      selected_run_id: selectedRunId.value,
+      selected_version_id: selectedVersionId.value,
+      message: '正在恢复 Evolution deep link。'
+    })
+    try {
+      if (runId && (selectedRunId.value !== runId || !selectedRun.value)) {
+        await selectRun(runId)
+      }
+    } catch (err) {
+      pending.push('run')
+      setEvolutionDeepLinkTarget(target, {
+        status: 'partial',
+        pending,
+        error: err?.message || '运行详情读取失败',
+        selected_run_id: selectedRunId.value,
+        selected_version_id: selectedVersionId.value,
+        message: '运行目标未能恢复，已保留 deep link 待重试。'
+      })
+      return true
+    }
+
+    if (runId && selectedRunId.value !== runId) pending.push('run')
+
+    const role = explicitRole || (versionId ? firstTextValue(selectedRun.value?.role) : '')
+    if (role) selectRole(role)
+    if (versionId) {
+      if (role) {
+        await loadVersionDetail(role, versionId)
+        if (selectedVersionDetail.value.error) pending.push('version_detail')
+      } else {
+        selectedVersionId.value = versionId
+        pending.push('role')
+      }
+      if (selectedVersionId.value !== versionId) pending.push('version')
+    }
+
+    if (proposalId || gateReportId) {
+      if (!selectedRunId.value) {
+        pending.push('run')
+      } else {
+        if (!selectedProposalReview.value || selectedProposalReview.value.source === 'none') {
+          await loadProposalReview(selectedRunId.value)
+        }
+        if (!proposalDeepLinkResolved(proposalId)) pending.push('proposal')
+        if (!gateDeepLinkResolved(gateReportId)) pending.push('gate_report')
+        trustBundleAudit.value = currentTrustBundleAudit('review')
+        trustBundleDrawerOpen.value = true
+      }
+    }
+
+    const status = pending.length ? 'partial' : 'applied'
+    setEvolutionDeepLinkTarget(target, {
+      status,
+      pending,
+      selected_run_id: selectedRunId.value,
+      selected_version_id: selectedVersionId.value,
+      trust_drawer_open: trustBundleDrawerOpen.value,
+      message: status === 'applied'
+        ? 'Evolution deep link 已恢复。'
+        : 'Evolution deep link 已部分恢复，剩余目标保留为待恢复状态。'
+    })
+    return true
+  }
+
+  function handleEvolutionHashChange(event = {}) {
+    const target = consumeEvolutionDeepLink(event.newURL || globalThis.window?.location?.hash || '')
+    if (target) void applyEvolutionDeepLink(target)
   }
 
   function clearSampleSelection({ unsupported = false, message = '' } = {}) {
@@ -1600,6 +2544,19 @@ function useEvolutionWorkbench(options = {}) {
     }
   }
 
+  function rememberRunDetail(run) {
+    if (!run?.id) return
+    if (run.entityType === 'batch') {
+      if (!batches.value.some((item) => (item.batch_id || item.id) === run.id)) {
+        batches.value = mergeById(batches.value, [run], ['batch_id', 'id']).filter(isEvolutionBatch)
+      }
+      return
+    }
+    if (!runs.value.some((item) => (item.run_id || item.id) === run.id)) {
+      runs.value = mergeById(runs.value, [run], ['run_id', 'id'])
+    }
+  }
+
   async function loadRuns({ append = false, selectFirst = true } = {}) {
     const token = runListRequests.next()
     if (!append) runLoadingMore.value = false
@@ -1648,6 +2605,7 @@ function useEvolutionWorkbench(options = {}) {
   async function refreshAll({ silent = false } = {}) {
     const refreshToken = refreshRequests.next()
     const token = runListRequests.next()
+    const deepLinkTarget = consumeEvolutionDeepLink() || evolutionDeepLinkTarget.value
     runLoadingMore.value = false
     if (!silent) loading.value = true
     setError('')
@@ -1659,9 +2617,10 @@ function useEvolutionWorkbench(options = {}) {
       runs.value = pageRuns
       batches.value = pageBatches
       runPagination.value = pagination
-      if (!selectedRunId.value && runRows.value.length) {
+      const deepLinkApplied = await applyEvolutionDeepLink(deepLinkTarget)
+      if (!deepLinkApplied && !selectedRunId.value && runRows.value.length) {
         await selectRun(runRows.value[0].id)
-      } else if (selectedRunId.value) {
+      } else if (!deepLinkApplied && selectedRunId.value) {
         const current = runRows.value.find((item) => item.id === selectedRunId.value)
         if (current) await selectRun(selectedRunId.value)
       }
@@ -1680,6 +2639,7 @@ function useEvolutionWorkbench(options = {}) {
     const loaded = await fetchRunDetail(id, row)
     if (!token.isLatest() || selectedRunId.value !== id) return
     selectedRun.value = loaded
+    rememberRunDetail(loaded)
     if (selectedRun.value?.role) selectRole(selectedRun.value.role)
     if (selectedRun.value?.entityType === 'batch') {
       clearDiffSelection()
@@ -2081,6 +3041,10 @@ function useEvolutionWorkbench(options = {}) {
     return Number.isFinite(value) && value >= min ? Math.floor(value) : fallback
   }
 
+  function autoPromoteField() {
+    return Boolean(form.value.auto_promote)
+  }
+
   async function startSingle() {
     if (!selectedRole.value) {
       const message = '请选择一个有基线版本的角色'
@@ -2101,7 +3065,7 @@ function useEvolutionWorkbench(options = {}) {
           training_games: numberField('training_games', 5),
           battle_games: numberField('battle_games', 4),
           max_days: numberField('max_days', 5),
-          auto_promote: true
+          auto_promote: autoPromoteField()
         })
       })
       if (!token.isLatest()) return
@@ -2147,7 +3111,7 @@ function useEvolutionWorkbench(options = {}) {
           training_games: numberField('training_games', 5),
           battle_games: numberField('battle_games', 4),
           max_days: numberField('max_days', 5),
-          auto_promote: true
+          auto_promote: autoPromoteField()
         })
       })
       if (!token.isLatest()) return
@@ -2238,10 +3202,12 @@ function useEvolutionWorkbench(options = {}) {
     await updateProposal(id, proposalId, 'accept')
   }
 
-  async function rejectProposal(proposal, id = selectedRunId.value, reason = '') {
+  async function rejectProposal(proposal, id = selectedRunId.value, reason = '', options = {}) {
     const proposalId = proposal?.apiId || proposal?.proposal_id || proposal?.id
+    const tags = textItems(options?.tags, options?.metadata?.tags)
     await updateProposal(id, proposalId, 'reject', {
-      reason: reason || 'manual_reject'
+      reason: reason || 'manual_reject',
+      tags
     })
   }
 
@@ -2297,9 +3263,14 @@ function useEvolutionWorkbench(options = {}) {
   }
 
   if (options.installLifecycle !== false) {
+    onMounted(() => {
+      consumeEvolutionDeepLink()
+      if (typeof window !== 'undefined') window.addEventListener('hashchange', handleEvolutionHashChange)
+    })
     onBeforeUnmount(() => {
       closeEventStream()
       noticeAutoDismiss.dispose()
+      if (typeof window !== 'undefined') window.removeEventListener('hashchange', handleEvolutionHashChange)
     })
   }
 
@@ -2328,6 +3299,11 @@ function useEvolutionWorkbench(options = {}) {
     selectedVersion,
     selectedVersionId,
     selectedVersionDetail,
+    evolutionDeepLinkTarget,
+    trustBundleDrawerOpen,
+    trustBundleAudit,
+    trustBundleAuditLoading,
+    trustBundleAuditError,
     selectedRoleLeaderboard,
     selectedRunId,
     selectedRun,
@@ -2340,6 +3316,7 @@ function useEvolutionWorkbench(options = {}) {
     selectedProposalRows,
     selectedCanPromote,
     selectedPromoteDisabledReason,
+    baselinePromoteTrustDisabledReason: selectedBaselinePromoteTrustDisabledReason,
     selectedGames,
     sampleBuckets,
     selectedGameBucket,
@@ -2369,6 +3346,8 @@ function useEvolutionWorkbench(options = {}) {
     startBatch,
     runAction,
     loadProposalReview,
+    consumeEvolutionDeepLink,
+    applyEvolutionDeepLink,
     acceptProposal,
     rejectProposal,
     applyAcceptedProposals,
@@ -2377,6 +3356,9 @@ function useEvolutionWorkbench(options = {}) {
     loadMoreSampleGames,
     loadSampleGameDetail,
     loadVersionDetail,
+    openTrustBundleDrawer,
+    refreshTrustBundleAudit,
+    closeTrustBundleDrawer,
     toggleBatchRole,
     shortId,
     sourceText,

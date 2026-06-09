@@ -108,10 +108,10 @@ const detailBenchmarkRows = computed(() => {
   const detail = selectedDetail.value
   const benchmark = detail?.benchmark || selectedRun.value?.benchmark || {}
   return [
-    { label: 'Suite', value: detail?.benchmarkLabel || selectedRun.value?.benchmarkLabel || '临时评测' },
-    { label: 'Evaluation Set', value: benchmark.evaluation_set_id || selectedRun.value?.evaluationSetId || 'ad-hoc' },
-    { label: 'Seed Set', value: benchmark.seed_set_id || 'ad-hoc' },
-    { label: 'Config Hash', value: benchmark.config_hash || '—' }
+    { label: '套件', value: detail?.benchmarkLabel || selectedRun.value?.benchmarkLabel || '临时评测' },
+    { label: '评测集', value: benchmark.evaluation_set_id || selectedRun.value?.evaluationSetId || 'ad-hoc' },
+    { label: '种子集', value: benchmark.seed_set_id || 'ad-hoc' },
+    { label: '配置 Hash', value: benchmark.config_hash || '—' }
   ]
 })
 const gameStatusOptions = [
@@ -190,7 +190,7 @@ function isSelectedRun(run) {
           <div v-else class="bench-table">
             <div class="bench-row bench-header">
               <span>批次</span>
-              <span>Suite</span>
+              <span>套件</span>
               <span>对象</span>
               <span>状态</span>
               <span>Judge</span>
@@ -369,9 +369,9 @@ function isSelectedRun(run) {
                 <div v-for="game in detailGames" :key="game.result_batch_id + '-' + game.game_id" class="bench-game-row">
                   <span>
                     <strong>{{ game.game_id }}</strong>
-                    <small>{{ game.history_game_id || game.replay_unavailable_reason || 'no replay id' }}</small>
+                    <small>{{ game.history_game_id || game.replay_unavailable_reason || '无回放 ID' }}</small>
                   </span>
-                  <span>{{ game.statusLabel }} · seed {{ game.seedLabel }}</span>
+                  <span>{{ game.statusLabel }} · 种子 {{ game.seedLabel }}</span>
                   <em>{{ game.decision_count }} 决策 / {{ game.diagnostic_count }} 诊断</em>
                   <a
                     v-if="game.replayHash"
@@ -416,10 +416,21 @@ function isSelectedRun(run) {
 
 <style scoped>
 .bench-tab-panel {
+  --bench-bg: #f8f0e0;
+  --bench-surface: rgba(255, 252, 245, 0.7);
+  --bench-border: rgba(139, 94, 52, 0.15);
+  --bench-text: #3a2a18;
+  --bench-text-secondary: #8b6b4a;
+  --bench-accent: #8b5e34;
+  --bench-accent-strong: #5a3319;
+  --bench-input-bg: rgba(255, 252, 245, 0.7);
+  --bench-input-border: rgba(139, 94, 52, 0.2);
+  --bench-hover: rgba(139, 94, 52, 0.06);
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-height: 0;
+  color: var(--bench-text);
 }
 
 .bench-run-stats {
@@ -686,7 +697,7 @@ function isSelectedRun(run) {
   border: 1px solid rgba(90, 51, 25, 0.18);
   border-radius: 6px;
   background: var(--bench-accent-strong);
-  color: #fff7dc;
+  color: #f8f0e0;
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
@@ -864,10 +875,10 @@ function isSelectedRun(run) {
 .bench-detail-error {
   margin: 12px;
   padding: 9px 10px;
-  border: 1px solid rgba(168, 42, 42, 0.22);
+  border: 1px solid rgba(90, 51, 25, 0.28);
   border-radius: 7px;
-  background: rgba(168, 42, 42, 0.08);
-  color: #8b3a3a;
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--bench-accent-strong);
   font-size: 12px;
   font-weight: 800;
 }
@@ -933,14 +944,14 @@ function isSelectedRun(run) {
 }
 
 .bench-detail-result b {
-  color: #3a7a3a;
+  color: var(--bench-accent-strong);
   font-size: 12px;
   font-weight: 800;
   text-align: right;
 }
 
 .bench-detail-result b.warning {
-  color: #9a5a20;
+  color: var(--bench-accent);
 }
 
 .bench-detail-result em,
@@ -978,7 +989,7 @@ function isSelectedRun(run) {
   padding: 0 8px;
   border: 1px solid var(--bench-accent-strong);
   border-radius: 6px;
-  background: rgba(31, 111, 84, 0.08);
+  background: rgba(139, 94, 52, 0.08);
   color: var(--bench-accent-strong);
   text-decoration: none;
 }
@@ -992,11 +1003,11 @@ function isSelectedRun(run) {
 }
 
 .bench-diagnostic-row.level-error {
-  border-left-color: #9a3a3a;
+  border-left-color: var(--bench-accent-strong);
 }
 
 .bench-diagnostic-row.level-warning {
-  border-left-color: #9a6a20;
+  border-left-color: var(--bench-accent);
 }
 
 .bench-detail-footnote {
