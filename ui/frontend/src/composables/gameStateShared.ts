@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { computed, ref } from 'vue'
-import { viewFromHash } from './gameSession.ts'
+import { currentLegacyView } from '../router/legacyViewNavigation'
 import { roleIconSpecs, roleMatches } from './useMatchUtils.ts'
 
 export { roleIconSpecs, roleMatches }
@@ -163,7 +163,6 @@ export function fallbackRoleIconImage(player) {
 }
 
 export function createRefs() {
-  const initialHash = typeof window !== 'undefined' ? window.location.hash : ''
   const liveGame = ref(null)
   const replayGame = ref(null)
   const isReplayMode = ref(false)
@@ -201,7 +200,7 @@ export function createRefs() {
     judgeBoardStarting: ref(false),
     roleAssignmentComplete: ref(false),
     roleAssignmentCompleteNotice: ref(false),
-    currentView: ref(viewFromHash(initialHash)),
+    currentView: ref(currentLegacyView()),
     gameHistory: ref([]),
     selectedHistoryGameId: ref(null),
     selectedHistoryGame: ref(null),

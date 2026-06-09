@@ -265,6 +265,12 @@ test('display game switches between live and replay without overwriting live gam
   assert.equal(state.game.value.game_id, live.game_id)
 })
 
+test('game state initializes the current view from the legacy hash', () => withWindow(() => {
+  const state = useGameState()
+
+  assert.equal(state.currentView.value, 'benchmark')
+}, { hash: '#benchmark?batch_id=bench-run-7' }))
+
 test('history replay writes replayGame and restores the live game on exit', () => withWindow(() => {
   const state = useGameState()
   const live = game('live-game')
