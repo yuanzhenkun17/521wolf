@@ -1146,7 +1146,15 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
             "get": (
                 "benchmark_batch_diagnostics_api_benchmark_batch__batch_id__diagnostics_get",
                 None,
-                [("batch_id", "path", True)],
+                [
+                    ("batch_id", "path", True),
+                    ("target_role", "query", False),
+                    ("kind", "query", False),
+                    ("level", "query", False),
+                    ("status", "query", False),
+                    ("stage", "query", False),
+                    ("seed", "query", False),
+                ],
             ),
         },
         "/api/benchmark/batch/{batch_id}/report": {
@@ -1189,6 +1197,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                     ("result_batch_id", "query", False),
                     ("target_role", "query", False),
                     ("status", "query", False),
+                    ("seed", "query", False),
                     ("limit", "query", False),
                     ("offset", "query", False),
                 ],
@@ -2098,9 +2107,16 @@ def test_benchmark_batch_detail_games_diagnostics_api_contract(tmp_path: Path) -
 
         detail_response = client.get(f"/api/benchmark/batch/{batch_id}")
         games_response = client.get(
-            f"/api/benchmark/batch/{batch_id}/games?target_role=seer&status=timeout&limit=1&offset=0"
+            f"/api/benchmark/batch/{batch_id}/games?target_role=seer&status=timeout&seed=260607&limit=1&offset=0"
+        )
+        games_offset_response = client.get(
+            f"/api/benchmark/batch/{batch_id}/games?target_role=seer&seed=260607&limit=1&offset=1"
         )
         diagnostics_response = client.get(f"/api/benchmark/batch/{batch_id}/diagnostics")
+        filtered_diagnostics_response = client.get(
+            f"/api/benchmark/batch/{batch_id}/diagnostics?"
+            "target_role=seer&kind=game_failure&level=warning&status=timeout&stage=game.run&seed=260607"
+        )
 
     assert detail_response.status_code == 200
     detail = detail_response.json()
@@ -2142,12 +2158,14 @@ def test_benchmark_batch_detail_games_diagnostics_api_contract(tmp_path: Path) -
             "batch_id": str,
             "target_role": str,
             "status": str,
+            "seed": str,
             "games": list,
             "pagination": dict,
         },
     )
     _assert_pagination(games)
     assert games["kind"] == "benchmark_batch_games"
+    assert games["seed"] == "260607"
     assert games["pagination"]["total"] == 1
     game = games["games"][0]
     _assert_shape(
@@ -2173,6 +2191,14 @@ def test_benchmark_batch_detail_games_diagnostics_api_contract(tmp_path: Path) -
     assert "events" not in game
     assert "decisions" not in game
 
+    assert games_offset_response.status_code == 200
+    games_offset = games_offset_response.json()
+    assert games_offset["pagination"]["total"] == 1
+    assert games_offset["pagination"]["limit"] == 1
+    assert games_offset["pagination"]["offset"] == 1
+    assert games_offset["pagination"]["returned"] == 0
+    assert games_offset["games"] == []
+
     assert diagnostics_response.status_code == 200
     diagnostics = diagnostics_response.json()
     _assert_shape(
@@ -2193,6 +2219,19 @@ def test_benchmark_batch_detail_games_diagnostics_api_contract(tmp_path: Path) -
     assert diagnostics["summary"]["by_kind"]["game_failure"] == 1
     assert diagnostics["summary"]["by_kind"]["leaderboard_gate_failed"] == 1
     assert diagnostics["summary"]["by_origin"]["game"] >= 1
+
+    assert filtered_diagnostics_response.status_code == 200
+    filtered_diagnostics = filtered_diagnostics_response.json()
+    assert filtered_diagnostics["summary"]["by_kind"] == {"game_failure": 1}
+    assert filtered_diagnostics["summary"]["by_level"] == {"warning": 1}
+    filtered_item = filtered_diagnostics["diagnostics"][0]
+    _assert_shape(
+        filtered_item,
+        {"kind": str, "stage": str, "level": str, "game_id": str, "seed": int, "history_game_id": str},
+    )
+    assert filtered_item["game_id"] == "bench_contract_game_002"
+    assert filtered_item["seed"] == 260607
+    assert filtered_item["history_game_id"] == "bench_contract_game_002"
 
 
 def test_benchmark_batch_report_api_contract(tmp_path: Path) -> None:
@@ -2610,6 +2649,12 @@ def test_benchmark_diagnostics_api_aggregates_across_runs(tmp_path: Path) -> Non
             "scope=role_version&benchmark_id=role-baseline-v1&"
             "evaluation_set_id=role-baseline-v1%40v1&target_role=seer&limit=10"
         )
+        game_filter_response = client.get(
+            "/api/benchmark/diagnostics?"
+            "scope=role_version&benchmark_id=role-baseline-v1&"
+            "evaluation_set_id=role-baseline-v1%40v1&target_role=seer&"
+            "kind=game_failure&level=warning&status=timeout&stage=game.run&seed=260600"
+        )
         error_response = client.get(
             "/api/benchmark/diagnostics?"
             "benchmark_id=role-baseline-v1&evaluation_set_id=role-baseline-v1%40v1&"
@@ -2650,7 +2695,24 @@ def test_benchmark_diagnostics_api_aggregates_across_runs(tmp_path: Path) -> Non
         "bench_diag_a_game_001",
         "bench_diag_b_game_001",
     }
+    assert all(game["history_game_id"] for game in aggregate["affected_games"])
     assert aggregate["affected_runs"][0]["diagnostic_summary"]["total"] >= 1
+
+    assert game_filter_response.status_code == 200
+    game_filter_payload = game_filter_response.json()
+    assert game_filter_payload["summary"]["by_kind"] == {"game_failure": 1}
+    assert game_filter_payload["summary"]["by_level"] == {"warning": 1}
+    assert [run["batch_id"] for run in game_filter_payload["affected_runs"]] == ["bench_diag_a"]
+    assert [game["game_id"] for game in game_filter_payload["affected_games"]] == ["bench_diag_a_game_001"]
+    assert game_filter_payload["affected_games"][0]["seed"] == 260600
+    assert game_filter_payload["affected_games"][0]["history_game_id"] == "bench_diag_a_game_001"
+    game_filter_item = game_filter_payload["diagnostics"][0]
+    _assert_shape(
+        game_filter_item,
+        {"kind": str, "stage": str, "level": str, "game_id": str, "seed": int, "history_game_id": str},
+    )
+    assert game_filter_item["status"] == "timeout"
+    assert game_filter_item["history_game_id"] == "bench_diag_a_game_001"
 
     assert error_response.status_code == 200
     error_payload = error_response.json()
@@ -3825,6 +3887,11 @@ def test_benchmark_list_and_detail_api_contract(tmp_path: Path) -> None:
                 "target_role": "seer",
                 "target_version_id": "seer_candidate_v2",
                 "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "benchmark_config_hash": "sha256:contract",
+                "source_run_id": "bench_role_contract_old",
+                "report_id": "benchmark_report:bench_role_contract_old",
+                "result_batch_id": "bench_role_contract_old_seer",
                 "avg_role_score": 0.7,
                 "target_side_win_rate": 0.6,
                 "rankable": True,

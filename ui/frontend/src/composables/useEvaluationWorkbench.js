@@ -916,6 +916,7 @@ function normalizeBenchmarkDiagnostic(entry) {
   const targetRole = entry?.target_role || ''
   const kind = String(entry?.kind || 'diagnostic')
   const level = String(entry?.level || 'info').toLowerCase()
+  const historyGameId = String(entry?.history_game_id || entry?.historyGameId || entry?.game_id || '')
   return {
     ...entry,
     id: [
@@ -937,7 +938,9 @@ function normalizeBenchmarkDiagnostic(entry) {
     targetRoleLabel: targetRole ? roleMeta(targetRole).label : '全部角色',
     result_batch_id: String(entry?.result_batch_id || ''),
     game_id: String(entry?.game_id || ''),
-    seedLabel: entry?.seed == null ? '' : String(entry.seed)
+    history_game_id: historyGameId,
+    seedLabel: entry?.seed == null ? '' : String(entry.seed),
+    replayHash: historyGameId ? `#logs?workspace=archive&game_id=${encodeURIComponent(historyGameId)}` : ''
   }
 }
 
