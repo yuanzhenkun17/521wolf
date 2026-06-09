@@ -130,6 +130,86 @@ function rowLabel(item) {
   }
   return item.is_baseline ? '基线版本' : `候选版本${candidateNumber(item)}`
 }
+
+function numberFrom(...values) {
+  for (const value of values) {
+    const number = Number(value)
+    if (Number.isFinite(number)) return number
+  }
+  return null
+}
+
+function percentFromFraction(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return null
+  return Math.abs(number) <= 1 ? number * 100 : number
+}
+
+function formatPct(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return `${Math.round(number)}%`
+}
+
+function formatSignedPct(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return `${number >= 0 ? '+' : ''}${Math.round(number)}%`
+}
+
+function sampleSize(item) {
+  return numberFrom(item?.sample_size, item?.sampleSize, item?.games, item?.game_count, item?.games_played, item?.total_games) ?? 0
+}
+
+function pairedSampleSize(item) {
+  return numberFrom(item?.paired_sample_size, item?.pairedSampleSize, item?.paired_n, item?.seed_overlap) ?? 0
+}
+
+function confidenceIntervalLabel(item) {
+  const direct = item?.win_rate_ci || item?.winRateCi || item?.confidence_interval || item?.ci
+  let low = null
+  let high = null
+  if (Array.isArray(direct)) {
+    low = direct[0]
+    high = direct[1]
+  } else if (direct && typeof direct === 'object') {
+    low = direct.low ?? direct.lower ?? direct.ci_low ?? direct.ciLow
+    high = direct.high ?? direct.upper ?? direct.ci_high ?? direct.ciHigh
+  }
+  low = numberFrom(percentFromFraction(low), percentFromFraction(item?.ci_low), percentFromFraction(item?.ciLow))
+  high = numberFrom(percentFromFraction(high), percentFromFraction(item?.ci_high), percentFromFraction(item?.ciHigh))
+  if (low == null || high == null) return '--'
+  return `${formatPct(Math.min(low, high))}-${formatPct(Math.max(low, high))}`
+}
+
+function pairedDeltaLabel(item) {
+  const value = numberFrom(
+    percentFromFraction(item?.paired_delta),
+    percentFromFraction(item?.pairedDelta),
+    percentFromFraction(item?.delta_vs_baseline?.paired_delta)
+  )
+  return formatSignedPct(value)
+}
+
+function significanceLabel(item) {
+  const explicit = String(item?.significance_label || item?.significanceLabel || '').trim()
+  if (explicit) return explicit
+  if (item?.significant === true) return '差异显著'
+  if (item?.significant === false) return '差异不显著'
+  return '待比较'
+}
+
+function warningText(item) {
+  const labels = {
+    low_sample: '小样本',
+    unpaired_seeds: '未配对种子',
+    insufficient_overlap: '配对重叠不足'
+  }
+  const raw = Array.isArray(item?.warnings) ? item.warnings : []
+  const codes = raw.map((value) => String(value || '').trim()).filter(Boolean)
+  if (sampleSize(item) > 0 && sampleSize(item) < 30 && !codes.includes('low_sample')) codes.push('low_sample')
+  return codes.map((code) => labels[code] || code).join(' / ')
+}
 </script>
 
 <template>
@@ -175,13 +255,17 @@ function rowLabel(item) {
               <span>模型</span>
               <span>得分</span>
               <span>胜率</span>
-              <span>差异</span>
+              <span>paired delta</span>
+              <span>样本量</span>
+              <span>置信证据</span>
             </template>
             <template v-else>
               <span>版本</span>
               <span>来源</span>
               <span>得分</span>
               <span>胜率</span>
+              <span>样本量</span>
+              <span>置信证据</span>
             </template>
           </div>
           <div
@@ -193,8 +277,17 @@ function rowLabel(item) {
               <span>{{ rowLabel(item) }}</span>
               <span>{{ item.scorePct }}%</span>
               <span>{{ item.winRatePct }}%</span>
-              <span :class="item.deltaScore >= 0 ? 'positive' : 'negative'">
-                {{ item.deltaScore >= 0 ? '+' : '' }}{{ Math.round(item.deltaScore * 100) }}%
+              <span class="bench-stat-cell" :class="Number(item.paired_delta ?? item.pairedDelta ?? item.deltaScore ?? 0) >= 0 ? 'positive' : 'negative'">
+                <b>{{ pairedDeltaLabel(item) }}</b>
+                <small>配对 {{ pairedSampleSize(item) }}</small>
+              </span>
+              <span class="bench-stat-cell">
+                <b>{{ sampleSize(item) }} 样本</b>
+                <small>{{ warningText(item) || '样本正常' }}</small>
+              </span>
+              <span class="bench-stat-cell">
+                <b>{{ confidenceIntervalLabel(item) }}</b>
+                <small>{{ significanceLabel(item) }}</small>
               </span>
             </template>
             <template v-else>
@@ -202,6 +295,14 @@ function rowLabel(item) {
               <span>{{ sourceLabel(item.source) }}</span>
               <span>{{ item.scorePct }}%</span>
               <span>{{ item.winRatePct }}%</span>
+              <span class="bench-stat-cell">
+                <b>{{ sampleSize(item) }} 样本</b>
+                <small>配对 {{ pairedSampleSize(item) }}</small>
+              </span>
+              <span class="bench-stat-cell">
+                <b>{{ confidenceIntervalLabel(item) }}</b>
+                <small>{{ warningText(item) || significanceLabel(item) }}</small>
+              </span>
             </template>
           </div>
         </div>
@@ -441,7 +542,7 @@ function rowLabel(item) {
 
 .bench-row {
   display: grid;
-  grid-template-columns: minmax(112px, 0.9fr) minmax(100px, 1fr) minmax(86px, 0.7fr) minmax(90px, 0.7fr);
+  grid-template-columns: minmax(112px, 0.9fr) minmax(82px, 0.58fr) minmax(82px, 0.58fr) minmax(104px, 0.74fr) minmax(104px, 0.74fr) minmax(124px, 0.88fr);
   gap: 10px;
   align-items: center;
   min-width: 580px;
@@ -489,6 +590,35 @@ function rowLabel(item) {
   color: var(--bench-text-secondary);
   font-size: 11px;
   font-weight: 700;
+}
+
+.bench-stat-cell {
+  display: grid !important;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.bench-stat-cell b,
+.bench-stat-cell small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bench-stat-cell b {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.bench-stat-cell small {
+  display: block;
+  margin-left: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 10px;
 }
 
 .positive {

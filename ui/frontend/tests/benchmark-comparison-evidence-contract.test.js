@@ -15,8 +15,13 @@ function leaderboardSource() {
   return readSource('../src/components/benchmark/BenchmarkLeaderboardTable.vue')
 }
 
+function workbenchSource() {
+  return readSource('../src/composables/useEvaluationWorkbench.js')
+}
+
 test('BenchmarkComparisonView keeps unrankable evidence separate from formal ranking rows', () => {
   const source = comparisonSource()
+  const workbench = workbenchSource()
 
   assert.match(source, /const comparePayload = computed\(\(\) =>/)
   assert.match(source, /benchmarkLeaderboardCompareLoading/)
@@ -53,6 +58,25 @@ test('BenchmarkComparisonView keeps unrankable evidence separate from formal ran
   assert.match(source, /服务端标准比较/)
   assert.match(source, /本地兜底比较/)
   assert.match(source, /本地当前榜单/)
+  assert.match(source, /const WARNING_LABELS = \{/)
+  assert.match(source, /low_sample:\s*'小样本'/)
+  assert.match(source, /unpaired_seeds:\s*'未配对种子'/)
+  assert.match(source, /insufficient_overlap:\s*'配对重叠不足'/)
+  assert.match(source, /sampleSize/)
+  assert.match(source, /pairedSampleSize/)
+  assert.match(source, /standardErrorValue/)
+  assert.match(source, /pairedDeltaValue/)
+  assert.match(source, /normalizeWinRateInterval/)
+  assert.match(source, /normalizeSignificanceLabel/)
+  assert.match(source, /normalizeWarnings/)
+  assert.match(workbench, /const statistics = \{/)
+  assert.match(workbench, /sample_size:\s*score\?\.sample_size/)
+  assert.match(workbench, /paired_sample_size:\s*score\?\.paired_sample_size/)
+  assert.match(workbench, /win_rate_ci:\s*score\?\.win_rate_ci/)
+  assert.match(workbench, /paired_delta:\s*score\?\.paired_delta/)
+  assert.match(workbench, /significance_label:\s*score\?\.significance_label/)
+  assert.match(workbench, /warnings:\s*score\?\.warnings/)
+  assert.match(workbench, /\.\.\.statistics/)
 })
 
 test('BenchmarkComparisonView uses warm benchmark colors and Chinese visible labels', () => {
@@ -71,7 +95,21 @@ test('BenchmarkComparisonView uses warm benchmark colors and Chinese visible lab
   assert.match(source, /95% 置信区间/)
   assert.match(source, /置信区间正常/)
   assert.match(source, /目标角色边界/)
+  assert.match(source, /样本量/)
+  assert.match(source, /配对样本/)
+  assert.match(source, /标准误/)
+  assert.match(source, /paired delta/)
+  assert.match(source, /差异不显著/)
+  assert.match(source, /未配对种子/)
+  assert.match(source, /配对重叠不足/)
 
+  assert.match(leaderboard, /样本量/)
+  assert.match(leaderboard, /置信证据/)
+  assert.match(leaderboard, /paired delta/)
+  assert.match(leaderboard, /差异不显著/)
+  assert.match(leaderboard, /小样本/)
+  assert.match(leaderboard, /未配对种子/)
+  assert.match(leaderboard, /配对重叠不足/)
   assert.doesNotMatch(leaderboard, /#3a7a3a/)
   assert.match(leaderboard, /color:\s*var\(--bench-accent-strong,\s*#8b5e34\)/)
   assert.match(leaderboard, /color:\s*var\(--bench-danger,\s*var\(--logbook-danger,\s*#993026\)\)/)
@@ -90,4 +128,15 @@ test('BenchmarkComparisonView SFC compiles after unrankable evidence wiring', ()
     id: 'benchmark-comparison-evidence-test'
   })
   assert.deepEqual(template.errors, [])
+
+  const leaderboardFilename = new URL('../src/components/benchmark/BenchmarkLeaderboardTable.vue', import.meta.url).pathname
+  const leaderboardParsed = parse(leaderboardSource(), { filename: leaderboardFilename })
+  assert.deepEqual(leaderboardParsed.errors, [])
+  compileScript(leaderboardParsed.descriptor, { id: 'benchmark-leaderboard-statistics-test' })
+  const leaderboardTemplate = compileTemplate({
+    source: leaderboardParsed.descriptor.template.content,
+    filename: leaderboardFilename,
+    id: 'benchmark-leaderboard-statistics-test'
+  })
+  assert.deepEqual(leaderboardTemplate.errors, [])
 })

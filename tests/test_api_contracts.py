@@ -368,6 +368,38 @@ def _assert_shape(payload: dict[str, Any], shape: dict[str, type | tuple[type, .
         assert isinstance(payload[key], expected), f"{key} expected {expected}, got {type(payload[key])}"
 
 
+def _assert_leaderboard_statistics_contract(payload: dict[str, Any]) -> None:
+    _assert_shape(
+        payload,
+        {
+            "sample_size": int,
+            "paired_sample_size": int,
+            "win_rate_ci": dict,
+            "ci_low": (int, float),
+            "ci_high": (int, float),
+            "standard_error": (int, float),
+            "paired_delta": (int, float, type(None)),
+            "significant": bool,
+            "significance_label": str,
+            "warnings": list,
+        },
+    )
+    _assert_shape(
+        payload["win_rate_ci"],
+        {
+            "low": (int, float),
+            "high": (int, float),
+            "level": (int, float),
+        },
+    )
+    assert payload["ci_low"] == payload["win_rate_ci"]["low"]
+    assert payload["ci_high"] == payload["win_rate_ci"]["high"]
+    assert payload["sample_size"] >= 0
+    assert payload["paired_sample_size"] >= 0
+    assert 0 <= payload["ci_low"] <= payload["ci_high"] <= 1
+    assert set(payload["warnings"]).issubset({"low_sample", "unpaired_seeds", "insufficient_overlap"})
+
+
 def _assert_pagination(payload: dict[str, Any]) -> None:
     _assert_shape(
         payload["pagination"],
@@ -4367,6 +4399,16 @@ def test_leaderboards_api_contract_preserves_scope_isolation_params(tmp_path: Pa
                     "avg_role_score": 0.7,
                     "rankable": True,
                     "data_sufficient": True,
+                    "sample_size": 3,
+                    "paired_sample_size": 0,
+                    "win_rate_ci": {"low": 0.0, "high": 1.0, "level": 0.95},
+                    "ci_low": 0.0,
+                    "ci_high": 1.0,
+                    "standard_error": 0.0,
+                    "paired_delta": None,
+                    "significant": False,
+                    "significance_label": "差异不显著",
+                    "warnings": ["low_sample", "unpaired_seeds"],
                     "summary": {},
                     "updated_at": "2026-06-09T10:00:00+08:00",
                 }
@@ -4405,6 +4447,9 @@ def test_leaderboards_api_contract_preserves_scope_isolation_params(tmp_path: Pa
     assert payload["entries"][0]["scope"] == "role_version"
     assert payload["entries"][0]["target_role"] == "seer"
     assert payload["entries"][0]["evaluation_set_id"] == "role-baseline-v1@v1"
+    _assert_leaderboard_statistics_contract(payload["entries"][0])
+    assert payload["entries"][0]["significance_label"] == "差异不显著"
+    assert payload["entries"][0]["warnings"] == ["low_sample", "unpaired_seeds"]
 
 
 def test_leaderboard_compare_api_pins_baseline_and_reports_boundary(tmp_path: Path) -> None:
@@ -4429,7 +4474,14 @@ def test_leaderboard_compare_api_pins_baseline_and_reports_boundary(tmp_path: Pa
                 "policy_adjusted_rate": 0.03,
                 "rankable": True,
                 "is_baseline": True,
-                "summary": {"is_baseline": True},
+                "summary": {
+                    "is_baseline": True,
+                    "seed_metrics": [
+                        {"seed": 101, "target_side_win": True},
+                        {"seed": 102, "target_side_win": False},
+                        {"seed": 103, "target_side_win": True},
+                    ],
+                },
             },
             {
                 "scope": "role_version",
@@ -4448,7 +4500,13 @@ def test_leaderboard_compare_api_pins_baseline_and_reports_boundary(tmp_path: Pa
                 "llm_error_rate": 0.01,
                 "policy_adjusted_rate": 0.02,
                 "rankable": True,
-                "summary": {},
+                "summary": {
+                    "seed_metrics": [
+                        {"seed": 101, "target_side_win": True},
+                        {"seed": 102, "target_side_win": True},
+                        {"seed": 103, "target_side_win": True},
+                    ],
+                },
             },
             {
                 "scope": "role_version",
@@ -4525,6 +4583,12 @@ def test_leaderboard_compare_api_pins_baseline_and_reports_boundary(tmp_path: Pa
     assert rows_by_subject["seer_candidate"]["change"] == "improvement"
     assert abs(rows_by_subject["seer_candidate"]["delta_vs_baseline"]["score"] - 0.06) < 0.000001
     assert abs(rows_by_subject["seer_candidate"]["delta_vs_baseline"]["target_side_win_rate"] - 0.03) < 0.000001
+    _assert_leaderboard_statistics_contract(rows_by_subject["seer_candidate"])
+    assert rows_by_subject["seer_candidate"]["paired_sample_size"] == 3
+    assert abs(rows_by_subject["seer_candidate"]["paired_delta"] - (1 / 3)) < 0.000001
+    assert rows_by_subject["seer_candidate"]["significant"] is False
+    assert rows_by_subject["seer_candidate"]["significance_label"] == "差异不显著"
+    assert rows_by_subject["seer_candidate"]["warnings"] == ["insufficient_overlap"]
     assert rows_by_subject["seer_mismatch"]["change"] == "incomparable"
     assert rows_by_subject["seer_mismatch"]["boundary_warnings"] == [
         "evaluation_set_mismatch",
@@ -4532,6 +4596,126 @@ def test_leaderboard_compare_api_pins_baseline_and_reports_boundary(tmp_path: Pa
     ]
     assert payload["summary"]["improvement_count"] == 1
     assert payload["summary"]["boundary_mismatch_count"] == 1
+    assert payload["summary"]["not_significant_count"] == 1
+    assert payload["summary"]["unpaired_seed_count"] >= 1
+    assert payload["summary"]["insufficient_overlap_count"] >= 1
+
+
+def test_leaderboard_compare_api_requires_paired_overlap_for_significance(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        rows = [
+            {
+                "scope": "role_version",
+                "subject_id": "seer_baseline",
+                "target_role": "seer",
+                "target_version_id": "seer_baseline",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "game_count": 40,
+                "games_played": 40,
+                "avg_role_score": 0.2,
+                "target_side_win_rate": 0.05,
+                "rankable": True,
+                "is_baseline": True,
+                "summary": {
+                    "is_baseline": True,
+                    "seed_metrics": [{"seed": seed, "target_side_win": False} for seed in range(100, 130)],
+                },
+            },
+            {
+                "scope": "role_version",
+                "subject_id": "seer_candidate",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "game_count": 40,
+                "games_played": 40,
+                "avg_role_score": 0.95,
+                "target_side_win_rate": 0.95,
+                "rankable": True,
+                "summary": {
+                    "seed_metrics": [{"seed": seed, "target_side_win": True} for seed in range(200, 230)],
+                },
+            },
+        ]
+        store.leaderboard_entries = lambda **_: [dict(row) for row in rows]
+        response = client.get(
+            "/api/leaderboards/compare?"
+            "scope=role_version&evaluation_set_id=role-baseline-v1%40v1&"
+            "target_role=seer&baseline_subject_id=seer_baseline"
+        )
+
+    assert response.status_code == 200
+    candidate = next(row for row in response.json()["rows"] if row["subject_id"] == "seer_candidate")
+    _assert_leaderboard_statistics_contract(candidate)
+    assert candidate["paired_sample_size"] == 0
+    assert candidate["paired_delta"] is None
+    assert candidate["significant"] is False
+    assert candidate["significance_label"] == "差异不显著"
+    assert candidate["warnings"] == ["insufficient_overlap"]
+
+
+def test_leaderboard_compare_api_pairs_duplicate_seeds_by_game_index(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
+        store = client.app.state.backend_store
+        rows = [
+            {
+                "scope": "role_version",
+                "subject_id": "seer_baseline",
+                "target_role": "seer",
+                "target_version_id": "seer_baseline",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "game_count": 40,
+                "games_played": 40,
+                "avg_role_score": 0.5,
+                "target_side_win_rate": 0.5,
+                "rankable": True,
+                "is_baseline": True,
+                "summary": {
+                    "is_baseline": True,
+                    "seed_metrics": [
+                        {"seed": 777, "game_index": 1, "target_side_win": True},
+                        {"seed": 777, "game_index": 2, "target_side_win": False},
+                    ],
+                },
+            },
+            {
+                "scope": "role_version",
+                "subject_id": "seer_candidate",
+                "target_role": "seer",
+                "target_version_id": "seer_candidate",
+                "evaluation_set_id": "role-baseline-v1@v1",
+                "seed_set_id": "role-baseline-quick-202606",
+                "game_count": 40,
+                "games_played": 40,
+                "avg_role_score": 0.7,
+                "target_side_win_rate": 0.75,
+                "rankable": True,
+                "summary": {
+                    "seed_metrics": [
+                        {"seed": 777, "game_index": 1, "target_side_win": True},
+                        {"seed": 777, "game_index": 2, "target_side_win": True},
+                    ],
+                },
+            },
+        ]
+        store.leaderboard_entries = lambda **_: [dict(row) for row in rows]
+        response = client.get(
+            "/api/leaderboards/compare?"
+            "scope=role_version&evaluation_set_id=role-baseline-v1%40v1&"
+            "target_role=seer&baseline_subject_id=seer_baseline"
+        )
+
+    assert response.status_code == 200
+    candidate = next(row for row in response.json()["rows"] if row["subject_id"] == "seer_candidate")
+    _assert_leaderboard_statistics_contract(candidate)
+    assert candidate["paired_sample_size"] == 2
+    assert candidate["paired_delta"] == 0.5
+    assert candidate["significant"] is False
+    assert candidate["warnings"] == ["insufficient_overlap"]
 
 
 def test_leaderboard_compare_api_reports_unrankable_evidence_outside_rows(tmp_path: Path) -> None:
@@ -4560,7 +4744,14 @@ def test_leaderboard_compare_api_reports_unrankable_evidence_outside_rows(tmp_pa
                 "policy_adjusted_rate": 0.03,
                 "rankable": True,
                 "is_baseline": True,
-                "summary": {"is_baseline": True},
+                "summary": {
+                    "is_baseline": True,
+                    "seed_metrics": [
+                        {"seed": 101, "target_side_win": True},
+                        {"seed": 102, "target_side_win": False},
+                        {"seed": 103, "target_side_win": True},
+                    ],
+                },
             },
             {
                 "scope": "model",
@@ -4646,7 +4837,14 @@ def test_leaderboard_compare_api_recovers_batch_gate_failures_as_unrankable_evid
                 "target_side_win_rate": 0.61,
                 "rankable": True,
                 "is_baseline": True,
-                "summary": {"is_baseline": True},
+                "summary": {
+                    "is_baseline": True,
+                    "seed_metrics": [
+                        {"seed": 101, "target_side_win": True},
+                        {"seed": 102, "target_side_win": False},
+                        {"seed": 103, "target_side_win": True},
+                    ],
+                },
             }
         ]
         store.leaderboard_entries = lambda **_: [dict(row) for row in rankable_rows]

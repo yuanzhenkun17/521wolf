@@ -1207,7 +1207,20 @@ def test_persist_batch_node_carries_benchmark_evaluation_metadata(tmp_path, monk
             "evaluation_set_id": "role-baseline-v1@v1",
             "seed_set_id": "role-baseline-quick-202606",
         },
-        "games": [_valid_game("villagers"), _valid_game("werewolves")],
+        "games": [
+            {
+                **_valid_game("villagers"),
+                "game_id": "bench_meta_seer_game_001",
+                "source_game_id": "role-baseline-slot-001",
+                "seed": 270600,
+            },
+            {
+                **_valid_game("werewolves"),
+                "game_id": "bench_meta_seer_game_002",
+                "source_game_id": "role-baseline-slot-002",
+                "seed": 270611,
+            },
+        ],
         "score_summary": {
             "avg_role_score": 6.2,
             "by_role_category": {"seer": 6.2},
@@ -1234,6 +1247,11 @@ def test_persist_batch_node_carries_benchmark_evaluation_metadata(tmp_path, monk
     assert leaderboard_entries[0]["summary"]["benchmark_config_hash"] == "sha256:role-meta"
     assert leaderboard_entries[0]["summary"]["evaluation_set_id"] == "role-baseline-v1@v1"
     assert leaderboard_entries[0]["summary"]["seed_set_id"] == "role-baseline-quick-202606"
+    seed_metrics = leaderboard_entries[0]["summary"]["seed_metrics"]
+    assert seed_metrics[0]["seed"] == 270600
+    assert seed_metrics[0]["game_index"] == 1
+    assert seed_metrics[0]["source_game_id"] == "role-baseline-slot-001"
+    assert seed_metrics[0]["pair_key"] == "270600:1"
     assert leaderboard_entries[0]["scope"] == "role_version"
     assert leaderboard_entries[0]["subject_id"] == "seer_candidate_v2"
 

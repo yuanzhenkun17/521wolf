@@ -466,6 +466,18 @@ function normalizeBenchmarkRoleVersion(version, score = null) {
     score?.total_games ??
     metrics.games_played
   )
+  const statistics = {
+    sample_size: score?.sample_size ?? score?.summary?.sample_size ?? games,
+    paired_sample_size: score?.paired_sample_size ?? score?.summary?.paired_sample_size ?? 0,
+    win_rate_ci: score?.win_rate_ci ?? score?.summary?.win_rate_ci ?? null,
+    ci_low: score?.ci_low ?? score?.summary?.ci_low ?? null,
+    ci_high: score?.ci_high ?? score?.summary?.ci_high ?? null,
+    standard_error: score?.standard_error ?? score?.summary?.standard_error ?? null,
+    paired_delta: score?.paired_delta ?? score?.summary?.paired_delta ?? null,
+    significant: score?.significant ?? score?.summary?.significant ?? false,
+    significance_label: score?.significance_label ?? score?.summary?.significance_label ?? '',
+    warnings: score?.warnings ?? score?.summary?.warnings ?? []
+  }
   const targetDisabledReason = benchmarkTargetVersionDisabledReason({
     ...version,
     release_stage: releaseStage,
@@ -493,6 +505,7 @@ function normalizeBenchmarkRoleVersion(version, score = null) {
     winRatePct: pct(winRate),
     games,
     game_count: games,
+    ...statistics,
     target_role_role_weighted_score: scoreValue,
     target_side_win_rate: winRate,
     targetDisabled: Boolean(targetDisabledReason),

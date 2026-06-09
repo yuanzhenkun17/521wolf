@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import uuid
 import asyncio
@@ -324,8 +325,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 where += "AND evaluation_set_id = ? "
                 params.append(evaluation_set_id)
             rows = conn.execute(
-                "SELECT target_version_id, avg_role_score, target_side_win_rate, "
-                "fallback_rate, rankable, games_played FROM benchmark_leaderboard "
+                "SELECT scope, subject_id, model_id, model_config_hash, target_role, target_version_id, "
+                "comparison_group_id, evaluation_set_id, seed_set_id, games_played, valid_game_rate, "
+                "strength_score, avg_role_score, by_role_category_scores, avg_speech_score, avg_vote_score, "
+                "avg_skill_score, avg_logic_score, avg_team_score, risk_penalty, fallback_rate, llm_error_rate, "
+                "policy_adjusted_rate, target_side_win_rate, rankable, data_sufficient, summary, updated_at "
+                "FROM benchmark_leaderboard "
                 f"{where}"
                 "ORDER BY updated_at DESC",
                 tuple(params),
@@ -333,7 +338,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             for row in rows:
                 vid = row["target_version_id"]
                 if vid and vid not in scores:  # newest row per version wins
-                    scores[vid] = dict(row)
+                    scores[vid] = self._leaderboard_row_payload(row)
         except Exception:  # noqa: BLE001 — leaderboard read is best-effort
             _log.warning("leaderboard_scores_for_role failed for %s", role, exc_info=True)
         finally:
@@ -1150,7 +1155,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             summary.get("report_id") if isinstance(summary, dict) else None,
             f"benchmark_report:{source_run_id}" if source_run_id else "",
         )
-        return {
+        row_payload = {
             "scope": scope,
             "hash": subject_id or str(target_version_id or model_config_hash or model_id or ""),
             "subject_id": subject_id,
@@ -1196,6 +1201,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             "report_id": report_id,
             "updated_at": payload.get("updated_at"),
         }
+        row_payload.update(_leaderboard_row_statistics(row_payload))
+        return row_payload
 
     def leaderboard_scores_for_roles(
         self,
@@ -1220,8 +1227,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 where += "AND evaluation_set_id = ? "
                 params.append(evaluation_set_id)
             rows = conn.execute(
-                "SELECT target_role, target_version_id, avg_role_score, target_side_win_rate, "
-                "fallback_rate, rankable, games_played FROM benchmark_leaderboard "
+                "SELECT scope, subject_id, model_id, model_config_hash, target_role, target_version_id, "
+                "comparison_group_id, evaluation_set_id, seed_set_id, games_played, valid_game_rate, "
+                "strength_score, avg_role_score, by_role_category_scores, avg_speech_score, avg_vote_score, "
+                "avg_skill_score, avg_logic_score, avg_team_score, risk_penalty, fallback_rate, llm_error_rate, "
+                "policy_adjusted_rate, target_side_win_rate, rankable, data_sufficient, summary, updated_at "
+                "FROM benchmark_leaderboard "
                 f"{where}"
                 "ORDER BY updated_at DESC",
                 tuple(params),
@@ -1230,7 +1241,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 role = row["target_role"]
                 vid = row["target_version_id"]
                 if role in scores and vid and vid not in scores[role]:  # newest row per role/version wins
-                    scores[role][vid] = dict(row)
+                    scores[role][vid] = self._leaderboard_row_payload(row)
         except Exception:  # noqa: BLE001 — leaderboard read is best-effort
             _log.warning("leaderboard_scores_for_roles failed", exc_info=True)
         finally:
@@ -3979,10 +3990,329 @@ def _leaderboard_metric(row: dict[str, Any] | None, *keys: str) -> float:
     return 0.0
 
 
+_LEADERBOARD_CONFIDENCE_LEVEL = 0.95
+_LEADERBOARD_Z_95 = 1.96
+_LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE = 30
+_LEADERBOARD_MIN_PAIRED_OVERLAP = _LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE
+
+
 def _leaderboard_score(row: dict[str, Any] | None, *, scope: str | None) -> float:
     if scope == "model":
         return _leaderboard_metric(row, "strength_score", "avg_role_score", "target_role_role_weighted_score")
     return _leaderboard_metric(row, "avg_role_score", "target_role_role_weighted_score", "strength_score")
+
+
+def _leaderboard_row_statistics(row: dict[str, Any] | None) -> dict[str, Any]:
+    """Return row-level binomial confidence evidence for leaderboard payloads."""
+    if not row:
+        return _empty_leaderboard_statistics()
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    sample_size = _first_int(
+        row.get("sample_size"),
+        summary.get("sample_size"),
+        row.get("completed_games"),
+        row.get("completed"),
+        summary.get("completed_games"),
+        summary.get("win_rate_denominator"),
+        row.get("games_played"),
+        row.get("game_count"),
+        summary.get("games_played"),
+        summary.get("game_count"),
+        default=0,
+    )
+    win_rate = _probability_from_value(
+        _first_float(
+            row.get("target_side_win_rate"),
+            row.get("win_rate"),
+            summary.get("target_side_win_rate"),
+            summary.get("win_rate"),
+            default=0.0,
+        )
+    )
+    standard_error = _binomial_standard_error(win_rate, sample_size)
+    ci_low, ci_high = _wilson_confidence_interval(win_rate, sample_size)
+    paired_sample_size = _first_int(
+        row.get("paired_sample_size"),
+        summary.get("paired_sample_size"),
+        summary.get("paired_valid_count"),
+        default=0,
+    )
+    paired_delta = _optional_probability_delta(
+        row.get("paired_delta"),
+        summary.get("paired_delta"),
+        summary.get("paired_seed_delta"),
+    )
+    warnings = _stat_warning_list(row.get("warnings"), summary.get("warnings"))
+    if sample_size < _LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE:
+        warnings.append("low_sample")
+    warnings = _dedupe_warning_codes(warnings)
+    return {
+        "sample_size": sample_size,
+        "paired_sample_size": paired_sample_size,
+        "win_rate_ci": {
+            "low": ci_low,
+            "high": ci_high,
+            "level": _LEADERBOARD_CONFIDENCE_LEVEL,
+        },
+        "ci_low": ci_low,
+        "ci_high": ci_high,
+        "standard_error": standard_error,
+        "paired_delta": paired_delta,
+        "significant": bool(row.get("significant", False)),
+        "significance_label": str(row.get("significance_label") or "待比较"),
+        "warnings": warnings,
+    }
+
+
+def _empty_leaderboard_statistics() -> dict[str, Any]:
+    return {
+        "sample_size": 0,
+        "paired_sample_size": 0,
+        "win_rate_ci": {"low": 0.0, "high": 0.0, "level": _LEADERBOARD_CONFIDENCE_LEVEL},
+        "ci_low": 0.0,
+        "ci_high": 0.0,
+        "standard_error": 0.0,
+        "paired_delta": None,
+        "significant": False,
+        "significance_label": "待比较",
+        "warnings": ["low_sample"],
+    }
+
+
+def _probability_from_value(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number):
+        return 0.0
+    if abs(number) > 1 and abs(number) <= 100:
+        number = number / 100.0
+    return max(0.0, min(1.0, number))
+
+
+def _optional_probability_delta(*values: Any) -> float | None:
+    for value in values:
+        if value is None or value == "":
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(number):
+            continue
+        if abs(number) > 1 and abs(number) <= 100:
+            number = number / 100.0
+        return number
+    return None
+
+
+def _binomial_standard_error(win_rate: float, sample_size: int) -> float:
+    if sample_size <= 0:
+        return 0.0
+    probability = max(0.0, min(1.0, float(win_rate)))
+    return math.sqrt((probability * (1.0 - probability)) / sample_size)
+
+
+def _wilson_confidence_interval(win_rate: float, sample_size: int) -> tuple[float, float]:
+    if sample_size <= 0:
+        return 0.0, 0.0
+    probability = max(0.0, min(1.0, float(win_rate)))
+    z_squared = _LEADERBOARD_Z_95 ** 2
+    denominator = 1.0 + (z_squared / sample_size)
+    center = (probability + (z_squared / (2 * sample_size))) / denominator
+    half_width = (
+        _LEADERBOARD_Z_95
+        * math.sqrt((probability * (1.0 - probability) / sample_size) + (z_squared / (4 * sample_size ** 2)))
+        / denominator
+    )
+    return (
+        max(0.0, min(1.0, center - half_width)),
+        max(0.0, min(1.0, center + half_width)),
+    )
+
+
+def _stat_warning_list(*values: Any) -> list[str]:
+    warnings: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            warnings.append(value)
+        elif isinstance(value, list):
+            warnings.extend(str(item) for item in value)
+        elif isinstance(value, dict):
+            warnings.extend(str(key) for key, enabled in value.items() if enabled)
+    return warnings
+
+
+def _dedupe_warning_codes(values: list[str]) -> list[str]:
+    allowed = {"low_sample", "unpaired_seeds", "insufficient_overlap"}
+    warnings: list[str] = []
+    for value in values:
+        code = str(value or "").strip()
+        if code in allowed and code not in warnings:
+            warnings.append(code)
+    return warnings
+
+
+def _leaderboard_seed_metrics(row: dict[str, Any] | None) -> dict[str, float]:
+    if not row:
+        return {}
+    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+    candidates = (
+        row.get("seed_metrics"),
+        row.get("paired_seed_metrics"),
+        row.get("per_seed_metrics"),
+        summary.get("seed_metrics"),
+        summary.get("paired_seed_metrics"),
+        summary.get("per_seed_metrics"),
+        summary.get("seed_results"),
+        summary.get("per_seed"),
+    )
+    metrics: dict[str, float] = {}
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            iterable = [{"seed": seed, "value": value} for seed, value in candidate.items()]
+        elif isinstance(candidate, list):
+            iterable = candidate
+        else:
+            continue
+        for index, item in enumerate(iterable):
+            if not isinstance(item, dict):
+                continue
+            key = _leaderboard_seed_metric_key(item, index)
+            if not key:
+                continue
+            value = _seed_metric_value(item)
+            if value is not None:
+                metrics[key] = value
+    return metrics
+
+
+def _leaderboard_seed_metric_key(item: dict[str, Any], index: int) -> str:
+    pair_key = _first_text(item.get("pair_key"), item.get("paired_key"), item.get("pair_id"))
+    if pair_key:
+        return f"pair:{pair_key}"
+    seed = _first_text(item.get("seed"), item.get("seed_id"), item.get("id"))
+    game_index = _first_text(item.get("game_index"), item.get("game_slot"), item.get("slot_index"), item.get("ordinal"))
+    if seed and game_index:
+        return f"seed:{seed}:game:{game_index}"
+    game_id = _first_text(item.get("source_game_id"), item.get("game_id"))
+    if seed and game_id:
+        return f"seed:{seed}:source:{game_id}"
+    if seed:
+        return f"seed:{seed}"
+    if game_id:
+        return f"game:{game_id}"
+    return f"index:{index}"
+
+
+def _seed_metric_value(item: dict[str, Any]) -> float | None:
+    for key in (
+        "target_side_win",
+        "target_side_won",
+        "win",
+        "won",
+        "value",
+        "target_side_win_rate",
+        "score",
+    ):
+        value = item.get(key)
+        if value is None or value == "":
+            continue
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        text = str(value).strip().lower()
+        if text in {"win", "won", "true", "yes"}:
+            return 1.0
+        if text in {"loss", "lost", "false", "no"}:
+            return 0.0
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            return _probability_from_value(number)
+    return None
+
+
+def _leaderboard_paired_evidence(
+    row: dict[str, Any],
+    baseline: dict[str, Any] | None,
+) -> tuple[float | None, int, list[str]]:
+    if not baseline:
+        return None, 0, []
+    row_metrics = _leaderboard_seed_metrics(row)
+    baseline_metrics = _leaderboard_seed_metrics(baseline)
+    if not row_metrics or not baseline_metrics:
+        return None, 0, ["unpaired_seeds"]
+    overlap = sorted(set(row_metrics).intersection(baseline_metrics))
+    if not overlap:
+        return None, 0, ["insufficient_overlap"]
+    deltas = [row_metrics[seed] - baseline_metrics[seed] for seed in overlap]
+    paired_delta = sum(deltas) / len(deltas)
+    warnings: list[str] = []
+    if len(overlap) < min(len(row_metrics), len(baseline_metrics)):
+        warnings.append("unpaired_seeds")
+    if len(overlap) < _LEADERBOARD_MIN_PAIRED_OVERLAP:
+        warnings.append("insufficient_overlap")
+    return paired_delta, len(overlap), warnings
+
+
+def _leaderboard_compare_statistics(
+    row: dict[str, Any],
+    baseline: dict[str, Any] | None,
+    *,
+    boundary_warnings: list[str],
+    is_reference: bool,
+    win_rate_delta: float,
+) -> dict[str, Any]:
+    row_stats = _leaderboard_row_statistics(row)
+    baseline_stats = _leaderboard_row_statistics(baseline)
+    warnings = list(row_stats["warnings"])
+    if baseline and baseline_stats["sample_size"] < _LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE:
+        warnings.append("low_sample")
+    paired_delta, paired_sample_size, paired_warnings = _leaderboard_paired_evidence(row, baseline)
+    warnings.extend(paired_warnings)
+    paired_delta_error = None
+    if paired_sample_size > 0:
+        paired_delta_error = math.sqrt((float(row_stats["standard_error"] or 0.0) ** 2) + (float(baseline_stats["standard_error"] or 0.0) ** 2))
+    combined_standard_error = math.sqrt(
+        float(row_stats["standard_error"] or 0.0) ** 2
+        + float(baseline_stats["standard_error"] or 0.0) ** 2
+    )
+    warning_codes = _dedupe_warning_codes(warnings)
+    statistically_significant = bool(
+        baseline
+        and not is_reference
+        and not boundary_warnings
+        and paired_delta is not None
+        and "low_sample" not in warning_codes
+        and "unpaired_seeds" not in warning_codes
+        and "insufficient_overlap" not in warning_codes
+        and paired_delta_error
+        and paired_delta_error > 0
+        and abs(float(paired_delta or 0.0)) > (_LEADERBOARD_Z_95 * paired_delta_error)
+    )
+    if is_reference:
+        label = "基线参考"
+    elif boundary_warnings:
+        label = "不可比较"
+    elif statistically_significant:
+        label = "显著提升" if win_rate_delta > 0 else "显著回退"
+    elif baseline:
+        label = "差异不显著"
+    else:
+        label = "等待基线"
+    return {
+        **row_stats,
+        "paired_sample_size": paired_sample_size,
+        "paired_delta": paired_delta,
+        "standard_error": row_stats["standard_error"],
+        "combined_standard_error": combined_standard_error,
+        "significant": statistically_significant,
+        "significance_label": label,
+        "warnings": warning_codes,
+    }
 
 
 def _leaderboard_boundary_warnings(
@@ -4045,7 +4375,16 @@ def _leaderboard_compare_row(
         change = "stable"
     games = int(_leaderboard_metric(row, "games_played", "game_count", "total_games"))
     baseline_games = int(_leaderboard_metric(baseline, "games_played", "game_count", "total_games"))
-    confidence = "low_sample" if games < 30 or baseline_games < 30 else "comparable"
+    statistics = _leaderboard_compare_statistics(
+        row,
+        baseline,
+        boundary_warnings=boundary_warnings,
+        is_reference=is_reference,
+        win_rate_delta=win_rate_delta,
+    )
+    confidence = "low_sample" if "low_sample" in statistics["warnings"] or games < 30 or baseline_games < 30 else (
+        "significant" if statistics["significant"] else "not_significant"
+    )
     payload = dict(row)
     payload.update(
         {
@@ -4055,9 +4394,11 @@ def _leaderboard_compare_row(
             "boundary_warnings": boundary_warnings,
             "change": change,
             "confidence": confidence,
+            **statistics,
             "delta": {
                 "score": score_delta,
                 "target_side_win_rate": win_rate_delta,
+                "paired_delta": statistics["paired_delta"],
                 "fallback_rate": fallback_delta,
                 "llm_error_rate": llm_error_delta,
                 "policy_adjusted_rate": policy_adjusted_delta,
@@ -4067,6 +4408,7 @@ def _leaderboard_compare_row(
                 "target_role_role_weighted_score": score_delta,
                 "strength_score": score_delta,
                 "target_side_win_rate": win_rate_delta,
+                "paired_delta": statistics["paired_delta"],
                 "fallback_rate": fallback_delta,
                 "llm_error_rate": llm_error_delta,
                 "policy_adjusted_rate": policy_adjusted_delta,
@@ -4088,6 +4430,16 @@ def _leaderboard_compare_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "incomparable_count": changes.get("incomparable", 0),
         "reference_count": changes.get("reference", 0),
         "boundary_mismatch_count": sum(1 for row in rows if row.get("boundary_warnings")),
+        "significant_count": sum(1 for row in rows if row.get("significant") is True),
+        "not_significant_count": sum(
+            1 for row in rows
+            if row.get("significant") is False and str(row.get("significance_label") or "") == "差异不显著"
+        ),
+        "low_sample_count": sum(1 for row in rows if "low_sample" in set(row.get("warnings") or [])),
+        "unpaired_seed_count": sum(1 for row in rows if "unpaired_seeds" in set(row.get("warnings") or [])),
+        "insufficient_overlap_count": sum(
+            1 for row in rows if "insufficient_overlap" in set(row.get("warnings") or [])
+        ),
         "by_change": dict(sorted(changes.items())),
     }
 
