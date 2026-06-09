@@ -43,6 +43,11 @@ export function currentLegacyHash(): string {
   return typeof window === 'undefined' ? '' : String(window.location.hash || '')
 }
 
+export function currentLegacyView(fallback: AppView = 'lobby'): AppView {
+  if (typeof window === 'undefined') return fallback
+  return viewFromHash(currentLegacyHash())
+}
+
 export function routeHashFromLegacyHash(hash = ''): string {
   return String(hash || '').split('?')[0]
 }

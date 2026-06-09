@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { afterEach, test } from 'vitest'
 import {
   currentLegacyHash,
+  currentLegacyView,
   hashForView,
   isLegacyHashForView,
   registerLegacyViewRouter,
@@ -115,6 +116,15 @@ test('writes explicit legacy hashes and exposes the current hash', () => {
     query: { game_id: 'game-7', workspace: 'archive' },
     hash: '#logs?game_id=game-7&workspace=archive'
   }])
+})
+
+test('reads the current legacy view with a server-side fallback', () => {
+  if (originalWindow === undefined) delete (globalThis as { window?: Window }).window
+  else globalThis.window = undefined as unknown as Window & typeof globalThis
+  assert.equal(currentLegacyView('match'), 'match')
+
+  globalThis.window = { location: locationLike('#evolution?run_id=run-1') } as Window & typeof globalThis
+  assert.equal(currentLegacyView(), 'evolution')
 })
 
 test('syncs the current legacy hash only when it matches the target view', () => {

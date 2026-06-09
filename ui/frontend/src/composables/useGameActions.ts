@@ -19,10 +19,10 @@ import {
   isReturnableGame,
   isTerminalGame,
   readStoredGameSession,
-  viewFromHash,
   writeStoredGameSession,
   writeViewHash
 } from './gameSession.ts'
+import { currentLegacyView } from '../router/legacyViewNavigation'
 import { applyLogToPlayers, applyLogsToPlayers } from './gameTimeline.ts'
 
 const SPEECH_EVENT_TYPES = new Set([
@@ -194,7 +194,7 @@ function useGameActions(state, options = {}) {
       mountedRestoreIdle = false
       void restoreStoredGame({ silent: true, navigate: true, start: true })
     }
-    const hashView = viewFromHash(window.location.hash)
+    const hashView = currentLegacyView()
     if (hashView === 'match' || options.restoreStoredGameOnMount === 'immediate') {
       restore()
       return
@@ -533,7 +533,7 @@ function useGameActions(state, options = {}) {
 
   async function restoreStoredGame({ navigate = true, silent = true, start = true } = {}) {
     const session = readStoredGameSession()
-    const hashView = typeof window === 'undefined' ? state.currentView.value : viewFromHash(window.location.hash)
+    const hashView = currentLegacyView(state.currentView.value)
     if (!session?.gameId || isReturnableGame(state.liveGame.value)) {
       if (navigate && hashView === 'match' && !isReturnableGame(state.liveGame.value)) {
         state.currentView.value = 'lobby'
