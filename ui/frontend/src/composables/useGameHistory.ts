@@ -9,7 +9,9 @@ import {
   displayPhaseLabel,
   normalizeHistoryDisplayText
 } from '../components/history/historyDisplay.ts'
+import { normalizeHistoryWorkspaceTab } from '../domain/history/normalizers'
 import { syncRouterToLegacyView } from '../router/legacyViewNavigation'
+import { historyDeepLinkFromHash, logsHash } from '../router/workbenchDeepLinks'
 import { isReturnableGame, writeViewHash } from './gameSession.ts'
 import {
   AUTHORITATIVE_DEATH_EVENTS,
@@ -87,7 +89,6 @@ const DEFAULT_PHASE_LOG_LIMIT = 300
 const DEFAULT_PHASE_DECISION_LIMIT = 200
 const DEFAULT_REPLAY_LIMIT = 500
 const EMPTY_HISTORY_COUNTS = { all: 0, normal: 0, benchmark: 0, evolution: 0 }
-const HISTORY_WORKSPACE_TABS = new Set(['phase', 'review', 'archive'])
 
 function deleteHistoryNoticeFromError(err) {
   const message = String(err?.message || err || '').trim()
@@ -121,20 +122,6 @@ function historyLoadNotice(type, message, fallback) {
     type,
     message: String(message || '').trim() || fallback
   }
-}
-
-function normalizeHistoryWorkspaceTab(value, fallback = 'phase') {
-  const text = String(value || '').trim().toLowerCase()
-  return HISTORY_WORKSPACE_TABS.has(text) ? text : fallback
-}
-
-function logsHash({ gameId = '', workspace = '' } = {}) {
-  const query = new URLSearchParams()
-  if (gameId) query.set('game_id', String(gameId))
-  const tab = normalizeHistoryWorkspaceTab(workspace, '')
-  if (tab && tab !== 'phase') query.set('workspace', tab)
-  const queryString = query.toString()
-  return queryString ? `#logs?${queryString}` : '#logs'
 }
 
 function writeLogsHash(options = {}) {
@@ -1387,13 +1374,7 @@ function useGameHistory(state, options = {}) {
 
   function hashRouteInfo() {
     const hash = typeof window === 'undefined' ? '' : String(window.location.hash || '')
-    const [routeHash, queryString = ''] = hash.split('?')
-    const params = new URLSearchParams(queryString)
-    return {
-      routeHash,
-      gameId: params.get('game_id') || params.get('game') || '',
-      workspace: normalizeHistoryWorkspaceTab(params.get('workspace') || params.get('tab') || '', '')
-    }
+    return historyDeepLinkFromHash(hash)
   }
 
   function syncHashRoute({ rememberOrigin = false } = {}) {

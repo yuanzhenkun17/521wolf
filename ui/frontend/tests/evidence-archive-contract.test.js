@@ -33,10 +33,15 @@ test('EvidencePage is removed as a first-class route and TopNav entry', () => {
 test('legacy #evidence links are not routed or recognized', () => {
   const gameSession = readSource('../src/composables/gameSession.ts')
   const history = readSource('../src/composables/useGameHistory.ts')
+  const deepLinks = readSource('../src/router/workbenchDeepLinks.ts')
 
+  assertSourceContract(deepLinks, [
+    ['router helper builds logs hashes with game id and workspace', /export function logsHash\([\s\S]*query\.set\('game_id', String\(gameId\)\)[\s\S]*query\.set\('workspace', tab\)/],
+    ['router helper parses logs workspace query aliases', /export function historyDeepLinkFromHash\([\s\S]*workspace: optionalHistoryWorkspaceTab\(query\.get\('workspace'\) \|\| query\.get\('tab'\)\)/],
+  ])
   assertSourceContract(history, [
-    ['logs hashes can carry game id and workspace', /function logsHash\(\{ gameId = '', workspace = '' \} = \{\}\)[\s\S]*query\.set\('game_id', String\(gameId\)\)[\s\S]*query\.set\('workspace', tab\)/],
-    ['hash routing parses workspace query parameters', /workspace: normalizeHistoryWorkspaceTab\(params\.get\('workspace'\) \|\| params\.get\('tab'\) \|\| '', ''\)/],
+    ['useGameHistory imports logs deep link helpers', /import \{ historyDeepLinkFromHash, logsHash \} from '..\/router\/workbenchDeepLinks'/],
+    ['hash routing delegates parsing to router helper', /return historyDeepLinkFromHash\(hash\)/],
     ['openLogPage stores the requested workspace', /state\.historyWorkspaceTab\.value = targetWorkspace/],
   ])
   assert.doesNotMatch(gameSession, /#evidence/)

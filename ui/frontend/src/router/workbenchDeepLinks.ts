@@ -1,7 +1,15 @@
 import type { LocationQuery, RouteLocationNormalizedLoaded } from 'vue-router'
+import { normalizeHistoryWorkspaceTab } from '../domain/history/normalizers'
+import type { HistoryWorkspaceTab } from '../types/history'
 
 type RouteLike = Pick<RouteLocationNormalizedLoaded, 'name' | 'path' | 'query' | 'hash'>
 type QueryLike = LocationQuery | Record<string, unknown>
+
+export interface HistoryDeepLinkTarget {
+  routeHash: string
+  gameId: string
+  workspace: HistoryWorkspaceTab | ''
+}
 
 export interface EvolutionDeepLinkTarget {
   run_id: string
@@ -41,6 +49,13 @@ function textValue(value: unknown): string {
 
 function firstTextValue(...values: unknown[]): string {
   return values.map(textValue).find(Boolean) || ''
+}
+
+function optionalHistoryWorkspaceTab(value: unknown): HistoryWorkspaceTab | '' {
+  const text = textValue(value).toLowerCase()
+  if (!text) return ''
+  const tab = normalizeHistoryWorkspaceTab(text)
+  return tab === text ? tab : ''
 }
 
 function routeName(route: Partial<RouteLike> = {}): string {
@@ -105,6 +120,43 @@ export function benchmarkBatchIdFromRoute(route: Partial<RouteLike> | null | und
   if (!route) return ''
   const routeValue = isRouteFor(route, 'benchmark') ? benchmarkBatchIdFromQuery(route.query || {}) : ''
   return routeValue || benchmarkBatchIdFromHash(route.hash || '')
+}
+
+export function logsHash({ gameId = '', workspace = '' }: { gameId?: unknown; workspace?: unknown } = {}): string {
+  const query = new URLSearchParams()
+  if (gameId) query.set('game_id', String(gameId))
+  const tab = optionalHistoryWorkspaceTab(workspace)
+  if (tab && tab !== 'phase') query.set('workspace', tab)
+  const queryString = query.toString()
+  return queryString ? `#logs?${queryString}` : '#logs'
+}
+
+export function historyDeepLinkFromQuery(query: QueryLike = {}): HistoryDeepLinkTarget {
+  return {
+    routeHash: '#logs',
+    gameId: firstTextValue(query.game_id, query.game),
+    workspace: optionalHistoryWorkspaceTab(firstTextValue(query.workspace, query.tab))
+  }
+}
+
+export function historyDeepLinkFromHash(value = ''): HistoryDeepLinkTarget {
+  const { routeHash, query } = queryFromHash(value)
+  return {
+    routeHash,
+    gameId: firstTextValue(query.get('game_id'), query.get('game')),
+    workspace: optionalHistoryWorkspaceTab(query.get('workspace') || query.get('tab'))
+  }
+}
+
+export function historyDeepLinkFromRoute(route: Partial<RouteLike> | null | undefined): HistoryDeepLinkTarget {
+  if (!route) return historyDeepLinkFromHash('')
+  if (isRouteFor(route, 'logs')) {
+    const routeTarget = historyDeepLinkFromQuery(route.query || {})
+    if (routeTarget.gameId || routeTarget.workspace || !route.hash) return routeTarget
+  }
+  const hashTarget = historyDeepLinkFromHash(route.hash || '')
+  if (hashTarget.routeHash) return hashTarget
+  return isRouteFor(route, 'logs') ? historyDeepLinkFromQuery(route.query || {}) : hashTarget
 }
 
 export function evolutionDeepLinkFromQuery(query: QueryLike = {}): EvolutionDeepLinkTarget | null {

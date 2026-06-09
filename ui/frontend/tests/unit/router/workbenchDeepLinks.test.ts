@@ -7,7 +7,11 @@ import {
   evolutionDeepLinkFromHash,
   evolutionDeepLinkFromQuery,
   evolutionDeepLinkFromRoute,
-  evolutionDeepLinkPanel
+  evolutionDeepLinkPanel,
+  historyDeepLinkFromHash,
+  historyDeepLinkFromQuery,
+  historyDeepLinkFromRoute,
+  logsHash
 } from '../../../src/router/workbenchDeepLinks'
 
 test('extracts benchmark batch ids from route query aliases before legacy hash fallback', () => {
@@ -46,6 +50,61 @@ test('falls back to benchmark legacy hash when the current route query has no id
       hash: '#benchmark?run_id=bench-from-hash'
     }),
     'bench-from-hash'
+  )
+})
+
+test('builds logs hashes with optional game and non-default workspace query', () => {
+  assert.equal(logsHash(), '#logs')
+  assert.equal(logsHash({ gameId: 'game/1' }), '#logs?game_id=game%2F1')
+  assert.equal(logsHash({ gameId: 'game/1', workspace: 'phase' }), '#logs?game_id=game%2F1')
+  assert.equal(logsHash({ gameId: 'game/1', workspace: 'archive' }), '#logs?game_id=game%2F1&workspace=archive')
+  assert.equal(logsHash({ workspace: 'review' }), '#logs?workspace=review')
+})
+
+test('extracts logs deep link targets from query and legacy hash aliases', () => {
+  assert.deepEqual(historyDeepLinkFromQuery({ game_id: 'game-a', workspace: 'archive' }), {
+    routeHash: '#logs',
+    gameId: 'game-a',
+    workspace: 'archive'
+  })
+  assert.deepEqual(historyDeepLinkFromHash('#logs?game=game-b&tab=review'), {
+    routeHash: '#logs',
+    gameId: 'game-b',
+    workspace: 'review'
+  })
+  assert.deepEqual(historyDeepLinkFromHash('#logs?game_id=game-c&workspace=unknown'), {
+    routeHash: '#logs',
+    gameId: 'game-c',
+    workspace: ''
+  })
+})
+
+test('uses logs route query before legacy hash fallback', () => {
+  assert.deepEqual(
+    historyDeepLinkFromRoute({
+      name: 'logs',
+      path: '/logs',
+      query: { game_id: 'route-game', workspace: 'archive' },
+      hash: '#logs?game_id=hash-game&workspace=review'
+    }),
+    {
+      routeHash: '#logs',
+      gameId: 'route-game',
+      workspace: 'archive'
+    }
+  )
+  assert.deepEqual(
+    historyDeepLinkFromRoute({
+      name: 'lobby',
+      path: '/',
+      query: {},
+      hash: '#logs?game_id=hash-game&workspace=review'
+    }),
+    {
+      routeHash: '#logs',
+      gameId: 'hash-game',
+      workspace: 'review'
+    }
   )
 })
 
