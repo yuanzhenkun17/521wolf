@@ -531,7 +531,7 @@ function suggestedActionsForDiagnostic(item) {
     ]
   }
   return [
-    { label: '打开运行报告', detail: '在报告面板导出诊断、门禁、问题对局和可复现包。' },
+    { label: '打开运行报告', detail: '在报告面板导出诊断、门禁、问题对局和追溯数据。' },
     { label: '固定比较边界', detail: '不要跨评测集、种子集或 benchmark 配置 Hash 比较行。' }
   ]
 }

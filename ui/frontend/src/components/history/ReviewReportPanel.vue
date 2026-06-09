@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { buildAssessmentScores } from '../../composables/assessmentScores.js'
 import JudgeEvidencePanel from './JudgeEvidencePanel.vue'
 import {
@@ -61,57 +61,50 @@ const flowDecisionCount = computed(() => {
 })
 const canShowFlowChartGate = computed(() =>
   hasFlowChartData.value
-  || Boolean(props.loadFlowData)
   || Boolean(props.flowLoading)
   || Boolean(flowDataError.value)
   || flowDecisionCount.value > 0
 )
-const showFlowCharts = ref(false)
-const flowChartsRequested = ref(false)
-const flowChartGateEl = ref(null)
-let flowChartObserver = null
-
-async function requestFlowCharts() {
-  flowChartsRequested.value = true
-  if (hasFlowChartData.value) {
-    showFlowCharts.value = true
-    return
-  }
-  if (props.flowLoading) return
-  const loaded = await props.loadFlowData?.()
-  const payload = loaded?.data || loaded
-  if (decisionArray(payload?.decisions).length || hasFlowChartData.value) {
-    showFlowCharts.value = true
-  }
-}
-
-function stopFlowChartObserver() {
-  flowChartObserver?.disconnect()
-  flowChartObserver = null
-}
-
-watch(flowChartGateEl, (element) => {
-  stopFlowChartObserver()
-  if (showFlowCharts.value || typeof Element === 'undefined' || !(element instanceof Element)) return
-  if (typeof IntersectionObserver === 'undefined') return
-  flowChartObserver = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) {
-      requestFlowCharts()
-      stopFlowChartObserver()
-    }
-  }, { rootMargin: '160px 0px' })
-  flowChartObserver.observe(element)
-}, { flush: 'post' })
-
-watch(hasFlowChartData, (hasData) => {
-  if (hasData && flowChartsRequested.value) {
-    showFlowCharts.value = true
-    return
-  }
-  if (!hasData) showFlowCharts.value = false
+const showFlowCharts = computed(() => hasFlowChartData.value)
+const flowChartRequestKey = computed(() => String(
+  props.game?.game_id
+  ?? flowDataPayload.value?.game_id
+  ?? reviewData.value?.game_id
+  ?? ''
+))
+const requestedFlowChartKey = ref('')
+const flowChartStatusLabel = computed(() => {
+  if (props.flowLoading) return '读取中'
+  if (flowDataError.value) return '读取失败'
+  if (hasFlowChartData.value) return `${reviewFlowDecisions.value.length} 条决策`
+  if (flowDecisionCount.value > 0) return `${flowDecisionCount.value} 条决策`
+  return '无可用决策'
 })
 
-onBeforeUnmount(stopFlowChartObserver)
+async function requestFlowCharts({ force = false } = {}) {
+  const key = flowChartRequestKey.value || '__current__'
+  if (!force && requestedFlowChartKey.value === key) return null
+  requestedFlowChartKey.value = key
+  if (hasFlowChartData.value || props.flowLoading || !props.loadFlowData) return null
+  return props.loadFlowData()
+}
+
+function retryFlowCharts() {
+  return requestFlowCharts({ force: true })
+}
+
+watch(flowChartRequestKey, (key, previousKey) => {
+  if (key !== previousKey) requestedFlowChartKey.value = ''
+})
+
+watch(
+  [canShowFlowChartGate, hasFlowChartData, () => props.flowLoading, flowDataError, flowChartRequestKey],
+  () => {
+    if (!canShowFlowChartGate.value || hasFlowChartData.value || props.flowLoading || flowDataError.value) return
+    void requestFlowCharts()
+  },
+  { immediate: true }
+)
 
 const hasReviewFallback = computed(() =>
   reviewScoreCards.value.length
@@ -511,20 +504,24 @@ function jsonText(value) {
         <ReviewScoreStackedBar :cards="reviewScoreCards" />
       </section>
 
-      <section v-if="canShowFlowChartGate" ref="flowChartGateEl" class="review-flow-gate">
+      <section v-if="canShowFlowChartGate" class="review-flow-gate">
         <header class="review-flow-gate-head">
           <div>
             <h4>图表分析</h4>
           </div>
-          <button type="button" :aria-expanded="String(showFlowCharts)" :disabled="flowLoading" @click="requestFlowCharts">
-            {{ flowLoading ? '读取中' : (showFlowCharts ? '已展开' : '展开图表') }}
+          <button v-if="flowDataError" type="button" :disabled="flowLoading" @click="retryFlowCharts">
+            重试
           </button>
+          <small v-else>{{ flowChartStatusLabel }}</small>
         </header>
         <p v-if="flowDataError" class="review-flow-gate-copy">
           {{ flowDataError }}
         </p>
+        <p v-else-if="flowLoading && !showFlowCharts" class="review-flow-gate-copy">
+          正在读取投票流向与回合热力图。
+        </p>
         <p v-else-if="!showFlowCharts" class="review-flow-gate-copy">
-          {{ reviewFlowDecisions.length }} 条决策可生成投票流向与回合热力图。
+          暂无可生成的投票流向或回合热力图。
         </p>
         <VoteFlowSankey v-if="showFlowCharts" :decisions="reviewFlowDecisions" :players="game.players || []" />
       </section>
@@ -846,6 +843,23 @@ function jsonText(value) {
   font-weight: 900;
 }
 
+.review-flow-gate-head small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 252, 245, 0.58);
+  color: var(--log-text-secondary);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .review-flow-gate-head button {
   display: inline-flex;
   align-items: center;
@@ -869,7 +883,7 @@ function jsonText(value) {
   background: rgba(255, 252, 245, 0.92);
 }
 
-.review-flow-gate-head button[aria-expanded='true'] {
+.review-flow-gate-head button:disabled {
   color: var(--log-accent);
   background: rgba(139, 94, 52, 0.08);
   cursor: default;

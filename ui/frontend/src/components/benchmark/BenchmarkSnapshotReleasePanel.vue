@@ -25,17 +25,9 @@ const snapshotRows = computed(() => selectedSnapshot.value?.rows || [])
 const selectedSnapshotAudit = computed(() => snapshotAudit(selectedSnapshot.value))
 const isModel = computed(() => props.benchmark.selectedBenchmarkIsModelSuite.value)
 const isLoading = computed(() => Boolean(props.benchmark.benchmarkSnapshotLoading.value))
-const compareLoading = computed(() => Boolean(props.benchmark.benchmarkSnapshotCompareLoading?.value))
 const compareError = computed(() => String(props.benchmark.benchmarkSnapshotCompareError?.value || ''))
 const boundaryWarnings = computed(() => Array.isArray(compare.value.boundary_warnings) ? compare.value.boundary_warnings : [])
 const boundaryWarningLabels = computed(() => boundaryWarnings.value.map(warningLabel).filter(Boolean))
-const compareSourceLabel = computed(() => {
-  if (compareAgainstSnapshotId.value) return props.benchmark.benchmarkSnapshotServerCompare?.value ? '服务端快照对比' : '本地快照对比'
-  if (props.benchmark.benchmarkSnapshotServerCompare?.value) return '服务端标准对比'
-  if (compareLoading.value) return '正在加载对比'
-  if (compareError.value) return '本地回退对比'
-  return '本地对比'
-})
 const compareModeLabel = computed(() =>
   compareAgainstSnapshotId.value
     ? `${selectedSnapshot.value?.title || '已选快照'} 对比 ${compareAgainstSnapshot.value?.title || compareAgainstSnapshotId.value}`
@@ -64,16 +56,6 @@ const currentReleaseAudit = computed(() => ({
     row?.total_games
   ) || 0), 0)
 }))
-const currentSourceAudit = computed(() => currentRowSourceAudit(currentRows.value))
-const currentSourceSummary = computed(() => {
-  const audit = currentSourceAudit.value
-  const parts = [
-    sourceCountText(audit.runCount, 'run'),
-    sourceCountText(audit.reportCount, 'report'),
-    sourceCountText(audit.resultBatchCount, 'batch', 'batches')
-  ].filter((label) => label !== '未上报')
-  return parts.length ? parts.join(' / ') : '来源未上报'
-})
 const boundaryWarningSummary = computed(() =>
   boundaryWarningLabels.value.length ? `${formatNumber(boundaryWarningLabels.value.length)} 条告警` : '无边界告警'
 )
@@ -85,17 +67,13 @@ const benchmarkConfigHash = computed(() =>
   ''
 )
 const releaseBoundary = computed(() => {
-  const latestAudit = snapshotAudit(latestSnapshot.value)
   const scope = props.benchmark.benchmarkSnapshotScope.value || (isModel.value ? 'model' : 'role_version')
   return {
     benchmarkId: props.benchmark.selectedBenchmarkId.value || '',
     evaluationSetId: props.benchmark.selectedBenchmarkEvaluationSetId.value || selectedSuite.value.evaluation_set_id || '',
     seedSetId: selectedSuite.value.seed_set_id || props.benchmark.benchmarkPlan.value?.seed_set_id || '',
     configHash: benchmarkConfigHash.value,
-    scope,
-    subject: isModel.value ? '模型榜单' : props.benchmark.selectedRoleLabel.value,
-    contentHashLabel: latestAudit.contentHash ? `冻结后生成 / 上次 ${shortHash(latestAudit.contentHash)}` : '冻结后由服务端生成',
-    contentHashTitle: latestAudit.contentHash || '冻结时由服务端计算'
+    scope
   }
 })
 const releaseReadinessChecks = computed(() => {
@@ -167,30 +145,6 @@ const releaseReadinessChecks = computed(() => {
       blockedReason: '缺少 Config Hash，无法证明配置边界'
     },
     {
-      key: 'source-run',
-      label: '来源 run',
-      value: sourceCountText(currentSourceAudit.value.runCount, 'run'),
-      passed: Number(currentSourceAudit.value.runCount) > 0,
-      required: true,
-      blockedReason: '缺少来源 run ID，无法追溯评测运行'
-    },
-    {
-      key: 'source-report',
-      label: '来源 report',
-      value: sourceCountText(currentSourceAudit.value.reportCount, 'report'),
-      passed: Number(currentSourceAudit.value.reportCount) > 0,
-      required: true,
-      blockedReason: '缺少来源 report ID，无法追溯评测报告'
-    },
-    {
-      key: 'source-result',
-      label: '来源 result',
-      value: sourceCountText(currentSourceAudit.value.resultBatchCount, 'batch', 'batches'),
-      passed: Number(currentSourceAudit.value.resultBatchCount) > 0,
-      required: true,
-      blockedReason: '缺少来源 result ID，无法追溯结果批次'
-    },
-    {
       key: 'boundary-warning',
       label: '边界告警',
       value: boundaryWarningSummary.value,
@@ -205,13 +159,6 @@ const releaseReadinessChecks = computed(() => {
       passed: audit.unrankableCount === 0,
       required: false,
       attentionReason: '不可排名证据会保留，但不进入正式排名'
-    },
-    {
-      key: 'content',
-      label: 'Content Hash',
-      value: boundary.contentHashLabel,
-      passed: true,
-      required: false
     }
   ]
 })
@@ -243,15 +190,11 @@ const releaseGateDetail = computed(() => {
   return `可冻结：${formatNumber(audit.rankableCount)} 条可排名行将进入正式快照，${unrankable}。`
 })
 
-const scopeLabel = computed(() =>
-  isModel.value ? '模型范围' : `${props.benchmark.selectedRoleLabel.value} 角色版本`
-)
 const defaultTitle = computed(() => {
   const suite = props.benchmark.selectedBenchmarkSuiteLabel.value || '基准'
   const subject = isModel.value ? '模型' : props.benchmark.selectedRoleLabel.value
   return `${suite} / ${subject} 发布快照`
 })
-const latestSnapshot = computed(() => snapshots.value[0] || null)
 const diffRows = computed(() => [
   { label: '变更', value: compare.value.changed?.length || 0, tone: 'blue' },
   { label: '新增', value: compare.value.added?.length || 0, tone: 'green' },
@@ -332,10 +275,6 @@ async function createSnapshot() {
 function selectSnapshot(snapshot) {
   if (!snapshot?.snapshot_id) return
   props.benchmark.selectBenchmarkSnapshot(snapshot.snapshot_id)
-}
-
-function refreshSnapshots() {
-  props.benchmark.loadBenchmarkSnapshots()
 }
 
 async function selectCompareAgainst(event) {
@@ -482,35 +421,6 @@ function snapshotSourceCount(snapshot, ids, countKey) {
   return ids.length ? ids.length : null
 }
 
-function currentRowSourceAudit(rows) {
-  const runIds = uniqueRowIds(rows, ['source_run_id', 'run_id'])
-  const reportIds = uniqueRowIds(rows, ['source_report_id', 'report_id'])
-  const resultBatchIds = uniqueRowIds(rows, ['result_batch_id', 'source_result_batch_id'])
-  return {
-    runCount: runIds.length || null,
-    reportCount: reportIds.length || null,
-    resultBatchCount: resultBatchIds.length || null,
-    runIds,
-    reportIds,
-    resultBatchIds
-  }
-}
-
-function uniqueRowIds(rows, keys) {
-  const seen = new Set()
-  const ids = []
-  for (const row of rows || []) {
-    for (const key of keys) {
-      for (const id of normalizedIdList(row?.[key])) {
-        if (seen.has(id)) continue
-        seen.add(id)
-        ids.push(id)
-      }
-    }
-  }
-  return ids
-}
-
 function snapshotHistoryCountLabel(snapshot) {
   const audit = snapshotAudit(snapshot)
   return [
@@ -518,42 +428,6 @@ function snapshotHistoryCountLabel(snapshot) {
     `可排名 ${formatNumber(audit.rankableCount)}`,
     `不可排名 ${formatNumber(audit.unrankableCount)}`
   ].join(' / ')
-}
-
-function snapshotSourceSummary(snapshot) {
-  const audit = snapshotAudit(snapshot)
-  const parts = [
-    sourceCountText(audit.runCount, 'run'),
-    sourceCountText(audit.reportCount, 'report'),
-    sourceCountText(audit.resultBatchCount, 'batch', 'batches')
-  ].filter((label) => label !== '未上报')
-  return parts.length ? parts.join(' / ') : '来源未上报'
-}
-
-function sourceCountText(count, singular, plural = `${singular}s`) {
-  if (count == null || count === '') return '未上报'
-  const number = Number(count)
-  if (!Number.isFinite(number)) return '未上报'
-  const labelMap = {
-    run: '运行',
-    runs: '运行',
-    report: '报告',
-    reports: '报告',
-    batch: '批次',
-    batches: '批次'
-  }
-  return `${formatNumber(number)} ${labelMap[number === 1 ? singular : plural] || labelMap[singular] || singular}`
-}
-
-function sourceIdsPreview(ids) {
-  if (!ids?.length) return '未上报关联 ID'
-  const shown = ids.slice(0, 3).map(shortHash)
-  const remaining = ids.length - shown.length
-  return remaining > 0 ? `${shown.join(', ')} +${remaining}` : shown.join(', ')
-}
-
-function sourceIdsTitle(ids) {
-  return ids?.length ? ids.join(', ') : ''
 }
 
 function rowSubjectLabel(row) {
@@ -653,13 +527,9 @@ function clearTransientState() {
     <header class="snapshot-header">
       <div>
         <small>发布快照</small>
-        <h2>冻结排行榜证据</h2>
-        <p>{{ props.benchmark.selectedBenchmarkSuiteLabel.value }} / {{ scopeLabel }}</p>
+        <h2>冻结排行榜</h2>
       </div>
       <div class="snapshot-header-actions">
-        <button type="button" class="snapshot-secondary-button" @click="refreshSnapshots">
-          刷新
-        </button>
         <span class="snapshot-freeze-stack">
           <button
             type="button"
@@ -672,9 +542,6 @@ function clearTransientState() {
           >
             冻结快照
           </button>
-          <small :class="['snapshot-freeze-reason', 'is-' + releaseGateTone]">
-            {{ releaseGateDetail }}
-          </small>
         </span>
       </div>
     </header>
@@ -712,20 +579,6 @@ function clearTransientState() {
             <small>需复核</small>
             <span v-for="reason in releaseAttentionReasons" :key="reason">{{ reason }}</span>
           </div>
-          <div class="snapshot-gate-checks">
-            <span
-              v-for="item in releaseReadinessChecks"
-              :key="item.key"
-              :class="[
-                'snapshot-gate-check',
-                item.passed ? 'passed' : (item.required ? 'blocked' : 'attention')
-              ]"
-            >
-              <small>{{ item.label }}</small>
-              <b :title="item.value">{{ item.value }}</b>
-              <em>{{ item.passed ? '通过' : (item.required ? '阻止发布' : '需复核') }}</em>
-            </span>
-          </div>
         </div>
         <label>
           <span>标题</span>
@@ -740,40 +593,6 @@ function clearTransientState() {
             placeholder="记录本次变更、为什么该套件可发布，以及仍需关注的风险。"
           />
         </label>
-        <div class="snapshot-boundary snapshot-release-boundary">
-          <span>
-            <small>当前行</small>
-            <b>{{ formatNumber(currentReleaseAudit.rowCount) }} 行 / {{ formatNumber(currentReleaseAudit.rankableCount) }} 可排名</b>
-          </span>
-          <span>
-            <small>评测边界</small>
-            <b :title="releaseBoundary.evaluationSetId">{{ releaseBoundary.evaluationSetId || '未绑定评测集' }}</b>
-          </span>
-          <span>
-            <small>来源 run/report/result</small>
-            <b :title="currentSourceSummary">{{ currentSourceSummary }}</b>
-          </span>
-          <span>
-            <small>边界告警</small>
-            <b :title="boundaryWarningLabels.join(', ')">{{ boundaryWarningSummary }}</b>
-          </span>
-          <span>
-            <small>scope</small>
-            <b>{{ releaseBoundary.scope }} / {{ releaseBoundary.subject }}</b>
-          </span>
-          <span>
-            <small>Seed Set</small>
-            <b :title="releaseBoundary.seedSetId">{{ releaseBoundary.seedSetId || '未上报' }}</b>
-          </span>
-          <span>
-            <small>Config Hash</small>
-            <b :title="releaseBoundary.configHash">{{ releaseBoundary.configHash ? shortHash(releaseBoundary.configHash) : '未上报' }}</b>
-          </span>
-          <span>
-            <small>Content Hash</small>
-            <b :title="releaseBoundary.contentHashTitle">{{ releaseBoundary.contentHashLabel }}</b>
-          </span>
-        </div>
         <div class="snapshot-unrankable-evidence" aria-label="不可排名证据">
           <div class="snapshot-section-title compact">
             <span>
@@ -812,11 +631,6 @@ function clearTransientState() {
             <span class="snapshot-list-main">
               <b>{{ snapshot.title }}</b>
               <small>{{ createdLabel(snapshot.created_at) }} / {{ snapshotHistoryCountLabel(snapshot) }}</small>
-              <small class="snapshot-source-line">{{ snapshotSourceSummary(snapshot) }}</small>
-            </span>
-            <span class="snapshot-list-meta">
-              <small>Content Hash</small>
-              <em :title="snapshot.content_hash || ''">{{ shortHash(snapshot.content_hash) }}</em>
             </span>
           </button>
         </div>
@@ -869,79 +683,6 @@ function clearTransientState() {
             <b>{{ formatNumber(item.value) }}</b>
           </span>
         </div>
-        <div class="snapshot-boundary compare-boundary">
-          <span>
-            <small>对比来源</small>
-            <b>{{ compareSourceLabel }}</b>
-          </span>
-          <span>
-            <small>边界告警</small>
-            <b>{{ boundaryWarningLabels.length ? boundaryWarningLabels.join(', ') : '无' }}</b>
-          </span>
-        </div>
-        <dl class="snapshot-audit">
-          <div>
-            <dt>行数</dt>
-            <dd>
-              <b>{{ formatNumber(selectedSnapshotAudit.rowCount) }}</b>
-              <small>
-                {{ formatNumber(selectedSnapshotAudit.rankableCount) }} 可排名 /
-                {{ formatNumber(selectedSnapshotAudit.unrankableCount) }} 不可排名
-              </small>
-            </dd>
-          </div>
-          <div>
-            <dt>Content Hash</dt>
-            <dd class="snapshot-code-value" :title="selectedSnapshotAudit.contentHash">
-              {{ selectedSnapshotAudit.contentHash || '未上报' }}
-            </dd>
-          </div>
-          <div>
-            <dt>运行</dt>
-            <dd>
-              <b>{{ sourceCountText(selectedSnapshotAudit.runCount, 'run') }}</b>
-              <small :title="sourceIdsTitle(selectedSnapshotAudit.runIds)">
-                {{ sourceIdsPreview(selectedSnapshotAudit.runIds) }}
-              </small>
-            </dd>
-          </div>
-          <div>
-            <dt>报告</dt>
-            <dd>
-              <b>{{ sourceCountText(selectedSnapshotAudit.reportCount, 'report') }}</b>
-              <small :title="sourceIdsTitle(selectedSnapshotAudit.reportIds)">
-                {{ sourceIdsPreview(selectedSnapshotAudit.reportIds) }}
-              </small>
-            </dd>
-          </div>
-          <div>
-            <dt>结果批次</dt>
-            <dd>
-              <b>{{ sourceCountText(selectedSnapshotAudit.resultBatchCount, 'batch', 'batches') }}</b>
-              <small :title="sourceIdsTitle(selectedSnapshotAudit.resultBatchIds)">
-                {{ sourceIdsPreview(selectedSnapshotAudit.resultBatchIds) }}
-              </small>
-            </dd>
-          </div>
-          <div>
-            <dt>基准</dt>
-            <dd>
-              <b>{{ selectedSnapshot?.benchmark_id || props.benchmark.selectedBenchmarkId.value || '临时' }}</b>
-            </dd>
-          </div>
-          <div>
-            <dt>Seed Set</dt>
-            <dd>
-              <b>{{ selectedSnapshot?.seed_set_id || props.benchmark.selectedBenchmarkSuite.value?.seed_set_id || '临时' }}</b>
-            </dd>
-          </div>
-          <div>
-            <dt>Config Hash</dt>
-            <dd class="snapshot-code-value" :title="selectedSnapshot?.benchmark_config_hash || ''">
-              {{ selectedSnapshot?.benchmark_config_hash || '未上报' }}
-            </dd>
-          </div>
-        </dl>
       </article>
 
       <article class="snapshot-delta-card">
@@ -1067,24 +808,14 @@ function clearTransientState() {
   line-height: 1.1;
 }
 
-.snapshot-header p {
-  margin: 4px 0 0;
-  color: var(--snapshot-muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
 .snapshot-header small,
 .snapshot-section-title small,
 .snapshot-gate-head small,
-.snapshot-gate-check small,
 .snapshot-disable-reasons small,
 .snapshot-attention-reasons small,
 .snapshot-release-card label span,
-.snapshot-boundary small,
 .snapshot-list-row small,
 .snapshot-metrics small,
-.snapshot-audit dt,
 .snapshot-delta-row small,
 .snapshot-unrankable-list small {
   color: var(--snapshot-muted);
@@ -1112,28 +843,7 @@ function clearTransientState() {
   width: 100%;
 }
 
-.snapshot-freeze-reason {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--snapshot-muted);
-  font-size: 10px;
-  font-weight: 850;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-freeze-reason.is-ready {
-  color: var(--snapshot-accent);
-}
-
-.snapshot-freeze-reason.is-blocked,
-.snapshot-freeze-reason.is-loading {
-  color: var(--snapshot-strong);
-}
-
 .snapshot-primary-button,
-.snapshot-secondary-button,
 .snapshot-export-row button {
   height: 34px;
   padding: 0 12px;
@@ -1147,11 +857,6 @@ function clearTransientState() {
 .snapshot-primary-button {
   background: var(--snapshot-accent);
   color: rgb(255, 252, 245);
-}
-
-.snapshot-secondary-button {
-  background: var(--snapshot-surface-strong);
-  color: var(--snapshot-strong);
 }
 
 .snapshot-export-row {
@@ -1425,70 +1130,6 @@ function clearTransientState() {
   color: var(--snapshot-accent);
 }
 
-.snapshot-gate-checks {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 7px;
-  min-width: 0;
-}
-
-.snapshot-gate-check {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 8px 9px;
-  border: 1px solid var(--snapshot-border);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.56);
-}
-
-.snapshot-gate-check b,
-.snapshot-gate-check em {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-gate-check b {
-  color: var(--snapshot-ink);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.snapshot-gate-check em {
-  color: var(--snapshot-muted);
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 850;
-}
-
-.snapshot-gate-check.passed {
-  border-color: rgba(139, 94, 52, 0.22);
-}
-
-.snapshot-gate-check.blocked {
-  border-color: rgba(90, 51, 25, 0.36);
-  background: rgba(90, 51, 25, 0.07);
-}
-
-.snapshot-gate-check.attention {
-  border-color: rgba(139, 94, 52, 0.34);
-  background: rgba(139, 94, 52, 0.07);
-}
-
-.snapshot-boundary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.compare-boundary {
-  grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.35fr);
-  margin: 10px 0;
-}
-
-.snapshot-boundary span,
 .snapshot-metrics span {
   display: grid;
   gap: 4px;
@@ -1499,21 +1140,13 @@ function clearTransientState() {
   background: var(--snapshot-soft);
 }
 
-.snapshot-boundary b,
 .snapshot-metrics b,
-.snapshot-audit dd,
 .snapshot-delta-row span,
 .snapshot-chip-list b {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.snapshot-boundary b {
-  color: var(--snapshot-ink);
-  font-size: 12px;
-  font-weight: 900;
 }
 
 .snapshot-unrankable-evidence {
@@ -1576,7 +1209,7 @@ function clearTransientState() {
 
 .snapshot-list-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(142px, 0.36fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -1600,15 +1233,6 @@ function clearTransientState() {
   display: grid;
   gap: 3px;
   min-width: 0;
-}
-
-.snapshot-list-meta {
-  justify-items: end;
-  text-align: right;
-}
-
-.snapshot-source-line {
-  color: var(--snapshot-strong) !important;
 }
 
 .snapshot-list-row b {
@@ -1644,57 +1268,6 @@ function clearTransientState() {
 
 .tone-red {
   border-left: 4px solid var(--snapshot-danger) !important;
-}
-
-.snapshot-audit {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 14px;
-  margin: 0;
-}
-
-.snapshot-audit div {
-  display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  gap: 10px;
-  align-items: baseline;
-  min-width: 0;
-  min-height: 34px;
-  padding: 7px 0;
-  border-top: 1px solid var(--snapshot-border);
-}
-
-.snapshot-audit div:nth-child(-n + 2) {
-  border-top: none;
-}
-
-.snapshot-audit dd {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-  color: var(--snapshot-ink);
-  font-size: 12px;
-  font-weight: 850;
-}
-
-.snapshot-audit dd b,
-.snapshot-audit dd small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.snapshot-audit dd small {
-  color: var(--snapshot-muted);
-  font-size: 10px;
-  font-weight: 850;
-}
-
-.snapshot-code-value {
-  display: block !important;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 11px !important;
 }
 
 .snapshot-delta-table {

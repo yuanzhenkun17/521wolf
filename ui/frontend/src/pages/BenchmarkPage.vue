@@ -4,7 +4,6 @@ import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.js
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
 import BenchmarkBatchRunsTable from '../components/benchmark/BenchmarkBatchRunsTable.vue'
-import BenchmarkBoundaryBar from '../components/benchmark/BenchmarkBoundaryBar.vue'
 import BenchmarkComparisonView from '../components/benchmark/BenchmarkComparisonView.vue'
 import BenchmarkDiagnosticsExplorer from '../components/benchmark/BenchmarkDiagnosticsExplorer.vue'
 import BenchmarkRunReportPanel from '../components/benchmark/BenchmarkRunReportPanel.vue'
@@ -68,21 +67,14 @@ const budgetStatusLabel = computed(() => {
   if (!plan.value) return '计划待生成'
   return benchmark.benchmarkPlanBudgetExceeded.value ? '预算超限' : '预算正常'
 })
+const launchStatusLabel = computed(() =>
+  benchmark.selectedBenchmarkCanLaunch.value ? '可启动' : '不可启动'
+)
 const launchDisabledReason = computed(() =>
   benchmark.selectedBenchmarkSuiteLaunchDisabledReason.value ||
   benchmark.selectedRoleTargetVersionBlockedReason.value ||
   (benchmark.benchmarkPlanBudgetExceeded.value ? '评测预算超过上限，请提高预算或选择更小的套件。' : '')
 )
-const labHeaderMeta = computed(() => [
-  { key: 'mode', label: '模式', value: selectedModeLabel.value },
-  { key: 'suite', label: '套件', value: benchmark.selectedBenchmarkSuiteLabel.value },
-  {
-    key: 'budget',
-    label: '预算',
-    value: budgetStatusLabel.value,
-    tone: benchmark.benchmarkPlanBudgetExceeded.value ? 'danger' : 'neutral'
-  }
-])
 const estimatedUnitsLabel = computed(() => {
   const value = planBudget.value.estimated_units ?? planEstimates.value.estimated_llm_call_units
   return formatNumber(value)
@@ -95,10 +87,6 @@ const estimatedCost = computed(() =>
   numberOrNull(planBudget.value.estimated_cost ?? planEstimates.value.estimated_cost ?? plan.value?.estimated_cost)
 )
 const estimatedCostLabel = computed(() => formatCost(estimatedCost.value, planCurrency.value))
-const estimatedTokens = computed(() =>
-  numberOrNull(planBudget.value.estimated_tokens ?? planEstimates.value.estimated_tokens ?? plan.value?.estimated_tokens)
-)
-const estimatedTokensLabel = computed(() => formatNumber(estimatedTokens.value))
 const budgetLimitUnits = computed(() => numberOrNull(planBudget.value.limit_units))
 const budgetLimitCost = computed(() => numberOrNull(planBudget.value.limit_cost))
 const budgetLimitCostLabel = computed(() => formatCost(budgetLimitCost.value, planCurrency.value, '未设置'))
@@ -116,25 +104,22 @@ const budgetDeltaCaption = computed(() =>
     ? '设置上限可在启动前拦截'
     : (budgetDeltaUnits.value >= 0 ? '启动前剩余额度' : '已超限，禁止启动')
 )
-const gameDecisionUnitsLabel = computed(() => formatNumber(planEstimates.value.game_decision_units))
 const judgeUnitValue = computed(() =>
   planEstimates.value.judge_decision_units ?? planJudge.value.estimated_decisions ?? plan.value?.judge_decisions
 )
 const judgeDecisionLabel = computed(() => formatNumber(judgeUnitValue.value))
 const totalGamesLabel = computed(() => formatNumber(plan.value?.total_games))
-const evalBatchLabel = computed(() => formatNumber(plan.value?.eval_batch_count))
 const suiteCostTier = computed(() => String(plan.value?.cost_tier || selectedSuite.value?.cost_tier || 'ad_hoc').toLowerCase())
 const suiteCostTierDisplayLabel = computed(() => costTierDisplayLabel(suiteCostTier.value))
 const requiresLaunchConfirmation = computed(() =>
   ['standard', 'release'].includes(suiteCostTier.value)
 )
-const formalLaunchLabel = computed(() =>
-  benchmark.selectedBenchmarkId.value ? `${suiteCostTierDisplayLabel.value} / 正式边界` : '临时评测 / 不入正式证据'
-)
 const currentScopeLabel = computed(() => {
   const scope = benchmark.benchmarkSnapshotScope.value || (benchmark.selectedBenchmarkIsModelSuite.value ? 'model' : 'role_version')
   const normalized = String(scope || '').replace(/^scope=/, '').trim()
-  return normalized ? `scope=${normalized}` : 'scope=model'
+  if (normalized === 'model') return '模型范围'
+  if (normalized === 'role_version') return '角色版本范围'
+  return normalized || '模型范围'
 })
 const expectedDurationLabel = computed(() => {
   const explicitSeconds = numberOrNull(
@@ -159,111 +144,41 @@ const concurrencyLabel = computed(() => {
   if (judgeConcurrency != null && judgeConcurrency > 0) parts.push(`Judge ${formatNumber(judgeConcurrency)}`)
   return parts.length ? parts.join(' / ') : '后端默认'
 })
-const concurrencyCaption = computed(() => {
-  const policy = planConcurrencyPolicy.value
-  const waves = [
-    numberOrNull(policy.game_waves_per_eval_batch) == null ? '' : `对局 ${formatNumber(policy.game_waves_per_eval_batch)} 波/批次`,
-    numberOrNull(policy.judge_waves) == null ? '' : `Judge ${formatNumber(policy.judge_waves)} 波`
-  ].filter(Boolean)
-  if (waves.length) return waves.join('，')
-  return planJudge.value.timeout_seconds ? `${formatNumber(planJudge.value.timeout_seconds)} 秒 Judge 超时` : '运行策略'
-})
 const dryRunBlocked = computed(() =>
   Boolean(plan.value && (benchmark.benchmarkPlanBudgetExceeded.value || plan.value.launchable === false || launchDisabledReason.value))
 )
-const dryRunLabel = computed(() => {
-  if (!plan.value) return '计划待生成'
-  if (plan.value.dry_run === false) return '正式启动计划'
-  return dryRunBlocked.value ? '预检未通过' : '仅预估不启动'
-})
 const dryRunCaption = computed(() => {
   if (!plan.value) return '等待计划接口'
   if (benchmark.benchmarkPlanBudgetExceeded.value) return '预算门禁已拦截'
   if (launchDisabledReason.value) return launchDisabledReason.value
   return plan.value.dry_run === false ? '后端返回正式启动计划' : '只做预算预检'
 })
-const planCostRows = computed(() => [
-  {
-    key: 'estimated_cost',
-    label: '预计成本',
-    value: estimatedCostLabel.value,
-    caption: planCurrency.value ? `按 ${planCurrency.value} 成本模型估算` : '后端成本模型估算'
-  },
-  {
-    key: 'estimated_tokens',
-    label: '预计 token',
-    value: estimatedTokensLabel.value,
-    caption: '由对局与 Judge 调用折算'
-  },
-  {
-    key: 'game',
-    label: '对局调用单位',
-    value: gameDecisionUnitsLabel.value,
-    caption: `按 ${formatNumber(planEstimates.value.player_count || 12)} 人、天数、局数估算`
-  },
-  {
-    key: 'judge',
-    label: '裁判判定单位',
-    value: judgeDecisionLabel.value,
-    caption: planJudge.value.enabled ? `每局最多 ${formatNumber(planJudge.value.max_decisions_per_game)} 次判定` : '裁判判定未启用'
-  },
-  {
-    key: 'tokens',
-    label: '预计 Token',
-    value: estimatedTokensLabel.value,
-    caption: '按 planner 假设折算'
-  },
+const planSummaryRows = computed(() => [
   {
     key: 'cost',
     label: '预计成本',
     value: estimatedCostLabel.value,
-    caption: `币种 ${planCurrency.value}`
+    caption: planCurrency.value ? planCurrency.value : '成本模型'
   },
   {
-    key: 'limit',
-    label: '预算上限',
-    value: budgetLimitUnits.value == null ? '未设置' : `${formatNumber(budgetLimitUnits.value)} 单位`,
-    caption: budgetLimitCost.value == null ? '启动前校验' : `成本上限 ${budgetLimitCostLabel.value}`
-  },
-  {
-    key: 'remaining',
-    label: budgetDeltaUnits.value == null || budgetDeltaUnits.value >= 0 ? '剩余额度' : '超出预算',
-    value: budgetDeltaLabel.value,
-    caption: budgetDeltaCaption.value,
+    key: 'units',
+    label: '调用单位',
+    value: estimatedUnitsLabel.value,
+    caption: budgetDeltaUnits.value == null ? '未设上限' : budgetDeltaCaption.value,
     danger: budgetDeltaUnits.value != null && budgetDeltaUnits.value < 0
-  }
-])
-const planPolicyRows = computed(() => [
+  },
   {
     key: 'duration',
     label: '预计耗时',
     value: expectedDurationLabel.value,
-    caption: '启动前工作量估计'
+    caption: concurrencyLabel.value
   },
   {
-    key: 'concurrency',
-    label: '并发策略',
-    value: concurrencyLabel.value,
-    caption: concurrencyCaption.value
-  },
-  {
-    key: 'dry-run',
-    label: '预检模式',
-    value: dryRunLabel.value,
-    caption: dryRunCaption.value,
-    danger: dryRunBlocked.value
-  },
-  {
-    key: 'formality',
-    label: '证据边界',
-    value: formalLaunchLabel.value,
-    caption: benchmark.selectedBenchmarkId.value ? '可进入隔离榜单' : '临时评测不冻结正式证据'
-  },
-  {
-    key: 'confirmation',
+    key: 'gate',
     label: '启动门禁',
     value: launchDisabledReason.value ? '不可启动' : (requiresLaunchConfirmation.value ? '需要确认' : '可直接启动'),
-    caption: launchDisabledReason.value || (requiresLaunchConfirmation.value ? 'standard/release 正式门禁' : 'quick 快速套件或临时评测')
+    caption: launchDisabledReason.value || dryRunCaption.value,
+    danger: Boolean(launchDisabledReason.value || dryRunBlocked.value)
   }
 ])
 const budgetReasonRows = computed(() => {
@@ -313,6 +228,24 @@ const launchSubjectLabel = computed(() => {
   }
   return `${benchmark.selectedRoleLabel.value} / ${benchmark.form.value.target_version_id || '基线'}`
 })
+const benchmarkCommandMetaRows = computed(() => [
+  { key: 'mode', label: '模式', value: selectedModeLabel.value },
+  { key: 'subject', label: '被测对象', value: launchSubjectLabel.value },
+  { key: 'games', label: '总局数', value: totalGamesLabel.value },
+  { key: 'units', label: '调用单位', value: estimatedUnitsLabel.value },
+  {
+    key: 'budget',
+    label: '预算',
+    value: budgetStatusLabel.value,
+    tone: benchmark.benchmarkPlanBudgetExceeded.value ? 'danger' : 'neutral'
+  },
+  {
+    key: 'launch',
+    label: '启动',
+    value: launchStatusLabel.value,
+    tone: benchmark.selectedBenchmarkCanLaunch.value ? 'neutral' : 'danger'
+  }
+])
 const selectedContextRun = computed(() => benchmark.selectedBenchmarkBatchRun.value || null)
 const contextRun = computed(() =>
   selectedContextRun.value || activeRuns.value[0] || recentRuns.value[0] || null
@@ -345,6 +278,32 @@ const diagnosticLevelLabels = {
   warning: '警告',
   error: '错误'
 }
+const benchmarkMetricLabels = {
+  avg_role_score: '角色均分',
+  strength_score: '模型强度',
+  target_side_win_rate: '目标阵营胜率',
+  villagers_win_rate: '好人胜率',
+  werewolves_win_rate: '狼人胜率',
+  fallback_rate: '回退率',
+  llm_error_rate: 'LLM 错误率',
+  policy_adjusted_rate: '策略修正率',
+  decision_judge_avg_score: '裁判均分'
+}
+const seedTierLabels = {
+  smoke: '冒烟',
+  quick: '快速',
+  standard: '标准',
+  release: '发布',
+  audit: '审计'
+}
+const seedUsageBoundaryLabels = {
+  smoke: '冒烟验证',
+  quick_check: '快速验证',
+  formal_benchmark: '正式评测',
+  leaderboard: '榜单口径',
+  release_gate: '发布门禁',
+  audit: '审计回放'
+}
 const viewDensityLabels = {
   compact: '紧凑',
   comfortable: '舒展',
@@ -370,7 +329,7 @@ const planBudgetReasonLabels = {
   stop_after_budget_units: '达到预算停止线',
   estimated_units: '预计调用单位超限',
   estimated_cost: '预计成本超限',
-  estimated_tokens: '预计 token'
+  estimated_tokens: '预计调用单位'
 }
 const contextDiagnosticRows = computed(() => {
   const rows = countSummaryRows(contextDiagnosticSummary.value.by_kind, displayDiagnosticKind).slice(0, 4)
@@ -385,7 +344,7 @@ const contextDiagnosticRows = computed(() => {
 })
 const contextBoundaryRows = computed(() => [
   { key: 'mode', label: '模式', value: selectedModeLabel.value },
-  { key: 'scope', label: '范围', value: currentScopeLabel.value },
+  { key: 'scope', label: '比较边界', value: currentScopeLabel.value },
   { key: 'evaluation', label: '评测集', value: benchmark.selectedBenchmarkEvaluationSetId.value || '临时' },
   { key: 'seed', label: '种子集', value: selectedSuite.value?.seed_set_id || plan.value?.seed_set_id || '临时' },
   {
@@ -401,21 +360,70 @@ const contextBoundaryRows = computed(() => [
   },
   { key: 'subject', label: '被测对象', value: launchSubjectLabel.value }
 ])
-const contextSuiteRows = computed(() => [
-  {
-    key: 'status',
-    label: '生命周期',
-    value: selectedSuite.value?.statusLabel || (benchmark.selectedBenchmarkId.value ? '启用' : '临时')
-  },
-  { key: 'cost', label: '成本等级', value: suiteCostTierDisplayLabel.value },
-  { key: 'games', label: '局数', value: selectedSuite.value?.game_count ?? plan.value?.total_games ?? '未生成' },
-  { key: 'days', label: '最大天数', value: selectedSuite.value?.max_days ?? plan.value?.max_days ?? '未生成' },
-  { key: 'roles', label: '覆盖角色', value: suiteRoleCoverageLabel.value }
-])
-const suiteRoleCoverageLabel = computed(() => {
-  const roles = selectedSuite.value?.roles || []
-  if (!roles.length) return benchmark.selectedBenchmarkIsModelSuite.value ? '全角色模型套件' : '临时角色范围'
-  return roles.length > 4 ? `${roles.length} 个角色` : roles.join('、')
+const selectedSuiteSeedSet = computed(() => objectOrEmpty(selectedSuite.value?.seed_set))
+const contextSuiteDetailRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  return [
+    {
+      key: 'status',
+      label: '生命周期',
+      value: suite.statusLabel || displayMappedLabel(suite.status, {
+        enabled: '启用',
+        active: '启用',
+        draft: '草稿',
+        deprecated: '废弃',
+        disabled: '停用',
+        archived: '归档'
+      }, '未标记')
+    },
+    { key: 'cost', label: '成本等级', value: costTierDisplayLabel(suite.cost_tier) },
+    { key: 'games', label: '局数', value: suite.game_count == null ? '未设置' : `${formatNumber(suite.game_count)} 局` },
+    { key: 'days', label: '最大天数', value: suite.max_days == null ? '未设置' : `${formatNumber(suite.max_days)} 天` },
+    { key: 'roles', label: '覆盖角色', value: suiteRoleScopeLabel(suite) },
+    { key: 'description', label: '说明', value: String(suite.description || '').trim() || '未填写', wide: true }
+  ]
+})
+const contextSuiteSeedRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  const seed = selectedSuiteSeedSet.value
+  const seedPreview = Array.isArray(suite.seed_preview) ? suite.seed_preview : []
+  const warnings = Array.isArray(seed.overlap_warnings) ? seed.overlap_warnings : []
+  return [
+    { key: 'version', label: '种子版本', value: formatVersion(seed.version) || '未标记' },
+    { key: 'tier', label: '种子层级', value: displayMappedLabel(seed.tier, seedTierLabels, '未标记') },
+    { key: 'usage', label: '使用边界', value: displayMappedLabel(seed.usage_boundary, seedUsageBoundaryLabels, '未标记') },
+    { key: 'non-overlap', label: '非重叠组', value: seed.non_overlap_group || '未标记' },
+    { key: 'count', label: '种子数', value: suite.seed_count == null ? '未上报' : `${formatNumber(suite.seed_count)} 个` },
+    { key: 'preview', label: '种子预览', value: seedPreview.length ? seedPreview.join('、') : '未上报', wide: true },
+    { key: 'warning', label: '重叠警告', value: warnings.length ? `${warnings.length} 条` : '无' }
+  ]
+})
+const contextSuiteMetricRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  const metrics = objectOrEmpty(suite.metrics)
+  const secondary = Array.isArray(metrics.secondary)
+    ? metrics.secondary.map(displayBenchmarkMetric).filter(Boolean)
+    : []
+  return [
+    { key: 'primary', label: '主指标', value: displayBenchmarkMetric(metrics.primary) || '未设置' },
+    { key: 'secondary', label: '辅助指标', value: secondary.length ? secondary.join('、') : '未设置', wide: true }
+  ]
+})
+const contextSuiteJudgeRows = computed(() => {
+  const suite = selectedSuite.value
+  if (!suite) return []
+  const judge = objectOrEmpty(suite.judge)
+  const enabled = Boolean(judge.enable_decision_judge)
+  return [
+    { key: 'enabled', label: '裁判判定', value: enabled ? '启用' : '未启用' },
+    { key: 'max', label: '每局上限', value: enabled && judge.judge_max_decisions != null ? `${formatNumber(judge.judge_max_decisions)} 次` : '无' },
+    { key: 'concurrency', label: '并发', value: enabled && judge.judge_concurrency != null ? `${formatNumber(judge.judge_concurrency)} 个任务` : '后端默认' },
+    { key: 'timeout', label: '超时', value: enabled && judge.judge_timeout_seconds != null ? `${formatNumber(judge.judge_timeout_seconds)} 秒` : '后端默认' },
+    { key: 'paired', label: '配对种子', value: suite.paired_seed ? '启用' : '未启用' }
+  ]
 })
 const contextGateRows = computed(() => {
   const gates = selectedSuite.value?.gates || plan.value?.gates || {}
@@ -423,8 +431,9 @@ const contextGateRows = computed(() => {
     ['min_completed_games', '最少完成局'],
     ['min_valid_game_rate', '有效局率'],
     ['max_fallback_rate', '最大回退率'],
-    ['max_llm_error_rate', '最大 LLM 错误率']
-  ].map(([key, label]) => ({ key, label, value: gates[key] }))
+    ['max_llm_error_rate', '最大 LLM 错误率'],
+    ['max_policy_adjusted_rate', '最大策略修正率']
+  ].map(([key, label]) => ({ key, label, value: formatBenchmarkGateValue(key, gates[key]) }))
     .filter((row) => row.value != null && row.value !== '')
   return rows.length ? rows : [{ key: 'empty', label: '门禁', value: '计划生成后显示' }]
 })
@@ -467,9 +476,19 @@ function numberOrNull(value) {
   return Number.isFinite(number) ? number : null
 }
 
+function objectOrEmpty(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
 function formatNumber(value, fallback = '--') {
   const number = Number(value)
   return Number.isFinite(number) ? number.toLocaleString('zh-CN') : fallback
+}
+
+function formatVersion(value) {
+  if (value == null || value === '') return ''
+  const text = String(value).trim()
+  return text.startsWith('v') ? text : `v${text}`
 }
 
 function formatCost(value, currency = '', fallback = '--') {
@@ -508,6 +527,26 @@ function displayDiagnosticKind(value) {
 
 function displayDiagnosticLevel(value) {
   return displayMappedLabel(value, diagnosticLevelLabels, '信息')
+}
+
+function displayBenchmarkMetric(value) {
+  return displayMappedLabel(value, benchmarkMetricLabels, '')
+}
+
+function formatBenchmarkGateValue(key, value) {
+  if (value == null || value === '') return value
+  const number = Number(value)
+  if (Number.isFinite(number) && String(key || '').includes('rate')) {
+    return `${Math.round(number * 100)}%`
+  }
+  return String(value)
+}
+
+function suiteRoleScopeLabel(suite = {}) {
+  if (suite.target_type === 'model') return '全角色覆盖'
+  const roles = Array.isArray(suite.roles) ? suite.roles.filter(Boolean) : []
+  if (!roles.length) return '全角色'
+  return roles.length > 4 ? `${roles.length} 个角色` : roles.join('、')
 }
 
 function densityDisplayLabel(value) {
@@ -661,25 +700,18 @@ onBeforeUnmount(() => {
       title="评测工作台"
       eyebrow="评测控制台"
       :tabs="navTabs"
-      :meta="labHeaderMeta"
-      tabs-label="评测工作台视图"
-      boundary-label="评测边界"
-      rail-label="评测套件栏"
-      context-label="评测上下文"
+      :meta="benchmarkCommandMetaRows"
       action-label="刷新"
       action-busy-label="刷新中"
       :action-busy="Boolean(benchmark.loading.value)"
+      :action-disabled="Boolean(benchmark.loading.value)"
+      tabs-label="评测工作台视图"
+      rail-label="评测套件栏"
+      context-label="评测上下文"
       @action="refresh"
     >
       <template #rail>
         <BenchmarkSuiteRail :benchmark="benchmark" />
-      </template>
-
-      <template #boundary>
-        <BenchmarkBoundaryBar :benchmark="benchmark" />
-        <div v-if="benchmark.selectedBenchmarkUsingLegacyRuns.value" class="bench-inline-warning">
-          当前套件暂无匹配批次，已展示未绑定评测套件/评测集的历史评测批次。
-        </div>
       </template>
 
       <template #notice>
@@ -694,6 +726,9 @@ onBeforeUnmount(() => {
           @retry="refresh"
           compact
         />
+        <div v-else-if="benchmark.selectedBenchmarkUsingLegacyRuns.value" class="bench-alert bench-alert--warning">
+          当前套件暂无匹配批次，已展示未绑定评测套件/评测集的历史评测批次。
+        </div>
         <div
           v-else-if="benchInlineNotice"
           :class="['bench-alert', `bench-alert--${benchInlineNotice.type}`]"
@@ -708,24 +743,95 @@ onBeforeUnmount(() => {
             <header>
               <div>
                 <small>当前套件</small>
-                <h2>{{ benchmark.selectedBenchmarkSuiteLabel.value }}</h2>
+                <h2 :title="benchmark.selectedBenchmarkSuiteLabel.value">{{ benchmark.selectedBenchmarkSuiteLabel.value }}</h2>
               </div>
               <b>{{ benchmark.selectedBenchmarkId.value ? '正式' : '临时' }}</b>
             </header>
-            <div class="bench-context-kv-list">
-              <span v-for="item in contextSuiteRows" :key="item.key">
+            <div v-if="contextSuiteDetailRows.length" class="bench-context-detail">
+              <div class="bench-context-subtitle">
+                <span>套件详情</span>
+                <small>{{ launchStatusLabel }}</small>
+              </div>
+              <span
+                v-for="item in contextSuiteDetailRows"
+                :key="item.key"
+                :class="{ wide: item.wide }"
+              >
                 <small>{{ item.label }}</small>
-                <b>{{ item.value }}</b>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
               </span>
             </div>
+            <div v-if="contextSuiteSeedRows.length" class="bench-context-detail">
+              <div class="bench-context-subtitle">
+                <span>种子集</span>
+                <small>{{ selectedSuiteSeedSet.enabled === false ? '停用' : '固定边界' }}</small>
+              </div>
+              <span
+                v-for="item in contextSuiteSeedRows"
+                :key="item.key"
+                :class="{ wide: item.wide }"
+              >
+                <small>{{ item.label }}</small>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
+              </span>
+            </div>
+            <div v-if="contextSuiteMetricRows.length" class="bench-context-detail">
+              <div class="bench-context-subtitle">
+                <span>指标</span>
+                <small>{{ suiteCostTierDisplayLabel }}</small>
+              </div>
+              <span
+                v-for="item in contextSuiteMetricRows"
+                :key="item.key"
+                :class="{ wide: item.wide }"
+              >
+                <small>{{ item.label }}</small>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
+              </span>
+            </div>
+            <div v-if="contextSuiteJudgeRows.length" class="bench-context-detail">
+              <div class="bench-context-subtitle">
+                <span>裁判配置</span>
+                <small>{{ selectedSuite?.paired_seed ? 'paired seed' : '非配对' }}</small>
+              </div>
+              <span v-for="item in contextSuiteJudgeRows" :key="item.key">
+                <small>{{ item.label }}</small>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
+              </span>
+            </div>
+          </article>
+
+          <article class="bench-context-section bench-context-section--boundary">
+            <header>
+              <div>
+                <small>评测边界</small>
+                <h2>复现口径</h2>
+              </div>
+            </header>
+            <div class="bench-context-boundary">
+              <span v-for="item in contextBoundaryRows" :key="item.key">
+                <small>{{ item.label }}</small>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
+              </span>
+            </div>
+          </article>
+
+          <article class="bench-context-section bench-context-section--gate">
+            <header>
+              <div>
+                <small>入榜门禁</small>
+                <h2>正式排名约束</h2>
+              </div>
+              <b>{{ launchStatusLabel }}</b>
+            </header>
             <div class="bench-context-gates">
               <div class="bench-context-subtitle">
-                <span>门禁</span>
+                <span>门禁规则</span>
                 <small>{{ budgetStatusLabel }}</small>
               </div>
               <span v-for="item in contextGateRows" :key="item.key">
                 <small>{{ item.label }}</small>
-                <b>{{ item.value }}</b>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
               </span>
             </div>
           </article>
@@ -739,9 +845,9 @@ onBeforeUnmount(() => {
               <b>{{ activeRuns.length }} 运行中</b>
             </header>
             <div v-if="contextRun" class="bench-context-run-detail">
-              <strong>{{ contextRun.benchmarkLabel }}</strong>
-              <span>{{ contextRun.displayRole }} / {{ contextRun.statusLabel }}</span>
-              <em>{{ contextRunProgressLabel }}</em>
+              <strong :title="contextRun.benchmarkLabel">{{ contextRun.benchmarkLabel }}</strong>
+              <span :title="`${contextRun.displayRole} / ${contextRun.statusLabel}`">{{ contextRun.displayRole }} / {{ contextRun.statusLabel }}</span>
+              <em :title="contextRunProgressLabel">{{ contextRunProgressLabel }}</em>
             </div>
             <div v-else class="bench-context-empty">暂无运行记录。</div>
             <div v-if="contextRecentRows.length" class="bench-context-run-list">
@@ -753,10 +859,10 @@ onBeforeUnmount(() => {
                 @click="selectRun(run)"
               >
                 <span>
-                  <b>{{ run.benchmarkLabel }}</b>
-                  <small>{{ run.displayRole }} / {{ run.statusLabel }}</small>
+                  <b :title="run.benchmarkLabel">{{ run.benchmarkLabel }}</b>
+                  <small :title="`${run.displayRole} / ${run.statusLabel}`">{{ run.displayRole }} / {{ run.statusLabel }}</small>
                 </span>
-                <em>{{ run.judgeScoreLabel || '--' }}</em>
+                <em :title="run.judgeScoreLabel || '--'">{{ run.judgeScoreLabel || '--' }}</em>
               </button>
             </div>
           </article>
@@ -778,27 +884,11 @@ onBeforeUnmount(() => {
             <div v-else-if="contextDiagnosticRows.length" class="bench-context-diagnostics">
               <span v-for="item in contextDiagnosticRows" :key="item.label + item.caption">
                 <small>{{ item.label }}</small>
-                <b>{{ item.value }}</b>
-                <em>{{ item.caption }}</em>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
+                <em :title="String(item.caption || '')">{{ item.caption }}</em>
               </span>
             </div>
             <div v-else class="bench-context-empty">当前套件边界暂无诊断。</div>
-          </article>
-
-          <article class="bench-context-section">
-            <header>
-              <div>
-                <small>审计边界</small>
-                <h2>复现信息</h2>
-              </div>
-              <b>{{ currentScopeLabel }}</b>
-            </header>
-            <div class="bench-context-boundary">
-              <span v-for="item in contextBoundaryRows" :key="item.key">
-                <small>{{ item.label }}</small>
-                <b :title="String(item.value || '')">{{ item.value }}</b>
-              </span>
-            </div>
           </article>
 
           <article class="bench-context-section">
@@ -812,8 +902,8 @@ onBeforeUnmount(() => {
             <div class="bench-context-artifacts">
               <span v-for="item in contextArtifactRows" :key="item.key">
                 <small>{{ item.label }}</small>
-                <b>{{ item.value }}</b>
-                <em>{{ item.caption }}</em>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
+                <em :title="String(item.caption || '')">{{ item.caption }}</em>
               </span>
             </div>
           </article>
@@ -830,26 +920,8 @@ onBeforeUnmount(() => {
                   <small>运行计划</small>
                   <h2>启动计划</h2>
                 </div>
-                <b>{{ budgetStatusLabel }}</b>
+                <b>{{ launchStatusLabel }}</b>
               </header>
-              <div class="bench-plan-grid">
-                <span>
-                  <small>总局数</small>
-                  <b>{{ totalGamesLabel }}</b>
-                </span>
-                <span>
-                  <small>评测批次</small>
-                  <b>{{ evalBatchLabel }}</b>
-                </span>
-                <span>
-                  <small>裁判判定</small>
-                  <b>{{ judgeDecisionLabel }}</b>
-                </span>
-                <span :class="{ danger: benchmark.benchmarkPlanBudgetExceeded.value }">
-                  <small>预计调用单位</small>
-                  <b>{{ estimatedUnitsLabel }}</b>
-                </span>
-              </div>
               <div class="bench-plan-controls">
                 <label>
                   <span>局数</span>
@@ -900,19 +972,12 @@ onBeforeUnmount(() => {
                   />
                 </label>
               </div>
-              <div class="bench-cost-breakdown" aria-label="评测成本拆分">
+              <div class="bench-plan-summary" aria-label="启动计划摘要">
                 <span
-                  v-for="item in planCostRows"
+                  v-for="item in planSummaryRows"
                   :key="item.key"
                   :class="{ danger: item.danger }"
                 >
-                  <small>{{ item.label }}</small>
-                  <b>{{ item.value }}</b>
-                  <em>{{ item.caption }}</em>
-                </span>
-              </div>
-              <div class="bench-policy-breakdown" aria-label="评测执行策略">
-                <span v-for="item in planPolicyRows" :key="item.key">
                   <small>{{ item.label }}</small>
                   <b>{{ item.value }}</b>
                   <em>{{ item.caption }}</em>
@@ -924,8 +989,8 @@ onBeforeUnmount(() => {
                   <em>{{ displayPlanWarningMessage(warning) }}</em>
                 </span>
               </div>
-              <div v-if="budgetReasonRows.length" class="bench-budget-reasons" aria-label="预算与停止线提示">
-                <strong>{{ benchmark.benchmarkPlanBudgetExceeded.value ? '超预算原因' : '预算与停止线提示' }}</strong>
+              <div v-if="benchmark.benchmarkPlanBudgetExceeded.value && budgetReasonRows.length" class="bench-budget-reasons" aria-label="预算超限提示">
+                <strong>超预算原因</strong>
                 <span v-for="item in budgetReasonRows" :key="item.key">
                   <b>{{ item.label }}</b>
                   <em>{{ item.value }}</em>
@@ -936,11 +1001,6 @@ onBeforeUnmount(() => {
                 {{ benchmark.benchmarkPlanError.value }}
               </div>
               <footer class="bench-launch-strip">
-                <span>
-                  <small>被测对象</small>
-                  <b>{{ launchSubjectLabel }}</b>
-                  <em>{{ selectedSuite?.evaluation_set_id || '临时评测' }}</em>
-                </span>
                 <button
                   type="button"
                   class="bench-launch-button"
@@ -1110,108 +1170,65 @@ onBeforeUnmount(() => {
 }
 
 .bench-workbench-shell {
-  --lab-rail-width: 316px;
-  --lab-context-width: 320px;
+  --lab-rail-width: 300px;
+  --lab-context-width: 300px;
   display: grid;
-  grid-template-columns: 316px minmax(0, 1fr) 320px;
-  gap: 14px;
-  height: 100%;
-  min-height: 0;
-  padding: 14px;
-}
-
-.bench-workbench-main {
-  display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
-  gap: 10px;
-  min-width: 0;
-  min-height: 0;
-}
-
-.bench-workbench-header {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(420px, 1.3fr) auto;
-  align-items: center;
+  grid-template-columns: var(--lab-rail-width) minmax(0, 1fr) var(--lab-context-width);
   gap: 12px;
+  width: 100%;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-main) {
+  gap: 8px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-action-bar) {
+  grid-template-columns: minmax(190px, 0.58fr) minmax(0, 2fr) auto;
+  min-height: 0;
   padding: 10px 12px;
-  border: 1px solid var(--bench-border);
-  border-radius: 8px;
-  background: var(--bench-panel);
-  box-shadow: 0 2px 8px rgba(91, 47, 18, 0.08);
+  border-color: rgba(139, 94, 52, 0.18);
+  background: rgba(255, 249, 232, 0.76);
+  box-shadow: inset 0 -1px 0 rgba(92, 54, 20, 0.08);
 }
 
-.bench-title-block {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
+.bench-workbench-shell :deep(.lab-workbench-title h1) {
+  font-size: 22px;
 }
 
-.bench-title-block small,
-.bench-header-meta small,
+.bench-workbench-shell :deep(.lab-workbench-meta) {
+  grid-template-columns: repeat(6, minmax(78px, 1fr));
+  gap: 7px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span) {
+  min-height: 38px;
+  padding: 6px 8px;
+  background: rgba(255, 248, 226, 0.48);
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta small),
 .bench-panel header small,
-.bench-plan-grid small,
-.bench-plan-controls span,
-.bench-launch-strip small {
+.bench-plan-summary small,
+.bench-plan-controls span {
   color: var(--bench-text-secondary);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
 }
 
-.bench-title-block h1 {
-  min-width: 0;
-  overflow: hidden;
-  margin: 0;
-  color: var(--bench-text);
-  font-size: 22px;
-  font-weight: 950;
-  line-height: 1.05;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bench-header-meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-
-.bench-header-meta span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  min-height: 42px;
-  padding: 7px 9px;
-  border: 1px solid var(--bench-border);
-  border-radius: 6px;
-  background: rgba(255, 248, 226, 0.58);
-}
-
-.bench-header-meta span.danger {
-  border-color: var(--bench-danger-border);
-  background: var(--bench-danger-bg);
-}
-
-.bench-header-meta b,
-.bench-panel header b,
-.bench-plan-grid b,
-.bench-launch-strip b,
-.bench-launch-strip em {
+.bench-workbench-shell :deep(.lab-workbench-meta b),
+.bench-panel header b {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bench-header-meta b {
-  color: var(--bench-text);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.bench-refresh-button,
 .bench-launch-button {
   display: inline-flex;
   align-items: center;
@@ -1227,7 +1244,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.bench-refresh-button:hover,
 .bench-launch-button:hover {
   background: var(--bench-accent);
 }
@@ -1237,32 +1253,9 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
-.bench-view-tabs {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-  padding: 4px;
-  border: 1px solid var(--bench-border);
-  border-radius: 8px;
-  background: var(--bench-panel);
-}
-
-.bench-view-tabs button {
-  height: 32px;
-  padding: 0 14px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--bench-text-secondary);
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.bench-view-tabs button.active {
-  border-color: var(--bench-border-strong);
-  background: var(--bench-active-bg);
-  color: var(--bench-accent-strong);
+.bench-workbench-shell :deep(.lab-workbench-tabs) {
+  background: rgba(255, 252, 245, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54);
 }
 
 .bench-alert {
@@ -1289,11 +1282,13 @@ onBeforeUnmount(() => {
 
 .bench-overview {
   display: grid;
+  align-content: start;
+  align-self: start;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .bench-overview-primary,
@@ -1307,8 +1302,7 @@ onBeforeUnmount(() => {
   display: grid;
   align-content: start;
   gap: 12px;
-  overflow-y: auto;
-  padding-right: 2px;
+  overflow: visible;
 }
 
 .bench-panel {
@@ -1359,12 +1353,17 @@ onBeforeUnmount(() => {
 .bench-context-panel {
   display: grid;
   align-content: start;
+  align-items: start;
+  grid-auto-rows: max-content;
   gap: 10px;
   height: 100%;
   min-width: 0;
   min-height: 0;
+  max-height: 100%;
   overflow-y: auto;
   padding-right: 2px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .bench-context-section {
@@ -1396,7 +1395,7 @@ onBeforeUnmount(() => {
 }
 
 .bench-context-section header small,
-.bench-context-kv-list small,
+.bench-context-detail small,
 .bench-context-gates small,
 .bench-context-run-button small,
 .bench-context-diagnostics small,
@@ -1410,13 +1409,17 @@ onBeforeUnmount(() => {
 }
 
 .bench-context-section header h2 {
+  display: -webkit-box;
   overflow: hidden;
   margin: 2px 0 0;
   color: var(--bench-text);
   font-size: 13px;
   font-weight: 950;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.16;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .bench-context-section header b {
@@ -1433,8 +1436,8 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.bench-context-kv-list,
 .bench-context-gates,
+.bench-context-detail,
 .bench-context-diagnostics,
 .bench-context-boundary,
 .bench-context-artifacts {
@@ -1444,32 +1447,28 @@ onBeforeUnmount(() => {
   padding: 0 10px 10px;
 }
 
-.bench-context-kv-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding-top: 10px;
-}
-
 .bench-context-boundary,
 .bench-context-artifacts {
   padding-top: 10px;
 }
 
-.bench-context-kv-list span,
 .bench-context-gates span,
+.bench-context-detail span,
 .bench-context-diagnostics span,
 .bench-context-boundary span,
 .bench-context-artifacts span {
   display: grid;
+  align-content: start;
   gap: 3px;
   min-width: 0;
-  padding: 8px 9px;
+  padding: 7px 8px;
   border: 1px solid rgba(139, 94, 52, 0.13);
   border-radius: 7px;
   background: rgba(255, 250, 240, 0.68);
 }
 
-.bench-context-kv-list b,
 .bench-context-gates b,
+.bench-context-detail b,
 .bench-context-run-detail strong,
 .bench-context-run-detail span,
 .bench-context-run-detail em,
@@ -1487,8 +1486,8 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.bench-context-kv-list b,
 .bench-context-gates b,
+.bench-context-detail b,
 .bench-context-diagnostics b,
 .bench-context-boundary b,
 .bench-context-artifacts b {
@@ -1497,12 +1496,42 @@ onBeforeUnmount(() => {
   font-weight: 900;
 }
 
+.bench-context-detail {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bench-context-detail .bench-context-subtitle,
+.bench-context-detail span.wide {
+  grid-column: 1 / -1;
+}
+
+.bench-context-boundary span.danger {
+  border-color: var(--bench-danger-border);
+  background: var(--bench-danger-bg);
+}
+
+.bench-context-boundary span.danger b {
+  color: var(--bench-danger);
+}
+
 .bench-context-diagnostics em,
 .bench-context-artifacts em {
   color: var(--bench-text-secondary);
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
+  line-height: 1.25;
+}
+
+.bench-context-diagnostics em,
+.bench-context-detail b,
+.bench-context-boundary b,
+.bench-context-artifacts em {
+  display: -webkit-box;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .bench-context-subtitle {
@@ -1611,7 +1640,6 @@ onBeforeUnmount(() => {
   color: var(--bench-warning);
 }
 
-.bench-plan-grid,
 .bench-diagnostic-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1623,7 +1651,6 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.bench-plan-grid span,
 .bench-diagnostic-grid span {
   display: grid;
   gap: 4px;
@@ -1635,12 +1662,6 @@ onBeforeUnmount(() => {
   background: rgba(255, 242, 210, 0.48);
 }
 
-.bench-plan-grid span.danger {
-  border-color: var(--bench-danger-border);
-  background: var(--bench-danger-bg);
-}
-
-.bench-plan-grid b,
 .bench-diagnostic-grid b {
   color: var(--bench-text);
   font-size: 17px;
@@ -1677,41 +1698,31 @@ onBeforeUnmount(() => {
   opacity: 0.68;
 }
 
-.bench-cost-breakdown {
+.bench-plan-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   padding: 0 12px 12px;
 }
 
-.bench-policy-breakdown {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 12px 12px;
-}
-
-.bench-cost-breakdown span,
-.bench-policy-breakdown span {
+.bench-plan-summary span {
   display: grid;
   gap: 3px;
   min-width: 0;
-  min-height: 62px;
+  min-height: 52px;
   padding: 9px 10px;
   border: 1px solid var(--bench-border);
   border-radius: 7px;
   background: rgba(255, 250, 240, 0.72);
 }
 
-.bench-cost-breakdown span.danger {
+.bench-plan-summary span.danger {
   border-color: var(--bench-danger-border);
   background: var(--bench-danger-bg);
 }
 
-.bench-cost-breakdown small,
-.bench-cost-breakdown em,
-.bench-policy-breakdown small,
-.bench-policy-breakdown em {
+.bench-plan-summary small,
+.bench-plan-summary em {
   min-width: 0;
   overflow: hidden;
   color: var(--bench-text-secondary);
@@ -1722,8 +1733,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.bench-cost-breakdown b,
-.bench-policy-breakdown b {
+.bench-plan-summary b {
   min-width: 0;
   overflow: hidden;
   color: var(--bench-text);
@@ -1733,8 +1743,8 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.bench-cost-breakdown span.danger b,
-.bench-cost-breakdown span.danger em {
+.bench-plan-summary span.danger b,
+.bench-plan-summary span.danger em {
   color: var(--bench-danger);
 }
 
@@ -1836,34 +1846,13 @@ onBeforeUnmount(() => {
 }
 
 .bench-launch-strip {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  display: flex;
+  justify-content: flex-end;
   margin: 0 12px 12px;
   padding: 10px;
   border: 1px solid var(--bench-border);
   border-radius: 7px;
   background: rgba(255, 242, 210, 0.5);
-}
-
-.bench-launch-strip span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.bench-launch-strip b {
-  color: var(--bench-text);
-  font-size: 14px;
-  font-weight: 950;
-}
-
-.bench-launch-strip em {
-  color: var(--bench-text-secondary);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 800;
 }
 
 .bench-launch-confirmation {
@@ -2017,7 +2006,8 @@ onBeforeUnmount(() => {
 .bench-leaderboard-stack,
 .bench-diagnostics-view,
 .bench-reports-view {
-  overflow-y: auto;
+  align-self: start;
+  overflow: visible;
 }
 
 .bench-reports-view {

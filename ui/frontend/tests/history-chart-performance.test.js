@@ -22,14 +22,16 @@ test('review vote-flow chart keeps the ECharts flow and heatmap implementation',
   assert.match(voteFlowSource, /class="vote-flow-chart"/)
 })
 
-test('review report mounts vote-flow chart only after the chart gate opens', () => {
+test('review report auto requests flow data before mounting vote-flow charts', () => {
   const reviewSource = source('src/components/history/ReviewReportPanel.vue')
 
-  assert.match(reviewSource, /const showFlowCharts = ref\(false\)/)
+  assert.match(reviewSource, /const showFlowCharts = computed\(\(\) => hasFlowChartData\.value\)/)
   assert.match(reviewSource, /class="review-flow-gate"/)
-  assert.match(reviewSource, /IntersectionObserver/)
+  assert.match(reviewSource, /requestFlowCharts/)
   assert.match(reviewSource, /flowData/)
   assert.match(reviewSource, /loadFlowData/)
+  assert.doesNotMatch(reviewSource, /IntersectionObserver/)
+  assert.doesNotMatch(reviewSource, /展开图表/)
   assert.doesNotMatch(reviewSource, /props\.game\?\.decisions/)
   assert.match(reviewSource, /<VoteFlowSankey\s+v-if="showFlowCharts"/)
 })

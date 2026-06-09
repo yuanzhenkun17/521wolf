@@ -1,6 +1,5 @@
 <script setup>
 import { computed } from 'vue'
-import EvidenceLink from './EvidenceLink.vue'
 import { buildEvidenceLink } from './evidenceLinks.js'
 import { displayRoleLabel, normalizeHistoryDisplayText } from './historyDisplay.js'
 
@@ -66,9 +65,6 @@ const runTitle = computed(() =>
     ? firstText(runLink.value.unavailableReason, runLabel.value)
     : firstText(runLink.value.href, runLabel.value)
 )
-const proposalId = computed(() =>
-  firstText(context.value.existing.proposal_id, props.game?.proposal_id, context.value.config.proposal_id)
-)
 const phaseLabel = computed(() =>
   firstText(
     context.value.existing.source_phase_label,
@@ -103,24 +99,6 @@ const roleVersionTitle = computed(() =>
     ? roleVersions.value.map((item) => `${item.role}: ${item.version}`).join(' / ')
     : '默认基线'
 )
-const proposalEvidenceMissing = computed(() => sourceKey.value === 'evolution' && !proposalId.value)
-const evidenceLinkTargets = computed(() => {
-  const game = props.game || {}
-  const rows = []
-  if (proposalId.value) {
-    rows.push({
-      key: 'proposal',
-      kind: 'proposal',
-      label: 'Proposal',
-      target: {
-        ...game,
-        source_run_id: sourceRunId.value,
-        proposal_id: proposalId.value
-      }
-    })
-  }
-  return rows
-})
 </script>
 
 <template>
@@ -185,24 +163,6 @@ const evidenceLinkTargets = computed(() => {
         </dd>
       </div>
     </dl>
-    <nav v-if="evidenceLinkTargets.length || proposalEvidenceMissing" class="evidence-context-links" aria-label="证据跳转">
-      <EvidenceLink
-        v-for="item in evidenceLinkTargets"
-        :key="item.key"
-        :kind="item.kind"
-        :label="item.label"
-        :target="item.target"
-        compact
-      />
-      <span
-        v-if="proposalEvidenceMissing"
-        class="evidence-context-status"
-        data-state="missing"
-      >
-        <span>Proposal</span>
-        <small>未关联提案</small>
-      </span>
-    </nav>
   </section>
 </template>
 
@@ -217,16 +177,6 @@ const evidenceLinkTargets = computed(() => {
   background: rgba(255, 249, 232, 0.72);
   color: #3d2818;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.66);
-}
-
-.evidence-context-bar[data-source="benchmark"] {
-  border-color: rgba(45, 96, 134, 0.24);
-  background: rgba(232, 242, 248, 0.78);
-}
-
-.evidence-context-bar[data-source="evolution"] {
-  border-color: rgba(97, 82, 148, 0.24);
-  background: rgba(239, 236, 248, 0.78);
 }
 
 .evidence-context-summary {
@@ -336,53 +286,6 @@ const evidenceLinkTargets = computed(() => {
 .version-more {
   flex: 0 0 auto;
   color: rgba(61, 40, 24, 0.68);
-}
-
-.evidence-context-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-  margin-top: 8px;
-}
-
-.evidence-context-links :deep(.evidence-link) {
-  flex: 0 1 190px;
-}
-
-.evidence-context-status {
-  display: inline-grid;
-  align-content: center;
-  gap: 2px;
-  flex: 0 1 190px;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 30px;
-  padding: 5px 8px;
-  border: 1px solid rgba(92, 63, 37, 0.16);
-  border-radius: 6px;
-  background: rgba(247, 241, 232, 0.72);
-  color: rgba(68, 48, 32, 0.7);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
-}
-
-.evidence-context-status span {
-  overflow: hidden;
-  font-size: 11px;
-  font-weight: 850;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.evidence-context-status small {
-  overflow: hidden;
-  color: rgba(96, 65, 40, 0.68);
-  font-size: 10px;
-  font-weight: 750;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 @media (max-width: 1080px) {

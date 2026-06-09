@@ -18,12 +18,14 @@ const props = defineProps({
   actionBusy: { type: Boolean, default: false },
   actionDisabled: { type: Boolean, default: false },
   meta: { type: Array, default: () => [] },
-  mainLabel: { type: String, default: '' }
+  mainLabel: { type: String, default: '' },
+  showHeader: { type: Boolean, default: true }
 })
 
 const emit = defineEmits(['update:activeTab', 'action'])
 const slots = useSlots()
 const hasContext = computed(() => Boolean(slots.context))
+const hasTabsActions = computed(() => Boolean(slots['tabs-actions']))
 
 const rootClass = computed(() => [
   props.bridge ? 'lab-workbench-bridge' : 'lab-workbench-shell',
@@ -59,7 +61,7 @@ function selectTab(tab) {
       </aside>
 
       <main class="lab-workbench-main">
-        <header class="lab-workbench-action-bar" :aria-label="`${title} 操作区`">
+        <header v-if="showHeader" class="lab-workbench-action-bar" :aria-label="`${title} 操作区`">
           <div class="lab-workbench-title">
             <small>{{ eyebrow }}</small>
             <h1>{{ title }}</h1>
@@ -73,7 +75,7 @@ function selectTab(tab) {
                 :data-tone="item.tone || 'neutral'"
               >
                 <small>{{ item.label }}</small>
-                <b>{{ item.value }}</b>
+                <b :title="String(item.value || '')">{{ item.value }}</b>
               </span>
             </slot>
           </div>
@@ -117,6 +119,9 @@ function selectTab(tab) {
           >
             <span>{{ tab.label }}</span>
           </button>
+          <div v-if="hasTabsActions" class="lab-workbench-tabs-actions">
+            <slot name="tabs-actions" />
+          </div>
         </nav>
 
         <section v-if="slots.notice" class="lab-workbench-notice-area" aria-label="Lab notice">
@@ -187,6 +192,10 @@ function selectTab(tab) {
 
 .lab-workbench-context {
   overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .lab-workbench-main {
@@ -198,7 +207,7 @@ function selectTab(tab) {
 
 .lab-workbench-action-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(360px, 1.25fr) auto;
+  grid-template-columns: minmax(168px, 0.58fr) minmax(0, 1.42fr) auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -264,8 +273,8 @@ function selectTab(tab) {
   color: var(--lab-text);
   font-size: 12px;
   font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .lab-workbench-action-area {
@@ -304,6 +313,7 @@ function selectTab(tab) {
 
 .lab-workbench-tabs {
   display: flex;
+  align-items: center;
   gap: 6px;
   min-width: 0;
   overflow-x: auto;
@@ -312,6 +322,22 @@ function selectTab(tab) {
   border-radius: 8px;
   background: var(--lab-panel);
   scrollbar-width: none;
+}
+
+.lab-workbench-tabs-actions {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-left: auto;
+  padding-left: 8px;
+  background: var(--lab-panel);
+}
+
+.lab-workbench-tabs-actions .lab-workbench-primary-action {
+  height: 32px;
 }
 
 .lab-workbench-tabs::-webkit-scrollbar {
@@ -361,9 +387,14 @@ function selectTab(tab) {
 
 .lab-workbench-main-pane {
   display: grid;
+  align-content: start;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 @media (max-width: 1120px) {

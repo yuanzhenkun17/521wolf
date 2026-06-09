@@ -48,26 +48,6 @@ const statusLabels = {
   archived: '归档'
 }
 
-const metricLabels = {
-  avg_role_score: '角色均分',
-  strength_score: '模型强度',
-  target_side_win_rate: '目标阵营胜率',
-  villagers_win_rate: '好人胜率',
-  werewolves_win_rate: '狼人胜率',
-  fallback_rate: '回退率',
-  llm_error_rate: 'LLM 错误率',
-  policy_adjusted_rate: '策略修正率',
-  decision_judge_avg_score: '裁判均分'
-}
-
-const gateLabels = {
-  min_completed_games: '最少完成局',
-  min_valid_game_rate: '有效局率',
-  max_fallback_rate: '最大回退率',
-  max_llm_error_rate: '最大 LLM 错误率',
-  max_policy_adjusted_rate: '最大策略修正率'
-}
-
 const runStatusLabels = {
   queued: '排队中',
   running: '运行中',
@@ -118,23 +98,6 @@ const legacyScopes = computed(() => [
   }
 ])
 
-const suiteCounts = computed(() => {
-  const counts = {
-    total: suites.value.length,
-    model: 0,
-    role_version: 0,
-    quick: 0,
-    release: 0
-  }
-  for (const suite of suites.value) {
-    if (suite.targetType === 'model') counts.model += 1
-    if (suite.targetType === 'role_version') counts.role_version += 1
-    if (suite.isQuick) counts.quick += 1
-    if (suite.isRelease) counts.release += 1
-  }
-  return counts
-})
-
 const suiteGroups = computed(() => {
   const groups = [
     { key: 'quick', label: '快速 / 冒烟', caption: '低成本验证', rows: [] },
@@ -147,75 +110,6 @@ const suiteGroups = computed(() => {
     byKey.get(groupKey(suite)).rows.push(suite)
   }
   return groups.filter((group) => group.rows.length)
-})
-
-const selectedSuite = computed(() =>
-  suites.value.find((suite) => suite.id === selectedSuiteId.value) || null
-)
-const selectedSpecRows = computed(() => {
-  const suite = selectedSuite.value
-  if (!suite) return []
-  return [
-    { key: 'target', label: '对象', value: suite.targetTypeLabel },
-    { key: 'games', label: '局数', value: suite.gameCount == null ? '未设置' : `${suite.gameCount} 局` },
-    { key: 'days', label: '最大天数', value: suite.maxDays == null ? '未设置' : `${suite.maxDays} 天` },
-    { key: 'roles', label: '覆盖角色', value: roleScopeLabel(suite) },
-    { key: 'evaluation', label: '评测集', value: suite.evaluationSetId || '临时' },
-    { key: 'hash', label: 'Config Hash', value: suite.shortConfigHash || '未上报', title: suite.configHash }
-  ]
-})
-const selectedSeedRows = computed(() => {
-  const suite = selectedSuite.value
-  if (!suite) return []
-  const seedPurpose = String(suite.seedSet?.purpose || '').trim()
-  const seedHash = String(suite.seedSet?.config_hash || '').trim()
-  return [
-    { key: 'seed-set', label: '种子集', value: suite.seedSetId || '临时' },
-    { key: 'seed-version', label: '版本', value: suite.seedSetVersionLabel || '未标记' },
-    { key: 'seed-tier', label: '层级', value: suite.seedTierLabel || '未标记' },
-    { key: 'seed-target', label: '对象类型', value: suite.seedTargetTypeLabel || '未标记' },
-    { key: 'usage-boundary', label: '使用边界', value: suite.usageBoundaryLabel || '未标记' },
-    { key: 'non-overlap', label: '非重叠组', value: suite.nonOverlapGroup || '未标记' },
-    { key: 'immutable', label: '不可变', value: suite.seedImmutable == null ? '未标记' : (suite.seedImmutable ? '是' : '否') },
-    { key: 'seed-count', label: '种子数', value: suite.seedCount == null ? '未上报' : `${suite.seedCount} 个` },
-    { key: 'seed-preview', label: '种子预览', value: suite.seedPreviewLabel || '未上报' },
-    { key: 'paired', label: '配对种子', value: suite.pairedSeed ? '启用' : '未启用' },
-    { key: 'purpose', label: '用途', value: seedPurpose || '未标记' },
-    { key: 'seed-hash', label: '种子 Hash', value: shortHash(seedHash) || '未上报', title: seedHash }
-  ]
-})
-const selectedSeedWarnings = computed(() => selectedSuite.value?.seedWarnings || [])
-const selectedMetricRows = computed(() => {
-  const suite = selectedSuite.value
-  if (!suite) return []
-  const primary = metricLabel(suite.metrics?.primary)
-  const secondary = Array.isArray(suite.metrics?.secondary)
-    ? suite.metrics.secondary.map(metricLabel).filter(Boolean)
-    : []
-  return [
-    { key: 'primary', label: '主指标', value: primary || '未设置' },
-    { key: 'secondary', label: '辅助指标', value: secondary.length ? secondary.join('、') : '未设置' }
-  ]
-})
-const selectedGateRows = computed(() => {
-  const suite = selectedSuite.value
-  if (!suite) return []
-  const rows = Object.entries(suite.gates || {})
-    .filter(([, value]) => value != null && value !== '')
-    .map(([key, value]) => ({ key, label: gateLabels[key] || key, value: formatGateValue(key, value) }))
-  return rows.length ? rows : [{ key: 'empty', label: '门禁', value: '未设置' }]
-})
-const selectedJudgeRows = computed(() => {
-  const suite = selectedSuite.value
-  if (!suite) return []
-  const judge = suite.judge || {}
-  const enabled = Boolean(judge.enable_decision_judge)
-  return [
-    { key: 'enabled', label: '裁判判定', value: enabled ? '启用' : '未启用' },
-    { key: 'max', label: '每局上限', value: enabled && judge.judge_max_decisions != null ? `${judge.judge_max_decisions} 次` : '无' },
-    { key: 'concurrency', label: '并发', value: enabled && judge.judge_concurrency != null ? `${judge.judge_concurrency} 个任务` : '后端默认' },
-    { key: 'timeout', label: '超时', value: enabled && judge.judge_timeout_seconds != null ? `${judge.judge_timeout_seconds} 秒` : '后端默认' }
-  ]
 })
 
 function normalizeSuite(raw) {
@@ -450,32 +344,6 @@ function titleCase(value) {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-function roleScopeLabel(suite) {
-  if (suite.targetType === 'model') return '全角色覆盖'
-  if (!suite.roles.length) return '全角色'
-  return `${suite.roles.length} 个角色`
-}
-
-function suiteMetaLine(suite) {
-  const parts = []
-  if (suite.gameCount != null) parts.push(`${suite.gameCount} 局`)
-  if (suite.seedCount != null) parts.push(`${suite.seedCount} 个种子`)
-  parts.push(roleScopeLabel(suite))
-  return parts.join(' / ')
-}
-
-function metricLabel(value) {
-  const key = String(value || '').trim()
-  if (!key) return ''
-  return metricLabels[key] || key
-}
-
-function formatGateValue(key, value) {
-  const number = Number(value)
-  if (Number.isFinite(number) && String(key || '').includes('rate')) return `${Math.round(number * 100)}%`
-  return String(value)
-}
-
 function defaultLaunchDisabledReason(status) {
   if (status === 'draft') return '草稿套件启用后才能启动。'
   if (status === 'deprecated') return '废弃套件只保留历史审计，不能启动。'
@@ -497,30 +365,9 @@ function selectLegacyScope(targetType) {
   <aside class="benchmark-suite-rail" aria-label="评测套件库">
     <header class="suite-rail-header">
       <div>
-        <p>套件索引</p>
         <h2>评测套件</h2>
       </div>
-      <span>{{ suiteCounts.total }}</span>
     </header>
-
-    <section class="suite-rail-summary" aria-label="套件计数">
-      <span>
-        <small>模型</small>
-        <b>{{ suiteCounts.model }}</b>
-      </span>
-      <span>
-        <small>角色</small>
-        <b>{{ suiteCounts.role_version }}</b>
-      </span>
-      <span>
-        <small>快速</small>
-        <b>{{ suiteCounts.quick }}</b>
-      </span>
-      <span>
-        <small>发布</small>
-        <b>{{ suiteCounts.release }}</b>
-      </span>
-    </section>
 
     <div v-if="benchmark.benchmarkSuiteError.value" class="suite-rail-alert">
       {{ benchmark.benchmarkSuiteError.value }}
@@ -529,7 +376,6 @@ function selectLegacyScope(targetType) {
     <section class="legacy-scope-group" aria-label="临时评测范围">
       <div class="suite-group-title">
         <span>临时 / 历史</span>
-        <small>历史无边界数据</small>
       </div>
       <button
         v-for="scope in legacyScopes"
@@ -544,9 +390,7 @@ function selectLegacyScope(targetType) {
       >
         <span>
           <strong>{{ scope.label }}</strong>
-          <em>{{ scope.caption }}</em>
         </span>
-        <b>{{ scope.count }}</b>
       </button>
     </section>
 
@@ -564,7 +408,6 @@ function selectLegacyScope(targetType) {
       >
         <div class="suite-group-title">
           <span>{{ group.label }}</span>
-          <small>{{ group.caption }}</small>
         </div>
 
         <button
@@ -583,118 +426,9 @@ function selectLegacyScope(targetType) {
             <strong>{{ suite.label }}</strong>
             <em>{{ suite.id }}</em>
           </span>
-          <span class="suite-row-tags">
-            <b>{{ suite.targetTypeLabel }}</b>
-            <b>{{ suite.costTierLabel }}</b>
-            <b>{{ suite.statusLabel }}</b>
-            <b v-if="suite.seedWarningCount">重叠警告 {{ suite.seedWarningCount }}</b>
-          </span>
-          <span class="suite-row-meta">
-            <small>{{ suite.evaluationSetId || '临时评测集' }}</small>
-            <small>{{ suite.seedSetId || '临时种子集' }}</small>
-          </span>
-          <span class="suite-row-foot">
-            <small>{{ suiteMetaLine(suite) }}</small>
-            <small v-if="suite.version">{{ suite.version }}</small>
-          </span>
-          <span class="suite-row-activity" aria-label="套件活动">
-            <span :class="['suite-activity-line', suite.lastRun ? `suite-activity-line--${suite.lastRun.tone}` : 'suite-activity-line--empty']">
-              <small>运行</small>
-              <b>{{ suite.lastRun?.statusLabel || '暂无运行' }}</b>
-              <em>
-                {{ suite.lastRun?.stageLabel || suite.lastRun?.shortId || '等待启动' }}
-                <template v-if="suite.lastRun?.timeLabel"> · {{ suite.lastRun.timeLabel }}</template>
-              </em>
-            </span>
-            <span :class="['suite-activity-line', suite.latestSnapshot ? 'suite-activity-line--snapshot' : 'suite-activity-line--empty']">
-              <small>快照</small>
-              <b>{{ suite.latestSnapshot ? `${suite.latestSnapshot.rowCount ?? 0} 行` : '无' }}</b>
-              <em>
-                {{ suite.latestSnapshot?.shortHash || suite.latestSnapshot?.shortId || '未发布' }}
-                <template v-if="suite.latestSnapshot?.createdAtLabel"> · {{ suite.latestSnapshot.createdAtLabel }}</template>
-              </em>
-            </span>
-          </span>
         </button>
       </section>
     </div>
-
-    <footer v-if="selectedSuite" class="suite-rail-selected" aria-label="选中套件详情">
-      <header>
-        <div>
-          <small>套件详情</small>
-          <b>{{ selectedSuite.label }}</b>
-        </div>
-        <span :class="['suite-selected-status', selectedSuite.launchable ? 'ok' : 'blocked']">
-          {{ selectedSuite.launchable ? '可启动' : '不可启动' }}
-        </span>
-      </header>
-      <p v-if="selectedSuite.description">{{ selectedSuite.description }}</p>
-      <div v-if="selectedSuite.launchDisabledReason" class="suite-selected-warning">
-        {{ selectedSuite.launchDisabledReason }}
-      </div>
-
-      <section class="suite-selected-grid" aria-label="协议摘要">
-        <span v-for="item in selectedSpecRows" :key="item.key" :title="item.title || String(item.value || '')">
-          <small>{{ item.label }}</small>
-          <b>{{ item.value }}</b>
-        </span>
-      </section>
-
-      <section class="suite-selected-section" aria-label="种子集">
-        <div class="suite-selected-subtitle">
-          <b>种子集</b>
-          <small>{{ selectedSeedWarnings.length ? `${selectedSeedWarnings.length} 条重叠警告` : (selectedSuite.seedSet?.enabled === false ? '停用' : '固定边界') }}</small>
-        </div>
-        <span v-for="item in selectedSeedRows" :key="item.key" :title="item.title || String(item.value || '')">
-          <small>{{ item.label }}</small>
-          <b>{{ item.value }}</b>
-        </span>
-        <div v-if="selectedSeedWarnings.length" class="suite-selected-warning suite-selected-warning--seed">
-          <strong>重叠警告</strong>
-          <span v-for="warning in selectedSeedWarnings" :key="warning">{{ warning }}</span>
-        </div>
-      </section>
-
-      <section class="suite-selected-section" aria-label="指标和门禁">
-        <div class="suite-selected-subtitle">
-          <b>指标 / 门禁</b>
-          <small>{{ selectedSuite.costTierLabel }}</small>
-        </div>
-        <span v-for="item in selectedMetricRows" :key="item.key">
-          <small>{{ item.label }}</small>
-          <b>{{ item.value }}</b>
-        </span>
-        <span v-for="item in selectedGateRows" :key="item.key">
-          <small>{{ item.label }}</small>
-          <b>{{ item.value }}</b>
-        </span>
-      </section>
-
-      <section class="suite-selected-section" aria-label="裁判配置">
-        <div class="suite-selected-subtitle">
-          <b>裁判配置</b>
-          <small>{{ selectedSuite.pairedSeed ? 'paired seed' : '非配对' }}</small>
-        </div>
-        <span v-for="item in selectedJudgeRows" :key="item.key">
-          <small>{{ item.label }}</small>
-          <b>{{ item.value }}</b>
-        </span>
-      </section>
-
-      <section class="suite-selected-activity" aria-label="最近产物">
-        <span>
-          <small>最近运行</small>
-          <b>{{ selectedSuite.lastRun?.statusLabel || '暂无运行' }}</b>
-          <em>{{ selectedSuite.lastRun?.shortId || selectedSuite.lastRun?.timeLabel || '等待启动' }}</em>
-        </span>
-        <span>
-          <small>最新快照</small>
-          <b>{{ selectedSuite.latestSnapshot ? `${selectedSuite.latestSnapshot.rowCount ?? 0} 行` : '未发布' }}</b>
-          <em>{{ selectedSuite.latestSnapshot?.shortHash || selectedSuite.latestSnapshot?.shortId || '无冻结榜单' }}</em>
-        </span>
-      </section>
-    </footer>
   </aside>
 </template>
 
@@ -715,81 +449,43 @@ function selectLegacyScope(targetType) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 292px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: 100%;
   min-height: 0;
   padding: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--rail-bg);
   border: 1px solid var(--rail-line);
   border-radius: 8px;
   color: var(--rail-text);
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.benchmark-suite-rail,
+.benchmark-suite-rail * {
+  box-sizing: border-box;
 }
 
 .suite-rail-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  flex: 0 0 auto;
 }
 
-.suite-rail-header p,
 .suite-rail-header h2 {
   margin: 0;
 }
 
-.suite-rail-header p {
-  color: var(--rail-muted);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
 .suite-rail-header h2 {
-  margin-top: 2px;
   font-size: 17px;
   line-height: 1.15;
-}
-
-.suite-rail-header > span {
-  display: grid;
-  place-items: center;
-  min-width: 34px;
-  height: 28px;
-  border: 1px solid var(--rail-line);
-  border-radius: 6px;
-  background: var(--rail-panel);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.suite-rail-summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.suite-rail-summary span {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-  padding: 7px 6px;
-  background: var(--rail-panel);
-  border: 1px solid var(--rail-line);
-  border-radius: 6px;
-}
-
-.suite-rail-summary small {
-  color: var(--rail-muted);
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.suite-rail-summary b {
-  font-size: 14px;
-  line-height: 1.1;
 }
 
 .suite-rail-alert,
@@ -816,13 +512,17 @@ function selectLegacyScope(targetType) {
   font-weight: 600;
 }
 
+.suite-rail-alert {
+  flex: 0 0 auto;
+}
+
 .suite-rail-list {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: grid;
   align-content: start;
   gap: 10px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
   padding-right: 2px;
 }
 
@@ -834,16 +534,14 @@ function selectLegacyScope(targetType) {
 
 .legacy-scope-group {
   display: grid;
+  flex: 0 0 auto;
   gap: 7px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--rail-line);
 }
 
 .suite-group-title {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 10px;
+  display: block;
   padding-top: 2px;
 }
 
@@ -852,17 +550,13 @@ function selectLegacyScope(targetType) {
   font-weight: 900;
 }
 
-.suite-group-title small {
-  color: var(--rail-muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
 .suite-row {
   display: grid;
-  gap: 7px;
+  align-content: start;
   width: 100%;
-  padding: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  overflow: hidden;
   text-align: left;
   color: inherit;
   background: var(--rail-panel);
@@ -897,12 +591,11 @@ function selectLegacyScope(targetType) {
 
 .legacy-scope-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
   width: 100%;
-  min-height: 58px;
-  padding: 10px;
+  min-height: 44px;
+  padding: 9px 10px;
   text-align: left;
   color: inherit;
   background: var(--rail-panel);
@@ -949,54 +642,44 @@ function selectLegacyScope(targetType) {
   line-height: 1.2;
 }
 
-.legacy-scope-row em {
-  color: var(--rail-muted);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 700;
-}
-
-.legacy-scope-row b {
-  min-width: 32px;
-  min-height: 28px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 6px;
-  background: var(--rail-soft);
-  color: var(--rail-accent);
-  font-size: 12px;
-  font-weight: 900;
-}
-
 .suite-row--deprecated,
 .suite-row--disabled,
 .suite-row--archived {
   border-left-color: var(--rail-danger);
 }
 
-.suite-row-main,
-.suite-row-meta,
-.suite-row-foot {
+.suite-row-main {
   display: grid;
   min-width: 0;
+  max-width: 100%;
 }
 
 .suite-row-main {
   gap: 2px;
 }
 
-.suite-row-main strong,
-.suite-row-main em,
-.suite-row-meta small,
-.suite-row-foot small {
+.suite-row-main em {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .suite-row-main strong {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
   font-size: 13px;
-  line-height: 1.2;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.suite-row-main em {
+  max-width: 100%;
+  min-width: 0;
+  font-size: 13px;
 }
 
 .suite-row-main em {
@@ -1006,282 +689,4 @@ function selectLegacyScope(targetType) {
   font-weight: 700;
 }
 
-.suite-row-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.suite-row-tags b {
-  padding: 2px 6px;
-  background: var(--rail-soft);
-  border: 1px solid var(--rail-line);
-  border-radius: 5px;
-  color: var(--rail-accent);
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1.2;
-}
-
-.suite-row-meta {
-  gap: 2px;
-  color: var(--rail-muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.suite-row-foot {
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  color: var(--rail-muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.suite-row-activity {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding-top: 2px;
-  border-top: 1px solid var(--rail-line);
-}
-
-.suite-activity-line {
-  display: grid;
-  grid-template-columns: 52px 78px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--rail-text);
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.suite-activity-line small,
-.suite-activity-line b,
-.suite-activity-line em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.suite-activity-line small {
-  color: var(--rail-muted);
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.suite-activity-line b {
-  position: relative;
-  padding-left: 9px;
-  font-weight: 900;
-}
-
-.suite-activity-line b::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--rail-line-strong);
-  transform: translateY(-50%);
-}
-
-.suite-activity-line em {
-  color: var(--rail-muted);
-  font-style: normal;
-  font-weight: 750;
-}
-
-.suite-activity-line--ok b::before,
-.suite-activity-line--snapshot b::before {
-  background: var(--rail-accent);
-}
-
-.suite-activity-line--live b::before {
-  background: rgba(90, 51, 25, 0.72);
-}
-
-.suite-activity-line--bad b::before {
-  background: var(--rail-danger);
-}
-
-.suite-activity-line--empty {
-  color: var(--rail-muted);
-}
-
-.suite-activity-line--empty b::before {
-  background: rgba(139, 94, 52, 0.28);
-}
-
-.suite-rail-selected {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  max-height: 44%;
-  overflow-y: auto;
-  padding: 10px;
-  border: 1px solid var(--rail-line-strong);
-  border-radius: 8px;
-  background: var(--rail-soft-strong);
-}
-
-.suite-rail-selected header,
-.suite-selected-subtitle {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.suite-rail-selected header div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.suite-rail-selected header b {
-  color: var(--rail-text);
-  font-size: 13px;
-  font-weight: 950;
-}
-
-.suite-selected-status {
-  display: inline-grid;
-  place-items: center;
-  min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid var(--rail-line);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.7);
-  color: var(--rail-accent);
-  font-size: 11px;
-  font-weight: 950;
-}
-
-.suite-selected-status.blocked {
-  border-color: var(--rail-danger-border);
-  background: var(--rail-danger-bg);
-  color: var(--rail-danger);
-}
-
-.suite-rail-selected p,
-.suite-selected-warning {
-  margin: 0;
-  color: var(--rail-muted);
-  font-size: 11px;
-  font-weight: 750;
-  line-height: 1.45;
-}
-
-.suite-selected-warning {
-  padding: 7px 8px;
-  border: 1px solid var(--rail-danger-border);
-  border-radius: 6px;
-  background: var(--rail-danger-bg);
-  color: var(--rail-danger);
-  font-weight: 850;
-}
-
-.suite-selected-warning--seed {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 4px;
-}
-
-.suite-selected-warning--seed strong,
-.suite-selected-warning--seed span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.suite-selected-warning--seed strong {
-  font-size: 11px;
-  font-weight: 950;
-}
-
-.suite-selected-grid,
-.suite-selected-section,
-.suite-selected-activity {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.suite-selected-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.suite-selected-section,
-.suite-selected-activity {
-  padding-top: 8px;
-  border-top: 1px solid var(--rail-line);
-}
-
-.suite-selected-section {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.suite-selected-subtitle {
-  grid-column: 1 / -1;
-}
-
-.suite-selected-subtitle b {
-  color: var(--rail-text);
-  font-size: 12px;
-  font-weight: 950;
-}
-
-.suite-selected-grid span,
-.suite-selected-section > span,
-.suite-selected-activity span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--rail-line);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.62);
-}
-
-.suite-selected-activity {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.suite-rail-selected small,
-.suite-selected-subtitle small,
-.suite-selected-activity small {
-  color: var(--rail-muted);
-  font-size: 10px;
-  font-weight: 900;
-}
-
-.suite-selected-grid b,
-.suite-selected-section > span b,
-.suite-selected-activity b,
-.suite-selected-activity em {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.suite-selected-grid b,
-.suite-selected-section > span b,
-.suite-selected-activity b {
-  color: var(--rail-text);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.suite-selected-activity em {
-  color: var(--rail-muted);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 700;
-}
 </style>

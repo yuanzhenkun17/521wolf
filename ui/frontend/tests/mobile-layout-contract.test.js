@@ -23,18 +23,32 @@ function assertSourceContract(source, contracts) {
 
 test('Benchmark Lab views keep narrow screens constrained by scrollable table owners', () => {
   const benchmarkPage = readSource('../src/pages/BenchmarkPage.vue')
+  const benchmarkSuiteRail = readSource('../src/components/benchmark/BenchmarkSuiteRail.vue')
   const batchRunsTable = readSource('../src/components/benchmark/BenchmarkBatchRunsTable.vue')
   const leaderboardTable = readSource('../src/components/benchmark/BenchmarkLeaderboardTable.vue')
   const runReport = readSource('../src/components/benchmark/BenchmarkRunReportPanel.vue')
   const snapshotRelease = readSource('../src/components/benchmark/BenchmarkSnapshotReleasePanel.vue')
 
   assertSourceContract(benchmarkPage, [
-    ['Benchmark shell keeps suite, workspace, and context columns shrinkable', /\.bench-workbench-shell[\s\S]*grid-template-columns:\s*316px minmax\(0, 1fr\) 320px/],
+    ['Benchmark shell keeps suite, workspace, and context columns shrinkable', /\.bench-workbench-shell[\s\S]*--lab-rail-width:\s*300px[\s\S]*--lab-context-width:\s*300px[\s\S]*grid-template-columns:\s*var\(--lab-rail-width\) minmax\(0, 1fr\) var\(--lab-context-width\)/],
     ['Benchmark context panel owns vertical overflow', /\.bench-context-panel\s*\{[\s\S]*min-width:\s*0[\s\S]*min-height:\s*0[\s\S]*overflow-y:\s*auto/],
-    ['Benchmark context values ellipsize long ids', /\.bench-context-kv-list b,[\s\S]*\.bench-context-artifacts em\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow:\s*hidden[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/],
+    ['Benchmark context cards keep content-height rows inside the scrolling panel', /\.bench-context-panel\s*\{[\s\S]*align-items:\s*start[\s\S]*grid-auto-rows:\s*max-content/],
+    ['Benchmark context values ellipsize long ids', /\.bench-context-gates b,[\s\S]*\.bench-context-artifacts em\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow:\s*hidden[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/],
+    ['Benchmark boundary summary lives in the context rail', /bench-context-section--boundary[\s\S]*<small>评测边界<\/small>[\s\S]*bench-context-boundary/],
+    ['Benchmark right rail separates suite, boundary, and gate context', /bench-context-section--suite[\s\S]*<small>当前套件<\/small>[\s\S]*bench-context-section--boundary[\s\S]*<small>评测边界<\/small>[\s\S]*bench-context-section--gate[\s\S]*<small>入榜门禁<\/small>/],
+    ['Benchmark uses compact shell command header with refresh action', /:meta="benchmarkCommandMetaRows"[\s\S]*action-label="刷新"[\s\S]*@action="refresh"/],
+    ['Benchmark context rail carries selected suite detail sections', /contextSuiteDetailRows[\s\S]*contextSuiteSeedRows[\s\S]*contextSuiteMetricRows[\s\S]*contextSuiteJudgeRows[\s\S]*contextGateRows/],
     ['Benchmark overview uses a single shrinkable workspace column', /\.bench-overview\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/],
-    ['Benchmark cards and grids use shrinkable minmax tracks', /\.bench-plan-grid,[\s\S]*\.bench-diagnostic-grid[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/],
+    ['Benchmark plan summary uses shrinkable minmax tracks', /\.bench-plan-summary\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/],
+    ['Benchmark diagnostic grid uses bounded shrinkable tracks', /\.bench-diagnostic-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/],
   ])
+  assert.doesNotMatch(benchmarkPage, /:meta="labHeaderMeta"|<template #boundary>|<BenchmarkBoundaryBar|boundary-label=|:show-header="false"|<template #tabs-actions>|bench-tabs-refresh/)
+  assert.doesNotMatch(benchmarkPage, /<small>评测口径<\/small>|bench-plan-grid|bench-cost-breakdown|bench-policy-breakdown/)
+
+  assertSourceContract(benchmarkSuiteRail, [
+    ['Benchmark suite rail keeps rows as selection-only entries', /<span class="suite-row-main">[\s\S]*<strong>{{ suite\.label }}<\/strong>[\s\S]*<em>{{ suite\.id }}<\/em>/],
+  ])
+  assert.doesNotMatch(benchmarkSuiteRail, /suite-rail-summary|suite-row-tags|suite-row-meta|suite-row-foot|suite-row-activity|suite-rail-selected|selectedSpecRows|selectedSeedRows|selectedMetricRows|selectedGateRows|selectedJudgeRows/)
 
   assertSourceContract(batchRunsTable, [
     ['Batch run table owns horizontal overflow', /\.bench-table\s*\{[\s\S]*overflow-x:\s*auto/],
@@ -55,8 +69,9 @@ test('Benchmark Lab views keep narrow screens constrained by scrollable table ow
     ['Run report problem-game table does not widen its parent', /\.game-table\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow:\s*hidden/],
     ['Run report rows use shrinkable identity columns', /\.game-row\s*\{[\s\S]*grid-template-columns:\s*minmax\(150px, 1\.3fr\)[\s\S]*min-width:\s*0/],
     ['Run report tags wrap long metadata chips', /\.tag-list\s*\{[\s\S]*flex-wrap:\s*wrap/],
-    ['Run report bundle values ellipsize long ids', /\.report-bundle dd\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow:\s*hidden[\s\S]*text-overflow:\s*ellipsis/],
+    ['Run report keeps export actions in the side column without a preview textarea', /class="report-section report-export"[\s\S]*class="export-actions"[\s\S]*copyExport\('json'\)[\s\S]*copyExport\('csv'\)/],
   ])
+  assert.doesNotMatch(runReport, /<textarea :value="markdownReport"|\.report-export textarea|report-bundle|report-header-grid/)
 
   assertSourceContract(snapshotRelease, [
     ['Snapshot delta table clips inside its panel', /\.snapshot-delta-table\s*\{[\s\S]*overflow:\s*hidden/],

@@ -19,6 +19,14 @@ function pageSource() {
   return readSource('../src/pages/BenchmarkPage.vue')
 }
 
+function suiteRailSource() {
+  return readSource('../src/components/benchmark/BenchmarkSuiteRail.vue')
+}
+
+function targetSelectorSource() {
+  return readSource('../src/components/benchmark/BenchmarkTargetSelector.vue')
+}
+
 function assertSfcCompiles(relativePath, id) {
   const filename = new URL(relativePath, import.meta.url).pathname
   const source = readSource(relativePath)
@@ -74,16 +82,64 @@ test('Benchmark page maps diagnostics, warnings, and visible judge labels to Chi
   assert.match(source, /displayPlanWarningKind\(warning\.kind\)/)
   assert.match(source, /displayPlanBudgetReason\(reason\)/)
   assert.match(source, /超预算原因/)
-  assert.match(source, /预算与停止线提示/)
   assert.match(source, /预计成本/)
-  assert.match(source, /预计 Token|预计 token/)
-  assert.match(source, /预检模式/)
   assert.match(source, /临时评测不绑定版本化套件/)
-  assert.match(source, /label: '裁判判定单位'/)
-  assert.match(source, /裁判判定未启用/)
-  assert.match(source, /<small>裁判判定<\/small>/)
+  assert.match(source, /label: '裁判判定'/)
   assert.match(source, /<dt>裁判判定<\/dt>/)
-  assert.doesNotMatch(source, /Judge 判定单位|判定 Judge 未启用|<small>Judge 判定<\/small>|<dt>Judge 判定<\/dt>|over budget reason|Dry Run/)
+  assert.doesNotMatch(source, /Judge 判定单位|判定 Judge 未启用|<small>Judge 判定<\/small>|<dt>Judge 判定<\/dt>|over budget reason|Dry Run|预算与停止线提示|预计 Token|预计 token|预检模式/)
+})
+
+test('Benchmark page keeps boundary metadata in the right context rail only', () => {
+  const source = pageSource()
+
+  assert.match(source, /bench-context-section--boundary/)
+  assert.match(source, /bench-context-section--suite/)
+  assert.match(source, /bench-context-section--gate/)
+  assert.match(source, /<small>当前套件<\/small>/)
+  assert.match(source, /<small>评测边界<\/small>/)
+  assert.match(source, /<small>入榜门禁<\/small>/)
+  assert.match(source, /label: '比较边界'/)
+  assert.match(source, /label: '评测集'/)
+  assert.match(source, /label: '种子集'/)
+  assert.match(source, /label: 'Config Hash'/)
+  assert.match(source, /<span>门禁规则<\/span>/)
+  assert.match(source, /<span>套件详情<\/span>/)
+  assert.match(source, /<span>种子集<\/span>/)
+  assert.match(source, /<span>指标<\/span>/)
+  assert.match(source, /<span>裁判配置<\/span>/)
+  assert.match(source, /const benchmarkCommandMetaRows = computed\(\(\) => \[/)
+  assert.match(source, /:meta="benchmarkCommandMetaRows"/)
+  assert.match(source, /action-label="刷新"/)
+  assert.match(source, /@action="refresh"/)
+  assert.match(source, /const planSummaryRows = computed\(\(\) => \[/)
+  assert.match(source, /class="bench-plan-summary" aria-label="启动计划摘要"/)
+  assert.doesNotMatch(source, /import BenchmarkBoundaryBar/)
+  assert.doesNotMatch(source, /const labHeaderMeta/)
+  assert.doesNotMatch(source, /:meta="labHeaderMeta"/)
+  assert.doesNotMatch(source, /<template #boundary>/)
+  assert.doesNotMatch(source, /boundary-label=/)
+  assert.doesNotMatch(source, /:show-header="false"|<template #tabs-actions>|bench-tabs-refresh/)
+  assert.doesNotMatch(source, /<small>评测口径<\/small>|contextBudgetRows|label: '预算状态'|bench-plan-grid|bench-cost-breakdown|bench-policy-breakdown|scope=model/)
+})
+
+test('Benchmark suite rail stays focused on suite selection', () => {
+  const source = suiteRailSource()
+
+  assert.match(source, /aria-label="评测套件库"/)
+  assert.match(source, /<span class="suite-row-main">/)
+  assert.doesNotMatch(source, /suite-rail-summary|suite-row-tags|suite-row-meta|suite-row-foot|suite-row-activity|suite-rail-selected/)
+  assert.doesNotMatch(source, /selectedSpecRows|selectedSeedRows|selectedMetricRows|selectedGateRows|selectedJudgeRows/)
+})
+
+test('Benchmark target selector keeps overview focused on editable inputs', () => {
+  const source = targetSelectorSource()
+
+  assert.match(source, /<small>目标<\/small>/)
+  assert.match(source, /<h2>被测对象<\/h2>/)
+  assert.match(source, /v-model\.trim="benchmark\.form\.value\.model_id"/)
+  assert.match(source, /v-model\.trim="benchmark\.form\.value\.model_config_hash"/)
+  assert.match(source, /v-model\.trim="benchmark\.form\.value\.target_version_id"/)
+  assert.doesNotMatch(source, /targetModeLabel|subjectLabel|selectedRoleLabel|target-note|模型评测写入|角色版本评测写入/)
 })
 
 test('Benchmark boundary and page keep the warm logbook palette', () => {
@@ -99,6 +155,9 @@ test('Benchmark boundary and page keep the warm logbook palette', () => {
   assert.match(boundary, /--boundary-accent:\s*var\(--bench-accent,\s*var\(--logbook-accent,\s*#8b5e34\)\)/)
   assert.match(boundary, /--boundary-accent-strong:\s*var\(--bench-accent-strong,\s*var\(--logbook-accent-strong,\s*#5a3319\)\)/)
   assert.match(boundary, /box-shadow:\s*0 1px 3px rgba\(91, 47, 18, 0\.04\)/)
+  assert.match(boundary, /\.benchmark-boundary-bar\s*\{[\s\S]*overflow-x:\s*auto[\s\S]*overflow-y:\s*hidden/)
+  assert.match(boundary, /\.boundary-cell small,[\s\S]*\.boundary-cell em\s*\{[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/)
+  assert.doesNotMatch(boundary, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/)
 
   assert.match(page, /--logbook-bg:\s*#f2dfae/)
   assert.match(page, /--logbook-bg-texture:[\s\S]*repeating-linear-gradient\(90deg,\s*rgba\(118, 71, 27, 0\.024\)[\s\S]*var\(--logbook-bg\)/)
@@ -121,5 +180,7 @@ test('Benchmark boundary and page keep the warm logbook palette', () => {
 test('Benchmark UI localization SFCs compile', () => {
   assertSfcCompiles('../src/components/benchmark/BenchmarkBatchRunsTable.vue', 'benchmark-batch-runs-localization-test')
   assertSfcCompiles('../src/components/benchmark/BenchmarkBoundaryBar.vue', 'benchmark-boundary-localization-test')
+  assertSfcCompiles('../src/components/benchmark/BenchmarkSuiteRail.vue', 'benchmark-suite-rail-localization-test')
+  assertSfcCompiles('../src/components/benchmark/BenchmarkTargetSelector.vue', 'benchmark-target-selector-localization-test')
   assertSfcCompiles('../src/pages/BenchmarkPage.vue', 'benchmark-page-localization-test')
 })

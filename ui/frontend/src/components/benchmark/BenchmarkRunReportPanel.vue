@@ -53,7 +53,7 @@ const DISPLAY_LABELS = {
   seed_set_id: '种子集',
   benchmark_config_hash: '配置 Hash',
   config_hash: '配置 Hash',
-  content_hash: '内容 Hash',
+  content_hash: '内容摘要',
   model_id: '模型 ID',
   model_config_hash: '模型配置 Hash',
   target_role: '目标角色',
@@ -302,7 +302,7 @@ const summaryRows = computed(() => [
   { key: 'results', label: '结果', value: resultCount.value, caption: '结果批次' },
   { key: 'games', label: '对局', value: gameTotal.value, caption: problemGameCaption.value },
   { key: 'diagnostics', label: '诊断', value: diagnosticTotal.value, caption: topDiagnosticCaption.value },
-  { key: 'leaderboard', label: '排行榜', value: leaderboardRows.value.length, caption: leaderboardScopeLabel.value }
+  { key: 'leaderboard', label: '排行榜', value: leaderboardRows.value.length, caption: '当前榜单行' }
 ])
 
 const gateRows = computed(() => {
@@ -554,16 +554,15 @@ const reproducibilityRows = computed(() => {
   ]
 })
 
-const leaderboardScopeLabel = computed(() =>
-  reportLeaderboard.value.scope
-    ? compactJoin([
-      `scope=${reportLeaderboard.value.scope}`,
-      reportLeaderboard.value.evaluation_set_id || evaluationSetId.value,
-      reportLeaderboard.value.target_role || (reportLeaderboard.value.scope === 'role_version' ? targetRoleLabel.value : '')
-    ], ' / ')
-    : (targetType.value === 'model'
-      ? `scope=model / ${evaluationSetId.value}`
-      : `scope=role_version / ${targetRoleLabel.value}`)
+const leaderboardScopeValue = computed(() =>
+  reportLeaderboard.value.scope || targetType.value
+)
+const leaderboardBoundaryLabel = computed(() =>
+  compactJoin([
+    leaderboardScopeValue.value === 'model' ? '模型范围' : '角色版本范围',
+    reportLeaderboard.value.evaluation_set_id || evaluationSetId.value,
+    reportLeaderboard.value.target_role || (leaderboardScopeValue.value === 'role_version' ? targetRoleLabel.value : '')
+  ], ' / ')
 )
 const gateCaption = computed(() => {
   if (canonicalReport.value) {
@@ -608,7 +607,7 @@ const markdownReport = computed(() => {
     '## 诊断与标签',
     ...markdownDiagnosticRows.value,
     '',
-    '## 可复现包',
+    '## 追溯数据',
     ...reproducibilityRows.value.map((row) => `- ${row.label}: ${markdownValue(row.value)}`)
   ]
   return lines.join('\n')
@@ -644,7 +643,7 @@ const csvReport = computed(() =>
           compactJoin([group.levelLabel, `${group.gameCount} 局`, `${group.stageCount} 阶段`], ' / ')
         ]),
         ...topTags.value.map((tag) => ['标签', tag.label, tag.count, '']),
-        ...reproducibilityRows.value.map((row) => ['可复现', row.label, row.value, ''])
+        ...reproducibilityRows.value.map((row) => ['追溯', row.label, row.value, ''])
       ])
     : ''
 )
@@ -785,7 +784,8 @@ function reportPayload() {
     tags: topTags.value,
     reproducibility: Object.fromEntries(reproducibilityRows.value.map((row) => [row.label, row.value])),
     leaderboard: {
-      scope: leaderboardScopeLabel.value,
+      scope: leaderboardScopeValue.value,
+      boundary: leaderboardBoundaryLabel.value,
       rows: leaderboardRows.value.slice(0, 20)
     }
   }
@@ -813,8 +813,7 @@ function isSelectedReport(row) {
 function reportHistoryMeta(row) {
   return compactJoin([
     row?.subjectLabel,
-    statusDisplayLabel(row?.statusLabel || row?.status),
-    row?.content_hash ? shortHash(row.content_hash) : ''
+    statusDisplayLabel(row?.statusLabel || row?.status)
   ], ' / ')
 }
 
@@ -1250,21 +1249,14 @@ function clearTransientState(stateRef) {
         <div class="report-title">
           <small>运行报告</small>
           <h2>{{ selectedRunId }}</h2>
-          <p>{{ suiteLabel }} / {{ targetTypeLabel }}</p>
+          <p>{{ subjectLabel }} / {{ targetTypeLabel }}</p>
         </div>
         <div class="report-status">
           <span>{{ statusLabel }}</span>
-          <em>{{ leaderboardScopeLabel }}</em>
+          <em>{{ rankableLabel }}</em>
           <small>{{ reportSourceLabel }}</small>
         </div>
       </header>
-
-      <section class="report-header-grid" aria-label="报告头">
-        <article v-for="row in headerRows" :key="row.label" class="report-kv">
-          <small>{{ row.label }}</small>
-          <b>{{ row.value }}</b>
-        </article>
-      </section>
 
       <section class="report-summary-grid" aria-label="报告摘要">
         <article
@@ -1414,25 +1406,10 @@ function clearTransientState(stateRef) {
             </p>
           </section>
 
-          <section class="report-section report-bundle">
-            <div class="report-section-heading">
-              <span>
-                <small>可复现包</small>
-                <b>审计边界</b>
-              </span>
-            </div>
-            <dl>
-              <div v-for="row in reproducibilityRows" :key="row.label">
-                <dt>{{ row.label }}</dt>
-                <dd>{{ row.value }}</dd>
-              </div>
-            </dl>
-          </section>
-
           <section class="report-section report-export">
             <div class="report-section-heading export-heading">
               <span>
-                <small>导出预览</small>
+                <small>报告导出</small>
                 <b>Markdown / JSON / CSV</b>
               </span>
               <div class="export-actions">
@@ -1456,7 +1433,6 @@ function clearTransientState(stateRef) {
               <button type="button" @click="copyExport('csv')">复制 CSV</button>
               <em>{{ exportState }}</em>
             </div>
-            <textarea :value="markdownReport" readonly spellcheck="false" />
           </section>
         </aside>
       </div>
@@ -1466,7 +1442,7 @@ function clearTransientState(stateRef) {
       <div>
         <small>运行报告</small>
         <h2>未选择运行</h2>
-        <p>从运行列表选择一个评测批次，生成摘要、门禁解释、问题对局、诊断汇总和可复现包。</p>
+        <p>从运行列表选择一个评测批次，生成摘要、门禁解释、问题对局、诊断汇总和追溯数据。</p>
       </div>
       <div v-if="reportHistory.length || recentRuns.length" class="report-empty-picker">
         <div v-if="reportHistory.length" class="report-empty-history">
@@ -1560,13 +1536,11 @@ function clearTransientState(stateRef) {
 }
 
 .report-title small,
-.report-kv small,
 .report-summary-card small,
 .report-section-heading small,
 .gate-row small,
 .diagnostic-rollup-row small,
 .benchmark-judge-evidence-head small,
-.report-bundle dt,
 .recent-run-button small,
 .report-history-row small {
   color: var(--report-muted);
@@ -1632,38 +1606,12 @@ function clearTransientState(stateRef) {
   justify-self: end;
 }
 
-.report-header-grid {
-  display: grid;
-  grid-template-columns: 1.2fr 1.15fr 0.8fr 0.95fr 1.05fr 1.05fr 1.25fr;
-  gap: 8px;
-  min-width: 0;
-}
-
-.report-kv,
 .report-summary-card,
 .report-section,
 .report-empty-state {
   border: 1px solid var(--report-line);
   border-radius: 8px;
   background: var(--report-panel);
-}
-
-.report-kv {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  min-height: 58px;
-  padding: 9px 10px;
-}
-
-.report-kv b {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--report-ink);
-  font-size: 12px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .report-summary-grid {
@@ -1901,37 +1849,6 @@ function clearTransientState(stateRef) {
   white-space: nowrap;
 }
 
-.report-bundle dl {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-
-.report-bundle div {
-  display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
-  gap: 10px;
-  align-items: baseline;
-  min-width: 0;
-  padding: 7px 0;
-  border-top: 1px solid var(--report-line);
-}
-
-.report-bundle div:first-child {
-  border-top: 0;
-}
-
-.report-bundle dd {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--report-ink);
-  font-size: 12px;
-  font-weight: 850;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .export-heading {
   align-items: center;
 }
@@ -2036,23 +1953,6 @@ function clearTransientState(stateRef) {
   font-size: 11px;
   font-weight: 850;
   line-height: 1.35;
-}
-
-.report-export textarea {
-  display: block;
-  width: 100%;
-  min-height: 320px;
-  resize: vertical;
-  box-sizing: border-box;
-  padding: 10px;
-  border: 1px solid var(--report-line);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.7);
-  color: var(--report-ink);
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.55;
 }
 
 .report-empty-state {

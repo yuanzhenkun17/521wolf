@@ -15,7 +15,7 @@ const gates = computed(() => suite.value?.gates || suite.value?.rankable_gates |
 const targetType = computed(() => props.benchmark.selectedBenchmarkIsModelSuite.value ? 'model' : 'role_version')
 
 const scopeLabel = computed(() =>
-  targetType.value === 'model' ? 'scope=model' : `scope=role_version / ${props.benchmark.selectedRoleLabel.value}`
+  targetType.value === 'model' ? '模型范围' : `角色版本范围 / ${props.benchmark.selectedRoleLabel.value}`
 )
 const subjectLabel = computed(() => {
   if (targetType.value === 'model') {
@@ -48,27 +48,27 @@ const configHash = computed(() =>
   <section class="benchmark-boundary-bar" aria-label="评测边界">
     <div class="boundary-cell boundary-cell--suite">
       <small>套件</small>
-      <b>{{ benchmark.selectedBenchmarkSuiteLabel.value }}</b>
-      <em>{{ suite?.id || '临时' }}</em>
+      <b :title="benchmark.selectedBenchmarkSuiteLabel.value">{{ benchmark.selectedBenchmarkSuiteLabel.value }}</b>
+      <em :title="suite?.id || '临时'">{{ suite?.id || '临时' }}</em>
     </div>
     <div class="boundary-cell">
       <small>比较边界</small>
-      <b>{{ scopeLabel }}</b>
-      <em>{{ subjectLabel }}</em>
+      <b :title="scopeLabel">{{ scopeLabel }}</b>
+      <em :title="subjectLabel">{{ subjectLabel }}</em>
     </div>
     <div class="boundary-cell">
       <small>评测集</small>
-      <b>{{ benchmark.selectedBenchmarkEvaluationSetId.value || '临时' }}</b>
-      <em>{{ suite?.seed_set_id || '临时种子集' }}</em>
+      <b :title="benchmark.selectedBenchmarkEvaluationSetId.value || '临时'">{{ benchmark.selectedBenchmarkEvaluationSetId.value || '临时' }}</b>
+      <em :title="suite?.seed_set_id || '临时种子集'">{{ suite?.seed_set_id || '临时种子集' }}</em>
     </div>
     <div class="boundary-cell">
       <small>入榜门禁</small>
-      <b>{{ gateLabel }}</b>
-      <em>{{ configHash || 'Config Hash 待生成' }}</em>
+      <b :title="gateLabel">{{ gateLabel }}</b>
+      <em :title="configHash || 'Config Hash 待生成'">{{ configHash || 'Config Hash 待生成' }}</em>
     </div>
     <div :class="['boundary-cell', 'boundary-cell--budget', { danger: benchmark.benchmarkPlanBudgetExceeded.value }]">
       <small>预算</small>
-      <b>{{ budgetLabel }}</b>
+      <b :title="budgetLabel">{{ budgetLabel }}</b>
       <em>{{ benchmark.selectedBenchmarkCanLaunch.value ? '可启动' : '不可启动' }}</em>
     </div>
   </section>
@@ -85,22 +85,34 @@ const configHash = computed(() =>
   --boundary-accent-strong: var(--bench-accent-strong, var(--logbook-accent-strong, #5a3319));
   --boundary-soft: var(--bench-active-bg, var(--logbook-active-bg, rgba(139, 94, 52, 0.1)));
   display: grid;
-  grid-template-columns: minmax(190px, 1.05fr) minmax(190px, 1fr) minmax(220px, 1.15fr) minmax(220px, 1.2fr) minmax(150px, 0.8fr);
-  gap: 8px;
+  grid-template-columns:
+    minmax(240px, 1.1fr)
+    minmax(220px, 1fr)
+    minmax(220px, 1fr)
+    minmax(260px, 1.2fr)
+    minmax(150px, 0.72fr);
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
-  padding: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 6px;
   border: 1px solid var(--boundary-border);
   border-radius: 8px;
   background: var(--boundary-bg);
   box-shadow: 0 1px 3px rgba(91, 47, 18, 0.04);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .boundary-cell {
   display: grid;
-  gap: 3px;
+  align-content: center;
+  gap: 2px;
   min-width: 0;
-  min-height: 58px;
-  padding: 9px 10px;
+  min-height: 50px;
+  padding: 7px 9px;
   border: 1px solid var(--boundary-border);
   border-radius: 7px;
   background: var(--boundary-surface);
@@ -140,6 +152,7 @@ const configHash = computed(() =>
   color: var(--boundary-text);
   font-size: 12px;
   font-weight: 900;
+  line-height: 1.18;
 }
 
 .boundary-cell em {
@@ -147,5 +160,6 @@ const configHash = computed(() =>
   font-size: 11px;
   font-style: normal;
   font-weight: 700;
+  line-height: 1.18;
 }
 </style>

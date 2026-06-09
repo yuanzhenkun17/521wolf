@@ -22,7 +22,6 @@ const props = defineProps({
 })
 
 const savedViewState = ref('')
-const selectedRowKey = ref('')
 
 const mode = computed(() =>
   props.benchmark.selectedBenchmarkIsModelSuite.value ? 'model' : 'role_version'
@@ -246,12 +245,6 @@ const viewStorageKey = computed(() => {
   return props.benchmark.currentBenchmarkViewKey?.value || `${STORAGE_PREFIX}:${mode.value}`
 })
 
-const selectedLeaderboardRow = computed(() =>
-  comparisonRows.value.find((row) => row.key === selectedRowKey.value) ||
-  comparisonRows.value[0] ||
-  null
-)
-
 const boundaryMismatchRows = computed(() => {
   const evaluationSet = props.benchmark.selectedBenchmarkEvaluationSetId.value
   if (!evaluationSet) return []
@@ -259,11 +252,6 @@ const boundaryMismatchRows = computed(() => {
     const rowEvaluationSet = String(row.raw?.evaluation_set_id || row.raw?.evaluationSetId || '').trim()
     return rowEvaluationSet && rowEvaluationSet !== evaluationSet
   })
-})
-
-const compareSummaryPayload = computed(() => {
-  const summary = comparePayload.value?.summary
-  return summary && typeof summary === 'object' ? summary : {}
 })
 
 const tableViewSummary = computed(() =>
@@ -305,89 +293,13 @@ const summary = computed(() => {
   ]
 })
 
-const compareAuditRows = computed(() => {
-  const summary = compareSummaryPayload.value
-  const formalCount = comparePayload.value
-    ? numberFrom(summary.row_count, summary.rankable_count, apiCompareRows.value.length)
-    : rankableRows.value.length
-  const unrankableCount = comparePayload.value
-    ? numberFrom(summary.unrankable_evidence_count, summary.unrankable_count, unrankableEvidenceRows.value.length)
-    : unrankableEvidenceRows.value.length
-  const boundaryCount = comparePayload.value
-    ? numberFrom(summary.boundary_mismatch_count, boundaryMismatchRows.value.length)
-    : boundaryMismatchRows.value.length
-  const improvementCount = numberFrom(summary.improvement_count) ?? 0
-  const regressionCount = numberFrom(summary.regression_count) ?? 0
-  const incomparableCount = numberFrom(summary.incomparable_count, boundaryCount) ?? 0
-  return [
-    {
-      label: '正式行',
-      value: formatCount(formalCount),
-      caption: comparePayload.value ? '服务端可入榜行' : '本地可见行'
-    },
-    {
-      label: '未入榜证据',
-      value: formatCount(unrankableCount),
-      caption: '排除在正式排名外'
-    },
-    {
-      label: '边界告警',
-      value: formatCount(boundaryCount),
-      caption: Number(boundaryCount) > 0 ? '需复核边界' : '边界一致'
-    },
-    {
-      label: '变化分布',
-      value: comparePayload.value
-        ? `提升 ${formatCount(improvementCount)} / 回退 ${formatCount(regressionCount)} / 不可比 ${formatCount(incomparableCount)}`
-        : '等待服务端比较',
-      caption: comparePayload.value ? '相对固定基线' : '本地仅供预览'
-    }
-  ]
-})
-
-const boundaryRows = computed(() => {
-  if (mode.value === 'model') {
-    return [
-      { label: '范围', value: 'scope=model' },
-      { label: '套件', value: props.benchmark.selectedBenchmarkSuiteLabel.value || '--' },
-      { label: '评测集', value: props.benchmark.selectedBenchmarkEvaluationSetId.value || '--' },
-      { label: '排行单位', value: '模型标识 / Config Hash' }
-    ]
-  }
-  return [
-    { label: '范围', value: 'scope=role_version' },
-    { label: '目标角色', value: props.benchmark.selectedRoleLabel.value || '--' },
-    { label: '套件', value: props.benchmark.selectedBenchmarkSuiteLabel.value || '--' },
-    { label: '评测集', value: props.benchmark.selectedBenchmarkEvaluationSetId.value || '--' }
-  ]
-})
-
-const baselineDeltaRows = computed(() => {
-  const baseline = baselineRow.value
-  if (!baseline) return []
-  return comparisonRows.value
-    .filter((row) => row.key !== baseline.key)
-    .slice(0, 6)
-    .map((row) => ({
-      ...row,
-      barWidth: Math.min(100, Math.max(6, Math.abs(row.displayDeltaValue))),
-      direction: row.displayDeltaValue >= 0 ? 'positive' : 'negative'
-    }))
-})
-
-const confidenceRows = computed(() =>
-  comparisonRows.value
-    .filter((row) => row.key !== baselineRow.value?.key)
-    .slice(0, 6)
-)
-
 const emptyTitle = computed(() =>
   mode.value === 'model' ? '暂无模型评测行' : '暂无角色版本评测行'
 )
 
 const emptyCaption = computed(() =>
   mode.value === 'model'
-    ? '运行模型套件后会生成 scope=model 榜单行。'
+    ? '运行模型套件后会生成模型榜单行。'
     : '选择角色并运行角色版本套件后会生成比较数据。'
 )
 
@@ -666,10 +578,6 @@ async function selectSavedView(event) {
   savedViewState.value = ''
 }
 
-function selectRow(row) {
-  selectedRowKey.value = row?.key || ''
-}
-
 function clearSavedViewState() {
   if (typeof window === 'undefined' || !window.setTimeout) return
   window.setTimeout(() => {
@@ -900,12 +808,6 @@ function formatSignedPct(value) {
   return `${number >= 0 ? '+' : ''}${Math.round(number)}%`
 }
 
-function formatCount(value) {
-  const number = Number(value)
-  if (!Number.isFinite(number)) return '--'
-  return Math.max(0, Math.round(number)).toLocaleString('zh-CN')
-}
-
 function valueOrDash(value) {
   const text = String(value || '').trim()
   return text || '--'
@@ -920,12 +822,6 @@ function clampPercent(value) {
 watch(viewStorageKey, () => {
   loadSavedView()
 }, { immediate: true })
-
-watch(tableRows, (current) => {
-  if (!current.some((row) => row.key === selectedRowKey.value)) {
-    selectedRowKey.value = current[0]?.key || ''
-  }
-})
 </script>
 
 <template>
@@ -937,9 +833,6 @@ watch(tableRows, (current) => {
         <h2 v-else>{{ benchmark.selectedRoleLabel.value }} 角色版本榜单</h2>
       </div>
       <div class="comparison-header-status">
-        <span :class="['mode-badge', 'mode-badge--' + mode]">
-          {{ mode === 'model' ? 'scope=model' : '目标角色边界' }}
-        </span>
         <span
           :class="['compare-source-chip', 'compare-source-chip--' + compareSourceTone]"
           aria-label="比较来源"
@@ -952,23 +845,8 @@ watch(tableRows, (current) => {
       </div>
     </header>
 
-    <section class="boundary-strip" aria-label="比较边界">
-      <span v-for="item in boundaryRows" :key="item.label">
-        <small>{{ item.label }}</small>
-        <b>{{ item.value }}</b>
-      </span>
-    </section>
-
     <section class="metric-summary" aria-label="指标汇总">
       <span v-for="item in summary" :key="item.label">
-        <small>{{ item.label }}</small>
-        <b>{{ item.value }}</b>
-        <em>{{ item.caption }}</em>
-      </span>
-    </section>
-
-    <section class="compare-audit-strip" aria-label="正式比较口径">
-      <span v-for="item in compareAuditRows" :key="item.label">
         <small>{{ item.label }}</small>
         <b>{{ item.value }}</b>
         <em>{{ item.caption }}</em>
@@ -1024,53 +902,6 @@ watch(tableRows, (current) => {
       <span>{{ compareError }}</span>
     </section>
 
-    <section v-if="confidenceRows.length" class="confidence-panel" aria-label="统计置信度">
-      <div class="confidence-title">
-        <span>统计置信度</span>
-        <small>基于胜率和完成局数估算 95% 置信区间</small>
-      </div>
-      <div class="confidence-list">
-        <div v-for="row in confidenceRows" :key="'confidence-' + row.key" class="confidence-row">
-          <span>
-            <b>{{ row.primary }}</b>
-            <small>样本量 {{ row.sampleSize }} / 配对样本 {{ row.pairedSampleSize ?? 0 }} / 胜率区间 {{ formatInterval(row.interval) }}</small>
-            <small>标准误 {{ formatStandardError(row.standardErrorValue) }} / paired delta {{ formatSignedPct(row.pairedDeltaValue) }}</small>
-          </span>
-          <em :class="'confidence-chip confidence-chip--' + row.confidenceTone">
-            {{ row.warningText || row.confidenceLabel }}
-          </em>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="baselineRow" class="baseline-panel" aria-label="基线比较">
-      <div class="baseline-pin">
-        <small>{{ baselineRow.isBaseline ? '固定基线' : '参考基线' }}</small>
-        <strong>{{ baselineRow.primary }}</strong>
-        <span>{{ baselineRow.secondary }}</span>
-        <b>{{ formatPct(baselineRow.scoreValue) }} 分 / {{ formatPct(baselineRow.winRateValue) }} 胜率</b>
-      </div>
-      <div class="delta-panel">
-        <div class="delta-panel-title">
-          <span>相对差值</span>
-          <small>{{ baselineDeltaRows.length ? '优先展示 paired delta' : '暂无候选差值' }}</small>
-        </div>
-        <div v-if="baselineDeltaRows.length" class="delta-list">
-          <div v-for="row in baselineDeltaRows" :key="'delta-' + row.key" class="delta-row">
-            <strong>{{ row.primary }}</strong>
-            <i :class="row.direction" aria-hidden="true">
-              <b :style="{ width: row.barWidth + '%' }"></b>
-            </i>
-            <span :class="row.direction">
-              {{ formatSignedPct(row.displayDeltaValue) }}
-              <small>{{ row.displayDeltaSource }}</small>
-            </span>
-          </div>
-        </div>
-        <div v-else class="compact-empty">至少需要两行才能比较相对差值。</div>
-      </div>
-    </section>
-
     <section v-if="tableRows.length" class="comparison-table-card">
       <div :class="['comparison-table', 'comparison-table--' + mode]">
         <div class="comparison-row comparison-row--header" :style="comparisonGridStyle">
@@ -1094,16 +925,10 @@ watch(tableRows, (current) => {
             'comparison-row',
             {
               'comparison-row--baseline': row.isBaseline,
-              'comparison-row--unrankable': row.rankable === false,
-              'comparison-row--selected': row.key === selectedLeaderboardRow?.key
+              'comparison-row--unrankable': row.rankable === false
             }
           ]"
           :style="comparisonGridStyle"
-          role="button"
-          tabindex="0"
-          @click="selectRow(row)"
-          @keydown.enter.prevent="selectRow(row)"
-          @keydown.space.prevent="selectRow(row)"
         >
           <template v-if="mode === 'model'">
             <span class="identity-cell">
@@ -1176,63 +1001,6 @@ watch(tableRows, (current) => {
       <span>{{ emptyCaption }}</span>
     </section>
 
-    <section v-if="selectedLeaderboardRow" class="row-detail-panel" aria-label="榜单行详情">
-      <div class="row-detail-heading">
-        <span>
-          <small>行详情</small>
-          <b>{{ selectedLeaderboardRow.primary }}</b>
-        </span>
-        <em>{{ selectedLeaderboardRow.rankableLabel }}</em>
-      </div>
-      <dl>
-        <div>
-          <dt>{{ mode === 'model' ? '配置 Hash' : '对象' }}</dt>
-          <dd>{{ mode === 'model' ? selectedLeaderboardRow.modelConfigHash : selectedLeaderboardRow.secondary }}</dd>
-        </div>
-        <div>
-          <dt>paired delta</dt>
-          <dd :class="selectedLeaderboardRow.displayDeltaValue >= 0 ? 'positive' : 'negative'">
-            {{ formatSignedPct(selectedLeaderboardRow.displayDeltaValue) }} / {{ selectedLeaderboardRow.displayDeltaSource }}
-          </dd>
-        </div>
-        <div>
-          <dt>95% 置信区间</dt>
-          <dd>{{ formatInterval(selectedLeaderboardRow.interval) }}</dd>
-        </div>
-        <div>
-          <dt>样本量</dt>
-          <dd>{{ selectedLeaderboardRow.sampleSize }} / 配对 {{ selectedLeaderboardRow.pairedSampleSize ?? 0 }}</dd>
-        </div>
-        <div>
-          <dt>标准误</dt>
-          <dd>{{ formatStandardError(selectedLeaderboardRow.standardErrorValue) }}</dd>
-        </div>
-        <div>
-          <dt>显著性</dt>
-          <dd>{{ selectedLeaderboardRow.significanceLabel || selectedLeaderboardRow.confidenceLabel }}</dd>
-        </div>
-        <div>
-          <dt>统计告警</dt>
-          <dd>{{ selectedLeaderboardRow.warningText || '无' }}</dd>
-        </div>
-        <div v-if="mode === 'model'">
-          <dt>回退率</dt>
-          <dd>{{ formatPct(selectedLeaderboardRow.fallbackRateValue) }}</dd>
-        </div>
-        <div v-if="mode === 'model'">
-          <dt>LLM 错误</dt>
-          <dd>{{ formatPct(selectedLeaderboardRow.llmErrorRateValue) }}</dd>
-        </div>
-        <div v-if="mode === 'model'">
-          <dt>策略修正</dt>
-          <dd>{{ formatPct(selectedLeaderboardRow.policyAdjustedRateValue) }}</dd>
-        </div>
-      </dl>
-      <p>
-        {{ selectedLeaderboardRow.warningText || selectedLeaderboardRow.rankableReason || (selectedLeaderboardRow.rankable === false ? '未入榜，但后端未返回原因。' : '差异不显著时不应作为晋级证据。') }}
-      </p>
-    </section>
-
     <section class="unrankable-panel" aria-label="未入榜证据">
       <div class="unrankable-title">
         <span>未入榜证据</span>
@@ -1290,11 +1058,15 @@ watch(tableRows, (current) => {
   --comparison-warning-border: var(--bench-warning-border, rgba(139, 100, 31, 0.3));
   --comparison-warning-bg: var(--bench-warning-bg, rgba(139, 100, 31, 0.08));
   display: grid;
+  align-content: start;
+  align-self: start;
   gap: 10px;
+  width: 100%;
   min-width: 980px;
   padding: 12px;
   border: 1px solid var(--comparison-line);
   border-radius: 8px;
+  overflow: visible;
   background:
     linear-gradient(135deg, rgba(255, 252, 245, 0.72), rgba(235, 199, 136, 0.2)),
     var(--comparison-bg);
@@ -1303,16 +1075,11 @@ watch(tableRows, (current) => {
 }
 
 .comparison-header,
-.boundary-strip,
 .metric-summary,
-.compare-audit-strip,
 .comparison-controls,
 .boundary-mismatch-alert,
 .comparison-source-alert,
-.confidence-panel,
-.baseline-panel,
 .comparison-table-card,
-.row-detail-panel,
 .unrankable-panel,
 .empty-state {
   border: 1px solid var(--comparison-line);
@@ -1330,12 +1097,7 @@ watch(tableRows, (current) => {
 }
 
 .comparison-header small,
-.boundary-strip small,
 .metric-summary small,
-.compare-audit-strip small,
-.confidence-title small,
-.baseline-pin small,
-.delta-panel-title small,
 .unrankable-title small {
   color: var(--comparison-muted);
   font-size: 10px;
@@ -1358,27 +1120,6 @@ watch(tableRows, (current) => {
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
-}
-
-.mode-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--comparison-line-strong);
-  border-radius: 6px;
-  background: var(--comparison-panel-soft);
-  color: var(--comparison-text);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.mode-badge--model {
-  border-left: 4px solid var(--comparison-model);
-}
-
-.mode-badge--role_version {
-  border-left: 4px solid var(--comparison-positive);
 }
 
 .compare-source-chip {
@@ -1428,16 +1169,7 @@ watch(tableRows, (current) => {
   box-shadow: inset 3px 0 0 var(--comparison-amber);
 }
 
-.boundary-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  overflow: hidden;
-}
-
-.boundary-strip span,
-.metric-summary span,
-.compare-audit-strip span {
+.metric-summary span {
   display: grid;
   gap: 3px;
   min-width: 0;
@@ -1445,20 +1177,12 @@ watch(tableRows, (current) => {
   border-right: 1px solid var(--comparison-line);
 }
 
-.boundary-strip span:last-child,
-.metric-summary span:last-child,
-.compare-audit-strip span:last-child {
+.metric-summary span:last-child {
   border-right: none;
 }
 
-.boundary-strip b,
 .metric-summary b,
 .metric-summary em,
-.compare-audit-strip b,
-.compare-audit-strip em,
-.baseline-pin strong,
-.baseline-pin span,
-.baseline-pin b,
 .comparison-row span,
 .unrankable-row-main b,
 .unrankable-row-main span,
@@ -1469,23 +1193,10 @@ watch(tableRows, (current) => {
   white-space: nowrap;
 }
 
-.boundary-strip b {
-  color: var(--comparison-text);
-  font-size: 12px;
-  font-weight: 900;
-}
-
 .metric-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
-}
-
-.compare-audit-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  overflow: hidden;
-  background: rgba(255, 252, 245, 0.58);
 }
 
 .metric-summary b {
@@ -1495,19 +1206,11 @@ watch(tableRows, (current) => {
   line-height: 1;
 }
 
-.metric-summary em,
-.compare-audit-strip em {
+.metric-summary em {
   color: var(--comparison-muted);
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
-}
-
-.compare-audit-strip b {
-  color: var(--comparison-text);
-  font-size: 13px;
-  font-weight: 900;
-  line-height: 1.15;
 }
 
 .comparison-controls {
@@ -1527,9 +1230,7 @@ watch(tableRows, (current) => {
 }
 
 .comparison-controls small,
-.boundary-mismatch-alert b,
-.row-detail-heading small,
-.row-detail-panel dt {
+.boundary-mismatch-alert b {
   color: var(--comparison-muted);
   font-size: 10px;
   font-weight: 900;
@@ -1661,114 +1362,6 @@ watch(tableRows, (current) => {
   white-space: nowrap;
 }
 
-.confidence-panel {
-  display: grid;
-  gap: 8px;
-  padding: 11px 12px;
-}
-
-.confidence-title {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.confidence-title span {
-  color: var(--comparison-text);
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.confidence-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(260px, 1fr));
-  gap: 7px 10px;
-}
-
-.confidence-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 38px;
-  padding: 7px 9px;
-  border: 1px solid var(--comparison-line);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.68);
-}
-
-.confidence-row span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.confidence-row b,
-.confidence-row small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.confidence-row b {
-  color: var(--comparison-text);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.confidence-row small {
-  color: var(--comparison-muted);
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.baseline-panel {
-  display: grid;
-  grid-template-columns: minmax(250px, 0.72fr) minmax(0, 1fr);
-  min-height: 116px;
-  overflow: hidden;
-}
-
-.baseline-pin {
-  display: grid;
-  align-content: center;
-  gap: 5px;
-  min-width: 0;
-  padding: 14px;
-  border-left: 4px solid var(--comparison-amber);
-  border-right: 1px solid var(--comparison-line);
-  background: rgba(255, 245, 221, 0.78);
-}
-
-.baseline-pin strong {
-  color: var(--comparison-text);
-  font-size: 18px;
-  font-weight: 900;
-}
-
-.baseline-pin span {
-  color: var(--comparison-muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.baseline-pin b {
-  color: var(--comparison-amber);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.delta-panel {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  min-width: 0;
-  padding: 12px;
-}
-
-.delta-panel-title,
 .unrankable-title {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1776,66 +1369,17 @@ watch(tableRows, (current) => {
   gap: 12px;
 }
 
-.delta-panel-title span,
 .unrankable-title span {
   color: var(--comparison-text);
   font-size: 13px;
   font-weight: 900;
 }
 
-.delta-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(260px, 1fr));
-  gap: 7px 14px;
-}
-
-.delta-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(88px, 0.42fr) 44px;
-  align-items: center;
-  gap: 8px;
-  min-height: 28px;
-}
-
-.delta-row strong {
+.comparison-table-card {
   min-width: 0;
   overflow: hidden;
-  color: var(--comparison-text);
-  font-size: 12px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.delta-row i {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(139, 94, 52, 0.16);
-}
-
-.delta-row i b {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-}
-
-.delta-row i.positive b {
-  background: var(--comparison-positive);
-}
-
-.delta-row i.negative b {
-  background: var(--comparison-red);
-}
-
-.delta-row span {
-  font-size: 12px;
-  font-weight: 900;
-  text-align: right;
-}
-
-.comparison-table-card {
-  overflow: auto;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 
 .comparison-table {
@@ -1860,7 +1404,6 @@ watch(tableRows, (current) => {
 
 .comparison-row:not(.comparison-row--header):hover {
   background: rgba(139, 94, 52, 0.07);
-  cursor: pointer;
 }
 
 .comparison-row--header {
@@ -1879,11 +1422,6 @@ watch(tableRows, (current) => {
 .comparison-row--unrankable {
   color: var(--comparison-muted);
   background: rgba(255, 252, 245, 0.48);
-}
-
-.comparison-row--selected {
-  outline: 2px solid rgba(139, 94, 52, 0.28);
-  background: rgba(255, 226, 157, 0.32);
 }
 
 .comparison-row span {
@@ -2011,86 +1549,6 @@ watch(tableRows, (current) => {
   font-weight: 950;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.row-detail-panel {
-  display: grid;
-  gap: 10px;
-  padding: 11px 12px;
-}
-
-.row-detail-heading {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-}
-
-.row-detail-heading span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.row-detail-heading b,
-.row-detail-heading em {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-detail-heading b {
-  color: var(--comparison-text);
-  font-size: 13px;
-  font-weight: 950;
-}
-
-.row-detail-heading em {
-  padding: 4px 8px;
-  border: 1px solid var(--comparison-line);
-  border-radius: 999px;
-  background: rgba(255, 250, 240, 0.72);
-  color: var(--comparison-text);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 900;
-}
-
-.row-detail-panel dl {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-}
-
-.row-detail-panel dl div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 8px 9px;
-  border: 1px solid var(--comparison-line);
-  border-radius: 7px;
-  background: rgba(255, 250, 240, 0.68);
-}
-
-.row-detail-panel dd {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--comparison-text);
-  font-size: 12px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-detail-panel p {
-  margin: 0;
-  color: var(--comparison-muted);
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.45;
 }
 
 .baseline-chip.on {

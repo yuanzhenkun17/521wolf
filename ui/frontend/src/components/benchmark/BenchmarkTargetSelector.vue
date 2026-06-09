@@ -11,17 +11,8 @@ const props = defineProps({
 const roleRows = computed(() => props.benchmark.roleRows.value || [])
 const roleVersionRows = computed(() => props.benchmark.roleTargetVersionRows.value || [])
 const isModel = computed(() => props.benchmark.selectedBenchmarkIsModelSuite.value)
-const selectedRoleLabel = computed(() => props.benchmark.selectedRoleLabel.value)
 const selectedTargetVersion = computed(() => props.benchmark.selectedRoleTargetVersion.value || null)
 const selectedTargetBlockedReason = computed(() => props.benchmark.selectedRoleTargetVersionBlockedReason.value || '')
-const targetModeLabel = computed(() => isModel.value ? '模型评测' : '角色版本评测')
-const subjectLabel = computed(() => {
-  if (isModel.value) {
-    return props.benchmark.form.value.model_config_hash || props.benchmark.form.value.model_id || '当前后端模型'
-  }
-  if (!props.benchmark.form.value.target_version_id) return '当前基线版本'
-  return selectedTargetVersion.value?.short || props.benchmark.form.value.target_version_id
-})
 
 const versionStageLabels = {
   baseline: '基线',
@@ -58,10 +49,9 @@ function versionOptionText(version) {
   <article class="benchmark-target-selector" aria-label="评测目标选择器">
     <header>
       <div>
-        <small>被测对象</small>
-        <h2>{{ targetModeLabel }}</h2>
+        <small>目标</small>
+        <h2>被测对象</h2>
       </div>
-      <b>{{ subjectLabel }}</b>
     </header>
 
     <section v-if="isModel" class="target-fields target-fields--model">
@@ -83,9 +73,6 @@ function versionOptionText(version) {
           placeholder="留空由后端生成"
         />
       </label>
-      <p class="target-note">
-        模型评测写入 scope=model 榜单，只比较模型运行配置；启动请求只携带模型标识与 Config Hash，不携带角色列表或目标版本。
-      </p>
     </section>
 
     <section v-else class="target-fields target-fields--role">
@@ -139,9 +126,6 @@ function versionOptionText(version) {
       <p v-else-if="!roleVersionRows.length" class="target-warning neutral" role="status">
         暂无可列出的版本，启动时将使用当前基线。
       </p>
-      <p class="target-note">
-        角色版本评测写入 scope=role_version，只比较当前角色的目标版本；基线与金丝雀可评测，影子需先晋升金丝雀。
-      </p>
     </section>
   </article>
 </template>
@@ -167,9 +151,8 @@ function versionOptionText(version) {
 
 .benchmark-target-selector header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
   min-height: 52px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--target-border);
@@ -182,8 +165,7 @@ function versionOptionText(version) {
 }
 
 .benchmark-target-selector small,
-.target-fields label span,
-.target-note {
+.target-fields label span {
   color: var(--target-muted);
   font-size: 11px;
   font-weight: 800;
@@ -194,20 +176,6 @@ function versionOptionText(version) {
   color: var(--target-text);
   font-size: 15px;
   font-weight: 900;
-}
-
-.benchmark-target-selector header b {
-  max-width: 220px;
-  overflow: hidden;
-  padding: 3px 8px;
-  border: 1px solid var(--target-border);
-  border-radius: 6px;
-  background: var(--target-soft);
-  color: var(--target-text);
-  font-size: 12px;
-  font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .target-fields {
@@ -264,12 +232,6 @@ function versionOptionText(version) {
 .target-fields select[aria-invalid='true'] {
   border-color: var(--target-accent);
   box-shadow: 0 0 0 2px rgba(90, 51, 25, 0.12);
-}
-
-.target-note {
-  grid-column: 1 / -1;
-  margin: 0;
-  line-height: 1.45;
 }
 
 .role-target-list {

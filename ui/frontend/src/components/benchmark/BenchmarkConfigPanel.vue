@@ -373,7 +373,7 @@ function sourceLabel(source) {
           <div class="bench-embedded-section">
             <div class="bench-section-title">
               <span>{{ versionBoardTitle }}</span>
-              <small>{{ benchmark.selectedBenchmarkIsModelSuite.value ? 'scope=model' : '版本 / 来源' }}</small>
+              <small>{{ benchmark.selectedBenchmarkIsModelSuite.value ? '模型范围' : '版本 / 来源' }}</small>
             </div>
             <div v-if="!benchmark.selectedBenchmarkIsModelSuite.value && rolePreviewRows.length" class="bench-mini-list">
               <div v-for="(item, index) in rolePreviewRows" :key="item.version_id" class="bench-mini-row">
