@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request
@@ -10,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from ui.backend.schemas import BenchmarkLifecycleRequest, BenchmarkRequest, BenchmarkSnapshotRequest, BenchmarkViewRequest
 from ui.backend.preflight import require_runtime_ready
+from ui.backend.settings_runtime_variables import runtime_setting_bool_for_store
 from ui.backend.task_state import _last_event_id_from_request
 
 
@@ -115,7 +115,7 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     async def start_benchmark(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         await require_runtime_ready(store, scope="benchmark_start")
         batch = store.benchmark_service.queue_benchmark(request)
-        if _use_pg_task_queue():
+        if _use_pg_task_queue(store):
             store.benchmark_service.queue_benchmark_task(batch, request)
         else:
             background_tasks.add_task(store.benchmark_service.run_queued_benchmark, batch["batch_id"], request)
@@ -125,7 +125,7 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     async def start_benchmark_batch(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         await require_runtime_ready(store, scope="benchmark_start")
         batch = store.benchmark_service.queue_benchmark(request)
-        if _use_pg_task_queue():
+        if _use_pg_task_queue(store):
             store.benchmark_service.queue_benchmark_task(batch, request)
         else:
             background_tasks.add_task(store.benchmark_service.run_queued_benchmark, batch["batch_id"], request)
@@ -249,5 +249,5 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
         return StreamingResponse(stream, media_type="text/event-stream")
 
 
-def _use_pg_task_queue() -> bool:
-    return os.environ.get("WOLF_USE_PG_TASK_QUEUE", "").strip().lower() in {"1", "true", "yes", "on"}
+def _use_pg_task_queue(store: Any) -> bool:
+    return runtime_setting_bool_for_store(store, "WOLF_USE_PG_TASK_QUEUE", default=False)

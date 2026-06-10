@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request
@@ -16,6 +15,7 @@ from ui.backend.schemas import (
 )
 from ui.backend.services import EvolutionService
 from ui.backend.preflight import require_runtime_ready
+from ui.backend.settings_runtime_variables import runtime_setting_bool_for_store
 from ui.backend.task_state import (
     _history_query_requested,
     _last_event_id_from_request,
@@ -30,7 +30,7 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         await require_runtime_ready(store, scope="evolution_start")
         request = automatic_evolution_request(request)
         queued = store.queue_evolution(request)
-        if _use_pg_task_queue():
+        if _use_pg_task_queue(store):
             store.queue_evolution_task(queued, request)
         elif queued.get("batch_id"):
             background_tasks.add_task(store.run_queued_evolution_batch, queued["batch_id"], request)
@@ -127,5 +127,5 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         return StreamingResponse(stream, media_type="text/event-stream")
 
 
-def _use_pg_task_queue() -> bool:
-    return os.environ.get("WOLF_USE_PG_TASK_QUEUE", "").strip().lower() in {"1", "true", "yes", "on"}
+def _use_pg_task_queue(store: Any) -> bool:
+    return runtime_setting_bool_for_store(store, "WOLF_USE_PG_TASK_QUEUE", default=False)

@@ -1653,6 +1653,16 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
                 [("x-settings-admin-token", "header", False)],
             ),
         },
+        "/api/settings/runtime-variables": {
+            "get": ("list_runtime_variables_api_settings_runtime_variables_get", None, []),
+        },
+        "/api/settings/runtime-variables/{setting_key}": {
+            "patch": (
+                "update_runtime_variable_api_settings_runtime_variables__setting_key__patch",
+                "SettingsRuntimeVariableUpdateRequest",
+                [("setting_key", "path", True), ("x-settings-admin-token", "header", False)],
+            ),
+        },
         "/api/settings/model-profiles/{profile_id}": {
             "patch": (
                 "update_model_profile_api_settings_model_profiles__profile_id__patch",
@@ -1771,6 +1781,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "LangfuseTaskRequest",
         "ModelProfileCreateRequest",
         "ModelProfileUpdateRequest",
+        "SettingsRuntimeVariableUpdateRequest",
         "TtsSpeechRequest",
         "ValidationError",
     }

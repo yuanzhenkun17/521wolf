@@ -389,6 +389,8 @@ class _UiMemoryDatabase:
         self.task_workers: dict[str, dict[str, Any]] = {}
         self.model_profiles: dict[str, dict[str, Any]] = {}
         self.model_profiles_enabled = False
+        self.runtime_settings: dict[str, dict[str, Any]] = {}
+        self.runtime_settings_enabled = False
         self.background_upserts = 0
         self.event_upserts = 0
         self.deletes = 0
@@ -424,7 +426,7 @@ class _UiMemoryConnection:
             return _UiCursor([{"ok": 1}])
 
         if text.startswith("SELECT version_num FROM public.alembic_version"):
-            return _UiCursor([{"version_num": "20260611_0005"}])
+            return _UiCursor([{"version_num": "20260611_0006"}])
 
         if text == "SELECT status, COUNT(*) AS count FROM ui_task_queue GROUP BY status":
             counts: dict[str, int] = {}
@@ -565,6 +567,28 @@ class _UiMemoryConnection:
                 self._db.deletes += 1
             return _UiCursor()
 
+        if text.startswith("SELECT setting_key, value_json, updated_at, updated_by FROM ui_runtime_settings"):
+            with self._db.lock:
+                rows = sorted(
+                    (dict(row) for row in self._db.runtime_settings.values()),
+                    key=lambda row: str(row.get("setting_key") or ""),
+                )
+            if " WHERE setting_key = ?" in text:
+                setting_key = str(params[0])
+                rows = [row for row in rows if str(row.get("setting_key") or "") == setting_key]
+            return _UiCursor(rows)
+
+        if text.startswith("INSERT INTO ui_runtime_settings"):
+            setting_key, value_json, updated_at, updated_by = params
+            with self._db.lock:
+                self._db.runtime_settings[str(setting_key)] = {
+                    "setting_key": str(setting_key),
+                    "value_json": json.loads(value_json) if isinstance(value_json, str) else value_json,
+                    "updated_at": updated_at,
+                    "updated_by": updated_by,
+                }
+            return _UiCursor()
+
         if text.startswith("INSERT INTO ui_task_events"):
             event_id, entity_id, entity_kind, event, status, payload, created_at = params
             with self._db.lock:
@@ -648,6 +672,8 @@ class _UiMemoryConnection:
     def table_exists(self, table_name: str) -> bool:
         if table_name == "ui_model_profiles":
             return self._db.model_profiles_enabled
+        if table_name == "ui_runtime_settings":
+            return self._db.runtime_settings_enabled
         return table_name in {
             "ui_background_tasks",
             "ui_task_events",
@@ -1395,6 +1421,75 @@ def test_settings_model_profiles_store_api_keys_encrypted_in_postgres(
     cleared_row = _fake_ui_pg_provider.db.model_profiles[profile_id]
     assert cleared_row["api_key_ciphertext"] is None
     assert cleared_row["api_key_masked"] == ""
+
+
+def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
+    tmp_path: Path,
+    monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
+    _fake_ui_pg_provider.db.runtime_settings_enabled = True
+    monkeypatch.delenv("TASK_WORKER_REQUIRED", raising=False)
+    monkeypatch.delenv("WOLF_USE_PG_TASK_QUEUE", raising=False)
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        list_response = client.get("/api/settings/runtime-variables")
+        update_response = client.patch(
+            "/api/settings/runtime-variables/TASK_WORKER_REQUIRED",
+            headers=headers,
+            json={"value": True},
+        )
+        health_response = client.get("/api/health")
+        settings_response = client.get("/api/settings/model-profiles")
+
+    assert list_response.status_code == 200
+    listed = list_response.json()["variables"]
+    worker_var = next(item for item in listed if item["key"] == "TASK_WORKER_REQUIRED")
+    assert worker_var["editable"] is True
+    assert worker_var["value"] == "false"
+    assert worker_var["source"] == "default"
+
+    assert update_response.status_code == 200
+    updated = update_response.json()["variable"]
+    assert updated["key"] == "TASK_WORKER_REQUIRED"
+    assert updated["raw_value"] is True
+    assert updated["source"] == "settings"
+    assert _fake_ui_pg_provider.db.runtime_settings["TASK_WORKER_REQUIRED"]["value_json"] is True
+
+    health = health_response.json()
+    assert health["ready"] is False
+    assert health["status"] == "error"
+    assert health["checks"]["task_worker"]["status"] == "error"
+    assert health["gates"]["benchmark_start"]["ready"] is False
+    assert "task_worker" in health["gates"]["benchmark_start"]["blockers"]
+
+    payload_vars = settings_response.json()["variables"]
+    payload_worker_var = next(item for item in payload_vars if item["key"] == "TASK_WORKER_REQUIRED")
+    assert payload_worker_var["value"] == "true"
+    assert payload_worker_var["source"] == "settings"
+
+    monkeypatch.setenv("TASK_WORKER_REQUIRED", "false")
+    with _test_client(tmp_path) as client:
+        locked_list_response = client.get("/api/settings/runtime-variables")
+        locked_update_response = client.patch(
+            "/api/settings/runtime-variables/TASK_WORKER_REQUIRED",
+            headers=headers,
+            json={"value": True},
+        )
+
+    locked_worker_var = next(
+        item for item in locked_list_response.json()["variables"]
+        if item["key"] == "TASK_WORKER_REQUIRED"
+    )
+    assert locked_worker_var["locked"] is True
+    assert locked_worker_var["editable"] is False
+    assert locked_worker_var["value"] == "false"
+    assert locked_worker_var["source"] == "environment"
+    assert locked_update_response.status_code == 409
+    assert locked_update_response.json()["error"]["code"] == "settings_runtime_variable_locked"
 
 
 def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(

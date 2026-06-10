@@ -7,6 +7,7 @@ from pathlib import Path
 BASELINE = Path("migrations/versions/20260608_0001_postgresql_baseline.py")
 BENCHMARK_SAVED_VIEWS = Path("migrations/versions/20260610_0002_benchmark_saved_views.py")
 UI_MODEL_PROFILES = Path("migrations/versions/20260611_0005_ui_model_profiles.py")
+UI_RUNTIME_SETTINGS = Path("migrations/versions/20260611_0006_ui_runtime_settings.py")
 
 
 def _baseline_text() -> str:
@@ -19,6 +20,10 @@ def _benchmark_saved_views_text() -> str:
 
 def _ui_model_profiles_text() -> str:
     return UI_MODEL_PROFILES.read_text(encoding="utf-8")
+
+
+def _ui_runtime_settings_text() -> str:
+    return UI_RUNTIME_SETTINGS.read_text(encoding="utf-8")
 
 
 def test_postgresql_baseline_uses_namespaces_for_storage_domains() -> None:
@@ -179,3 +184,16 @@ def test_ui_model_profiles_migration_owns_encrypted_settings_schema() -> None:
     assert "enabled boolean NOT NULL DEFAULT true" in migration_text
     assert "model-profile-secrets.json" not in migration_text
     assert "api_key text" not in migration_text
+
+
+def test_ui_runtime_settings_migration_owns_non_secret_variable_schema() -> None:
+    migration_text = _ui_runtime_settings_text()
+    compact_migration = re.sub(r"\s+", " ", migration_text)
+
+    assert 'down_revision = "20260611_0005"' in migration_text
+    assert "CREATE TABLE IF NOT EXISTS wolf.ui_runtime_settings" in compact_migration
+    assert "setting_key text PRIMARY KEY" in migration_text
+    assert "value_json jsonb NOT NULL" in migration_text
+    assert "updated_at timestamptz NOT NULL" in migration_text
+    assert "updated_by text" in migration_text
+    assert "secret" not in migration_text.lower()

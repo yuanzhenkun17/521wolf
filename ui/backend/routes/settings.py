@@ -7,19 +7,44 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 
 from ui.backend.health import build_health_payload
-from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequest
+from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequest, SettingsRuntimeVariableUpdateRequest
+from ui.backend.settings_runtime_variables import SettingsRuntimeVariableStore
 from ui.backend.settings_model_profiles import SettingsModelProfileStore, settings_admin_authorized, settings_admin_payload
 
 
 def register_settings_routes(api: FastAPI, store: Any) -> None:
     profile_store = SettingsModelProfileStore.from_backend_store(store)
+    runtime_store = SettingsRuntimeVariableStore.from_backend_store(store)
 
     @api.get("/api/settings/model-profiles")
     def list_model_profiles() -> dict[str, Any]:
-        return {
-            **profile_store.list_payload(),
-            "health": build_health_payload(store),
-        }
+        payload = profile_store.list_payload()
+        payload["variables"] = runtime_store.list_variables()
+        return {**payload, "health": build_health_payload(store)}
+
+    @api.get("/api/settings/runtime-variables")
+    def list_runtime_variables() -> dict[str, Any]:
+        return runtime_store.list_payload()
+
+    @api.patch("/api/settings/runtime-variables/{setting_key}")
+    def update_runtime_variable(
+        setting_key: str,
+        request: SettingsRuntimeVariableUpdateRequest,
+        x_settings_admin_token: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        _require_settings_admin(x_settings_admin_token)
+        try:
+            return {
+                "kind": "settings_runtime_variable",
+                "schema_version": 1,
+                "variable": runtime_store.update_variable(setting_key, request.value),
+            }
+        except FileNotFoundError as exc:
+            raise _settings_error(404, "settings_runtime_variable_not_found", "runtime variable not found") from exc
+        except PermissionError as exc:
+            raise _settings_error(409, "settings_runtime_variable_locked", str(exc)) from exc
+        except ValueError as exc:
+            raise _settings_error(422, "settings_runtime_variable_invalid", str(exc)) from exc
 
     @api.post("/api/settings/model-profiles")
     def create_model_profile(

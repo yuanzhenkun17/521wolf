@@ -342,6 +342,10 @@ class ModelProfileUpdateRequest(BaseModel):
         return text or None
 
 
+class SettingsRuntimeVariableUpdateRequest(BaseModel):
+    value: Any
+
+
 class TtsSpeechRequest(BaseModel):
     text: str = Field(default="", max_length=2000)
     speaker: str = Field(default="", max_length=64)

@@ -288,6 +288,30 @@ def test_execute_casts_model_profile_jsonb_and_boolean_insert_parameters() -> No
     assert params[6] == '{"benchmark":true}'
 
 
+def test_execute_casts_runtime_setting_value_json_insert_parameter() -> None:
+    raw = _FakeRawConnection()
+    adapter = _adapter(raw)
+    raw.calls.clear()
+
+    adapter.execute(
+        """
+        INSERT INTO ui_runtime_settings
+        (setting_key, value_json, updated_at, updated_by)
+        VALUES (?, ?, ?, ?)
+        """,
+        (
+            "TASK_WORKER_REQUIRED",
+            "true",
+            "2026-06-11T00:00:00+08:00",
+            "settings_admin",
+        ),
+    )
+
+    sql, params = raw.calls[0]
+    assert "VALUES (%s, %s::jsonb, %s, %s)" in " ".join(sql.split())
+    assert params[1] == "true"
+
+
 def test_execute_casts_jsonb_update_parameters_and_adapts_boolean_where() -> None:
     raw = _FakeRawConnection()
     adapter = _adapter(raw)

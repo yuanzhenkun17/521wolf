@@ -10,6 +10,7 @@ from app.config import load_llm_config
 from app.services.llm import create_llm
 from app.util.redaction import redact_text
 from app.util.time import beijing_now_iso
+from ui.backend.settings_runtime_variables import runtime_setting_bool_for_store, runtime_setting_float_for_store
 
 _OK = "ok"
 _DEGRADED = "degraded"
@@ -30,9 +31,9 @@ def build_health_payload(store: Any) -> dict[str, Any]:
     task_control = _task_control_health(store)
     llm_config = llm_config_check(store)
     llm_connectivity = llm_connectivity_status(store)
-    checks = _checks_from(startup_checks, task_control, llm_config, llm_connectivity)
-    gates = build_runtime_gates(checks)
-    status = _overall_status(checks, gates)
+    checks = _checks_from(startup_checks, task_control, llm_config, llm_connectivity, store=store)
+    gates = build_runtime_gates(checks, store=store)
+    status = _overall_status(checks, gates, store=store)
     ready = status != _ERROR
     degraded_features = _dedupe(
         [
@@ -199,7 +200,7 @@ async def probe_llm_connectivity(store: Any, *, scope: str = "game_start") -> di
         return result
 
 
-def build_runtime_gates(checks: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def build_runtime_gates(checks: dict[str, Any], *, store: Any | None = None) -> dict[str, dict[str, Any]]:
     return {
         "game_start": _gate(
             "game_start",
@@ -211,14 +212,14 @@ def build_runtime_gates(checks: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "benchmark_start",
             checks,
             required=("llm_config", "llm_connectivity"),
-            extra_required=_task_required_checks(),
+            extra_required=_task_required_checks(store),
             allow_unknown_connectivity=True,
         ),
         "evolution_start": _gate(
             "evolution_start",
             checks,
             required=("llm_config", "llm_connectivity"),
-            extra_required=_task_required_checks(),
+            extra_required=_task_required_checks(store),
             allow_unknown_connectivity=True,
         ),
     }
@@ -229,6 +230,8 @@ def _checks_from(
     task_control: dict[str, Any],
     llm_config: dict[str, Any],
     llm_connectivity: dict[str, Any],
+    *,
+    store: Any | None = None,
 ) -> dict[str, Any]:
     startup = _mapping(startup_checks.get("checks"))
     artifact_root = _mapping(task_control.get("artifact_root"))
@@ -244,8 +247,8 @@ def _checks_from(
             "stale_running_count": int(task_control.get("stale_running_count") or 0),
         },
         "task_worker": {
-            "status": _worker_status(task_control),
-            "message": _worker_message(task_control),
+            "status": _worker_status(task_control, store=store),
+            "message": _worker_message(task_control, store=store),
             "worker_fresh": bool(task_control.get("worker_fresh")),
             "workers": _list(task_control.get("workers")),
         },
@@ -288,11 +291,11 @@ def _gate(
     }
 
 
-def _overall_status(checks: dict[str, Any], gates: dict[str, Any]) -> str:
+def _overall_status(checks: dict[str, Any], gates: dict[str, Any], *, store: Any | None = None) -> str:
     statuses = {str(check.get("status") or _UNKNOWN) for check in checks.values() if isinstance(check, dict)}
     if _ERROR in statuses:
         return _ERROR
-    if _env_true("TASK_WORKER_REQUIRED"):
+    if _task_worker_required(store):
         worker_gate = gates.get("benchmark_start") or {}
         if not worker_gate.get("ready", False):
             return _ERROR
@@ -305,30 +308,34 @@ def _overall_status(checks: dict[str, Any], gates: dict[str, Any]) -> str:
     return _OK
 
 
-def _task_required_checks() -> tuple[str, ...]:
-    if _env_true("TASK_WORKER_REQUIRED") or _env_true("WOLF_USE_PG_TASK_QUEUE"):
+def _task_required_checks(store: Any | None = None) -> tuple[str, ...]:
+    if _task_worker_required(store) or runtime_setting_bool_for_store(store, "WOLF_USE_PG_TASK_QUEUE", default=False):
         return ("task_queue", "task_worker", "artifact_root")
     return ()
 
 
-def _worker_status(task_control: dict[str, Any]) -> str:
+def _worker_status(task_control: dict[str, Any], *, store: Any | None = None) -> str:
     if str(task_control.get("status") or "") == _ERROR:
         return _ERROR
     if task_control.get("worker_fresh"):
         return _OK
-    return _ERROR if _task_worker_required() else _DEGRADED
+    return _ERROR if _task_worker_required(store) else _DEGRADED
 
 
-def _worker_message(task_control: dict[str, Any]) -> str:
+def _worker_message(task_control: dict[str, Any], *, store: Any | None = None) -> str:
     if task_control.get("worker_fresh"):
         return "Task worker heartbeat is fresh."
-    if _task_worker_required():
+    if _task_worker_required(store):
         return "Task worker heartbeat is missing or stale."
     return "Task worker heartbeat is missing or stale; long-running queue tasks may be delayed."
 
 
-def _task_worker_required() -> bool:
-    return _env_true("TASK_WORKER_REQUIRED") or _env_true("WOLF_USE_PG_TASK_QUEUE")
+def _task_worker_required(store: Any | None = None) -> bool:
+    return runtime_setting_bool_for_store(store, "TASK_WORKER_REQUIRED", default=False) or runtime_setting_bool_for_store(
+        store,
+        "WOLF_USE_PG_TASK_QUEUE",
+        default=False,
+    )
 
 
 def _probe_model(store: Any) -> Any:
@@ -367,9 +374,10 @@ def _llm_probe_cache(store: Any) -> dict[str, Any] | None:
 
 
 def _set_llm_probe_cache(store: Any, result: dict[str, Any], *, success: bool) -> None:
-    ttl = _env_float(
+    ttl = runtime_setting_float_for_store(
+        store,
         "HEALTH_LLM_PROBE_TTL_SECONDS" if success else "HEALTH_LLM_PROBE_FAILURE_TTL_SECONDS",
-        300.0 if success else 60.0,
+        default=300.0 if success else 60.0,
     )
     cached = dict(result)
     cached["_expires_monotonic"] = time.monotonic() + max(0.0, ttl)

@@ -17,6 +17,7 @@ from app.util.redaction import redact_text
 from app.util.time import beijing_now_iso
 from storage.ui import ModelProfileRepository
 from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequest
+from ui.backend.settings_runtime_variables import SettingsRuntimeVariableStore
 from ui.backend.settings_secret_crypto import (
     SettingsSecretEncryptionError,
     decrypt_settings_secret,
@@ -63,7 +64,10 @@ class SettingsModelProfileStore:
                 for scope in MODEL_PROFILE_SCOPES
             ],
             "providers": sorted(MODEL_PROFILE_PROVIDERS),
-            "variables": runtime_variables_payload(),
+            "variables": SettingsRuntimeVariableStore(
+                self._root,
+                connection_factory=self._connection_factory,
+            ).list_variables(),
         }
 
     def model_runtime_payload(

@@ -57,6 +57,7 @@ _JSONB_COLUMNS_BY_TABLE = {
     "ui_task_artifacts": {"metadata"},
     "ui_task_workers": {"metadata"},
     "ui_model_profiles": {"default_scopes", "capabilities", "metadata"},
+    "ui_runtime_settings": {"value_json"},
     "patterns": {"source_games"},
     "evolution_rounds": {"config"},
     "candidate_packages": {"proposal_ids"},
