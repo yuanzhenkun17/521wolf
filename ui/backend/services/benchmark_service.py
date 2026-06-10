@@ -11,6 +11,10 @@ from collections.abc import Callable, Mapping
 from inspect import isawaitable
 from typing import Any, cast
 
+from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
+from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
+from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
+from storage.postgres.unit_of_work import from_connection_factory
 from ui.backend.schemas import (
     BenchmarkLifecycleRequest,
     BenchmarkRequest,
@@ -71,6 +75,139 @@ class BenchmarkService:
     @property
     def context(self) -> Any:
         return self._context
+
+    def _open_connection(self) -> Any:
+        from app.lib.score import open_eval_connection
+
+        return open_eval_connection(getattr(self._context, "paths", None))
+
+    def load_role_leaderboard_rows(
+        self,
+        role: str,
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> list[Any]:
+        conn = None
+        try:
+            conn = self._open_connection()
+            return BenchmarkLeaderboardRepository(conn).list_role_rows(
+                role,
+                evaluation_set_id=evaluation_set_id,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def load_leaderboard_rows(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 100,
+    ) -> list[Any]:
+        conn = None
+        try:
+            conn = self._open_connection()
+            return BenchmarkLeaderboardRepository(conn).list(
+                scope=scope,
+                evaluation_set_id=evaluation_set_id,
+                target_role=target_role,
+                limit=limit,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def load_role_leaderboard_rows_for_roles(
+        self,
+        roles: list[str],
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> list[Any]:
+        conn = None
+        try:
+            conn = self._open_connection()
+            return BenchmarkLeaderboardRepository(conn).list_role_rows_for_roles(
+                roles,
+                evaluation_set_id=evaluation_set_id,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def persist_benchmark_snapshot(self, snapshot: dict[str, Any]) -> None:
+        with from_connection_factory(self._open_connection) as tx:
+            BenchmarkSnapshotRepository(tx.connection, autocommit=False).save(snapshot)
+            tx.commit()
+
+    def load_benchmark_snapshot_summaries(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        benchmark_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        conn = None
+        try:
+            conn = self._open_connection()
+            return BenchmarkSnapshotRepository(conn).list(
+                scope=scope,
+                evaluation_set_id=evaluation_set_id,
+                benchmark_id=benchmark_id,
+                target_role=target_role,
+                limit=limit,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def load_benchmark_snapshot_detail(self, snapshot_id: str) -> dict[str, Any] | None:
+        conn = None
+        try:
+            conn = self._open_connection()
+            return BenchmarkSnapshotRepository(conn).get(snapshot_id)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def persist_benchmark_saved_view(self, view: dict[str, Any]) -> None:
+        with from_connection_factory(self._open_connection) as tx:
+            BenchmarkSavedViewRepository(tx.connection, autocommit=False).save(view)
+            tx.commit()
+
+    def load_benchmark_saved_views(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        benchmark_id: str | None = None,
+        target_role: str | None = None,
+        view_key: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        conn = None
+        try:
+            conn = self._open_connection()
+            return BenchmarkSavedViewRepository(conn).list(
+                scope=scope,
+                evaluation_set_id=evaluation_set_id,
+                benchmark_id=benchmark_id,
+                target_role=target_role,
+                view_key=view_key,
+                limit=limit,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def delete_benchmark_saved_view(self, view_key: str) -> bool:
+        with from_connection_factory(self._open_connection) as tx:
+            deleted = BenchmarkSavedViewRepository(tx.connection, autocommit=False).delete(view_key)
+            tx.commit()
+            return deleted
 
     def _resolve(self, method_name: str) -> BenchmarkCallable:
         if method_name in self._callables:

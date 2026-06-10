@@ -39,10 +39,6 @@ from app.lib.version import VersionRegistryProtocol, registry_version_release_st
 from app.run import LANGFUSE_EVAL_CONFIG_KEYS, run_evaluation, run_evolution
 from app.services.llm import create_llm
 from app.util.time import beijing_now_iso
-from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
-from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
-from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
-from storage.postgres.unit_of_work import from_connection_factory
 from ui.backend.background_store import BackgroundTaskStoreMixin
 from ui.backend.constants import (
     MANUAL_STOP_REASON,
@@ -626,13 +622,9 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         Reads the benchmark_leaderboard table populated by the eval pipeline.
         Returns {} on any failure so the leaderboard endpoint still renders.
         """
-        from app.lib.score import open_eval_connection
-
         scores: dict[str, dict[str, Any]] = {}
-        conn = None
         try:
-            conn = open_eval_connection(self.paths)
-            rows = BenchmarkLeaderboardRepository(conn).list_role_rows(
+            rows = self.benchmark_service.load_role_leaderboard_rows(
                 role,
                 evaluation_set_id=evaluation_set_id,
             )
@@ -642,9 +634,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                     scores[vid] = self._leaderboard_row_payload(row)
         except Exception:  # noqa: BLE001 — leaderboard read is best-effort
             _log.warning("leaderboard_scores_for_role failed for %s", role, exc_info=True)
-        finally:
-            if conn is not None:
-                conn.close()
         return scores
 
     def _leaderboard_entries(
@@ -656,16 +645,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         """Load benchmark leaderboard rows with explicit scope isolation."""
-        from app.lib.score import open_eval_connection
-
         normalized_scope = str(scope or "").strip().lower()
         if normalized_scope not in {"", "role_version", "model"}:
             raise HTTPException(status_code=422, detail="unsupported leaderboard scope")
         rows_out: list[dict[str, Any]] = []
-        conn = None
         try:
-            conn = open_eval_connection(self.paths)
-            rows = BenchmarkLeaderboardRepository(conn).list(
+            rows = self.benchmark_service.load_leaderboard_rows(
                 scope=normalized_scope or None,
                 evaluation_set_id=evaluation_set_id,
                 target_role=target_role,
@@ -676,9 +661,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             raise
         except Exception:  # noqa: BLE001 - leaderboard read is best-effort
             _log.warning("leaderboard_entries failed", exc_info=True)
-        finally:
-            if conn is not None:
-                conn.close()
         return rows_out
 
     def _model_leaderboard_entries(
@@ -1222,11 +1204,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         }
 
     def _persist_benchmark_leaderboard_snapshot(self, snapshot: dict[str, Any]) -> None:
-        from app.lib.score import open_eval_connection
-
-        with from_connection_factory(lambda: open_eval_connection(self.paths)) as tx:
-            BenchmarkSnapshotRepository(tx.connection, autocommit=False).save(snapshot)
-            tx.commit()
+        self.benchmark_service.persist_benchmark_snapshot(snapshot)
 
     def _load_benchmark_snapshot_summaries(
         self,
@@ -1238,12 +1216,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        conn = None
         try:
-            from app.lib.score import open_eval_connection
-
-            conn = open_eval_connection(self.paths)
-            snapshots = BenchmarkSnapshotRepository(conn).list(
+            snapshots = self.benchmark_service.load_benchmark_snapshot_summaries(
                 scope=scope,
                 evaluation_set_id=evaluation_set_id,
                 benchmark_id=benchmark_id,
@@ -1265,34 +1239,20 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 target_role=target_role,
                 limit=limit,
             )
-        finally:
-            if conn is not None:
-                conn.close()
         return rows
 
     def _load_benchmark_snapshot_detail(self, snapshot_id: str) -> dict[str, Any] | None:
-        conn = None
         try:
-            from app.lib.score import open_eval_connection
-
-            conn = open_eval_connection(self.paths)
-            snapshot = BenchmarkSnapshotRepository(conn).get(snapshot_id)
+            snapshot = self.benchmark_service.load_benchmark_snapshot_detail(snapshot_id)
             if snapshot is None:
                 return self.benchmark_leaderboard_snapshots.get(snapshot_id)
             return snapshot
         except Exception:  # noqa: BLE001 - fallback to process cache when storage is unavailable
             _log.warning("load benchmark leaderboard snapshot detail failed", exc_info=True)
             return self.benchmark_leaderboard_snapshots.get(snapshot_id)
-        finally:
-            if conn is not None:
-                conn.close()
 
     def _persist_benchmark_saved_view(self, view: dict[str, Any]) -> None:
-        from app.lib.score import open_eval_connection
-
-        with from_connection_factory(lambda: open_eval_connection(self.paths)) as tx:
-            BenchmarkSavedViewRepository(tx.connection, autocommit=False).save(view)
-            tx.commit()
+        self.benchmark_service.persist_benchmark_saved_view(view)
 
     def _load_benchmark_saved_views(
         self,
@@ -1305,12 +1265,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
-        conn = None
         try:
-            from app.lib.score import open_eval_connection
-
-            conn = open_eval_connection(self.paths)
-            views = BenchmarkSavedViewRepository(conn).list(
+            views = self.benchmark_service.load_benchmark_saved_views(
                 scope=scope,
                 evaluation_set_id=evaluation_set_id,
                 benchmark_id=benchmark_id,
@@ -1334,18 +1290,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                 view_key=view_key,
                 limit=limit,
             )
-        finally:
-            if conn is not None:
-                conn.close()
         return rows
 
     def _delete_benchmark_saved_view(self, view_key: str) -> bool:
-        from app.lib.score import open_eval_connection
-
-        with from_connection_factory(lambda: open_eval_connection(self.paths)) as tx:
-            deleted = BenchmarkSavedViewRepository(tx.connection, autocommit=False).delete(view_key)
-            tx.commit()
-            return deleted
+        return self.benchmark_service.delete_benchmark_saved_view(view_key)
 
     @staticmethod
     def _leaderboard_row_payload(row: Any) -> dict[str, Any]:
@@ -1435,16 +1383,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         evaluation_set_id: str | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
         """Load persisted benchmark scores for multiple roles with one DB round trip."""
-        from app.lib.score import open_eval_connection
-
         role_keys = [str(role) for role in roles if role]
         if not role_keys:
             return {}
         scores: dict[str, dict[str, dict[str, Any]]] = {role: {} for role in role_keys}
-        conn = None
         try:
-            conn = open_eval_connection(self.paths)
-            rows = BenchmarkLeaderboardRepository(conn).list_role_rows_for_roles(
+            rows = self.benchmark_service.load_role_leaderboard_rows_for_roles(
                 role_keys,
                 evaluation_set_id=evaluation_set_id,
             )
@@ -1455,9 +1399,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
                     scores[role][vid] = self._leaderboard_row_payload(row)
         except Exception:  # noqa: BLE001 — leaderboard read is best-effort
             _log.warning("leaderboard_scores_for_roles failed", exc_info=True)
-        finally:
-            if conn is not None:
-                conn.close()
         return scores
 
     def _list_benchmark_specs(self) -> list[dict[str, Any]]:
