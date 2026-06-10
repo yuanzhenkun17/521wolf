@@ -53,6 +53,8 @@ _JSONB_COLUMNS_BY_TABLE = {
     "experience_candidates": {"evidence_decision_ids", "raw_json"},
     "ui_background_tasks": {"payload"},
     "ui_task_events": {"payload"},
+    "ui_task_queue": {"payload", "result", "error", "progress", "metadata"},
+    "ui_task_artifacts": {"metadata"},
     "patterns": {"source_games"},
     "evolution_rounds": {"config"},
     "candidate_packages": {"proposal_ids"},
