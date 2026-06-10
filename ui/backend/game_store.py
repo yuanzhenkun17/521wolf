@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections import Counter
 from typing import Any
@@ -30,13 +29,12 @@ from ui.backend.history_index import GameHistoryIndex, history_facets, source_co
 from ui.backend.live_game import (
     LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS,
     LIVE_GAME_TERMINAL_STATUSES,
-    BroadcastEventSink,
     LiveGameSession,
-    live_game_heartbeat_timed_out,
 )
 from ui.backend.schemas import GameStartRequest, HumanActionRequest
 from ui.backend.services.game_delete_service import GameDeleteCoordinator
 from ui.backend.services.game_read_service import GameReadGateway
+from ui.backend.services.live_game_lifecycle import LiveGameLifecycleCoordinator
 from ui.backend.serializers import (
     _dead_players,
     _fallback_version,
@@ -161,23 +159,6 @@ def _paginate_history_rows(
     }
 
 
-class _FanoutSink:
-    def __init__(self, *sinks: Any) -> None:
-        self._sinks = [sink for sink in sinks if sink is not None]
-
-    def record_event(self, entry: Any) -> None:
-        for sink in self._sinks:
-            record = getattr(sink, "record_event", None)
-            if callable(record):
-                record(entry)
-
-    def record_decision(self, decision: Any) -> None:
-        for sink in self._sinks:
-            record = getattr(sink, "record_decision", None)
-            if callable(record):
-                record(decision)
-
-
 class GameStoreMixin:
     def _deleted_game_ids(self) -> set[str]:
         deleted = getattr(self, "_deleted_game_ids_cache", None)
@@ -227,6 +208,13 @@ class GameStoreMixin:
         if coordinator is None:
             coordinator = GameDeleteCoordinator(self)
             setattr(self, "_game_delete_coordinator_cache", coordinator)
+        return coordinator
+
+    def _live_game_lifecycle(self) -> LiveGameLifecycleCoordinator:
+        coordinator = getattr(self, "_live_game_lifecycle_cache", None)
+        if coordinator is None:
+            coordinator = LiveGameLifecycleCoordinator(self)
+            setattr(self, "_live_game_lifecycle_cache", coordinator)
         return coordinator
 
     def _wolf_read_lock(self) -> Any:
@@ -471,148 +459,27 @@ class GameStoreMixin:
         }
 
     async def start_game(self, request: GameStartRequest) -> dict[str, Any]:
-        game_id = f"ui_{uuid.uuid4().hex[:12]}"
-        skill_dir = self.skill_dir_for_request(request)
-        return await self.start_live_game(game_id=game_id, request=request, skill_dir=skill_dir)
+        return await self._live_game_lifecycle().start_game(request)
 
     async def start_live_game(self, *, game_id: str, request: GameStartRequest, skill_dir: str | None) -> dict[str, Any]:
-        self._clear_game_deleted(game_id)
-        human_player_id = request.human_player_id
-        if human_player_id is not None and (human_player_id < 1 or human_player_id > request.player_count):
-            raise HTTPException(status_code=400, detail="human_player_id must be a valid player seat")
-
-        from dataclasses import replace
-
-        from app.lib.game import create_agents, create_engine
-        from app.lib.store import AgentDecisionRecorder
-        from engine import STANDARD_12, GameLogger, assign_roles
-
-        config = replace(STANDARD_12, max_days=request.max_days, enable_sheriff=request.enable_sheriff)
-        roles = assign_roles(config, seed=request.seed)
-        provider = storage_provider_from_env(paths=self.paths)
-        persistence = GamePersistence(
-            game_id=game_id,
-            provider=provider,
-            run_metadata={
-                "mode": "play" if human_player_id is not None else "watch",
-                "source_run_id": game_id,
-                "ruleset_version": "werewolf_12p_v1",
-            },
-        )
-        event_sink = BroadcastEventSink()
-        db_event_sink = persistence.create_event_sink()
-        db_decision_sink = persistence.create_decision_sink()
-        recorder = AgentDecisionRecorder(sink=_FanoutSink(event_sink, db_decision_sink))
-        agents = create_agents(
-            roles,
-            client=self.model_for_run(),
-            decision_recorder=recorder,
-            game_id=game_id,
-            skill_dir=skill_dir,
-            human_player_id=human_player_id,
-            paths=self.paths,
-        )
-        logger = GameLogger(sink=_FanoutSink(event_sink, db_event_sink))
-        engine = create_engine(
-            roles,
-            agents,
-            seed=request.seed or 0,
-            max_days=request.max_days,
-            enable_sheriff=request.enable_sheriff,
-            logger=logger,
-        )
-        session = LiveGameSession(
+        return await self._live_game_lifecycle().start_live_game(
             game_id=game_id,
             request=request,
-            engine=engine,
-            recorder=recorder,
-            human=agents.get(human_player_id) if human_player_id is not None else None,
-            event_sink=event_sink,
             skill_dir=skill_dir,
         )
-        setattr(session, "persistence", persistence)
-        self._persist_live_session_start(session)
-        self.live_sessions[game_id] = session
-        session.task = asyncio.create_task(self.run_live_session(game_id))
-        snapshot = session.snapshot()
-        self.games[game_id] = snapshot
-        self.invalidate_game_history_index()
-        return snapshot
 
     async def run_live_session(self, game_id: str) -> None:
-        session = self.live_sessions.get(game_id)
-        if session is None:
-            return
-        try:
-            await session.run()
-            if self._is_game_deleted(game_id):
-                return
-            snapshot = session.snapshot()
-            self.games[game_id] = snapshot
-            self.persist_live_session(session, snapshot)
-        finally:
-            if self.live_sessions.get(game_id) is session and session.status in LIVE_GAME_TERMINAL_STATUSES:
-                self.live_sessions.pop(game_id, None)
+        await self._live_game_lifecycle().run_live_session(game_id)
 
     def check_live_game_watchdog(
         self,
         *,
         timeout_seconds: float | None = None,
     ) -> list[dict[str, Any]]:
-        resolved_timeout = (
-            timeout_seconds if timeout_seconds is not None else self._live_game_heartbeat_timeout_seconds()
-        )
-        interrupted: list[dict[str, Any]] = []
-        for game_id, session in list(self.live_sessions.items()):
-            status = str(getattr(session, "status", "") or "").lower()
-            if status in LIVE_GAME_TERMINAL_STATUSES:
-                continue
-            if not hasattr(session, "mark_interrupted"):
-                continue
-            if not live_game_heartbeat_timed_out(
-                getattr(session, "last_heartbeat_at", None),
-                timeout_seconds=resolved_timeout,
-            ):
-                continue
-            if self._live_session_waiting_for_human_within_timeout(session):
-                continue
-            session.mark_interrupted(
-                "live game heartbeat timed out",
-                stage="live_game.watchdog",
-                kind="live_game_interrupted",
-                timeout_seconds=resolved_timeout,
-            )
-            snapshot = session.snapshot()
-            self.games[game_id] = snapshot
-            try:
-                self.persist_live_session(session, snapshot)
-            except Exception:
-                # Keep the interrupted state visible even if final persistence fails.
-                pass
-            self.live_sessions.pop(game_id, None)
-            interrupted.append(snapshot)
-        if interrupted:
-            self.invalidate_game_history_index()
-        return interrupted
+        return self._live_game_lifecycle().check_watchdog(timeout_seconds=timeout_seconds)
 
     def _live_session_waiting_for_human_within_timeout(self, session: Any) -> bool:
-        human = getattr(session, "human", None)
-        if human is None:
-            return False
-        try:
-            is_waiting = bool(getattr(human, "is_waiting", False))
-        except Exception:
-            return False
-        if not is_waiting:
-            return False
-        try:
-            human_timeout = float(getattr(human, "timeout_seconds"))
-        except (TypeError, ValueError):
-            return False
-        return not live_game_heartbeat_timed_out(
-            getattr(session, "last_heartbeat_at", None),
-            timeout_seconds=human_timeout,
-        )
+        return self._live_game_lifecycle().live_session_waiting_for_human_within_timeout(session)
 
     def get_game(self, game_id: str) -> dict[str, Any] | None:
         self.check_live_game_watchdog()
@@ -1134,46 +1001,7 @@ class GameStoreMixin:
         return snapshot
 
     def stop_game(self, game_id: str) -> dict[str, Any]:
-        live = self.live_sessions.get(game_id)
-        if live is not None:
-            live.cancel()
-            snapshot = live.snapshot()
-            self.games[game_id] = snapshot
-            if live.task is None or live.task.done():
-                self.persist_live_session(live, snapshot)
-            return snapshot
-        game = self.get_game(game_id)
-        if game is None:
-            now = beijing_now_iso()
-            return {
-                "game_id": game_id,
-                "status": "cancelled",
-                "stop_requested": True,
-                "cancelled": True,
-                "interrupted": False,
-                "failed": False,
-                "cancelled_at": now,
-                "finished_at": now,
-                "error": "cancelled",
-                "players": [],
-                "logs": [],
-                "decisions": [],
-            }
-        now = beijing_now_iso()
-        stopped = {
-            **game,
-            "status": "cancelled",
-            "stop_requested": True,
-            "cancelled": True,
-            "interrupted": False,
-            "failed": False,
-            "cancelled_at": game.get("cancelled_at") or now,
-            "finished_at": game.get("finished_at") or now,
-            "error": game.get("error") or "cancelled",
-        }
-        self.games[game_id] = stopped
-        self._persist_snapshot_to_pg(stopped)
-        return stopped
+        return self._live_game_lifecycle().stop_game(game_id)
 
     def delete_game(self, game_id: str, *, force: bool = False) -> dict[str, Any]:
         return self._game_delete_coordinator().delete_game(game_id, force=force)
@@ -1187,36 +1015,17 @@ class GameStoreMixin:
         delete_game_from_env(game_id, paths=self.paths)
 
     def _persist_live_session_start(self, session: LiveGameSession) -> None:
-        self._persist_snapshot_to_pg(
-            session.snapshot(),
-            persistence=getattr(session, "persistence", None),
-        )
+        self._live_game_lifecycle().persist_start(session)
 
     def persist_live_session(self, session: LiveGameSession, snapshot: dict[str, Any] | None = None) -> None:
-        snapshot = snapshot or session.snapshot()
-        terminal = str(snapshot.get("status") or session.status or "").lower() in LIVE_GAME_TERMINAL_STATUSES
-        if terminal:
-            with session.persist_lock:
-                if session.files_written:
-                    return
-                session.files_written = True
-        try:
-            self._persist_snapshot_to_pg(
-                snapshot,
-                persistence=getattr(session, "persistence", None),
-            )
-            if terminal:
-                persistence = getattr(session, "persistence", None)
-                close = getattr(persistence, "close", None)
-                if callable(close):
-                    close()
-        except Exception:
-            if terminal:
-                with session.persist_lock:
-                    session.files_written = False
-            raise
-        finally:
-            self.invalidate_game_history_index()
+        self._live_game_lifecycle().persist_session(session, snapshot)
+
+    def _create_game_persistence(self, game_id: str, *, run_metadata: dict[str, Any]) -> GamePersistence:
+        return GamePersistence(
+            game_id=game_id,
+            provider=storage_provider_from_env(paths=self.paths),
+            run_metadata=run_metadata,
+        )
 
     def _persist_snapshot_to_pg(
         self,
