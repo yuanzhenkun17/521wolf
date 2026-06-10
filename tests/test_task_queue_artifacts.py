@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 import pytest
 
@@ -56,6 +57,55 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+class _Cursor:
+    rowcount = 1
+
+    def __init__(self, row: dict[str, Any] | None) -> None:
+        self._row = row
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._row
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return [] if self._row is None else [self._row]
+
+
+class _FakePostgresClaimConnection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def execute_for_update(self, sql: str, parameters: Any = ()) -> _Cursor:
+        raise AssertionError("claim_next should issue its CTE update through execute()")
+
+    def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
+        self.calls.append((sql, tuple(parameters)))
+        return _Cursor(
+            {
+                "task_id": "task_pg",
+                "kind": "evolution_run",
+                "status": "running",
+                "priority": 40,
+                "payload": {"run_id": "evolve_pg"},
+                "result": None,
+                "error": None,
+                "progress": None,
+                "attempt": 1,
+                "max_attempts": 1,
+                "lease_owner": "worker-1",
+                "lease_expires_at": "2026-06-10T10:05:01+08:00",
+                "queued_at": "2026-06-10T10:00:00+08:00",
+                "started_at": "2026-06-10T10:00:01+08:00",
+                "updated_at": "2026-06-10T10:00:01+08:00",
+                "finished_at": None,
+                "cancel_requested": False,
+                "idempotency_key": None,
+                "parent_task_id": None,
+                "source": "test",
+                "metadata": {"role": "seer"},
+            }
+        )
+
+
 def test_task_queue_repository_claims_and_completes_task() -> None:
     conn = _connect()
     repo = TaskQueueRepository(conn)
@@ -100,6 +150,39 @@ def test_task_queue_repository_claims_and_completes_task() -> None:
     assert completed["status"] == "succeeded"
     assert completed["result"] == {"ok": True}
     assert completed["progress"] == {"stage": "training", "percent": 0.2}
+
+
+def test_task_queue_repository_postgres_claim_uses_skip_locked_cte() -> None:
+    conn = _FakePostgresClaimConnection()
+    repo = TaskQueueRepository(conn)  # type: ignore[arg-type]
+
+    claimed = repo.claim_next(
+        worker_id="worker-1",
+        now="2026-06-10T10:00:01+08:00",
+        lease_expires_at="2026-06-10T10:05:01+08:00",
+        kinds=["evolution_run", "benchmark_batch"],
+    )
+
+    assert claimed is not None
+    assert claimed["task_id"] == "task_pg"
+    assert claimed["payload"] == {"run_id": "evolve_pg"}
+    assert len(conn.calls) == 1
+    sql, parameters = conn.calls[0]
+    assert "WITH candidate AS (" in sql
+    assert "FOR UPDATE SKIP LOCKED LIMIT 1" in sql
+    assert "UPDATE ui_task_queue AS q SET" in sql
+    assert "AND kind IN (?, ?) " in sql
+    assert "RETURNING q.task_id" in sql
+    assert parameters == (
+        False,
+        "evolution_run",
+        "benchmark_batch",
+        "worker-1",
+        "2026-06-10T10:05:01+08:00",
+        "2026-06-10T10:00:01+08:00",
+        "2026-06-10T10:00:01+08:00",
+        False,
+    )
 
 
 def test_task_queue_repository_marks_expired_running_tasks_interrupted() -> None:

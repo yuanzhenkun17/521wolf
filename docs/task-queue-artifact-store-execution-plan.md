@@ -190,6 +190,7 @@ wolf.ui_task_queue + TaskWorkerLoop + wolf.ui_task_events + LocalArtifactStore +
 
 - `WOLF_USE_PG_TASK_QUEUE=true` 时，benchmark/evolution UI 触发的长任务写入 `wolf.ui_task_queue`，由单机 worker 执行，API 进程和 worker 进程通过同一 PostgreSQL 观测状态。
 - worker claim 在 PostgreSQL 使用 `FOR UPDATE SKIP LOCKED`，heartbeat 续租并写 task event；终态写回要求任务仍处于 running 且归当前 worker 持有，避免过期 worker 覆盖新状态。
+- 收尾验证已覆盖 PostgreSQL claim CTE SQL 形态、owner guarded complete、stale running -> interrupted、retry/cancel 和 artifact rewrite 可读性。
 - 旧 `ui_background_tasks` 仍作为默认兼容路径和领域状态快照，不再是 queue-backed 路径的执行权威。
 - `wolf.ui_task_events` 支持 benchmark/evolution 原有 SSE replay，也支持 `/api/tasks/{task_id}/events` JSON replay。
 - benchmark/evolution/Langfuse task executor 完成后写入 `LocalArtifactStore`，文件在 `runs/tasks/<task_id>/<sha-prefix>/...`，metadata 在 `wolf.ui_task_artifacts`。
@@ -305,14 +306,13 @@ idx_ui_task_artifacts_sha256(sha256)
 runs/
   tasks/
     <task_id>/
-      result.json
-      events.jsonl
-      benchmark-report.json
-      reproducibility-manifest.json
-      langfuse-verification.json
-      annotation-queue.json
-      link-manifest.json
-      diagnostics.zip
+      <sha-prefix>/
+        benchmark-report.json
+        reproducibility-manifest.json
+        langfuse-verification.json
+        annotation-queue.json
+        link-manifest.json
+        diagnostics.zip
 ```
 
 规则：
