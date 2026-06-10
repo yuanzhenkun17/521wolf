@@ -42,6 +42,7 @@ from ui.backend.services import (
     BenchmarkService,
     GameDeleteCoordinator,
     GameHistoryService,
+    GamePersistenceService,
     GameReadGateway,
     LiveGameLifecycleCoordinator,
     TaskService,
@@ -276,6 +277,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     _game_history_service_cache: GameHistoryService | None = field(default=None, init=False, repr=False)
     _game_read_gateway_cache: GameReadGateway | None = field(default=None, init=False, repr=False)
     _game_delete_coordinator_cache: GameDeleteCoordinator | None = field(default=None, init=False, repr=False)
+    _game_persistence_service_cache: GamePersistenceService | None = field(default=None, init=False, repr=False)
     _live_game_lifecycle_cache: LiveGameLifecycleCoordinator | None = field(default=None, init=False, repr=False)
     _registry: VersionRegistryProtocol | None = field(default=None, init=False, repr=False)
     _role_overview_cache: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
@@ -318,6 +320,9 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
     def _game_delete_coordinator(self) -> GameDeleteCoordinator:
         return self._cached_component("_game_delete_coordinator_cache", lambda: GameDeleteCoordinator(self))
+
+    def _game_persistence_service(self) -> GamePersistenceService:
+        return self._cached_component("_game_persistence_service_cache", lambda: GamePersistenceService(self))
 
     def _live_game_lifecycle(self) -> LiveGameLifecycleCoordinator:
         return self._cached_component("_live_game_lifecycle_cache", lambda: LiveGameLifecycleCoordinator(self))
