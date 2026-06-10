@@ -29,6 +29,7 @@ class _TransactionalConn:
         self.begin_writes = 0
         self.commits = 0
         self.rollbacks = 0
+        self.closes = 0
 
     def __enter__(self) -> "_TransactionalConn":
         self.entered += 1
@@ -57,6 +58,9 @@ class _TransactionalConn:
 
     def rollback(self) -> None:
         self.rollbacks += 1
+
+    def close(self) -> None:
+        self.closes += 1
 
 
 def test_evaluation_save_batch_uses_single_storage_transaction() -> None:
@@ -129,6 +133,53 @@ def test_game_delete_can_defer_transaction_to_caller() -> None:
     assert conn.commits == 0
     assert conn.rollbacks == 0
     assert len(conn.sql) == len(WOLF_GAME_CHILD_TABLES) + 1
+
+
+def test_delete_game_from_provider_opens_and_closes_connection() -> None:
+    from storage.game_store import WOLF_GAME_CHILD_TABLES, delete_game_from_provider
+
+    conn = _TransactionalConn()
+
+    class _Provider:
+        def __init__(self) -> None:
+            self.opens = 0
+
+        def open_wolf_connection(self) -> _TransactionalConn:
+            self.opens += 1
+            return conn
+
+    provider = _Provider()
+
+    delete_game_from_provider(provider, "game-delete-1")
+
+    expected_sql = [
+        f"DELETE FROM {table} WHERE game_id = ?"
+        for table in WOLF_GAME_CHILD_TABLES
+    ]
+    expected_sql.append("DELETE FROM games WHERE id = ?")
+    assert provider.opens == 1
+    assert conn.sql == expected_sql
+    assert conn.commits == 1
+    assert conn.rollbacks == 0
+    assert conn.closes == 1
+
+
+def test_delete_game_from_provider_closes_connection_on_delete_failure() -> None:
+    from storage.game_store import delete_game_from_provider
+
+    conn = _TransactionalConn(fail_on_execute=2)
+
+    class _Provider:
+        def open_wolf_connection(self) -> _TransactionalConn:
+            return conn
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        delete_game_from_provider(_Provider(), "game-delete-1")
+
+    assert conn.begin_writes == 1
+    assert conn.commits == 0
+    assert conn.rollbacks == 1
+    assert conn.closes == 1
 
 
 def test_evaluation_save_batch_rolls_back_whole_batch_on_failure() -> None:

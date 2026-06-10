@@ -252,3 +252,12 @@ class GameStore:
         except Exception:
             self._rollback()
             raise
+
+
+def delete_game_from_provider(provider: Any, game_id: str) -> None:
+    """Open a wolf connection from a provider and delete one game through storage."""
+    conn = provider.open_wolf_connection()
+    try:
+        GameStore(conn).delete_game(game_id)
+    finally:
+        conn.close()

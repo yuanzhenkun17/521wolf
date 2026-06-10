@@ -285,6 +285,78 @@ def test_run_game_batch_times_out_game_and_cleans_partial_rows():
     assert all(params == ("g_timeout",) for _, params in conn.calls)
 
 
+def test_run_game_batch_cleanup_failure_preserves_original_error():
+    class FailingPersistence:
+        def __init__(self):
+            self.close_attempts = 0
+
+        def close(self):
+            self.close_attempts += 1
+            raise RuntimeError("close failed")
+
+    class FailingConn:
+        def __init__(self):
+            self.calls = []
+            self.commits = 0
+            self.rollbacks = 0
+            self.closed = False
+
+        def execute(self, sql, params=()):
+            self.calls.append((sql, tuple(params)))
+            raise RuntimeError("delete failed")
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+        def close(self):
+            self.closed = True
+
+    class FakeProvider:
+        def __init__(self, conn):
+            self.conn = conn
+            self.opens = 0
+
+        def open_wolf_connection(self):
+            self.opens += 1
+            return self.conn
+
+    class BoomGame:
+        async def ainvoke(self, state):
+            state["game_persistence"] = persistence
+            raise RuntimeError("game exploded")
+
+    persistence = FailingPersistence()
+    conn = FailingConn()
+    provider = FakeProvider(conn)
+
+    games = asyncio.run(
+        run_game_batch(
+            BoomGame(),
+            1,
+            lambda i: {
+                "game_id": "g_cleanup_fail",
+                "seed": 7,
+                "storage_provider": provider,
+            },
+            concurrency=1,
+            label="t",
+            fail_fast=False,
+        )
+    )
+
+    assert games[0]["game_id"] == "g_cleanup_fail"
+    assert games[0]["winner"] == "error"
+    assert games[0]["error"] == "game exploded"
+    assert persistence.close_attempts == 1
+    assert provider.opens == 1
+    assert conn.commits == 0
+    assert conn.rollbacks == 1
+    assert conn.closed is True
+
+
 def test_run_game_batch_empty():
     class Never:
         async def ainvoke(self, state):

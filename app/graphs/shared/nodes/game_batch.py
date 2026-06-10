@@ -236,32 +236,9 @@ def _cleanup_failed_game_state(game_state: dict[str, Any] | None, game_id: str) 
     if provider is None:
         return
 
-    conn = None
     try:
-        conn = provider.open_wolf_connection()
-        for table in (
-            "decision_reviews",
-            "counterfactuals",
-            "llm_judgments",
-            "evaluations",
-            "reports",
-            "decisions",
-            "game_events",
-            "players",
-            "games",
-        ):
-            conn.execute(f"DELETE FROM {table} WHERE game_id = ?", (game_id,))
-        conn.commit()
+        from storage.game_store import delete_game_from_provider
+
+        delete_game_from_provider(provider, game_id)
     except Exception as exc:  # noqa: BLE001
         _log.warning("failed to clean partial rows for game %s: %s", game_id, exc)
-        if conn is not None:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
