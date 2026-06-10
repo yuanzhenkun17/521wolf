@@ -1,20 +1,128 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed } from 'vue'
+import type { PropType } from 'vue'
+
+type UnknownRecord = Record<string, unknown>
+type TargetType = 'model' | 'role_version'
+type SuiteGroupKey = 'quick' | 'standard' | 'release' | 'other'
+type RunTone = 'ok' | 'live' | 'bad' | 'idle'
+type BenchmarkSuiteRaw = UnknownRecord
+
+interface ValueRef<T> {
+  value: T
+}
+
+interface LegacyBenchmarkRun {
+  benchmarkTargetType?: string
+}
+
+interface BenchmarkSuiteRailBenchmark {
+  benchmarkSuites: ValueRef<BenchmarkSuiteRaw[]>
+  selectedBenchmarkId: ValueRef<string>
+  legacyBenchmarkTargetType?: ValueRef<string>
+  unscopedBenchmarkRunRows?: ValueRef<LegacyBenchmarkRun[]>
+  benchmarkSuiteError: ValueRef<string>
+  selectBenchmarkSuite: (id: string) => void
+  selectLegacyBenchmarkScope: (targetType: TargetType) => void
+}
+
+interface LegacyScope {
+  targetType: TargetType
+  label: string
+  caption: string
+  count: number
+}
+
+interface NormalizedLastRun {
+  id: string
+  shortId: string
+  status: string
+  statusLabel: string
+  stage: string
+  stageLabel: string
+  resultCount: number | null
+  diagnosticCount: number | null
+  timeLabel: string
+  tone: RunTone
+}
+
+interface NormalizedLatestSnapshot {
+  id: string
+  shortId: string
+  title: string
+  rowCount: number | null
+  contentHash: string
+  shortHash: string
+  createdAtLabel: string
+}
+
+interface NormalizedSuite {
+  raw: BenchmarkSuiteRaw | null | undefined
+  id: string
+  label: string
+  version: string
+  description: string
+  targetType: TargetType
+  targetTypeLabel: string
+  costTier: string
+  costTierLabel: string
+  status: string
+  statusLabel: string
+  evaluationSetId: string
+  seedSetId: string
+  gameCount: number | null
+  maxDays: number | null
+  seedCount: number | null
+  seedPreview: string[]
+  seedPreviewLabel: string
+  pairedSeed: boolean
+  configHash: string
+  shortConfigHash: string
+  seedSet: UnknownRecord
+  seedSetVersionLabel: string
+  seedTier: string
+  seedTierLabel: string
+  seedTargetType: TargetType | ''
+  seedTargetTypeLabel: string
+  usageBoundary: string
+  usageBoundaryLabel: string
+  nonOverlapGroup: string
+  seedImmutable: boolean | null
+  seedWarnings: string[]
+  seedWarningCount: number
+  metrics: UnknownRecord
+  gates: UnknownRecord
+  judge: UnknownRecord
+  roles: unknown[]
+  lastRun: NormalizedLastRun | null
+  latestSnapshot: NormalizedLatestSnapshot | null
+  isQuick: boolean
+  isRelease: boolean
+  enabled: boolean
+  launchable: boolean
+  launchDisabledReason: string
+}
+
+interface SuiteGroup {
+  key: SuiteGroupKey
+  label: string
+  caption: string
+  rows: NormalizedSuite[]
+}
 
 const props = defineProps({
   benchmark: {
-    type: Object,
+    type: Object as PropType<BenchmarkSuiteRailBenchmark>,
     required: true
   }
 })
 
-const targetTypeLabels = {
+const targetTypeLabels: Record<string, string> = {
   model: '模型',
   role_version: '角色版本'
 }
 
-const costTierLabels = {
+const costTierLabels: Record<string, string> = {
   smoke: '冒烟',
   low: '低成本',
   medium: '中等',
@@ -23,7 +131,7 @@ const costTierLabels = {
   high: '高成本'
 }
 
-const seedTierLabels = {
+const seedTierLabels: Record<string, string> = {
   smoke: '冒烟',
   quick: '快速',
   standard: '标准',
@@ -31,7 +139,7 @@ const seedTierLabels = {
   audit: '审计'
 }
 
-const usageBoundaryLabels = {
+const usageBoundaryLabels: Record<string, string> = {
   smoke: '冒烟验证',
   quick_check: '快速验证',
   formal_benchmark: '正式评测',
@@ -40,7 +148,7 @@ const usageBoundaryLabels = {
   audit: '审计回放'
 }
 
-const statusLabels = {
+const statusLabels: Record<string, string> = {
   enabled: '启用',
   active: '启用',
   draft: '草稿',
@@ -49,7 +157,7 @@ const statusLabels = {
   archived: '归档'
 }
 
-const runStatusLabels = {
+const runStatusLabels: Record<string, string> = {
   queued: '排队中',
   running: '运行中',
   rate_limited: '限速中',
@@ -59,7 +167,7 @@ const runStatusLabels = {
   interrupted: '已中断'
 }
 
-const runStageLabels = {
+const runStageLabels: Record<string, string> = {
   planning: '规划中',
   queued: '排队中',
   launching: '启动中',
@@ -77,14 +185,14 @@ const runStageLabels = {
   failed: '失败'
 }
 
-const suites = computed(() =>
-  props.benchmark.benchmarkSuites.value.map(normalizeSuite).filter(Boolean)
+const suites = computed<NormalizedSuite[]>(() =>
+  props.benchmark.benchmarkSuites.value.map(normalizeSuite).filter(Boolean) as NormalizedSuite[]
 )
 
 const selectedSuiteId = computed(() => props.benchmark.selectedBenchmarkId.value)
-const legacyTargetType = computed(() => props.benchmark.legacyBenchmarkTargetType?.value || 'role_version')
-const legacyRows = computed(() => props.benchmark.unscopedBenchmarkRunRows?.value || [])
-const legacyScopes = computed(() => [
+const legacyTargetType = computed(() => normalizeTargetType(props.benchmark.legacyBenchmarkTargetType?.value || 'role_version'))
+const legacyRows = computed<LegacyBenchmarkRun[]>(() => props.benchmark.unscopedBenchmarkRunRows?.value || [])
+const legacyScopes = computed<LegacyScope[]>(() => [
   {
     targetType: 'role_version',
     label: '临时角色',
@@ -99,21 +207,21 @@ const legacyScopes = computed(() => [
   }
 ])
 
-const suiteGroups = computed(() => {
-  const groups = [
+const suiteGroups = computed<SuiteGroup[]>(() => {
+  const groups: SuiteGroup[] = [
     { key: 'quick', label: '快速 / 冒烟', caption: '低成本验证', rows: [] },
     { key: 'standard', label: '标准', caption: '正式比较', rows: [] },
     { key: 'release', label: '发布', caption: '发布口径', rows: [] },
     { key: 'other', label: '其他', caption: '未归类', rows: [] }
   ]
-  const byKey = new Map(groups.map((group) => [group.key, group]))
+  const byKey = new Map<SuiteGroupKey, SuiteGroup>(groups.map((group) => [group.key, group]))
   for (const suite of suites.value) {
-    byKey.get(groupKey(suite)).rows.push(suite)
+    byKey.get(groupKey(suite))?.rows.push(suite)
   }
   return groups.filter((group) => group.rows.length)
 })
 
-function normalizeSuite(raw) {
+function normalizeSuite(raw: BenchmarkSuiteRaw | null | undefined): NormalizedSuite | null {
   const id = String(raw?.id || raw?.benchmark_id || '').trim()
   if (!id) return null
   const targetType = normalizeTargetType(raw?.target_type || raw?.scope)
@@ -186,58 +294,60 @@ function normalizeSuite(raw) {
   }
 }
 
-function normalizeSeedPreview(raw) {
-  const candidates = [raw?.seed_preview, raw?.seedPreview, raw?.seed_set?.seed_preview, raw?.seed_set?.seeds]
+function normalizeSeedPreview(raw: BenchmarkSuiteRaw | null | undefined): string[] {
+  const seedSet = objectOrEmpty(raw?.seed_set)
+  const candidates = [raw?.seed_preview, raw?.seedPreview, seedSet.seed_preview, seedSet.seeds]
   const arrayValue = candidates.find((value) => Array.isArray(value))
-  if (arrayValue) return arrayValue.map((seed) => String(seed ?? '').trim()).filter(Boolean).slice(0, 6)
+  if (Array.isArray(arrayValue)) return arrayValue.map((seed) => String(seed ?? '').trim()).filter(Boolean).slice(0, 6)
   return []
 }
 
-function normalizeOverlapWarnings(seedSet, seedSetId) {
-  const warnings = Array.isArray(seedSet?.overlap_warnings)
+function normalizeOverlapWarnings(seedSet: UnknownRecord, seedSetId: string): string[] {
+  const warnings = Array.isArray(seedSet.overlap_warnings)
     ? seedSet.overlap_warnings
-    : (Array.isArray(seedSet?.overlapWarnings) ? seedSet.overlapWarnings : [])
+    : (Array.isArray(seedSet.overlapWarnings) ? seedSet.overlapWarnings : [])
   return warnings
     .map((warning) => formatOverlapWarning(warning, seedSetId))
     .filter(Boolean)
 }
 
-function formatOverlapWarning(warning, seedSetId) {
+function formatOverlapWarning(warning: unknown, seedSetId: string): string {
   if (!warning || typeof warning !== 'object') return ''
+  const warningRecord = warning as UnknownRecord
   const currentId = String(seedSetId || '').trim()
   const otherIds = [
-    warning.left_seed_set_id,
-    warning.right_seed_set_id,
-    ...(Array.isArray(warning.seed_set_ids) ? warning.seed_set_ids : [])
+    warningRecord.left_seed_set_id,
+    warningRecord.right_seed_set_id,
+    ...(Array.isArray(warningRecord.seed_set_ids) ? warningRecord.seed_set_ids : [])
   ]
     .map((id) => String(id || '').trim())
     .filter((id, index, items) => id && id !== currentId && items.indexOf(id) === index)
-  const count = numberOrNull(warning.overlap_count ?? warning.seed_overlap_count ?? warning.count)
-  const ratio = numberOrNull(warning.overlap_ratio ?? warning.ratio)
-  const parts = []
+  const count = numberOrNull(warningRecord.overlap_count ?? warningRecord.seed_overlap_count ?? warningRecord.count)
+  const ratio = numberOrNull(warningRecord.overlap_ratio ?? warningRecord.ratio)
+  const parts: string[] = []
   if (otherIds.length) parts.push(`与 ${otherIds.join('、')} 重叠`)
   if (count != null) parts.push(`${count} 个种子`)
   if (ratio != null) parts.push(`${Math.round(ratio * 100)}%`)
-  const message = String(warning.message || warning.reason || '').trim()
+  const message = String(warningRecord.message || warningRecord.reason || '').trim()
   return parts.length ? parts.join('，') : (message || '存在种子重叠')
 }
 
-function formatSeedSetVersion(value) {
+function formatSeedSetVersion(value: unknown): string {
   if (value == null || value === '') return ''
   const text = String(value).trim()
   return text.startsWith('v') ? text : `v${text}`
 }
 
-function objectOrEmpty(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+function objectOrEmpty(value: unknown): UnknownRecord {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as UnknownRecord : {}
 }
 
-function normalizeTargetType(value) {
+function normalizeTargetType(value: unknown): TargetType {
   const text = String(value || '').trim().toLowerCase()
   return text === 'model' ? 'model' : 'role_version'
 }
 
-function normalizeStatus(raw) {
+function normalizeStatus(raw: BenchmarkSuiteRaw | null | undefined): string {
   const direct = String(raw?.status || '').trim().toLowerCase()
   if (direct) return direct
   if (raw?.deprecated) return 'deprecated'
@@ -245,19 +355,20 @@ function normalizeStatus(raw) {
   return 'enabled'
 }
 
-function numberOrNull(value) {
+function numberOrNull(value: unknown): number | null {
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
 
-function normalizeLastRun(raw) {
+function normalizeLastRun(raw: unknown): NormalizedLastRun | null {
   if (!raw || typeof raw !== 'object') return null
-  const id = String(raw.batch_id || raw.run_id || '').trim()
-  const status = String(raw.status || '').trim().toLowerCase()
-  const stage = String(raw.current_stage || raw.stage || '').trim()
-  const resultCount = numberOrNull(raw.result_count)
-  const diagnosticCount = numberOrNull(raw.diagnostic_count)
-  const time = raw.finished_at || raw.last_heartbeat_at || raw.started_at || ''
+  const run = raw as UnknownRecord
+  const id = String(run.batch_id || run.run_id || '').trim()
+  const status = String(run.status || '').trim().toLowerCase()
+  const stage = String(run.current_stage || run.stage || '').trim()
+  const resultCount = numberOrNull(run.result_count)
+  const diagnosticCount = numberOrNull(run.diagnostic_count)
+  const time = run.finished_at || run.last_heartbeat_at || run.started_at || ''
   return {
     id,
     shortId: shortToken(id),
@@ -272,43 +383,44 @@ function normalizeLastRun(raw) {
   }
 }
 
-function normalizeLatestSnapshot(raw) {
+function normalizeLatestSnapshot(raw: unknown): NormalizedLatestSnapshot | null {
   if (!raw || typeof raw !== 'object') return null
-  const id = String(raw.snapshot_id || raw.id || '').trim()
-  const rowCount = numberOrNull(raw.row_count)
-  const contentHash = String(raw.content_hash || '').trim()
+  const snapshot = raw as UnknownRecord
+  const id = String(snapshot.snapshot_id || snapshot.id || '').trim()
+  const rowCount = numberOrNull(snapshot.row_count)
+  const contentHash = String(snapshot.content_hash || '').trim()
   return {
     id,
     shortId: shortToken(id),
-    title: String(raw.title || id || '未命名快照'),
+    title: String(snapshot.title || id || '未命名快照'),
     rowCount,
     contentHash,
     shortHash: shortHash(contentHash),
-    createdAtLabel: formatDateTime(raw.created_at || '')
+    createdAtLabel: formatDateTime(snapshot.created_at || '')
   }
 }
 
-function runTone(status) {
+function runTone(status: string): RunTone {
   if (['completed'].includes(status)) return 'ok'
   if (['queued', 'running', 'rate_limited'].includes(status)) return 'live'
   if (['failed', 'cancelled', 'interrupted'].includes(status)) return 'bad'
   return 'idle'
 }
 
-function shortToken(value, size = 12) {
+function shortToken(value: unknown, size = 12): string {
   const text = String(value || '').trim()
   if (!text) return ''
   return text.length > size ? `${text.slice(0, size - 1)}...` : text
 }
 
-function shortHash(value) {
+function shortHash(value: unknown): string {
   const text = String(value || '').trim()
   if (!text) return ''
-  const hash = text.includes(':') ? text.split(':').pop() : text
+  const hash = text.includes(':') ? text.split(':').pop() || '' : text
   return hash.length > 10 ? hash.slice(0, 10) : hash
 }
 
-function formatDateTime(value) {
+function formatDateTime(value: unknown): string {
   const text = String(value || '').trim()
   if (!text) return ''
   const date = new Date(text)
@@ -320,32 +432,32 @@ function formatDateTime(value) {
   return `${month}-${day} ${hour}:${minute}`
 }
 
-function isQuickSuite(raw, costTier) {
+function isQuickSuite(raw: BenchmarkSuiteRaw | null | undefined, costTier: string): boolean {
   const id = String(raw?.id || '').toLowerCase()
   const name = String(raw?.name || raw?.label || '').toLowerCase()
   return ['smoke', 'quick', 'low'].includes(costTier) || id.includes('quick') || name.includes('quick')
 }
 
-function isReleaseSuite(raw, costTier) {
+function isReleaseSuite(raw: BenchmarkSuiteRaw | null | undefined, costTier: string): boolean {
   const id = String(raw?.id || '').toLowerCase()
   const name = String(raw?.name || raw?.label || '').toLowerCase()
   return costTier === 'release' || id.includes('release') || name.includes('release')
 }
 
-function groupKey(suite) {
+function groupKey(suite: NormalizedSuite): SuiteGroupKey {
   if (suite.isQuick) return 'quick'
   if (suite.isRelease) return 'release'
   if (['standard', 'medium', 'high'].includes(suite.costTier)) return 'standard'
   return 'other'
 }
 
-function titleCase(value) {
+function titleCase(value: unknown): string {
   const text = String(value || '').trim()
   if (!text) return '未知'
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-function defaultLaunchDisabledReason(status) {
+function defaultLaunchDisabledReason(status: string): string {
   if (status === 'draft') return '草稿套件启用后才能启动。'
   if (status === 'deprecated') return '废弃套件只保留历史审计，不能启动。'
   if (status === 'disabled') return '停用套件不能启动。'
@@ -353,11 +465,11 @@ function defaultLaunchDisabledReason(status) {
   return '当前套件不能启动。'
 }
 
-function selectSuite(id) {
+function selectSuite(id: string) {
   props.benchmark.selectBenchmarkSuite(id)
 }
 
-function selectLegacyScope(targetType) {
+function selectLegacyScope(targetType: TargetType) {
   props.benchmark.selectLegacyBenchmarkScope(targetType)
 }
 </script>

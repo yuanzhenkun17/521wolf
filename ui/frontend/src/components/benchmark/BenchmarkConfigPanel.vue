@@ -1,10 +1,114 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+type ReadableRef<T> = {
+  readonly value: T
+}
+
+type BenchmarkActionLoading = '' | 'start' | `stop:${string}` | string
+
+interface BenchmarkConfigForm {
+  battle_games: number | string | null
+  max_days: number | string | null
+  budget_limit_units: number | string | null
+  model_id: string
+  model_config_hash: string
+  target_version_id: string
+}
+
+interface BenchmarkSuiteSummary {
+  id: string
+  label: string
+  roles?: string[]
+  cost_tier?: string
+  seed_count?: number | string | null
+  seed_set_id?: string
+  seed_preview?: string[]
+}
+
+interface BenchmarkLeaderboardPreviewRow {
+  hash?: string
+  version_id?: string
+  model_id?: string
+  model_config_hash?: string
+  is_baseline?: boolean
+  scorePct?: number | string
+  winRatePct?: number | string
+  source?: string
+}
+
+interface BenchmarkBatchRunRow {
+  id: string
+  status?: string
+  statusLabel?: string
+  roleKeys?: string[]
+}
+
+interface BenchmarkBudgetExceededDetail {
+  value?: boolean
+}
+
+interface BenchmarkPlanBudget {
+  exceeded?: boolean | BenchmarkBudgetExceededDetail | null
+  estimated_units?: number | string | null
+  estimated_tokens?: number | string | null
+  estimated_cost?: number | string | null
+  currency?: string | null
+}
+
+interface BenchmarkPlanEstimates {
+  estimated_llm_call_units?: number | string | null
+  estimated_tokens?: number | string | null
+  estimated_cost?: number | string | null
+  currency?: string | null
+}
+
+interface BenchmarkPlanJudge {
+  estimated_decisions?: number | string | null
+}
+
+interface BenchmarkPlan {
+  budget?: BenchmarkPlanBudget | null
+  estimates?: BenchmarkPlanEstimates | null
+  judge?: BenchmarkPlanJudge | null
+  estimated_tokens?: number | string | null
+  estimated_cost?: number | string | null
+  currency?: string | null
+  dry_run?: boolean
+  total_games?: number | string | null
+  eval_batch_count?: number | string | null
+}
+
+interface BenchmarkConfigPanelBenchmark {
+  modelLeaderboardRows: ReadableRef<BenchmarkLeaderboardPreviewRow[]>
+  roleLeaderboardRows: ReadableRef<BenchmarkLeaderboardPreviewRow[]>
+  visibleBatchRunRows: ReadableRef<BenchmarkBatchRunRow[]>
+  filteredBatchRunRows: ReadableRef<BenchmarkBatchRunRow[]>
+  actionLoading: ReadableRef<BenchmarkActionLoading>
+  loading: ReadableRef<boolean>
+  benchmarkSuites: ReadableRef<BenchmarkSuiteSummary[]>
+  benchmarkSuiteError: ReadableRef<string>
+  benchmarkPlan: ReadableRef<BenchmarkPlan | null>
+  benchmarkPlanError: ReadableRef<string>
+  benchmarkPlanBudgetExceeded: ReadableRef<boolean>
+  selectedBenchmarkId: ReadableRef<string>
+  selectedBenchmarkSuite: ReadableRef<BenchmarkSuiteSummary | null>
+  selectedBenchmarkIsModelSuite: ReadableRef<boolean>
+  selectedBenchmarkCanLaunch: ReadableRef<boolean>
+  selectedBenchmarkSuiteLabel: ReadableRef<string>
+  launchBattleGames: ReadableRef<number>
+  launchMaxDays: ReadableRef<number>
+  selectedRole: ReadableRef<string>
+  selectedRoleLabel: ReadableRef<string>
+  form: ReadableRef<BenchmarkConfigForm>
+  roleMeta: (role: string) => { label: string }
+  selectBenchmarkSuite: (benchmarkId: string) => void
+  startEvaluation: () => void | Promise<void>
+}
 
 const props = defineProps({
   benchmark: {
-    type: Object,
+    type: Object as PropType<BenchmarkConfigPanelBenchmark>,
     required: true
   }
 })
@@ -93,9 +197,9 @@ const versionBoardTitle = computed(() =>
   props.benchmark.selectedBenchmarkIsModelSuite.value ? '角色版本榜隔离' : '角色版本榜'
 )
 const runPlan = computed(() => props.benchmark.benchmarkPlan.value || null)
-const planBudget = computed(() => runPlan.value?.budget || {})
-const planEstimates = computed(() => runPlan.value?.estimates || {})
-const planJudge = computed(() => runPlan.value?.judge || {})
+const planBudget = computed<BenchmarkPlanBudget>(() => runPlan.value?.budget || {})
+const planEstimates = computed<BenchmarkPlanEstimates>(() => runPlan.value?.estimates || {})
+const planJudge = computed<BenchmarkPlanJudge>(() => runPlan.value?.judge || {})
 const planBudgetExceeded = computed(() => {
   const exceeded = planBudget.value.exceeded
   if (exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded)) return Boolean(exceeded.value)
@@ -123,17 +227,17 @@ const judgeUnitsLabel = computed(() => {
   return Number.isFinite(value) ? value.toLocaleString('zh-CN') : '--'
 })
 
-function modelLabel(item, index = 0) {
+function modelLabel(item: BenchmarkLeaderboardPreviewRow | null | undefined, index = 0) {
   if (!item) return '暂无'
   return item.model_id || item.model_config_hash || item.hash || (item.is_baseline ? '基线模型' : `候选模型${index + 1}`)
 }
 
-function versionLabel(item, index = 0) {
+function versionLabel(item: BenchmarkLeaderboardPreviewRow | null | undefined, index = 0) {
   if (!item) return '暂无'
   return item.is_baseline ? '基线版本' : `候选版本${index + 1}`
 }
 
-function sourceLabel(source) {
+function sourceLabel(source: string | undefined) {
   const labels = {
     baseline: '基线',
     evolution: '演化',
@@ -141,6 +245,10 @@ function sourceLabel(source) {
     candidate: '候选'
   }
   return labels[source] || '其他'
+}
+
+function selectBenchmarkSuite(event: Event) {
+  props.benchmark.selectBenchmarkSuite((event.target as HTMLSelectElement | null)?.value || '')
 }
 </script>
 
@@ -158,7 +266,7 @@ function sourceLabel(source) {
             <label>评测套件
               <select
                 :value="benchmark.selectedBenchmarkId.value"
-                @change="benchmark.selectBenchmarkSuite($event.target.value)"
+                @change="selectBenchmarkSuite"
               >
                 <option value="">临时评测</option>
                 <option

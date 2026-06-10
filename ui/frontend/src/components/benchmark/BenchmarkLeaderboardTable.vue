@@ -1,12 +1,63 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+type LeaderboardKind = 'model' | 'role'
+
+interface BenchmarkLeaderboardRow {
+  hash?: string
+  subject_id?: string
+  model_config_hash?: string
+  model_id?: string
+  target_version_id?: string
+  version_id?: string
+  short?: string
+  is_baseline?: boolean
+  source?: string
+  scorePct?: number | string
+  winRatePct?: number | string
+  deltaScore?: number | string
+  paired_delta?: number | string
+  pairedDelta?: number | string
+  paired_sample_size?: number | string
+  pairedSampleSize?: number | string
+  paired_n?: number | string
+  seed_overlap?: number | string
+  sample_size?: number | string
+  sampleSize?: number | string
+  games?: number | string
+  game_count?: number | string
+  games_played?: number | string
+  total_games?: number | string
+  win_rate_ci?: unknown
+  winRateCi?: unknown
+  confidence_interval?: unknown
+  ci?: unknown
+  ci_low?: number | string
+  ciLow?: number | string
+  ci_high?: number | string
+  ciHigh?: number | string
+  significance_label?: string
+  significanceLabel?: string
+  significant?: boolean
+  warnings?: unknown[]
+  delta_vs_baseline?: {
+    paired_delta?: number | string
+  }
+}
+
+interface ScoreBand {
+  label: string
+  floor: number
+  ceiling: number
+  count: number
+  width?: number
+}
 
 const props = defineProps({
   kind: {
     type: String,
     required: true,
-    validator: value => ['model', 'role'].includes(value)
+    validator: (value: string) => ['model', 'role'].includes(value)
   },
   title: {
     type: String,
@@ -17,11 +68,12 @@ const props = defineProps({
     required: true
   },
   rows: {
-    type: Array,
+    type: Array as PropType<BenchmarkLeaderboardRow[]>,
     required: true
   }
 })
 
+const leaderboardKind = computed(() => props.kind as LeaderboardKind)
 const rankedRows = computed(() =>
   [...props.rows].sort((a, b) => Number(b.scorePct || 0) - Number(a.scorePct || 0))
 )
@@ -38,7 +90,7 @@ const averageWinRate = computed(() => {
   return Math.round(total / props.rows.length) + '%'
 })
 const scoreBands = computed(() => {
-  const bands = [
+  const bands: ScoreBand[] = [
     { label: '六十分以上', floor: 60, ceiling: 101, count: 0 },
     { label: '五十分段', floor: 50, ceiling: 60, count: 0 },
     { label: '五十分以下', floor: -1, ceiling: 50, count: 0 }
@@ -54,9 +106,9 @@ const scoreBands = computed(() => {
   }))
 })
 const coverageRows = computed(() => {
-  const groups = new Map()
+  const groups = new Map<string, number>()
   for (const item of props.rows) {
-    const label = props.kind === 'role'
+    const label = leaderboardKind.value === 'role'
       ? sourceLabel(item.source || 'version')
       : modelGroupLabel(item)
     groups.set(label, (groups.get(label) || 0) + 1)
@@ -109,7 +161,7 @@ function candidateNumber(item) {
 
 function rowKey(item) {
   if (!item) return ''
-  return props.kind === 'model'
+  return leaderboardKind.value === 'model'
     ? String(item.subject_id || item.model_config_hash || item.model_id || item.hash || item.target_version_id || item.short || '')
     : String(item.version_id || item.short || '')
 }
@@ -126,7 +178,7 @@ function modelGroupLabel(item) {
 
 function rowLabel(item) {
   if (!item) return '暂无'
-  if (props.kind === 'model') {
+  if (leaderboardKind.value === 'model') {
     return modelLabel(item)
   }
   return item.is_baseline ? '基线版本' : `候选版本${candidateNumber(item)}`
