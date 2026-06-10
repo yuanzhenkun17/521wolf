@@ -61,3 +61,21 @@ test('SettingsPage follows local secret safety rules', () => {
   assert.match(service, /typeof options === 'string'/)
   assert.doesNotMatch(service, /localStorage\.(setItem|getItem)/)
 })
+
+test('SettingsPage explains profile recovery state and prevents testing stale form drafts', () => {
+  const source = readSource('../src/pages/SettingsPage.vue')
+
+  assert.match(source, /const selectedProfileLastTestError = computed\(\(\) => profileTestError\(selectedProfile\.value\)\)/)
+  assert.match(source, /const profileFormDirty = computed/)
+  assert.match(source, /profileFormSignature\(\) !== selectedProfileFormSignature\.value/)
+  assert.match(source, /const canTestSelectedProfile = computed\(\(\) => Boolean\(selectedProfile\.value && canWrite\.value && !testing\.value && !profileFormDirty\.value\)\)/)
+  assert.match(source, /表单有未保存改动；请先保存，再测试连接。/)
+  assert.match(source, /function profileTestError\(profile: ModelProfile \| null\): string/)
+  assert.match(source, /selectedProfileLastTestError[\s\S]*上次失败/)
+  assert.match(source, /const scopedProfileCandidates = computed/)
+  assert.match(source, /const scopedProfiles = computed\(\(\) =>[\s\S]*scopedProfileCandidates\.value\.filter\(profileCanLaunch\)/)
+  assert.match(source, /const inactiveScopedProfiles = computed/)
+  assert.match(source, /function profileCanLaunch\(profile: ModelProfile\): boolean[\s\S]*profile\.enabled && profile\.has_api_key/)
+  assert.match(source, /个可用默认模型/)
+  assert.match(source, /未计入可用默认模型/)
+})

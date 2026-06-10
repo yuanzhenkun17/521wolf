@@ -90,6 +90,7 @@ const notice = ref('')
 const refreshedAt = ref('')
 const form = reactive({ ...DEFAULT_FORM })
 const variableDrafts = reactive<Record<string, boolean | number | string>>({})
+const selectedProfileFormSignature = ref('')
 
 const selectedProfile = computed(() =>
   profiles.value.find((profile) => profile.profile_id === selectedProfileId.value) || null
@@ -98,6 +99,10 @@ const canWrite = computed(() =>
   Boolean(admin.value.enabled && admin.value.token_configured && adminToken.value.trim())
 )
 const enabledProfiles = computed(() => profiles.value.filter((profile) => profile.enabled))
+const selectedProfileLastTestError = computed(() => profileTestError(selectedProfile.value))
+const profileFormDirty = computed(() =>
+  Boolean(selectedProfile.value && selectedProfileFormSignature.value && profileFormSignature() !== selectedProfileFormSignature.value)
+)
 const healthStatus = computed(() => String(health.value.status || 'unknown'))
 const healthReady = computed(() => health.value.ready !== false)
 const adminWriteStateLabel = computed(() => canWrite.value ? '可写' : '只读')
@@ -156,8 +161,14 @@ const profileGuidanceRows = computed(() => {
   const rows: string[] = []
   if (!canWrite.value) rows.push(adminWriteHint())
   rows.push(...profileBlockingIssues.value)
+  if (profileFormDirty.value) {
+    rows.push('表单有未保存改动；保存后再测试连接，避免测试旧配置。')
+  }
   if (selectedProfile.value && !selectedProfile.value.enabled) {
     rows.push('当前 Profile 已禁用，启动任务不会选用它。')
+  }
+  if (selectedProfileLastTestError.value) {
+    rows.push(`上次测试失败：${selectedProfileLastTestError.value}`)
   }
   if (selectedProfile.value && ['error', 'stale', 'untested'].includes(String(selectedProfile.value.last_test_status || 'untested'))) {
     rows.push('保存后建议测试连接；启动入口会重新预检，失败才会阻断任务。')
@@ -172,7 +183,12 @@ const profileGuidanceRows = computed(() => {
   return rows
 })
 const canSubmitProfile = computed(() => Boolean(canWrite.value && !saving.value && profileBlockingIssues.value.length === 0))
-const canTestSelectedProfile = computed(() => Boolean(selectedProfile.value && canWrite.value && !testing.value))
+const canTestSelectedProfile = computed(() => Boolean(selectedProfile.value && canWrite.value && !testing.value && !profileFormDirty.value))
+const profileTestButtonTitle = computed(() => {
+  if (!selectedProfile.value) return '先选择模型 Profile。'
+  if (profileFormDirty.value) return '表单有未保存改动，保存后才能测试连接。'
+  return adminWriteHint()
+})
 const settingsMetaRows = computed(() => [
   { key: 'profiles', label: '模型', value: profiles.value.length || '0' },
   { key: 'enabled', label: '启用', value: enabledProfiles.value.length || '0' },
@@ -193,14 +209,23 @@ const settingsGuidanceRows = computed(() => {
   if (['benchmark', 'evolution'].includes(activeGroup.value) && Boolean(envLocks.value[activeGroup.value])) {
     rows.push(`${activeGroupInfo.value.label} 默认模型由环境变量锁定，设置页只展示本地配置。`)
   }
+  if (['benchmark', 'evolution'].includes(activeGroup.value) && inactiveScopedProfiles.value.length) {
+    rows.push(`${inactiveScopedProfiles.value.length} 个默认 Profile 缺少启用状态或 API key，启动入口不会选用。`)
+  }
   return rows.slice(0, 4)
 })
 const activeGroupInfo = computed(() => GROUPS.find((item) => item.key === activeGroup.value) || GROUPS[0])
-const scopedProfiles = computed(() => {
+const scopedProfileCandidates = computed(() => {
   const scope = activeGroup.value
   if (!['benchmark', 'evolution'].includes(scope)) return []
   return profiles.value.filter((profile) => Boolean(profile.default_scopes?.[scope]))
 })
+const scopedProfiles = computed(() =>
+  scopedProfileCandidates.value.filter(profileCanLaunch)
+)
+const inactiveScopedProfiles = computed(() =>
+  scopedProfileCandidates.value.filter((profile) => !profileCanLaunch(profile))
+)
 
 onMounted(() => {
   void refreshSettings()
@@ -269,6 +294,7 @@ function selectProfile(profile: ModelProfile | null) {
 function startNewProfile() {
   selectedProfileId.value = ''
   Object.assign(form, JSON.parse(JSON.stringify(DEFAULT_FORM)))
+  selectedProfileFormSignature.value = profileFormSignature()
 }
 
 function loadProfileToForm(profile: ModelProfile | null) {
@@ -290,6 +316,7 @@ function loadProfileToForm(profile: ModelProfile | null) {
     default_scopes: { ...DEFAULT_FORM.default_scopes, ...(profile.default_scopes || {}) },
     capabilities: { ...DEFAULT_FORM.capabilities, ...(profile.capabilities || {}) }
   })
+  selectedProfileFormSignature.value = profileFormSignature()
 }
 
 function buildPayload(): ModelProfilePayload {
@@ -344,6 +371,10 @@ async function saveProfile() {
 async function testSelectedProfile() {
   if (!selectedProfileId.value || !canWrite.value) {
     notice.value = selectedProfileId.value ? adminWriteHint() : '先选择或创建模型 Profile。'
+    return
+  }
+  if (profileFormDirty.value) {
+    notice.value = '表单有未保存改动；请先保存，再测试连接。'
     return
   }
   testing.value = true
@@ -469,6 +500,32 @@ function upsertProfile(profile: ModelProfile) {
   const index = profiles.value.findIndex((item) => item.profile_id === profile.profile_id)
   if (index >= 0) profiles.value.splice(index, 1, profile)
   else profiles.value.unshift(profile)
+}
+
+function profileCanLaunch(profile: ModelProfile): boolean {
+  return Boolean(profile.enabled && profile.has_api_key)
+}
+
+function profileTestError(profile: ModelProfile | null): string {
+  const text = String(profile?.last_test_error || '').trim()
+  return text || ''
+}
+
+function profileFormSignature(): string {
+  return JSON.stringify({
+    name: form.name.trim(),
+    provider: String(form.provider || ''),
+    base_url: form.base_url.trim(),
+    model: form.model.trim(),
+    api_key_present: Boolean(form.api_key.trim()),
+    temperature: Number(form.temperature),
+    timeout_seconds: Number(form.timeout_seconds),
+    max_retries: Number(form.max_retries),
+    enabled: Boolean(form.enabled),
+    clear_api_key: Boolean(form.clear_api_key),
+    default_scopes: { ...form.default_scopes },
+    capabilities: { ...form.capabilities }
+  })
 }
 
 function numberOrDefault(value: unknown, fallback: number): number {
@@ -687,7 +744,9 @@ function shortId(value: unknown): string {
                   </span>
                   <span class="settings-scope-cell">
                     <b>{{ statusLabel(profile.last_test_status || 'untested') }}</b>
-                    <small>{{ scopeText(profile) }}</small>
+                    <small :class="{ error: Boolean(profileTestError(profile)) }">
+                      {{ profileTestError(profile) || scopeText(profile) }}
+                    </small>
                   </span>
                   <span class="settings-time-cell">
                     <b>{{ profile.enabled ? '启用' : '禁用' }}</b>
@@ -705,7 +764,7 @@ function shortId(value: unknown): string {
                   <small>{{ selectedProfile ? '编辑 Profile' : '新建 Profile' }}</small>
                   <h2>{{ selectedProfile ? selectedProfile.name : '本地模型配置' }}</h2>
                 </div>
-                <b>{{ adminWriteStateLabel }}</b>
+                <b>{{ profileFormDirty ? '未保存' : adminWriteStateLabel }}</b>
               </header>
               <div v-if="profileGuidanceRows.length" class="settings-guardrail" aria-label="模型操作提示">
                 <span v-for="row in profileGuidanceRows" :key="row">{{ row }}</span>
@@ -788,7 +847,7 @@ function shortId(value: unknown): string {
                 <button type="button" class="settings-card-action primary" :disabled="!canSubmitProfile" :title="profileGuidanceRows[0] || ''" @click="saveProfile">
                   {{ saving ? '保存中' : selectedProfile ? '保存' : '创建' }}
                 </button>
-                <button type="button" class="settings-card-action" :disabled="!canTestSelectedProfile" :title="selectedProfile ? adminWriteHint() : '先选择模型 Profile。'" @click="testSelectedProfile">
+                <button type="button" class="settings-card-action" :disabled="!canTestSelectedProfile" :title="profileTestButtonTitle" @click="testSelectedProfile">
                   {{ testing ? '测试中' : '测试连接' }}
                 </button>
                 <button type="button" class="settings-card-action" :disabled="!selectedProfile || !canWrite" :title="selectedProfile ? adminWriteHint() : '先选择模型 Profile。'" @click="disableSelectedProfile">禁用</button>
@@ -850,10 +909,15 @@ function shortId(value: unknown): string {
               <header>
                 <div>
                   <small>{{ activeGroupInfo.label }}</small>
-                  <h2>{{ scopedProfiles.length }} 个默认模型</h2>
+                  <h2>{{ scopedProfiles.length }} 个可用默认模型</h2>
                 </div>
                 <b>{{ Boolean(envLocks[activeGroup]) ? '环境锁定' : '可配置' }}</b>
               </header>
+              <div v-if="inactiveScopedProfiles.length" class="settings-guardrail" aria-label="不可用默认模型">
+                <span v-for="profile in inactiveScopedProfiles" :key="profile.profile_id">
+                  {{ profile.name }} 未计入可用默认模型：{{ profile.enabled ? '缺少 API key' : '已禁用' }}
+                </span>
+              </div>
               <div class="settings-profile-table compact">
                 <button
                   v-for="profile in scopedProfiles"
@@ -872,7 +936,7 @@ function shortId(value: unknown): string {
                     <small>{{ shortId(profile.model_config_hash) }}</small>
                   </span>
                 </button>
-                <div v-if="!scopedProfiles.length" class="settings-empty">还没有为 {{ activeGroupInfo.label }} 指定默认模型。</div>
+                <div v-if="!scopedProfiles.length" class="settings-empty">还没有为 {{ activeGroupInfo.label }} 指定可用默认模型。</div>
               </div>
             </section>
 
@@ -973,6 +1037,12 @@ function shortId(value: unknown): string {
               </div>
               <p class="settings-context-empty">
                 {{ ['error', 'stale', 'untested'].includes(String(selectedProfile.last_test_status || 'untested')) ? '连接未确认时，启动入口会重新预检；预检失败才会阻断。' : '连接状态可用于启动门禁判断。' }}
+              </p>
+              <p v-if="selectedProfileLastTestError" class="settings-context-empty error">
+                上次失败：{{ selectedProfileLastTestError }}
+              </p>
+              <p v-if="profileFormDirty" class="settings-context-empty warning">
+                当前表单未保存；测试连接会先被禁用，避免误测旧配置。
               </p>
             </template>
             <p v-else class="settings-context-empty">正在编辑新 Profile。</p>
@@ -1291,6 +1361,10 @@ function shortId(value: unknown): string {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-profile-row small.error {
+  color: var(--settings-danger);
 }
 
 .settings-filter-chip em {
@@ -1888,6 +1962,18 @@ function shortId(value: unknown): string {
   border: 1px dashed rgba(93, 48, 17, 0.16);
   border-radius: 0;
   background: rgba(255, 242, 210, 0.34);
+}
+
+.settings-context-empty.error {
+  border-color: rgba(153, 48, 38, 0.2);
+  background: rgba(153, 48, 38, 0.07);
+  color: var(--settings-danger);
+}
+
+.settings-context-empty.warning {
+  border-color: rgba(185, 133, 47, 0.22);
+  background: rgba(255, 239, 194, 0.38);
+  color: var(--settings-accent-strong);
 }
 
 .settings-warning {
