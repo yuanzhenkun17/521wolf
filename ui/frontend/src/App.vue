@@ -8,7 +8,6 @@ import { useGameActions } from './composables/useGameActions.ts'
 import { useGameAudio } from './composables/useGameAudio.ts'
 import { useGameHistory } from './composables/useGameHistory.ts'
 import { useAppRuntimeProps } from './composables/appRuntimeProps'
-import { isReturnableGame } from './composables/gameSession.ts'
 import { appViewFromRouteSource } from './router/appViews'
 import {
   createIncrementalRuntimeHydrator,
@@ -71,15 +70,8 @@ const inMatch = computed(() => activeAppView.value === 'match')
 const inLogs = computed(() => activeAppView.value === 'logs')
 const inBenchmark = computed(() => activeAppView.value === 'benchmark')
 const inEvolution = computed(() => activeAppView.value === 'evolution')
-const activeSession = computed(() => sessionStore.activeSession)
 const isNight = computed(() => gameStore.isNight)
-const topNavActiveView = computed(() => replayStore.isReplayMode ? 'logs' : activeAppView.value)
 const toastError = computed(() => uiStore.errorMessage)
-const showActiveGamePill = computed(() => {
-  if (replayStore.isReplayMode) return false
-  if (activeAppView.value === 'match') return false
-  return isReturnableGame(gameStore.liveGame)
-})
 const showMatchBoot = computed(() => {
   return activeAppView.value === 'match'
     && !replayStore.isReplayMode
@@ -96,10 +88,6 @@ const matchBootStatus = computed(() => {
   if (!gameStore.roleAssignmentComplete) return '分配身份'
   return '进入议事厅'
 })
-const showTopbarExitGame = computed(() => {
-  return activeAppView.value === 'match' && !replayStore.isReplayMode && Boolean(gameStore.liveGame)
-})
-const topbarExitDisabled = computed(() => false)
 
 const {
   assessDimension,
@@ -141,12 +129,7 @@ const {
 
       <TopNav
         :variant="inMatch ? 'match' : (inLobby ? 'lobby' : 'section')"
-        :active-view="topNavActiveView"
         :class="{ 'night-mode': isNight }"
-        :active-session="activeSession"
-        :has-active-game="showActiveGamePill"
-        :show-exit-game="showTopbarExitGame"
-        :exit-disabled="topbarExitDisabled"
         @go-lobby="goLobby"
         @open-logs="openLogPage()"
         @open-benchmark="openBenchmarkPage"

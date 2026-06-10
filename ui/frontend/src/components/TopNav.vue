@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, getCurrentInstance, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useGameStore, useSessionStore, useUiStore } from '../stores'
+import { useGameStore, useReplayStore, useSessionStore, useUiStore } from '../stores'
 import { isReturnableGame } from '../composables/gameSession.ts'
 import { appViewFromRouteSource } from '../router/appViews'
 import type { ActiveGameSession } from '../types/game'
@@ -93,6 +93,7 @@ const instance = getCurrentInstance()
 const route = useRoute()
 const sessionStore = useSessionStore()
 const gameStore = useGameStore()
+const replayStore = useReplayStore()
 const uiStore = useUiStore()
 const exitConfirming = ref(false)
 let exitConfirmTimer = 0
@@ -110,6 +111,31 @@ const RECONNECTING_STREAM_STATUSES: ReadonlySet<string> = new Set(['connecting',
 const POLLING_STREAM_STATUSES: ReadonlySet<string> = new Set(['degraded', 'fallback', 'polling', 'polling_fallback', 'long_polling'])
 const BACKGROUND_STREAM_STATUSES: ReadonlySet<string> = new Set(['background', 'background_running', 'detached'])
 const STOPPED_STREAM_STATUSES: ReadonlySet<string> = new Set(['closed', 'done', 'stopped', 'terminal'])
+const TOP_NAV_PROP_ALIASES = {
+  activeView: ['activeView', 'active-view'],
+  activeSession: ['activeSession', 'active-session'],
+  hasActiveGame: ['hasActiveGame', 'has-active-game'],
+  showExitGame: ['showExitGame', 'show-exit-game'],
+  exitDisabled: ['exitDisabled', 'exit-disabled']
+} as const
+const UI_PROP_ALIASES = {
+  audioEnabled: ['audioEnabled', 'audio-enabled'],
+  ttsEnabled: ['ttsEnabled', 'tts-enabled'],
+  ttsAvailable: ['ttsAvailable', 'tts-available']
+} as const
+
+function hasExplicitAliasProp(aliases: readonly string[]): boolean {
+  const rawProps = instance?.vnode.props || {}
+  return aliases.some((key) => Object.prototype.hasOwnProperty.call(rawProps, key))
+}
+
+function hasExplicitTopNavProp(propName: keyof typeof TOP_NAV_PROP_ALIASES): boolean {
+  return hasExplicitAliasProp(TOP_NAV_PROP_ALIASES[propName])
+}
+
+function hasExplicitUiProp(propName: keyof typeof UI_PROP_ALIASES): boolean {
+  return hasExplicitAliasProp(UI_PROP_ALIASES[propName])
+}
 
 function truthy(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true'
@@ -143,36 +169,36 @@ function navItemAriaLabel(item): string {
 const routeActiveView = computed(() => appViewFromRouteSource(route))
 
 const storeActiveView = computed(() => sessionStore.currentView || '')
+const explicitActiveView = computed(() => hasExplicitTopNavProp('activeView') ? props.activeView : '')
 const activeNavView = computed(() => {
   if (routeActiveView.value) return routeActiveView.value
-  return props.activeView || routeActiveView.value || storeActiveView.value || 'lobby'
+  return explicitActiveView.value || storeActiveView.value || 'lobby'
 })
 
 const storeActiveSession = computed<StreamAwareActiveSession>(() => sessionStore.activeSession || {})
+const propActiveSession = computed<StreamAwareActiveSession>(() => hasExplicitTopNavProp('activeSession') ? props.activeSession || {} : {})
+function hasSessionSignal(session: StreamAwareActiveSession): boolean {
+  return Boolean(session?.gameId || session?.game_id || session?.running || session?.mode)
+}
+
 const effectiveActiveSession = computed(() => {
   const session = storeActiveSession.value
-  if (session?.gameId || session?.game_id || session?.running || session?.mode) return session
-  return props.activeSession || {}
+  if (hasSessionSignal(session)) return session
+  return propActiveSession.value
 })
 
 const storeHasActiveGame = computed(() => {
+  if (replayStore.isReplayMode) return false
   if (props.variant === 'match' || activeNavView.value === 'match') return false
   return sessionStore.returnToMatchAvailable || isReturnableGame(gameStore.liveGame)
 })
 
-const effectiveHasActiveGame = computed(() => props.hasActiveGame || storeHasActiveGame.value)
-const effectiveShowExitGame = computed(() => props.showExitGame || (activeNavView.value === 'match' && Boolean(gameStore.liveGame)))
-
-const UI_PROP_ALIASES = {
-  audioEnabled: ['audioEnabled', 'audio-enabled'],
-  ttsEnabled: ['ttsEnabled', 'tts-enabled'],
-  ttsAvailable: ['ttsAvailable', 'tts-available']
-} as const
-
-function hasExplicitUiProp(propName: keyof typeof UI_PROP_ALIASES) {
-  const rawProps = instance?.vnode.props || {}
-  return UI_PROP_ALIASES[propName].some((key) => Object.prototype.hasOwnProperty.call(rawProps, key))
-}
+const propHasActiveGame = computed(() => hasExplicitTopNavProp('hasActiveGame') && Boolean(props.hasActiveGame))
+const effectiveHasActiveGame = computed(() => !replayStore.isReplayMode && (propHasActiveGame.value || storeHasActiveGame.value))
+const propShowExitGame = computed(() => hasExplicitTopNavProp('showExitGame') && Boolean(props.showExitGame))
+const storeShowExitGame = computed(() => activeNavView.value === 'match' && Boolean(gameStore.liveGame))
+const effectiveShowExitGame = computed(() => !replayStore.isReplayMode && (propShowExitGame.value || storeShowExitGame.value))
+const effectiveExitDisabled = computed(() => hasExplicitTopNavProp('exitDisabled') ? Boolean(props.exitDisabled) : false)
 
 const effectiveAudioEnabled = computed(() => hasExplicitUiProp('audioEnabled') ? props.audioEnabled : uiStore.audioEnabled)
 const effectiveTtsEnabled = computed(() => hasExplicitUiProp('ttsEnabled') ? props.ttsEnabled : uiStore.ttsEnabled)
@@ -249,7 +275,7 @@ function clearExitConfirm() {
 }
 
 function requestExitGame() {
-  if (props.exitDisabled) return
+  if (effectiveExitDisabled.value) return
   if (exitConfirming.value) {
     clearExitConfirm()
     emit('exit-game')
@@ -259,7 +285,7 @@ function requestExitGame() {
   exitConfirmTimer = window.setTimeout(clearExitConfirm, 1800)
 }
 
-watch(() => [props.activeView, props.variant, props.showExitGame, activeNavView.value, effectiveShowExitGame.value], clearExitConfirm)
+watch(() => [explicitActiveView.value, props.variant, effectiveShowExitGame.value, effectiveExitDisabled.value, activeNavView.value], clearExitConfirm)
 onBeforeUnmount(clearExitConfirm)
 </script>
 
@@ -361,7 +387,7 @@ onBeforeUnmount(clearExitConfirm)
         class="topbar-exit-game"
         :class="{ confirming: exitConfirming }"
         type="button"
-        :disabled="exitDisabled"
+        :disabled="effectiveExitDisabled"
         :title="exitConfirming ? '再次点击确认退出游戏' : '退出游戏'"
         :aria-label="exitConfirming ? '再次点击确认退出游戏' : '退出游戏'"
         @click="requestExitGame"

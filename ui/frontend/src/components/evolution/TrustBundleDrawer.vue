@@ -449,20 +449,6 @@ async function refresh() {
 
 <style scoped>
 .evo-trust-drawer-backdrop {
-  --logbook-bg: var(--workbench-logbook-bg, #f2dfae);
-  --logbook-bg-texture: var(
-    --workbench-logbook-bg-texture,
-    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
-    var(--logbook-bg)
-  );
-  --logbook-surface: var(--workbench-logbook-surface, rgba(255, 252, 245, 0.7));
-  --logbook-border: var(--workbench-logbook-border, rgba(139, 94, 52, 0.15));
-  --logbook-text: var(--workbench-logbook-text, #3a2a18);
-  --logbook-muted: var(--workbench-logbook-muted, #8b6b4a);
-  --logbook-accent: var(--workbench-logbook-accent, #8b5e34);
-  --logbook-accent-strong: var(--workbench-logbook-accent-strong, #5a3319);
-  --logbook-input-bg: var(--workbench-logbook-input-bg, rgba(255, 255, 250, 0.8));
-  --logbook-danger: var(--workbench-logbook-danger, #993026);
   --evo-bg: var(--logbook-bg);
   --evo-bg-texture: var(--logbook-bg-texture);
   --evo-border: var(--logbook-border, rgba(139, 94, 52, 0.15));

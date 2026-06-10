@@ -7,7 +7,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
 import TopNav from '../../src/components/TopNav.vue'
-import { useGameStore, useSessionStore, useUiStore } from '../../src/stores'
+import { useGameStore, useReplayStore, useSessionStore, useUiStore } from '../../src/stores'
 import type { Game } from '../../src/types/game'
 
 const EmptyRoute = defineComponent({ template: '<div />' })
@@ -54,8 +54,6 @@ async function mountTopNav(path: string, props = {}, setupStores: () => void = (
   return mount(TopNav, {
     props: {
       variant: 'lobby',
-      activeView: 'lobby',
-      activeSession: {},
       ...props,
     },
     global: {
@@ -88,6 +86,18 @@ describe('TopNav router active state', () => {
 
     expect(evolutionButton.classes()).toContain('active')
     expect(evolutionButton.attributes('aria-current')).toBe('page')
+  })
+
+  it('falls back to Pinia active view when App no longer passes activeView', async () => {
+    const wrapper = await mountTopNav('/missing', {}, () => {
+      useSessionStore().setView('logs')
+    })
+    const logsButton = navButton(wrapper, '日志')
+    const lobbyButton = navButton(wrapper, '大厅')
+
+    expect(logsButton.classes()).toContain('active')
+    expect(logsButton.attributes('aria-current')).toBe('page')
+    expect(lobbyButton.classes()).not.toContain('active')
   })
 
   it('uses legacy route hashes before the store while hash routing is still supported', async () => {
@@ -152,6 +162,16 @@ describe('TopNav router active state', () => {
     expect(buttons[0].classes()).not.toContain('muted')
     expect(buttons[1].attributes('disabled')).toBeDefined()
     expect(buttons[1].classes()).toContain('disabled')
+  })
+
+  it('hides return and exit controls during replay even with legacy props present', async () => {
+    const wrapper = await mountTopNav('/match', { variant: 'match', hasActiveGame: true, showExitGame: true }, () => {
+      useGameStore().setGame(gameFixture('replay-live'))
+      useReplayStore().hydrateFromRuntime({ isReplayMode: true })
+    })
+
+    expect(wrapper.find('.active-session-pill').exists()).toBe(false)
+    expect(wrapper.find('button.topbar-exit-game').exists()).toBe(false)
   })
 
   it('keeps legacy navigation events while route ownership is migrating', async () => {

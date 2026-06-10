@@ -30,4 +30,23 @@
   --workbench-logbook-danger: #993026;
   --workbench-logbook-warning: #76510e;
   --workbench-logbook-warning-benchmark: #8b5e34;
+  --logbook-bg: var(--workbench-logbook-bg, #f2dfae);
+  --logbook-bg-texture: var(--workbench-logbook-bg-texture);
+  --logbook-surface: var(--workbench-logbook-surface);
+  --logbook-panel: var(--workbench-logbook-panel);
+  --logbook-panel-solid: var(--workbench-logbook-panel-solid);
+  --logbook-panel-soft: var(--workbench-logbook-panel-soft);
+  --logbook-border: var(--workbench-logbook-border);
+  --logbook-border-strong: var(--workbench-logbook-border-strong);
+  --logbook-text: var(--workbench-logbook-text);
+  --logbook-muted: var(--workbench-logbook-muted);
+  --logbook-accent: var(--workbench-logbook-accent);
+  --logbook-accent-strong: var(--workbench-logbook-accent-strong);
+  --logbook-input-bg: var(--workbench-logbook-input-bg);
+  --logbook-input-border: var(--workbench-logbook-input-border);
+  --logbook-hover: var(--workbench-logbook-hover);
+  --logbook-active-bg: var(--workbench-logbook-active-bg);
+  --logbook-danger: var(--workbench-logbook-danger);
+  --logbook-warning: var(--workbench-logbook-warning);
+  --logbook-warning-benchmark: var(--workbench-logbook-warning-benchmark);
 }
