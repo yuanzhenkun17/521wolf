@@ -27,7 +27,12 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/evolution-runs")
     async def start_evolution(request: EvolutionStartRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
-        await require_runtime_ready(store, scope="evolution_start")
+        await require_runtime_ready(
+            store,
+            scope="evolution_start",
+            model_scope="evolution",
+            model_profile_id=request.model_profile_id,
+        )
         request = automatic_evolution_request(request)
         queued = store.queue_evolution(request)
         if _use_pg_task_queue(store):

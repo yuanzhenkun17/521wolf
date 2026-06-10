@@ -113,7 +113,12 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/benchmark")
     async def start_benchmark(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
-        await require_runtime_ready(store, scope="benchmark_start")
+        await require_runtime_ready(
+            store,
+            scope="benchmark_start",
+            model_scope="benchmark",
+            model_profile_id=request.model_profile_id,
+        )
         batch = store.benchmark_service.queue_benchmark(request)
         if _use_pg_task_queue(store):
             store.benchmark_service.queue_benchmark_task(batch, request)
@@ -123,7 +128,12 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/benchmark/batch")
     async def start_benchmark_batch(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
-        await require_runtime_ready(store, scope="benchmark_start")
+        await require_runtime_ready(
+            store,
+            scope="benchmark_start",
+            model_scope="benchmark",
+            model_profile_id=request.model_profile_id,
+        )
         batch = store.benchmark_service.queue_benchmark(request)
         if _use_pg_task_queue(store):
             store.benchmark_service.queue_benchmark_task(batch, request)

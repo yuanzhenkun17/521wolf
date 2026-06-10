@@ -6,21 +6,45 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ui.backend.health import build_health_payload, probe_llm_connectivity
+from ui.backend.health import build_health_payload, build_runtime_gates, probe_llm_connectivity
 
 _LLM_SCOPES = {"game_start", "benchmark_start", "evolution_start", "settings_model_test"}
 
 
-async def check_runtime_ready(store: Any, *, scope: str) -> dict[str, Any]:
+async def check_runtime_ready(
+    store: Any,
+    *,
+    scope: str,
+    model_scope: str | None = None,
+    model_profile_id: str | None = None,
+) -> dict[str, Any]:
     """Return the runtime gate for *scope*, probing the LLM when required."""
+    normalized_profile_id = str(model_profile_id or "").strip() or None
+    resolved_model_scope = model_scope or _model_scope_for_runtime_scope(scope)
     health = build_health_payload(store)
     gate = _gate_for(health, scope)
-    if scope in _LLM_SCOPES and _needs_llm_probe(gate, health):
-        await probe_llm_connectivity(store, scope=scope)
+    if scope in _LLM_SCOPES and (normalized_profile_id is not None or _needs_llm_probe(gate, health)):
+        probe = await probe_llm_connectivity(
+            store,
+            scope=scope,
+            model_scope=resolved_model_scope,
+            model_profile_id=normalized_profile_id,
+            cache=normalized_profile_id is None,
+        )
         health = build_health_payload(store)
-        gate = _gate_for(health, scope)
+        if normalized_profile_id is None:
+            gate = _gate_for(health, scope)
+        else:
+            checks = health.get("checks") if isinstance(health.get("checks"), dict) else {}
+            checks = dict(checks)
+            checks["llm_connectivity"] = probe
+            gates = build_runtime_gates(checks, store=store)
+            health = {**health, "checks": checks, "gates": gates}
+            gate = _gate_for(health, scope)
     return {
         "scope": scope,
+        "model_scope": resolved_model_scope,
+        "model_profile_id": normalized_profile_id,
         "ready": bool(gate.get("ready")),
         "status": gate.get("status") or "unknown",
         "gate": gate,
@@ -29,9 +53,20 @@ async def check_runtime_ready(store: Any, *, scope: str) -> dict[str, Any]:
     }
 
 
-async def require_runtime_ready(store: Any, *, scope: str) -> dict[str, Any]:
+async def require_runtime_ready(
+    store: Any,
+    *,
+    scope: str,
+    model_scope: str | None = None,
+    model_profile_id: str | None = None,
+) -> dict[str, Any]:
     """Raise HTTP 503 when a runtime gate is not ready."""
-    result = await check_runtime_ready(store, scope=scope)
+    result = await check_runtime_ready(
+        store,
+        scope=scope,
+        model_scope=model_scope,
+        model_profile_id=model_profile_id,
+    )
     if result["ready"]:
         return result
     gate = result["gate"] if isinstance(result.get("gate"), dict) else {}
@@ -43,6 +78,8 @@ async def require_runtime_ready(store: Any, *, scope: str) -> dict[str, Any]:
             "code": "runtime_not_ready",
             "message": _message_for(scope, blockers),
             "scope": scope,
+            "model_scope": result.get("model_scope"),
+            "model_profile_id": result.get("model_profile_id"),
             "blockers": blockers,
             "checks": {name: checks.get(name) for name in blockers if name in checks},
             "actions": result["actions"],
@@ -88,3 +125,12 @@ def _message_for(scope: str, blockers: list[str]) -> str:
     if "artifact_root" in blockers:
         return "任务产物目录不可写，不能启动长任务。"
     return "运行环境未就绪。"
+
+
+def _model_scope_for_runtime_scope(scope: str) -> str:
+    return {
+        "game_start": "game_decision",
+        "benchmark_start": "benchmark",
+        "evolution_start": "evolution",
+        "settings_model_test": "prompt_test",
+    }.get(str(scope or "").strip(), "game_decision")

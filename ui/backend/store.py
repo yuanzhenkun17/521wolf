@@ -232,6 +232,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         scope: str = "game_decision",
         model_profile_id: str | None = None,
     ) -> Any | None:
+        normalized_profile_id = str(model_profile_id or "").strip() or None
+        if normalized_profile_id is not None:
+            return SettingsModelProfileStore.from_backend_store(self).create_llm_for_scope(
+                scope=scope,
+                profile_id=normalized_profile_id,
+            )
         if self.model is not None:
             return self.model
         use_fake = os.environ.get("UI_BACKEND_USE_FAKE_LLM", "").lower() in {"1", "true", "yes"}
@@ -239,7 +245,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             return _FakeModel()
         settings_model = SettingsModelProfileStore.from_backend_store(self).create_llm_for_scope(
             scope=scope,
-            profile_id=model_profile_id,
+            profile_id=normalized_profile_id,
         )
         if settings_model is not None:
             return settings_model

@@ -22,8 +22,19 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
         return build_health_payload(store)
 
     @api.post("/api/health/probes/llm")
-    async def probe_llm(scope: str = "game_start") -> dict[str, Any]:
-        return await probe_llm_connectivity(store, scope=scope)
+    async def probe_llm(
+        scope: str = "game_start",
+        model_scope: str | None = None,
+        model_profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_profile_id = str(model_profile_id or "").strip() or None
+        return await probe_llm_connectivity(
+            store,
+            scope=scope,
+            model_scope=model_scope,
+            model_profile_id=normalized_profile_id,
+            cache=normalized_profile_id is None,
+        )
 
     @api.post("/api/tts/speech/stream")
     async def tts_speech_stream(request: TtsSpeechRequest) -> StreamingResponse:

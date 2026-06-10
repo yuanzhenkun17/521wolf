@@ -213,15 +213,21 @@ def tts_config_check() -> dict[str, Any]:
     return payload
 
 
-def llm_config_check(store: Any) -> dict[str, Any]:
+def llm_config_check(
+    store: Any,
+    *,
+    model_scope: str = "game_decision",
+    model_profile_id: str | None = None,
+) -> dict[str, Any]:
     """Return a local-only LLM configuration check."""
-    if getattr(store, "model", None) is not None:
+    normalized_profile_id = str(model_profile_id or "").strip() or None
+    if getattr(store, "model", None) is not None and normalized_profile_id is None:
         return {
             "status": _OK,
             "message": "LLM is provided by the UI backend process.",
             "source": "injected_model",
         }
-    if _env_true("UI_BACKEND_USE_FAKE_LLM"):
+    if _env_true("UI_BACKEND_USE_FAKE_LLM") and normalized_profile_id is None:
         return {
             "status": _DEGRADED,
             "message": "UI backend is explicitly using the fake LLM.",
@@ -229,17 +235,45 @@ def llm_config_check(store: Any) -> dict[str, Any]:
             "degraded_features": ["real model play", "benchmark", "evolution"],
             "actions": ["Unset UI_BACKEND_USE_FAKE_LLM for real model runs."],
         }
-    settings_runtime = _settings_model_runtime(store, scope="game_decision")
+    try:
+        settings_runtime = _settings_model_runtime(
+            store,
+            scope=model_scope,
+            model_profile_id=normalized_profile_id,
+            strict=normalized_profile_id is not None,
+        )
+    except Exception as exc:  # noqa: BLE001 - converted to redacted health diagnostics.
+        return {
+            "status": _ERROR,
+            "message": "Selected Settings model profile is unavailable.",
+            "source": "settings_profile",
+            "model_scope": model_scope,
+            "model_profile_id": normalized_profile_id,
+            "error": _safe_error(exc),
+            "degraded_features": ["real model play", "benchmark", "evolution"],
+            "actions": ["Open Settings and test the selected model profile."],
+        }
     if settings_runtime is not None:
         runtime = settings_runtime.get("model_runtime") if isinstance(settings_runtime.get("model_runtime"), dict) else {}
         return {
             "status": _OK,
             "message": "LLM configuration is available from local Settings.",
             "source": "settings_profile",
+            "model_scope": model_scope,
             "model": str(settings_runtime.get("model_id") or ""),
             "model_profile_id": runtime.get("model_profile_id"),
             "base_url_host": runtime.get("base_url_host"),
             "model_config_hash": settings_runtime.get("model_config_hash"),
+        }
+    if normalized_profile_id is not None:
+        return {
+            "status": _ERROR,
+            "message": "Selected Settings model profile did not resolve to a usable runtime.",
+            "source": "settings_profile",
+            "model_scope": model_scope,
+            "model_profile_id": normalized_profile_id,
+            "degraded_features": ["real model play", "benchmark", "evolution"],
+            "actions": ["Open Settings and test the selected model profile."],
         }
     try:
         config = load_llm_config()
@@ -259,6 +293,7 @@ def llm_config_check(store: Any) -> dict[str, Any]:
         "status": _OK,
         "message": "LLM configuration is available.",
         "source": "configured",
+        "model_scope": model_scope,
         "model": str(config.get("model") or ""),
         "base_url": _public_url(str(config.get("base_url") or "")),
         "timeout": config.get("timeout"),
@@ -286,47 +321,78 @@ def llm_connectivity_status(store: Any) -> dict[str, Any]:
     }
 
 
-async def probe_llm_connectivity(store: Any, *, scope: str = "game_start") -> dict[str, Any]:
+async def probe_llm_connectivity(
+    store: Any,
+    *,
+    scope: str = "game_start",
+    model_scope: str | None = None,
+    model_profile_id: str | None = None,
+    cache: bool = True,
+) -> dict[str, Any]:
     """Probe the effective LLM and cache a redacted result."""
-    config = llm_config_check(store)
+    resolved_model_scope = model_scope or _model_scope_for_runtime_scope(scope)
+    normalized_profile_id = str(model_profile_id or "").strip() or None
+    config = llm_config_check(
+        store,
+        model_scope=resolved_model_scope,
+        model_profile_id=normalized_profile_id,
+    )
     if config.get("status") == _ERROR:
         result = {
             "status": _ERROR,
             "scope": scope,
+            "model_scope": resolved_model_scope,
             "checked_at": beijing_now_iso(),
             "message": "LLM configuration is missing or invalid.",
             "source": config.get("source"),
+            "model": config.get("model"),
+            "model_profile_id": config.get("model_profile_id"),
+            "model_config_hash": config.get("model_config_hash"),
             "actions": list(config.get("actions") or []),
             "error": config.get("error"),
         }
-        _set_llm_probe_cache(store, result, success=False)
+        if cache:
+            _set_llm_probe_cache(store, result, success=False)
         return result
 
     started = time.perf_counter()
     try:
-        llm = _probe_model(store)
+        llm = _probe_model(
+            store,
+            model_scope=resolved_model_scope,
+            model_profile_id=normalized_profile_id,
+        )
         await llm.ainvoke(_PROBE_PROMPT)
         result = {
             "status": _OK,
             "scope": scope,
+            "model_scope": resolved_model_scope,
             "checked_at": beijing_now_iso(),
             "latency_ms": int(round((time.perf_counter() - started) * 1000)),
             "message": "LLM connectivity probe succeeded.",
             "source": config.get("source") or "configured",
             "model": config.get("model"),
+            "model_profile_id": config.get("model_profile_id"),
+            "model_config_hash": config.get("model_config_hash"),
+            "base_url_host": config.get("base_url_host"),
             "base_url": config.get("base_url"),
         }
-        _set_llm_probe_cache(store, result, success=True)
+        if cache:
+            _set_llm_probe_cache(store, result, success=True)
         return result
     except Exception as exc:  # noqa: BLE001 - converted to runtime gate diagnostics.
         result = {
             "status": _ERROR,
             "scope": scope,
+            "model_scope": resolved_model_scope,
             "checked_at": beijing_now_iso(),
             "latency_ms": int(round((time.perf_counter() - started) * 1000)),
             "message": "LLM connectivity probe failed.",
             "source": config.get("source") or "configured",
             "model": config.get("model"),
+            "model_profile_id": config.get("model_profile_id"),
+            "model_config_hash": config.get("model_config_hash"),
+            "base_url_host": config.get("base_url_host"),
             "base_url": config.get("base_url"),
             "error": _safe_error(exc),
             "actions": [
@@ -334,7 +400,8 @@ async def probe_llm_connectivity(store: Any, *, scope: str = "game_start") -> di
                 "Open Settings and run the model connection test.",
             ],
         }
-        _set_llm_probe_cache(store, result, success=False)
+        if cache:
+            _set_llm_probe_cache(store, result, success=False)
         return result
 
 
@@ -480,26 +547,51 @@ def _task_worker_required(store: Any | None = None) -> bool:
     )
 
 
-def _probe_model(store: Any) -> Any:
-    if getattr(store, "model", None) is not None:
+def _probe_model(
+    store: Any,
+    *,
+    model_scope: str = "game_decision",
+    model_profile_id: str | None = None,
+) -> Any:
+    normalized_profile_id = str(model_profile_id or "").strip() or None
+    if getattr(store, "model", None) is not None and normalized_profile_id is None:
         return store.model
-    if _env_true("UI_BACKEND_USE_FAKE_LLM"):
+    if _env_true("UI_BACKEND_USE_FAKE_LLM") and normalized_profile_id is None:
         return store.model_for_run()
     model_for_run = getattr(store, "model_for_run", None)
     if callable(model_for_run):
-        return model_for_run(scope="game_decision")
+        return model_for_run(scope=model_scope, model_profile_id=normalized_profile_id)
+    if normalized_profile_id is not None:
+        raise RuntimeError("model profile resolver is unavailable")
     return create_llm()
 
 
-def _settings_model_runtime(store: Any, *, scope: str) -> dict[str, Any] | None:
+def _settings_model_runtime(
+    store: Any,
+    *,
+    scope: str,
+    model_profile_id: str | None = None,
+    strict: bool = False,
+) -> dict[str, Any] | None:
     resolver = getattr(store, "settings_model_runtime_for_scope", None)
     if not callable(resolver):
         return None
     try:
-        runtime = resolver(scope)
+        runtime = resolver(scope, model_profile_id=model_profile_id)
     except Exception:  # noqa: BLE001 - health must keep reporting public fallback diagnostics.
+        if strict:
+            raise
         return None
     return runtime if isinstance(runtime, dict) and runtime else None
+
+
+def _model_scope_for_runtime_scope(scope: str) -> str:
+    return {
+        "game_start": "game_decision",
+        "benchmark_start": "benchmark",
+        "evolution_start": "evolution",
+        "settings_model_test": "prompt_test",
+    }.get(str(scope or "").strip(), "game_decision")
 
 
 def _llm_probe_cache(store: Any) -> dict[str, Any] | None:

@@ -1676,6 +1676,101 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
     assert "override is not allowed" in exc_info.value.detail["detail"]
 
 
+def test_benchmark_start_probes_selected_model_profile_before_queueing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import ui.backend.settings_model_profiles as settings_model_profiles
+
+    class ProfileProbeModel:
+        def __init__(self, *, fail: bool = False) -> None:
+            self._fail = fail
+
+        async def ainvoke(self, messages: Any) -> Any:
+            assert messages in {
+                "Return exactly: ok",
+                settings_model_profiles.MODEL_PROFILE_TEST_PROMPT,
+            }
+            if self._fail:
+                raise TimeoutError("selected profile timed out with sk-bad-profile-secret")
+            return type("Result", (), {"content": "ok"})()
+
+    create_calls: list[dict[str, Any]] = []
+
+    def fake_create_llm(**kwargs: Any) -> ProfileProbeModel:
+        create_calls.append(dict(kwargs))
+        return ProfileProbeModel(fail=kwargs.get("model") == "bad-benchmark-model")
+
+    monkeypatch.delenv("UI_BACKEND_USE_FAKE_LLM", raising=False)
+    for key in ("WEREWOLF_LLM_API_KEY", "WEREWOLF_LLM_BASE_URL", "WEREWOLF_LLM_MODEL"):
+        monkeypatch.setenv(key, "")
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
+
+    app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=None)
+    store = app.state.backend_store
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        good_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Good Game Model",
+                "provider": "openai_compatible",
+                "base_url": "https://good.example.test/v1",
+                "model": "good-game-model",
+                "api_key": "sk-good-profile-secret",
+                "default_scopes": {"game_decision": True},
+            },
+        )
+        bad_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Bad Benchmark Model",
+                "provider": "openai_compatible",
+                "base_url": "https://bad.example.test/v1",
+                "model": "bad-benchmark-model",
+                "api_key": "sk-bad-profile-secret",
+                "default_scopes": {"benchmark": True},
+            },
+        )
+        bad_profile_id = bad_response.json()["profile"]["profile_id"]
+        start_response = client.post(
+            "/api/benchmark",
+            json={
+                "target_type": "model",
+                "battle_games": 1,
+                "max_days": 1,
+                "model_profile_id": bad_profile_id,
+            },
+        )
+
+    assert good_response.status_code == 200
+    assert bad_response.status_code == 200
+    assert start_response.status_code == 503
+    payload = start_response.json()
+    assert payload["error"]["code"] == "runtime_not_ready"
+    detail = payload["detail"]
+    assert detail["scope"] == "benchmark_start"
+    assert detail["model_scope"] == "benchmark"
+    assert detail["model_profile_id"] == bad_profile_id
+    assert detail["blockers"] == ["llm_connectivity"]
+    llm_check = detail["checks"]["llm_connectivity"]
+    assert llm_check["status"] == "error"
+    assert llm_check["source"] == "settings_profile"
+    assert llm_check["model"] == "bad-benchmark-model"
+    assert llm_check["model_profile_id"] == bad_profile_id
+    assert llm_check["error"]["type"] == "TimeoutError"
+    assert store.evolution_batches == {}
+    assert create_calls[-1]["model"] == "bad-benchmark-model"
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "sk-bad-profile-secret" not in serialized
+    assert "sk-good-profile-secret" not in serialized
+
+
 def test_error_handlers_keep_detail_and_add_error_shape(tmp_path: Path) -> None:
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=FakeModel())
 
