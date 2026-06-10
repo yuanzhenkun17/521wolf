@@ -84,6 +84,21 @@ class TaskArtifactRepository:
         ).fetchall()
         return [_artifact_from_row(row) for row in rows]
 
+    def list_recent(self, *, task_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        if task_id:
+            rows = self._conn.execute(
+                f"SELECT {_artifact_columns_sql()} FROM ui_task_artifacts "
+                "WHERE task_id = ? ORDER BY created_at DESC, artifact_id LIMIT ?",
+                (task_id, int(limit)),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                f"SELECT {_artifact_columns_sql()} FROM ui_task_artifacts "
+                "ORDER BY created_at DESC, artifact_id LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [_artifact_from_row(row) for row in rows]
+
     def delete_for_task(self, task_id: str) -> int:
         cursor = self._conn.execute("DELETE FROM ui_task_artifacts WHERE task_id = ?", (task_id,))
         return int(cursor.rowcount)

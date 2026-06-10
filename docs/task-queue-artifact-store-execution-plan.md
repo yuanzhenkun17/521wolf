@@ -121,6 +121,15 @@ PostgreSQL-backed task queue
 - 默认 cleanup 范围不变，不会误扫 `runs/tasks`。
 - 显式开启后，`runs/tasks/<task_id>` 会进入 age/size retention plan，并沿用 dry-run 默认、安全 path 校验和 execute 清理流程。
 
+已完成 Phase H2 Task Operations CLI：
+
+- 新增 `app.tools.manage_ui_tasks` 单机运维命令：
+  - `list --status queued,running --limit N`
+  - `cancel <task_id>`
+  - `retry <task_id>`
+  - `verify-artifacts [--task-id <task_id>]`
+- `verify-artifacts` 会校验 artifact 文件存在性、`sha256` 和 `size_bytes`，发现 mismatch 时返回非 0，便于部署 smoke 或 cron 检查。
+
 已完成 Phase I Frontend Task/Artifact UI：
 
 - 新增前端 task domain normalizers、task API service 与类型导出，覆盖 list/detail/cancel/retry/events/artifacts/download URL。
@@ -158,6 +167,8 @@ uv run pytest tests/test_ui_backend_app.py::test_langfuse_task_routes_enqueue_pg
 uv run pytest tests/test_langfuse_experiment_verification.py tests/test_langfuse_annotation_export.py tests/test_langfuse_link_manifest.py -q
 uv run pytest tests/test_api_contracts.py -q -k "openapi or langfuse or task"
 uv run pytest tests/test_tools_cleanup_runs.py -q
+uv run pytest tests/test_tools_manage_ui_tasks.py tests/test_task_queue_artifacts.py -q
+uv run ruff check app/tools/manage_ui_tasks.py storage/ui/task_artifact_repo.py tests/test_tools_manage_ui_tasks.py
 npm run test:unit --prefix ui/frontend -- tests/unit/domain/domainAndServices.test.ts tests/unit/router/legacyViewNavigation.test.ts tests/unit/router/legacyHashRedirect.test.ts tests/unit/stores/coreStores.test.ts
 npm run test:component --prefix ui/frontend -- tests/component/TopNav.test.ts tests/component/AppRouterPinia.test.ts
 npm run typecheck --prefix ui/frontend
@@ -603,12 +614,12 @@ Steps：
    - succeeded/failed 超过 N 天清理 artifacts。
    - retained release artifacts 可打标不删。
    - DB metadata 可保留更久，文件可先删。
-3. 新增 health check：
+3. 新增 health check：（已完成 task control health）
    - artifact root exists/writable。
    - worker freshness。
    - queue backlog。
    - stuck running tasks。
-4. 新增运维命令：
+4. 新增运维命令：（已完成 `app.tools.manage_ui_tasks`）
    - list queued/running tasks。
    - retry interrupted task。
    - cancel task。
@@ -709,6 +720,8 @@ ui/frontend/tests/task-status-recovery-contract.test.js
 uv run alembic upgrade head
 curl http://127.0.0.1:8000/api/health
 curl http://127.0.0.1:8000/api/tasks
+uv run python -m app.tools.manage_ui_tasks list --status queued,running --limit 20
+uv run python -m app.tools.manage_ui_tasks verify-artifacts --limit 100
 ```
 
 ## 最小可上线版本
