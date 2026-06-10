@@ -82,7 +82,7 @@ PostgreSQL-backed task queue
   - `diagnostics.json`（存在 diagnostics 时；batch 会汇总 child run diagnostics）
 - `BackendStore.create_task_worker_loop()` 现在同时注册 benchmark 与 evolution executors。
 
-当前 P4 后端收口已覆盖 queue 状态 overlay 与 task artifacts；仍未改前端任务中心，也未把 full-local research runner 的本地产物 manifest 纳入这一套 artifact 命名。
+P4 后端收口已覆盖 queue 状态 overlay 与 task artifacts；P6 已补齐前端任务中心与共享 Artifact UI。full-local research runner 的本地产物 manifest 仍沿用原命名体系，暂不作为本轮单机 queue/artifact 上线 blocker。
 
 已完成 Phase F Evolution Queue Authority 收口：
 
