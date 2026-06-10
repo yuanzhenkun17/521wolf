@@ -124,7 +124,16 @@ test('game store hydrates snapshots and clears live watch state', () => {
     watchRunning: true,
     roleAssignmentComplete: false,
     judgeBoardStarted: true,
-    judgeBoardStarting: false
+    judgeBoardStarting: false,
+    promptText: '今晚行动',
+    judgeStripMessage: [{ message: '法官提示' }],
+    playerIdentityList: [{ id: 1, speaking: true }],
+    matchRecordLogs: [{ message: '日志' }],
+    livingPlayers: [{ id: 1 }],
+    speakerCarousel: [{ key: 1, label: '1号' }],
+    speakerMessage: '正在发言',
+    sceneVoteTally: [{ target: 1, count: 2 }],
+    sceneEffects: [{ type: 'speech' }]
   })
 
   assert.equal(store.liveGame?.game_id, 'game-1')
@@ -134,6 +143,15 @@ test('game store hydrates snapshots and clears live watch state', () => {
   assert.equal(store.roleAssignmentComplete, false)
   assert.equal(store.judgeBoardStarted, true)
   assert.equal(store.judgeBoardStarting, false)
+  assert.equal(store.promptText, '今晚行动')
+  assert.deepEqual(store.judgeStripMessage, [{ message: '法官提示' }])
+  assert.deepEqual(store.playerIdentityList, [{ id: 1, speaking: true }])
+  assert.deepEqual(store.matchRecordLogs, [{ message: '日志' }])
+  assert.deepEqual(store.livingPlayers, [{ id: 1 }])
+  assert.deepEqual(store.speakerCarousel, [{ key: 1, label: '1号' }])
+  assert.equal(store.speakerMessage, '正在发言')
+  assert.deepEqual(store.sceneVoteTally, [{ target: 1, count: 2 }])
+  assert.deepEqual(store.sceneEffects, [{ type: 'speech' }])
   assert.equal(store.isNight, true)
   assert.equal(store.isWatch, true)
 
@@ -162,6 +180,15 @@ test('game store hydrates snapshots and clears live watch state', () => {
   assert.equal(store.roleAssignmentComplete, false)
   assert.equal(store.judgeBoardStarted, false)
   assert.equal(store.judgeBoardStarting, false)
+  assert.equal(store.promptText, '')
+  assert.deepEqual(store.judgeStripMessage, [])
+  assert.deepEqual(store.playerIdentityList, [])
+  assert.deepEqual(store.matchRecordLogs, [])
+  assert.deepEqual(store.livingPlayers, [])
+  assert.deepEqual(store.speakerCarousel, [])
+  assert.equal(store.speakerMessage, '')
+  assert.deepEqual(store.sceneVoteTally, [])
+  assert.deepEqual(store.sceneEffects, [])
 
   store.hydrateFromRuntime({
     roleAssignmentComplete: null,
@@ -350,6 +377,15 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     roleAssignmentComplete: ref(true),
     judgeBoardStarted: ref(true),
     judgeBoardStarting: ref(false),
+    promptText: ref('runtime prompt'),
+    judgeStripMessage: ref([{ message: 'runtime judge' }]),
+    playerIdentityList: ref([{ id: 2, speaking: true }]),
+    matchRecordLogs: ref([{ message: 'runtime log' }]),
+    livingPlayers: ref([{ id: 2 }]),
+    speakerCarousel: ref([{ key: 2, label: '2号' }]),
+    speakerMessage: ref('runtime speaker'),
+    sceneVoteTally: ref([{ target: 2, count: 1 }]),
+    sceneEffects: ref([{ type: 'vote' }]),
     gameHistory: ref([historyGame]),
     selectedHistoryGameId: ref('runtime-history'),
     selectedHistoryGame: ref(historyGame),
@@ -400,7 +436,16 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     'watchRunning',
     'roleAssignmentComplete',
     'judgeBoardStarted',
-    'judgeBoardStarting'
+    'judgeBoardStarting',
+    'promptText',
+    'judgeStripMessage',
+    'playerIdentityList',
+    'matchRecordLogs',
+    'livingPlayers',
+    'speakerCarousel',
+    'speakerMessage',
+    'sceneVoteTally',
+    'sceneEffects'
   ])
   assert.equal(payloads.game.liveGame?.game_id, 'runtime-game')
   assert.equal(payloads.game.game?.game_id, 'runtime-replay')
@@ -411,6 +456,15 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
   assert.equal(gameStore.roleAssignmentComplete, true)
   assert.equal(gameStore.judgeBoardStarted, true)
   assert.equal(gameStore.judgeBoardStarting, false)
+  assert.equal(gameStore.promptText, 'runtime prompt')
+  assert.deepEqual(gameStore.judgeStripMessage, [{ message: 'runtime judge' }])
+  assert.deepEqual(gameStore.playerIdentityList, [{ id: 2, speaking: true }])
+  assert.deepEqual(gameStore.matchRecordLogs, [{ message: 'runtime log' }])
+  assert.deepEqual(gameStore.livingPlayers, [{ id: 2 }])
+  assert.deepEqual(gameStore.speakerCarousel, [{ key: 2, label: '2号' }])
+  assert.equal(gameStore.speakerMessage, 'runtime speaker')
+  assert.deepEqual(gameStore.sceneVoteTally, [{ target: 2, count: 1 }])
+  assert.deepEqual(gameStore.sceneEffects, [{ type: 'vote' }])
   assert.equal(historyStore.games[0].game_id, 'runtime-history')
   assert.equal(historyStore.historyWorkspaceTab, 'archive')
   assert.deepEqual(historyStore.pagination, { total: 6, limit: 2, offset: 4, returned: 2 })
@@ -480,6 +534,15 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
     roleAssignmentComplete: ref(false),
     judgeBoardStarted: ref(false),
     judgeBoardStarting: ref(false),
+    promptText: ref(''),
+    judgeStripMessage: ref([]),
+    playerIdentityList: ref([]),
+    matchRecordLogs: ref([]),
+    livingPlayers: ref([]),
+    speakerCarousel: ref([]),
+    speakerMessage: ref(''),
+    sceneVoteTally: ref([]),
+    sceneEffects: ref([]),
     gameHistory: ref([]),
     selectedHistoryGameId: ref(null),
     selectedHistoryGame: ref(null),

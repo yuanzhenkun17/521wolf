@@ -48,14 +48,7 @@ const logsPropKeys = [
 
 const matchPropKeys = [
   'skipIntroGameId',
-  'promptText',
-  'judgeStripMessage',
-  'playerIdentityList',
   'chatLogExpanded',
-  'matchRecordLogs',
-  'livingPlayers',
-  'speakerCarousel',
-  'speakerMessage',
   'humanPlayer',
   'roleName',
   'skillState',
@@ -77,8 +70,6 @@ const matchPropKeys = [
   'actionChoice',
   'burstArmed',
   'actionTarget',
-  'sceneVoteTally',
-  'sceneEffects',
   'playerLabel',
   'roleIconImage',
   'logSpeaker',

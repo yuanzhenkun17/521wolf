@@ -42,7 +42,16 @@ export const runtimeHydrationKeys = {
     'watchRunning',
     'roleAssignmentComplete',
     'judgeBoardStarted',
-    'judgeBoardStarting'
+    'judgeBoardStarting',
+    'promptText',
+    'judgeStripMessage',
+    'playerIdentityList',
+    'matchRecordLogs',
+    'livingPlayers',
+    'speakerCarousel',
+    'speakerMessage',
+    'sceneVoteTally',
+    'sceneEffects'
   ],
   history: [
     'gameHistory',

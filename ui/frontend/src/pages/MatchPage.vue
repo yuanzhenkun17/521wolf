@@ -186,7 +186,16 @@ const MATCH_STORE_PROP_ALIASES = {
   watchRunning: ['watchRunning', 'watch-running'],
   roleAssignmentComplete: ['roleAssignmentComplete', 'role-assignment-complete'],
   judgeBoardStarted: ['judgeBoardStarted', 'judge-board-started'],
-  judgeBoardStarting: ['judgeBoardStarting', 'judge-board-starting']
+  judgeBoardStarting: ['judgeBoardStarting', 'judge-board-starting'],
+  promptText: ['promptText', 'prompt-text'],
+  judgeStripMessage: ['judgeStripMessage', 'judge-strip-message'],
+  playerIdentityList: ['playerIdentityList', 'player-identity-list'],
+  matchRecordLogs: ['matchRecordLogs', 'match-record-logs'],
+  livingPlayers: ['livingPlayers', 'living-players'],
+  speakerCarousel: ['speakerCarousel', 'speaker-carousel'],
+  speakerMessage: ['speakerMessage', 'speaker-message'],
+  sceneVoteTally: ['sceneVoteTally', 'scene-vote-tally'],
+  sceneEffects: ['sceneEffects', 'scene-effects']
 } as const
 
 function hasExplicitMatchProp(propName: keyof typeof MATCH_STORE_PROP_ALIASES) {
@@ -236,6 +245,33 @@ const judgeBoardStarted = computed(() => (
 const judgeBoardStarting = computed(() => (
   hasExplicitMatchProp('judgeBoardStarting') ? props.judgeBoardStarting : gameStore.judgeBoardStarting
 ))
+const promptText = computed(() => (
+  hasExplicitMatchProp('promptText') ? props.promptText : gameStore.promptText
+))
+const judgeStripMessage = computed<JudgeStripMessage[]>(() => (
+  hasExplicitMatchProp('judgeStripMessage') ? props.judgeStripMessage : gameStore.judgeStripMessage as JudgeStripMessage[]
+))
+const playerIdentityList = computed<MatchPlayer[]>(() => (
+  hasExplicitMatchProp('playerIdentityList') ? props.playerIdentityList : gameStore.playerIdentityList as MatchPlayer[]
+))
+const matchRecordLogs = computed<LooseRecord[]>(() => (
+  hasExplicitMatchProp('matchRecordLogs') ? props.matchRecordLogs : gameStore.matchRecordLogs as LooseRecord[]
+))
+const livingPlayers = computed<LooseRecord[]>(() => (
+  hasExplicitMatchProp('livingPlayers') ? props.livingPlayers : gameStore.livingPlayers as LooseRecord[]
+))
+const speakerCarousel = computed<CarouselItem[]>(() => (
+  hasExplicitMatchProp('speakerCarousel') ? props.speakerCarousel : gameStore.speakerCarousel as CarouselItem[]
+))
+const speakerMessage = computed(() => (
+  hasExplicitMatchProp('speakerMessage') ? props.speakerMessage : gameStore.speakerMessage
+))
+const sceneVoteTally = computed<LooseRecord[]>(() => (
+  hasExplicitMatchProp('sceneVoteTally') ? props.sceneVoteTally : gameStore.sceneVoteTally as LooseRecord[]
+))
+const sceneEffects = computed<LooseRecord[]>(() => (
+  hasExplicitMatchProp('sceneEffects') ? props.sceneEffects : gameStore.sceneEffects as LooseRecord[]
+))
 
 function phaseName(phase: unknown) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : displayPhaseLabel(phase)
@@ -278,7 +314,7 @@ const introProgressPercent = computed(() => {
   return `${Math.max(6, Math.min(100, Math.round((Number.isFinite(progress) ? progress : 0.08) * 100)))}%`
 })
 const activeSeatLabel = computed(() => {
-  const player = props.playerIdentityList.find((item) => item?.speaking)
+  const player = playerIdentityList.value.find((item) => item?.speaking)
   return player?.displaySeat == null ? '' : String(player.displaySeat)
 })
 const introReady = computed(() =>
