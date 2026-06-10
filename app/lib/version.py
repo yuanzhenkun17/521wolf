@@ -823,9 +823,9 @@ class PostgresVersionRegistry:
         battle_result: dict[str, Any] | None = None,
     ) -> None:
         _validate_name(role, "role")
-        try:
-            row = self._repo.begin_rejected_update(role)
-            existing = _dedupe_rejected_rows(_rejected_rows_from_value(row["proposals_json"] if row else []))
+
+        def build_payload(existing_payload: Any | None) -> str:
+            existing = _dedupe_rejected_rows(_rejected_rows_from_value(existing_payload))
             seen = {_rejected_proposal_key(item) for item in existing}
             for proposal in proposals:
                 row_data = dict(proposal)
@@ -838,10 +838,9 @@ class PostgresVersionRegistry:
                 existing.append(row_data)
                 seen.add(key)
             payload = existing[-_REJECTED_BUFFER_LIMIT:]
-            self._repo.update_rejected(role=role, proposals_json=json.dumps(payload, ensure_ascii=False))
-        except Exception:
-            self._repo.rollback()
-            raise
+            return json.dumps(payload, ensure_ascii=False)
+
+        self._repo.save_rejected_payload(role=role, build_payload=build_payload)
 
     def load_rejected(self, role: str) -> list[dict[str, Any]]:
         _validate_name(role, "role")

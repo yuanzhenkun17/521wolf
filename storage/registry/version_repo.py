@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from app.util.time import beijing_now_iso
@@ -341,25 +342,28 @@ class RegistryVersionRepository:
         self._conn.commit()
         return result
 
-    def begin_rejected_update(self, role: str) -> StorageRow | None:
+    def save_rejected_payload(self, *, role: str, build_payload: Callable[[Any | None], str]) -> None:
         begin_write(self._conn)
-        self._conn.execute(
-            "INSERT INTO rejected_proposals (role, proposals_json) VALUES (?, ?) "
-            "ON CONFLICT(role) DO NOTHING",
-            (role, "[]"),
-        )
-        return execute_for_update(
-            self._conn,
-            "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
-            (role,),
-        ).fetchone()
-
-    def update_rejected(self, *, role: str, proposals_json: str) -> None:
-        self._conn.execute(
-            "UPDATE rejected_proposals SET proposals_json = ? WHERE role = ?",
-            (proposals_json, role),
-        )
-        self._conn.commit()
+        try:
+            self._conn.execute(
+                "INSERT INTO rejected_proposals (role, proposals_json) VALUES (?, ?) "
+                "ON CONFLICT(role) DO NOTHING",
+                (role, "[]"),
+            )
+            row = execute_for_update(
+                self._conn,
+                "SELECT proposals_json FROM rejected_proposals WHERE role = ?",
+                (role,),
+            ).fetchone()
+            proposals_json = build_payload(row["proposals_json"] if row is not None else None)
+            self._conn.execute(
+                "UPDATE rejected_proposals SET proposals_json = ? WHERE role = ?",
+                (proposals_json, role),
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def load_rejected_payload(self, role: str) -> Any | None:
         row = self._conn.execute(
@@ -368,9 +372,6 @@ class RegistryVersionRepository:
         ).fetchone()
         self._conn.commit()
         return row["proposals_json"] if row is not None else None
-
-    def rollback(self) -> None:
-        self._conn.rollback()
 
     def current_baseline_unlocked(self, role: str, rows: list[Any]) -> str | None:
         row = self._conn.execute(
