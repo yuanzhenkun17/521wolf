@@ -5,8 +5,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable
 
-from storage.game_read_model import (
-    GameReadRepository,
+from storage.game_history_rules import (
     death_target_ids,
     history_phase_key,
     history_phase_title,
@@ -14,6 +13,7 @@ from storage.game_read_model import (
     row_history_phase,
     sheriff_id_after_log,
 )
+from storage.game_read_model import GameReadRepository
 from ui.backend.game_history_helpers import (
     _evidence_source_context,
     _paginate_history_rows,

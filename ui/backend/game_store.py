@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from storage.game_history_rules import row_history_phase
 from storage.game_store import delete_game_from_env
-from storage.game_read_model import row_history_phase
 from storage.provider import storage_provider_from_env as storage_provider_from_env
 from storage.runtime import GamePersistence
 from ui.backend.history_index import GameHistoryIndex, history_facets, source_counts
