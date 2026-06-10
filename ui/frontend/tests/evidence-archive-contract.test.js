@@ -40,9 +40,9 @@ test('legacy #evidence links are not routed or recognized', () => {
     ['router helper parses logs workspace query aliases', /export function historyDeepLinkFromHash\([\s\S]*workspace: optionalHistoryWorkspaceTab\(query\.get\('workspace'\) \|\| query\.get\('tab'\)\)/],
   ])
   assertSourceContract(history, [
-    ['useGameHistory imports logs deep link helpers', /import \{ historyDeepLinkFromHash, logsHash \} from '..\/router\/workbenchDeepLinks'/],
+    ['useGameHistory imports route-first logs deep link helpers', /import \{ historyDeepLinkFromHash, historyDeepLinkFromRoute, logsHash \} from '..\/router\/workbenchDeepLinks'/],
     ['useGameHistory reads the current hash through legacy navigation helpers', /import \{[\s\S]*currentLegacyHash[\s\S]*writeLegacyHashForView[\s\S]*\} from '..\/router\/legacyViewNavigation'/],
-    ['hash routing delegates parsing to router helper', /return historyDeepLinkFromHash\(currentLegacyHash\(\)\)/],
+    ['hash routing prefers route query before legacy hash fallback', /return routeSource[\s\S]*historyDeepLinkFromRoute\(routeSource\)[\s\S]*historyDeepLinkFromHash\(currentLegacyHash\(\)\)/],
     ['logs deep links are written through legacy navigation helpers', /writeLegacyHashForView\('logs', hash\)/],
     ['openLogPage stores the requested workspace', /state\.historyWorkspaceTab\.value = targetWorkspace/],
   ])
@@ -67,8 +67,11 @@ test('LogsPage owns archive and review workspaces for evidence details', () => {
     ['LogsPage binds history workspace tab through v-model', /v-model:history-workspace-tab="historyWorkspaceTab"/],
   ])
   assertSourceContract(appRuntimeProps, [
-    ['logs runtime props include the shared logs workspace model', /const logsPropKeys = \[[\s\S]*'historyWorkspaceTab'[\s\S]*\]/],
+    ['logs runtime props still carry formatter/action props', /const logsPropKeys = \[[\s\S]*'historyPhaseName'[\s\S]*'loadArchive'[\s\S]*'loadReview'[\s\S]*\]/],
   ])
+  assert.doesNotMatch(appRuntimeProps, /'historyWorkspaceTab'/)
+  assert.doesNotMatch(appRuntimeProps, /'selectedHistoryPage'/)
+  assert.doesNotMatch(appRuntimeProps, /'historyLogs'/)
   assertSourceContract(refs, [
     ['runtime stores the selected logs workspace', /historyWorkspaceTab:\s*ref\('phase'\)/],
   ])

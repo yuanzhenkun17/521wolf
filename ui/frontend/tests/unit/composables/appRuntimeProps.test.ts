@@ -10,6 +10,8 @@ import {
 
 test('unwraps runtime refs when building page prop payloads', () => {
   const apiFetch = () => Promise.resolve({})
+  const roleIconImage = () => '/role-icons/optimized/villager.webp'
+  const loadArchive = () => Promise.resolve({})
   const runtime = {
     currentView: ref('logs'),
     gameHistory: ref([{ game_id: 'history-a' }]),
@@ -21,7 +23,15 @@ test('unwraps runtime refs when building page prop payloads', () => {
     game: ref({ game_id: 'match-a' }),
     speech: ref('runtime speech'),
     actionTarget: ref(2),
-    selectedHistoryPageKey: ref('day-1')
+    selectedHistoryPageKey: ref('day-1'),
+    historyWorkspaceTab: ref('archive'),
+    selectedHistoryPage: ref({ key: 'day-1' }),
+    historyLogs: ref([{ message: 'runtime log' }]),
+    playerAssessmentScores: ref([{ player: { id: 1 } }]),
+    archiveByGameId: ref({ 'history-a': { archive_id: 'archive-a' } }),
+    archiveLoading: ref(true),
+    roleIconImage,
+    loadArchive
   }
 
   assert.equal(bindRuntimeValue(ref('value-a')), 'value-a')
@@ -34,7 +44,15 @@ test('unwraps runtime refs when building page prop payloads', () => {
   const props = useAppRuntimeProps(runtime)
 
   assert.equal('gameHistory' in props.logsProps.value, false)
-  assert.equal(props.logsProps.value.selectedHistoryPageKey, 'day-1')
+  assert.equal('selectedHistoryPageKey' in props.logsProps.value, false)
+  assert.equal('historyWorkspaceTab' in props.logsProps.value, false)
+  assert.equal('selectedHistoryPage' in props.logsProps.value, false)
+  assert.equal('historyLogs' in props.logsProps.value, false)
+  assert.equal('playerAssessmentScores' in props.logsProps.value, false)
+  assert.equal('archiveByGameId' in props.logsProps.value, false)
+  assert.equal('archiveLoading' in props.logsProps.value, false)
+  assert.equal(props.logsProps.value.roleIconImage, roleIconImage)
+  assert.equal(props.logsProps.value.loadArchive, loadArchive)
   assert.equal(props.lobbyProps.value.backendMode, 'api')
   assert.equal(props.lobbyProps.value.apiFetch, apiFetch)
   assert.equal('game' in props.matchProps.value, false)

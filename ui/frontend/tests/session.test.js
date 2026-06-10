@@ -1994,6 +1994,67 @@ test('logs hash deep link selects the requested benchmark replay game', () => wi
   assert.equal(state.selectedHistoryGame.value.logs[0].message, 'benchmark replay')
 }, { hash: '#logs?game_id=benchmark-game-2' }))
 
+test('logs route query deep link selects the requested history game and workspace', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const rows = [
+    game('history-first', { winner: 'villagers' }),
+    game('benchmark-game-2', { source: 'benchmark', winner: 'werewolves' })
+  ]
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games?limit=3&offset=0') {
+      return {
+        games: rows,
+        pagination: { total: rows.length, offset: 0, limit: 3, returned: rows.length, has_more: false }
+      }
+    }
+    if (path === '/games/benchmark-game-2?view=history-shell') {
+      return game('benchmark-game-2', {
+        source: 'benchmark',
+        winner: 'werewolves',
+        phases: [{ key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 }]
+      })
+    }
+    if (path === historyPhasePath('benchmark-game-2')) {
+      return {
+        game_id: 'benchmark-game-2',
+        day: 1,
+        phase: 'setup',
+        logs: [{ sequence: 1, day: 1, phase: 'setup', event_type: 'game_init', message: 'route replay' }],
+        decisions: []
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    historyListLimit: 3,
+    apiFetch,
+    route: {
+      name: 'logs',
+      path: '/logs',
+      query: { game_id: 'benchmark-game-2', workspace: 'archive' },
+      hash: ''
+    }
+  })
+
+  history.syncHashRoute()
+  await flushPromises(10)
+
+  assert.deepEqual(requests, [
+    '/games?limit=3&offset=0',
+    '/games/benchmark-game-2?view=history-shell',
+    historyPhasePath('benchmark-game-2')
+  ])
+  assert.equal(state.currentView.value, 'logs')
+  assert.equal(state.historyWorkspaceTab.value, 'archive')
+  assert.equal(state.selectedHistoryGameId.value, 'benchmark-game-2')
+  assert.equal(state.selectedHistoryGame.value.game_id, 'benchmark-game-2')
+  assert.equal(state.selectedHistoryGame.value.logs[0].message, 'route replay')
+  assert.equal(window.location.hash, '#logs?game_id=benchmark-game-2&workspace=archive')
+}))
+
 test('legacy evidence hash is ignored as an invalid route', () => withWindow(async () => {
   assert.equal(viewFromHash('#evidence?game_id=benchmark-game-2'), 'lobby')
 

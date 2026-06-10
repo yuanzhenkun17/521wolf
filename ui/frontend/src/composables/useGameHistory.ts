@@ -16,7 +16,7 @@ import {
   writeLegacyHashForView,
   writeViewHash
 } from '../router/legacyViewNavigation'
-import { historyDeepLinkFromHash, logsHash } from '../router/workbenchDeepLinks'
+import { historyDeepLinkFromHash, historyDeepLinkFromRoute, logsHash } from '../router/workbenchDeepLinks'
 import { isReturnableGame } from './gameSession.ts'
 import {
   AUTHORITATIVE_DEATH_EVENTS,
@@ -605,6 +605,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
   const { apiFetch } = options.apiFetch ? { apiFetch: options.apiFetch } : createGameApi(options.apiBase)
   let actionApi = options.actionApi || {}
   let sceneApi = options.sceneApi || {}
+  const routeSource = options.route || null
   let replayTimer = null
   let replayAdvancePending = false
   const logOpenRequests = createLatestOnlyTracker()
@@ -1370,7 +1371,9 @@ function useGameHistory(state, options: LooseRecord = {}) {
   }
 
   function hashRouteInfo() {
-    return historyDeepLinkFromHash(currentLegacyHash())
+    return routeSource
+      ? historyDeepLinkFromRoute(routeSource)
+      : historyDeepLinkFromHash(currentLegacyHash())
   }
 
   function syncHashRoute({ rememberOrigin = false } = {}) {
@@ -1856,8 +1859,8 @@ function useGameHistory(state, options: LooseRecord = {}) {
     const handleHashChange = () => syncHashRoute({ rememberOrigin: false })
     let removeHashChangeListener = () => {}
     onMounted(() => {
-      const hash = currentLegacyHash()
-      if (['#logs', '#evolution', '#benchmark', '#match'].includes(String(hash || '').split('?')[0])) {
+      const route = hashRouteInfo()
+      if (['#logs', '#evolution', '#benchmark', '#match'].includes(route.routeHash)) {
         syncHashRoute({ rememberOrigin: false })
       } else if (options.prefetchHistoryOnMount === true) {
         refreshHistoryList({ silent: true })

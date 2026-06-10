@@ -95,6 +95,19 @@ test('uses logs route query before legacy hash fallback', () => {
   )
   assert.deepEqual(
     historyDeepLinkFromRoute({
+      name: 'logs',
+      path: '/logs',
+      query: { game_id: 'route-only-game', workspace: 'review' },
+      hash: ''
+    }),
+    {
+      routeHash: '#logs',
+      gameId: 'route-only-game',
+      workspace: 'review'
+    }
+  )
+  assert.deepEqual(
+    historyDeepLinkFromRoute({
       name: 'lobby',
       path: '/',
       query: {},
