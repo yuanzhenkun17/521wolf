@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -714,6 +713,7 @@ function clearTransientState() {
       </div>
       <div class="snapshot-header-actions">
         <span class="snapshot-freeze-stack">
+          <!-- @vue-ignore -->
           <button
             type="button"
             class="snapshot-primary-button"
