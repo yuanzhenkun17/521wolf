@@ -53,23 +53,9 @@ const logsPropKeys = [
 ]
 
 const matchPropKeys = [
-  'game',
-  'loading',
-  'matchNotice',
-  'backendMode',
-  'isNight',
-  'isWatch',
-  'isReplayMode',
-  'replayCursor',
-  'replayPlaying',
-  'replaySpeed',
   'replayTotal',
   'replayEventLabel',
-  'watchRunning',
   'skipIntroGameId',
-  'roleAssignmentComplete',
-  'judgeBoardStarted',
-  'judgeBoardStarting',
   'promptText',
   'judgeStripMessage',
   'playerIdentityList',

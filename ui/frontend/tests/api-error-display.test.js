@@ -170,8 +170,8 @@ test('MatchPage source wires error notices to ApiErrorPanel without reusing the 
 
   assert.match(source, /import ApiErrorPanel from '\.\.\/components\/ApiErrorPanel\.vue'/)
   assert.match(source, /import \{ inlineNoticeForDisplay, noticeErrorForPanel \} from '\.\.\/composables\/apiErrorDisplay\.ts'/)
-  assert.match(source, /inlineMatchNotice = computed\(\(\) => inlineNoticeForDisplay\(props\.matchNotice\)\)/)
-  assert.match(source, /matchErrorNotice = computed\(\(\) => matchPanelErrorForNotice\(props\.matchNotice\)\)/)
+  assert.match(source, /inlineMatchNotice = computed\(\(\) => inlineNoticeForDisplay\(matchNotice\.value\)\)/)
+  assert.match(source, /matchErrorNotice = computed\(\(\) => matchPanelErrorForNotice\(matchNotice\.value\)\)/)
   assert.match(source, /<ApiErrorPanel[\s\S]*v-if="matchErrorNotice"[\s\S]*class="match-error-notice"[\s\S]*title="对局操作失败"/)
   assert.match(source, /<aside[\s\S]*v-if="matchNoticeMessage"[\s\S]*match-action-notice/)
   assert.match(source, /--match-safe-left/)

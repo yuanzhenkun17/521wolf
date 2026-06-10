@@ -35,5 +35,6 @@ test('unwraps runtime refs when building page prop payloads', () => {
   assert.equal(props.logsProps.value.selectedHistoryPageKey, 'day-1')
   assert.equal(props.lobbyProps.value.backendMode, 'api')
   assert.equal(props.lobbyProps.value.apiFetch, apiFetch)
-  assert.deepEqual(props.matchProps.value.game, { game_id: 'match-a' })
+  assert.equal('game' in props.matchProps.value, false)
+  assert.equal('backendMode' in props.matchProps.value, false)
 })

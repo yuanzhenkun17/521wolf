@@ -3,7 +3,7 @@ const settledIntroGameIds = new Set<string | number>()
 </script>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import ActionPanel from '../components/ActionPanel.vue'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import ChatLog from '../components/ChatLog.vue'
@@ -16,6 +16,7 @@ import PlayerIdentityBoard from '../components/PlayerIdentityBoard.vue'
 import ReplayControls from '../components/ReplayControls.vue'
 import { displayPhaseLabel } from '../components/history/historyDisplay.ts'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
+import { useGameStore, useReplayStore, useSessionStore, useUiStore } from '../stores'
 
 type LooseRecord = Record<string, any>
 type IdValue = string | number
@@ -149,6 +150,11 @@ const compactHudHeight = ref(146)
 const introMounted = ref(true)
 const introLeaving = ref(false)
 const hoveredTargetId = ref<NullableId>(null)
+const instance = getCurrentInstance()
+const gameStore = useGameStore()
+const replayStore = useReplayStore()
+const sessionStore = useSessionStore()
+const uiStore = useUiStore()
 const sceneLoadProgress = ref<SceneLoadProgress>({
   phase: 'scene',
   label: '搭建议事厅',
@@ -164,39 +170,98 @@ let introRemoveTimer = 0
 let introSettledGameId: NullableId = null
 const introWaitTimers = new Set<IntroWaitEntry>()
 
+const MATCH_STORE_PROP_ALIASES = {
+  game: ['game'],
+  loading: ['loading'],
+  matchNotice: ['matchNotice', 'match-notice'],
+  backendMode: ['backendMode', 'backend-mode'],
+  isNight: ['isNight', 'is-night'],
+  isWatch: ['isWatch', 'is-watch'],
+  isReplayMode: ['isReplayMode', 'is-replay-mode'],
+  replayCursor: ['replayCursor', 'replay-cursor'],
+  replayPlaying: ['replayPlaying', 'replay-playing'],
+  replaySpeed: ['replaySpeed', 'replay-speed'],
+  watchRunning: ['watchRunning', 'watch-running'],
+  roleAssignmentComplete: ['roleAssignmentComplete', 'role-assignment-complete'],
+  judgeBoardStarted: ['judgeBoardStarted', 'judge-board-started'],
+  judgeBoardStarting: ['judgeBoardStarting', 'judge-board-starting']
+} as const
+
+function hasExplicitMatchProp(propName: keyof typeof MATCH_STORE_PROP_ALIASES) {
+  const rawProps = instance?.vnode.props || {}
+  return MATCH_STORE_PROP_ALIASES[propName].some((key) => Object.prototype.hasOwnProperty.call(rawProps, key))
+}
+
+const game = computed<LooseRecord | null>(() => (
+  hasExplicitMatchProp('game') ? props.game : gameStore.liveGame as LooseRecord | null
+))
+const loading = computed(() => hasExplicitMatchProp('loading') ? props.loading : gameStore.loading)
+const matchNotice = computed<LooseRecord>(() => (
+  hasExplicitMatchProp('matchNotice') ? props.matchNotice : uiStore.notice as LooseRecord
+))
+const backendMode = computed(() => (
+  hasExplicitMatchProp('backendMode') ? props.backendMode : sessionStore.backendMode
+))
+const isNight = computed(() => hasExplicitMatchProp('isNight') ? props.isNight : gameStore.isNight)
+const isWatch = computed(() => hasExplicitMatchProp('isWatch') ? props.isWatch : gameStore.isWatch)
+const isReplayMode = computed(() => (
+  hasExplicitMatchProp('isReplayMode') ? props.isReplayMode : replayStore.isReplayMode
+))
+const replayCursor = computed(() => (
+  hasExplicitMatchProp('replayCursor') ? props.replayCursor : replayStore.replayCursor
+))
+const replayPlaying = computed(() => (
+  hasExplicitMatchProp('replayPlaying') ? props.replayPlaying : replayStore.replayPlaying
+))
+const replaySpeed = computed(() => (
+  hasExplicitMatchProp('replaySpeed') ? props.replaySpeed : replayStore.replaySpeed
+))
+const watchRunning = computed(() => (
+  hasExplicitMatchProp('watchRunning') ? props.watchRunning : gameStore.watchRunning
+))
+const roleAssignmentComplete = computed(() => (
+  hasExplicitMatchProp('roleAssignmentComplete') ? props.roleAssignmentComplete : gameStore.roleAssignmentComplete
+))
+const judgeBoardStarted = computed(() => (
+  hasExplicitMatchProp('judgeBoardStarted') ? props.judgeBoardStarted : gameStore.judgeBoardStarted
+))
+const judgeBoardStarting = computed(() => (
+  hasExplicitMatchProp('judgeBoardStarting') ? props.judgeBoardStarting : gameStore.judgeBoardStarting
+))
+
 function phaseName(phase: unknown) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : displayPhaseLabel(phase)
 }
 
 const hasPendingHumanAction = computed(() => {
-  const pending = props.game?.pending_human_action
+  const pending = game.value?.pending_human_action
   if (!pending) return false
   const pendingPlayerId = Number(pending.player_id)
-  const humanPlayerId = Number(props.humanPlayer?.id || props.game?.human_player_id)
+  const humanPlayerId = Number(props.humanPlayer?.id || game.value?.human_player_id)
   return !pendingPlayerId || !humanPlayerId || pendingPlayerId === humanPlayerId
 })
 const sceneSelectableIds = computed(() => {
   if (!hasPendingHumanAction.value) return []
   if (props.burstArmed) return props.whiteWolfTargets.map((player) => player.id)
   if (props.pendingActionType) return props.needsTarget ? props.actionCandidates.map((player) => player.id) : []
-  if (props.game?.waiting_for === 'vote') return props.canVotePlayers.map((player) => player.id)
+  if (game.value?.waiting_for === 'vote') return props.canVotePlayers.map((player) => player.id)
   return []
 })
 const selectedSceneTargetId = computed(() => props.actionTarget ?? null)
 const dismissedGameOverKey = ref('')
 const gameOverKey = computed(() => {
-  if (!props.game?.winner) return ''
-  return `${props.game?.game_id || ''}:${props.game.winner}:${props.game?.day || ''}`
+  if (!game.value?.winner) return ''
+  return `${game.value?.game_id || ''}:${game.value.winner}:${game.value?.day || ''}`
 })
 const showGameOverModal = computed(() =>
   Boolean(gameOverKey.value) &&
-  !props.isReplayMode &&
+  !isReplayMode.value &&
   dismissedGameOverKey.value !== gameOverKey.value
 )
 const introStage = computed(() => {
-  if (!props.game) return '创建房间'
+  if (!game.value) return '创建房间'
   if (!sceneApi.value) return '点亮议事厅'
-  if (!props.roleAssignmentComplete && !props.isReplayMode) return '分配身份'
+  if (!roleAssignmentComplete.value && !isReplayMode.value) return '分配身份'
   return '召集玩家'
 })
 const introStageText = computed(() => sceneLoadProgress.value?.label || introStage.value)
@@ -209,12 +274,12 @@ const activeSeatLabel = computed(() => {
   return player?.displaySeat == null ? '' : String(player.displaySeat)
 })
 const introReady = computed(() =>
-  Boolean(props.game)
+  Boolean(game.value)
   && Boolean(sceneApi.value)
-  && (props.roleAssignmentComplete || props.isReplayMode)
+  && (roleAssignmentComplete.value || isReplayMode.value)
 )
-const showIntro = computed(() => !props.isReplayMode && introMounted.value)
-const replayPhaseText = computed(() => `第${props.game?.day ?? '-'}天 · ${phaseName(props.game?.phase)}`)
+const showIntro = computed(() => !isReplayMode.value && introMounted.value)
+const replayPhaseText = computed(() => `第${game.value?.day ?? '-'}天 · ${phaseName(game.value?.phase)}`)
 const replayJudgeStripMessage = computed(() => [
   { message: props.replayEventLabel || '准备回放' }
 ])
@@ -228,16 +293,16 @@ function matchPanelErrorForNotice(notice: LooseRecord) {
   }
 }
 
-const inlineMatchNotice = computed(() => inlineNoticeForDisplay(props.matchNotice))
-const matchErrorNotice = computed(() => matchPanelErrorForNotice(props.matchNotice))
+const inlineMatchNotice = computed(() => inlineNoticeForDisplay(matchNotice.value))
+const matchErrorNotice = computed(() => matchPanelErrorForNotice(matchNotice.value))
 const matchNoticeMessage = computed(() => String(inlineMatchNotice.value?.message || '').trim())
 const matchNoticeType = computed(() => inlineMatchNotice.value?.type || 'info')
 const hasMobileTask = computed(() => (
-  props.roleAssignmentComplete &&
-  !props.isWatch &&
-  !props.isReplayMode &&
+  roleAssignmentComplete.value &&
+  !isWatch.value &&
+  !isReplayMode.value &&
   hasPendingHumanAction.value &&
-  (props.game?.waiting_for === 'speech' || Boolean(props.pendingActionType) || props.game?.waiting_for === 'vote')
+  (game.value?.waiting_for === 'speech' || Boolean(props.pendingActionType) || game.value?.waiting_for === 'vote')
 ))
 
 function handleCouncilReady(api: LooseRecord) {
@@ -332,10 +397,10 @@ function hideIntroOverlay() {
 }
 
 async function settleIntro() {
-  const gameId = props.game?.game_id ?? null
+  const gameId = game.value?.game_id ?? null
   const runId = ++introRunId
   clearIntroDelayTimer()
-  if (props.isReplayMode) {
+  if (isReplayMode.value) {
     forceHideIntroOverlay()
     return
   }
@@ -365,10 +430,10 @@ async function settleIntro() {
 
 watch(
   [
-    () => props.game?.game_id ?? null,
+    () => game.value?.game_id ?? null,
     () => props.skipIntroGameId,
-    () => props.roleAssignmentComplete,
-    () => props.isReplayMode,
+    () => roleAssignmentComplete.value,
+    () => isReplayMode.value,
     () => sceneApi.value
   ],
   settleIntro,
