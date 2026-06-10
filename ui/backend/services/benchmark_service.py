@@ -10,16 +10,8 @@ from fastapi import HTTPException
 
 from app.util.time import beijing_now_iso
 from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
-from storage.benchmark.saved_view_repo import (
-    BenchmarkSavedViewRepository,
-    delete_benchmark_saved_view,
-    persist_benchmark_saved_view,
-)
-from storage.benchmark.snapshot_repo import (
-    BenchmarkSnapshotRepository,
-    persist_benchmark_snapshot,
-)
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
+from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
 from ui.backend.schemas import (
     BenchmarkLifecycleRequest,
     BenchmarkRequest,
@@ -89,6 +81,7 @@ class BenchmarkService:
         self._callables = dict(callables or {})
         self._allow_context_fallback = allow_context_fallback
         self._catalog = BenchmarkCatalogService(context)
+        self._snapshots = BenchmarkSnapshotService(context, self._callables, resolver=self._resolve)
 
     @property
     def context(self) -> BenchmarkServiceContextProtocol:
@@ -159,7 +152,7 @@ class BenchmarkService:
                 conn.close()
 
     def persist_benchmark_snapshot(self, snapshot: dict[str, Any]) -> None:
-        persist_benchmark_snapshot(self._open_connection, snapshot)
+        self._snapshots.persist_benchmark_snapshot(snapshot)
 
     def load_benchmark_snapshot_summaries(
         self,
@@ -170,31 +163,19 @@ class BenchmarkService:
         target_role: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        conn = None
-        try:
-            conn = self._open_connection()
-            return BenchmarkSnapshotRepository(conn).list(
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                benchmark_id=benchmark_id,
-                target_role=target_role,
-                limit=limit,
-            )
-        finally:
-            if conn is not None:
-                conn.close()
+        return self._snapshots.load_benchmark_snapshot_summaries(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            limit=limit,
+        )
 
     def load_benchmark_snapshot_detail(self, snapshot_id: str) -> dict[str, Any] | None:
-        conn = None
-        try:
-            conn = self._open_connection()
-            return BenchmarkSnapshotRepository(conn).get(snapshot_id)
-        finally:
-            if conn is not None:
-                conn.close()
+        return self._snapshots.load_benchmark_snapshot_detail(snapshot_id)
 
     def persist_benchmark_saved_view(self, view: dict[str, Any]) -> None:
-        persist_benchmark_saved_view(self._open_connection, view)
+        self._snapshots.persist_benchmark_saved_view(view)
 
     def load_benchmark_saved_views(
         self,
@@ -206,23 +187,17 @@ class BenchmarkService:
         view_key: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        conn = None
-        try:
-            conn = self._open_connection()
-            return BenchmarkSavedViewRepository(conn).list(
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                benchmark_id=benchmark_id,
-                target_role=target_role,
-                view_key=view_key,
-                limit=limit,
-            )
-        finally:
-            if conn is not None:
-                conn.close()
+        return self._snapshots.load_benchmark_saved_views(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            view_key=view_key,
+            limit=limit,
+        )
 
     def delete_benchmark_saved_view(self, view_key: str) -> bool:
-        return delete_benchmark_saved_view(self._open_connection, view_key)
+        return self._snapshots.delete_benchmark_saved_view(view_key)
 
     def _resolve(self, method_name: str) -> BenchmarkCallable:
         if method_name in self._callables:
@@ -505,7 +480,7 @@ class BenchmarkService:
         )
 
     def benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("benchmark_batch_report", batch_id, format=format))
+        return self._snapshots.benchmark_batch_report(batch_id, format=format)
 
     def benchmark_reports(
         self,
@@ -520,20 +495,16 @@ class BenchmarkService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "benchmark_reports",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                benchmark_id=benchmark_id,
-                target_role=target_role,
-                model_id=model_id,
-                model_config_hash=model_config_hash,
-                status=status,
-                limit=limit,
-                offset=offset,
-            ),
+        return self._snapshots.benchmark_reports(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            model_id=model_id,
+            model_config_hash=model_config_hash,
+            status=status,
+            limit=limit,
+            offset=offset,
         )
 
     def benchmark_diagnostics(
@@ -574,7 +545,7 @@ class BenchmarkService:
         )
 
     def create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("create_benchmark_snapshot", request))
+        return self._snapshots.create_benchmark_snapshot(request)
 
     def list_benchmark_snapshots(
         self,
@@ -585,23 +556,19 @@ class BenchmarkService:
         target_role: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "list_benchmark_snapshots",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                benchmark_id=benchmark_id,
-                target_role=target_role,
-                limit=limit,
-            ),
+        return self._snapshots.list_benchmark_snapshots(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            limit=limit,
         )
 
     def get_benchmark_snapshot(self, snapshot_id: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("get_benchmark_snapshot", snapshot_id))
+        return self._snapshots.get_benchmark_snapshot(snapshot_id)
 
     def benchmark_snapshot_export(self, snapshot_id: str, *, format: str = "json") -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("benchmark_snapshot_export", snapshot_id, format=format))
+        return self._snapshots.benchmark_snapshot_export(snapshot_id, format=format)
 
     def benchmark_snapshot_compare(
         self,
@@ -610,18 +577,14 @@ class BenchmarkService:
         against_snapshot_id: str | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "benchmark_snapshot_compare",
-                snapshot_id,
-                against_snapshot_id=against_snapshot_id,
-                limit=limit,
-            ),
+        return self._snapshots.benchmark_snapshot_compare(
+            snapshot_id,
+            against_snapshot_id=against_snapshot_id,
+            limit=limit,
         )
 
     def save_benchmark_view(self, request: BenchmarkViewRequest) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("save_benchmark_view", request))
+        return self._snapshots.save_benchmark_view(request)
 
     def list_benchmark_views(
         self,
@@ -633,21 +596,17 @@ class BenchmarkService:
         view_key: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "list_benchmark_views",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                benchmark_id=benchmark_id,
-                target_role=target_role,
-                view_key=view_key,
-                limit=limit,
-            ),
+        return self._snapshots.list_benchmark_views(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            view_key=view_key,
+            limit=limit,
         )
 
     def get_benchmark_view(self, view_key: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("get_benchmark_view", view_key))
+        return self._snapshots.get_benchmark_view(view_key)
 
     def delete_benchmark_view(self, view_key: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("delete_benchmark_view", view_key))
+        return self._snapshots.delete_benchmark_view(view_key)

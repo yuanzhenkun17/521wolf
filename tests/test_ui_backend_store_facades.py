@@ -10,6 +10,7 @@ import pytest
 from app.config import PathConfig
 import ui.backend.store as ui_backend_store
 from ui.backend.services.benchmark_service import BenchmarkService
+from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
 from ui.backend.services.evolution_service import EvolutionService
 
 
@@ -626,3 +627,171 @@ def test_benchmark_facades_delegate_to_cached_service(
             },
         ),
     ]
+
+
+def test_benchmark_snapshot_facades_delegate_to_snapshot_service(tmp_path: Path) -> None:
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    def recorder(name: str) -> Any:
+        def call(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            calls.append((name, args, kwargs))
+            return {"method": name, "args": list(args), "kwargs": kwargs}
+
+        return call
+
+    callables = {
+        "benchmark_batch_report": recorder("benchmark_batch_report"),
+        "benchmark_reports": recorder("benchmark_reports"),
+        "create_benchmark_snapshot": recorder("create_benchmark_snapshot"),
+        "list_benchmark_snapshots": recorder("list_benchmark_snapshots"),
+        "get_benchmark_snapshot": recorder("get_benchmark_snapshot"),
+        "benchmark_snapshot_export": recorder("benchmark_snapshot_export"),
+        "benchmark_snapshot_compare": recorder("benchmark_snapshot_compare"),
+        "save_benchmark_view": recorder("save_benchmark_view"),
+        "list_benchmark_views": recorder("list_benchmark_views"),
+        "get_benchmark_view": recorder("get_benchmark_view"),
+        "delete_benchmark_view": recorder("delete_benchmark_view"),
+    }
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path), evolution_batches={})
+    service = BenchmarkService(context, callables=callables)
+    snapshot_request = object()
+    view_request = object()
+
+    assert service.benchmark_batch_report("batch-1", format="markdown")["method"] == "benchmark_batch_report"
+    assert service.benchmark_reports(scope="role_version", status="completed", offset=3)["method"] == "benchmark_reports"
+    assert service.create_benchmark_snapshot(snapshot_request)["method"] == "create_benchmark_snapshot"
+    assert service.list_benchmark_snapshots(benchmark_id="bench-1", target_role="seer")["method"] == "list_benchmark_snapshots"
+    assert service.get_benchmark_snapshot("snap-1")["method"] == "get_benchmark_snapshot"
+    assert service.benchmark_snapshot_export("snap-1", format="csv")["method"] == "benchmark_snapshot_export"
+    assert service.benchmark_snapshot_compare("snap-1", against_snapshot_id="snap-0", limit=7)["method"] == (
+        "benchmark_snapshot_compare"
+    )
+    assert service.save_benchmark_view(view_request)["method"] == "save_benchmark_view"
+    assert service.list_benchmark_views(view_key="default", limit=2)["method"] == "list_benchmark_views"
+    assert service.get_benchmark_view("default")["method"] == "get_benchmark_view"
+    assert service.delete_benchmark_view("default")["method"] == "delete_benchmark_view"
+
+    assert calls == [
+        ("benchmark_batch_report", ("batch-1",), {"format": "markdown"}),
+        (
+            "benchmark_reports",
+            (),
+            {
+                "scope": "role_version",
+                "evaluation_set_id": None,
+                "benchmark_id": None,
+                "target_role": None,
+                "model_id": None,
+                "model_config_hash": None,
+                "status": "completed",
+                "limit": 50,
+                "offset": 3,
+            },
+        ),
+        ("create_benchmark_snapshot", (snapshot_request,), {}),
+        (
+            "list_benchmark_snapshots",
+            (),
+            {
+                "scope": None,
+                "evaluation_set_id": None,
+                "benchmark_id": "bench-1",
+                "target_role": "seer",
+                "limit": 50,
+            },
+        ),
+        ("get_benchmark_snapshot", ("snap-1",), {}),
+        ("benchmark_snapshot_export", ("snap-1",), {"format": "csv"}),
+        ("benchmark_snapshot_compare", ("snap-1",), {"against_snapshot_id": "snap-0", "limit": 7}),
+        ("save_benchmark_view", (view_request,), {}),
+        (
+            "list_benchmark_views",
+            (),
+            {
+                "scope": None,
+                "evaluation_set_id": None,
+                "benchmark_id": None,
+                "target_role": None,
+                "view_key": "default",
+                "limit": 2,
+            },
+        ),
+        ("get_benchmark_view", ("default",), {}),
+        ("delete_benchmark_view", ("default",), {}),
+    ]
+
+
+def test_benchmark_snapshot_service_uses_minimal_context_protocol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened_paths: list[Any] = []
+    repository_calls: list[dict[str, Any]] = []
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    connections: list[FakeConnection] = []
+
+    def fake_open_eval_connection(paths: Any) -> FakeConnection:
+        opened_paths.append(paths)
+        connection = FakeConnection()
+        connections.append(connection)
+        return connection
+
+    class FakeSnapshotRepository:
+        def __init__(self, conn: FakeConnection) -> None:
+            assert conn is connections[-1]
+
+        def list(
+            self,
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            benchmark_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 50,
+        ) -> list[dict[str, Any]]:
+            repository_calls.append(
+                {
+                    "scope": scope,
+                    "evaluation_set_id": evaluation_set_id,
+                    "benchmark_id": benchmark_id,
+                    "target_role": target_role,
+                    "limit": limit,
+                }
+            )
+            return [{"snapshot_id": "snap-1"}]
+
+    monkeypatch.setattr("app.lib.score.open_eval_connection", fake_open_eval_connection)
+    monkeypatch.setattr(
+        "ui.backend.services.benchmark_snapshot_service.BenchmarkSnapshotRepository",
+        FakeSnapshotRepository,
+    )
+
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path))
+    service = BenchmarkSnapshotService(context)
+    rows = service.load_benchmark_snapshot_summaries(
+        scope="role_version",
+        evaluation_set_id="suite@v1",
+        benchmark_id="bench-1",
+        target_role="seer",
+        limit=3,
+    )
+
+    assert rows == [{"snapshot_id": "snap-1"}]
+    assert opened_paths == [context.paths]
+    assert repository_calls == [
+        {
+            "scope": "role_version",
+            "evaluation_set_id": "suite@v1",
+            "benchmark_id": "bench-1",
+            "target_role": "seer",
+            "limit": 3,
+        }
+    ]
+    assert connections and connections[0].closed is True

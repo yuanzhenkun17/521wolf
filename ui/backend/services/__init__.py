@@ -6,6 +6,10 @@ from ui.backend.services.benchmark_service import (
     BenchmarkServiceContextProtocol,
 )
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
+from ui.backend.services.benchmark_snapshot_service import (
+    BenchmarkSnapshotService,
+    BenchmarkSnapshotServiceContextProtocol,
+)
 from ui.backend.services.evolution_service import EvolutionService
 from ui.backend.services.evolution_proposal_service import EvolutionProposalService
 from ui.backend.services.game_delete_service import GameDeleteCoordinator
@@ -20,6 +24,8 @@ __all__ = [
     "BenchmarkCatalogService",
     "BenchmarkService",
     "BenchmarkServiceContextProtocol",
+    "BenchmarkSnapshotService",
+    "BenchmarkSnapshotServiceContextProtocol",
     "EvolutionService",
     "EvolutionProposalService",
     "GameDeleteCoordinator",
