@@ -14,10 +14,23 @@
   --color-text-primary: var(--text, #eae1d4);
   --color-text-muted: var(--muted, #d0c5af);
   --color-border-default: var(--outline, rgba(242, 202, 80, 0.16));
+  --color-border-subtle: rgba(242, 202, 80, 0.1);
   --color-accent-primary: var(--primary, #f2ca50);
   --color-accent-primary-strong: var(--primary-deep, #d4af37);
+  --color-accent-primary-soft: rgba(242, 202, 80, 0.16);
   --color-status-danger: var(--danger, #ffb4ab);
+  --color-status-danger-strong: #993026;
+  --color-status-danger-soft: rgba(255, 180, 171, 0.16);
+  --color-status-warning: #ffc45c;
+  --color-status-warning-strong: #76510e;
+  --color-status-warning-muted: #8b5e34;
+  --color-status-warning-soft: rgba(255, 196, 92, 0.16);
+  --color-status-success: #8dffac;
+  --color-status-success-strong: #2d7a43;
+  --color-status-success-soft: rgba(141, 255, 172, 0.16);
   --color-status-info: var(--blue, #bfcdff);
+  --color-status-info-strong: #426ca8;
+  --color-status-info-soft: rgba(191, 205, 255, 0.16);
 
   --space-2xs: 2px;
   --space-xs: 4px;

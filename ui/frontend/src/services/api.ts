@@ -1,5 +1,5 @@
 import { buildQuery } from '../domain/common'
-import type { ApiClient, ApiErrorPayload, ApiRequestOptions, QueryParams } from '../types/api'
+import type { ApiClient, ApiDiagnostic, ApiErrorInit, ApiErrorNormalizeInput, ApiErrorPayload, ApiErrorShape, ApiRequestOptions, ErrorPayloadReadResult, QueryParams } from '../types/api'
 
 export const API_BASE = import.meta.env.VITE_API_BASE || '/api'
 export const USE_FRONTEND_MOCK = import.meta.env.VITE_USE_FRONTEND_MOCK === 'true'
@@ -19,34 +19,17 @@ const STATUS_ERROR_CODES: Record<number, string> = {
 
 let mockApiFetchPromise: Promise<(path: string, options?: ApiRequestOptions) => Promise<unknown>> | null = null
 
-export class ApiError extends Error {
+export class ApiError extends Error implements ApiErrorShape {
+  name = 'ApiError' as const
   status: number
   code: string
   detail: unknown
-  diagnostics: unknown[]
+  diagnostics: ApiDiagnostic[]
   requestId: string | null
   payload: unknown
   body: string
 
-  constructor({
-    status = 0,
-    code = '',
-    message = '',
-    detail = null,
-    diagnostics = [],
-    requestId = null,
-    payload = null,
-    body = ''
-  }: {
-    status?: number
-    code?: string
-    message?: string
-    detail?: unknown
-    diagnostics?: unknown[]
-    requestId?: string | null
-    payload?: unknown
-    body?: string
-  } = {}) {
+  constructor({ status = 0, code = '', message = '', detail = null, diagnostics = [], requestId = null, payload = null, body = '' }: ApiErrorInit = {}) {
     super(message || (status ? `HTTP ${status}` : 'API request failed'))
     this.name = 'ApiError'
     this.status = status
@@ -61,6 +44,14 @@ export class ApiError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isApiDiagnostic(value: unknown): value is ApiDiagnostic {
+  return isRecord(value)
+}
+
+function diagnosticsFrom(value: unknown): ApiDiagnostic[] {
+  return Array.isArray(value) ? value.filter(isApiDiagnostic) : []
 }
 
 function firstText(...values: unknown[]): string {
@@ -90,14 +81,7 @@ function requestIdFromHeaders(headers: Headers | undefined | null): string | nul
 function requestIdFromPayload(payload: unknown): string | null {
   if (!isRecord(payload)) return null
   const error = isRecord(payload.error) ? payload.error : {}
-  return firstText(
-    payload.requestId,
-    payload.request_id,
-    payload.requestID,
-    error.requestId,
-    error.request_id,
-    error.requestID
-  ) || null
+  return firstText(payload.requestId, payload.request_id, payload.requestID, error.requestId, error.request_id, error.requestID) || null
 }
 
 function stringifyFallback(value: unknown): string {
@@ -129,13 +113,7 @@ function messageFromDetail(detail: unknown): string {
 
 function normalizeBody(body: ApiRequestOptions['body']): BodyInit | null | undefined {
   if (body == null) return body as null | undefined
-  if (
-    typeof body === 'string' ||
-    body instanceof FormData ||
-    body instanceof Blob ||
-    body instanceof URLSearchParams ||
-    body instanceof ArrayBuffer
-  ) {
+  if (typeof body === 'string' || body instanceof FormData || body instanceof Blob || body instanceof URLSearchParams || body instanceof ArrayBuffer) {
     return body
   }
   return JSON.stringify(body)
@@ -155,41 +133,42 @@ async function apiFetchMock(path: string, options: ApiRequestOptions = {}): Prom
   return mockApiFetch(path, options)
 }
 
-export async function readErrorPayload(response: Response): Promise<{ payload: ApiErrorPayload | null; text: string; requestId: string | null }> {
+function normalizeErrorPayload(value: unknown): ApiErrorPayload | null {
+  if (value == null) return null
+  return isRecord(value) ? value : { detail: value }
+}
+
+export async function readErrorPayload(response: Response): Promise<ErrorPayloadReadResult> {
   const text = await response.text().catch(() => '')
-  if (!text) return { payload: null, text: '', requestId: requestIdFromHeaders(response.headers) }
+  if (!text)
+    return {
+      payload: null,
+      text: '',
+      requestId: requestIdFromHeaders(response.headers)
+    }
   try {
     return {
-      payload: JSON.parse(text) as ApiErrorPayload,
+      payload: normalizeErrorPayload(JSON.parse(text)),
       text,
       requestId: requestIdFromHeaders(response.headers)
     }
   } catch {
-    return { payload: null, text, requestId: requestIdFromHeaders(response.headers) }
+    return {
+      payload: null,
+      text,
+      requestId: requestIdFromHeaders(response.headers)
+    }
   }
 }
 
-export function normalizeApiError({
-  response = null,
-  payload = null,
-  text = '',
-  requestId = null
-}: {
-  response?: Response | null
-  payload?: ApiErrorPayload | null
-  text?: string
-  requestId?: string | null
-} = {}): ApiError {
+export function normalizeApiError({ response = null, payload = null, text = '', requestId = null }: ApiErrorNormalizeInput = {}): ApiError {
   const status = Number(response?.status || 0)
   const error = isRecord(payload?.error) ? payload.error : {}
   const detail = isRecord(payload) && Object.prototype.hasOwnProperty.call(payload, 'detail') ? payload.detail : text || null
-  const diagnostics = Array.isArray(error.diagnostics)
-    ? error.diagnostics
-    : isRecord(payload) && Array.isArray(payload.diagnostics)
-      ? payload.diagnostics
-      : Array.isArray(detail)
-        ? detail
-        : []
+  const errorDiagnostics = diagnosticsFrom(error.diagnostics)
+  const payloadDiagnostics = isRecord(payload) ? diagnosticsFrom(payload.diagnostics) : []
+  const detailDiagnostics = diagnosticsFrom(detail)
+  const diagnostics = errorDiagnostics.length ? errorDiagnostics : payloadDiagnostics.length ? payloadDiagnostics : detailDiagnostics
   const message = firstText(error.message, isRecord(payload) ? payload.message : '', messageFromDetail(detail), text, status ? `HTTP ${status}` : '')
   const code = firstText(error.code, isRecord(payload) ? payload.code : '', httpErrorCode(status))
   return new ApiError({
@@ -221,7 +200,11 @@ export function createApiClient(apiBase = API_BASE): ApiClient {
   async function fetchJson<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
     if (USE_FRONTEND_MOCK) return apiFetchMock(path, options) as Promise<T>
     const response = await raw(path, options)
-    if (!response.ok) throw normalizeApiError({ response, ...(await readErrorPayload(response)) })
+    if (!response.ok)
+      throw normalizeApiError({
+        response,
+        ...(await readErrorPayload(response))
+      })
     if (response.status === 204) return null as T
     const text = await response.text()
     return (text ? JSON.parse(text) : null) as T

@@ -1,241 +1,388 @@
-import assert from 'node:assert/strict'
-import { afterEach, test } from 'vitest'
+import assert from "node:assert/strict";
+import { afterEach, test } from "vitest";
 import {
   addLegacyHashChangeListener,
   currentLegacyHash,
   currentLegacyView,
   hashForView,
   isLegacyHashForView,
+  legacyHashFromRouteQuery,
+  normalizeRouteQuery,
   registerLegacyViewRouter,
   routeHashFromLegacyHash,
   routeLocationForLegacyView,
+  routeLocationForViewQuery,
   routePathForView,
   routeQueryFromLegacyHash,
+  routeQueryString,
   syncCurrentLegacyHashForView,
   syncRouterToLegacyView,
   viewFromHash,
   writeLegacyHashForView,
-  writeViewHash
-} from '../../../src/router/legacyViewNavigation'
+  writeViewRoute,
+  writeViewHash,
+} from "../../../src/router/legacyViewNavigation";
 
-const originalWindow = globalThis.window
+const originalWindow = globalThis.window;
 
 afterEach(() => {
-  registerLegacyViewRouter(null)
-  if (originalWindow === undefined) delete (globalThis as { window?: Window }).window
-  else globalThis.window = originalWindow
-})
+  registerLegacyViewRouter(null);
+  if (originalWindow === undefined)
+    delete (globalThis as { window?: Window }).window;
+  else globalThis.window = originalWindow;
+});
 
-function locationLike(hash = ''): Pick<Location, 'hash'> {
-  return { hash }
+function locationLike(hash = ""): Pick<Location, "hash"> {
+  return { hash };
 }
 
-function eventWindowLike(hash = '') {
-  const listeners = new Map<string, EventListener[]>()
+function eventWindowLike(hash = "") {
+  const listeners = new Map<string, EventListener[]>();
   return {
     location: locationLike(hash),
     addEventListener(type: string, listener: EventListener) {
-      listeners.set(type, [...(listeners.get(type) || []), listener])
+      listeners.set(type, [...(listeners.get(type) || []), listener]);
     },
     removeEventListener(type: string, listener: EventListener) {
-      listeners.set(type, (listeners.get(type) || []).filter((item) => item !== listener))
+      listeners.set(
+        type,
+        (listeners.get(type) || []).filter((item) => item !== listener),
+      );
     },
     listeners(type: string) {
-      return listeners.get(type) || []
-    }
-  }
+      return listeners.get(type) || [];
+    },
+  };
 }
 
-test('maps legacy app views to router paths', () => {
-  assert.equal(routePathForView('lobby'), '/')
-  assert.equal(routePathForView('match'), '/match')
-  assert.equal(routePathForView('logs'), '/logs')
-  assert.equal(routePathForView('benchmark'), '/benchmark')
-  assert.equal(routePathForView('evolution'), '/evolution')
-})
+test("maps legacy app views to router paths", () => {
+  assert.equal(routePathForView("lobby"), "/");
+  assert.equal(routePathForView("match"), "/match");
+  assert.equal(routePathForView("logs"), "/logs");
+  assert.equal(routePathForView("benchmark"), "/benchmark");
+  assert.equal(routePathForView("evolution"), "/evolution");
+});
 
-test('maps app views to legacy hashes and parses legacy hash routes', () => {
-  assert.equal(hashForView('lobby'), '')
-  assert.equal(hashForView('match'), 'match')
-  assert.equal(hashForView('logs'), 'logs')
-  assert.equal(hashForView('benchmark'), 'benchmark')
-  assert.equal(hashForView('evolution'), 'evolution')
+test("maps app views to legacy hashes and parses legacy hash routes", () => {
+  assert.equal(hashForView("lobby"), "");
+  assert.equal(hashForView("match"), "match");
+  assert.equal(hashForView("logs"), "logs");
+  assert.equal(hashForView("benchmark"), "benchmark");
+  assert.equal(hashForView("evolution"), "evolution");
 
-  assert.equal(routeHashFromLegacyHash('#evolution?run_id=run-1'), '#evolution')
-  assert.equal(isLegacyHashForView('evolution', '#evolution?run_id=run-1'), true)
-  assert.equal(isLegacyHashForView('benchmark', '#evolution?run_id=run-1'), false)
-  assert.equal(isLegacyHashForView('lobby', ''), true)
-  assert.equal(viewFromHash(''), 'lobby')
-  assert.equal(viewFromHash('#logs?game_id=game-7'), 'logs')
-  assert.equal(viewFromHash('#benchmark?batch_id=bench-1'), 'benchmark')
-  assert.equal(viewFromHash('#evidence?game_id=game-2'), 'lobby')
-})
+  assert.equal(
+    routeHashFromLegacyHash("#evolution?run_id=run-1"),
+    "#evolution",
+  );
+  assert.equal(
+    isLegacyHashForView("evolution", "#evolution?run_id=run-1"),
+    true,
+  );
+  assert.equal(
+    isLegacyHashForView("benchmark", "#evolution?run_id=run-1"),
+    false,
+  );
+  assert.equal(isLegacyHashForView("lobby", ""), true);
+  assert.equal(viewFromHash(""), "lobby");
+  assert.equal(viewFromHash("#logs?game_id=game-7"), "logs");
+  assert.equal(viewFromHash("#benchmark?batch_id=bench-1"), "benchmark");
+  assert.equal(viewFromHash("#evidence?game_id=game-2"), "lobby");
+});
 
-test('extracts router query from legacy hash deep links', () => {
-  assert.deepEqual(routeQueryFromLegacyHash('#logs?game_id=game-7&workspace=archive'), {
-    game_id: 'game-7',
-    workspace: 'archive'
-  })
-  assert.deepEqual(routeQueryFromLegacyHash('#benchmark?batch_id=a&batch_id=b'), {
-    batch_id: ['a', 'b']
-  })
-  assert.deepEqual(routeQueryFromLegacyHash('#match'), {})
-})
+test("extracts router query from legacy hash deep links", () => {
+  assert.deepEqual(
+    routeQueryFromLegacyHash("#logs?game_id=game-7&workspace=archive"),
+    {
+      game_id: "game-7",
+      workspace: "archive",
+    },
+  );
+  assert.deepEqual(
+    routeQueryFromLegacyHash("#benchmark?batch_id=a&batch_id=b"),
+    {
+      batch_id: ["a", "b"],
+    },
+  );
+  assert.deepEqual(routeQueryFromLegacyHash("#match"), {});
+});
 
-test('syncs a legacy view navigation into vue-router', () => {
-  const calls: unknown[] = []
+test("normalizes route query and builds stable legacy query strings", () => {
+  assert.deepEqual(
+    normalizeRouteQuery({
+      workspace: "archive",
+      game_id: "game/7",
+      empty: "",
+      skip: null,
+      batch_id: ["bench-a", undefined, "bench-b"],
+    }),
+    {
+      batch_id: ["bench-a", "bench-b"],
+      game_id: "game/7",
+      workspace: "archive",
+    },
+  );
+  assert.equal(
+    routeQueryString({
+      workspace: "archive",
+      game_id: "game/7",
+      batch_id: ["bench-a", "bench-b"],
+    }),
+    "batch_id=bench-a&batch_id=bench-b&game_id=game%2F7&workspace=archive",
+  );
+});
+
+test("syncs a legacy view navigation into vue-router", () => {
+  const calls: unknown[] = [];
   registerLegacyViewRouter({
     replace(to: unknown) {
-      calls.push(to)
-      return Promise.resolve()
-    }
-  })
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
 
-  syncRouterToLegacyView('logs', '#logs?game_id=game-7&workspace=archive')
+  syncRouterToLegacyView("logs", "#logs?game_id=game-7&workspace=archive");
 
-  assert.deepEqual(calls, [{
-    path: '/logs',
-    query: { game_id: 'game-7', workspace: 'archive' },
-    hash: '#logs?game_id=game-7&workspace=archive'
-  }])
-})
+  assert.deepEqual(calls, [
+    {
+      path: "/logs",
+      query: { game_id: "game-7", workspace: "archive" },
+      hash: "#logs?game_id=game-7&workspace=archive",
+    },
+  ]);
+});
 
-test('builds route locations for legacy view navigation', () => {
-  assert.deepEqual(routeLocationForLegacyView('lobby'), {
-    path: '/',
+test("builds route locations for legacy view navigation", () => {
+  assert.deepEqual(routeLocationForLegacyView("lobby"), {
+    path: "/",
     query: {},
-    hash: ''
-  })
-  assert.deepEqual(routeLocationForLegacyView('logs', '#logs?game_id=game-7&workspace=archive'), {
-    path: '/logs',
-    query: { game_id: 'game-7', workspace: 'archive' },
-    hash: '#logs?game_id=game-7&workspace=archive'
-  })
-})
+    hash: "",
+  });
+  assert.deepEqual(
+    routeLocationForLegacyView(
+      "logs",
+      "#logs?game_id=game-7&workspace=archive",
+    ),
+    {
+      path: "/logs",
+      query: { game_id: "game-7", workspace: "archive" },
+      hash: "#logs?game_id=game-7&workspace=archive",
+    },
+  );
+});
 
-test('writeViewHash keeps legacy hash behavior and mirrors the router path', () => {
-  const calls: unknown[] = []
-  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+test("builds route locations from router query without manual hashes", () => {
+  assert.equal(
+    legacyHashFromRouteQuery("logs", {
+      game_id: "game-7",
+      workspace: "archive",
+    }),
+    "#logs?game_id=game-7&workspace=archive",
+  );
+  assert.deepEqual(
+    routeLocationForViewQuery("logs", {
+      workspace: "archive",
+      game_id: "game-7",
+    }),
+    {
+      path: "/logs",
+      query: { game_id: "game-7", workspace: "archive" },
+      hash: "#logs?game_id=game-7&workspace=archive",
+    },
+  );
+  assert.deepEqual(routeLocationForViewQuery("lobby", { game_id: "game-7" }), {
+    path: "/",
+    query: { game_id: "game-7" },
+    hash: "",
+  });
+});
+
+test("writeViewHash keeps legacy hash behavior and mirrors the router path", () => {
+  const calls: unknown[] = [];
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
   registerLegacyViewRouter({
     replace(to: unknown) {
-      calls.push(to)
-      return Promise.resolve()
-    }
-  })
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
 
-  writeViewHash('match')
+  writeViewHash("match");
 
-  assert.deepEqual(calls, [{ path: '/match', query: {}, hash: '#match' }])
-})
+  assert.deepEqual(calls, [{ path: "/match", query: {}, hash: "#match" }]);
+});
 
-test('writeViewHash mirrors lobby navigation into the root router path', () => {
-  const calls: unknown[] = []
-  globalThis.window = { location: locationLike('#logs') } as Window & typeof globalThis
+test("writeViewHash mirrors lobby navigation into the root router path", () => {
+  const calls: unknown[] = [];
+  globalThis.window = { location: locationLike("#logs") } as Window &
+    typeof globalThis;
   registerLegacyViewRouter({
     replace(to: unknown) {
-      calls.push(to)
-      return Promise.resolve()
-    }
-  })
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
 
-  writeViewHash('lobby')
+  writeViewHash("lobby");
 
-  assert.deepEqual(calls, [{ path: '/', query: {}, hash: '' }])
-})
+  assert.deepEqual(calls, [{ path: "/", query: {}, hash: "" }]);
+});
 
-test('writeViewHash falls back to legacy hashes when no router is registered', () => {
-  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+test("writeViewHash falls back to legacy hashes when no router is registered", () => {
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
 
-  writeViewHash('match')
-  assert.equal(window.location.hash, '#match')
+  writeViewHash("match");
+  assert.equal(window.location.hash, "#match");
 
-  writeViewHash('lobby')
-  assert.equal(window.location.hash, '')
-})
+  writeViewHash("lobby");
+  assert.equal(window.location.hash, "");
+});
 
-test('writeViewHash falls back to legacy hashes when router navigation fails', async () => {
-  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+test("writeViewHash falls back to legacy hashes when router navigation fails", async () => {
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
   registerLegacyViewRouter({
     replace() {
-      return Promise.reject(new Error('router offline'))
-    }
-  })
+      return Promise.reject(new Error("router offline"));
+    },
+  });
 
-  writeViewHash('logs')
-  await Promise.resolve()
-  await Promise.resolve()
+  writeViewHash("logs");
+  await Promise.resolve();
+  await Promise.resolve();
 
-  assert.equal(window.location.hash, '#logs')
-})
+  assert.equal(window.location.hash, "#logs");
+});
 
-test('writes explicit legacy hashes through the registered router', () => {
-  const calls: unknown[] = []
-  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+test("writes explicit legacy hashes through the registered router", () => {
+  const calls: unknown[] = [];
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
   registerLegacyViewRouter({
     replace(to: unknown) {
-      calls.push(to)
-      return Promise.resolve()
-    }
-  })
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
 
-  writeLegacyHashForView('logs', '#logs?game_id=game-7&workspace=archive')
+  writeLegacyHashForView("logs", "#logs?game_id=game-7&workspace=archive");
 
-  assert.deepEqual(calls, [{
-    path: '/logs',
-    query: { game_id: 'game-7', workspace: 'archive' },
-    hash: '#logs?game_id=game-7&workspace=archive'
-  }])
-})
+  assert.deepEqual(calls, [
+    {
+      path: "/logs",
+      query: { game_id: "game-7", workspace: "archive" },
+      hash: "#logs?game_id=game-7&workspace=archive",
+    },
+  ]);
+});
 
-test('writes explicit legacy hashes to the window without a router', () => {
-  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+test("writes router query locations through the registered router", () => {
+  const calls: unknown[] = [];
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
+  registerLegacyViewRouter({
+    replace(to: unknown) {
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
 
-  writeLegacyHashForView('logs', '#logs?game_id=game-7&workspace=archive')
+  writeViewRoute("logs", { game_id: "game-7", workspace: "archive" });
 
-  assert.equal(currentLegacyHash(), '#logs?game_id=game-7&workspace=archive')
-})
+  assert.deepEqual(calls, [
+    {
+      path: "/logs",
+      query: { game_id: "game-7", workspace: "archive" },
+      hash: "#logs?game_id=game-7&workspace=archive",
+    },
+  ]);
+});
 
-test('reads the current legacy view with a server-side fallback', () => {
-  if (originalWindow === undefined) delete (globalThis as { window?: Window }).window
-  else globalThis.window = undefined as unknown as Window & typeof globalThis
-  assert.equal(currentLegacyView('match'), 'match')
+test("can push router query locations while retaining legacy hash fallback", () => {
+  const calls: unknown[] = [];
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
+  registerLegacyViewRouter({
+    replace() {
+      throw new Error("replace should not be used");
+    },
+    push(to: unknown) {
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
 
-  globalThis.window = { location: locationLike('#evolution?run_id=run-1') } as Window & typeof globalThis
-  assert.equal(currentLegacyView(), 'evolution')
-})
+  writeViewRoute("benchmark", { batch_id: "bench-7" }, { mode: "push" });
 
-test('registers legacy hashchange listeners and returns cleanup callbacks', () => {
-  const target = eventWindowLike('#logs')
-  globalThis.window = target as unknown as Window & typeof globalThis
-  const events: string[] = []
+  assert.deepEqual(calls, [
+    {
+      path: "/benchmark",
+      query: { batch_id: "bench-7" },
+      hash: "#benchmark?batch_id=bench-7",
+    },
+  ]);
+});
+
+test("writes explicit legacy hashes to the window without a router", () => {
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
+
+  writeLegacyHashForView("logs", "#logs?game_id=game-7&workspace=archive");
+
+  assert.equal(currentLegacyHash(), "#logs?game_id=game-7&workspace=archive");
+});
+
+test("reads the current legacy view with a server-side fallback", () => {
+  if (originalWindow === undefined)
+    delete (globalThis as { window?: Window }).window;
+  else globalThis.window = undefined as unknown as Window & typeof globalThis;
+  assert.equal(currentLegacyView("match"), "match");
+
+  globalThis.window = {
+    location: locationLike("#evolution?run_id=run-1"),
+  } as Window & typeof globalThis;
+  assert.equal(currentLegacyView(), "evolution");
+});
+
+test("registers legacy hashchange listeners and returns cleanup callbacks", () => {
+  const target = eventWindowLike("#logs");
+  globalThis.window = target as unknown as Window & typeof globalThis;
+  const events: string[] = [];
   const remove = addLegacyHashChangeListener((event) => {
-    events.push(event.newURL)
-  })
+    events.push(event.newURL);
+  });
 
-  assert.equal(target.listeners('hashchange').length, 1)
-  target.listeners('hashchange')[0]({ newURL: '#logs?game_id=game-1' } as HashChangeEvent)
-  assert.deepEqual(events, ['#logs?game_id=game-1'])
+  assert.equal(target.listeners("hashchange").length, 1);
+  target.listeners("hashchange")[0]({
+    newURL: "#logs?game_id=game-1",
+  } as HashChangeEvent);
+  assert.deepEqual(events, ["#logs?game_id=game-1"]);
 
-  remove()
+  remove();
 
-  assert.equal(target.listeners('hashchange').length, 0)
-})
+  assert.equal(target.listeners("hashchange").length, 0);
+});
 
-test('syncs the current legacy hash only when it matches the target view', () => {
-  const calls: unknown[] = []
-  globalThis.window = { location: locationLike('#benchmark?batch_id=bench-7') } as Window & typeof globalThis
+test("syncs the current legacy hash only when it matches the target view", () => {
+  const calls: unknown[] = [];
+  globalThis.window = {
+    location: locationLike("#benchmark?batch_id=bench-7"),
+  } as Window & typeof globalThis;
   registerLegacyViewRouter({
     replace(to: unknown) {
-      calls.push(to)
-      return Promise.resolve()
-    }
-  })
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
 
-  assert.equal(syncCurrentLegacyHashForView('benchmark'), true)
-  assert.equal(syncCurrentLegacyHashForView('evolution'), false)
-  assert.deepEqual(calls, [{
-    path: '/benchmark',
-    query: { batch_id: 'bench-7' },
-    hash: '#benchmark?batch_id=bench-7'
-  }])
-})
+  assert.equal(syncCurrentLegacyHashForView("benchmark"), true);
+  assert.equal(syncCurrentLegacyHashForView("evolution"), false);
+  assert.deepEqual(calls, [
+    {
+      path: "/benchmark",
+      query: { batch_id: "bench-7" },
+      hash: "#benchmark?batch_id=bench-7",
+    },
+  ]);
+});

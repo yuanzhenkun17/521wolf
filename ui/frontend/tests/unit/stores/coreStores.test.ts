@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { afterEach, test, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
+import { useEvolutionStore } from '../../../src/stores/evolution'
 import { useGameStore } from '../../../src/stores/game'
 import { useHistoryStore } from '../../../src/stores/history'
 import { useReplayStore } from '../../../src/stores/replay'
@@ -13,6 +14,7 @@ import {
 } from '../../../src/stores/runtimeHydration'
 import { useSessionStore } from '../../../src/stores/session'
 import { useUiStore } from '../../../src/stores/ui'
+import type { EvolutionRun } from '../../../src/types/evolution'
 import type { Game } from '../../../src/types/game'
 import type { HistoryGame, ReplaySnapshot } from '../../../src/types/history'
 
@@ -55,6 +57,43 @@ function replaySnapshotFixture(id: string, overrides: Partial<ReplaySnapshot> = 
     limit: 100,
     next_cursor: null,
     has_more: false,
+    ...overrides
+  }
+}
+
+function evolutionRunFixture(id: string, overrides: Partial<EvolutionRun> = {}): EvolutionRun {
+  return {
+    id,
+    run_id: id,
+    entityType: 'run',
+    isBatch: false,
+    childRuns: [],
+    childRunCount: 0,
+    role: 'werewolf',
+    roles: ['werewolf'],
+    displayRole: '狼人',
+    status: 'running',
+    currentStage: 'training',
+    recommendation: 'pending',
+    recommendationLabel: '等待',
+    progressPercent: 0,
+    progressLabel: '0%',
+    overallProgressPercent: 0,
+    stageProgressPercent: 0,
+    trainingProgressPercent: 0,
+    battleProgressPercent: 0,
+    trainingGameRequested: 0,
+    trainingGameCompleted: 0,
+    battleGameRequested: 0,
+    battleGameCompleted: 0,
+    proposalCount: 0,
+    diffCount: 0,
+    diagnosticCount: 0,
+    warningCount: 0,
+    errorCount: 0,
+    isReviewing: false,
+    isTerminal: false,
+    isActive: true,
     ...overrides
   }
 }
@@ -306,7 +345,29 @@ test('history store hydrates selection and derives selection state', () => {
     historyHasMore: true,
     historyCurrentPage: 2,
     historyTotalPages: 4,
-    historyPages: [{ key: 'day-1-night' }]
+    historyPages: [{ key: 'day-1-night' }],
+    selectedHistoryPageKey: 'day-1-night',
+    selectedHistoryPage: { key: 'day-1-night', phase: 'night' },
+    phaseLoadingByKey: { 'day-1-night': true },
+    historyLogs: [{ event_type: 'night_result', message: '昨夜平安' }],
+    pageNightActions: [{ actor: 1, action: 'guard' }],
+    pageSpeechDecisions: [{ player_id: 2, decision: 'claim' }],
+    sheriffVotes: [{ voter: 1, target: 2 }],
+    voteDecisions: [{ voter: 2, target: 3 }],
+    currentVoteTally: [{ target: 3, count: 2 }],
+    sheriffVoteTally: [{ target: 2, count: 1 }],
+    pageLastWords: [{ player_id: 4, text: '遗言' }],
+    nightResult: 'peace',
+    sheriffResult: { elected: 2 },
+    playerAssessmentScores: [{ player_id: 1, score: 0.8 }],
+    activeAssessScores: [{ player_id: 2, score: 0.6 }],
+    playerAliveAtPage: { 1: true, 4: false },
+    archiveByGameId: { 'history-1': { archive_id: 'archive-1' } },
+    reviewByGameId: { 'history-1': { report_id: 'review-1' } },
+    flowDataByGameId: { 'history-1': { nodes: [] } },
+    flowLoadingByGameId: { 'history-1': false },
+    archiveLoading: true,
+    reviewLoading: true
   })
 
   assert.equal(store.games.length, 1)
@@ -325,6 +386,28 @@ test('history store hydrates selection and derives selection state', () => {
   assert.equal(store.currentPage, 2)
   assert.equal(store.totalPages, 4)
   assert.deepEqual(store.pages, [{ key: 'day-1-night' }])
+  assert.equal(store.selectedHistoryPageKey, 'day-1-night')
+  assert.deepEqual(store.selectedHistoryPage, { key: 'day-1-night', phase: 'night' })
+  assert.deepEqual(store.phaseLoadingByKey, { 'day-1-night': true })
+  assert.deepEqual(store.historyLogs, [{ event_type: 'night_result', message: '昨夜平安' }])
+  assert.deepEqual(store.pageNightActions, [{ actor: 1, action: 'guard' }])
+  assert.deepEqual(store.pageSpeechDecisions, [{ player_id: 2, decision: 'claim' }])
+  assert.deepEqual(store.sheriffVotes, [{ voter: 1, target: 2 }])
+  assert.deepEqual(store.voteDecisions, [{ voter: 2, target: 3 }])
+  assert.deepEqual(store.currentVoteTally, [{ target: 3, count: 2 }])
+  assert.deepEqual(store.sheriffVoteTally, [{ target: 2, count: 1 }])
+  assert.deepEqual(store.pageLastWords, [{ player_id: 4, text: '遗言' }])
+  assert.equal(store.nightResult, 'peace')
+  assert.deepEqual(store.sheriffResult, { elected: 2 })
+  assert.deepEqual(store.playerAssessmentScores, [{ player_id: 1, score: 0.8 }])
+  assert.deepEqual(store.activeAssessScores, [{ player_id: 2, score: 0.6 }])
+  assert.deepEqual(store.playerAliveAtPage, { 1: true, 4: false })
+  assert.deepEqual(store.archiveByGameId, { 'history-1': { archive_id: 'archive-1' } })
+  assert.deepEqual(store.reviewByGameId, { 'history-1': { report_id: 'review-1' } })
+  assert.deepEqual(store.flowDataByGameId, { 'history-1': { nodes: [] } })
+  assert.deepEqual(store.flowLoadingByGameId, { 'history-1': false })
+  assert.equal(store.archiveLoading, true)
+  assert.equal(store.reviewLoading, true)
   assert.equal(store.hasSelection, true)
 
   store.selectGame(null)
@@ -369,6 +452,104 @@ test('history store forwards runtime actions through a thin facade', async () =>
   assert.equal(store.hasRuntimeActions, false)
   assert.equal(store.hasRuntimeAction('loadReview'), false)
   assert.equal(store.loadReview('history-1'), undefined)
+})
+
+test('evolution store hydrates workbench shell state and forwards actions', async () => {
+  setActivePinia(createPinia())
+  const store = useEvolutionStore()
+  const run = evolutionRunFixture('run-1')
+  const detail = evolutionRunFixture('run-1', { proposalCount: 3, progressLabel: 'loaded detail' })
+  const batch = evolutionRunFixture('batch-1', {
+    batch_id: 'batch-1',
+    entityType: 'batch',
+    isBatch: true,
+    run_id: undefined,
+    roles: ['werewolf', 'seer'],
+    displayRole: '批量运行'
+  })
+  const refreshAll = vi.fn().mockResolvedValue('refreshed')
+  const selectRole = vi.fn().mockReturnValue('role-selected')
+  const selectRun = vi.fn().mockResolvedValue('run-selected')
+
+  store.hydrateFromWorkbench({
+    loading: true,
+    error: 'evolution failed',
+    notice: { type: 'warning', message: 'stale' },
+    roles: ['werewolf'],
+    roleRows: [{ key: 'werewolf', label: '狼人' }],
+    versionsByRole: {
+      werewolf: [{
+        version_id: 'v1',
+        releaseStage: 'baseline',
+        rollbackDisabled: false,
+        rollbackDisabledReason: '',
+        short: 'v1'
+      }]
+    },
+    runs: [run],
+    runRows: [run, batch],
+    selectedRole: 'werewolf',
+    selectedRunId: 'run-1',
+    selectedRun: detail,
+    selectedRunSummary: { id: 'run-1', statusLabel: '运行中' },
+    selectedProposalReview: { source: 'api' },
+    selectedGames: { training: [{ id: 'game-1' }] },
+    selectedCanPromote: true,
+    selectedPromoteDisabledReason: '',
+    selectedCanReject: true,
+    selectedRejectDisabledReason: '',
+    selectedCanTerminate: true,
+    selectedTerminateDisabledReason: '',
+    selectedRollbackDisabledReason: '当前运行不可回滚'
+  })
+
+  assert.equal(store.loading, true)
+  assert.equal(store.error, 'evolution failed')
+  assert.deepEqual(store.notice, { type: 'warning', message: 'stale' })
+  assert.deepEqual(store.roleRows, [{ key: 'werewolf', label: '狼人' }])
+  assert.equal(store.selectedRole, 'werewolf')
+  assert.equal(store.selectedRun?.proposalCount, 3)
+  assert.equal(store.selectedRun?.progressLabel, 'loaded detail')
+  assert.equal(store.selectedIsRun, true)
+  assert.equal(store.selectedIsBatch, false)
+  assert.deepEqual(store.selectedRunSummary, { id: 'run-1', statusLabel: '运行中' })
+  assert.deepEqual(store.selectedProposalReview, { source: 'api' })
+  assert.deepEqual(store.selectedGames, { training: [{ id: 'game-1' }] })
+  assert.equal(store.selectedCanPromote, true)
+  assert.equal(store.selectedCanReject, true)
+  assert.equal(store.selectedCanTerminate, true)
+  assert.equal(store.selectedRollbackDisabledReason, '当前运行不可回滚')
+  assert.deepEqual(store.selectedRoleVersions.map((version) => version.version_id), ['v1'])
+
+  store.hydrateFromWorkbench({
+    runs: [run],
+    runRows: [run, batch],
+    selectedRole: 'werewolf',
+    selectedRunId: 'batch-1',
+    selectedRun: null
+  })
+
+  assert.equal(store.selectedRun?.id, 'batch-1')
+  assert.equal(store.selectedIsBatch, true)
+  assert.equal(store.hasSelection, true)
+
+  store.bindRuntimeActions({ refreshAll, selectRole, selectRun })
+
+  assert.equal(store.hasRuntimeActions, true)
+  assert.equal(store.hasRuntimeAction('selectRole'), true)
+  assert.equal(store.selectRole('seer'), 'role-selected')
+  assert.equal(store.selectedRole, 'seer')
+  assert.deepEqual(selectRole.mock.calls[0], ['seer'])
+  assert.equal(await store.selectRun('run-1'), 'run-selected')
+  assert.equal(store.selectedRunId, 'run-1')
+  assert.equal(store.selectedRun?.id, 'run-1')
+  assert.equal(await store.refreshAll(), 'refreshed')
+
+  store.clearRuntimeActions()
+
+  assert.equal(store.hasRuntimeActions, false)
+  assert.equal(store.hasRuntimeAction('selectRole'), false)
+  assert.equal(store.selectRun(''), undefined)
 })
 
 test('replay store hydrates replay state and toggles replay actions', () => {
@@ -520,6 +701,28 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     historyCurrentPage: ref(3),
     historyTotalPages: ref(5),
     historyPages: ref([{ key: 'runtime-page' }]),
+    selectedHistoryPageKey: ref('runtime-page'),
+    selectedHistoryPage: ref({ key: 'runtime-page', phase: 'speech' }),
+    phaseLoadingByKey: ref({ 'runtime-page': false }),
+    historyLogs: ref([{ event_type: 'speech', message: 'runtime log' }]),
+    pageNightActions: ref([{ actor: 3, action: 'inspect' }]),
+    pageSpeechDecisions: ref([{ player_id: 3, decision: 'vote' }]),
+    sheriffVotes: ref([{ voter: 3, target: 1 }]),
+    voteDecisions: ref([{ voter: 4, target: 1 }]),
+    currentVoteTally: ref([{ target: 1, count: 3 }]),
+    sheriffVoteTally: ref([{ target: 1, count: 2 }]),
+    pageLastWords: ref([{ player_id: 5, text: 'runtime last words' }]),
+    nightResult: ref('runtime night result'),
+    sheriffResult: ref({ elected: 1 }),
+    playerAssessmentScores: ref([{ player_id: 3, score: 0.7 }]),
+    activeAssessScores: ref([{ player_id: 4, score: 0.5 }]),
+    playerAliveAtPage: ref({ 3: true, 5: false }),
+    archiveByGameId: ref({ 'runtime-history': { archive_id: 'runtime-archive' } }),
+    reviewByGameId: ref({ 'runtime-history': { report_id: 'runtime-review' } }),
+    flowDataByGameId: ref({ 'runtime-history': { edges: [] } }),
+    flowLoadingByGameId: ref({ 'runtime-history': true }),
+    archiveLoading: ref(true),
+    reviewLoading: ref(true),
     replayGame: ref(replayGame),
     isReplayMode: ref(true),
     replayCursor: ref(3),
@@ -568,6 +771,45 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     'skipIntroGameId',
     'speechRemaining'
   ])
+  assert.deepEqual(runtimeHydrationKeys.history, [
+    'gameHistory',
+    'selectedHistoryGameId',
+    'selectedHistoryGame',
+    'historyWorkspaceTab',
+    'historyLoading',
+    'historyPagination',
+    'historyLoadingMore',
+    'historySourceFilter',
+    'historyCounts',
+    'historyFacets',
+    'historyNotice',
+    'historyHasMore',
+    'historyCurrentPage',
+    'historyTotalPages',
+    'historyPages',
+    'selectedHistoryPageKey',
+    'selectedHistoryPage',
+    'phaseLoadingByKey',
+    'historyLogs',
+    'pageNightActions',
+    'pageSpeechDecisions',
+    'sheriffVotes',
+    'voteDecisions',
+    'currentVoteTally',
+    'sheriffVoteTally',
+    'pageLastWords',
+    'nightResult',
+    'sheriffResult',
+    'playerAssessmentScores',
+    'activeAssessScores',
+    'playerAliveAtPage',
+    'archiveByGameId',
+    'reviewByGameId',
+    'flowDataByGameId',
+    'flowLoadingByGameId',
+    'archiveLoading',
+    'reviewLoading'
+  ])
   assert.equal(payloads.game.liveGame?.game_id, 'runtime-game')
   assert.equal(payloads.game.game?.game_id, 'runtime-replay')
   assert.equal(payloads.game.roleAssignmentComplete, true)
@@ -599,6 +841,29 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
   assert.equal(historyStore.currentPage, 3)
   assert.equal(historyStore.totalPages, 5)
   assert.deepEqual(historyStore.pages, [{ key: 'runtime-page' }])
+  assert.equal(payloads.history.selectedHistoryPageKey, 'runtime-page')
+  assert.equal(historyStore.selectedHistoryPageKey, 'runtime-page')
+  assert.deepEqual(historyStore.selectedHistoryPage, { key: 'runtime-page', phase: 'speech' })
+  assert.deepEqual(historyStore.phaseLoadingByKey, { 'runtime-page': false })
+  assert.deepEqual(historyStore.historyLogs, [{ event_type: 'speech', message: 'runtime log' }])
+  assert.deepEqual(historyStore.pageNightActions, [{ actor: 3, action: 'inspect' }])
+  assert.deepEqual(historyStore.pageSpeechDecisions, [{ player_id: 3, decision: 'vote' }])
+  assert.deepEqual(historyStore.sheriffVotes, [{ voter: 3, target: 1 }])
+  assert.deepEqual(historyStore.voteDecisions, [{ voter: 4, target: 1 }])
+  assert.deepEqual(historyStore.currentVoteTally, [{ target: 1, count: 3 }])
+  assert.deepEqual(historyStore.sheriffVoteTally, [{ target: 1, count: 2 }])
+  assert.deepEqual(historyStore.pageLastWords, [{ player_id: 5, text: 'runtime last words' }])
+  assert.equal(historyStore.nightResult, 'runtime night result')
+  assert.deepEqual(historyStore.sheriffResult, { elected: 1 })
+  assert.deepEqual(historyStore.playerAssessmentScores, [{ player_id: 3, score: 0.7 }])
+  assert.deepEqual(historyStore.activeAssessScores, [{ player_id: 4, score: 0.5 }])
+  assert.deepEqual(historyStore.playerAliveAtPage, { 3: true, 5: false })
+  assert.deepEqual(historyStore.archiveByGameId, { 'runtime-history': { archive_id: 'runtime-archive' } })
+  assert.deepEqual(historyStore.reviewByGameId, { 'runtime-history': { report_id: 'runtime-review' } })
+  assert.deepEqual(historyStore.flowDataByGameId, { 'runtime-history': { edges: [] } })
+  assert.deepEqual(historyStore.flowLoadingByGameId, { 'runtime-history': true })
+  assert.equal(historyStore.archiveLoading, true)
+  assert.equal(historyStore.reviewLoading, true)
   assert.equal(replayStore.replayGame?.game_id, 'runtime-replay')
   assert.equal(replayStore.replaySpeed, 1.5)
   assert.equal(replayStore.replayTotal, 9)

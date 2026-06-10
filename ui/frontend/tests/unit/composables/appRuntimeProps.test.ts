@@ -3,6 +3,9 @@ import { ref } from 'vue'
 import { test } from 'vitest'
 import {
   bindRuntimeValue,
+  buildLogsRuntimeProps,
+  buildLobbyRuntimeProps,
+  buildMatchRuntimeProps,
   pickRuntime,
   readRuntimeValue,
   useAppRuntimeProps
@@ -42,6 +45,9 @@ test('unwraps runtime refs when building page prop payloads', () => {
   })
 
   const props = useAppRuntimeProps(runtime)
+  const logsViewModel = buildLogsRuntimeProps(runtime)
+  const lobbyViewModel = buildLobbyRuntimeProps(runtime)
+  const matchViewModel = buildMatchRuntimeProps(runtime)
 
   assert.equal('gameHistory' in props.logsProps.value, false)
   assert.equal('selectedHistoryPageKey' in props.logsProps.value, false)
@@ -52,11 +58,15 @@ test('unwraps runtime refs when building page prop payloads', () => {
   assert.equal('archiveByGameId' in props.logsProps.value, false)
   assert.equal('archiveLoading' in props.logsProps.value, false)
   assert.equal(props.logsProps.value.roleIconImage, roleIconImage)
+  assert.equal(logsViewModel.roleIconImage, roleIconImage)
   assert.equal('loadArchive' in props.logsProps.value, false)
   assert.equal(props.lobbyProps.value.backendMode, 'api')
   assert.equal(props.lobbyProps.value.apiFetch, apiFetch)
+  assert.equal(lobbyViewModel.backendMode, 'api')
+  assert.equal(lobbyViewModel.apiFetch, apiFetch)
   assert.equal('game' in props.matchProps.value, false)
   assert.equal('backendMode' in props.matchProps.value, false)
   assert.equal('speech' in props.matchProps.value, false)
   assert.equal('actionTarget' in props.matchProps.value, false)
+  assert.equal(matchViewModel.roleIconImage, roleIconImage)
 })

@@ -140,7 +140,7 @@ test('BenchmarkPage consumes benchmark run deep links after the router preserves
 
   assert.match(component, /function benchmarkDeepLinkBatchId/)
   assert.match(component, /benchmarkBatchIdFromRoute/)
-  assert.match(helper, /const benchmarkIdKeys = \['batch_id', 'batch', 'run_id', 'run', 'source_run_id'\]/)
+  assert.match(helper, /const benchmarkIdKeys = \[['"]batch_id['"], ['"]batch['"], ['"]run_id['"], ['"]run['"], ['"]source_run_id['"]\]/)
   assert.match(helper, /export function benchmarkBatchIdFromRoute/)
   assert.match(component, /activeView\.value = 'runs'/)
   assert.match(component, /benchmark\.selectBenchmarkBatch\(batchId\)/)

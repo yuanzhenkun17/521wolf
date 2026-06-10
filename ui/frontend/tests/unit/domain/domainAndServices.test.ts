@@ -1,35 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import {
-  arrayOrEmpty,
-  booleanValue,
-  buildQuery,
-  firstNumber,
-  firstString,
-  integerValue,
-  isRecord,
-  mergeByStableId,
-  normalizePagination,
-  nullableNumber,
-  numberValue,
-  objectOrEmpty,
-  positiveInteger,
-  shortId,
-  stringValue,
-  uniqueStrings
-} from '../../../src/domain/common'
-import {
-  canonicalActionType,
-  canonicalChoice,
-  normalizeGameSnapshot,
-  normalizePendingHumanAction,
-  targetRequiredForAction
-} from '../../../src/domain/game/normalizers'
+import { arrayOrEmpty, booleanValue, buildQuery, firstNumber, firstString, integerValue, isRecord, mergeByStableId, normalizePagination, nullableNumber, numberValue, objectOrEmpty, positiveInteger, shortId, stringValue, uniqueStrings } from '../../../src/domain/common'
+import { canonicalActionType, canonicalChoice, normalizeGameSnapshot, normalizePendingHumanAction, targetRequiredForAction } from '../../../src/domain/game/normalizers'
 import { canSubmitPendingAction, currentSpeaker, pendingCandidatePlayers } from '../../../src/domain/game/selectors'
 import { historyPageKey, normalizeHistoryPageSummary, parseHistoryPageKey } from '../../../src/domain/history/normalizers'
 import { historyGameEvidenceLabel, logsForPhase } from '../../../src/domain/history/selectors'
 import { normalizeRun, normalizeVersion } from '../../../src/domain/evolution/normalizers'
 import { activeEvolutionRuns, rollbackEligibleVersions } from '../../../src/domain/evolution/selectors'
-import { ApiError, normalizeApiError } from '../../../src/services/api'
+import { ApiError, normalizeApiError, readErrorPayload } from '../../../src/services/api'
 import { createBenchmarkService } from '../../../src/services/benchmarkApi'
 import { createHistoryService } from '../../../src/services/historyApi'
 import type { ApiClient, ApiRequestOptions } from '../../../src/types/api'
@@ -39,13 +16,35 @@ interface RecordedRequest {
   options: ApiRequestOptions
 }
 
-function recordingClient(response: unknown = {}): { client: ApiClient; requests: RecordedRequest[] } {
+function recordingClient(response: unknown = {}): {
+  client: ApiClient
+  requests: RecordedRequest[]
+} {
   const requests: RecordedRequest[] = []
   const client: ApiClient = {
     apiBase: '/api',
     async fetch<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
       requests.push({ path, options })
       return response as T
+    },
+    async raw(): Promise<Response> {
+      throw new Error('raw should not be called by service contract tests')
+    }
+  }
+  return { client, requests }
+}
+
+function recordingSequenceClient(responses: readonly unknown[]): {
+  client: ApiClient
+  requests: RecordedRequest[]
+} {
+  const requests: RecordedRequest[] = []
+  let index = 0
+  const client: ApiClient = {
+    apiBase: '/api',
+    async fetch<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+      requests.push({ path, options })
+      return (responses[index++] ?? {}) as T
     },
     async raw(): Promise<Response> {
       throw new Error('raw should not be called by service contract tests')
@@ -98,7 +97,13 @@ describe('domain common helpers', () => {
 
     expect(
       normalizePagination(
-        { total: '-5', offset: '-4', limit: 'bad', returned: '-2', has_more: 'yes' },
+        {
+          total: '-5',
+          offset: '-4',
+          limit: 'bad',
+          returned: '-2',
+          has_more: 'yes'
+        },
         [1, 2, 3],
         { total: 10, offset: 8, limit: 5 }
       )
@@ -110,25 +115,23 @@ describe('domain common helpers', () => {
       has_more: true
     })
 
-    const existing: Array<{ id?: string; fallback_id?: string; value: number }> = [
-      { id: 'a', value: 1 },
-      { id: '', fallback_id: 'legacy', value: 2 },
-      { value: 3 }
-    ]
-    const incoming: Array<{ id?: string; fallback_id?: string; value: number }> = [
+    const existing: Array<{
+      id?: string
+      fallback_id?: string
+      value: number
+    }> = [{ id: 'a', value: 1 }, { id: '', fallback_id: 'legacy', value: 2 }, { value: 3 }]
+    const incoming: Array<{
+      id?: string
+      fallback_id?: string
+      value: number
+    }> = [
       { id: 'a', value: 99 },
       { fallback_id: 'legacy', value: 100 },
       { id: 'b', value: 4 },
       { id: '', value: 5 }
     ]
 
-    expect(mergeByStableId(existing, incoming, ['id', 'fallback_id'])).toEqual([
-      existing[0],
-      existing[1],
-      existing[2],
-      incoming[2],
-      incoming[3]
-    ])
+    expect(mergeByStableId(existing, incoming, ['id', 'fallback_id'])).toEqual([existing[0], existing[1], existing[2], incoming[2], incoming[3]])
   })
 
   it('keeps helper type contracts narrow for readonly inputs', () => {
@@ -207,10 +210,20 @@ describe('game domain normalizers and selectors', () => {
 describe('history and evolution boundaries', () => {
   it('normalizes history page keys, phase aliases, and evidence labels', () => {
     expect(historyPageKey(0, 'finished')).toBe('day-1-ended')
-    expect(parseHistoryPageKey('day-03-sheriff_election')).toEqual({ day: 3, phase: 'sheriff' })
+    expect(parseHistoryPageKey('day-03-sheriff_election')).toEqual({
+      day: 3,
+      phase: 'sheriff'
+    })
     expect(parseHistoryPageKey('bad-key')).toBeNull()
     expect(
-      normalizeHistoryPageSummary({ phase_key: 'day-0-finished', logs_count: 'bad', decisions_count: '4' }, 7)
+      normalizeHistoryPageSummary(
+        {
+          phase_key: 'day-0-finished',
+          logs_count: 'bad',
+          decisions_count: '4'
+        },
+        7
+      )
     ).toMatchObject({
       key: 'day-0-finished',
       day: 1,
@@ -220,10 +233,30 @@ describe('history and evolution boundaries', () => {
       index: 7
     })
 
-    const speechLog = { day: 2, phase: 'day_speech', sequence: 1, type: 'speak', speaker: 'P1', visibility: 'public', message: 'claim' }
-    const nightLog = { day: 2, phase: 'night', sequence: 2, type: 'night', speaker: 'Judge', visibility: 'public', message: 'night' }
+    const speechLog = {
+      day: 2,
+      phase: 'day_speech',
+      sequence: 1,
+      type: 'speak',
+      speaker: 'P1',
+      visibility: 'public',
+      message: 'claim'
+    }
+    const nightLog = {
+      day: 2,
+      phase: 'night',
+      sequence: 2,
+      type: 'night',
+      speaker: 'Judge',
+      visibility: 'public',
+      message: 'night'
+    }
     expect(logsForPhase([speechLog, nightLog], { day: 2, phase: 'speech' })).toEqual([speechLog])
-    expect(historyGameEvidenceLabel({ evidence_source: { log_source: 'benchmark' } })).toBe('benchmark')
+    expect(
+      historyGameEvidenceLabel({
+        evidence_source: { log_source: 'benchmark' }
+      })
+    ).toBe('benchmark')
     expect(historyGameEvidenceLabel({ log_source_label: 'archive' })).toBe('archive')
     expect(historyGameEvidenceLabel(null)).toBe('对局')
   })
@@ -251,9 +284,18 @@ describe('history and evolution boundaries', () => {
     expect(done.isTerminal).toBe(true)
     expect(activeEvolutionRuns([active, done])).toEqual([active])
 
-    const baseline = normalizeVersion({ version_id: 'baseline-version', is_baseline: true })
-    const shadow = normalizeVersion({ target_version_id: 'shadow-version', provenance: { release_stage: 'SHADOW' } })
-    const stable = normalizeVersion({ version_id: 'stable-version', release_stage: 'stable' })
+    const baseline = normalizeVersion({
+      version_id: 'baseline-version',
+      is_baseline: true
+    })
+    const shadow = normalizeVersion({
+      target_version_id: 'shadow-version',
+      provenance: { release_stage: 'SHADOW' }
+    })
+    const stable = normalizeVersion({
+      version_id: 'stable-version',
+      release_stage: 'stable'
+    })
 
     expect(baseline.rollbackDisabled).toBe(true)
     expect(shadow.rollbackDisabled).toBe(true)
@@ -290,6 +332,25 @@ describe('service error conversion', () => {
     expect(error.diagnostics).toEqual([{ level: 'error', message: 'target missing' }])
     expect(error.body).toBe('{"detail":[{"msg":"fallback detail"}]}')
   })
+
+  it('converts primitive error JSON into a typed detail payload', async () => {
+    const response = new Response('"plain failure"', {
+      status: 500,
+      headers: { 'x-correlation-id': 'correlation-1' }
+    })
+    const payload = await readErrorPayload(response)
+    const error = normalizeApiError({ response, ...payload })
+
+    expect(payload).toEqual({
+      payload: { detail: 'plain failure' },
+      text: '"plain failure"',
+      requestId: 'correlation-1'
+    })
+    expect(error.code).toBe('internal_error')
+    expect(error.message).toBe('plain failure')
+    expect(error.requestId).toBe('correlation-1')
+    expect(error.diagnostics).toEqual([])
+  })
 })
 
 describe('service endpoint contracts', () => {
@@ -297,7 +358,12 @@ describe('service endpoint contracts', () => {
     const { client, requests } = recordingClient()
     const history = createHistoryService({ client })
 
-    await history.list({ source: 'benchmark', status: 'completed', limit: 12, offset: 24 })
+    await history.list({
+      source: 'benchmark',
+      status: 'completed',
+      limit: 12,
+      offset: 24
+    })
     await history.list({ source: 'all', status: 'all' })
     await history.shell('game id/1')
     await history.phaseDetail('game id/1', { day: 2, phase: 'speech' })
@@ -307,7 +373,14 @@ describe('service endpoint contracts', () => {
     expect(requests).toEqual([
       {
         path: '/games',
-        options: { query: { limit: 12, offset: 24, source: 'benchmark', status: 'completed' } }
+        options: {
+          query: {
+            limit: 12,
+            offset: 24,
+            source: 'benchmark',
+            status: 'completed'
+          }
+        }
       },
       {
         path: '/games',
@@ -353,28 +426,42 @@ describe('service endpoint contracts', () => {
 
     await benchmark.suites()
     await benchmark.seedSets()
-    await benchmark.leaderboard({ scope: 'role_version', target_role: 'seer', limit: 50 })
+    await benchmark.leaderboard({
+      scope: 'role_version',
+      target_role: 'seer',
+      limit: 50
+    })
     await benchmark.runs({ status: 'running', limit: 20 })
     await benchmark.launch(payload)
     await benchmark.run('bench id/1')
-    await benchmark.diagnostics('bench id/1', { kind: 'game_failure', seed: 260902 })
+    await benchmark.diagnostics('bench id/1', {
+      kind: 'game_failure',
+      seed: 260902
+    })
     await benchmark.report('bench id/1')
-    await benchmark.snapshots({ scope: 'role_version', benchmark_id: 'role-baseline' })
+    await benchmark.snapshots({
+      scope: 'role_version',
+      benchmark_id: 'role-baseline'
+    })
 
     expect(requests).toEqual([
       { path: '/benchmarks', options: {} },
       { path: '/benchmark/seed-sets', options: {} },
       {
         path: '/leaderboards',
-        options: { query: { scope: 'role_version', target_role: 'seer', limit: 50 } }
+        options: {
+          query: { scope: 'role_version', target_role: 'seer', limit: 50 }
+        }
       },
       {
         path: '/evolution-runs',
-        options: { query: { status: 'running', limit: 20, source: 'benchmark' } }
+        options: {
+          query: { status: 'running', limit: 20, source: 'benchmark' }
+        }
       },
       {
         path: '/benchmark',
-        options: { method: 'POST', body: payload }
+        options: { method: 'POST', body: { ...payload, target_versions: {} } }
       },
       { path: '/benchmark/batch/bench%20id%2F1', options: {} },
       {
@@ -384,8 +471,122 @@ describe('service endpoint contracts', () => {
       { path: '/benchmark/batch/bench%20id%2F1/report', options: {} },
       {
         path: '/benchmark/snapshots',
-        options: { query: { scope: 'role_version', benchmark_id: 'role-baseline' } }
+        options: {
+          query: { scope: 'role_version', benchmark_id: 'role-baseline' }
+        }
       }
     ])
+  })
+
+  it('normalizes benchmark service DTO responses into domain contracts', async () => {
+    const { client } = recordingSequenceClient([
+      {
+        benchmarks: [
+          {
+            benchmark_id: 'suite-1',
+            version: '2',
+            name: 'Model gate',
+            target_type: 'model',
+            seed_set_id: 'seed-A',
+            roles: ['seer', ''],
+            status: 'draft'
+          }
+        ]
+      },
+      {
+        seed_sets: [
+          {
+            seed_set_id: 'seed-A',
+            seeds: '101 202',
+            target_type: 'model',
+            enabled: false
+          }
+        ],
+        summary: { total: 'bad' }
+      },
+      {
+        scope: 'model',
+        rows: [
+          {
+            model_id: 'gpt-x',
+            model_config_hash: 'hash1234567890',
+            score: '0.7',
+            games: '5'
+          }
+        ]
+      },
+      {
+        runs: [
+          {
+            batch_id: 'batch-1',
+            status: 'running',
+            roles: ['seer'],
+            benchmark: { id: 'suite-1', target_type: 'role_version' }
+          }
+        ],
+        pagination: { total: '2', offset: '0', limit: '10' }
+      },
+      { run: { run_id: 'batch-2', status: 'completed', role: 'wolf' } },
+      {
+        diagnostics: [{ level: 'warning', message: 'bad seed', history_game_id: 'game-1' }],
+        summary: { warning: 1 },
+        pagination: { total: 1, offset: 0, limit: 10 }
+      },
+      {
+        snapshots: [
+          {
+            snapshot_id: 'snap-1',
+            scope: 'model',
+            rows: [{ model_id: 'gpt-x', score: '0.8' }]
+          }
+        ]
+      }
+    ])
+    const benchmark = createBenchmarkService({ client })
+
+    const suites = await benchmark.suites()
+    const seedSets = await benchmark.seedSets()
+    const leaderboard = await benchmark.leaderboard({ scope: 'model' })
+    const runs = await benchmark.runs({ status: 'running' })
+    const launched = await benchmark.launch({ roles: ['seer'] })
+    const diagnostics = await benchmark.diagnostics('batch-1')
+    const snapshots = await benchmark.snapshots({ scope: 'model' })
+
+    expect(suites[0]).toMatchObject({
+      id: 'suite-1',
+      target_type: 'model',
+      roles: ['seer'],
+      launchable: false
+    })
+    expect(seedSets).toMatchObject({
+      summary: { total: 1 },
+      items: [{ id: 'seed-A', seed_preview: ['101', '202'], enabled: false }]
+    })
+    expect(leaderboard[0]).toMatchObject({
+      primary: 'gpt-x',
+      secondary: 'hash12345678',
+      score: 0.7,
+      games: 5
+    })
+    expect(runs.items[0]).toMatchObject({
+      id: 'batch-1',
+      displayRole: 'seer',
+      isActive: true
+    })
+    expect(runs.pagination).toMatchObject({ total: 2, returned: 1 })
+    expect(launched).toMatchObject({
+      id: 'batch-2',
+      displayRole: 'wolf',
+      isTerminal: true
+    })
+    expect(diagnostics).toMatchObject({
+      summary: { warning: 1 },
+      diagnostics: [{ level: 'warning', message: 'bad seed', history_game_id: 'game-1' }]
+    })
+    expect(snapshots[0]).toMatchObject({
+      snapshot_id: 'snap-1',
+      scope: 'model',
+      rows: [{ primary: 'gpt-x', score: 0.8 }]
+    })
   })
 })

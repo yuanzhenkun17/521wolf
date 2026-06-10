@@ -65,6 +65,27 @@ export interface ApiErrorShape {
   body: string
 }
 
+export interface ApiErrorInit {
+  status?: number
+  code?: string
+  message?: string
+  detail?: unknown
+  diagnostics?: ApiDiagnostic[]
+  requestId?: string | null
+  payload?: unknown
+  body?: string
+}
+
+export interface ErrorPayloadReadResult {
+  payload: ApiErrorPayload | null
+  text: string
+  requestId: string | null
+}
+
+export interface ApiErrorNormalizeInput extends Partial<ErrorPayloadReadResult> {
+  response?: Response | null
+}
+
 export interface ApiRequestOptions extends Omit<RequestInit, 'body'> {
   body?: BodyInit | object | null
   query?: QueryParams

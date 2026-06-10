@@ -94,7 +94,7 @@ test('Evolution trust audit messages are localized while keeping code field name
 
   assert.match(workbench, /authority:\s*'权威信任包'/)
   assert.match(workbench, /review:\s*'提案审核'/)
-  assert.match(routerDeepLinks, /message: panel \? '等待恢复定位链接目标。' : '等待恢复自进化定位链接。'/)
+  assert.match(routerDeepLinks, /message: panel \? ["']等待恢复定位链接目标。["'] : ["']等待恢复自进化定位链接。["']/)
   assert.match(workbench, /缺少信任包：未收到 trust_bundle_id 或 bundle_hash。/)
   assert.match(workbench, /权威信任包与当前页面缓存不一致。/)
   assert.match(workbench, /缓存、版本库\/来源运行与权威包一致。/)

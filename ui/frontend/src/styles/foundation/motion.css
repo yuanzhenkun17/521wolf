@@ -15,6 +15,16 @@
   --ease-standard: ease;
   --ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-productive: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  --duration-feedback: var(--duration-fast);
+  --duration-panel: var(--duration-standard);
+  --duration-overlay: var(--duration-slow);
+  --duration-atmosphere: var(--duration-scene);
+
+  --ease-feedback: var(--ease-standard);
+  --ease-panel: var(--ease-productive);
+  --ease-overlay: var(--ease-emphasized);
+  --ease-atmosphere: var(--ease-emphasized);
 }
 
 @media (prefers-reduced-motion: reduce) {

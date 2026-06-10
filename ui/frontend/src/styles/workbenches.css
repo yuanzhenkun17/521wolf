@@ -27,9 +27,9 @@
   --workbench-logbook-input-border: rgba(139, 94, 52, 0.2);
   --workbench-logbook-hover: rgba(139, 94, 52, 0.06);
   --workbench-logbook-active-bg: rgba(139, 94, 52, 0.1);
-  --workbench-logbook-danger: #993026;
-  --workbench-logbook-warning: #76510e;
-  --workbench-logbook-warning-benchmark: #8b5e34;
+  --workbench-logbook-danger: var(--color-status-danger-strong);
+  --workbench-logbook-warning: var(--color-status-warning-strong);
+  --workbench-logbook-warning-benchmark: var(--color-status-warning-muted);
   --logbook-bg: var(--workbench-logbook-bg, #f2dfae);
   --logbook-bg-texture: var(--workbench-logbook-bg-texture);
   --logbook-surface: var(--workbench-logbook-surface);

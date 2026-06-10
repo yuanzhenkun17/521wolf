@@ -6,10 +6,15 @@
  */
 
 :root {
+  --z-underlay-deep: -2;
+  --z-underlay: -1;
   --z-background: 0;
   --z-base: 1;
+  --z-raised: 2;
   --z-scene: 5;
+  --z-scene-overlay: 7;
   --z-panel: 10;
+  --z-panel-raised: 20;
   --z-hud: 30;
   --z-topbar: 50;
   --z-dropdown: 60;

@@ -1,17 +1,5 @@
-import type {
-  BenchmarkDiagnostic,
-  BenchmarkGame,
-  BenchmarkLeaderboardRow,
-  BenchmarkRequest,
-  BenchmarkResult,
-  BenchmarkRun,
-  BenchmarkSeedSet,
-  BenchmarkSnapshot,
-  BenchmarkSuite,
-  BenchmarkTargetType,
-  BenchmarkView
-} from '../../types/benchmark'
-import { arrayOrEmpty, booleanValue, firstNumber, firstString, integerValue, nullableNumber, numberValue, objectOrEmpty, shortId, stringValue } from '../common'
+import type { BenchmarkDiagnostic, BenchmarkDiagnosticsResponse, BenchmarkGame, BenchmarkLeaderboardRow, BenchmarkListResponse, BenchmarkRequest, BenchmarkResult, BenchmarkRun, BenchmarkSeedSet, BenchmarkSeedRegistryResponse, BenchmarkSnapshot, BenchmarkSuite, BenchmarkTargetType, BenchmarkView } from '../../types/benchmark'
+import { arrayOrEmpty, booleanValue, firstNumber, firstString, integerValue, normalizePagination, nullableNumber, numberValue, objectOrEmpty, shortId, stringValue } from '../common'
 
 const BENCHMARK_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 const BENCHMARK_ACTIVE_STATUSES = new Set(['queued', 'running', 'rate_limited'])
@@ -32,23 +20,21 @@ export function normalizeSeedPreview(raw: unknown): string[] {
   const seedSet = objectOrEmpty(source.seed_set)
   const registry = objectOrEmpty(source.seed_registry)
   const registrySummary = objectOrEmpty(source.seed_registry_summary)
-  const candidates = [
-    source.seed_preview,
-    source.seedPreview,
-    seedSet.seed_preview,
-    registry.seed_preview,
-    registrySummary.seed_preview,
-    source.seeds,
-    seedSet.seeds,
-    registry.seeds
-  ]
+  const candidates = [source.seed_preview, source.seedPreview, seedSet.seed_preview, registry.seed_preview, registrySummary.seed_preview, source.seeds, seedSet.seeds, registry.seeds]
   const arrayValue = candidates.find(Array.isArray)
   if (arrayValue) {
-    return arrayValue.map((seed) => stringValue(seed)).filter(Boolean).slice(0, 6)
+    return arrayValue
+      .map((seed) => stringValue(seed))
+      .filter(Boolean)
+      .slice(0, 6)
   }
   const stringSeed = candidates.find((value) => typeof value === 'string')
   if (stringSeed) {
-    return String(stringSeed).split(/[,\s]+/).map((seed) => seed.trim()).filter(Boolean).slice(0, 6)
+    return String(stringSeed)
+      .split(/[,\s]+/)
+      .map((seed) => seed.trim())
+      .filter(Boolean)
+      .slice(0, 6)
   }
   return []
 }
@@ -58,16 +44,7 @@ export function normalizeSeedCount(raw: unknown, seedPreview: string[] = normali
   const seedSet = objectOrEmpty(source.seed_set)
   const registry = objectOrEmpty(source.seed_registry)
   const registrySummary = objectOrEmpty(source.seed_registry_summary)
-  const value = firstNumber(
-    source.seed_count,
-    source.seedCount,
-    seedSet.seed_count,
-    seedSet.count,
-    registry.seed_count,
-    registry.count,
-    registrySummary.seed_count,
-    registrySummary.count
-  )
+  const value = firstNumber(source.seed_count, source.seedCount, seedSet.seed_count, seedSet.count, registry.seed_count, registry.count, registrySummary.seed_count, registrySummary.count)
   if (value != null && value >= 0) return Math.floor(value)
   return seedPreview.length ? seedPreview.length : null
 }
@@ -94,11 +71,9 @@ export function normalizeBenchmarkSeedSet(raw: unknown): BenchmarkSeedSet | null
   }
 }
 
-export function normalizeBenchmarkSeedRegistry(data: unknown): { items: BenchmarkSeedSet[]; summary: Record<string, unknown> } {
+export function normalizeBenchmarkSeedRegistry(data: unknown): BenchmarkSeedRegistryResponse {
   const source = objectOrEmpty(data)
-  const items = (Array.isArray(data) ? data : arrayOrEmpty(source.items ?? source.seed_sets))
-    .map(normalizeBenchmarkSeedSet)
-    .filter((item): item is BenchmarkSeedSet => Boolean(item))
+  const items = (Array.isArray(data) ? data : arrayOrEmpty(source.items ?? source.seed_sets)).map(normalizeBenchmarkSeedSet).filter((item): item is BenchmarkSeedSet => Boolean(item))
   const summary = objectOrEmpty(source.summary)
   return {
     items,
@@ -107,6 +82,11 @@ export function normalizeBenchmarkSeedRegistry(data: unknown): { items: Benchmar
       total: integerValue(summary.total, items.length)
     }
   }
+}
+
+export function normalizeBenchmarkSuiteList(data: unknown, seedRegistryById: Map<string, BenchmarkSeedSet> = new Map()): BenchmarkSuite[] {
+  const source = objectOrEmpty(data)
+  return (Array.isArray(data) ? data : arrayOrEmpty(source.items ?? source.benchmarks)).map((item) => normalizeBenchmarkSuite(item, seedRegistryById)).filter((item): item is BenchmarkSuite => Boolean(item))
 }
 
 export function normalizeBenchmarkSuiteStatus(raw: unknown): string {
@@ -145,7 +125,9 @@ export function normalizeBenchmarkSuite(raw: unknown, seedRegistryById: Map<stri
     label: version == null ? name : `${name} v${version}`,
     description: stringValue(source.description),
     target_type: normalizeBenchmarkTargetType(source.target_type ?? source.scope),
-    roles: arrayOrEmpty(source.roles).map((role) => stringValue(role)).filter(Boolean),
+    roles: arrayOrEmpty(source.roles)
+      .map((role) => stringValue(role))
+      .filter(Boolean),
     game_count: nullableNumber(source.game_count ?? source.battle_games ?? source.games),
     max_days: nullableNumber(source.max_days),
     seed_set_id: seedSetId,
@@ -170,7 +152,9 @@ export function normalizeBenchmarkRequest(raw: Partial<BenchmarkRequest> = {}): 
   return {
     ...raw,
     target_type: normalizeBenchmarkTargetType(raw.target_type),
-    roles: arrayOrEmpty(raw.roles).map((role) => stringValue(role).toLowerCase()).filter(Boolean),
+    roles: arrayOrEmpty(raw.roles)
+      .map((role) => stringValue(role).toLowerCase())
+      .filter(Boolean),
     target_versions: objectOrEmpty(raw.target_versions) as Record<string, string>
   }
 }
@@ -199,8 +183,10 @@ export function normalizeBenchmarkRun(raw: unknown): BenchmarkRun {
   const source = objectOrEmpty(raw)
   const id = firstString(source.run_id, source.batch_id, source.id)
   const benchmark = objectOrEmpty(source.benchmark ?? objectOrEmpty(source.config).benchmark)
-  const roles = arrayOrEmpty(source.roles).map((role) => stringValue(role)).filter(Boolean)
-  const roleKeys = roles.length ? roles : (source.role ? [stringValue(source.role)] : [])
+  const roles = arrayOrEmpty(source.roles)
+    .map((role) => stringValue(role))
+    .filter(Boolean)
+  const roleKeys = roles.length ? roles : source.role ? [stringValue(source.role)] : []
   const benchmarkTargetType = normalizeBenchmarkTargetType(benchmark.target_type ?? source.target_type ?? objectOrEmpty(source.config).target_type)
   const status = stringValue(source.status)
   return {
@@ -215,6 +201,22 @@ export function normalizeBenchmarkRun(raw: unknown): BenchmarkRun {
     resultRows: arrayOrEmpty(source.results).map(normalizeBenchmarkResult),
     isActive: BENCHMARK_ACTIVE_STATUSES.has(status),
     isTerminal: BENCHMARK_TERMINAL_STATUSES.has(status)
+  }
+}
+
+export function normalizeBenchmarkRunResponse(raw: unknown): BenchmarkRun {
+  const source = objectOrEmpty(raw)
+  return normalizeBenchmarkRun(source.run ?? source.batch ?? source.data ?? raw)
+}
+
+export function normalizeBenchmarkRunsResponse(raw: unknown): BenchmarkListResponse<BenchmarkRun> {
+  const source = objectOrEmpty(raw)
+  const rows = Array.isArray(raw) ? raw : arrayOrEmpty(source.runs).length ? arrayOrEmpty(source.runs) : arrayOrEmpty(source.batches).length ? arrayOrEmpty(source.batches) : arrayOrEmpty(source.items)
+  const items = rows.map(normalizeBenchmarkRun)
+  return {
+    items,
+    pagination: source.pagination ? normalizePagination(source.pagination, items) : undefined,
+    raw
   }
 }
 
@@ -258,15 +260,24 @@ export function normalizeBenchmarkDiagnostic(raw: unknown): BenchmarkDiagnostic 
   }
 }
 
+export function normalizeBenchmarkDiagnosticsResponse(raw: unknown): BenchmarkDiagnosticsResponse {
+  const source = objectOrEmpty(raw)
+  const diagnostics = arrayOrEmpty(source.diagnostics ?? source.items).map(normalizeBenchmarkDiagnostic)
+  return {
+    diagnostics,
+    summary: objectOrEmpty(source.summary),
+    pagination: source.pagination ? normalizePagination(source.pagination, diagnostics) : undefined,
+    raw
+  }
+}
+
 export function normalizeBenchmarkLeaderboardRow(raw: unknown, index = 0, scope: BenchmarkTargetType = 'role_version'): BenchmarkLeaderboardRow {
   const source = objectOrEmpty(raw)
   const targetRole = stringValue(source.target_role ?? source.role)
   const targetVersionId = firstString(source.target_version_id, source.version_id, source.hash)
   const modelId = firstString(source.model_id, source.subject_id)
   const modelConfigHash = firstString(source.model_config_hash, source.hash)
-  const key = scope === 'model'
-    ? firstString(source.key, modelConfigHash, modelId, `model-${index}`)
-    : firstString(source.key, targetVersionId, `${targetRole}-${index}`)
+  const key = scope === 'model' ? firstString(source.key, modelConfigHash, modelId, `model-${index}`) : firstString(source.key, targetVersionId, `${targetRole}-${index}`)
   return {
     ...source,
     key,
@@ -282,6 +293,12 @@ export function normalizeBenchmarkLeaderboardRow(raw: unknown, index = 0, scope:
     model_id: modelId,
     model_config_hash: modelConfigHash
   }
+}
+
+export function normalizeBenchmarkLeaderboardResponse(raw: unknown, scopeFallback: BenchmarkTargetType = 'role_version'): BenchmarkLeaderboardRow[] {
+  const source = objectOrEmpty(raw)
+  const scope = normalizeBenchmarkTargetType(source.scope ?? scopeFallback)
+  return (Array.isArray(raw) ? raw : arrayOrEmpty(source.rows ?? source.items ?? source.leaderboard)).map((row, index) => normalizeBenchmarkLeaderboardRow(row, index, scope))
 }
 
 export function normalizeBenchmarkSnapshot(raw: unknown, scopeFallback: BenchmarkTargetType = 'role_version'): BenchmarkSnapshot | null {
@@ -312,13 +329,20 @@ export function normalizeBenchmarkSnapshot(raw: unknown, scopeFallback: Benchmar
   }
 }
 
+export function normalizeBenchmarkSnapshotsResponse(raw: unknown, scopeFallback: BenchmarkTargetType = 'role_version'): BenchmarkSnapshot[] {
+  const source = objectOrEmpty(raw)
+  return (Array.isArray(raw) ? raw : arrayOrEmpty(source.items ?? source.snapshots)).map((snapshot) => normalizeBenchmarkSnapshot(snapshot, scopeFallback)).filter((snapshot): snapshot is BenchmarkSnapshot => Boolean(snapshot))
+}
+
 export function normalizeBenchmarkViewConfig(raw: unknown = {}): BenchmarkView['view_config'] {
   const config = objectOrEmpty(raw)
   const rankFilter = stringValue(config.rank_filter)
   return {
     mode: normalizeBenchmarkTargetType(config.mode ?? config.scope),
     rank_filter: ['all', 'rankable', 'unrankable'].includes(rankFilter) ? (rankFilter as BenchmarkView['view_config']['rank_filter']) : 'all',
-    columns: arrayOrEmpty(config.columns).map((item) => stringValue(item)).filter(Boolean),
+    columns: arrayOrEmpty(config.columns)
+      .map((item) => stringValue(item))
+      .filter(Boolean),
     sort: stringValue(config.sort, 'score_desc'),
     search: stringValue(config.search),
     density: stringValue(config.density, 'standard')

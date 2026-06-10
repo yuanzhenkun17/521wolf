@@ -4,6 +4,202 @@ export type BenchmarkTargetType = 'role_version' | 'model'
 export type BenchmarkRunStatus = 'queued' | 'running' | 'rate_limited' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | string
 export type BenchmarkSuiteStatus = 'enabled' | 'active' | 'draft' | 'deprecated' | 'disabled' | 'archived' | string
 
+export interface BenchmarkSeedSetDto extends UnknownRecord {
+  id?: string | number | null
+  seed_set_id?: string | number | null
+  purpose?: string | null
+  version?: string | number | null
+  description?: string | null
+  target_type?: string | null
+  tier?: string | null
+  seed_count?: string | number | null
+  count?: string | number | null
+  seed_preview?: unknown[] | string | null
+  seeds?: unknown[] | string | null
+  config_hash?: string | null
+  enabled?: boolean | null
+  overlap_warnings?: unknown[] | null
+}
+
+export interface BenchmarkSuiteDto extends UnknownRecord {
+  id?: string | number | null
+  benchmark_id?: string | number | null
+  version?: string | number | null
+  name?: string | null
+  label?: string | null
+  description?: string | null
+  target_type?: string | null
+  scope?: string | null
+  roles?: unknown[] | null
+  game_count?: string | number | null
+  battle_games?: string | number | null
+  games?: string | number | null
+  max_days?: string | number | null
+  seed_set_id?: string | number | null
+  seed_set?: BenchmarkSeedSetDto | UnknownRecord | null
+  paired_seed?: boolean | string | number | null
+  metrics?: UnknownRecord | null
+  gates?: UnknownRecord | null
+  judge?: UnknownRecord | null
+  config_hash?: string | null
+  benchmark_config_hash?: string | null
+  cost_tier?: string | null
+  evaluation_set_id?: string | null
+  status?: string | null
+  lifecycle_status?: string | null
+  lifecycleStatus?: string | null
+  deprecated?: boolean | null
+  archived?: boolean | null
+  enabled?: boolean | null
+  launchable?: boolean | null
+  launch_disabled_reason?: string | null
+}
+
+export interface BenchmarkResultDto extends UnknownRecord {
+  result_batch_id?: string | null
+  batch_id?: string | null
+  target_role?: string | null
+  target_version_id?: string | null
+  completed?: string | number | null
+  errored?: string | number | null
+  game_count?: string | number | null
+  attempted_game_count?: string | number | null
+  rankable?: boolean | null
+  diagnostic_count?: string | number | null
+  warning_count?: string | number | null
+}
+
+export interface BenchmarkRunDto extends UnknownRecord {
+  id?: string | number | null
+  run_id?: string | number | null
+  batch_id?: string | number | null
+  roles?: unknown[] | null
+  role?: string | null
+  status?: BenchmarkRunStatus | null
+  benchmark?: BenchmarkSuiteDto | UnknownRecord | null
+  benchmark_id?: string | null
+  benchmark_version?: string | number | null
+  target_type?: string | null
+  evaluation_set_id?: string | null
+  results?: BenchmarkResultDto[] | null
+}
+
+export interface BenchmarkLeaderboardRowDto extends UnknownRecord {
+  key?: string | null
+  rank?: string | number | null
+  target_role?: string | null
+  role?: string | null
+  target_version_id?: string | null
+  version_id?: string | null
+  model_id?: string | null
+  subject_id?: string | null
+  model_config_hash?: string | null
+  hash?: string | null
+  score?: string | number | null
+  target_role_role_weighted_score?: string | number | null
+  avg_role_score?: string | number | null
+  strength_score?: string | number | null
+  winRate?: string | number | null
+  win_rate?: string | number | null
+  target_side_win_rate?: string | number | null
+  games?: string | number | null
+  game_count?: string | number | null
+  games_played?: string | number | null
+  rankable?: boolean | null
+}
+
+export interface BenchmarkDiagnosticDto extends UnknownRecord {
+  kind?: string | null
+  level?: string | null
+  origin?: string | null
+  stage?: string | null
+  message?: string | null
+  target_role?: string | null
+  result_batch_id?: string | null
+  batch_id?: string | null
+  game_id?: string | null
+  history_game_id?: string | null
+  historyGameId?: string | null
+}
+
+export interface BenchmarkSnapshotDto extends UnknownRecord {
+  snapshot_id?: string | number | null
+  id?: string | number | null
+  title?: string | null
+  release_notes?: string | null
+  scope?: string | null
+  benchmark_id?: string | null
+  benchmark_version?: string | number | null
+  evaluation_set_id?: string | null
+  seed_set_id?: string | null
+  benchmark_config_hash?: string | null
+  target_role?: string | null
+  source_filter?: UnknownRecord | null
+  view_config?: UnknownRecord | null
+  summary?: UnknownRecord | null
+  release_gate?: UnknownRecord | null
+  release_manifest?: UnknownRecord | null
+  rows?: BenchmarkLeaderboardRowDto[] | null
+  created_at?: string | null
+}
+
+export type BenchmarkSuiteListDto =
+  | BenchmarkSuiteDto[]
+  | {
+      items?: BenchmarkSuiteDto[] | null
+      benchmarks?: BenchmarkSuiteDto[] | null
+      [key: string]: unknown
+    }
+
+export interface BenchmarkSeedRegistryDto extends UnknownRecord {
+  items?: BenchmarkSeedSetDto[] | null
+  seed_sets?: BenchmarkSeedSetDto[] | null
+  summary?: UnknownRecord | null
+}
+
+export type BenchmarkLeaderboardDto =
+  | BenchmarkLeaderboardRowDto[]
+  | {
+      items?: BenchmarkLeaderboardRowDto[] | null
+      rows?: BenchmarkLeaderboardRowDto[] | null
+      leaderboard?: BenchmarkLeaderboardRowDto[] | null
+      [key: string]: unknown
+    }
+
+export type BenchmarkRunsDto =
+  | BenchmarkRunDto[]
+  | {
+      items?: BenchmarkRunDto[] | null
+      runs?: BenchmarkRunDto[] | null
+      batches?: BenchmarkRunDto[] | null
+      pagination?: Partial<Pagination> | null
+      [key: string]: unknown
+    }
+
+export type BenchmarkRunResponseDto =
+  | BenchmarkRunDto
+  | {
+      run?: BenchmarkRunDto | null
+      batch?: BenchmarkRunDto | null
+      data?: BenchmarkRunDto | null
+      [key: string]: unknown
+    }
+
+export interface BenchmarkDiagnosticsDto extends UnknownRecord {
+  items?: BenchmarkDiagnosticDto[] | null
+  diagnostics?: BenchmarkDiagnosticDto[] | null
+  summary?: UnknownRecord | null
+  pagination?: Partial<Pagination> | null
+}
+
+export type BenchmarkSnapshotsDto =
+  | BenchmarkSnapshotDto[]
+  | {
+      items?: BenchmarkSnapshotDto[] | null
+      snapshots?: BenchmarkSnapshotDto[] | null
+      [key: string]: unknown
+    }
+
 export interface BenchmarkSeedSet {
   id: string
   seed_set_id: string
@@ -188,6 +384,18 @@ export interface BenchmarkView {
 
 export interface BenchmarkListResponse<T> {
   items: T[]
+  pagination?: Pagination
+  raw?: unknown
+}
+
+export interface BenchmarkSeedRegistryResponse {
+  items: BenchmarkSeedSet[]
+  summary: Record<string, unknown>
+}
+
+export interface BenchmarkDiagnosticsResponse {
+  diagnostics: BenchmarkDiagnostic[]
+  summary: Record<string, unknown>
   pagination?: Pagination
   raw?: unknown
 }

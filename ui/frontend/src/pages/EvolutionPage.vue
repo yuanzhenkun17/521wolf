@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.ts'
 import EvolutionConsolePanel from '../components/evolution/EvolutionConsolePanel.vue'
@@ -11,6 +11,7 @@ import EvolutionSamplesPanel from '../components/evolution/EvolutionSamplesPanel
 import EvolutionVersionsPanel from '../components/evolution/EvolutionVersionsPanel.vue'
 import EvolutionWorkbenchShell from '../components/evolution/EvolutionWorkbenchShell.vue'
 import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
+import { useEvolutionStore } from '../stores/evolution'
 
 defineOptions({
   inheritAttrs: false
@@ -20,6 +21,7 @@ const emit = defineEmits(['back-to-match', 'open-sample-log', 'replay-sample-gam
 
 const route = useRoute()
 const evo = useEvolutionWorkbench({ initialRoute: route })
+const evolutionStore = useEvolutionStore()
 
 const activeTab = ref('console')
 
@@ -33,11 +35,43 @@ const navTabs = [
   { key: 'samples', label: '样本局' }
 ]
 
-const selectedIsBatch = computed(() => evo.selectedIsBatch.value)
-const selectedCanReview = computed(() => evo.selectedCanReject.value)
-const selectedCanPromote = computed(() => evo.selectedCanPromote.value)
-const selectedPromoteDisabledReason = computed(() => evo.selectedPromoteDisabledReason.value)
-const selectedCanTerminate = computed(() => evo.selectedCanTerminate.value)
+evolutionStore.bindRuntimeActions({
+  refreshAll: evo.refreshAll,
+  selectRole: evo.selectRole,
+  selectRun: evo.selectRun
+})
+
+watchEffect(() => {
+  evolutionStore.hydrateFromWorkbench({
+    loading: evo.loading.value,
+    error: evo.error.value,
+    notice: evo.notice.value,
+    roles: evo.roles.value,
+    roleRows: evo.roleRows.value,
+    versionsByRole: evo.versionsByRole.value,
+    runs: evo.runs.value,
+    runRows: evo.runRows.value,
+    selectedRole: evo.selectedRole.value,
+    selectedRunId: evo.selectedRunId.value,
+    selectedRun: evo.selectedRun.value,
+    selectedRunSummary: evo.selectedRunSummary.value,
+    selectedProposalReview: evo.selectedProposalReview.value,
+    selectedGames: evo.selectedGames.value,
+    selectedCanPromote: evo.selectedCanPromote.value,
+    selectedPromoteDisabledReason: evo.selectedPromoteDisabledReason.value,
+    selectedCanReject: evo.selectedCanReject.value,
+    selectedRejectDisabledReason: evo.selectedRejectDisabledReason.value,
+    selectedCanTerminate: evo.selectedCanTerminate.value,
+    selectedTerminateDisabledReason: evo.selectedTerminateDisabledReason.value,
+    selectedRollbackDisabledReason: evo.selectedRollbackDisabledReason.value
+  })
+})
+
+const selectedIsBatch = computed(() => evolutionStore.selectedIsBatch)
+const selectedCanReview = computed(() => evolutionStore.selectedCanReject)
+const selectedCanPromote = computed(() => evolutionStore.selectedCanPromote)
+const selectedPromoteDisabledReason = computed(() => evolutionStore.selectedPromoteDisabledReason)
+const selectedCanTerminate = computed(() => evolutionStore.selectedCanTerminate)
 
 watch(
   () => evo.evolutionDeepLinkTarget.value?.panel || '',
@@ -55,7 +89,11 @@ watch(
   }
 )
 
-onMounted(() => evo.refreshAll())
+onMounted(() => evolutionStore.refreshAll())
+
+onBeforeUnmount(() => {
+  evolutionStore.clearRuntimeActions()
+})
 </script>
 
 <template>
@@ -74,24 +112,24 @@ onMounted(() => evo.refreshAll())
         v-model:active-tab="activeTab"
         title="自进化"
         :tabs="navTabs"
-        :roles="evo.roleRows.value"
-        :run-rows="evo.runRows.value"
-        :selected-role="evo.selectedRole.value"
-        :selected-run="evo.selectedRun.value"
-        :selected-run-summary="evo.selectedRunSummary.value"
-        :selected-proposal-review="evo.selectedProposalReview.value"
-        :selected-games="evo.selectedGames.value"
+        :roles="evolutionStore.roleRows"
+        :run-rows="evolutionStore.runRows"
+        :selected-role="evolutionStore.selectedRole"
+        :selected-run="evolutionStore.selectedRun"
+        :selected-run-summary="evolutionStore.selectedRunSummary"
+        :selected-proposal-review="evolutionStore.selectedProposalReview"
+        :selected-games="evolutionStore.selectedGames"
         :selected-can-promote="selectedCanPromote"
         :selected-promote-disabled-reason="selectedPromoteDisabledReason"
         :selected-can-reject="selectedCanReview"
-        :selected-reject-disabled-reason="evo.selectedRejectDisabledReason.value"
+        :selected-reject-disabled-reason="evolutionStore.selectedRejectDisabledReason"
         :selected-can-terminate="selectedCanTerminate"
-        :selected-terminate-disabled-reason="evo.selectedTerminateDisabledReason.value"
-        :selected-rollback-disabled-reason="evo.selectedRollbackDisabledReason.value"
-        :error="evo.error.value"
-        :notice="evo.notice.value"
-        @refresh="evo.refreshAll()"
-        @select-role="evo.selectRole"
+        :selected-terminate-disabled-reason="evolutionStore.selectedTerminateDisabledReason"
+        :selected-rollback-disabled-reason="evolutionStore.selectedRollbackDisabledReason"
+        :error="evolutionStore.error"
+        :notice="evolutionStore.notice"
+        @refresh="evolutionStore.refreshAll()"
+        @select-role="evolutionStore.selectRole"
       >
         <EvolutionConsolePanel
           v-if="activeTab === 'console'"

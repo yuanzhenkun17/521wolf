@@ -13,10 +13,9 @@ import {
   addLegacyHashChangeListener,
   currentLegacyHash,
   syncCurrentLegacyHashForView,
-  writeLegacyHashForView,
-  writeViewHash
+  writeViewRoute
 } from '../router/legacyViewNavigation'
-import { historyDeepLinkFromHash, historyDeepLinkFromRoute, logsHash } from '../router/workbenchDeepLinks'
+import { historyDeepLinkFromHash, historyDeepLinkFromRoute, logsRouteQuery } from '../router/workbenchDeepLinks'
 import { isReturnableGame } from './gameSession.ts'
 import {
   AUTHORITATIVE_DEATH_EVENTS,
@@ -131,9 +130,8 @@ function historyLoadNotice(type, message, fallback) {
   }
 }
 
-function writeLogsHash(options = {}) {
-  const hash = logsHash(options)
-  writeLegacyHashForView('logs', hash)
+function writeLogsRoute(options = {}) {
+  writeViewRoute('logs', logsRouteQuery(options))
 }
 
 function normalizeHistoryPhase(phase = 'setup') {
@@ -1346,7 +1344,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'logs'
     state.historyWorkspaceTab.value = targetWorkspace
-    writeLogsHash({ gameId: targetGameId, workspace: targetWorkspace })
+    writeLogsRoute({ gameId: targetGameId, workspace: targetWorkspace })
     const listReady = await ensureHistoryList()
     if (!token.isLatest() || !listReady) return
     const selectedGameId = targetGameId || String(state.selectedHistoryGameId.value || '')
@@ -1360,14 +1358,14 @@ function useGameHistory(state, options: LooseRecord = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'evolution'
     if (syncCurrentLegacyHashForView('evolution')) return
-    writeViewHash('evolution')
+    writeViewRoute('evolution')
   }
 
   function openBenchmarkPage({ rememberOrigin = true } = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
     state.currentView.value = 'benchmark'
     if (syncCurrentLegacyHashForView('benchmark')) return
-    writeViewHash('benchmark')
+    writeViewRoute('benchmark')
   }
 
   function hashRouteInfo() {
@@ -1413,7 +1411,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
   function goLobby() {
     state.returnToMatchAvailable.value = isReturnableGame(state.liveGame.value)
     state.currentView.value = 'lobby'
-    writeViewHash('lobby')
+    writeViewRoute('lobby')
   }
 
   function backToMatch() {
@@ -1421,14 +1419,14 @@ function useGameHistory(state, options: LooseRecord = {}) {
     if (isReturnableGame(state.liveGame.value)) {
       state.currentView.value = 'match'
       state.skipIntroGameId.value = state.liveGame.value.game_id
-      writeViewHash('match')
+      writeViewRoute('match')
       if (!state.watchRunning.value) {
         state.watchRunning.value = false
         actionApi.startWatch?.()
       }
     } else {
       state.currentView.value = 'lobby'
-      writeViewHash('lobby')
+      writeViewRoute('lobby')
     }
   }
 
@@ -1732,7 +1730,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     state.roleAssignmentComplete.value = true
     applyReplayCursor(cursor, source)
     state.currentView.value = 'match'
-    writeViewHash('match')
+    writeViewRoute('match')
   }
 
   async function enterReplayPage(page = state.selectedHistoryPage.value) {
@@ -1773,7 +1771,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
   function returnToHistoryFromReplay() {
     pauseReplay()
     state.currentView.value = 'logs'
-    writeViewHash('logs')
+    writeViewRoute('logs')
     state.returnToMatchAvailable.value = false
   }
 
@@ -1793,7 +1791,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     const hasLiveGame = isReturnableGame(state.liveGame.value)
     state.currentView.value = hasLiveGame ? 'match' : 'lobby'
     if (hasLiveGame) state.skipIntroGameId.value = state.liveGame.value.game_id
-    writeViewHash(hasLiveGame ? 'match' : 'lobby')
+    writeViewRoute(hasLiveGame ? 'match' : 'lobby')
     state.returnToMatchAvailable.value = false
     if (hasLiveGame) {
       state.watchRunning.value = false
