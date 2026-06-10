@@ -300,7 +300,29 @@ test('history store hydrates selection and derives selection state', () => {
     historyHasMore: true,
     historyCurrentPage: 2,
     historyTotalPages: 4,
-    historyPages: [{ key: 'day-1-night' }]
+    historyPages: [{ key: 'day-1-night' }],
+    selectedHistoryPageKey: 'day-1-night',
+    selectedHistoryPage: { key: 'day-1-night', phase: 'night', pagination: { logs: { has_more: true } } },
+    phaseLoadingByKey: { 'history-1:day-1-night': true },
+    historyLogs: [{ message: 'night result' }],
+    pageNightActions: [{ action: 'werewolf_kill' }],
+    pageSpeechDecisions: [{ action: 'speak' }],
+    sheriffVotes: [{ action: 'sheriff_vote' }],
+    voteDecisions: [{ action: 'exile_vote' }],
+    currentVoteTally: [{ targetName: '2号', count: 2 }],
+    sheriffVoteTally: [{ targetName: '1号', count: 1 }],
+    pageLastWords: [{ action: 'last_word' }],
+    nightResult: '昨夜平安夜',
+    sheriffResult: { message: '1号当选警长' },
+    playerAssessmentScores: [{ player: { id: 1 }, role_score: 88 }],
+    activeAssessScores: [{ player: { id: 1 }, score: 88 }],
+    playerAliveAtPage: { 1: true, 2: false },
+    archiveByGameId: { 'history-1': { archive_id: 'archive-1' } },
+    reviewByGameId: { 'history-1': { report_id: 'review-1' } },
+    flowDataByGameId: { 'history-1': { nodes: [] } },
+    flowLoadingByGameId: { 'history-1': true },
+    archiveLoading: true,
+    reviewLoading: true
   })
 
   assert.equal(store.games.length, 1)
@@ -319,6 +341,28 @@ test('history store hydrates selection and derives selection state', () => {
   assert.equal(store.currentPage, 2)
   assert.equal(store.totalPages, 4)
   assert.deepEqual(store.pages, [{ key: 'day-1-night' }])
+  assert.equal(store.selectedHistoryPageKey, 'day-1-night')
+  assert.deepEqual(store.selectedHistoryPage, { key: 'day-1-night', phase: 'night', pagination: { logs: { has_more: true } } })
+  assert.deepEqual(store.phaseLoadingByKey, { 'history-1:day-1-night': true })
+  assert.deepEqual(store.historyLogs, [{ message: 'night result' }])
+  assert.deepEqual(store.pageNightActions, [{ action: 'werewolf_kill' }])
+  assert.deepEqual(store.pageSpeechDecisions, [{ action: 'speak' }])
+  assert.deepEqual(store.sheriffVotes, [{ action: 'sheriff_vote' }])
+  assert.deepEqual(store.voteDecisions, [{ action: 'exile_vote' }])
+  assert.deepEqual(store.currentVoteTally, [{ targetName: '2号', count: 2 }])
+  assert.deepEqual(store.sheriffVoteTally, [{ targetName: '1号', count: 1 }])
+  assert.deepEqual(store.pageLastWords, [{ action: 'last_word' }])
+  assert.equal(store.nightResult, '昨夜平安夜')
+  assert.deepEqual(store.sheriffResult, { message: '1号当选警长' })
+  assert.deepEqual(store.playerAssessmentScores, [{ player: { id: 1 }, role_score: 88 }])
+  assert.deepEqual(store.activeAssessScores, [{ player: { id: 1 }, score: 88 }])
+  assert.deepEqual(store.playerAliveAtPage, { 1: true, 2: false })
+  assert.deepEqual(store.archiveByGameId, { 'history-1': { archive_id: 'archive-1' } })
+  assert.deepEqual(store.reviewByGameId, { 'history-1': { report_id: 'review-1' } })
+  assert.deepEqual(store.flowDataByGameId, { 'history-1': { nodes: [] } })
+  assert.deepEqual(store.flowLoadingByGameId, { 'history-1': true })
+  assert.equal(store.archiveLoading, true)
+  assert.equal(store.reviewLoading, true)
   assert.equal(store.hasSelection, true)
 
   store.selectGame(null)
@@ -482,6 +526,28 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     historyCurrentPage: ref(3),
     historyTotalPages: ref(5),
     historyPages: ref([{ key: 'runtime-page' }]),
+    selectedHistoryPageKey: ref('runtime-page'),
+    selectedHistoryPage: ref({ key: 'runtime-page', phase: 'speech' }),
+    phaseLoadingByKey: ref({ 'runtime-history:runtime-page': false }),
+    historyLogs: ref([{ message: 'runtime history log' }]),
+    pageNightActions: ref([{ action: 'guard_protect' }]),
+    pageSpeechDecisions: ref([{ action: 'speak' }]),
+    sheriffVotes: ref([{ action: 'sheriff_vote' }]),
+    voteDecisions: ref([{ action: 'exile_vote' }]),
+    currentVoteTally: ref([{ targetName: '2号', count: 1 }]),
+    sheriffVoteTally: ref([{ targetName: '1号', count: 1 }]),
+    pageLastWords: ref([{ action: 'last_word' }]),
+    nightResult: ref('runtime night result'),
+    sheriffResult: ref({ message: 'runtime sheriff result' }),
+    playerAssessmentScores: ref([{ player: { id: 2 }, role_score: 92 }]),
+    activeAssessScores: ref([{ player: { id: 2 }, score: 92 }]),
+    playerAliveAtPage: ref({ 2: true }),
+    archiveByGameId: ref({ 'runtime-history': { archive_id: 'runtime-archive' } }),
+    reviewByGameId: ref({ 'runtime-history': { report_id: 'runtime-review' } }),
+    flowDataByGameId: ref({ 'runtime-history': { nodes: [] } }),
+    flowLoadingByGameId: ref({ 'runtime-history': true }),
+    archiveLoading: ref(true),
+    reviewLoading: ref(true),
     replayGame: ref(replayGame),
     isReplayMode: ref(true),
     replayCursor: ref(3),
@@ -561,6 +627,67 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
   assert.equal(historyStore.currentPage, 3)
   assert.equal(historyStore.totalPages, 5)
   assert.deepEqual(historyStore.pages, [{ key: 'runtime-page' }])
+  assert.deepEqual(runtimeHydrationKeys.history, [
+    'gameHistory',
+    'selectedHistoryGameId',
+    'selectedHistoryGame',
+    'historyWorkspaceTab',
+    'historyLoading',
+    'historyPagination',
+    'historyLoadingMore',
+    'historySourceFilter',
+    'historyCounts',
+    'historyFacets',
+    'historyNotice',
+    'historyHasMore',
+    'historyCurrentPage',
+    'historyTotalPages',
+    'historyPages',
+    'selectedHistoryPageKey',
+    'selectedHistoryPage',
+    'phaseLoadingByKey',
+    'historyLogs',
+    'pageNightActions',
+    'pageSpeechDecisions',
+    'sheriffVotes',
+    'voteDecisions',
+    'currentVoteTally',
+    'sheriffVoteTally',
+    'pageLastWords',
+    'nightResult',
+    'sheriffResult',
+    'playerAssessmentScores',
+    'activeAssessScores',
+    'playerAliveAtPage',
+    'archiveByGameId',
+    'reviewByGameId',
+    'flowDataByGameId',
+    'flowLoadingByGameId',
+    'archiveLoading',
+    'reviewLoading'
+  ])
+  assert.equal(historyStore.selectedHistoryPageKey, 'runtime-page')
+  assert.deepEqual(historyStore.selectedHistoryPage, { key: 'runtime-page', phase: 'speech' })
+  assert.deepEqual(historyStore.phaseLoadingByKey, { 'runtime-history:runtime-page': false })
+  assert.deepEqual(historyStore.historyLogs, [{ message: 'runtime history log' }])
+  assert.deepEqual(historyStore.pageNightActions, [{ action: 'guard_protect' }])
+  assert.deepEqual(historyStore.pageSpeechDecisions, [{ action: 'speak' }])
+  assert.deepEqual(historyStore.sheriffVotes, [{ action: 'sheriff_vote' }])
+  assert.deepEqual(historyStore.voteDecisions, [{ action: 'exile_vote' }])
+  assert.deepEqual(historyStore.currentVoteTally, [{ targetName: '2号', count: 1 }])
+  assert.deepEqual(historyStore.sheriffVoteTally, [{ targetName: '1号', count: 1 }])
+  assert.deepEqual(historyStore.pageLastWords, [{ action: 'last_word' }])
+  assert.equal(historyStore.nightResult, 'runtime night result')
+  assert.deepEqual(historyStore.sheriffResult, { message: 'runtime sheriff result' })
+  assert.deepEqual(historyStore.playerAssessmentScores, [{ player: { id: 2 }, role_score: 92 }])
+  assert.deepEqual(historyStore.activeAssessScores, [{ player: { id: 2 }, score: 92 }])
+  assert.deepEqual(historyStore.playerAliveAtPage, { 2: true })
+  assert.deepEqual(historyStore.archiveByGameId, { 'runtime-history': { archive_id: 'runtime-archive' } })
+  assert.deepEqual(historyStore.reviewByGameId, { 'runtime-history': { report_id: 'runtime-review' } })
+  assert.deepEqual(historyStore.flowDataByGameId, { 'runtime-history': { nodes: [] } })
+  assert.deepEqual(historyStore.flowLoadingByGameId, { 'runtime-history': true })
+  assert.equal(historyStore.archiveLoading, true)
+  assert.equal(historyStore.reviewLoading, true)
   assert.equal(replayStore.replayGame?.game_id, 'runtime-replay')
   assert.equal(replayStore.replaySpeed, 1.5)
   assert.equal(replayStore.replayTotal, 9)

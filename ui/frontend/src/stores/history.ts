@@ -22,6 +22,28 @@ export interface HistoryRuntimeHydration {
   historyCurrentPage?: number | null
   historyTotalPages?: number | null
   historyPages?: LooseRecord[] | null
+  selectedHistoryPageKey?: string | null
+  selectedHistoryPage?: LooseRecord | null
+  phaseLoadingByKey?: LooseRecord | null
+  historyLogs?: LooseRecord[] | null
+  pageNightActions?: LooseRecord[] | null
+  pageSpeechDecisions?: LooseRecord[] | null
+  sheriffVotes?: LooseRecord[] | null
+  voteDecisions?: LooseRecord[] | null
+  currentVoteTally?: LooseRecord[] | null
+  sheriffVoteTally?: LooseRecord[] | null
+  pageLastWords?: LooseRecord[] | null
+  nightResult?: string | null
+  sheriffResult?: LooseRecord | null
+  playerAssessmentScores?: LooseRecord[] | null
+  activeAssessScores?: LooseRecord[] | null
+  playerAliveAtPage?: LooseRecord | null
+  archiveByGameId?: LooseRecord | null
+  reviewByGameId?: LooseRecord | null
+  flowDataByGameId?: LooseRecord | null
+  flowLoadingByGameId?: LooseRecord | null
+  archiveLoading?: boolean | null
+  reviewLoading?: boolean | null
 }
 
 export const useHistoryStore = defineStore('history', () => {
@@ -40,6 +62,28 @@ export const useHistoryStore = defineStore('history', () => {
   const currentPage = ref(1)
   const totalPages = ref(1)
   const pages = ref<LooseRecord[]>([])
+  const selectedHistoryPageKey = ref('')
+  const selectedHistoryPage = ref<LooseRecord | null>(null)
+  const phaseLoadingByKey = ref<LooseRecord>({})
+  const historyLogs = ref<LooseRecord[]>([])
+  const pageNightActions = ref<LooseRecord[]>([])
+  const pageSpeechDecisions = ref<LooseRecord[]>([])
+  const sheriffVotes = ref<LooseRecord[]>([])
+  const voteDecisions = ref<LooseRecord[]>([])
+  const currentVoteTally = ref<LooseRecord[]>([])
+  const sheriffVoteTally = ref<LooseRecord[]>([])
+  const pageLastWords = ref<LooseRecord[]>([])
+  const nightResult = ref('')
+  const sheriffResult = ref<LooseRecord | null>(null)
+  const playerAssessmentScores = ref<LooseRecord[]>([])
+  const activeAssessScores = ref<LooseRecord[]>([])
+  const playerAliveAtPage = ref<LooseRecord>({})
+  const archiveByGameId = ref<LooseRecord>({})
+  const reviewByGameId = ref<LooseRecord>({})
+  const flowDataByGameId = ref<LooseRecord>({})
+  const flowLoadingByGameId = ref<LooseRecord>({})
+  const archiveLoading = ref(false)
+  const reviewLoading = ref(false)
   const error = ref('')
 
   const hasSelection = computed(() => Boolean(selectedHistoryGame.value || selectedHistoryGameId.value))
@@ -69,6 +113,28 @@ export const useHistoryStore = defineStore('history', () => {
     currentPage.value = Number(runtime.historyCurrentPage ?? 1) || 1
     totalPages.value = Number(runtime.historyTotalPages ?? 1) || 1
     pages.value = runtime.historyPages ?? []
+    selectedHistoryPageKey.value = runtime.selectedHistoryPageKey ?? ''
+    selectedHistoryPage.value = runtime.selectedHistoryPage ?? null
+    phaseLoadingByKey.value = runtime.phaseLoadingByKey ?? {}
+    historyLogs.value = runtime.historyLogs ?? []
+    pageNightActions.value = runtime.pageNightActions ?? []
+    pageSpeechDecisions.value = runtime.pageSpeechDecisions ?? []
+    sheriffVotes.value = runtime.sheriffVotes ?? []
+    voteDecisions.value = runtime.voteDecisions ?? []
+    currentVoteTally.value = runtime.currentVoteTally ?? []
+    sheriffVoteTally.value = runtime.sheriffVoteTally ?? []
+    pageLastWords.value = runtime.pageLastWords ?? []
+    nightResult.value = runtime.nightResult ?? ''
+    sheriffResult.value = runtime.sheriffResult ?? null
+    playerAssessmentScores.value = runtime.playerAssessmentScores ?? []
+    activeAssessScores.value = runtime.activeAssessScores ?? []
+    playerAliveAtPage.value = runtime.playerAliveAtPage ?? {}
+    archiveByGameId.value = runtime.archiveByGameId ?? {}
+    reviewByGameId.value = runtime.reviewByGameId ?? {}
+    flowDataByGameId.value = runtime.flowDataByGameId ?? {}
+    flowLoadingByGameId.value = runtime.flowLoadingByGameId ?? {}
+    archiveLoading.value = Boolean(runtime.archiveLoading)
+    reviewLoading.value = Boolean(runtime.reviewLoading)
     error.value = runtime.historyNotice?.message ?? ''
   }
 
@@ -88,6 +154,28 @@ export const useHistoryStore = defineStore('history', () => {
     currentPage,
     totalPages,
     pages,
+    selectedHistoryPageKey,
+    selectedHistoryPage,
+    phaseLoadingByKey,
+    historyLogs,
+    pageNightActions,
+    pageSpeechDecisions,
+    sheriffVotes,
+    voteDecisions,
+    currentVoteTally,
+    sheriffVoteTally,
+    pageLastWords,
+    nightResult,
+    sheriffResult,
+    playerAssessmentScores,
+    activeAssessScores,
+    playerAliveAtPage,
+    archiveByGameId,
+    reviewByGameId,
+    flowDataByGameId,
+    flowLoadingByGameId,
+    archiveLoading,
+    reviewLoading,
     error,
     hasSelection,
     setGames,

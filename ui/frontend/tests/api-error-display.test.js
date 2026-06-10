@@ -97,7 +97,7 @@ test('Evolution and Logs error panels wire retry to existing refresh/reload path
   assert.match(evolutionSource, /function retryRefresh\(\)[\s\S]*refreshRetryDisabled\.value[\s\S]*emit\('refresh'\)/)
   assert.match(evolutionSource, /<ApiErrorPanel[\s\S]*v-if="errorNotice"[\s\S]*class="evo-error-panel"[\s\S]*retry-label="重试刷新"[\s\S]*retry-busy-label="刷新中"[\s\S]*:retrying="refreshRetrying"[\s\S]*:retry-disabled="refreshRetryDisabled"[\s\S]*@retry="retryRefresh"/)
 
-  assert.match(logsSource, /const detailRetrying = computed\(\(\) =>[\s\S]*historyLoading\.value[\s\S]*selectedPhaseLoading\.value[\s\S]*props\.archiveLoading[\s\S]*props\.reviewLoading[\s\S]*selectedFlowLoading\.value/)
+  assert.match(logsSource, /const detailRetrying = computed\(\(\) =>[\s\S]*historyLoading\.value[\s\S]*selectedPhaseLoading\.value[\s\S]*archiveLoading\.value[\s\S]*reviewLoading\.value[\s\S]*selectedFlowLoading\.value/)
   assert.match(logsSource, /const detailRetryAvailable = computed\(\(\) => \{[\s\S]*workspaceTab\.value === 'review'[\s\S]*props\.loadReview[\s\S]*workspaceTab\.value === 'archive'[\s\S]*props\.loadArchive[\s\S]*props\.loadMoreHistoryPhaseDetail/)
   assert.match(logsSource, /function retrySelectedDetail\(\)[\s\S]*detailRetryDisabled\.value[\s\S]*workspaceTab\.value === 'review'[\s\S]*loadSelectedReview\(\)[\s\S]*workspaceTab\.value === 'archive'[\s\S]*loadSelectedArchive\(\)[\s\S]*loadMoreSelectedPhase\(\)/)
   assert.match(logsSource, /<ApiErrorPanel[\s\S]*v-if="detailErrorNotice"[\s\S]*class="detail-error-panel"[\s\S]*retry-label="重试读取"[\s\S]*retry-busy-label="读取中"[\s\S]*:retrying="detailRetrying"[\s\S]*:retry-disabled="detailRetryDisabled"[\s\S]*@retry="retrySelectedDetail"/)

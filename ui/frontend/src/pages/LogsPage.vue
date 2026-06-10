@@ -117,17 +117,42 @@ const RAW_LOG_FILTERS = [
   { key: 'vote', label: '投票' },
   { key: 'error', label: '异常' }
 ]
+const JUDGE_AVATAR_SRC = '/livehall-assets/props/optimized/judge-avatar-160.webp'
 const canShowRawLogs = computed(() =>
-  props.historyLogs.length > 0
-  && props.selectedHistoryPage
+  historyLogs.value.length > 0
+  && selectedHistoryPage.value
 )
 const gameHistory = computed<any[]>(() => historyStore.games.length ? historyStore.games : props.gameHistory)
 const selectedHistoryGameId = computed(() => historyStore.selectedHistoryGameId ?? props.selectedHistoryGameId)
 const selectedHistoryGame = computed<LooseRecord | null>(() => (historyStore.selectedHistoryGame as LooseRecord | null) || props.selectedHistoryGame)
 const historyLoading = computed(() => historyStore.loading || props.historyLoading)
 const historyNotice = computed<LooseRecord>(() => (historyStore.notice as LooseRecord | null) || props.historyNotice)
-const historyPagesForTabs = computed<any[]>(() => historyStore.pages.length ? historyStore.pages : props.historyPages)
-const activeAssessScoresForPanel = computed<any[]>(() => props.activeAssessScores)
+const hasStoreSelection = computed(() => Boolean(historyStore.selectedHistoryGame || historyStore.selectedHistoryGameId))
+const hasStoreDetail = computed(() => Boolean(historyStore.selectedHistoryPage || historyStore.selectedHistoryPageKey))
+const historyPagesForTabs = computed<any[]>(() => hasStoreSelection.value ? historyStore.pages : props.historyPages)
+const selectedHistoryPageKey = computed(() => historyStore.selectedHistoryPageKey || props.selectedHistoryPageKey)
+const selectedHistoryPage = computed<LooseRecord | null>(() => (historyStore.selectedHistoryPage as LooseRecord | null) || props.selectedHistoryPage)
+const phaseLoadingByKey = computed<LooseRecord>(() => hasStoreDetail.value ? historyStore.phaseLoadingByKey : props.phaseLoadingByKey)
+const historyLogs = computed<any[]>(() => hasStoreDetail.value ? historyStore.historyLogs : props.historyLogs)
+const pageNightActions = computed<any[]>(() => hasStoreDetail.value ? historyStore.pageNightActions : props.pageNightActions)
+const pageSpeechDecisions = computed<any[]>(() => hasStoreDetail.value ? historyStore.pageSpeechDecisions : props.pageSpeechDecisions)
+const sheriffVotes = computed<any[]>(() => hasStoreDetail.value ? historyStore.sheriffVotes : props.sheriffVotes)
+const voteDecisions = computed<any[]>(() => hasStoreDetail.value ? historyStore.voteDecisions : props.voteDecisions)
+const currentVoteTally = computed<any[]>(() => hasStoreDetail.value ? historyStore.currentVoteTally : props.currentVoteTally)
+const sheriffVoteTally = computed<any[]>(() => hasStoreDetail.value ? historyStore.sheriffVoteTally : props.sheriffVoteTally)
+const pageLastWords = computed<any[]>(() => hasStoreDetail.value ? historyStore.pageLastWords : props.pageLastWords)
+const nightResult = computed(() => hasStoreDetail.value ? historyStore.nightResult : props.nightResult)
+const sheriffResult = computed<LooseRecord | null>(() => hasStoreDetail.value ? historyStore.sheriffResult as LooseRecord | null : props.sheriffResult)
+const playerAssessmentScores = computed<any[]>(() => hasStoreSelection.value ? historyStore.playerAssessmentScores : props.playerAssessmentScores)
+const activeAssessScores = computed<any[]>(() => hasStoreSelection.value ? historyStore.activeAssessScores : props.activeAssessScores)
+const activeAssessScoresForPanel = computed<any[]>(() => activeAssessScores.value)
+const playerAliveAtPage = computed<LooseRecord>(() => hasStoreDetail.value ? historyStore.playerAliveAtPage : props.playerAliveAtPage)
+const archiveByGameId = computed<LooseRecord>(() => hasStoreSelection.value ? historyStore.archiveByGameId : props.archiveByGameId)
+const reviewByGameId = computed<LooseRecord>(() => hasStoreSelection.value ? historyStore.reviewByGameId : props.reviewByGameId)
+const flowDataByGameId = computed<LooseRecord>(() => hasStoreSelection.value ? historyStore.flowDataByGameId : props.flowDataByGameId)
+const flowLoadingByGameId = computed<LooseRecord>(() => hasStoreSelection.value ? historyStore.flowLoadingByGameId : props.flowLoadingByGameId)
+const archiveLoading = computed(() => hasStoreSelection.value ? historyStore.archiveLoading : props.archiveLoading)
+const reviewLoading = computed(() => hasStoreSelection.value ? historyStore.reviewLoading : props.reviewLoading)
 const focusedPlayerId = computed(() => normalizePlayerId(selectedAssessPlayerId.value))
 const focusedPlayer = computed(() => {
   const id = focusedPlayerId.value
@@ -135,7 +160,7 @@ const focusedPlayer = computed(() => {
   return (selectedHistoryGame.value?.players || []).find((player) => samePlayer(player?.id ?? player?.seat, id)) || null
 })
 const hasPlayerFocus = computed(() => focusedPlayerId.value != null)
-const rawLogsForFocus = computed(() => props.historyLogs.filter((log) => rowMatchesFocusedPlayer(log, { includeText: true })))
+const rawLogsForFocus = computed(() => historyLogs.value.filter((log) => rowMatchesFocusedPlayer(log, { includeText: true })))
 const filteredRawLogs = computed(() =>
   rawLogsForFocus.value.filter((log) => rawLogFilter.value === 'all' || rawLogKind(log) === rawLogFilter.value)
 )
@@ -148,10 +173,10 @@ const rawLogFilters = computed(() =>
       : rawLogsForFocus.value.filter((log) => rawLogKind(log) === item.key).length
   })).filter((item) => item.key === 'all' || item.count > 0)
 )
-const selectedReview = computed(() => props.reviewByGameId[selectedHistoryGame.value?.game_id] || null)
-const selectedArchive = computed(() => props.archiveByGameId[selectedHistoryGame.value?.game_id] || null)
-const selectedFlowData = computed(() => props.flowDataByGameId[selectedHistoryGame.value?.game_id] || null)
-const selectedFlowLoading = computed(() => Boolean(props.flowLoadingByGameId[selectedHistoryGame.value?.game_id]))
+const selectedReview = computed(() => reviewByGameId.value[selectedHistoryGame.value?.game_id] || null)
+const selectedArchive = computed(() => archiveByGameId.value[selectedHistoryGame.value?.game_id] || null)
+const selectedFlowData = computed(() => flowDataByGameId.value[selectedHistoryGame.value?.game_id] || null)
+const selectedFlowLoading = computed(() => Boolean(flowLoadingByGameId.value[selectedHistoryGame.value?.game_id]))
 const detailInlineNotice = computed(() => inlineNoticeForDisplay(historyNotice.value))
 const detailErrorNotice = computed(() => noticeErrorForPanel(historyNotice.value))
 const selectedGameConfig = computed(() => {
@@ -170,24 +195,24 @@ const selectedGameConfig = computed(() => {
 })
 const reviewLoaded = computed(() => Boolean(selectedReview.value && !selectedReview.value.error))
 const archiveLoaded = computed(() => Boolean(selectedArchive.value && !selectedArchive.value.error))
-const selectedPhasePagination = computed(() => props.selectedHistoryPage?.pagination || {})
+const selectedPhasePagination = computed(() => selectedHistoryPage.value?.pagination || {})
 const phaseHasMore = computed(() =>
   Boolean(selectedPhasePagination.value.logs?.has_more || selectedPhasePagination.value.decisions?.has_more)
 )
 const selectedPhaseLoadingKey = computed(() => {
   const gameId = selectedHistoryGame.value?.game_id || selectedHistoryGameId.value || ''
-  const pageKey = props.selectedHistoryPage?.key || props.selectedHistoryPageKey || ''
+  const pageKey = selectedHistoryPage.value?.key || selectedHistoryPageKey.value || ''
   return gameId && pageKey ? `${gameId}:${pageKey}` : ''
 })
 const selectedPhaseLoading = computed(() =>
-  Boolean(props.phaseLoadingByKey[selectedPhaseLoadingKey.value])
+  Boolean(phaseLoadingByKey.value[selectedPhaseLoadingKey.value])
 )
 const detailRetrying = computed(() =>
   Boolean(
     historyLoading.value ||
     selectedPhaseLoading.value ||
-    props.archiveLoading ||
-    props.reviewLoading ||
+    archiveLoading.value ||
+    reviewLoading.value ||
     selectedFlowLoading.value
   )
 )
@@ -196,7 +221,7 @@ const detailRetryAvailable = computed(() => {
   if (!gameId) return false
   if (workspaceTab.value === 'review') return Boolean(props.loadReview)
   if (workspaceTab.value === 'archive') return Boolean(props.loadArchive)
-  return Boolean(props.loadMoreHistoryPhaseDetail && (props.selectedHistoryPage?.key || props.selectedHistoryPageKey))
+  return Boolean(props.loadMoreHistoryPhaseDetail && (selectedHistoryPage.value?.key || selectedHistoryPageKey.value))
 })
 const detailRetryDisabled = computed(() => detailRetrying.value || !detailRetryAvailable.value)
 const phaseMoreMeta = computed(() => {
@@ -204,11 +229,11 @@ const phaseMoreMeta = computed(() => {
   const decisions = selectedPhasePagination.value.decisions || {}
   const parts = []
   if (logs.has_more) {
-    const loaded = Number(logs.offset || 0) + Number(logs.returned || props.historyLogs.length || 0)
+    const loaded = Number(logs.offset || 0) + Number(logs.returned || historyLogs.value.length || 0)
     parts.push(`日志 ${loaded}/${Number(logs.total || loaded)}`)
   }
   if (decisions.has_more) {
-    const currentDecisions = props.pageNightActions.length + props.pageSpeechDecisions.length + props.voteDecisions.length + props.sheriffVotes.length + props.pageLastWords.length
+    const currentDecisions = pageNightActions.value.length + pageSpeechDecisions.value.length + voteDecisions.value.length + sheriffVotes.value.length + pageLastWords.value.length
     const loaded = Number(decisions.offset || 0) + Number(decisions.returned || currentDecisions || 0)
     parts.push(`决策 ${loaded}/${Number(decisions.total || loaded)}`)
   }
@@ -223,16 +248,16 @@ function assessOverallScore(item: any) {
 
 const activeAssessPlayerId = computed(() => {
   const current = selectedAssessPlayerId.value
-  if (current != null && props.activeAssessScores.some((item) => item.player?.id === current)) {
+  if (current != null && activeAssessScores.value.some((item) => item.player?.id === current)) {
     return current
   }
-  const topScore = [...props.activeAssessScores]
+  const topScore = [...activeAssessScores.value]
     .sort((a, b) => assessOverallScore(b) - assessOverallScore(a) || Number(a.player?.seat || 0) - Number(b.player?.seat || 0))[0]
   return topScore?.player?.id || selectedHistoryGame.value?.players?.[0]?.id || null
 })
 
 const phaseCategory = computed(() => {
-  const phase = props.selectedHistoryPage?.phase || ''
+  const phase = selectedHistoryPage.value?.phase || ''
   if (NIGHT_PHASES.has(phase)) return 'night'
   if (SPEECH_PHASES.has(phase)) return 'speech'
   if (VOTE_PHASES.has(phase)) return 'vote'
@@ -242,16 +267,16 @@ const phaseCategory = computed(() => {
 })
 
 const focusedNightActions = computed(() =>
-  props.pageNightActions.filter((item) => rowMatchesFocusedPlayer(item))
+  pageNightActions.value.filter((item) => rowMatchesFocusedPlayer(item))
 )
 const focusedSpeechDecisions = computed(() =>
-  props.pageSpeechDecisions.filter((item) => rowMatchesFocusedPlayer(item, { includeText: true }))
+  pageSpeechDecisions.value.filter((item) => rowMatchesFocusedPlayer(item, { includeText: true }))
 )
 const activeVoteDecisions = computed(() =>
-  SHERIFF_VOTE_PHASES.has(props.selectedHistoryPage?.phase) ? props.sheriffVotes : props.voteDecisions
+  SHERIFF_VOTE_PHASES.has(selectedHistoryPage.value?.phase) ? sheriffVotes.value : voteDecisions.value
 )
 const activeVoteTally = computed(() =>
-  SHERIFF_VOTE_PHASES.has(props.selectedHistoryPage?.phase) ? props.sheriffVoteTally : props.currentVoteTally
+  SHERIFF_VOTE_PHASES.has(selectedHistoryPage.value?.phase) ? sheriffVoteTally.value : currentVoteTally.value
 )
 const focusedVoteDecisions = computed(() =>
   activeVoteDecisions.value.filter((item) => rowMatchesFocusedPlayer(item, { includeTarget: true }))
@@ -260,7 +285,7 @@ const focusedVoteTally = computed(() =>
   hasPlayerFocus.value ? tallyVoteRows(focusedVoteDecisions.value) : activeVoteTally.value
 )
 const focusedLastWords = computed(() =>
-  props.pageLastWords.filter((item) => rowMatchesFocusedPlayer(item, { includeText: true }))
+  pageLastWords.value.filter((item) => rowMatchesFocusedPlayer(item, { includeText: true }))
 )
 const focusedDecisionCount = computed(() =>
   focusedNightActions.value.length
@@ -344,8 +369,8 @@ const voteAnomalyRows = computed(() => {
 const phaseConclusion = computed(() => {
   const focusPrefix = hasPlayerFocus.value ? `${focusLabel.value}：` : ''
   if (phaseCategory.value === 'night') {
-    if (hasPlayerFocus.value && focusedNightActions.value.length) return `${focusPrefix}${focusedNightActions.value.length} 条夜间行动，${props.nightResult || '暂无结算文本'}`
-    return props.nightResult || `${focusedNightActions.value.length} 条夜间行动记录`
+    if (hasPlayerFocus.value && focusedNightActions.value.length) return `${focusPrefix}${focusedNightActions.value.length} 条夜间行动，${nightResult.value || '暂无结算文本'}`
+    return nightResult.value || `${focusedNightActions.value.length} 条夜间行动记录`
   }
   if (phaseCategory.value === 'speech') {
     const speakers = new Set(focusedSpeechDecisions.value.map((item) => String(normalizePlayerId(rowActorId(item)))).filter(Boolean)).size
@@ -353,7 +378,7 @@ const phaseConclusion = computed(() => {
   }
   if (phaseCategory.value === 'vote') {
     const top = voteRankingRows.value[0]
-    const result = props.selectedHistoryPage?.phase === 'sheriff_result' ? props.sheriffResult?.message : ''
+    const result = selectedHistoryPage.value?.phase === 'sheriff_result' ? sheriffResult.value?.message : ''
     if (top) return `${focusPrefix}最高票 ${top.label}，${top.count} 票${result ? `；${normalizeText(result)}` : ''}`
     return `${focusPrefix}暂无可统计票型`
   }
@@ -367,7 +392,7 @@ const phaseSummaryCards = computed(() => {
     return [
       { label: '行动', value: focusedNightActions.value.length },
       { label: '目标', value: targets.size },
-      { label: '结算', value: props.nightResult ? '有' : '无' },
+      { label: '结算', value: nightResult.value ? '有' : '无' },
       { label: '原始', value: rawLogsForFocus.value.length }
     ]
   }
@@ -398,7 +423,7 @@ const phaseSummaryCards = computed(() => {
 
 const phaseEvidenceKey = computed(() => {
   const gameId = selectedHistoryGame.value?.game_id ?? selectedHistoryGameId.value ?? 'game'
-  const pageKey = props.selectedHistoryPage?.key ?? props.selectedHistoryPageKey ?? props.selectedHistoryPage?.phase ?? 'phase'
+  const pageKey = selectedHistoryPage.value?.key ?? selectedHistoryPageKey.value ?? selectedHistoryPage.value?.phase ?? 'phase'
   return `${gameId}::${pageKey}`
 })
 
@@ -431,7 +456,7 @@ const phaseEvidenceSummary = computed(() => {
   }
   if (phaseCategory.value === 'night') {
     const targets = new Set(nightMatrixRows.value.map((row) => row.target).filter((item) => item && item !== '无目标'))
-    return `${nightMatrixRows.value.length} 次行动 · ${targets.size} 个目标 · ${props.nightResult ? '有结算' : '无结算'}`
+    return `${nightMatrixRows.value.length} 次行动 · ${targets.size} 个目标 · ${nightResult.value ? '有结算' : '无结算'}`
   }
   if (phaseCategory.value === 'speech') {
     const speakers = new Set(speechTimelineRows.value.map((row) => String(row.actor || '')).filter(Boolean)).size
@@ -479,16 +504,16 @@ const selectedGameSubLabel = computed(() => {
 })
 
 const selectedPhaseTitle = computed(() => {
-  return props.selectedHistoryPage ? pageTitle(props.selectedHistoryPage) : '阶段详情'
+  return selectedHistoryPage.value ? pageTitle(selectedHistoryPage.value) : '阶段详情'
 })
 
 const selectedPhaseKind = computed(() => {
-  const phase = props.selectedHistoryPage?.phase
+  const phase = selectedHistoryPage.value?.phase
   return displayPhaseLabel(phase) || normalizeHistoryDisplayText(phaseName(phase)) || '阶段'
 })
 
 const selectedPhaseSummary = computed(() => {
-  const phase = props.selectedHistoryPage?.phase
+  const phase = selectedHistoryPage.value?.phase
   if (phase === 'night') return '夜间行动、技能目标与结算结果'
   if (['speech', 'sheriff'].includes(phase)) return '玩家发言、公开表述与决策依据'
   if (['vote', 'exile_vote', 'pk_vote', 'sheriff_vote', 'sheriff_result'].includes(phase)) return '票型分布、投票理由与阶段结果'
@@ -497,7 +522,7 @@ const selectedPhaseSummary = computed(() => {
 })
 
 const archiveButtonText = computed(() => {
-  if (props.archiveLoading) return '读取中'
+  if (archiveLoading.value) return '读取中'
   if (archiveLoaded.value) return '档案已载入'
   return selectedArchive.value?.error ? '重试档案' : '对局档案'
 })
@@ -509,19 +534,19 @@ function asyncTabState({ loading = false, loaded = false, error = false, missing
   return { state: 'idle', badge: '未载入' }
 }
 const reviewTabState = computed(() => asyncTabState({
-  loading: props.reviewLoading,
+  loading: reviewLoading.value,
   loaded: reviewLoaded.value,
   error: Boolean(selectedReview.value?.error),
   missing: selectedReview.value?.missing === true || selectedReview.value?.status === 'missing'
 }))
 const archiveTabState = computed(() => asyncTabState({
-  loading: props.archiveLoading,
+  loading: archiveLoading.value,
   loaded: archiveLoaded.value,
   error: Boolean(selectedArchive.value?.error),
   missing: selectedArchive.value?.missing === true || selectedArchive.value?.status === 'missing'
 }))
 const workspaceTabs = computed(() => [
-  { key: 'phase', label: '阶段详情', badge: props.historyLogs.length ? String(props.historyLogs.length) : '', state: 'loaded' },
+  { key: 'phase', label: '阶段详情', badge: historyLogs.value.length ? String(historyLogs.value.length) : '', state: 'loaded' },
   { key: 'review', label: '复盘报告', ...reviewTabState.value },
   { key: 'archive', label: '对局档案', ...archiveTabState.value }
 ])
@@ -536,10 +561,10 @@ function setWorkspaceTab(tab: any, { emitUpdate = true, load = true }: { emitUpd
   if (workspaceTab.value !== next) workspaceTab.value = next
   if (emitUpdate && props.historyWorkspaceTab !== next) emit('update:historyWorkspaceTab', next)
   if (!load || !selectedHistoryGame.value?.game_id) return
-  if (next === 'review' && !reviewLoaded.value && !props.reviewLoading) {
+  if (next === 'review' && !reviewLoaded.value && !reviewLoading.value) {
     props.loadReview?.(selectedHistoryGame.value.game_id)
   }
-  if (next === 'archive' && !archiveLoaded.value && !props.archiveLoading) {
+  if (next === 'archive' && !archiveLoaded.value && !archiveLoading.value) {
     props.loadArchive?.(selectedHistoryGame.value.game_id)
   }
 }
@@ -558,7 +583,7 @@ watch(() => selectedHistoryGame.value?.game_id, () => {
   setWorkspaceTab(props.historyWorkspaceTab, { emitUpdate: false })
 })
 
-watch(() => props.selectedHistoryPage?.key, () => {
+watch(() => selectedHistoryPage.value?.key, () => {
   rawLogFilter.value = 'all'
 })
 
@@ -809,7 +834,7 @@ function tallyVoteRows(votes: any[] = []) {
 }
 
 function rawLogPhaseName(log: any) {
-  const phase = log?.phase || log?.event_type || log?.type || props.selectedHistoryPage?.phase
+  const phase = log?.phase || log?.event_type || log?.type || selectedHistoryPage.value?.phase
   return displayPhaseLabel(phase) || normalizeHistoryDisplayText(phaseName(phase))
 }
 
@@ -818,7 +843,7 @@ function setupInitMessage(log: any) {
 }
 
 function rawLogDayLabel(log: any) {
-  const day = log?.day || props.selectedHistoryPage?.day
+  const day = log?.day || selectedHistoryPage.value?.day
   return day ? `第${day}天` : '对局'
 }
 
@@ -860,7 +885,7 @@ function loadSelectedArchive() {
 function loadMoreSelectedPhase() {
   return props.loadMoreHistoryPhaseDetail?.(
     selectedHistoryGame.value?.game_id || selectedHistoryGameId.value,
-    props.selectedHistoryPage?.key || props.selectedHistoryPageKey
+    selectedHistoryPage.value?.key || selectedHistoryPageKey.value
   )
 }
 
@@ -1161,7 +1186,7 @@ function clearPlayerFocus() {
                     ]"
                   >
                     <span class="timeline-rail" aria-hidden="true">
-                      <img v-if="!log.role_assignments" src="/livehall-assets/props/optimized/judge-avatar-160.webp" alt="" />
+                      <img v-if="!log.role_assignments" :src="JUDGE_AVATAR_SRC" alt="" />
                       <i v-else></i>
                     </span>
                     <div class="timeline-card">
