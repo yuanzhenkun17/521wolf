@@ -66,8 +66,9 @@ PostgreSQL-backed task queue
   - `benchmark-report.md`
   - `benchmark-report.csv`
 - `BackendStore.create_task_worker_loop()` 汇总当前支持的 task executors，并绑定 `TaskService.publish_task_queue_event`。
+- 已新增 worker CLI：`uv run python -m app.tools.run_ui_task_worker --once` 或去掉 `--once` 常驻运行。
 
-当前仍未迁移 evolution 执行路径，没有改前端，也没有启动常驻 worker 进程；但 benchmark/evaluation 已具备可切换的 PG queue 桥接路径。下一阶段应迁移 evolution，或先补一个正式 worker CLI/进程入口。
+当前仍未迁移 evolution 执行路径，没有改前端；但 benchmark/evaluation 已具备可切换的 PG queue 桥接路径和正式 worker CLI。下一阶段应迁移 evolution。
 
 已验证：
 
@@ -78,6 +79,7 @@ uv run pytest tests/test_task_worker.py tests/test_task_routes.py -q
 uv run pytest tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.py tests/test_storage_provider.py -q -k "health or create_app or roles or task_service or task_event or background_tasks or startup"
 uv run pytest tests/test_ui_backend_app.py -q -k "benchmark and not snapshot"
 uv run pytest tests/test_api_contracts.py -q -k "benchmark and not snapshot"
+uv run pytest tests/test_task_worker_cli.py -q
 ```
 
 ## 当前状态
