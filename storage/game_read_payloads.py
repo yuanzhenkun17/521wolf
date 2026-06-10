@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from storage.game_history_rules import row_history_phase
 from storage.shared.database import StorageRow
 
 EVOLUTION_RUN_TYPES = {
@@ -151,6 +152,125 @@ def float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def paginate_rows(
+    rows: list[dict[str, Any]],
+    *,
+    offset: int,
+    limit: int | None,
+    default_limit: int,
+    max_limit: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    total = len(rows)
+    safe_offset = max(0, int_or_none(offset) or 0)
+    safe_limit = int_or_none(limit)
+    if safe_limit is None:
+        safe_limit = default_limit
+    safe_limit = max(1, min(safe_limit, max_limit))
+    page = rows[safe_offset:safe_offset + safe_limit]
+    return page, {
+        "total": total,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "returned": len(page),
+        "has_more": safe_offset + len(page) < total,
+    }
+
+
+def event_row(row: dict[str, Any]) -> dict[str, Any]:
+    payload = json_object(row.get("payload"))
+    return {
+        "index": int_or_none(row.get("idx")) or 0,
+        "idx": int_or_none(row.get("idx")) or 0,
+        "day": int_or_none(row.get("day")) or 0,
+        "phase": first_text(row.get("phase"), ""),
+        "type": first_text(row.get("event_type"), ""),
+        "event_type": first_text(row.get("event_type"), ""),
+        "message": first_text(row.get("message"), ""),
+        "public": bool_value(row.get("public"), True),
+        "actor": int_or_none(row.get("actor")),
+        "target": int_or_none(row.get("target")),
+        "payload": payload,
+        "created_at": first_text(row.get("created_at")),
+    }
+
+
+def decision_row(row: dict[str, Any]) -> dict[str, Any]:
+    seat = int_or_none(first_value(row.get("player_id"), row.get("seat")))
+    target = int_or_none(row.get("selected_target"))
+    parsed = json_object(row.get("parsed_decision"))
+    final_response = json_object(row.get("final_response"))
+    public_text = first_text(row.get("public_text"), final_response.get("text"), parsed.get("public_text"), "")
+    return {
+        **row,
+        "id": str(row.get("id") or ""),
+        "decision_id": str(row.get("decision_id") or row.get("id") or ""),
+        "player_id": seat,
+        "actor_id": seat,
+        "target_id": target,
+        "selected_target": target,
+        "action": first_text(row.get("action_type"), ""),
+        "action_type": first_text(row.get("action_type"), ""),
+        "day": int_or_none(row.get("day")) or 0,
+        "phase": first_text(row.get("phase"), ""),
+        "role": first_text(row.get("role"), ""),
+        "public_text": public_text,
+        "private_reasoning": first_text(row.get("private_reasoning"), ""),
+        "confidence": float_or_none(row.get("confidence")),
+        "candidates": json_array(row.get("candidates")),
+        "selected_skills": json_array(row.get("selected_skills")),
+        "alternatives": json_array(row.get("alternatives")),
+        "rejected_reasons": json_array(row.get("rejected_reasons")),
+        "policy_adjustments": json_array(row.get("policy_adjustments")),
+        "errors": json_array(row.get("errors")),
+        "parsed_decision": parsed,
+        "final_response": final_response,
+    }
+
+
+def player_row(row: dict[str, Any]) -> dict[str, Any]:
+    seat = int_or_none(row.get("seat"))
+    return {
+        "id": seat,
+        "seat": seat,
+        "name": f"{seat}号" if seat is not None else "",
+        "role": first_text(row.get("role"), ""),
+        "team": first_text(row.get("team"), ""),
+        "alive": bool_value(row.get("alive"), True),
+        "killed_day": int_or_none(row.get("killed_day")),
+        "killed_cause": first_text(row.get("killed_cause")),
+        "role_version_id": first_text(row.get("role_version_id")),
+        "skill_package_hash": first_text(row.get("skill_package_hash")),
+    }
+
+
+def flow_decision_row(decision: dict[str, Any]) -> dict[str, Any]:
+    public_summary = first_text(decision.get("public_summary"), decision.get("public_text"), decision.get("text"), "")
+    return {
+        "id": decision.get("id"),
+        "decision_id": decision.get("decision_id"),
+        "game_id": decision.get("game_id"),
+        "actor_id": decision.get("actor_id"),
+        "player_id": decision.get("player_id"),
+        "target_id": decision.get("target_id"),
+        "selected_target": decision.get("selected_target"),
+        "selected_choice": decision.get("selected_choice"),
+        "day": decision.get("day"),
+        "phase": row_history_phase(decision),
+        "action": decision.get("action"),
+        "action_type": decision.get("action_type"),
+        "role": decision.get("role"),
+        "public_summary": public_summary,
+        "public_text": decision.get("public_text") or public_summary,
+        "private_reasoning": decision.get("private_reasoning") or "",
+        "confidence": decision.get("confidence"),
+        "candidates": decision.get("candidates") if isinstance(decision.get("candidates"), list) else [],
+        "source": decision.get("source"),
+        "policy_adjustments": decision.get("policy_adjustments") if isinstance(decision.get("policy_adjustments"), list) else [],
+        "errors": decision.get("errors") if isinstance(decision.get("errors"), list) else [],
+        "created_at": decision.get("created_at"),
+    }
 
 
 def source_label(source: str) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from storage.game_read_payloads import player_row as read_model_player_row
 from storage.game_read_model import GameReadRepository
 
 
@@ -71,7 +72,7 @@ def test_load_game_history_shell_excludes_heavy_fields_and_includes_index() -> N
     assert "events" not in shell
     assert "decisions" not in shell
     assert "review" not in shell
-    assert shell["players"] == [GameReadRepository._player_row(_player_row())]
+    assert shell["players"] == [read_model_player_row(_player_row())]
     assert shell["event_count"] == 4
     assert shell["decision_count"] == 4
     assert {phase["key"] for phase in shell["phases"]} >= {
@@ -132,7 +133,7 @@ def test_load_game_flow_data_trims_heavy_decision_fields_and_excludes_logs() -> 
     assert "logs" not in flow_data
     assert "events" not in flow_data
     assert flow_data["decision_count"] == 4
-    assert flow_data["players"] == [GameReadRepository._player_row(_player_row())]
+    assert flow_data["players"] == [read_model_player_row(_player_row())]
     for decision in flow_data["decisions"]:
         assert "raw_output" not in decision
         assert "prompt_messages" not in decision

@@ -25,17 +25,21 @@ from storage.game_history_rules import (
 from storage.game_read_payloads import (
     EVOLUTION_RUN_TYPES,
     bool_value as _bool,
+    decision_row as _decision_row,
     default_manifest as _default_manifest,
+    event_row as _event_row,
     evidence_source_context as _evidence_source_context,
     first_text as _first_text,
     first_value as _first_value,
-    float_or_none as _float_or_none,
+    flow_decision_row as _flow_decision_row,
     history_final_state as _history_final_state,
     int_or_none as _int_or_none,
     json_array as _json_array,
     json_object as _json_object,
     json_object_list as _json_object_list,
     normalize_bundle_rows as _normalize_bundle_rows,
+    paginate_rows as _paginate_rows,
+    player_row as _player_row,
     row_dict as _row_dict,
 )
 from storage.public_events import public_events_only
@@ -300,8 +304,8 @@ class GameReadRepository:
             row for row in decision_rows
             if row_history_phase(row, fallback=normalized_phase) == normalized_phase
         ]
-        all_logs = [self._event_row(row) for row in event_rows]
-        all_decisions = [self._decision_row(row) for row in decision_rows]
+        all_logs = [_event_row(row) for row in event_rows]
+        all_decisions = [_decision_row(row) for row in decision_rows]
         logs, log_pagination = _paginate_rows(
             all_logs,
             offset=log_offset,
@@ -341,7 +345,7 @@ class GameReadRepository:
         game_row = self._conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
         if game_row is None:
             return None
-        players = [self._player_row(_row_dict(row)) for row in self._conn.execute(
+        players = [_player_row(_row_dict(row)) for row in self._conn.execute(
             "SELECT * FROM players WHERE game_id = ? ORDER BY seat",
             (game_id,),
         ).fetchall()]
@@ -356,7 +360,7 @@ class GameReadRepository:
             """,
             (game_id,),
         ).fetchall()]
-        decisions = [_flow_decision_row(self._decision_row(row)) for row in decision_rows]
+        decisions = [_flow_decision_row(_decision_row(row)) for row in decision_rows]
         return {
             "game_id": game_id,
             "detail_view": "flow-data",
@@ -384,7 +388,7 @@ class GameReadRepository:
         if safe_limit is None:
             safe_limit = _DEFAULT_REPLAY_LIMIT
         safe_limit = max(1, min(safe_limit, _MAX_REPLAY_LIMIT))
-        players = [self._player_row(_row_dict(row)) for row in self._conn.execute(
+        players = [_player_row(_row_dict(row)) for row in self._conn.execute(
             "SELECT * FROM players WHERE game_id = ? ORDER BY seat",
             (game_id,),
         ).fetchall()]
@@ -423,8 +427,8 @@ class GameReadRepository:
             ]
         else:
             decision_rows = []
-        events = [self._event_row(row) for row in event_rows]
-        decisions = [self._decision_row(row) for row in decision_rows]
+        events = [_event_row(row) for row in event_rows]
+        decisions = [_decision_row(row) for row in decision_rows]
         return {
             "game_id": game_id,
             "detail_view": "replay",
@@ -526,9 +530,9 @@ class GameReadRepository:
         decision_rows: list[dict[str, Any]],
         player_rows: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        events = [self._event_row(row) for row in event_rows]
-        decisions = [self._decision_row(row) for row in decision_rows]
-        players = [self._player_row(row) for row in player_rows]
+        events = [_event_row(row) for row in event_rows]
+        decisions = [_decision_row(row) for row in decision_rows]
+        players = [_player_row(row) for row in player_rows]
         config = _json_object(game.get("config"))
         final_state = _json_object(game.get("final_state"))
         public_events = public_events_only(_json_array(game.get("public_events")))
@@ -600,7 +604,7 @@ class GameReadRepository:
         player_rows: list[dict[str, Any]],
         state_event_rows: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        players = [self._player_row(row) for row in player_rows]
+        players = [_player_row(row) for row in player_rows]
         config = _json_object(game.get("config"))
         final_state = _json_object(game.get("final_state"))
         source_context = _evidence_source_context(game, config, final_state)
@@ -734,7 +738,7 @@ class GameReadRepository:
         players: list[dict[str, Any]],
         state_event_rows: list[dict[str, Any]],
     ) -> None:
-        state_events = [self._event_row(row) for row in state_event_rows]
+        state_events = [_event_row(row) for row in state_event_rows]
         state_events.sort(key=lambda item: (_phase_sort(_normalize_history_day(item.get("day")), row_history_phase(item)), _int_or_none(item.get("idx")) or 0))
         alive: dict[int, bool] = {}
         for player in players:
@@ -898,126 +902,6 @@ class GameReadRepository:
         if status in {"failed", "cancelled", "interrupted"}:
             return False
         return bool(_first_value(game.get("winner"), final_state.get("winner"))) or status == "completed"
-
-    @staticmethod
-    def _event_row(row: dict[str, Any]) -> dict[str, Any]:
-        payload = _json_object(row.get("payload"))
-        return {
-            "index": _int_or_none(row.get("idx")) or 0,
-            "idx": _int_or_none(row.get("idx")) or 0,
-            "day": _int_or_none(row.get("day")) or 0,
-            "phase": _first_text(row.get("phase"), ""),
-            "type": _first_text(row.get("event_type"), ""),
-            "event_type": _first_text(row.get("event_type"), ""),
-            "message": _first_text(row.get("message"), ""),
-            "public": _bool(row.get("public"), True),
-            "actor": _int_or_none(row.get("actor")),
-            "target": _int_or_none(row.get("target")),
-            "payload": payload,
-            "created_at": _first_text(row.get("created_at")),
-        }
-
-    @staticmethod
-    def _decision_row(row: dict[str, Any]) -> dict[str, Any]:
-        seat = _int_or_none(_first_value(row.get("player_id"), row.get("seat")))
-        target = _int_or_none(row.get("selected_target"))
-        parsed = _json_object(row.get("parsed_decision"))
-        final_response = _json_object(row.get("final_response"))
-        public_text = _first_text(row.get("public_text"), final_response.get("text"), parsed.get("public_text"), "")
-        return {
-            **row,
-            "id": str(row.get("id") or ""),
-            "decision_id": str(row.get("decision_id") or row.get("id") or ""),
-            "player_id": seat,
-            "actor_id": seat,
-            "target_id": target,
-            "selected_target": target,
-            "action": _first_text(row.get("action_type"), ""),
-            "action_type": _first_text(row.get("action_type"), ""),
-            "day": _int_or_none(row.get("day")) or 0,
-            "phase": _first_text(row.get("phase"), ""),
-            "role": _first_text(row.get("role"), ""),
-            "public_text": public_text,
-            "private_reasoning": _first_text(row.get("private_reasoning"), ""),
-            "confidence": _float_or_none(row.get("confidence")),
-            "candidates": _json_array(row.get("candidates")),
-            "selected_skills": _json_array(row.get("selected_skills")),
-            "alternatives": _json_array(row.get("alternatives")),
-            "rejected_reasons": _json_array(row.get("rejected_reasons")),
-            "policy_adjustments": _json_array(row.get("policy_adjustments")),
-            "errors": _json_array(row.get("errors")),
-            "parsed_decision": parsed,
-            "final_response": final_response,
-        }
-
-    @staticmethod
-    def _player_row(row: dict[str, Any]) -> dict[str, Any]:
-        seat = _int_or_none(row.get("seat"))
-        return {
-            "id": seat,
-            "seat": seat,
-            "name": f"{seat}号" if seat is not None else "",
-            "role": _first_text(row.get("role"), ""),
-            "team": _first_text(row.get("team"), ""),
-            "alive": _bool(row.get("alive"), True),
-            "killed_day": _int_or_none(row.get("killed_day")),
-            "killed_cause": _first_text(row.get("killed_cause")),
-            "role_version_id": _first_text(row.get("role_version_id")),
-            "skill_package_hash": _first_text(row.get("skill_package_hash")),
-        }
-
-
-def _paginate_rows(
-    rows: list[dict[str, Any]],
-    *,
-    offset: int,
-    limit: int | None,
-    default_limit: int,
-    max_limit: int,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    total = len(rows)
-    safe_offset = max(0, _int_or_none(offset) or 0)
-    safe_limit = _int_or_none(limit)
-    if safe_limit is None:
-        safe_limit = default_limit
-    safe_limit = max(1, min(safe_limit, max_limit))
-    page = rows[safe_offset:safe_offset + safe_limit]
-    return page, {
-        "total": total,
-        "offset": safe_offset,
-        "limit": safe_limit,
-        "returned": len(page),
-        "has_more": safe_offset + len(page) < total,
-    }
-
-
-def _flow_decision_row(decision: dict[str, Any]) -> dict[str, Any]:
-    public_summary = _first_text(decision.get("public_summary"), decision.get("public_text"), decision.get("text"), "")
-    return {
-        "id": decision.get("id"),
-        "decision_id": decision.get("decision_id"),
-        "game_id": decision.get("game_id"),
-        "actor_id": decision.get("actor_id"),
-        "player_id": decision.get("player_id"),
-        "target_id": decision.get("target_id"),
-        "selected_target": decision.get("selected_target"),
-        "selected_choice": decision.get("selected_choice"),
-        "day": decision.get("day"),
-        "phase": row_history_phase(decision),
-        "action": decision.get("action"),
-        "action_type": decision.get("action_type"),
-        "role": decision.get("role"),
-        "public_summary": public_summary,
-        "public_text": decision.get("public_text") or public_summary,
-        "private_reasoning": decision.get("private_reasoning") or "",
-        "confidence": decision.get("confidence"),
-        "candidates": decision.get("candidates") if isinstance(decision.get("candidates"), list) else [],
-        "source": decision.get("source"),
-        "policy_adjustments": decision.get("policy_adjustments") if isinstance(decision.get("policy_adjustments"), list) else [],
-        "errors": decision.get("errors") if isinstance(decision.get("errors"), list) else [],
-        "created_at": decision.get("created_at"),
-    }
-
 
 def _supports_detail_bundle(conn: StorageConnection) -> bool:
     if bool(getattr(conn, "supports_game_detail_bundle", False)):
