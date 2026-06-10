@@ -24,6 +24,7 @@ from ui.backend.services import (
     GamePersistenceService,
     GameReadGateway,
     GameSessionService,
+    LangfuseTaskService,
     LiveGameLifecycleCoordinator,
     TaskService,
 )
@@ -75,6 +76,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     _game_delete_coordinator_cache: GameDeleteCoordinator | None = field(default=None, init=False, repr=False)
     _game_persistence_service_cache: GamePersistenceService | None = field(default=None, init=False, repr=False)
     _game_session_service_cache: GameSessionService | None = field(default=None, init=False, repr=False)
+    _langfuse_task_service_cache: LangfuseTaskService | None = field(default=None, init=False, repr=False)
     _live_game_lifecycle_cache: LiveGameLifecycleCoordinator | None = field(default=None, init=False, repr=False)
     _registry: VersionRegistryProtocol | None = field(default=None, init=False, repr=False)
     _role_overview_cache: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
@@ -110,6 +112,9 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
     def _game_session_service(self) -> GameSessionService:
         return self._cached_component("_game_session_service_cache", lambda: GameSessionService(self))
+
+    def _langfuse_task_service(self) -> LangfuseTaskService:
+        return self._cached_component("_langfuse_task_service_cache", lambda: LangfuseTaskService(self))
 
     def _live_game_lifecycle(self) -> LiveGameLifecycleCoordinator:
         return self._cached_component("_live_game_lifecycle_cache", lambda: LiveGameLifecycleCoordinator(self))
@@ -321,6 +326,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         executors: dict[str, Any] = {}
         executors.update(self.benchmark_service.task_executors())
         executors.update(self._evolution_run_service().task_executors())
+        executors.update(self._langfuse_task_service().task_executors())
         return TaskWorkerLoop(
             connection_factory=self.task_service.open_connection,
             executors=executors,

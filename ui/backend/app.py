@@ -24,6 +24,7 @@ from ui.backend.routes.benchmark import register_benchmark_routes
 from ui.backend.routes.core import register_core_routes
 from ui.backend.routes.evolution import register_evolution_routes
 from ui.backend.routes.games import register_game_routes
+from ui.backend.routes.langfuse_tasks import register_langfuse_task_routes
 from ui.backend.routes.roles import register_role_routes
 from ui.backend.routes.tasks import register_task_routes
 from ui.backend.store import BackendStore
@@ -76,6 +77,7 @@ def create_app(
     register_role_routes(api, store)
     register_evolution_routes(api, store)
     register_benchmark_routes(api, store)
+    register_langfuse_task_routes(api, store)
     register_task_routes(api, store)
 
     return api

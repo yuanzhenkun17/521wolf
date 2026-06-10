@@ -1581,6 +1581,27 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "/api/games/{game_id}/stop": {
             "post": ("stop_game_api_games__game_id__stop_post", None, [("game_id", "path", True)]),
         },
+        "/api/langfuse/verification-tasks": {
+            "post": (
+                "create_langfuse_verification_task_api_langfuse_verification_tasks_post",
+                "LangfuseTaskRequest",
+                [],
+            ),
+        },
+        "/api/langfuse/annotation-export-tasks": {
+            "post": (
+                "create_langfuse_annotation_export_task_api_langfuse_annotation_export_tasks_post",
+                "LangfuseTaskRequest",
+                [],
+            ),
+        },
+        "/api/langfuse/link-manifest-tasks": {
+            "post": (
+                "create_langfuse_link_manifest_task_api_langfuse_link_manifest_tasks_post",
+                "LangfuseTaskRequest",
+                [],
+            ),
+        },
         "/api/tasks": {
             "get": (
                 "list_tasks_api_tasks_get",
@@ -1709,8 +1730,9 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "EvolutionStartRequest",
         "GameStartRequest",
         "HTTPValidationError",
-        "HumanActionRequest",
-        "TtsSpeechRequest",
+            "HumanActionRequest",
+            "LangfuseTaskRequest",
+            "TtsSpeechRequest",
         "ValidationError",
     }
 

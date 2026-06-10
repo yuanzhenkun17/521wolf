@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,6 +16,7 @@ from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotServ
 from ui.backend.services.evolution_read_service import EvolutionReadService
 from ui.backend.services.evolution_run_service import EvolutionRunService
 from ui.backend.services.evolution_service import EvolutionService
+from ui.backend.services.langfuse_task_service import LangfuseTaskService
 from ui.backend.services.task_persistence_service import TaskPersistenceService
 
 
@@ -474,7 +476,14 @@ def test_backend_store_creates_task_worker_loop_with_registered_executors(
 
     loop = store.create_task_worker_loop(worker_id="worker-test", poll_interval_seconds=0, lease_seconds=30)
 
-    assert loop.registry.kinds() == ("benchmark_batch", "evolution_batch", "evolution_run")
+    assert loop.registry.kinds() == (
+        "benchmark_batch",
+        "evolution_batch",
+        "evolution_run",
+        "langfuse_annotation_export",
+        "langfuse_link_manifest",
+        "langfuse_verification",
+    )
 
 
 class _FakeEvolutionTaskService:
@@ -688,6 +697,69 @@ def test_evolution_task_artifacts_include_trust_loop_json_files(tmp_path: Path) 
     assert artifacts["paired-seed-battle-table.json"]["payload"] == run["paired_seed_battle_table"]
     assert artifacts["scenario-replay-report.json"]["artifact_type"] == "evolution_scenario_replay_report"
     assert artifacts["scenario-replay-report.json"]["payload"] == run["scenario_replay_report"]
+
+
+def test_langfuse_task_executors_write_artifacts(tmp_path: Path) -> None:
+    payload_path = tmp_path / "langfuse-payload.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "game_id": "game-langfuse-1",
+                "status": "failed",
+                "seed": 7,
+                "langfuse_trace_id": "trace-1",
+                "langfuse_trace_url": "https://langfuse.local/project/p/traces/trace-1",
+                "langfuse_experiment_url": "https://langfuse.local/project/p/datasets/d/runs/r",
+                "decision_judge": {"score": 3.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    context = SimpleNamespace(
+        paths=PathConfig(root=tmp_path),
+        task_service=_FakeEvolutionTaskService(),
+    )
+    service = LangfuseTaskService(context)
+    worker_context = SimpleNamespace(heartbeat=lambda progress=None: True)
+
+    service.execute_verification_task(
+        {"task_id": "verify-task", "payload": {"payload_files": [str(payload_path)], "env": {}}},
+        worker_context,
+    )
+    service.execute_annotation_export_task(
+        {"task_id": "annotation-task", "payload": {"input_paths": [str(payload_path)], "max_items": 5}},
+        worker_context,
+    )
+    service.execute_link_manifest_task(
+        {"task_id": "manifest-task", "payload": {"input_paths": [str(payload_path)]}},
+        worker_context,
+    )
+
+    artifacts = {(artifact["task_id"], artifact["name"]): artifact for artifact in context.task_service.artifacts}
+    assert artifacts[("verify-task", "langfuse-verification.json")]["artifact_type"] == "langfuse_verification"
+    assert artifacts[("annotation-task", "annotation-queue.json")]["artifact_type"] == "langfuse_annotation_export"
+    assert artifacts[("manifest-task", "link-manifest.json")]["artifact_type"] == "langfuse_link_manifest"
+
+
+def test_langfuse_task_executor_writes_error_artifact(tmp_path: Path) -> None:
+    context = SimpleNamespace(
+        paths=PathConfig(root=tmp_path),
+        task_service=_FakeEvolutionTaskService(),
+    )
+    service = LangfuseTaskService(context)
+
+    with pytest.raises(FileNotFoundError):
+        service.execute_link_manifest_task(
+            {"task_id": "manifest-error", "payload": {"input_paths": [str(tmp_path / "missing.json")]}},
+            SimpleNamespace(heartbeat=lambda progress=None: True),
+        )
+
+    artifact = context.task_service.artifacts[0]
+    assert artifact["task_id"] == "manifest-error"
+    assert artifact["name"] == "error.json"
+    assert artifact["artifact_type"] == "langfuse_task_error"
+    assert artifact["payload"]["stage"] == "langfuse_link_manifest"
 
 
 def test_queue_backed_background_tasks_are_not_recovered_as_interrupted() -> None:

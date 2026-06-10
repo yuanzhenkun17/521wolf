@@ -1917,6 +1917,64 @@ def test_evolution_reads_overlay_pg_task_queue_state(
     assert [run["run_id"] for run in reviewing_list["runs"]] == [done_run_id]
 
 
+def test_langfuse_task_routes_enqueue_pg_tasks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        calls: list[dict[str, Any]] = []
+
+        def fake_enqueue_task(**kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            return {
+                "task_id": kwargs["task_id"],
+                "kind": kwargs["kind"],
+                "status": "queued",
+            }
+
+        monkeypatch.setattr(store.task_service, "enqueue_task", fake_enqueue_task)
+        verification = client.post(
+            "/api/langfuse/verification-tasks",
+            json={
+                "task_id": "verify-langfuse",
+                "payload_files": ["runs/benchmark-report.json"],
+                "verify_remote": False,
+                "env": {"LANGFUSE_TRACING_ENABLED": "false"},
+            },
+        )
+        annotation = client.post(
+            "/api/langfuse/annotation-export-tasks",
+            json={
+                "task_id": "annotation-langfuse",
+                "input_paths": ["runs/benchmark-report.json"],
+                "max_items": 10,
+            },
+        )
+        manifest = client.post(
+            "/api/langfuse/link-manifest-tasks",
+            json={
+                "task_id": "manifest-langfuse",
+                "input_paths": ["runs/annotation-queue.json"],
+                "ui_base_url": "http://localhost:5173",
+            },
+        )
+
+    assert verification.status_code == 200
+    assert annotation.status_code == 200
+    assert manifest.status_code == 200
+    assert [call["kind"] for call in calls] == [
+        "langfuse_verification",
+        "langfuse_annotation_export",
+        "langfuse_link_manifest",
+    ]
+    assert calls[0]["payload"]["payload_files"] == ["runs/benchmark-report.json"]
+    assert calls[1]["payload"]["max_items"] == 10
+    assert calls[2]["payload"]["ui_base_url"] == "http://localhost:5173"
+    assert verification.json()["task_id"] == "verify-langfuse"
+    assert verification.json()["task_queue_status"] == "queued"
+
+
 def test_evolution_start_normalizes_legacy_manual_defaults(
     tmp_path: Path,
     monkeypatch,

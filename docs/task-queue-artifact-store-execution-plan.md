@@ -97,6 +97,24 @@ PostgreSQL-backed task queue
   - `scenario-replay-report.json`
 - 单 run artifact 直接写 canonical raw payload；batch task 会按 child run 聚合非空 payload。
 
+已完成 Phase G Langfuse Tool Taskization：
+
+- 新增 `LangfuseTaskService` worker executors：
+  - `langfuse_verification`
+  - `langfuse_annotation_export`
+  - `langfuse_link_manifest`
+- executor 复用现有 local-first 工具函数，不改变 CLI `--output` 兼容路径。
+- 完成后写入 ArtifactStore：
+  - `langfuse-verification.json`
+  - `annotation-queue.json`
+  - `link-manifest.json`
+- 工具执行异常时写入 `error.json`，保留 stage、message、exception_type。
+- 新增最小后端 enqueue API：
+  - `POST /api/langfuse/verification-tasks`
+  - `POST /api/langfuse/annotation-export-tasks`
+  - `POST /api/langfuse/link-manifest-tasks`
+- `BackendStore.create_task_worker_loop()` 已注册 Langfuse executors，现有 `app.tools.run_ui_task_worker` 可直接执行这些 task kinds。
+
 已验证：
 
 ```text
@@ -119,6 +137,9 @@ uv run pytest tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.p
 uv run pytest tests/test_ui_backend_app.py::test_evolution_reads_overlay_pg_task_queue_state tests/test_api_contracts.py::test_evolution_run_list_diff_games_and_manifest_api_contract -q
 uv run pytest tests/test_ui_backend_store_facades.py -q
 uv run pytest tests/test_task_worker_cli.py tests/test_task_worker.py tests/test_task_queue_artifacts.py tests/test_task_routes.py -q
+uv run pytest tests/test_ui_backend_app.py::test_langfuse_task_routes_enqueue_pg_tasks tests/test_ui_backend_store_facades.py -q -k "langfuse_task or task_worker_loop"
+uv run pytest tests/test_langfuse_experiment_verification.py tests/test_langfuse_annotation_export.py tests/test_langfuse_link_manifest.py -q
+uv run pytest tests/test_api_contracts.py -q -k "openapi or langfuse or task"
 ```
 
 ## 当前状态
@@ -502,11 +523,11 @@ Steps：
 1. 包装任务类型：
    - `langfuse_verification`
    - `langfuse_annotation_export`
-   - `langfuse_link_manifest`
-2. CLI 保持 `--output` 兼容。
-3. UI/API 触发时输出写 ArtifactStore。
-4. result payload 只保存 summary、artifact ids、counts、diagnostics。
-5. 失败时写 error artifact，保留排查上下文。
+   - `langfuse_link_manifest`（已完成）
+2. CLI 保持 `--output` 兼容。（已完成：复用函数，不改 CLI）
+3. UI/API 触发时输出写 ArtifactStore。（已完成后端 enqueue API；前端入口归 P6）
+4. result payload 只保存 summary、artifact ids、counts、diagnostics。（已完成 executor result summary）
+5. 失败时写 error artifact，保留排查上下文。（已完成）
 
 验收：
 

@@ -29,6 +29,7 @@ from ui.backend.services.game_delete_service import GameDeleteCoordinator
 from ui.backend.services.game_persistence_service import GamePersistenceService
 from ui.backend.services.game_read_service import GameHistoryService, GameReadGateway
 from ui.backend.services.game_session_service import GameSessionService
+from ui.backend.services.langfuse_task_service import LangfuseTaskService
 from ui.backend.services.live_game_lifecycle import LiveGameLifecycleCoordinator
 from ui.backend.services.role_service import RoleService, RoleServiceStoreProtocol
 from ui.backend.services.task_persistence_service import TaskPersistenceService
@@ -56,6 +57,7 @@ __all__ = [
     "GamePersistenceService",
     "GameReadGateway",
     "GameSessionService",
+    "LangfuseTaskService",
     "LiveGameLifecycleCoordinator",
     "RoleService",
     "RoleServiceStoreProtocol",
