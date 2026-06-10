@@ -1987,9 +1987,8 @@ class EvolutionStateManager:
     def save_run(self, run: EvolutionRun) -> None:
         """Persist the current run state to PostgreSQL."""
         from app.util.time import beijing_now_iso
-        from storage.evolution.run_repo import EvolutionStore
+        from storage.evolution.state_gateway import EvolutionStateGateway
         from storage.interfaces import EvolutionRunData
-        from storage.provider import storage_provider_from_env
 
         _validate_run_id(run.run_id)
         updated_at = beijing_now_iso()
@@ -1998,72 +1997,53 @@ class EvolutionStateManager:
         payload["started_at"] = run.started_at or updated_at
         payload["finished_at"] = run.finished_at
 
-        conn = storage_provider_from_env().open_evolution_connection()
-        try:
-            EvolutionStore(conn).save_run(
-                EvolutionRunData(
-                    run_id=run.run_id,
-                    role=run.role,
-                    parent_hash=run.parent_hash,
-                    status=run.status,
-                    training_games=run.training_games,
-                    battle_games=run.battle_games,
-                    baseline_config=run.baseline_config,
-                    candidate_hash=run.candidate_hash,
-                    battle_result=run.battle_result,
-                    errors=list(run.errors),
-                    training_run_id=run.training_run_id,
-                    training_output_dir=run.training_output_dir,
-                    runtime_state=payload,
-                    started_at=run.started_at or updated_at,
-                    finished_at=run.finished_at,
-                )
+        EvolutionStateGateway().save_run(
+            EvolutionRunData(
+                run_id=run.run_id,
+                role=run.role,
+                parent_hash=run.parent_hash,
+                status=run.status,
+                training_games=run.training_games,
+                battle_games=run.battle_games,
+                baseline_config=run.baseline_config,
+                candidate_hash=run.candidate_hash,
+                battle_result=run.battle_result,
+                errors=list(run.errors),
+                training_run_id=run.training_run_id,
+                training_output_dir=run.training_output_dir,
+                runtime_state=payload,
+                started_at=run.started_at or updated_at,
+                finished_at=run.finished_at,
             )
-        finally:
-            conn.close()
+        )
 
     def load_run(self, run_id: str) -> EvolutionRun | None:
         """Load a persisted run by id from PostgreSQL."""
         _validate_run_id(run_id)
-        from storage.evolution.run_repo import EvolutionStore
-        from storage.provider import storage_provider_from_env
+        from storage.evolution.state_gateway import EvolutionStateGateway
 
-        conn = storage_provider_from_env().open_evolution_connection()
-        try:
-            stored = EvolutionStore(conn).get_run(run_id)
-        finally:
-            conn.close()
+        stored = EvolutionStateGateway().get_run(run_id)
         if stored is None:
             return None
         return _evolution_run_from_storage(stored)
 
     def list_runs(self, role: str) -> list[EvolutionRun]:
         """List persisted runs for a role from PostgreSQL."""
-        from storage.evolution.run_repo import EvolutionStore
-        from storage.provider import storage_provider_from_env
+        from storage.evolution.state_gateway import EvolutionStateGateway
 
-        conn = storage_provider_from_env().open_evolution_connection()
-        try:
-            stored = EvolutionStore(conn).list_runs(role=role, limit=200)
-        finally:
-            conn.close()
+        stored = EvolutionStateGateway().list_runs(role=role, limit=200)
         return [_evolution_run_from_storage(item) for item in stored]
 
     def scan_active_runs(self) -> list[EvolutionRun]:
         """Return non-terminal runs for recovery dashboards."""
-        from storage.evolution.run_repo import EvolutionStore
-        from storage.provider import storage_provider_from_env
+        from storage.evolution.state_gateway import EvolutionStateGateway
 
         terminal = {
             EvolutionStatus.PROMOTED.value,
             EvolutionStatus.REJECTED.value,
             EvolutionStatus.FAILED.value,
         }
-        conn = storage_provider_from_env().open_evolution_connection()
-        try:
-            stored = EvolutionStore(conn).list_runs(limit=200)
-        finally:
-            conn.close()
+        stored = EvolutionStateGateway().list_runs(limit=200)
         return [
             _evolution_run_from_storage(item)
             for item in stored
