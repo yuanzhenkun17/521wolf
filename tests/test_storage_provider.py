@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from storage.provider import PostgresStorageProvider, storage_provider_from_env
+from storage.provider import PostgresStorageProvider, open_wolf_connection, storage_provider_from_env
 
 
 class _FakeConn:
@@ -69,6 +69,51 @@ def test_storage_provider_from_env_is_postgres_only() -> None:
     provider = storage_provider_from_env(paths=SimpleNamespace(root="ignored"))
 
     assert isinstance(provider, PostgresStorageProvider)
+
+
+def test_open_wolf_connection_uses_injected_provider_without_env_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.conn = _FakeConn()
+            self.opened = 0
+
+        def open_wolf_connection(self) -> _FakeConn:
+            self.opened += 1
+            return self.conn
+
+    def fail_provider_from_env(**_: Any) -> _FakeProvider:
+        raise AssertionError("provider should not be resolved when injected")
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", fail_provider_from_env)
+    provider = _FakeProvider()
+
+    conn = open_wolf_connection(provider)
+
+    assert conn is provider.conn
+    assert provider.opened == 1
+
+
+def test_open_wolf_connection_preserves_no_arg_provider_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.conn = _FakeConn()
+
+        def open_wolf_connection(self) -> _FakeConn:
+            return self.conn
+
+    provider = _FakeProvider()
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", lambda: provider)
+
+    assert open_wolf_connection() is provider.conn
 
 
 def test_game_run_service_uses_postgres_provider_from_env(
@@ -151,6 +196,45 @@ def test_open_eval_connection_uses_postgres_provider(
     conn = open_eval_connection(paths)
 
     assert conn is provider.wolf_conn
+    assert seen_paths == [paths]
+
+
+def test_open_benchmark_connection_uses_wolf_provider_with_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from storage.benchmark.evaluation_repo import open_benchmark_connection
+
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.wolf_conn = _FakeConn()
+            self.opened = 0
+
+        def open_wolf_connection(self) -> _FakeConn:
+            self.opened += 1
+            return self.wolf_conn
+
+        def open_registry_connection(self) -> _FakeConn:
+            return _FakeConn()
+
+        def open_evolution_connection(self) -> _FakeConn:
+            return _FakeConn()
+
+    provider = _FakeProvider()
+    seen_paths: list[Any] = []
+
+    def provider_from_env(*, paths: Any | None = None) -> _FakeProvider:
+        seen_paths.append(paths)
+        return provider
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", provider_from_env)
+    paths = SimpleNamespace(root="ignored")
+
+    conn = open_benchmark_connection(paths=paths)
+
+    assert conn is provider.wolf_conn
+    assert provider.opened == 1
     assert seen_paths == [paths]
 
 

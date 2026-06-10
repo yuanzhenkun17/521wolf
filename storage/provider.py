@@ -55,7 +55,21 @@ def storage_provider_from_env(*, paths: Any | None = None) -> StorageProvider:
     return PostgresStorageProvider()
 
 
+def open_wolf_connection(
+    provider: StorageProvider | None = None,
+    *,
+    paths: Any | None = None,
+) -> StorageConnection:
+    """Open a wolf-domain storage connection through the active provider."""
+    if provider is not None:
+        return provider.open_wolf_connection()
+    if paths is None:
+        return storage_provider_from_env().open_wolf_connection()
+    return storage_provider_from_env(paths=paths).open_wolf_connection()
+
+
 __all__ = [
+    "open_wolf_connection",
     "PostgresStorageProvider",
     "StorageProvider",
     "storage_provider_from_env",

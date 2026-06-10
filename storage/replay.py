@@ -9,7 +9,7 @@ from typing import Any
 
 from storage.ids import artifact_game_id, public_decision_id
 from storage.decision_order import decision_timeline_order_clause
-from storage.provider import StorageProvider, storage_provider_from_env
+from storage.provider import StorageProvider, open_wolf_connection
 from storage.shared.database import StorageConnection, StorageRow
 
 _REPLAY_TABLES = frozenset({"game_events", "decisions", "experience_candidates"})
@@ -217,7 +217,7 @@ def _with_wolf_connection(
 ) -> ReplayLookupResult:
     if conn is not None:
         return callback(conn)
-    connection = (provider or storage_provider_from_env()).open_wolf_connection()
+    connection = open_wolf_connection(provider)
     try:
         return callback(connection)
     finally:

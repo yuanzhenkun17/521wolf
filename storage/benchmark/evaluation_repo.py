@@ -73,9 +73,9 @@ class BenchmarkEvaluationRepository:
 
 def open_benchmark_connection(paths: Any = None) -> StorageConnection:
     """Open the wolf-domain storage connection used by benchmark persistence."""
-    from storage.provider import storage_provider_from_env
+    from storage.provider import open_wolf_connection
 
-    return storage_provider_from_env(paths=paths).open_wolf_connection()
+    return open_wolf_connection(paths=paths)
 
 
 __all__ = ["BenchmarkEvaluationRepository", "open_benchmark_connection"]
