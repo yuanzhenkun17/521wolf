@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Mapping
 from inspect import isawaitable
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from fastapi import HTTPException
 
 from app.util.time import beijing_now_iso
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
 from ui.backend.services.benchmark_leaderboard_service import BenchmarkLeaderboardService
+from ui.backend.services.benchmark_report_service import BenchmarkReportService
 from ui.backend.services.benchmark_run_service import BenchmarkRunService
 from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
 from ui.backend.schemas import (
@@ -33,12 +34,6 @@ BENCHMARK_PUBLIC_METHODS: tuple[str, ...] = (
     "queue_benchmark",
     "run_queued_benchmark",
     "benchmark_model_runtime",
-    "benchmark_batch_detail",
-    "benchmark_batch_games",
-    "benchmark_batch_diagnostics",
-    "benchmark_batch_report",
-    "benchmark_reports",
-    "benchmark_diagnostics",
     "create_benchmark_snapshot",
     "list_benchmark_snapshots",
     "get_benchmark_snapshot",
@@ -77,6 +72,7 @@ class BenchmarkService:
         self._allow_context_fallback = allow_context_fallback
         self._catalog = BenchmarkCatalogService(context)
         self._leaderboards = BenchmarkLeaderboardService(context)
+        self._reports = BenchmarkReportService(context)
         self._runs = BenchmarkRunService(context, catalog=self._catalog)
         self._snapshots = BenchmarkSnapshotService(context, self._callables, resolver=self._resolve)
 
@@ -404,7 +400,7 @@ class BenchmarkService:
         return self._runs.benchmark_request_config(request, spec)
 
     def benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("benchmark_batch_detail", batch_id))
+        return self._reports.benchmark_batch_detail(batch_id)
 
     def benchmark_batch_games(
         self,
@@ -417,18 +413,14 @@ class BenchmarkService:
         limit: int | None = None,
         offset: int = 0,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "benchmark_batch_games",
-                batch_id,
-                result_batch_id=result_batch_id,
-                target_role=target_role,
-                status=status,
-                seed=seed,
-                limit=limit,
-                offset=offset,
-            ),
+        return self._reports.benchmark_batch_games(
+            batch_id,
+            result_batch_id=result_batch_id,
+            target_role=target_role,
+            status=status,
+            seed=seed,
+            limit=limit,
+            offset=offset,
         )
 
     def benchmark_batch_diagnostics(
@@ -442,22 +434,18 @@ class BenchmarkService:
         stage: str | None = None,
         seed: str | None = None,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "benchmark_batch_diagnostics",
-                batch_id,
-                target_role=target_role,
-                kind=kind,
-                level=level,
-                status=status,
-                stage=stage,
-                seed=seed,
-            ),
+        return self._reports.benchmark_batch_diagnostics(
+            batch_id,
+            target_role=target_role,
+            kind=kind,
+            level=level,
+            status=status,
+            stage=stage,
+            seed=seed,
         )
 
     def benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
-        return self._snapshots.benchmark_batch_report(batch_id, format=format)
+        return self._reports.benchmark_batch_report(batch_id, format=format)
 
     def benchmark_reports(
         self,
@@ -472,7 +460,7 @@ class BenchmarkService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        return self._snapshots.benchmark_reports(
+        return self._reports.benchmark_reports(
             scope=scope,
             evaluation_set_id=evaluation_set_id,
             benchmark_id=benchmark_id,
@@ -501,24 +489,20 @@ class BenchmarkService:
         limit: int = 200,
         offset: int = 0,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "benchmark_diagnostics",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                benchmark_id=benchmark_id,
-                target_role=target_role,
-                model_id=model_id,
-                model_config_hash=model_config_hash,
-                kind=kind,
-                level=level,
-                status=status,
-                stage=stage,
-                seed=seed,
-                limit=limit,
-                offset=offset,
-            ),
+        return self._reports.benchmark_diagnostics(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            benchmark_id=benchmark_id,
+            target_role=target_role,
+            model_id=model_id,
+            model_config_hash=model_config_hash,
+            kind=kind,
+            level=level,
+            status=status,
+            stage=stage,
+            seed=seed,
+            limit=limit,
+            offset=offset,
         )
 
     def create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
