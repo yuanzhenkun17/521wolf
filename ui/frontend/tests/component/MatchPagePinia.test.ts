@@ -38,7 +38,62 @@ vi.mock('../../src/components/ReplayControls.vue', () => ({
   },
 }))
 
-vi.mock('../../src/components/ActionPanel.vue', () => ({ default: { name: 'ActionPanel', template: '<section class="action-panel-stub" />' } }))
+vi.mock('../../src/components/ActionPanel.vue', () => ({
+  default: {
+    name: 'ActionPanel',
+    props: [
+      'humanPlayer',
+      'roleName',
+      'skillState',
+      'isHumanWitch',
+      'isHumanWhiteWolf',
+      'canUseWitchAntidote',
+      'canUseWitchPoison',
+      'canWhiteWolfBurst',
+      'pendingActionType',
+      'pendingChoiceOptions',
+      'actionInstruction',
+      'speechCountdownText',
+      'canVotePlayers',
+      'actionCandidates',
+      'whiteWolfTargets',
+      'needsTarget',
+      'speech',
+      'witchChoice',
+      'actionChoice',
+      'burstArmed',
+      'actionTarget',
+    ],
+    emits: ['update:speech', 'update:witchChoice', 'update:actionChoice', 'update:burstArmed', 'update:actionTarget'],
+    template: `
+      <section
+        class="action-panel-stub"
+        :data-human-id="String(humanPlayer?.id || '')"
+        :data-role-name="roleName"
+        :data-witch="String(isHumanWitch)"
+        :data-action-type="pendingActionType"
+        :data-choice-count="String(pendingChoiceOptions.length)"
+        :data-action-instruction="actionInstruction"
+        :data-countdown="speechCountdownText"
+        :data-can-vote-count="String(canVotePlayers.length)"
+        :data-candidate-count="String(actionCandidates.length)"
+        :data-white-wolf-count="String(whiteWolfTargets.length)"
+        :data-needs-target="String(needsTarget)"
+        :data-speech="speech"
+        :data-witch-choice="witchChoice"
+        :data-action-choice="actionChoice"
+        :data-burst-armed="String(burstArmed)"
+        :data-action-target="String(actionTarget ?? '')"
+      >
+        <button class="set-speech" @click="$emit('update:speech', 'updated speech')" />
+        <button class="set-witch" @click="$emit('update:witchChoice', 'antidote')" />
+        <button class="set-action-choice" @click="$emit('update:actionChoice', 'skip')" />
+        <button class="set-burst" @click="$emit('update:burstArmed', false)" />
+        <button class="set-target" @click="$emit('update:actionTarget', 3)" />
+      </section>
+    `,
+  },
+}))
 vi.mock('../../src/components/ApiErrorPanel.vue', () => ({ default: { name: 'ApiErrorPanel', template: '<section class="api-error-panel-stub" />' } }))
 vi.mock('../../src/components/ChatLog.vue', () => ({
   default: {
@@ -152,6 +207,76 @@ describe('MatchPage Pinia fallback', () => {
     expect(wrapper.find('.replay-controls-stub').attributes('data-speed')).toBe('1.5')
     expect(wrapper.find('.replay-controls-stub').attributes('data-event-label')).toBe('store replay label')
     expect(wrapper.find('.match-action-notice').text()).toContain('store notice')
+  })
+
+  it('reads and mutates match action controls through the game store when props are absent', async () => {
+    let gameStore!: ReturnType<typeof useGameStore>
+    const actionGame = gameFixture('action-game', {
+      mode: 'play',
+      phase: 'night',
+      player_count: 3,
+      human_player_id: 1,
+      waiting_for: 'action',
+      players: [
+        { id: 1, seat: 1, name: 'Human', role_hint: '女巫', alive: true, is_human: true, is_sheriff: false },
+        { id: 2, seat: 2, name: 'Target', role_hint: '狼人', alive: true, is_human: false, is_sheriff: false },
+        { id: 3, seat: 3, name: 'Other', role_hint: '平民', alive: true, is_human: false, is_sheriff: false },
+      ],
+      pending_action: {
+        type: 'witch_act',
+        prompt: '女巫请选择是否发动技能。',
+        candidate_ids: [2],
+        target_required: false,
+        allow_no_target: true,
+        options: {
+          poison_available: true,
+          antidote_available: true,
+          attacked_player: 2,
+        },
+      },
+      skill_state: {
+        witch_antidote_used: false,
+        witch_poison_used: false,
+      },
+    })
+
+    const wrapper = mountMatchPage({}, () => {
+      gameStore = useGameStore()
+      gameStore.hydrateFromRuntime({
+        game: actionGame,
+        roleAssignmentComplete: true,
+        speechRemaining: 75,
+      })
+      gameStore.setSpeech('store speech')
+      gameStore.setWitchChoice('poison')
+      gameStore.setBurstArmed(true)
+      gameStore.setActionTarget(2)
+    })
+
+    const panel = wrapper.find('.action-panel-stub')
+    expect(panel.attributes('data-human-id')).toBe('1')
+    expect(panel.attributes('data-role-name')).toBe('女巫')
+    expect(panel.attributes('data-witch')).toBe('true')
+    expect(panel.attributes('data-action-type')).toBe('witch_act')
+    expect(panel.attributes('data-action-instruction')).toBe('法官提醒：点击一名玩家模型使用毒药。')
+    expect(panel.attributes('data-countdown')).toBe('1:15')
+    expect(panel.attributes('data-needs-target')).toBe('true')
+    expect(panel.attributes('data-speech')).toBe('store speech')
+    expect(panel.attributes('data-witch-choice')).toBe('poison')
+    expect(panel.attributes('data-burst-armed')).toBe('true')
+    expect(panel.attributes('data-action-target')).toBe('2')
+
+    await wrapper.find('.set-speech').trigger('click')
+    await wrapper.find('.set-witch').trigger('click')
+    await wrapper.find('.set-action-choice').trigger('click')
+    await wrapper.find('.set-burst').trigger('click')
+    await wrapper.find('.set-target').trigger('click')
+
+    expect(gameStore.speech).toBe('updated speech')
+    expect(gameStore.witchChoice).toBe('antidote')
+    expect(gameStore.actionChoice).toBe('skip')
+    expect(gameStore.burstArmed).toBe(false)
+    expect(gameStore.actionTarget).toBe(3)
   })
 
   it('keeps explicitly passed runtime props ahead of store state during migration', () => {

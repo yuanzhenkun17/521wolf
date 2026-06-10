@@ -19,6 +19,8 @@ test('unwraps runtime refs when building page prop payloads', () => {
     playerCount: ref(12),
     apiFetch,
     game: ref({ game_id: 'match-a' }),
+    speech: ref('runtime speech'),
+    actionTarget: ref(2),
     selectedHistoryPageKey: ref('day-1')
   }
 
@@ -37,4 +39,6 @@ test('unwraps runtime refs when building page prop payloads', () => {
   assert.equal(props.lobbyProps.value.apiFetch, apiFetch)
   assert.equal('game' in props.matchProps.value, false)
   assert.equal('backendMode' in props.matchProps.value, false)
+  assert.equal('speech' in props.matchProps.value, false)
+  assert.equal('actionTarget' in props.matchProps.value, false)
 })

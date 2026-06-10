@@ -51,7 +51,9 @@ export const runtimeHydrationKeys = {
     'speakerCarousel',
     'speakerMessage',
     'sceneVoteTally',
-    'sceneEffects'
+    'sceneEffects',
+    'skipIntroGameId',
+    'speechRemaining'
   ],
   history: [
     'gameHistory',

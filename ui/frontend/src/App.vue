@@ -102,12 +102,8 @@ const showTopbarExitGame = computed(() => {
 const topbarExitDisabled = computed(() => false)
 
 const {
-  actionTarget,
-  actionChoice,
   assessDimension,
   backToMatch,
-  burstArmed,
-  chatLogExpanded,
   detailTab,
   exitGame,
   exitReplayMode,
@@ -125,7 +121,6 @@ const {
   selectedHistoryPageKey,
   historyWorkspaceTab,
   seekReplay,
-  speech,
   startFromJudgeBoard,
   startMode,
   setReplaySpeed,
@@ -135,8 +130,7 @@ const {
   submitSpeech,
   toggleWatch,
   toggleAudio,
-  toggleTts,
-  witchChoice
+  toggleTts
 } = runtime
 </script>
 
@@ -201,12 +195,6 @@ const {
       <MatchPage
         v-if="inMatch"
         v-bind="matchProps"
-        v-model:speech="speech"
-        v-model:witch-choice="witchChoice"
-        v-model:action-choice="actionChoice"
-        v-model:burst-armed="burstArmed"
-        v-model:action-target="actionTarget"
-        v-model:chat-log-expanded="chatLogExpanded"
         @return-to-history="returnToHistoryFromReplay"
         @exit-replay="exitReplayMode"
         @play-replay="playReplay"
@@ -220,7 +208,7 @@ const {
         @step-game="stepGame"
         @council-ready="registerCouncilScene"
         @start-from-judge-board="startFromJudgeBoard"
-        @submit-speech="submitSpeech()"
+        @submit-speech="submitSpeech(gameStore.speech)"
         @submit-action="submitAction($event?.action, $event?.targetId, $event?.choice)"
       />
       <section v-if="showMatchBoot" class="match-boot-overlay" aria-live="polite">

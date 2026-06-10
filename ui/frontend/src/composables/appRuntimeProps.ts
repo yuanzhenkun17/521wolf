@@ -47,35 +47,11 @@ const logsPropKeys = [
 ]
 
 const matchPropKeys = [
-  'skipIntroGameId',
-  'chatLogExpanded',
-  'humanPlayer',
-  'roleName',
-  'skillState',
-  'isHumanWitch',
-  'isHumanWhiteWolf',
-  'canUseWitchAntidote',
-  'canUseWitchPoison',
-  'canWhiteWolfBurst',
-  'pendingActionType',
-  'pendingChoiceOptions',
-  'actionInstruction',
-  'speechCountdownText',
-  'canVotePlayers',
-  'actionCandidates',
-  'whiteWolfTargets',
-  'needsTarget',
-  'speech',
-  'witchChoice',
-  'actionChoice',
-  'burstArmed',
-  'actionTarget',
   'playerLabel',
   'roleIconImage',
   'logSpeaker',
   'logMessage',
-  'historyPhaseName',
-  'chooseScenePlayer'
+  'historyPhaseName'
 ]
 
 export function bindRuntimeValue(value: unknown): unknown {

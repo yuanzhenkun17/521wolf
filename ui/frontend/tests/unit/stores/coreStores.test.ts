@@ -133,7 +133,9 @@ test('game store hydrates snapshots and clears live watch state', () => {
     speakerCarousel: [{ key: 1, label: '1号' }],
     speakerMessage: '正在发言',
     sceneVoteTally: [{ target: 1, count: 2 }],
-    sceneEffects: [{ type: 'speech' }]
+    sceneEffects: [{ type: 'speech' }],
+    skipIntroGameId: 'game-1',
+    speechRemaining: 64
   })
 
   assert.equal(store.liveGame?.game_id, 'game-1')
@@ -152,6 +154,8 @@ test('game store hydrates snapshots and clears live watch state', () => {
   assert.equal(store.speakerMessage, '正在发言')
   assert.deepEqual(store.sceneVoteTally, [{ target: 1, count: 2 }])
   assert.deepEqual(store.sceneEffects, [{ type: 'speech' }])
+  assert.equal(store.skipIntroGameId, 'game-1')
+  assert.equal(store.speechRemaining, 64)
   assert.equal(store.isNight, true)
   assert.equal(store.isWatch, true)
 
@@ -189,6 +193,14 @@ test('game store hydrates snapshots and clears live watch state', () => {
   assert.equal(store.speakerMessage, '')
   assert.deepEqual(store.sceneVoteTally, [])
   assert.deepEqual(store.sceneEffects, [])
+  assert.equal(store.skipIntroGameId, null)
+  assert.equal(store.chatLogExpanded, false)
+  assert.equal(store.speech, '我先报一下自己的视角：目前重点听发言逻辑和票型。')
+  assert.equal(store.speechRemaining, 180)
+  assert.equal(store.witchChoice, 'skip')
+  assert.equal(store.actionChoice, '')
+  assert.equal(store.burstArmed, false)
+  assert.equal(store.actionTarget, null)
 
   store.hydrateFromRuntime({
     roleAssignmentComplete: null,
@@ -199,6 +211,73 @@ test('game store hydrates snapshots and clears live watch state', () => {
   assert.equal(store.roleAssignmentComplete, false)
   assert.equal(store.judgeBoardStarted, false)
   assert.equal(store.judgeBoardStarting, false)
+})
+
+test('game store owns match action controls and derives action prompts', () => {
+  setActivePinia(createPinia())
+  const store = useGameStore()
+  const liveGame = gameFixture('action-game', {
+    mode: 'play',
+    phase: 'night',
+    human_player_id: 1,
+    waiting_for: 'action',
+    players: [
+      { id: 1, seat: 1, name: 'Human', role_hint: '女巫', alive: true, is_human: true, is_sheriff: false },
+      { id: 2, seat: 2, name: 'Target', role_hint: '狼人', alive: true, is_human: false, is_sheriff: false },
+      { id: 3, seat: 3, name: 'Dead', role_hint: '平民', alive: false, is_human: false, is_sheriff: false }
+    ],
+    pending_action: {
+      type: 'witch_act',
+      prompt: '女巫请选择是否发动技能。',
+      candidate_ids: [2],
+      target_required: false,
+      allow_no_target: true,
+      options: {
+        poison_available: true,
+        antidote_available: true,
+        attacked_player: 2
+      }
+    },
+    skill_state: {
+      witch_antidote_used: false,
+      witch_poison_used: false
+    }
+  })
+
+  store.hydrateFromRuntime({
+    game: liveGame,
+    livingPlayers: liveGame.players.filter((player) => player.alive),
+    speechRemaining: 65
+  })
+  store.setWitchChoice('poison')
+
+  assert.equal(store.humanPlayer?.id, 1)
+  assert.equal(store.roleName, '女巫')
+  assert.equal(store.pendingActionType, 'witch_act')
+  assert.equal(store.canUseWitchAntidote, true)
+  assert.equal(store.canUseWitchPoison, true)
+  assert.equal(store.needsTarget, true)
+  assert.equal(store.speechCountdownText, '1:05')
+  assert.deepEqual(store.actionCandidates.map((player) => player.id), [2])
+  assert.equal(store.actionInstruction, '法官提醒：点击一名玩家模型使用毒药。')
+
+  store.setActionTarget(null)
+  store.selectScenePlayer(2)
+
+  assert.equal(store.actionTarget, 2)
+
+  store.setSpeech('更新后的发言')
+  store.setWitchChoice('antidote')
+  store.setActionChoice('skip')
+  store.setBurstArmed(true)
+  store.setChatLogExpanded(true)
+
+  assert.equal(store.speech, '更新后的发言')
+  assert.equal(store.witchChoice, 'antidote')
+  assert.equal(store.actionChoice, 'skip')
+  assert.equal(store.burstArmed, true)
+  assert.equal(store.chatLogExpanded, true)
+  assert.equal(store.actionInstruction, '法官提醒：确认使用解药救 2 号。')
 })
 
 test('history store hydrates selection and derives selection state', () => {
@@ -386,6 +465,8 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     speakerMessage: ref('runtime speaker'),
     sceneVoteTally: ref([{ target: 2, count: 1 }]),
     sceneEffects: ref([{ type: 'vote' }]),
+    skipIntroGameId: ref('runtime-game'),
+    speechRemaining: ref(42),
     gameHistory: ref([historyGame]),
     selectedHistoryGameId: ref('runtime-history'),
     selectedHistoryGame: ref(historyGame),
@@ -445,7 +526,9 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     'speakerCarousel',
     'speakerMessage',
     'sceneVoteTally',
-    'sceneEffects'
+    'sceneEffects',
+    'skipIntroGameId',
+    'speechRemaining'
   ])
   assert.equal(payloads.game.liveGame?.game_id, 'runtime-game')
   assert.equal(payloads.game.game?.game_id, 'runtime-replay')
@@ -465,6 +548,8 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
   assert.equal(gameStore.speakerMessage, 'runtime speaker')
   assert.deepEqual(gameStore.sceneVoteTally, [{ target: 2, count: 1 }])
   assert.deepEqual(gameStore.sceneEffects, [{ type: 'vote' }])
+  assert.equal(gameStore.skipIntroGameId, 'runtime-game')
+  assert.equal(gameStore.speechRemaining, 42)
   assert.equal(historyStore.games[0].game_id, 'runtime-history')
   assert.equal(historyStore.historyWorkspaceTab, 'archive')
   assert.deepEqual(historyStore.pagination, { total: 6, limit: 2, offset: 4, returned: 2 })

@@ -195,7 +195,30 @@ const MATCH_STORE_PROP_ALIASES = {
   speakerCarousel: ['speakerCarousel', 'speaker-carousel'],
   speakerMessage: ['speakerMessage', 'speaker-message'],
   sceneVoteTally: ['sceneVoteTally', 'scene-vote-tally'],
-  sceneEffects: ['sceneEffects', 'scene-effects']
+  sceneEffects: ['sceneEffects', 'scene-effects'],
+  skipIntroGameId: ['skipIntroGameId', 'skip-intro-game-id'],
+  chatLogExpanded: ['chatLogExpanded', 'chat-log-expanded'],
+  humanPlayer: ['humanPlayer', 'human-player'],
+  roleName: ['roleName', 'role-name'],
+  skillState: ['skillState', 'skill-state'],
+  isHumanWitch: ['isHumanWitch', 'is-human-witch'],
+  isHumanWhiteWolf: ['isHumanWhiteWolf', 'is-human-white-wolf'],
+  canUseWitchAntidote: ['canUseWitchAntidote', 'can-use-witch-antidote'],
+  canUseWitchPoison: ['canUseWitchPoison', 'can-use-witch-poison'],
+  canWhiteWolfBurst: ['canWhiteWolfBurst', 'can-white-wolf-burst'],
+  pendingActionType: ['pendingActionType', 'pending-action-type'],
+  pendingChoiceOptions: ['pendingChoiceOptions', 'pending-choice-options'],
+  actionInstruction: ['actionInstruction', 'action-instruction'],
+  speechCountdownText: ['speechCountdownText', 'speech-countdown-text'],
+  canVotePlayers: ['canVotePlayers', 'can-vote-players'],
+  actionCandidates: ['actionCandidates', 'action-candidates'],
+  whiteWolfTargets: ['whiteWolfTargets', 'white-wolf-targets'],
+  needsTarget: ['needsTarget', 'needs-target'],
+  speech: ['speech'],
+  witchChoice: ['witchChoice', 'witch-choice'],
+  actionChoice: ['actionChoice', 'action-choice'],
+  burstArmed: ['burstArmed', 'burst-armed'],
+  actionTarget: ['actionTarget', 'action-target']
 } as const
 
 function hasExplicitMatchProp(propName: keyof typeof MATCH_STORE_PROP_ALIASES) {
@@ -272,6 +295,99 @@ const sceneVoteTally = computed<LooseRecord[]>(() => (
 const sceneEffects = computed<LooseRecord[]>(() => (
   hasExplicitMatchProp('sceneEffects') ? props.sceneEffects : gameStore.sceneEffects as LooseRecord[]
 ))
+const skipIntroGameId = computed<NullableId>(() => (
+  hasExplicitMatchProp('skipIntroGameId') ? props.skipIntroGameId : gameStore.skipIntroGameId
+))
+const chatLogExpanded = computed({
+  get: () => hasExplicitMatchProp('chatLogExpanded') ? props.chatLogExpanded : gameStore.chatLogExpanded,
+  set: (value: boolean) => {
+    if (hasExplicitMatchProp('chatLogExpanded')) emit('update:chatLogExpanded', value)
+    else gameStore.setChatLogExpanded(value)
+  }
+})
+const humanPlayer = computed<LooseRecord | null>(() => (
+  hasExplicitMatchProp('humanPlayer') ? props.humanPlayer : gameStore.humanPlayer as LooseRecord | null
+))
+const roleName = computed(() => (
+  hasExplicitMatchProp('roleName') ? props.roleName : gameStore.roleName
+))
+const skillState = computed<LooseRecord>(() => (
+  hasExplicitMatchProp('skillState') ? props.skillState : gameStore.skillState as LooseRecord
+))
+const isHumanWitch = computed(() => (
+  hasExplicitMatchProp('isHumanWitch') ? props.isHumanWitch : gameStore.isHumanWitch
+))
+const isHumanWhiteWolf = computed(() => (
+  hasExplicitMatchProp('isHumanWhiteWolf') ? props.isHumanWhiteWolf : gameStore.isHumanWhiteWolf
+))
+const canUseWitchAntidote = computed(() => (
+  hasExplicitMatchProp('canUseWitchAntidote') ? props.canUseWitchAntidote : gameStore.canUseWitchAntidote
+))
+const canUseWitchPoison = computed(() => (
+  hasExplicitMatchProp('canUseWitchPoison') ? props.canUseWitchPoison : gameStore.canUseWitchPoison
+))
+const canWhiteWolfBurst = computed(() => (
+  hasExplicitMatchProp('canWhiteWolfBurst') ? props.canWhiteWolfBurst : gameStore.canWhiteWolfBurst
+))
+const pendingActionType = computed(() => (
+  hasExplicitMatchProp('pendingActionType') ? props.pendingActionType : gameStore.pendingActionType
+))
+const pendingChoiceOptions = computed<PendingChoiceOption[]>(() => (
+  hasExplicitMatchProp('pendingChoiceOptions') ? props.pendingChoiceOptions : gameStore.pendingChoiceOptions as PendingChoiceOption[]
+))
+const actionInstruction = computed(() => (
+  hasExplicitMatchProp('actionInstruction') ? props.actionInstruction : gameStore.actionInstruction
+))
+const speechCountdownText = computed(() => (
+  hasExplicitMatchProp('speechCountdownText') ? props.speechCountdownText : gameStore.speechCountdownText
+))
+const canVotePlayers = computed<MatchPlayer[]>(() => (
+  hasExplicitMatchProp('canVotePlayers') ? props.canVotePlayers : gameStore.canVotePlayers as MatchPlayer[]
+))
+const actionCandidates = computed<MatchPlayer[]>(() => (
+  hasExplicitMatchProp('actionCandidates') ? props.actionCandidates : gameStore.actionCandidates as MatchPlayer[]
+))
+const whiteWolfTargets = computed<MatchPlayer[]>(() => (
+  hasExplicitMatchProp('whiteWolfTargets') ? props.whiteWolfTargets : gameStore.whiteWolfTargets as MatchPlayer[]
+))
+const needsTarget = computed(() => (
+  hasExplicitMatchProp('needsTarget') ? props.needsTarget : gameStore.needsTarget
+))
+const speech = computed({
+  get: () => hasExplicitMatchProp('speech') ? props.speech : gameStore.speech,
+  set: (value: string) => {
+    if (hasExplicitMatchProp('speech')) emit('update:speech', value)
+    else gameStore.setSpeech(value)
+  }
+})
+const witchChoice = computed({
+  get: () => hasExplicitMatchProp('witchChoice') ? props.witchChoice : gameStore.witchChoice,
+  set: (value: string) => {
+    if (hasExplicitMatchProp('witchChoice')) emit('update:witchChoice', value)
+    else gameStore.setWitchChoice(value)
+  }
+})
+const actionChoice = computed({
+  get: () => hasExplicitMatchProp('actionChoice') ? props.actionChoice : gameStore.actionChoice,
+  set: (value: string) => {
+    if (hasExplicitMatchProp('actionChoice')) emit('update:actionChoice', value)
+    else gameStore.setActionChoice(value)
+  }
+})
+const burstArmed = computed({
+  get: () => hasExplicitMatchProp('burstArmed') ? props.burstArmed : gameStore.burstArmed,
+  set: (value: boolean) => {
+    if (hasExplicitMatchProp('burstArmed')) emit('update:burstArmed', value)
+    else gameStore.setBurstArmed(value)
+  }
+})
+const actionTarget = computed<NullableId>({
+  get: () => hasExplicitMatchProp('actionTarget') ? props.actionTarget : gameStore.actionTarget,
+  set: (value) => {
+    if (hasExplicitMatchProp('actionTarget')) emit('update:actionTarget', value)
+    else gameStore.setActionTarget(value)
+  }
+})
 
 function phaseName(phase: unknown) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : displayPhaseLabel(phase)
@@ -281,17 +397,17 @@ const hasPendingHumanAction = computed(() => {
   const pending = game.value?.pending_human_action
   if (!pending) return false
   const pendingPlayerId = Number(pending.player_id)
-  const humanPlayerId = Number(props.humanPlayer?.id || game.value?.human_player_id)
+  const humanPlayerId = Number(humanPlayer.value?.id || game.value?.human_player_id)
   return !pendingPlayerId || !humanPlayerId || pendingPlayerId === humanPlayerId
 })
 const sceneSelectableIds = computed(() => {
   if (!hasPendingHumanAction.value) return []
-  if (props.burstArmed) return props.whiteWolfTargets.map((player) => player.id)
-  if (props.pendingActionType) return props.needsTarget ? props.actionCandidates.map((player) => player.id) : []
-  if (game.value?.waiting_for === 'vote') return props.canVotePlayers.map((player) => player.id)
+  if (burstArmed.value) return whiteWolfTargets.value.map((player) => player.id)
+  if (pendingActionType.value) return needsTarget.value ? actionCandidates.value.map((player) => player.id) : []
+  if (game.value?.waiting_for === 'vote') return canVotePlayers.value.map((player) => player.id)
   return []
 })
-const selectedSceneTargetId = computed(() => props.actionTarget ?? null)
+const selectedSceneTargetId = computed(() => actionTarget.value ?? null)
 const dismissedGameOverKey = ref('')
 const gameOverKey = computed(() => {
   if (!game.value?.winner) return ''
@@ -346,7 +462,7 @@ const hasMobileTask = computed(() => (
   !isWatch.value &&
   !isReplayMode.value &&
   hasPendingHumanAction.value &&
-  (game.value?.waiting_for === 'speech' || Boolean(props.pendingActionType) || game.value?.waiting_for === 'vote')
+  (game.value?.waiting_for === 'speech' || Boolean(pendingActionType.value) || game.value?.waiting_for === 'vote')
 ))
 
 function handleCouncilReady(api: LooseRecord) {
@@ -362,7 +478,8 @@ function handleCouncilLoadingProgress(progress: SceneLoadProgress | null | undef
 }
 
 function handleScenePlayerSelect(playerId: unknown) {
-  props.chooseScenePlayer?.(playerId)
+  if (props.chooseScenePlayer) props.chooseScenePlayer(playerId)
+  else gameStore.selectScenePlayer(playerId)
 }
 
 function handleTargetHover(playerId: unknown) {
@@ -418,6 +535,30 @@ function clearIntroDelayTimer() {
   }
 }
 
+function updateChatLogExpanded(value: boolean) {
+  chatLogExpanded.value = value
+}
+
+function updateSpeech(value: string) {
+  speech.value = value
+}
+
+function updateWitchChoice(value: string) {
+  witchChoice.value = value
+}
+
+function updateActionChoice(value: string) {
+  actionChoice.value = value
+}
+
+function updateBurstArmed(value: boolean) {
+  burstArmed.value = value
+}
+
+function updateActionTarget(value: NullableId) {
+  actionTarget.value = value
+}
+
 function forceHideIntroOverlay() {
   clearIntroTimers()
   introMounted.value = false
@@ -448,7 +589,7 @@ async function settleIntro() {
     forceHideIntroOverlay()
     return
   }
-  if (gameId && String(props.skipIntroGameId || '') === String(gameId)) {
+  if (gameId && String(skipIntroGameId.value || '') === String(gameId)) {
     settledIntroGameIds.add(gameId)
     forceHideIntroOverlay()
     return
@@ -475,7 +616,7 @@ async function settleIntro() {
 watch(
   [
     () => game.value?.game_id ?? null,
-    () => props.skipIntroGameId,
+    () => skipIntroGameId.value,
     () => roleAssignmentComplete.value,
     () => isReplayMode.value,
     () => sceneApi.value
@@ -613,7 +754,7 @@ onBeforeUnmount(() => {
             :log-speaker="props.logSpeaker"
             :log-message="props.logMessage"
             @compact-height="compactHudHeight = $event"
-            @update:expanded="emit('update:chatLogExpanded', $event)"
+            @update:expanded="updateChatLogExpanded"
           />
         </Transition>
 
@@ -647,11 +788,11 @@ onBeforeUnmount(() => {
             :action-choice="actionChoice"
             :burst-armed="burstArmed"
             :action-target="actionTarget"
-            @update:speech="emit('update:speech', $event)"
-            @update:witchChoice="emit('update:witchChoice', $event)"
-            @update:actionChoice="emit('update:actionChoice', $event)"
-            @update:burstArmed="emit('update:burstArmed', $event)"
-            @update:actionTarget="emit('update:actionTarget', $event)"
+            @update:speech="updateSpeech"
+            @update:witchChoice="updateWitchChoice"
+            @update:actionChoice="updateActionChoice"
+            @update:burstArmed="updateBurstArmed"
+            @update:actionTarget="updateActionTarget"
             @target-hover="handleTargetHover"
             @submit-speech="emit('submit-speech')"
             @submit-action="emit('submit-action', $event)"
