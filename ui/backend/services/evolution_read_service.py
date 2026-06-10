@@ -46,8 +46,14 @@ class EvolutionReadService:
         source: str | None = None,
         status: str | None = None,
     ) -> dict[str, Any]:
-        runs = [_evolution_run_summary(run) for run in self._store.evolution_runs.values()]
-        batches = [_evolution_batch_summary(batch) for batch in self._store.evolution_batches.values()]
+        runs = [
+            self._with_task_queue_state(_evolution_run_summary(run), run)
+            for run in self._store.evolution_runs.values()
+        ]
+        batches = [
+            self._with_task_queue_state(_evolution_batch_summary(batch), batch)
+            for batch in self._store.evolution_batches.values()
+        ]
         runs.sort(key=_history_time_key, reverse=True)
         batches.sort(key=_history_time_key, reverse=True)
         if source:
@@ -83,11 +89,88 @@ class EvolutionReadService:
     def get_run(self, run_id: str) -> dict[str, Any]:
         run = self._store.evolution_runs.get(run_id)
         if run is not None:
-            return run
+            return self._with_task_queue_state(run, run)
         batch = self._store.evolution_batches.get(run_id)
         if batch is not None:
-            return _evolution_batch_summary(batch)
+            return self._with_task_queue_state(_evolution_batch_summary(batch), batch)
         raise HTTPException(status_code=404, detail="run not found")
+
+    def _with_task_queue_state(self, payload: dict[str, Any], entity: dict[str, Any]) -> dict[str, Any]:
+        task_id = str(entity.get("task_id") or "")
+        if not task_id and entity.get("task_queue_status"):
+            task_id = str(entity.get("run_id") or entity.get("batch_id") or "")
+        if not task_id:
+            return payload
+        task = self._task_queue_row(task_id)
+        if task is None:
+            if entity.get("task_id") or entity.get("task_queue_status"):
+                payload.setdefault("task_id", task_id)
+                payload.setdefault("task_queue_status", entity.get("task_queue_status"))
+            return payload
+        task_status = str(task.get("status") or "")
+        task_progress = task.get("progress") if isinstance(task.get("progress"), dict) else {}
+        existing_progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+        progress = dict(existing_progress)
+        if task_progress:
+            progress.update(task_progress)
+        progress.setdefault("stage", task_progress.get("stage") or payload.get("current_stage") or task_status)
+        progress["task_status"] = task_status
+        if task.get("updated_at"):
+            progress["updated_at"] = task.get("updated_at")
+
+        entity_id = str(entity.get("run_id") or entity.get("batch_id") or "")
+        direct_task = task_id == entity_id
+        overlaid = dict(payload)
+        overlaid["task_id"] = task_id
+        overlaid["task_kind"] = task.get("kind")
+        overlaid["task_queue_status"] = task_status
+        overlaid["task_cancel_requested"] = bool(task.get("cancel_requested"))
+        artifact_ids = _task_artifact_ids(task)
+        if artifact_ids and direct_task:
+            overlaid["task_artifact_ids"] = artifact_ids
+        if not direct_task:
+            return overlaid
+        overlaid["progress"] = progress
+        overlaid["current_stage"] = str(progress.get("stage") or overlaid.get("current_stage") or task_status)
+        overlaid["status"] = self._status_with_task_queue(entity, task)
+        overlaid["last_heartbeat_at"] = task.get("updated_at") or overlaid.get("last_heartbeat_at")
+        if task.get("started_at"):
+            overlaid.setdefault("started_at", task.get("started_at"))
+        if task.get("finished_at"):
+            overlaid["finished_at"] = task.get("finished_at")
+        if task.get("error") and (task_status in {"failed", "cancelled", "interrupted"} or not overlaid.get("error")):
+            overlaid["error"] = task.get("error")
+        existing_overall = overlaid.get("overall_progress") if isinstance(overlaid.get("overall_progress"), dict) else {}
+        overall = dict(existing_overall)
+        overall["stage"] = overlaid["current_stage"]
+        overall["updated_at"] = progress.get("updated_at")
+        if "percent" in progress:
+            overall["percent"] = progress["percent"]
+        overlaid["overall_progress"] = overall
+        overlaid["stage_progress"] = dict(progress)
+        return overlaid
+
+    def _task_queue_row(self, task_id: str) -> dict[str, Any] | None:
+        task_service = getattr(self._store, "task_service", None)
+        getter = getattr(task_service, "get_task_queue_row", None)
+        if not callable(getter):
+            return None
+        try:
+            task = getter(task_id)
+        except Exception as exc:  # noqa: BLE001 - task queue state is an overlay, not the runtime source of truth
+            _log.debug("failed to load task queue row for evolution entity %s: %s", task_id, exc)
+            return None
+        return task if isinstance(task, dict) else None
+
+    @staticmethod
+    def _status_with_task_queue(entity: dict[str, Any], task: dict[str, Any]) -> str:
+        task_status = str(task.get("status") or "")
+        if task_status == "succeeded":
+            result = task.get("result") if isinstance(task.get("result"), dict) else {}
+            return str(result.get("status") or entity.get("status") or "completed")
+        if task_status in {"queued", "running", "failed", "cancelled", "interrupted"}:
+            return task_status
+        return str(entity.get("status") or task_status)
 
     @staticmethod
     def trust_bundle_payload_from_run(run: dict[str, Any]) -> dict[str, Any] | None:
@@ -213,6 +296,14 @@ class EvolutionReadService:
                 "events": [_normalize_event(event) for event in game.get("events", []) or []],
             }
         raise HTTPException(status_code=404, detail="detail type not found")
+
+
+def _task_artifact_ids(task: dict[str, Any]) -> list[str]:
+    result = task.get("result") if isinstance(task.get("result"), dict) else {}
+    values = result.get("artifact_ids")
+    if not isinstance(values, list):
+        return []
+    return [str(value) for value in values if str(value)]
 
 
 __all__ = ["EvolutionReadService", "EvolutionReadServiceStoreProtocol"]

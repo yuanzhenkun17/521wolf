@@ -10,7 +10,9 @@ from typing import Any
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
+from ui.backend.evolution_serializers import _evolution_gate_report
 from ui.backend.schemas import EvolutionStartRequest, automatic_evolution_request
+from ui.backend.services.evolution_read_service import EvolutionReadService
 from ui.backend.task_state import _set_task_contract
 
 
@@ -273,6 +275,21 @@ class EvolutionRunService:
                     },
                 )
             )
+        for name, artifact_type, payload in self.evolution_task_structured_artifacts(entity):
+            artifacts.append(
+                self.task_service.put_task_json_artifact(
+                    task_id=task_id,
+                    name=name,
+                    payload=payload,
+                    artifact_type=artifact_type,
+                    metadata={
+                        "status": entity.get("status"),
+                        "kind": entity.get("kind"),
+                        "run_id": entity.get("run_id"),
+                        "batch_id": entity.get("batch_id"),
+                    },
+                )
+            )
         return artifacts
 
     def evolution_task_diagnostics(self, entity: dict[str, Any]) -> list[dict[str, Any]]:
@@ -292,6 +309,135 @@ class EvolutionRunService:
                         diagnostic.setdefault("role", run.get("role"))
                         diagnostics.append(diagnostic)
         return diagnostics
+
+    def evolution_task_structured_artifacts(self, entity: dict[str, Any]) -> list[tuple[str, str, Any]]:
+        children = self.evolution_task_child_runs(entity)
+        if children:
+            return self.evolution_batch_structured_artifacts(entity, children)
+        return self.evolution_run_structured_artifacts(entity)
+
+    def evolution_task_child_runs(self, entity: dict[str, Any]) -> list[dict[str, Any]]:
+        if entity.get("kind") != "role_evolution_batch":
+            return []
+        runs: list[dict[str, Any]] = []
+        for run_id in entity.get("runs", []) or []:
+            run = self.evolution_runs.get(str(run_id))
+            if isinstance(run, dict):
+                runs.append(run)
+        return runs
+
+    def evolution_batch_structured_artifacts(
+        self,
+        batch: dict[str, Any],
+        children: list[dict[str, Any]],
+    ) -> list[tuple[str, str, Any]]:
+        grouped: dict[str, tuple[str, list[Any]]] = {
+            "gate-report.json": ("evolution_gate_report", []),
+            "trust-bundle.json": ("evolution_trust_bundle", []),
+            "paired-seed-battle-table.json": ("evolution_paired_seed_battle_table", []),
+            "scenario-replay-report.json": ("evolution_scenario_replay_report", []),
+        }
+        for run in children:
+            for name, _artifact_type, payload in self.evolution_run_structured_artifacts(run):
+                grouped[name][1].append(payload)
+        artifacts: list[tuple[str, str, dict[str, Any]]] = []
+        for name, (artifact_type, payloads) in grouped.items():
+            if not payloads:
+                continue
+            artifacts.append(
+                (
+                    name,
+                    artifact_type,
+                    {
+                        "kind": f"{artifact_type}s",
+                        "schema_version": 1,
+                        "batch_id": batch.get("batch_id"),
+                        "status": batch.get("status"),
+                        "count": len(payloads),
+                        "items": payloads,
+                    },
+                )
+            )
+        return artifacts
+
+    def evolution_run_structured_artifacts(self, run: dict[str, Any]) -> list[tuple[str, str, Any]]:
+        artifacts: list[tuple[str, str, Any]] = []
+        gate_report = self.evolution_gate_report_artifact(run)
+        if gate_report is not None:
+            artifacts.append(("gate-report.json", "evolution_gate_report", gate_report))
+        trust_bundle = self.evolution_trust_bundle_artifact(run)
+        if trust_bundle is not None:
+            artifacts.append(("trust-bundle.json", "evolution_trust_bundle", trust_bundle))
+        paired_table = self.evolution_paired_seed_battle_table_artifact(run)
+        if paired_table is not None:
+            artifacts.append(("paired-seed-battle-table.json", "evolution_paired_seed_battle_table", paired_table))
+        replay_report = self.evolution_scenario_replay_report_artifact(run)
+        if replay_report is not None:
+            artifacts.append(("scenario-replay-report.json", "evolution_scenario_replay_report", replay_report))
+        return artifacts
+
+    def evolution_gate_report_artifact(self, run: dict[str, Any]) -> dict[str, Any] | None:
+        result = run.get("result") if isinstance(run.get("result"), dict) else {}
+        battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
+        report = _first_mapping(
+            run.get("gate_report"),
+            result.get("gate_report"),
+            battle.get("gate_report"),
+            run.get("promotion_gate"),
+            battle.get("promotion_gate"),
+        )
+        if report is not None:
+            return to_jsonable(dict(report))
+        summary = _evolution_gate_report(run)
+        if _non_empty_mapping(summary.get("raw")) or _non_empty_mapping(summary.get("release_gate")):
+            return to_jsonable(dict(summary))
+        return None
+
+    def evolution_trust_bundle_artifact(self, run: dict[str, Any]) -> dict[str, Any] | None:
+        result = run.get("result") if isinstance(run.get("result"), dict) else {}
+        battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
+        bundle = _first_mapping(run.get("trust_bundle"), result.get("trust_bundle"), battle.get("trust_bundle"))
+        if bundle is not None:
+            return to_jsonable(dict(bundle))
+        payload = EvolutionReadService.trust_bundle_payload_from_run(run)
+        if payload is None:
+            return None
+        bundle = payload.get("trust_bundle") if isinstance(payload.get("trust_bundle"), dict) else None
+        return to_jsonable(dict(bundle)) if bundle is not None else None
+
+    def evolution_paired_seed_battle_table_artifact(self, run: dict[str, Any]) -> list[dict[str, Any]] | None:
+        battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
+        pairs = _first_list(
+            run.get("paired_seed_battle_table"),
+            run.get("paired_seed_pairs"),
+            run.get("paired_seeds"),
+            run.get("battle_pairs"),
+            battle.get("paired_seed_battle_table"),
+            battle.get("paired_seed_pairs"),
+            battle.get("paired_seeds"),
+            battle.get("battle_pairs"),
+        )
+        if not pairs:
+            return None
+        return [to_jsonable(dict(item)) for item in pairs if isinstance(item, dict)]
+
+    def evolution_scenario_replay_report_artifact(self, run: dict[str, Any]) -> dict[str, Any] | None:
+        result = run.get("result") if isinstance(run.get("result"), dict) else {}
+        battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
+        gate = run.get("gate_report") if isinstance(run.get("gate_report"), dict) else {}
+        report = _first_mapping(
+            run.get("scenario_replay_report"),
+            run.get("scenario_replay"),
+            result.get("scenario_replay_report"),
+            result.get("scenario_replay"),
+            gate.get("scenario_replay_report"),
+            gate.get("scenario_replay"),
+            battle.get("scenario_replay_report"),
+            battle.get("scenario_replay"),
+        )
+        if report is None:
+            return None
+        return to_jsonable(dict(report))
 
     def create_evolution_run(
         self,
@@ -689,3 +835,21 @@ class EvolutionRunService:
         self._touch_background_task(run)
         self._persist_background_tasks()
         return run
+
+
+def _non_empty_mapping(value: Any) -> bool:
+    return isinstance(value, dict) and bool(value)
+
+
+def _first_mapping(*values: Any) -> dict[str, Any] | None:
+    for value in values:
+        if isinstance(value, dict) and value:
+            return value
+    return None
+
+
+def _first_list(*values: Any) -> list[Any] | None:
+    for value in values:
+        if isinstance(value, list) and value:
+            return value
+    return None

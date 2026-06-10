@@ -1834,6 +1834,89 @@ def test_evolution_start_uses_pg_task_queue_when_enabled(
     ]
 
 
+def test_evolution_reads_overlay_pg_task_queue_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    active_run_id = "evolve_seer_pg_active"
+    done_run_id = "evolve_witch_pg_done"
+
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        store.evolution_runs[active_run_id] = {
+            "kind": "role_evolution_run",
+            "run_id": active_run_id,
+            "role": "seer",
+            "status": "queued",
+            "task_id": active_run_id,
+            "task_queue_status": "queued",
+            "current_stage": "queued",
+            "progress": {"stage": "queued", "percent": 0.0},
+            "overall_progress": {"stage": "queued", "percent": 0.0},
+            "diagnostics": [],
+            "training_game_count": 2,
+            "battle_game_count": 1,
+        }
+        store.evolution_runs[done_run_id] = {
+            "kind": "role_evolution_run",
+            "run_id": done_run_id,
+            "role": "witch",
+            "status": "reviewing",
+            "task_id": done_run_id,
+            "task_queue_status": "succeeded",
+            "current_stage": "reviewing",
+            "progress": {"stage": "reviewing", "percent": 1.0},
+            "overall_progress": {"stage": "reviewing", "percent": 1.0},
+            "diagnostics": [],
+        }
+        task_rows = {
+            active_run_id: {
+                "task_id": active_run_id,
+                "kind": "evolution_run",
+                "status": "running",
+                "progress": {"stage": "training", "percent": 0.5, "completed_games": 1},
+                "updated_at": "2026-01-01T00:02:00+08:00",
+                "started_at": "2026-01-01T00:01:00+08:00",
+                "finished_at": None,
+                "cancel_requested": False,
+                "result": None,
+                "error": None,
+            },
+            done_run_id: {
+                "task_id": done_run_id,
+                "kind": "evolution_run",
+                "status": "succeeded",
+                "progress": {"stage": "completed", "percent": 1.0},
+                "updated_at": "2026-01-01T00:04:00+08:00",
+                "started_at": "2026-01-01T00:03:00+08:00",
+                "finished_at": "2026-01-01T00:04:00+08:00",
+                "cancel_requested": False,
+                "result": {"status": "reviewing", "artifact_ids": ["artifact-result"]},
+                "error": None,
+            },
+        }
+
+        monkeypatch.setattr(store.task_service, "get_task_queue_row", lambda task_id: task_rows.get(str(task_id)))
+
+        active_detail = client.get(f"/api/evolution-runs/{active_run_id}").json()
+        done_detail = client.get(f"/api/evolution-runs/{done_run_id}").json()
+        running_list = client.get("/api/evolution-runs?status=running").json()
+        reviewing_list = client.get("/api/evolution-runs?status=reviewing").json()
+
+    assert active_detail["status"] == "running"
+    assert active_detail["task_queue_status"] == "running"
+    assert active_detail["current_stage"] == "training"
+    assert active_detail["progress"]["percent"] == 0.5
+    assert active_detail["progress"]["task_status"] == "running"
+    assert active_detail["last_heartbeat_at"] == "2026-01-01T00:02:00+08:00"
+    assert [run["run_id"] for run in running_list["runs"]] == [active_run_id]
+
+    assert done_detail["status"] == "reviewing"
+    assert done_detail["task_queue_status"] == "succeeded"
+    assert done_detail["task_artifact_ids"] == ["artifact-result"]
+    assert [run["run_id"] for run in reviewing_list["runs"]] == [done_run_id]
+
+
 def test_evolution_start_normalizes_legacy_manual_defaults(
     tmp_path: Path,
     monkeypatch,

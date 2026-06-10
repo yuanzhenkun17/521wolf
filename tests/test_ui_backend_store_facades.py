@@ -660,6 +660,36 @@ def test_evolution_batch_task_artifacts_include_child_diagnostics(tmp_path: Path
     ]
 
 
+def test_evolution_task_artifacts_include_trust_loop_json_files(tmp_path: Path) -> None:
+    async def runner(**_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    context = _FakeEvolutionRunContext(tmp_path, runner)
+    service = EvolutionRunService(context)
+    run = {
+        "kind": "role_evolution_run",
+        "run_id": "evolve_seer_artifacts",
+        "role": "seer",
+        "status": "reviewing",
+        "gate_report": {"schema_version": "trust_loop_gate_v1", "decision": "review_required"},
+        "trust_bundle": {"schema_version": "trust_bundle_v1", "trust_bundle_id": "tb-artifacts"},
+        "paired_seed_battle_table": [{"seed": 7, "winner_side": "candidate"}],
+        "scenario_replay_report": {"schema_version": "scenario_replay_report_v1", "scenario_count": 1},
+    }
+
+    service.persist_evolution_task_artifacts("evolve_seer_artifacts", run)
+
+    artifacts = {artifact["name"]: artifact for artifact in context.task_service.artifacts}
+    assert artifacts["gate-report.json"]["artifact_type"] == "evolution_gate_report"
+    assert artifacts["gate-report.json"]["payload"] == run["gate_report"]
+    assert artifacts["trust-bundle.json"]["artifact_type"] == "evolution_trust_bundle"
+    assert artifacts["trust-bundle.json"]["payload"] == run["trust_bundle"]
+    assert artifacts["paired-seed-battle-table.json"]["artifact_type"] == "evolution_paired_seed_battle_table"
+    assert artifacts["paired-seed-battle-table.json"]["payload"] == run["paired_seed_battle_table"]
+    assert artifacts["scenario-replay-report.json"]["artifact_type"] == "evolution_scenario_replay_report"
+    assert artifacts["scenario-replay-report.json"]["payload"] == run["scenario_replay_report"]
+
+
 def test_queue_backed_background_tasks_are_not_recovered_as_interrupted() -> None:
     run = {
         "kind": "role_evolution_run",
@@ -760,6 +790,81 @@ def test_evolution_read_service_handles_run_detail_drilldown_without_task_servic
     assert decisions["decisions"][0]["id"] == "d1"
     assert decisions["decisions"][0]["target_id"] == 3
     assert events["events"][0]["type"] == "game_init"
+
+
+def test_evolution_read_service_task_overlay_fails_open() -> None:
+    class BrokenTaskService:
+        def get_task_queue_row(self, task_id: str) -> dict[str, Any]:
+            raise RuntimeError(f"offline: {task_id}")
+
+    run = {
+        "kind": "role_evolution_run",
+        "run_id": "run-task-offline",
+        "status": "reviewing",
+        "task_id": "run-task-offline",
+        "task_queue_status": "running",
+    }
+    service = EvolutionReadService(
+        SimpleNamespace(
+            evolution_runs={"run-task-offline": run},
+            evolution_batches={},
+            task_service=BrokenTaskService(),
+        )
+    )
+
+    assert service.get_run("run-task-offline") is run
+    assert service.get_run("run-task-offline")["status"] == "reviewing"
+
+
+def test_evolution_read_service_parent_batch_task_does_not_override_child_status() -> None:
+    class FakeTaskService:
+        def get_task_queue_row(self, task_id: str) -> dict[str, Any] | None:
+            if task_id != "batch-task":
+                return None
+            return {
+                "task_id": "batch-task",
+                "kind": "evolution_batch",
+                "status": "succeeded",
+                "progress": {"stage": "completed", "percent": 1.0},
+                "updated_at": "2026-01-01T00:00:02+08:00",
+                "finished_at": "2026-01-01T00:00:03+08:00",
+                "cancel_requested": False,
+                "result": {"status": "completed", "artifact_ids": ["batch-artifact"]},
+            }
+
+    child = {
+        "kind": "role_evolution_run",
+        "run_id": "child-run",
+        "batch_id": "batch-task",
+        "status": "reviewing",
+        "task_id": "batch-task",
+        "task_queue_status": "succeeded",
+    }
+    batch = {
+        "kind": "role_evolution_batch",
+        "batch_id": "batch-task",
+        "runs": ["child-run"],
+        "status": "completed",
+        "task_id": "batch-task",
+        "task_queue_status": "succeeded",
+    }
+    service = EvolutionReadService(
+        SimpleNamespace(
+            evolution_runs={"child-run": child},
+            evolution_batches={"batch-task": batch},
+            task_service=FakeTaskService(),
+        )
+    )
+
+    listed = service.list_runs(history_requested=False)
+    child_summary = listed["runs"][0]
+    batch_detail = service.get_run("batch-task")
+
+    assert child_summary["status"] == "reviewing"
+    assert child_summary["task_queue_status"] == "succeeded"
+    assert "task_artifact_ids" not in child_summary
+    assert batch_detail["status"] == "completed"
+    assert batch_detail["task_artifact_ids"] == ["batch-artifact"]
 
 
 def test_evolution_read_service_trust_bundle_falls_back_to_run_artifact(monkeypatch: pytest.MonkeyPatch) -> None:

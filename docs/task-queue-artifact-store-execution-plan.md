@@ -82,7 +82,20 @@ PostgreSQL-backed task queue
   - `diagnostics.json`（存在 diagnostics 时；batch 会汇总 child run diagnostics）
 - `BackendStore.create_task_worker_loop()` 现在同时注册 benchmark 与 evolution executors。
 
-当前还未做 P4 的深收口：evolution list/detail 仍未完全以 `ui_task_queue` 为权威，gate report、trust bundle、paired battle table、scenario replay 等完整产物还未全部 artifact 化，也没有改前端任务中心。下一阶段应继续做 evolution 状态权威收口和完整 artifacts。
+当前 P4 后端收口已覆盖 queue 状态 overlay 与 task artifacts；仍未改前端任务中心，也未把 full-local research runner 的本地产物 manifest 纳入这一套 artifact 命名。
+
+已完成 Phase F Evolution Queue Authority 收口：
+
+- `/api/evolution-runs` list/detail 在生成原有 evolution runtime payload 后，会按 `task_id` 只读 overlay `ui_task_queue` 状态。
+- queued/running/failed/cancelled/interrupted 的 active 状态和进度来自 PG task row；task `succeeded` 时不暴露领域外的 `status=succeeded`，而是回落到 `task.result.status` 或 evolution runtime status。
+- overlay 只对 direct task 生效；batch task 挂到 child run 上时不会覆盖 child run 的 reviewing/promoted/rejected 等领域状态。
+- task row 不可读时 fail-open，保持原有 evolution payload，不让任务队列读失败拖垮领域 API。
+- evolution task artifacts 已补齐 canonical JSON：
+  - `gate-report.json`
+  - `trust-bundle.json`
+  - `paired-seed-battle-table.json`
+  - `scenario-replay-report.json`
+- 单 run artifact 直接写 canonical raw payload；batch task 会按 child run 聚合非空 payload。
 
 已验证：
 
@@ -103,6 +116,9 @@ uv run pytest tests/test_api_contracts.py -q -k "evolution and not snapshot"
 uv run pytest tests/test_postgres_adapter.py -q
 uv run pytest tests/test_api_contracts.py -q -k "benchmark or evolution or task"
 uv run pytest tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.py -q -k "benchmark or evolution or task_worker_loop or background_tasks_restore"
+uv run pytest tests/test_ui_backend_app.py::test_evolution_reads_overlay_pg_task_queue_state tests/test_api_contracts.py::test_evolution_run_list_diff_games_and_manifest_api_contract -q
+uv run pytest tests/test_ui_backend_store_facades.py -q
+uv run pytest tests/test_task_worker_cli.py tests/test_task_worker.py tests/test_task_queue_artifacts.py tests/test_task_routes.py -q
 ```
 
 ## 当前状态
@@ -454,20 +470,20 @@ Steps：
 2. `run_id`/`batch_id` 与 `task_id` 建立稳定映射。（已完成 bridge）
 3. worker 执行 `run_evolution`。（已完成 bridge，复用 queued evolution/batch 入口）
 4. progress_sink 写：
-   - `ui_task_queue.progress`（bridge 已写 stage heartbeat；细粒度 evolution progress 仍需继续收口）
+   - `ui_task_queue.progress`（已完成 bridge stage heartbeat；active read overlay 已以 queue progress 为准）
    - `ui_task_events`
    - `evolution.evolution_runs.runtime_state`
 5. `GET /api/evolution-runs` 以 PostgreSQL 权威状态为主：
-   - active/progress 从 task queue。
+   - active/progress 从 task queue。（已完成后端 overlay）
    - final/runtime 从 `evolution.evolution_runs`。
-   - legacy `ui_background_tasks` 只作为兼容输入。
+   - legacy `ui_background_tasks` 只作为兼容输入。（已完成 fail-open 兼容）
 6. completion 写 artifacts：
    - result.json（已完成 bridge：`evolution-result.json`）
    - diagnostics.json（已完成 bridge：存在 diagnostics 时；batch 汇总 child diagnostics）
-   - gate-report.json
-   - trust-bundle.json
-   - paired-seed-battle-table.json
-   - scenario-replay-report.json
+   - gate-report.json（已完成 task artifact）
+   - trust-bundle.json（已完成 task artifact）
+   - paired-seed-battle-table.json（已完成 task artifact）
+   - scenario-replay-report.json（已完成 task artifact）
 7. proposal accept/reject/apply 继续作用于 evolution runtime state，并写审计事件。
 
 验收：
