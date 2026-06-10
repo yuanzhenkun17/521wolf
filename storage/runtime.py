@@ -20,7 +20,7 @@ from storage.shared.database import StorageConnection
 
 from storage.game_store import GameStore
 from storage.ids import storage_decision_id
-from storage.provider import StorageProvider, open_wolf_connection, storage_provider_from_env
+from storage.provider import StorageProvider
 
 DEFAULT_COMMIT_EVERY = 25
 
@@ -40,7 +40,9 @@ class EventEntry(Protocol):
 
 
 def open_storage_connection(provider: StorageProvider | None = None) -> StorageConnection:
-    return open_wolf_connection(provider)
+    import storage.provider as provider_mod
+
+    return provider_mod.open_wolf_connection(provider)
 
 
 def create_game_persistence(
@@ -258,9 +260,14 @@ class GamePersistence:
         self.run_policy = run_policy
         self.run_metadata = run_metadata
         self._provider = provider
-        if self._provider is None and conn is None:
-            self._provider = storage_provider_from_env()
-        self._conn = conn if conn is not None else open_wolf_connection(self._provider)
+        if conn is not None:
+            self._conn = conn
+        else:
+            import storage.provider as provider_mod
+
+            if self._provider is None:
+                self._provider = provider_mod.storage_provider_from_env()
+            self._conn = provider_mod.open_wolf_connection(self._provider)
         self._evolution_conn = evolution_conn
         self._committer = (
             BatchCommitter(self._conn, commit_every=commit_every)

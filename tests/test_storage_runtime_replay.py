@@ -790,6 +790,61 @@ def test_game_persistence_rejects_conflicting_provider_sources() -> None:
         )
 
 
+def test_game_persistence_uses_provider_module_for_wolf_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import storage.provider as provider_mod
+
+    provider = _Provider()
+    conn = _MemoryStorageConn()
+    seen_providers: list[Any] = []
+
+    def open_connection(
+        provider_arg: Any | None = None,
+        *,
+        paths: Any | None = None,
+    ) -> _MemoryStorageConn:
+        assert paths is None
+        seen_providers.append(provider_arg)
+        return conn
+
+    monkeypatch.setattr(provider_mod, "open_wolf_connection", open_connection)
+
+    persistence = GamePersistence(game_id="helper_game", provider=provider)
+    try:
+        assert persistence.conn is conn
+        assert seen_providers == [provider]
+    finally:
+        persistence.close()
+
+    assert conn.closed is True
+
+
+def test_game_persistence_preserves_no_arg_provider_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import storage.provider as provider_mod
+
+    provider = _Provider()
+    calls: list[str] = []
+
+    def provider_from_env() -> _Provider:
+        calls.append("no_args")
+        return provider
+
+    monkeypatch.setattr(provider_mod, "storage_provider_from_env", provider_from_env)
+
+    persistence = GamePersistence(game_id="no_arg_lookup")
+    try:
+        assert persistence.conn is provider.wolf_conn
+        assert calls == ["no_args"]
+        assert provider.wolf_calls == 1
+    finally:
+        persistence.close()
+
+    assert provider.wolf_conn.closed is True
+
+
 def test_create_game_persistence_resolves_provider_with_paths(monkeypatch, tmp_path: Path) -> None:
     import storage.provider as provider_mod
     from storage.run_policy import RunType
