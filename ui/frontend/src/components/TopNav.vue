@@ -1,21 +1,93 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useGameStore, useSessionStore } from '../stores'
 import { isReturnableGame } from '../composables/gameSession.ts'
+import type { ActiveGameSession } from '../types/game'
+import type { AppView } from '../types/ui'
 
-const props = defineProps({
-  brand: { type: String, default: 'NightCouncil' },
-  variant: { type: String, default: 'lobby' },
-  activeView: { type: String, default: 'lobby' },
-  activeSession: { type: Object, default: () => ({}) },
-  hasActiveGame: Boolean,
-  audioEnabled: Boolean,
-  ttsEnabled: Boolean,
-  ttsAvailable: { type: Boolean, default: true },
-  showExitGame: Boolean,
-  exitDisabled: Boolean
+type TopNavVariant = 'lobby' | 'match' | 'section'
+type NavItemKey = Exclude<AppView, 'match'>
+type NavWorkLine = 'play' | 'lab'
+type NavItemEmit = 'go-lobby' | 'open-logs' | 'open-benchmark' | 'open-evolution'
+type TopNavEmit = NavItemEmit | 'back-to-match' | 'toggle-audio' | 'toggle-tts' | 'exit-game'
+type StreamBadgeStatus = 'idle' | 'stopped' | 'polling' | 'reconnecting' | 'live' | 'background'
+
+interface StreamAwareActiveSession {
+  gameId?: ActiveGameSession['gameId']
+  game_id?: string | null
+  mode?: ActiveGameSession['mode']
+  running?: unknown
+  sseConnected?: unknown
+  sse_connected?: unknown
+  connected?: unknown
+  streamStatus?: unknown
+  stream_status?: unknown
+  sseStatus?: unknown
+  sse_status?: unknown
+  connectionStatus?: unknown
+  connection_status?: unknown
+  polling?: unknown
+  pollingFallback?: unknown
+  polling_fallback?: unknown
+  streamPolling?: unknown
+  streamDegraded?: unknown
+  stream_degraded?: unknown
+  reconnecting?: unknown
+  sseReconnecting?: unknown
+  sse_reconnecting?: unknown
+  streamReconnecting?: unknown
+  stream_reconnecting?: unknown
+  backgroundRunning?: unknown
+  background_running?: unknown
+  detached?: unknown
+  lastRecoveredAt?: unknown
+  last_recovered_at?: unknown
+  recoveredAt?: unknown
+  recovered_at?: unknown
+  lastConnectedAt?: unknown
+  last_connected_at?: unknown
+}
+
+interface TopNavProps {
+  brand?: string
+  variant?: TopNavVariant
+  activeView?: AppView | string
+  activeSession?: StreamAwareActiveSession | null
+  hasActiveGame?: boolean
+  audioEnabled?: boolean
+  ttsEnabled?: boolean
+  ttsAvailable?: boolean
+  showExitGame?: boolean
+  exitDisabled?: boolean
+}
+
+interface NavItem {
+  key: NavItemKey
+  label: string
+  line: NavWorkLine
+  lineLabel: 'Play' | 'Lab'
+  event: NavItemEmit
+}
+
+interface StreamStatusBadge {
+  status: StreamBadgeStatus
+  label: string
+  title: string
+  ariaLabel: string
+}
+
+const props = withDefaults(defineProps<TopNavProps>(), {
+  brand: 'NightCouncil',
+  variant: 'lobby',
+  activeView: 'lobby',
+  activeSession: () => ({}),
+  hasActiveGame: false,
+  audioEnabled: false,
+  ttsEnabled: false,
+  ttsAvailable: true,
+  showExitGame: false,
+  exitDisabled: false
 })
 
 const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
@@ -32,14 +104,14 @@ const navItems = [
   { key: 'logs', label: '日志', line: 'play', lineLabel: 'Play', event: 'open-logs' },
   { key: 'benchmark', label: '评测', line: 'lab', lineLabel: 'Lab', event: 'open-benchmark' },
   { key: 'evolution', label: '自进化', line: 'lab', lineLabel: 'Lab', event: 'open-evolution' }
-]
+] as const satisfies readonly NavItem[]
 
-const RECONNECTING_STREAM_STATUSES = new Set(['connecting', 'reconnect', 'reconnecting', 'retrying'])
-const POLLING_STREAM_STATUSES = new Set(['degraded', 'fallback', 'polling', 'polling_fallback', 'long_polling'])
-const BACKGROUND_STREAM_STATUSES = new Set(['background', 'background_running', 'detached'])
-const STOPPED_STREAM_STATUSES = new Set(['closed', 'done', 'stopped', 'terminal'])
+const RECONNECTING_STREAM_STATUSES: ReadonlySet<string> = new Set(['connecting', 'reconnect', 'reconnecting', 'retrying'])
+const POLLING_STREAM_STATUSES: ReadonlySet<string> = new Set(['degraded', 'fallback', 'polling', 'polling_fallback', 'long_polling'])
+const BACKGROUND_STREAM_STATUSES: ReadonlySet<string> = new Set(['background', 'background_running', 'detached'])
+const STOPPED_STREAM_STATUSES: ReadonlySet<string> = new Set(['closed', 'done', 'stopped', 'terminal'])
 
-const routeViewByName = {
+const routeViewByName: Readonly<Record<string, AppView>> = {
   lobby: 'lobby',
   match: 'match',
   logs: 'logs',
@@ -47,7 +119,7 @@ const routeViewByName = {
   evolution: 'evolution'
 }
 
-const routeViewByPath = {
+const routeViewByPath: Readonly<Record<string, AppView>> = {
   '/': 'lobby',
   '/match': 'match',
   '/logs': 'logs',
@@ -55,31 +127,31 @@ const routeViewByPath = {
   '/evolution': 'evolution'
 }
 
-function truthy(value) {
+function truthy(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true'
 }
 
-function anyTruthy(...values) {
+function anyTruthy(...values: unknown[]): boolean {
   return values.some((value) => truthy(value))
 }
 
-function normalizedStatus(value) {
+function normalizedStatus(value: unknown): string {
   return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
 }
 
-function firstValue(...values) {
+function firstValue(...values: unknown[]): unknown {
   return values.find((value) => value !== undefined && value !== null && value !== '')
 }
 
-function formatStreamTime(value) {
+function formatStreamTime(value: unknown): string {
   const raw = firstValue(value)
   if (!raw) return ''
-  const date = raw instanceof Date ? raw : new Date(raw)
+  const date = raw instanceof Date ? raw : new Date(raw as string | number)
   if (Number.isNaN(date.getTime())) return String(raw)
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
-function navItemAriaLabel(item) {
+function navItemAriaLabel(item): string {
   const label = `${item.lineLabel} 工作线：${item.label}`
   return activeNavView.value === item.key ? `${label}，当前页面` : label
 }
@@ -98,7 +170,7 @@ const activeNavView = computed(() => {
   return props.activeView || routeActiveView.value || storeActiveView.value || 'lobby'
 })
 
-const storeActiveSession = computed(() => sessionStore.activeSession || {})
+const storeActiveSession = computed<StreamAwareActiveSession>(() => sessionStore.activeSession || {})
 const effectiveActiveSession = computed(() => {
   const session = storeActiveSession.value
   if (session?.gameId || session?.game_id || session?.running || session?.mode) return session
@@ -141,7 +213,7 @@ const streamStatusBadge = computed(() => {
     session.last_connected_at
   ))
 
-  let status = 'stopped'
+  let status = 'stopped' as StreamBadgeStatus
   let label = '已停止'
   let detail = '实时流已停止'
 

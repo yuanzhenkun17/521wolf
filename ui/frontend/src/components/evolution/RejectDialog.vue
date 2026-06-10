@@ -1,36 +1,90 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, nextTick, ref, watch } from 'vue'
 
-const props = defineProps({
-  open: { type: Boolean, default: false },
-  proposal: { type: Object, default: null },
-  reason: { type: String, default: '' },
-  tags: { type: Array, default: () => [] },
-  rejectBuffer: { type: Object, default: () => ({}) },
-  busy: { type: Boolean, default: false },
-  disabled: { type: Boolean, default: false }
+interface ProposalLike {
+  apiId?: unknown
+  id?: unknown
+  proposal_id?: unknown
+  title?: unknown
+}
+
+interface RejectBufferMatch {
+  proposalId?: unknown
+  sourceRunId?: unknown
+  reason?: unknown
+}
+
+interface RejectBufferLike {
+  visible?: unknown
+  savedLabel?: unknown
+  duplicateLabel?: unknown
+  dedupeKey?: unknown
+  scope?: unknown
+  similarityScore?: unknown
+  overfitScore?: unknown
+  tags?: unknown
+  overfitEvidence?: unknown
+  reason?: unknown
+  matched?: RejectBufferMatch | null
+  status?: unknown
+  [key: string]: unknown
+}
+
+interface RejectDialogProps {
+  open?: boolean
+  proposal?: ProposalLike | null
+  reason?: string
+  tags?: readonly unknown[]
+  rejectBuffer?: RejectBufferLike | null
+  busy?: boolean
+  disabled?: boolean
+}
+
+interface SummaryItem {
+  key: string
+  label: string
+  value: unknown
+  code?: boolean
+}
+
+interface RejectConfirmPayload {
+  reason: string
+  tags: string[]
+  metadata: {
+    tags: string[]
+    rejectBuffer: RejectBufferLike
+  }
+}
+
+const props = withDefaults(defineProps<RejectDialogProps>(), {
+  open: false,
+  proposal: null,
+  reason: '',
+  tags: () => [],
+  rejectBuffer: () => ({}),
+  busy: false,
+  disabled: false
 })
 
 const emit = defineEmits(['cancel', 'confirm'])
 
-const reasonDraft = ref('')
-const tagDraft = ref('')
-const tagDrafts = ref([])
-const reasonTouched = ref(false)
-const reasonInput = ref(null)
+const reasonDraft = ref<string>('')
+const tagDraft = ref<string>('')
+const tagDrafts = ref<string[]>([])
+const reasonTouched = ref<boolean>(false)
+const reasonInput = ref<HTMLTextAreaElement | null>(null)
 
 const normalizedReason = computed(() => reasonDraft.value.trim())
 const hasReason = computed(() => Boolean(normalizedReason.value))
 const canConfirm = computed(() => props.open && !props.busy && !props.disabled && hasReason.value)
 const showReasonError = computed(() => reasonTouched.value && !hasReason.value)
 const proposalTitle = computed(() => displayText(props.proposal?.title || props.proposal?.id || props.proposal?.proposal_id, '待拒绝提案'))
-const buffer = computed(() => props.rejectBuffer || {})
+const buffer = computed<RejectBufferLike>(() => props.rejectBuffer || {})
 const hasBufferSummary = computed(() => Boolean(buffer.value?.visible))
-const matched = computed(() => buffer.value?.matched || {})
+const matched = computed<RejectBufferMatch>(() => buffer.value?.matched || {})
 const hasMatched = computed(() => Boolean(matched.value.proposalId || matched.value.sourceRunId || matched.value.reason))
-const summaryItems = computed(() => {
-  const items = []
+const summaryItems = computed<SummaryItem[]>(() => {
+  const items: SummaryItem[] = []
   if (buffer.value.savedLabel) items.push({ key: 'saved', label: '保存', value: buffer.value.savedLabel })
   if (buffer.value.duplicateLabel) items.push({ key: 'duplicate', label: '去重', value: buffer.value.duplicateLabel })
   if (buffer.value.dedupeKey) items.push({ key: 'dedupe', label: '去重键', value: buffer.value.dedupeKey, code: true })
@@ -39,7 +93,7 @@ const summaryItems = computed(() => {
   if (buffer.value.overfitScore != null) items.push({ key: 'overfit', label: '过拟合', value: scoreLabel(buffer.value.overfitScore) })
   return items
 })
-const bufferTags = computed(() => [
+const bufferTags = computed<string[]>(() => [
   ...normalizeTags(buffer.value.tags || []),
   ...normalizeTags(buffer.value.overfitEvidence || [])
 ])
@@ -62,24 +116,24 @@ watch(() => props.tags, (tags) => {
   if (!props.open) tagDrafts.value = normalizeTags(tags || [])
 })
 
-function displayText(value, fallback = '—') {
+function displayText(value: unknown, fallback = '—'): string {
   const text = String(value ?? '').trim()
   return text || fallback
 }
 
-function scoreLabel(value) {
+function scoreLabel(value: unknown): string {
   const number = Number(value)
   if (!Number.isFinite(number)) return '—'
   const pct = Math.abs(number) <= 1 ? number * 100 : number
   return `${Math.round(pct)}%`
 }
 
-function normalizeTags(tags) {
-  const values = Array.isArray(tags) ? tags : String(tags || '').split(/[,\s]+/)
+function normalizeTags(tags): string[] {
+  const values: unknown[] = Array.isArray(tags) ? tags : String(tags || '').split(/[,\s]+/)
   return [...new Set(values.map((tag) => String(tag ?? '').trim()).filter(Boolean))].slice(0, 12)
 }
 
-function matchedLabel() {
+function matchedLabel(): string {
   const parts = [
     matched.value.proposalId ? `提案 ${matched.value.proposalId}` : '',
     matched.value.sourceRunId ? `运行 ${matched.value.sourceRunId}` : ''
@@ -87,35 +141,35 @@ function matchedLabel() {
   return parts.join(' · ')
 }
 
-function bufferStatusLabel() {
-  if (buffer.value.savedLabel) return buffer.value.savedLabel
+function bufferStatusLabel(): string {
+  if (buffer.value.savedLabel) return displayText(buffer.value.savedLabel)
   if (buffer.value.status) return displayText(buffer.value.status)
-  if (buffer.value.duplicateLabel) return buffer.value.duplicateLabel
+  if (buffer.value.duplicateLabel) return displayText(buffer.value.duplicateLabel)
   return '已记录'
 }
 
-function addTags() {
+function addTags(): void {
   const nextTags = normalizeTags([...tagDrafts.value, ...String(tagDraft.value || '').split(/[,\n]+/)])
   tagDrafts.value = nextTags
   tagDraft.value = ''
 }
 
-function removeTag(tag) {
+function removeTag(tag: string): void {
   tagDrafts.value = tagDrafts.value.filter((item) => item !== tag)
 }
 
-function handleTagKeydown(event) {
+function handleTagKeydown(event): void {
   if (event.key !== 'Enter' && event.key !== ',') return
   event.preventDefault()
   addTags()
 }
 
-function cancel() {
+function cancel(): void {
   if (props.busy) return
   emit('cancel')
 }
 
-function confirm() {
+function confirm(): void {
   reasonTouched.value = true
   addTags()
   if (!canConfirm.value) return

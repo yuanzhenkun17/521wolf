@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed } from 'vue'
 import { formatApiErrorForDisplay } from '../composables/apiErrorDisplay.ts'
 
