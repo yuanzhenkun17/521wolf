@@ -831,6 +831,28 @@ def test_postgres_version_registry_facade_materializes_skills() -> None:
 
             config = build_baseline_config(registry)
             assert config.role_versions == {"seer": version_id}
+            canary_before = dict(conn.versions[("seer", canary_id)])
+            with pytest.raises(RuntimeError, match="Failed to set baseline for seer"):
+                registry.publish_skills(
+                    "seer",
+                    {"main.md": _registry_skill("canary candidate")},
+                    parent_id=shadow_id,
+                    source="evolve",
+                    run_id="run_canary_wrong_expected",
+                    proposal_ids=["p_canary"],
+                    version_id=canary_id,
+                    set_as_baseline=True,
+                    expected_current="wrong_baseline",
+                    release_stage="baseline",
+                    provenance={
+                        "trust_bundle_id": "tb_should_not_persist",
+                        "release_decision": "baseline_promote",
+                    },
+                )
+            assert registry.get_baseline("seer") == version_id
+            assert conn.versions[("seer", canary_id)]["status"] == canary_before["status"]
+            assert conn.versions[("seer", canary_id)]["provenance_json"] == canary_before["provenance_json"]
+
             canary_baseline_id = registry.publish_skills(
                 "seer",
                 {"main.md": _registry_skill("canary candidate")},

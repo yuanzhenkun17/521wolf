@@ -50,22 +50,16 @@ class RegistryVersionRepository:
         provenance: dict[str, Any],
     ) -> None:
         try:
-            self._conn.execute(
-                "INSERT INTO role_versions "
-                "(id, role, parent_id, source, run_id, skills, notes, status, created_at, provenance_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    version_id,
-                    role,
-                    parent_id,
-                    source,
-                    run_id,
-                    json.dumps(skills, ensure_ascii=False),
-                    json.dumps(notes, ensure_ascii=False),
-                    status,
-                    beijing_now_iso(),
-                    json.dumps(provenance, ensure_ascii=False),
-                ),
+            self._insert_version_unlocked(
+                version_id=version_id,
+                role=role,
+                parent_id=parent_id,
+                source=source,
+                run_id=run_id,
+                skills=skills,
+                notes=notes,
+                status=status,
+                provenance=provenance,
             )
             self._conn.commit()
         except Exception:
@@ -73,11 +67,171 @@ class RegistryVersionRepository:
             raise
 
     def update_version_status(self, *, role: str, version_id: str, status: str, provenance: dict[str, Any]) -> None:
+        self._update_version_status_unlocked(
+            role=role,
+            version_id=version_id,
+            status=status,
+            provenance=provenance,
+        )
+        self._conn.commit()
+
+    def publish_version(
+        self,
+        *,
+        version_id: str,
+        role: str,
+        parent_id: str | None,
+        source: str,
+        run_id: str | None,
+        skills: dict[str, str],
+        notes: list[str],
+        status: str,
+        provenance: dict[str, Any],
+        set_as_baseline: bool = False,
+        expected_current: str | None = None,
+        _retry_on_insert_conflict: bool = True,
+    ) -> bool:
+        """Insert or refresh an already-normalized PostgreSQL role version."""
+        insert_attempted = False
+        begin_write(self._conn)
+        try:
+            if set_as_baseline:
+                rows = execute_for_update(
+                    self._conn,
+                    "SELECT id, status FROM role_versions WHERE role = ? ORDER BY created_at",
+                    (role,),
+                ).fetchall()
+                if self.current_baseline_unlocked(role, rows) != expected_current:
+                    self._conn.rollback()
+                    return False
+
+            existing = execute_for_update(
+                self._conn,
+                "SELECT * FROM role_versions WHERE role = ? AND id = ?",
+                (role, version_id),
+            ).fetchone()
+            if existing is not None:
+                self._refresh_existing_version_unlocked(
+                    existing,
+                    role=role,
+                    version_id=version_id,
+                    skills=skills,
+                    status=status,
+                    provenance=provenance,
+                    set_as_baseline=set_as_baseline,
+                )
+            else:
+                insert_attempted = True
+                self._insert_version_unlocked(
+                    version_id=version_id,
+                    role=role,
+                    parent_id=parent_id,
+                    source=source,
+                    run_id=run_id,
+                    skills=skills,
+                    notes=notes,
+                    status=status,
+                    provenance=provenance,
+                )
+
+            if set_as_baseline and not self._set_baseline_unlocked(
+                role=role,
+                version_id=version_id,
+                expected_current=expected_current,
+            ):
+                self._conn.rollback()
+                return False
+            self._conn.commit()
+            return True
+        except Exception:
+            self._conn.rollback()
+            if insert_attempted and _retry_on_insert_conflict:
+                existing = self.load_version_row(role, version_id)
+                if existing is not None:
+                    existing_skills = _loads_json_object(existing["skills"], default={})
+                    if existing_skills != skills:
+                        raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
+                    return self.publish_version(
+                        version_id=version_id,
+                        role=role,
+                        parent_id=parent_id,
+                        source=source,
+                        run_id=run_id,
+                        skills=skills,
+                        notes=notes,
+                        status=status,
+                        provenance=provenance,
+                        set_as_baseline=set_as_baseline,
+                        expected_current=expected_current,
+                        _retry_on_insert_conflict=False,
+                    )
+            raise
+
+    def _insert_version_unlocked(
+        self,
+        *,
+        version_id: str,
+        role: str,
+        parent_id: str | None,
+        source: str,
+        run_id: str | None,
+        skills: dict[str, str],
+        notes: list[str],
+        status: str,
+        provenance: dict[str, Any],
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO role_versions "
+            "(id, role, parent_id, source, run_id, skills, notes, status, created_at, provenance_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                version_id,
+                role,
+                parent_id,
+                source,
+                run_id,
+                json.dumps(skills, ensure_ascii=False),
+                json.dumps(notes, ensure_ascii=False),
+                status,
+                beijing_now_iso(),
+                json.dumps(provenance, ensure_ascii=False),
+            ),
+        )
+
+    def _update_version_status_unlocked(
+        self,
+        *,
+        role: str,
+        version_id: str,
+        status: str,
+        provenance: dict[str, Any],
+    ) -> None:
         self._conn.execute(
             "UPDATE role_versions SET status = ?, provenance_json = ? WHERE role = ? AND id = ?",
             (status, json.dumps(provenance, ensure_ascii=False), role, version_id),
         )
-        self._conn.commit()
+
+    def _refresh_existing_version_unlocked(
+        self,
+        existing: StorageRow,
+        *,
+        role: str,
+        version_id: str,
+        skills: dict[str, str],
+        status: str,
+        provenance: dict[str, Any],
+        set_as_baseline: bool,
+    ) -> None:
+        existing_skills = _loads_json_object(existing["skills"], default={})
+        if existing_skills != skills:
+            raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
+        if set_as_baseline or _should_update_existing_release_status(str(existing["status"] or ""), status):
+            self._update_version_status_unlocked(
+                role=role,
+                version_id=version_id,
+                status=status,
+                provenance=provenance,
+            )
 
     def get_baseline(self, role: str) -> str | None:
         row = self._conn.execute(
@@ -99,46 +253,54 @@ class RegistryVersionRepository:
     def set_baseline(self, *, role: str, version_id: str, expected_current: str | None) -> bool:
         begin_write(self._conn)
         try:
-            rows = execute_for_update(
-                self._conn,
-                "SELECT id, status FROM role_versions WHERE role = ? ORDER BY created_at",
-                (role,),
-            ).fetchall()
-            if not any(str(row["id"]) == version_id for row in rows):
+            if not self._set_baseline_unlocked(
+                role=role,
+                version_id=version_id,
+                expected_current=expected_current,
+            ):
                 self._conn.rollback()
                 return False
-            current = self.current_baseline_unlocked(role, rows)
-            if current != expected_current:
-                self._conn.rollback()
-                return False
-            now = beijing_now_iso()
-            self._conn.execute(
-                "UPDATE role_versions SET status = 'archived' "
-                "WHERE role = ? AND status = 'baseline' AND id <> ?",
-                (role, version_id),
-            )
-            self._conn.execute(
-                "UPDATE role_versions SET status = 'baseline' WHERE role = ? AND id = ?",
-                (role, version_id),
-            )
-            self._conn.execute(
-                "INSERT INTO role_current_baseline (role, version_id, updated_at) "
-                "VALUES (?, ?, ?) "
-                "ON CONFLICT(role) DO UPDATE SET "
-                "version_id = excluded.version_id, updated_at = excluded.updated_at",
-                (role, version_id, now),
-            )
-            self._conn.execute(
-                "INSERT INTO role_baseline_history "
-                "(role, version_id, previous_version_id, reason, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (role, version_id, current, "baseline_set", now),
-            )
             self._conn.commit()
             return True
         except Exception:
             self._conn.rollback()
             raise
+
+    def _set_baseline_unlocked(self, *, role: str, version_id: str, expected_current: str | None) -> bool:
+        rows = execute_for_update(
+            self._conn,
+            "SELECT id, status FROM role_versions WHERE role = ? ORDER BY created_at",
+            (role,),
+        ).fetchall()
+        if not any(str(row["id"]) == version_id for row in rows):
+            return False
+        current = self.current_baseline_unlocked(role, rows)
+        if current != expected_current:
+            return False
+        now = beijing_now_iso()
+        self._conn.execute(
+            "UPDATE role_versions SET status = 'archived' "
+            "WHERE role = ? AND status = 'baseline' AND id <> ?",
+            (role, version_id),
+        )
+        self._conn.execute(
+            "UPDATE role_versions SET status = 'baseline' WHERE role = ? AND id = ?",
+            (role, version_id),
+        )
+        self._conn.execute(
+            "INSERT INTO role_current_baseline (role, version_id, updated_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(role) DO UPDATE SET "
+            "version_id = excluded.version_id, updated_at = excluded.updated_at",
+            (role, version_id, now),
+        )
+        self._conn.execute(
+            "INSERT INTO role_baseline_history "
+            "(role, version_id, previous_version_id, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (role, version_id, current, "baseline_set", now),
+        )
+        return True
 
     def reject_version(self, *, role: str, version_id: str, reason: str = "") -> bool:
         if self.load_version_row_uncommitted(role, version_id) is None:
@@ -219,6 +381,33 @@ class RegistryVersionRepository:
             return str(row["version_id"])
         baseline_row = next((item for item in rows if item["status"] == "baseline"), None)
         return str(baseline_row["id"]) if baseline_row is not None else None
+
+
+def _loads_json(value: Any, *, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value
+
+
+def _loads_json_object(value: Any, *, default: dict[str, Any]) -> dict[str, Any]:
+    data = _loads_json(value, default=default)
+    if not isinstance(data, dict):
+        return dict(default)
+    return {str(key): item for key, item in data.items()}
+
+
+def _should_update_existing_release_status(current_status: str, next_status: str) -> bool:
+    order = {"active": 0, "shadow": 1, "canary": 2, "baseline": 3, "promoted": 3}
+    current = str(current_status or "active").strip().lower()
+    target = str(next_status or "active").strip().lower()
+    if current in {"baseline", "promoted", "rejected"}:
+        return False
+    return order.get(target, 0) > order.get(current, 0)
 
 
 __all__ = ["RegistryVersionRepository"]

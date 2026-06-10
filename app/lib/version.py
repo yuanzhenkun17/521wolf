@@ -713,50 +713,28 @@ class PostgresVersionRegistry:
         version_id = version_id or compute_hash(normalized)
         _validate_name(version_id, "version_id")
 
-        existing = self._repo.load_version_row(role, version_id)
-        if existing is not None:
-            existing_skills = _loads_json_object(existing["skills"], default={})
-            if existing_skills != normalized:
-                raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
-            if set_as_baseline or _should_update_existing_release_status(str(existing["status"] or ""), status):
-                self._repo.update_version_status(
-                    role=role,
-                    version_id=version_id,
-                    status=status,
-                    provenance=provenance_payload,
-                )
-        else:
-            notes = [
-                item
-                for item in (
-                    f"proposal_ids={','.join(proposal_ids)}" if proposal_ids else "",
-                )
-                if item
-            ]
-            try:
-                self._repo.insert_version(
-                    version_id=version_id,
-                    role=role,
-                    parent_id=parent_id,
-                    source=source,
-                    run_id=run_id,
-                    skills=normalized,
-                    notes=notes,
-                    status=status,
-                    provenance=provenance_payload,
-                )
-            except Exception:
-                existing = self._repo.load_version_row(role, version_id)
-                if existing is None:
-                    raise
-                existing_skills = _loads_json_object(existing["skills"], default={})
-                if existing_skills != normalized:
-                    raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
-
-        if set_as_baseline:
-            ok = self.set_baseline(role, version_id, expected_current=expected_current)
-            if not ok:
-                raise RuntimeError(f"Failed to set baseline for {role}: expected {expected_current!r}")
+        notes = [
+            item
+            for item in (
+                f"proposal_ids={','.join(proposal_ids)}" if proposal_ids else "",
+            )
+            if item
+        ]
+        ok = self._repo.publish_version(
+            version_id=version_id,
+            role=role,
+            parent_id=parent_id,
+            source=source,
+            run_id=run_id,
+            skills=normalized,
+            notes=notes,
+            status=status,
+            provenance=provenance_payload,
+            set_as_baseline=set_as_baseline,
+            expected_current=expected_current,
+        )
+        if not ok:
+            raise RuntimeError(f"Failed to set baseline for {role}: expected {expected_current!r}")
         return version_id
 
     def get_baseline(self, role: str) -> str | None:
