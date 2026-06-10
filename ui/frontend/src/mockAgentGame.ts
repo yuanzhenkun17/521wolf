@@ -1,4 +1,5 @@
-// @ts-nocheck
+type LooseRecord = Record<string, any>
+
 const MOCK_STEP_DELAY_MS = {
   setup: 420,
   night: 950,
@@ -75,7 +76,7 @@ const MOCK_EVOLUTION_LABELS = {
   guard: '守卫'
 }
 
-const MOCK_BENCHMARK_SUITES = [
+const MOCK_BENCHMARK_SUITES: LooseRecord[] = [
   {
     id: 'role-baseline-quick-v1',
     version: 1,
@@ -190,7 +191,7 @@ const MOCK_BENCHMARK_SUITES = [
   }
 ]
 
-const mockEvolutionVersions = Object.fromEntries(MOCK_EVOLUTION_ROLES.map((role, index) => [
+const mockEvolutionVersions: Record<string, LooseRecord[]> = Object.fromEntries(MOCK_EVOLUTION_ROLES.map((role, index) => [
   role,
   [
     {
@@ -212,7 +213,7 @@ const mockEvolutionVersions = Object.fromEntries(MOCK_EVOLUTION_ROLES.map((role,
 
 let mockEvolutionCounter = 3
 
-const mockEvolutionRuns = [
+const mockEvolutionRuns: LooseRecord[] = [
   {
     kind: 'role_evolution_run',
     schema_version: 1,
@@ -274,7 +275,7 @@ const mockEvolutionRuns = [
   }
 ]
 
-const mockEvolutionBatches = [
+const mockEvolutionBatches: LooseRecord[] = [
   {
     kind: 'role_evolution_batch',
     schema_version: 1,
@@ -299,7 +300,7 @@ const MOCK_DEFAULT_BENCHMARK_ROLE = MOCK_EVOLUTION_ROLES[0]
 const MOCK_DEFAULT_BENCHMARK_BATCH_ID = `mock-bench-${MOCK_DEFAULT_BENCHMARK_ROLE}`
 const MOCK_DEFAULT_BENCHMARK_RESULT_ID = `${MOCK_DEFAULT_BENCHMARK_BATCH_ID}:${MOCK_DEFAULT_BENCHMARK_ROLE}`
 
-const mockBenchmarkBatches = [
+const mockBenchmarkBatches: LooseRecord[] = [
   {
     kind: 'benchmark_batch',
     schema_version: 1,
@@ -365,7 +366,7 @@ const mockBenchmarkBatches = [
   }
 ]
 
-const mockEvolutionDiffs = {
+const mockEvolutionDiffs: Record<string, LooseRecord[]> = {
   'mock-evo-seer-review': [
     { filename: 'speech.md', action: 'rewrite', proposal_ref: 'mock-proposal-seer-1' },
     { filename: 'claim.md', action: 'tighten', proposal_ref: 'mock-proposal-seer-2' },
@@ -380,14 +381,14 @@ const mockEvolutionDiffs = {
   ]
 }
 
-const mockBattleLeaderboardEntries = [
+const mockBattleLeaderboardEntries: LooseRecord[] = [
   { role: 'seer', label: '预言家 baseline', version_id: 'base-seer-20260604', score: 0.61, win_rate: 0.58, total_games: 40, source: 'battle' },
   { role: 'seer', label: '预言家 candidate', version_id: 'cand-seer-review-a4', score: 0.67, win_rate: 0.64, total_games: 40, source: 'battle' },
   { role: 'witch', label: '女巫 baseline', version_id: 'base-witch-20260604', score: 0.57, win_rate: 0.53, total_games: 36, source: 'battle' },
   { role: 'guard', label: '守卫 candidate', version_id: 'cand-guard-review-a7', score: 0.62, win_rate: 0.59, total_games: 28, source: 'battle' }
 ]
 
-const mockModelLeaderboardEntries = [
+const mockModelLeaderboardEntries: LooseRecord[] = [
   {
     scope: 'model',
     hash: 'qwen3-flash-runtime-a',
@@ -452,12 +453,12 @@ const mockModelLeaderboardEntries = [
   }
 ]
 
-const mockBenchmarkSnapshots = []
-const mockBenchmarkViews = new Map()
+const mockBenchmarkSnapshots: LooseRecord[] = []
+const mockBenchmarkViews = new Map<string, LooseRecord>()
 
 let mockSelfplayCounter = 2
 
-const mockSelfplayRuns = [
+const mockSelfplayRuns: LooseRecord[] = [
   {
     run_id: 'mock-selfplay-eval-a',
     status: 'completed',
@@ -799,7 +800,7 @@ function createVoteEvents(game, voteRows) {
 }
 
 function baseGame(mode = 'watch', scenario = 'good_win') {
-  const game = {
+  const game: LooseRecord = {
     game_id: `mock-agent-${Date.now()}`,
     log_name: 'Mock 多 Agent 狼人杀测试局',
     mode,
@@ -842,7 +843,7 @@ function baseGame(mode = 'watch', scenario = 'good_win') {
   return game
 }
 
-function applyStartConfig(game, body = {}) {
+function applyStartConfig(game: LooseRecord, body: LooseRecord = {}) {
   const roleSkillDirs = body.role_skill_dirs || body.role_versions || game.role_skill_dirs || {}
   const humanPlayerId = body.human_player_id === undefined ? game.human_player_id : body.human_player_id
   game.seed = body.seed ?? game.seed ?? null
@@ -2239,10 +2240,10 @@ function writeStoredHistory(games) {
   }
 }
 
-let activeGame = null
-let archivedGames = readStoredHistory()
+let activeGame: LooseRecord | null = null
+let archivedGames: LooseRecord[] = readStoredHistory()
 
-function snapshot(game = activeGame) {
+function snapshot(game: LooseRecord | null = activeGame) {
   if (!game) return null
   const data = clone(game)
   delete data.timeline
@@ -2258,7 +2259,7 @@ function tallyDecisionSources(decisions = []) {
   }, {})
 }
 
-function mockPublicEvents(game = {}) {
+function mockPublicEvents(game: LooseRecord = {}) {
   return (game.logs || [])
     .filter((event) => event.visibility !== 'god' && event.visibility !== 'private')
     .map((event) => ({
@@ -2276,7 +2277,7 @@ function mockPublicEvents(game = {}) {
     }))
 }
 
-function mockArchiveHighlights(game = {}, events = [], decisions = []) {
+function mockArchiveHighlights(game: LooseRecord = {}, events: LooseRecord[] = [], decisions: LooseRecord[] = []) {
   const winner = game.winner ? `最终裁定：${game.winner}。` : '本局仍保留完整过程证据。'
   const voteEvent = events.find((event) => /vote|exile|投票|放逐/.test(`${event.event_type || ''} ${event.message || ''}`))
   const nightDecision = decisions.find((decision) => ['seer_check', 'witch_act', 'guard_protect', 'werewolf_kill'].includes(decision.action))
@@ -2287,7 +2288,7 @@ function mockArchiveHighlights(game = {}, events = [], decisions = []) {
   ].filter(Boolean)
 }
 
-function mockGameArchivePayload(game = {}) {
+function mockGameArchivePayload(game: LooseRecord = {}) {
   const events = mockPublicEvents(game)
   const decisions = game.decisions || []
   const sourceTally = tallyDecisionSources(decisions)
@@ -2595,7 +2596,7 @@ function mockCandidateIds(game, actionType) {
     .map((player) => player.id)
 }
 
-function mockPendingMetadata(game, actionType, event = {}) {
+function mockPendingMetadata(game, actionType, event: LooseRecord = {}) {
   if (actionType === 'witch_act') {
     return {
       can_save: !game.skill_state?.witch_antidote_used,
@@ -2609,7 +2610,7 @@ function mockPendingMetadata(game, actionType, event = {}) {
   return {}
 }
 
-function mockPendingForEvent(game, event = {}) {
+function mockPendingForEvent(game, event: LooseRecord = {}) {
   if (!game || game.mode !== 'play' || !game.human_player_id || game.winner) return null
   const humanId = Number(game.human_player_id)
   const actorId = Number(event.decision?.actor_id ?? event.log?.actor_id ?? 0)
@@ -2716,7 +2717,7 @@ function stepActiveGame() {
   return { game: activeGame, delay: MOCK_STEP_DELAY_MS[event.phase] || 900 }
 }
 
-function startGame(body = {}) {
+function startGame(body: LooseRecord = {}) {
   activeGame = baseGame(body.mode || 'watch', body.scenario || 'good_win')
   applyStartConfig(activeGame, body)
   archivedGames = archivedGames.filter((game) => game.game_id !== activeGame.game_id)
@@ -2826,7 +2827,7 @@ function addHumanGenericAction(actionType, targetId = null, choice = null, text 
   return activeGame
 }
 
-function parseBody(options = {}) {
+function parseBody(options: LooseRecord = {}) {
   if (!options.body) return {}
   try {
     return typeof options.body === 'string' ? JSON.parse(options.body) : options.body
@@ -2945,7 +2946,7 @@ function mockModelLeaderboard(evaluationSetId = '') {
   }
 }
 
-function mockBenchmarkLeaderboardRows({ scope = 'role_version', evaluationSetId = '', targetRole = '' } = {}) {
+function mockBenchmarkLeaderboardRows({ scope = 'role_version', evaluationSetId = '', targetRole = '' }: LooseRecord = {}) {
   if (scope === 'model') {
     return mockModelLeaderboard(evaluationSetId).entries
   }
@@ -3080,7 +3081,7 @@ function mockSnapshotCount(value, fallback = 0) {
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : fallback
 }
 
-function mockSnapshotMatchingRunIds(snapshot = {}) {
+function mockSnapshotMatchingRunIds(snapshot: LooseRecord = {}) {
   const benchmarkId = String(snapshot.benchmark_id || '').trim()
   const evaluationSetId = String(snapshot.evaluation_set_id || '').trim()
   const targetRole = String(snapshot.target_role || '').trim()
@@ -3102,7 +3103,7 @@ function mockSnapshotMatchingRunIds(snapshot = {}) {
   return mockSnapshotStringList([...fromBatches, suiteRunId])
 }
 
-function mockSnapshotAuditFields(snapshot = {}, rowsInput = null) {
+function mockSnapshotAuditFields(snapshot: LooseRecord = {}, rowsInput = null) {
   const rows = Array.isArray(rowsInput)
     ? rowsInput
     : (Array.isArray(snapshot.rows) ? snapshot.rows : [])
@@ -3285,7 +3286,7 @@ function ensureMockBenchmarkSnapshots() {
 }
 
 function mockSnapshotSummary(snapshot) {
-  const { rows, ...summary } = mockSnapshotAuditFields(snapshot)
+  const { rows, ...summary } = mockSnapshotAuditFields(snapshot) as LooseRecord
   return clone(summary)
 }
 
@@ -3315,7 +3316,7 @@ function listMockBenchmarkSnapshots(queryString = '') {
   }
 }
 
-function createMockBenchmarkSnapshot(body = {}) {
+function createMockBenchmarkSnapshot(body: LooseRecord = {}) {
   const scope = body.scope === 'model' ? 'model' : 'role_version'
   const rows = mockBenchmarkLeaderboardRows({
     scope,
@@ -3443,7 +3444,7 @@ function mockSnapshotCompareRowKey(row, index, scope) {
   return String(value || `${scope}-${index + 1}`)
 }
 
-function mockSnapshotCompareRow(row = {}, index = 0, scope = 'role_version') {
+function mockSnapshotCompareRow(row: LooseRecord = {}, index = 0, scope = 'role_version') {
   const key = mockSnapshotCompareRowKey(row, index, scope)
   const score = mockSnapshotCompareNumber(
     row.score,
@@ -3743,7 +3744,7 @@ function listMockBenchmarkViews(queryString = '') {
   }
 }
 
-function saveMockBenchmarkView(body = {}) {
+function saveMockBenchmarkView(body: LooseRecord = {}) {
   const viewKey = String(body.view_key || '').trim()
   if (!viewKey) throw new Error('view_key is required')
   const existing = mockBenchmarkViews.get(viewKey) || {}
@@ -3790,7 +3791,7 @@ function mockEvolutionBaseline(role) {
     || (mockEvolutionVersions[role] || [])[0]
 }
 
-function createMockEvolutionRun(body = {}) {
+function createMockEvolutionRun(body: LooseRecord = {}) {
   const role = body.roles?.[0] || MOCK_EVOLUTION_ROLES[0]
   const baseline = mockEvolutionBaseline(role)
   const id = `mock-evo-${role}-${++mockEvolutionCounter}`
@@ -3839,7 +3840,7 @@ function createMockEvolutionRun(body = {}) {
   return clone(run)
 }
 
-function createMockEvolutionBatch(body = {}) {
+function createMockEvolutionBatch(body: LooseRecord = {}) {
   const roles = Array.isArray(body.roles) && body.roles.length ? body.roles : MOCK_EVOLUTION_ROLES
   const id = `mock-batch-${++mockEvolutionCounter}`
   const batch = {
@@ -3873,7 +3874,7 @@ function createMockEvolutionBatch(body = {}) {
   return clone(batch)
 }
 
-function createMockBenchmarkBatch(body = {}) {
+function createMockBenchmarkBatch(body: LooseRecord = {}) {
   const runPlan = createMockBenchmarkPlan(body)
   if (runPlan?.budget?.exceeded?.value) {
     throw createMockBenchmarkBudgetError(runPlan)
@@ -3948,7 +3949,7 @@ function createMockBenchmarkBatch(body = {}) {
   return clone(batch)
 }
 
-function createMockBenchmarkBudgetError(runPlan = {}) {
+function createMockBenchmarkBudgetError(runPlan: LooseRecord = {}) {
   const budget = runPlan?.budget || {}
   const exceeded = budget?.exceeded || {}
   const detail = {
@@ -3986,7 +3987,7 @@ function createMockBenchmarkBudgetError(runPlan = {}) {
       ]
     }
   }
-  const error = new Error('Benchmark budget exceeded.')
+  const error = new Error('Benchmark budget exceeded.') as Error & LooseRecord
   error.name = 'ApiError'
   error.status = 422
   error.code = 'benchmark_budget_exceeded'
@@ -4273,7 +4274,7 @@ function mockBenchmarkBatchReportPayload(batchId) {
     .flatMap((row) => row.score_summary?.decision_judge_aggregate?.top_mistake_tags || [])
     .filter(Boolean)
 
-  const report = {
+  const report: LooseRecord = {
     kind: 'benchmark_run_report',
     schema_version: 1,
     report_id: `benchmark_report:${runId}`,
@@ -4358,10 +4359,10 @@ function mockBenchmarkBatchReportPayload(batchId) {
   return report
 }
 
-function mockBenchmarkRunReportManifest(report, exportContentHash = '') {
+function mockBenchmarkRunReportManifest(report: LooseRecord, exportContentHash = '') {
   const suite = report.suite || {}
   const subject = report.subject || {}
-  const artifactHashes = {
+  const artifactHashes: LooseRecord = {
     content_hash: report.content_hash
   }
   if (exportContentHash) artifactHashes.export_content_hash = exportContentHash
@@ -4628,7 +4629,7 @@ function filterSet(value) {
   return items.length ? new Set(items) : null
 }
 
-function createMockBenchmarkPlan(body = {}) {
+function createMockBenchmarkPlan(body: LooseRecord = {}) {
   const suite = MOCK_BENCHMARK_SUITES.find((item) => item.id === body.benchmark_id) || null
   const isModelBenchmark = body.target_type === 'model' || suite?.target_type === 'model'
   const roles = isModelBenchmark
@@ -4862,11 +4863,11 @@ function mockEvolutionGames(runId, phase = 'training', side = '') {
 
 function mockEvolutionGameArchive(runId, gameId, phase = 'training', side = '') {
   const sideLabel = side === 'baseline' ? '基线' : side === 'candidate' ? '候选' : '训练'
-  const decisions = mockEvolutionGameDecisions(runId, gameId, phase, side).decisions.map((decision, index) => ({
+  const decisions = (mockEvolutionGameDecisions(runId, gameId, phase, side).decisions as LooseRecord[]).map((decision, index) => ({
     ...decision,
     source: decision.source || ['llm', 'tot', 'policy_adjusted'][index % 3]
   }))
-  const events = mockEvolutionGameEvents(runId, gameId, phase, side).events.map((event, index) => ({
+  const events = (mockEvolutionGameEvents(runId, gameId, phase, side).events as LooseRecord[]).map((event, index) => ({
     ...event,
     source: event.source || ['mock', 'llm', 'got'][index % 3]
   }))
@@ -5018,11 +5019,11 @@ function mockSelfplayGames(runId) {
 }
 
 function mockSelfplayGameArchive(runId, gameId) {
-  const decisions = mockSelfplayGameDecisions(runId, gameId).decisions.map((decision, index) => ({
+  const decisions = (mockSelfplayGameDecisions(runId, gameId).decisions as LooseRecord[]).map((decision, index) => ({
     ...decision,
     source: decision.source || ['llm', 'got', 'tot'][index % 3]
   }))
-  const events = mockSelfplayGameEvents(runId, gameId).events.map((event, index) => ({
+  const events = (mockSelfplayGameEvents(runId, gameId).events as LooseRecord[]).map((event, index) => ({
     ...event,
     source: event.source || ['mock', 'llm', 'got'][index % 3]
   }))
@@ -5102,7 +5103,7 @@ function mockSelfplayGameEvents(runId, gameId) {
   }
 }
 
-function createMockSelfplayRun(body = {}) {
+function createMockSelfplayRun(body: LooseRecord = {}) {
   const id = `mock-selfplay-${++mockSelfplayCounter}`
   const total = Number(body.num_games || 10)
   const run = {
@@ -5137,7 +5138,7 @@ function applyMockSelfplayAction(runId, action) {
   return cloneSelfplayRun(run)
 }
 
-export async function mockApiFetch(path, options = {}) {
+export async function mockApiFetch(path, options: LooseRecord = {}) {
   const body = parseBody(options)
   const method = String(options.method || 'GET').toUpperCase()
   const [routePath, queryString = ''] = String(path).split('?')
