@@ -9,7 +9,6 @@ import PhaseTabs from '../components/PhaseTabs.vue'
 import SeatLedger from '../components/SeatLedger.vue'
 import SpeechSection from '../components/SpeechSection.vue'
 import VoteSection from '../components/VoteSection.vue'
-import EvidenceContextBar from '../components/history/EvidenceContextBar.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 import {
   displayActionLabel,
@@ -128,7 +127,7 @@ const RAW_LOG_FILTERS = [
   { key: 'vote', label: '投票' },
   { key: 'error', label: '异常' }
 ]
-const JUDGE_AVATAR_SRC = '/livehall-assets/props/optimized/judge-avatar-160.webp'
+const JUDGE_AVATAR_SRC = '/livehall-assets/props/judge-avatar.png'
 
 function hasHistoryAction(name: HistoryActionName) {
   return historyStore.hasRuntimeAction(name) || typeof historyActionProps[name] === 'function'
@@ -137,6 +136,12 @@ function hasHistoryAction(name: HistoryActionName) {
 function runHistoryAction(name: HistoryActionName, ...args: any[]) {
   if (historyStore.hasRuntimeAction(name)) return historyActionStore[name]?.(...args)
   return historyActionProps[name]?.(...args)
+}
+
+function isSetupHistoryPage(page: any) {
+  const phase = String(page?.phase || '').trim().toLowerCase()
+  const key = String(page?.key || '').trim().toLowerCase()
+  return phase === 'setup' || /^day-\d+-setup$/.test(key)
 }
 
 const canShowRawLogs = computed(() =>
@@ -150,9 +155,22 @@ const historyLoading = computed(() => historyStore.loading || props.historyLoadi
 const historyNotice = computed<LooseRecord>(() => (historyStore.notice as LooseRecord | null) || props.historyNotice)
 const hasStoreSelection = computed(() => Boolean(historyStore.selectedHistoryGame || historyStore.selectedHistoryGameId))
 const hasStoreDetail = computed(() => Boolean(historyStore.selectedHistoryPage || historyStore.selectedHistoryPageKey))
-const historyPagesForTabs = computed<any[]>(() => hasStoreSelection.value ? historyStore.pages : props.historyPages)
+const allHistoryPages = computed<any[]>(() => hasStoreSelection.value ? historyStore.pages : props.historyPages)
+const historyPagesForTabs = computed<any[]>(() => allHistoryPages.value.filter((page) => !isSetupHistoryPage(page)))
 const selectedHistoryPageKey = computed(() => historyStore.selectedHistoryPageKey || props.selectedHistoryPageKey)
-const selectedHistoryPage = computed<LooseRecord | null>(() => (historyStore.selectedHistoryPage as LooseRecord | null) || props.selectedHistoryPage)
+const selectedHistoryPageRaw = computed<LooseRecord | null>(() => (historyStore.selectedHistoryPage as LooseRecord | null) || props.selectedHistoryPage)
+const selectedHistoryPage = computed<LooseRecord | null>(() => {
+  const current = selectedHistoryPageRaw.value
+  const visibleMatch = historyPagesForTabs.value.find((page) => page.key === selectedHistoryPageKey.value)
+  if (!current || isSetupHistoryPage(current)) return visibleMatch || historyPagesForTabs.value[0] || current
+  return current
+})
+const selectedPhaseTabKey = computed(() => {
+  const currentKey = selectedHistoryPage.value?.key || selectedHistoryPageKey.value
+  return historyPagesForTabs.value.some((page) => page.key === currentKey)
+    ? currentKey
+    : historyPagesForTabs.value[0]?.key || currentKey
+})
 const phaseLoadingByKey = computed<LooseRecord>(() => hasStoreDetail.value ? historyStore.phaseLoadingByKey : props.phaseLoadingByKey)
 const historyLogs = computed<any[]>(() => hasStoreDetail.value ? historyStore.historyLogs : props.historyLogs)
 const pageNightActions = computed<any[]>(() => hasStoreDetail.value ? historyStore.pageNightActions : props.pageNightActions)
@@ -185,7 +203,7 @@ const rawLogsForFocus = computed(() => historyLogs.value.filter((log) => rowMatc
 const filteredRawLogs = computed(() =>
   rawLogsForFocus.value.filter((log) => rawLogFilter.value === 'all' || rawLogKind(log) === rawLogFilter.value)
 )
-const visibleRawLogs = computed(() => filteredRawLogs.value.slice(0, 180))
+const visibleRawLogs = computed(() => filteredRawLogs.value)
 const rawLogFilters = computed(() =>
   RAW_LOG_FILTERS.map((item) => ({
     ...item,
@@ -198,6 +216,24 @@ const selectedReview = computed(() => reviewByGameId.value[selectedHistoryGame.v
 const selectedArchive = computed(() => archiveByGameId.value[selectedHistoryGame.value?.game_id] || null)
 const selectedFlowData = computed(() => flowDataByGameId.value[selectedHistoryGame.value?.game_id] || null)
 const selectedFlowLoading = computed(() => Boolean(flowLoadingByGameId.value[selectedHistoryGame.value?.game_id]))
+const selectedReviewGame = computed(() => {
+  const game = selectedHistoryGame.value || {}
+  const rows = mergeReviewDecisions([
+    ...(Array.isArray(game.decisions) ? game.decisions : []),
+    ...pageNightActions.value,
+    ...pageSpeechDecisions.value,
+    ...sheriffVotes.value,
+    ...voteDecisions.value,
+    ...pageLastWords.value,
+    ...historyLogs.value
+  ])
+  if (!rows.length) return game
+  return {
+    ...game,
+    decisions: rows,
+    decision_count: game.decision_count ?? rows.length
+  }
+})
 const detailInlineNotice = computed(() => inlineNoticeForDisplay(historyNotice.value))
 const detailErrorNotice = computed(() => noticeErrorForPanel(historyNotice.value))
 const selectedGameConfig = computed(() => {
@@ -217,6 +253,20 @@ const selectedGameConfig = computed(() => {
 const reviewLoaded = computed(() => Boolean(selectedReview.value && !selectedReview.value.error))
 const archiveLoaded = computed(() => Boolean(selectedArchive.value && !selectedArchive.value.error))
 const selectedPhasePagination = computed(() => selectedHistoryPage.value?.pagination || {})
+const detailMetaItems = computed(() => {
+  const config = selectedGameConfig.value || {}
+  const roleCoverage = config.role_skill_dirs && typeof config.role_skill_dirs === 'object' && !Array.isArray(config.role_skill_dirs)
+    ? Object.keys(config.role_skill_dirs).filter((key) => String(config.role_skill_dirs[key] ?? '').trim()).length
+    : 0
+  const skillDir = normalizeHistoryDisplayText(config.skill_dir) || '默认技能'
+  return [
+    { label: '随机种子', value: config.seed == null || config.seed === '' ? '随机' : normalizeHistoryDisplayText(config.seed) },
+    { label: '人数', value: config.player_count || selectedHistoryGame.value?.players?.length || 12 },
+    { label: '最大天数', value: config.max_days || 20 },
+    { label: '技能目录', value: skillDir === 'default' ? '默认技能' : skillDir },
+    { label: '角色覆盖', value: roleCoverage ? `${roleCoverage} 项` : '无' }
+  ]
+})
 const phaseHasMore = computed(() =>
   Boolean(selectedPhasePagination.value.logs?.has_more || selectedPhasePagination.value.decisions?.has_more)
 )
@@ -328,13 +378,6 @@ const phaseDetailCount = computed(() => {
 const canShowPhaseDecisionPanel = computed(() =>
   ['night', 'speech', 'vote'].includes(phaseCategory.value) || focusedLastWords.value.length > 0
 )
-const phaseDecisionPanelMeta = computed(() => {
-  const scope = hasPlayerFocus.value ? focusLabel.value : '全员'
-  if (phaseCategory.value === 'vote') return `${scope} · ${phaseDetailCount.value} 条投票决策`
-  if (phaseCategory.value === 'speech') return `${scope} · ${phaseDetailCount.value} 条发言/遗言`
-  if (phaseCategory.value === 'night') return `${scope} · ${phaseDetailCount.value} 条夜间行动`
-  return `${scope} · ${phaseDetailCount.value} 条结构化记录`
-})
 const nightMatrixRows = computed(() =>
   focusedNightActions.value.map((action, index) => ({
     key: decisionKey(action, index),
@@ -386,26 +429,6 @@ const voteAnomalyRows = computed(() => {
   }
   if (hasPlayerFocus.value && !votes.length) rows.push({ key: 'focus-empty', tone: 'info', text: `${focusLabel.value}在本阶段没有可匹配的投票记录` })
   return rows.slice(0, 3)
-})
-const phaseConclusion = computed(() => {
-  const focusPrefix = hasPlayerFocus.value ? `${focusLabel.value}：` : ''
-  if (phaseCategory.value === 'night') {
-    if (hasPlayerFocus.value && focusedNightActions.value.length) return `${focusPrefix}${focusedNightActions.value.length} 条夜间行动，${nightResult.value || '暂无结算文本'}`
-    return nightResult.value || `${focusedNightActions.value.length} 条夜间行动记录`
-  }
-  if (phaseCategory.value === 'speech') {
-    const speakers = new Set(focusedSpeechDecisions.value.map((item) => String(normalizePlayerId(rowActorId(item)))).filter(Boolean)).size
-    return `${focusPrefix}${speakers || focusedSpeechDecisions.value.length} 名玩家发言，${speechTimelineRows.value.flatMap((row) => row.tags).length} 个关键信号`
-  }
-  if (phaseCategory.value === 'vote') {
-    const top = voteRankingRows.value[0]
-    const result = selectedHistoryPage.value?.phase === 'sheriff_result' ? sheriffResult.value?.message : ''
-    if (top) return `${focusPrefix}最高票 ${top.label}，${top.count} 票${result ? `；${normalizeText(result)}` : ''}`
-    return `${focusPrefix}暂无可统计票型`
-  }
-  if (phaseCategory.value === 'result') return `最终胜方：${winnerLabel(selectedHistoryGame.value?.winner)}`
-  if (phaseCategory.value === 'setup') return `角色、规则和初始状态已记录，原始记录 ${rawLogsForFocus.value.length} 条`
-  return hasPlayerFocus.value ? `${focusPrefix}${focusedDecisionCount.value || rawLogsForFocus.value.length} 条相关记录` : selectedPhaseSummary.value
 })
 const phaseSummaryCards = computed(() => {
   if (phaseCategory.value === 'night') {
@@ -528,31 +551,17 @@ const selectedPhaseTitle = computed(() => {
   return selectedHistoryPage.value ? pageTitle(selectedHistoryPage.value) : '阶段详情'
 })
 
-const selectedPhaseKind = computed(() => {
-  const phase = selectedHistoryPage.value?.phase
-  return displayPhaseLabel(phase) || normalizeHistoryDisplayText(phaseName(phase)) || '阶段'
-})
-
-const selectedPhaseSummary = computed(() => {
-  const phase = selectedHistoryPage.value?.phase
-  if (phase === 'night') return '夜间行动、技能目标与结算结果'
-  if (['speech', 'sheriff'].includes(phase)) return '玩家发言、公开表述与决策依据'
-  if (['vote', 'exile_vote', 'pk_vote', 'sheriff_vote', 'sheriff_result'].includes(phase)) return '票型分布、投票理由与阶段结果'
-  if (phase === 'result' || phase === 'finished') return '最终胜负、死亡记录与游戏结束事件'
-  return '阶段事件、系统记录与关键上下文'
-})
-
 const archiveButtonText = computed(() => {
   if (archiveLoading.value) return '读取中'
-  if (archiveLoaded.value) return '档案已载入'
+  if (archiveLoaded.value) return '对局档案'
   return selectedArchive.value?.error ? '重试档案' : '对局档案'
 })
 function asyncTabState({ loading = false, loaded = false, error = false, missing = false } = {}) {
-  if (loading) return { state: 'loading', badge: '读取中' }
-  if (error) return { state: 'error', badge: '错误' }
-  if (missing) return { state: 'missing', badge: '缺失' }
-  if (loaded) return { state: 'loaded', badge: '已载入' }
-  return { state: 'idle', badge: '未载入' }
+  if (loading) return { state: 'loading' }
+  if (error) return { state: 'error' }
+  if (missing) return { state: 'missing' }
+  if (loaded) return { state: 'loaded' }
+  return { state: 'idle' }
 }
 const reviewTabState = computed(() => asyncTabState({
   loading: reviewLoading.value,
@@ -567,7 +576,7 @@ const archiveTabState = computed(() => asyncTabState({
   missing: selectedArchive.value?.missing === true || selectedArchive.value?.status === 'missing'
 }))
 const workspaceTabs = computed(() => [
-  { key: 'phase', label: '阶段详情', badge: historyLogs.value.length ? String(historyLogs.value.length) : '', state: 'loaded' },
+  { key: 'phase', label: '阶段详情', state: 'loaded' },
   { key: 'review', label: '复盘报告', ...reviewTabState.value },
   { key: 'archive', label: '对局档案', ...archiveTabState.value }
 ])
@@ -575,6 +584,41 @@ const workspaceTabs = computed(() => [
 function normalizeWorkspaceTab(tab: any) {
   const text = String(tab || '').trim().toLowerCase()
   return WORKSPACE_TAB_KEYS.has(text) ? text : 'phase'
+}
+
+function reviewDecisionCandidates(row: LooseRecord = {}) {
+  if (!row || typeof row !== 'object') return []
+  return [
+    row.decision,
+    row.vote,
+    row.payload?.decision,
+    row.payload,
+    row
+  ].filter((item) => item && typeof item === 'object')
+}
+
+function mergeReviewDecisions(rows: any[] = []) {
+  const seen = new Set<string>()
+  const merged: LooseRecord[] = []
+  rows.flatMap(reviewDecisionCandidates).forEach((row, index) => {
+    const actor = rowActorId(row)
+    const target = rowTargetId(row)
+    const action = row.action || row.action_type || row.type || row.event_type || ''
+    if (actor == null && target == null && !action) return
+    const normalized = {
+      ...row,
+      actor_id: actor ?? row.actor_id ?? row.player_id ?? null,
+      target_id: target ?? row.target_id ?? row.selected_target ?? null,
+      action: action || row.action || row.action_type || '',
+      phase: row.phase || row.stage || row.round_phase || selectedHistoryPage.value?.phase || '',
+      day: row.day ?? row.round ?? selectedHistoryPage.value?.day ?? 1
+    }
+    const key = decisionKey(normalized, index)
+    if (seen.has(key)) return
+    seen.add(key)
+    merged.push(normalized)
+  })
+  return merged
 }
 
 function setWorkspaceTab(tab: any, { emitUpdate = true, load = true }: { emitUpdate?: boolean, load?: boolean } = {}) {
@@ -607,6 +651,27 @@ watch(() => selectedHistoryGame.value?.game_id, () => {
 watch(() => selectedHistoryPage.value?.key, () => {
   rawLogFilter.value = 'all'
 })
+
+watch(
+  () => [
+    workspaceTab.value,
+    selectedHistoryPageRaw.value?.key || '',
+    selectedHistoryPageKey.value,
+    historyPagesForTabs.value.map((page) => page.key).join('|')
+  ],
+  () => {
+    if (workspaceTab.value !== 'phase') return
+    const fallback = historyPagesForTabs.value[0]
+    if (!fallback) return
+    const current = selectedHistoryPageRaw.value
+    const currentKey = current?.key || selectedHistoryPageKey.value
+    const currentIsVisible = historyPagesForTabs.value.some((page) => page.key === currentKey)
+    if (currentKey !== fallback.key && (!current || isSetupHistoryPage(current) || !currentIsVisible)) {
+      updatePage(fallback.key)
+    }
+  },
+  { immediate: true }
+)
 
 function togglePhaseEvidence() {
   const key = phaseEvidenceKey.value
@@ -995,20 +1060,18 @@ function clearPlayerFocus() {
               @click="selectWorkspaceTab(item.key)"
             >
               <span>{{ item.label }}</span>
-              <small
-                v-if="item.badge"
-                class="detail-workspace-badge"
-                :data-state="item.state"
-              >
-                {{ item.badge }}
-              </small>
             </button>
           </nav>
-          <EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" />
+          <div v-if="workspaceTab === 'phase'" class="detail-context-line" aria-label="对局配置">
+            <span v-for="item in detailMetaItems" :key="item.label">
+              <small>{{ item.label }}：</small>
+              <b>{{ item.value }}</b>
+            </span>
+          </div>
           <PhaseTabs
             v-if="workspaceTab === 'phase'"
             :pages="historyPagesForTabs"
-            :selected-page-key="selectedHistoryPage?.key || selectedHistoryPageKey"
+            :selected-page-key="selectedPhaseTabKey"
             :page-title="pageTitle"
             @update:selectedPageKey="updatePage"
           />
@@ -1019,28 +1082,6 @@ function clearPlayerFocus() {
           <div class="detail-main-column">
             <!-- Phase content -->
             <section v-if="workspaceTab === 'phase' && selectedHistoryPage" class="history-page-detail">
-              <header class="phase-overview" :data-phase="phaseCategory">
-                <div class="phase-overview-copy">
-                  <small>{{ selectedPhaseKind }}</small>
-                  <h3>{{ selectedPhaseTitle }}</h3>
-                  <p>{{ phaseConclusion }}</p>
-                  <button
-                    v-if="hasPlayerFocus"
-                    type="button"
-                    class="phase-focus-clear"
-                    @click="clearPlayerFocus"
-                  >
-                    {{ focusLabel }} · 清除聚焦
-                  </button>
-                </div>
-                <div class="phase-overview-stats" aria-label="阶段摘要">
-                  <span v-for="item in phaseSummaryCards" :key="item.label">
-                    <small>{{ item.label }}</small>
-                    <b>{{ item.value }}</b>
-                  </span>
-                </div>
-              </header>
-
               <section :class="['phase-evidence-panel', { 'is-expanded': phaseEvidenceExpanded }]">
                 <header class="phase-section-head phase-evidence-head">
                   <button
@@ -1136,7 +1177,6 @@ function clearPlayerFocus() {
               <section v-if="canShowPhaseDecisionPanel" class="phase-decision-panel">
                 <header class="phase-section-head">
                   <h4>决策明细</h4>
-                  <span>{{ phaseDecisionPanelMeta }}</span>
                 </header>
 
                 <NightSection
@@ -1270,7 +1310,7 @@ function clearPlayerFocus() {
             <section v-else-if="workspaceTab === 'review'" class="history-page-detail">
               <ReviewReportPanel
                 :report="reviewByGameId[selectedHistoryGame.game_id]"
-                :game="selectedHistoryGame"
+                :game="selectedReviewGame"
                 :flow-data="selectedFlowData"
                 :flow-loading="selectedFlowLoading"
                 :load-flow-data="loadSelectedFlowData"
@@ -1286,7 +1326,7 @@ function clearPlayerFocus() {
                 :format-json="formatJson"
               />
               <div v-else class="document-empty">
-                <strong>对局档案尚未载入</strong>
+                <strong>对局档案尚未读取</strong>
                 <span>读取后会展示决策来源、错误回退和智能体档案字段。</span>
                 <button type="button" :disabled="archiveLoading" @click="loadSelectedArchive">
                   {{ archiveLoading ? '读取中' : '读取对局档案' }}
@@ -1593,49 +1633,6 @@ function clearPlayerFocus() {
   border-color: var(--log-accent-strong);
   color: #fff7dc;
   background: var(--log-accent-strong);
-}
-
-.detail-workspace-tabs small {
-  display: inline-grid;
-  max-width: 68px;
-  min-width: 20px;
-  height: 18px;
-  place-items: center;
-  padding: 0 6px;
-  border-radius: 999px;
-  color: inherit;
-  background: rgba(255, 255, 255, 0.18);
-  font-size: 10px;
-  font-weight: 950;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail-workspace-badge[data-state="idle"] {
-  color: rgba(74, 37, 15, 0.72);
-  background: rgba(74, 37, 15, 0.08);
-}
-
-.detail-workspace-badge[data-state="loading"] {
-  color: #6a461b;
-  background: rgba(212, 158, 56, 0.18);
-}
-
-.detail-workspace-badge[data-state="loaded"] {
-  color: #335d35;
-  background: rgba(80, 139, 73, 0.16);
-}
-
-.detail-workspace-badge[data-state="error"],
-.detail-workspace-badge[data-state="missing"] {
-  color: #8a2c21;
-  background: rgba(161, 57, 42, 0.14);
-}
-
-.detail-workspace-tabs button.active .detail-workspace-badge {
-  color: #fff7dc;
-  background: rgba(255, 255, 255, 0.2);
 }
 
 .detail-topbar :deep(.history-phase-tabs) {
@@ -5174,6 +5171,67 @@ function clearPlayerFocus() {
   border-bottom: 0;
 }
 
+.detail-topbar.workspace-phase {
+  display: grid;
+  grid-template-columns: minmax(360px, max-content) minmax(0, 1fr);
+  grid-template-areas:
+    "workspace context"
+    "phases phases";
+  align-items: center;
+  row-gap: 12px;
+  column-gap: 24px;
+}
+
+.detail-topbar.workspace-phase .detail-workspace-tabs {
+  grid-area: workspace;
+}
+
+.detail-topbar.workspace-phase :deep(.history-phase-tabs) {
+  grid-area: phases;
+  min-width: 0;
+}
+
+.detail-context-line {
+  grid-area: context;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: clamp(12px, 1.55vw, 24px);
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.7);
+  font-size: 12.5px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.detail-context-line span {
+  display: inline-flex;
+  align-items: baseline;
+  flex: 0 1 auto;
+  gap: 2px;
+  max-width: 220px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.detail-context-line small {
+  flex: 0 0 auto;
+  color: rgba(74, 37, 15, 0.58);
+  font-size: inherit;
+  font-weight: 900;
+}
+
+.detail-context-line b {
+  min-width: 0;
+  overflow: hidden;
+  color: #3b1c09;
+  font-size: inherit;
+  font-weight: 950;
+  text-overflow: ellipsis;
+}
+
 .detail-content {
   gap: 22px;
   padding: 8px 0 0;
@@ -5211,11 +5269,15 @@ function clearPlayerFocus() {
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs) {
   align-items: center;
   gap: 0;
-  height: 70px;
-  min-height: 70px;
-  max-height: 70px;
-  padding: 11px 10px 11px 0;
+  height: 82px;
+  min-height: 82px;
+  max-height: 82px;
+  padding: 11px 10px 17px 0;
   border: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: rgba(116, 68, 28, 0.78) rgba(116, 68, 28, 0.16);
+  scrollbar-width: thin;
 }
 
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step) {
@@ -6127,7 +6189,7 @@ function clearPlayerFocus() {
 .phase-evidence-panel {
   display: grid;
   gap: 8px;
-  padding: 10px 14px 12px;
+  padding: 14px 14px 12px;
   border-top: 1px solid rgba(93, 48, 17, 0.14);
   background: rgba(255, 252, 245, 0.34);
 }
@@ -6488,9 +6550,10 @@ function clearPlayerFocus() {
 .phase-decision-panel {
   display: grid;
   gap: 10px;
-  padding: 12px 14px 14px;
-  border-top: 1px solid rgba(93, 48, 17, 0.14);
-  background: rgba(255, 248, 232, 0.5);
+  margin-top: 12px;
+  padding: 10px 14px 12px;
+  border-top: 0;
+  background: rgba(255, 252, 245, 0.34);
 }
 
 .phase-decision-panel :deep(.history-night-section) {
@@ -6511,19 +6574,21 @@ function clearPlayerFocus() {
   height: auto;
   min-height: 280px;
   max-height: min(560px, calc(100vh - 330px));
-  border: 1px solid rgba(93, 48, 17, 0.14);
+  border: 0;
   border-radius: 0;
-  background: rgba(255, 252, 245, 0.36);
+  background: transparent;
+  gap: 12px;
 }
 
 .phase-decision-panel :deep(.night-left) {
-  padding: 10px 8px 10px 10px;
-  border-right: 1px solid rgba(93, 48, 17, 0.12);
+  padding: 2px 0;
+  border-right: 0;
 }
 
 .phase-decision-panel :deep(.night-action-grid) {
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
+  gap: 10px;
+  padding: 0 2px 2px 0;
 }
 
 .phase-decision-panel :deep(.night-mini-card),
@@ -6532,10 +6597,46 @@ function clearPlayerFocus() {
   border-radius: 0;
 }
 
+.phase-decision-panel :deep(.night-mini-card) {
+  padding: 12px 14px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  background: rgba(255, 252, 245, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.64);
+}
+
+.phase-decision-panel :deep(.night-mini-card:hover) {
+  border-color: rgba(93, 48, 17, 0.3);
+  background: rgba(255, 245, 214, 0.72);
+}
+
+.phase-decision-panel :deep(.night-mini-card.sel) {
+  border-color: rgba(93, 48, 17, 0.36);
+  background: rgba(224, 184, 111, 0.34);
+  box-shadow: inset 3px 0 0 #70401e, inset 0 1px 0 rgba(255, 252, 228, 0.6);
+}
+
 .phase-decision-panel :deep(.night-right) {
   min-width: 0;
-  border-left: 0;
+  border: 1px solid rgba(93, 48, 17, 0.14);
   background: rgba(255, 252, 245, 0.42);
+}
+
+.phase-decision-panel :deep(.nmc-tabs) {
+  border-bottom-color: rgba(93, 48, 17, 0.14);
+  background: transparent;
+}
+
+.phase-decision-panel :deep(.nmc-tab) {
+  padding-top: 6px;
+}
+
+.phase-decision-panel :deep(.nmc-detail-body) {
+  padding: 12px 16px;
+  background: transparent;
+}
+
+.phase-decision-panel :deep(.nmc-dt) {
+  margin-bottom: 10px;
 }
 
 .phase-decision-panel :deep(.sheriff-bar-chart) {
@@ -6562,8 +6663,9 @@ function clearPlayerFocus() {
 
 .history-page-detail details.history-raw-section {
   display: grid;
-  margin-top: 0;
-  border-top: 1px solid rgba(93, 48, 17, 0.14);
+  margin-top: 12px;
+  border-top: 0;
+  background: rgba(255, 252, 245, 0.34);
 }
 
 .history-page-detail details.history-raw-section > summary {
@@ -6573,7 +6675,7 @@ function clearPlayerFocus() {
   min-height: 38px;
   padding: 0 14px;
   color: #3b1c09;
-  background: rgba(255, 239, 194, 0.36);
+  background: transparent;
   font-size: 13px;
   font-weight: 950;
   cursor: pointer;
@@ -6661,6 +6763,18 @@ function clearPlayerFocus() {
 }
 
 @media (max-width: 920px) {
+  .detail-topbar.workspace-phase {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "workspace"
+      "context"
+      "phases";
+  }
+
+  .detail-context-line {
+    justify-content: flex-start;
+  }
+
   .history-page-detail .phase-overview,
   .phase-speech-row,
   .phase-matrix-head,

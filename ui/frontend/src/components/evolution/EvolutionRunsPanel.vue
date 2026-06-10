@@ -114,7 +114,6 @@ function progressPercent(run: EvolutionRunRow) {
           <span class="evo-run-metric">{{ primaryMetric(run) }}</span>
         </button>
         <div v-if="evo.runHasMore.value" class="evo-run-more">
-          <span>已载入 {{ evo.runRows.value.length }} / {{ evo.runPagination.value.total || evo.runRows.value.length }}</span>
           <button type="button" class="evo-load-more" :disabled="evo.runLoadingMore.value" @click="evo.loadMoreRuns()">
             {{ evo.runLoadingMore.value ? '加载中' : '加载更多' }}
           </button>

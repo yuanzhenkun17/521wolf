@@ -1363,6 +1363,26 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .bench-page {
+  --logbook-bg: #f2dfae;
+  --logbook-bg-texture:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    var(--logbook-bg);
+  --logbook-surface: rgba(255, 252, 245, 0.5);
+  --logbook-panel: rgba(255, 252, 245, 0.64);
+  --logbook-panel-solid: rgba(255, 250, 240, 0.72);
+  --logbook-panel-soft: rgba(255, 242, 210, 0.38);
+  --logbook-border: rgba(139, 94, 52, 0.15);
+  --logbook-border-strong: rgba(90, 51, 25, 0.34);
+  --logbook-text: #3a2a18;
+  --logbook-muted: #8b6b4a;
+  --logbook-accent: #8b5e34;
+  --logbook-accent-strong: #5a3319;
+  --logbook-input-bg: rgba(255, 255, 250, 0.56);
+  --logbook-input-border: rgba(139, 94, 52, 0.2);
+  --logbook-hover: rgba(139, 94, 52, 0.06);
+  --logbook-active-bg: rgba(139, 94, 52, 0.1);
+  --logbook-danger: #993026;
+  --logbook-warning: #8b5e34;
   --log-bg: var(--logbook-bg);
   --log-surface: var(--logbook-surface);
   --log-border: var(--logbook-border);
@@ -1393,7 +1413,7 @@ onBeforeUnmount(() => {
   --bench-danger: var(--logbook-danger);
   --bench-danger-border: rgba(153, 48, 38, 0.28);
   --bench-danger-bg: rgba(153, 48, 38, 0.06);
-  --bench-warning: var(--logbook-warning-benchmark);
+  --bench-warning: var(--logbook-warning-benchmark, var(--logbook-warning));
   --bench-warning-border: rgba(139, 100, 31, 0.3);
   --bench-warning-bg: rgba(139, 100, 31, 0.08);
   --bench-font: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
@@ -1418,11 +1438,11 @@ onBeforeUnmount(() => {
 }
 
 .bench-workbench-shell {
-  --lab-rail-width: 300px;
+  --lab-rail-width: 252px;
   --lab-context-width: 300px;
   display: grid;
   grid-template-columns: var(--lab-rail-width) minmax(0, 1fr) var(--lab-context-width);
-  gap: 12px;
+  gap: 8px;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1432,31 +1452,95 @@ onBeforeUnmount(() => {
 }
 
 .bench-workbench-shell :deep(.lab-workbench-main) {
-  gap: 8px;
+  gap: 10px;
 }
 
 .bench-workbench-shell :deep(.lab-workbench-action-bar) {
-  grid-template-columns: minmax(190px, 0.58fr) minmax(0, 2fr) auto;
+  grid-template-columns: 188px minmax(0, 1fr) 78px;
+  justify-content: stretch;
+  column-gap: 20px;
   min-height: 0;
-  padding: 10px 12px;
+  padding: 10px 0 12px;
   border-color: rgba(139, 94, 52, 0.18);
-  background: rgba(255, 249, 232, 0.76);
-  box-shadow: inset 0 -1px 0 rgba(92, 54, 20, 0.08);
+  border-width: 0 0 1px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-title) {
+  gap: 0;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-title small) {
+  display: none;
 }
 
 .bench-workbench-shell :deep(.lab-workbench-title h1) {
   font-size: 22px;
+  font-weight: 950;
+  line-height: 1.05;
 }
 
 .bench-workbench-shell :deep(.lab-workbench-meta) {
-  grid-template-columns: repeat(6, minmax(78px, 1fr));
-  gap: 7px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .bench-workbench-shell :deep(.lab-workbench-meta span) {
-  min-height: 38px;
-  padding: 6px 8px;
-  background: rgba(255, 248, 226, 0.48);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: 0 0 86px;
+  min-width: 0;
+  max-width: 86px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-meta-key="mode"]) {
+  flex-basis: 88px;
+  max-width: 88px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-meta-key="subject"]) {
+  flex: 0 0 154px;
+  max-width: 154px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-meta-key="games"]) {
+  flex: 0 0 58px;
+  max-width: 58px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-meta-key="units"]) {
+  flex: 0 0 94px;
+  max-width: 94px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-meta-key="budget"]) {
+  flex: 0 0 86px;
+  max-width: 86px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-meta-key="launch"]) {
+  flex: 0 0 70px;
+  max-width: 70px;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-tone="danger"]) {
+  border: 0;
+  background: transparent;
 }
 
 .bench-workbench-shell :deep(.lab-workbench-meta small),
@@ -1469,12 +1553,77 @@ onBeforeUnmount(() => {
   letter-spacing: 0;
 }
 
+.bench-workbench-shell :deep(.lab-workbench-meta small) {
+  flex: 0 0 auto;
+  color: rgba(93, 48, 17, 0.62);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta small::after) {
+  content: ":";
+}
+
 .bench-workbench-shell :deep(.lab-workbench-meta b),
 .bench-panel header b {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta b) {
+  flex: 1 1 auto;
+  max-width: 100%;
+  color: var(--bench-text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-meta span[data-tone="danger"] b) {
+  color: var(--bench-danger);
+}
+
+.bench-workbench-shell :deep(.lab-workbench-action-area) {
+  align-items: center;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-primary-action) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  min-width: 78px;
+  padding: 0 12px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  background: rgba(255, 239, 194, 0.42);
+  color: rgba(59, 28, 9, 0.78);
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  white-space: nowrap;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-primary-action::before) {
+  content: "↻";
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-primary-action:hover:not(:disabled)) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.62);
+  color: var(--bench-text);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.82);
+  transform: none;
 }
 
 .bench-launch-button {
@@ -1484,16 +1633,17 @@ onBeforeUnmount(() => {
   height: 36px;
   padding: 0 14px;
   border: 1px solid var(--bench-accent-strong);
-  border-radius: 6px;
-  background: var(--bench-accent-strong);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(113, 72, 38, 0.96), rgba(79, 43, 20, 0.96));
   color: #fff7dc;
   font-size: 13px;
   font-weight: 900;
+  box-shadow: 0 6px 12px rgba(91, 47, 18, 0.13), inset 0 1px 0 rgba(255, 246, 213, 0.22);
   cursor: pointer;
 }
 
 .bench-launch-button:hover {
-  background: var(--bench-accent);
+  background: linear-gradient(180deg, rgba(139, 94, 52, 0.98), rgba(90, 51, 25, 0.98));
 }
 
 .bench-launch-button:disabled {
@@ -1502,15 +1652,39 @@ onBeforeUnmount(() => {
 }
 
 .bench-workbench-shell :deep(.lab-workbench-tabs) {
-  background: rgba(255, 252, 245, 0.9);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.bench-workbench-shell :deep(.lab-workbench-tab) {
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  background: rgba(255, 239, 194, 0.42);
+  color: rgba(59, 28, 9, 0.78);
+  font-weight: 800;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+}
+
+.bench-workbench-shell :deep(.lab-workbench-tab:hover:not(:disabled)) {
+  border-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 245, 214, 0.62);
+  color: var(--bench-text);
+}
+
+.bench-workbench-shell :deep(.lab-workbench-tab.active) {
+  border-color: rgba(93, 48, 17, 0.45);
+  background: rgba(224, 184, 111, 0.66);
+  color: var(--bench-text);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
 }
 
 .bench-alert {
   padding: 9px 12px;
   border: 1px solid var(--bench-danger-border);
-  border-radius: 8px;
-  background: var(--bench-danger-bg);
+  border-radius: 0;
+  background: rgba(153, 48, 38, 0.045);
   color: var(--bench-danger);
   font-size: 12px;
   font-weight: 800;
@@ -1558,9 +1732,12 @@ onBeforeUnmount(() => {
   grid-template-rows: auto auto;
   align-content: start;
   min-width: 0;
-  border: 1px solid var(--bench-border);
-  border-radius: 8px;
-  background: var(--bench-panel);
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.34), rgba(255, 239, 194, 0.14)),
+    rgba(255, 252, 245, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.46);
   overflow: hidden;
 }
 
@@ -1569,10 +1746,10 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 52px;
+  min-height: 44px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--bench-border);
-  background: rgba(255, 252, 245, 0.9);
+  border-bottom: 1px solid rgba(93, 48, 17, 0.12);
+  background: transparent;
 }
 
 .bench-panel header h2,
@@ -1580,8 +1757,13 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
+.bench-panel > header small,
+.bench-context-section > header small {
+  display: none;
+}
+
 .bench-panel header h2 {
-  margin-top: 2px;
+  margin-top: 0;
   color: var(--bench-text);
   font-size: 15px;
   font-weight: 950;
@@ -1589,10 +1771,10 @@ onBeforeUnmount(() => {
 
 .bench-panel header b {
   max-width: 180px;
-  padding: 3px 8px;
-  border: 1px solid var(--bench-border);
-  border-radius: 6px;
-  background: rgba(255, 242, 210, 0.56);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--bench-text);
   font-size: 12px;
   font-weight: 900;
@@ -1603,13 +1785,15 @@ onBeforeUnmount(() => {
   align-content: start;
   align-items: start;
   grid-auto-rows: max-content;
-  gap: 10px;
+  gap: 12px;
   height: 100%;
   min-width: 0;
   min-height: 0;
   max-height: 100%;
   overflow-y: auto;
-  padding-right: 2px;
+  border-left: 1px solid rgba(93, 48, 17, 0.22);
+  padding-left: 14px;
+  padding-right: 4px;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -1619,9 +1803,12 @@ onBeforeUnmount(() => {
   gap: 10px;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--bench-border);
-  border-radius: 8px;
-  background: rgba(255, 252, 245, 0.78);
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.13)),
+    rgba(255, 252, 245, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.44);
 }
 
 .bench-context-section header {
@@ -1630,10 +1817,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 48px;
-  padding: 9px 10px;
-  border-bottom: 1px solid var(--bench-border);
-  background: rgba(255, 248, 226, 0.58);
+  min-height: 44px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  background: transparent;
 }
 
 .bench-context-section header div,
@@ -1659,7 +1846,7 @@ onBeforeUnmount(() => {
 .bench-context-section header h2 {
   display: -webkit-box;
   overflow: hidden;
-  margin: 2px 0 0;
+  margin: 0;
   color: var(--bench-text);
   font-size: 13px;
   font-weight: 950;
@@ -1673,10 +1860,10 @@ onBeforeUnmount(() => {
 .bench-context-section header b {
   max-width: 96px;
   overflow: hidden;
-  padding: 3px 7px;
-  border: 1px solid var(--bench-border);
-  border-radius: 6px;
-  background: rgba(255, 242, 210, 0.6);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--bench-accent-strong);
   font-size: 11px;
   font-weight: 950;
@@ -1690,9 +1877,9 @@ onBeforeUnmount(() => {
 .bench-context-boundary,
 .bench-context-artifacts {
   display: grid;
-  gap: 7px;
+  gap: 0 12px;
   min-width: 0;
-  padding: 0 10px 10px;
+  padding: 0 12px 12px;
 }
 
 .bench-context-boundary,
@@ -1709,10 +1896,11 @@ onBeforeUnmount(() => {
   align-content: start;
   gap: 3px;
   min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid rgba(139, 94, 52, 0.13);
-  border-radius: 7px;
-  background: rgba(255, 250, 240, 0.68);
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
 }
 
 .bench-context-gates b,
@@ -1755,7 +1943,7 @@ onBeforeUnmount(() => {
 
 .bench-context-boundary span.danger {
   border-color: var(--bench-danger-border);
-  background: var(--bench-danger-bg);
+  background: rgba(153, 48, 38, 0.035);
 }
 
 .bench-context-boundary span.danger b {
@@ -1800,13 +1988,14 @@ onBeforeUnmount(() => {
 .bench-context-run-detail {
   display: grid;
   gap: 4px;
+  max-width: calc(100% - 24px);
   min-width: 0;
-  margin: 10px 10px 0;
+  margin: 10px 12px 0;
   padding: 9px 10px;
-  border: 1px solid var(--bench-border);
-  border-left: 4px solid var(--bench-accent);
-  border-radius: 7px;
-  background: rgba(255, 242, 210, 0.48);
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-left: 3px solid var(--bench-accent);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.24);
 }
 
 .bench-context-run-detail strong {
@@ -1827,7 +2016,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 7px;
   min-width: 0;
-  padding: 0 10px 10px;
+  padding: 0 12px 12px;
 }
 
 .bench-context-run-button {
@@ -1836,10 +2025,11 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
   min-width: 0;
-  padding: 8px 9px;
-  border: 1px solid var(--bench-border);
-  border-radius: 7px;
-  background: rgba(255, 250, 240, 0.64);
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -1847,8 +2037,8 @@ onBeforeUnmount(() => {
 
 .bench-context-run-button:hover,
 .bench-context-run-button.active {
-  border-color: var(--bench-border-strong);
-  background: rgba(255, 226, 157, 0.24);
+  border-color: rgba(93, 48, 17, 0.2);
+  background: rgba(255, 239, 194, 0.22);
 }
 
 .bench-context-run-button span {
@@ -1872,11 +2062,11 @@ onBeforeUnmount(() => {
 
 .bench-context-empty,
 .bench-context-warning {
-  margin: 10px;
+  margin: 10px 12px 12px;
   padding: 12px 10px;
   border: 1px dashed rgba(139, 94, 52, 0.24);
-  border-radius: 7px;
-  background: rgba(255, 250, 240, 0.58);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.24);
   color: var(--bench-text-secondary);
   font-size: 12px;
   font-weight: 850;
@@ -1905,9 +2095,9 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 56px;
   padding: 9px 10px;
-  border: 1px solid var(--bench-border);
-  border-radius: 7px;
-  background: rgba(255, 242, 210, 0.48);
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.28);
 }
 
 .bench-diagnostic-grid b {
@@ -1919,9 +2109,9 @@ onBeforeUnmount(() => {
 
 .bench-plan-controls {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 12px 12px;
+  grid-template-columns: repeat(5, minmax(96px, 1fr));
+  gap: 10px;
+  padding: 0 14px 12px;
 }
 
 .bench-plan-controls label {
@@ -1932,11 +2122,11 @@ onBeforeUnmount(() => {
 
 .bench-plan-controls input {
   width: 100%;
-  height: 34px;
+  height: 38px;
   padding: 0 10px;
-  border: 1px solid var(--bench-input-border);
-  border-radius: 6px;
-  background: var(--bench-input-bg);
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.5);
   color: var(--bench-text);
   font-size: 13px;
   font-weight: 900;
@@ -1949,8 +2139,8 @@ onBeforeUnmount(() => {
 .bench-plan-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 12px 12px;
+  gap: 0 12px;
+  padding: 0 14px 12px;
 }
 
 .bench-plan-summary span {
@@ -1958,10 +2148,11 @@ onBeforeUnmount(() => {
   gap: 3px;
   min-width: 0;
   min-height: 52px;
-  padding: 9px 10px;
-  border: 1px solid var(--bench-border);
-  border-radius: 7px;
-  background: rgba(255, 250, 240, 0.72);
+  padding: 9px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
 }
 
 .bench-plan-summary span.danger {
@@ -2009,8 +2200,8 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 8px 10px;
   border: 1px solid var(--bench-warning-border);
-  border-radius: 6px;
-  background: var(--bench-warning-bg);
+  border-radius: 0;
+  background: rgba(139, 100, 31, 0.055);
 }
 
 .bench-plan-warnings b,
@@ -2030,11 +2221,12 @@ onBeforeUnmount(() => {
   grid-template-columns: 140px repeat(2, minmax(0, 1fr));
   gap: 7px;
   align-items: stretch;
-  margin: 0 12px 12px;
-  padding: 9px 10px;
+  margin: 0 14px 12px;
+  padding: 10px 0 0;
   border: 1px solid var(--bench-danger-border);
-  border-radius: 7px;
-  background: var(--bench-danger-bg);
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .bench-budget-reasons strong,
@@ -2053,10 +2245,11 @@ onBeforeUnmount(() => {
 .bench-budget-reasons span {
   display: grid;
   gap: 3px;
-  padding: 7px 8px;
-  border: 1px solid rgba(153, 48, 38, 0.18);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.56);
+  padding: 0 0 8px;
+  border: 0;
+  border-bottom: 1px solid rgba(153, 48, 38, 0.12);
+  border-radius: 0;
+  background: transparent;
 }
 
 .bench-budget-reasons b,
@@ -2083,11 +2276,11 @@ onBeforeUnmount(() => {
 }
 
 .bench-inline-warning {
-  margin: 0 12px 12px;
+  margin: 0 14px 12px;
   padding: 8px 10px;
   border: 1px solid var(--bench-warning-border);
-  border-radius: 6px;
-  background: var(--bench-warning-bg);
+  border-radius: 0;
+  background: rgba(139, 100, 31, 0.055);
   color: var(--bench-warning);
   font-size: 12px;
   font-weight: 800;
@@ -2096,21 +2289,23 @@ onBeforeUnmount(() => {
 .bench-launch-strip {
   display: flex;
   justify-content: flex-end;
-  margin: 0 12px 12px;
-  padding: 10px;
-  border: 1px solid var(--bench-border);
-  border-radius: 7px;
-  background: rgba(255, 242, 210, 0.5);
+  margin: 0 14px 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(93, 48, 17, 0.12);
+  background: transparent;
 }
 
 .bench-launch-confirmation {
   display: grid;
   gap: 10px;
-  margin: 0 12px 12px;
+  margin: 0 14px 14px;
   padding: 12px;
   border: 1px solid var(--bench-warning-border);
-  border-radius: 8px;
-  background: rgba(255, 245, 221, 0.74);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 246, 222, 0.34), rgba(255, 239, 194, 0.16)),
+    rgba(255, 252, 245, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.42);
 }
 
 .bench-launch-confirmation small,
@@ -2141,10 +2336,11 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 3px;
   min-width: 0;
-  padding: 8px 9px;
-  border: 1px solid var(--bench-warning-border);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.86);
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(139, 100, 31, 0.16);
+  border-radius: 0;
+  background: transparent;
 }
 
 .bench-launch-confirmation dd {
@@ -2168,7 +2364,7 @@ onBeforeUnmount(() => {
 .bench-confirm-secondary {
   height: 32px;
   padding: 0 12px;
-  border-radius: 6px;
+  border-radius: 4px;
   font-size: 12px;
   font-weight: 950;
   cursor: pointer;
@@ -2182,7 +2378,7 @@ onBeforeUnmount(() => {
 
 .bench-confirm-secondary {
   border: 1px solid var(--bench-border);
-  background: rgba(255, 252, 245, 0.9);
+  background: rgba(255, 252, 245, 0.34);
   color: var(--bench-text);
 }
 
@@ -2210,10 +2406,10 @@ onBeforeUnmount(() => {
   width: 100%;
   min-width: 0;
   padding: 10px;
-  border: 1px solid var(--bench-border);
-  border-left: 4px solid var(--bench-accent);
-  border-radius: 7px;
-  background: rgba(255, 242, 210, 0.46);
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-left: 3px solid var(--bench-accent);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.2);
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -2221,7 +2417,7 @@ onBeforeUnmount(() => {
 
 .bench-run-card:hover {
   border-color: var(--bench-border-strong);
-  background: rgba(255, 226, 157, 0.26);
+  background: rgba(255, 239, 194, 0.18);
 }
 
 .bench-run-card strong,

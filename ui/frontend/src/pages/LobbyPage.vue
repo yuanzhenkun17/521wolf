@@ -271,8 +271,51 @@ watch(loading, (isLoading) => {
   <section class="lobby">
     <section class="lobby-hero">
       <span class="hero-mark"></span>
-      <h1>The Night Approaches</h1>
-      <p>Gather the council. Trust no one.</p>
+      <h1 class="lobby-hero-title">The Night Approaches</h1>
+      <div class="lobby-subtitle-stack">
+        <p>Gather the council. Trust no one.</p>
+        <section
+          v-if="backendAvailable && (registryStatusText || roleRows.length)"
+          :class="['lobby-version-panel', registryStatusType]"
+          aria-label="角色版本"
+        >
+          <div class="lobby-version-status" role="status" aria-live="polite">
+            <div class="lobby-version-title">
+              <span>角色版本</span>
+              <strong>{{ registryStatusText }}</strong>
+              <small v-if="fallbackRoleCount">
+                {{ fallbackRoleCount }} 个角色使用本地兜底，正式评测前建议发布基线。
+              </small>
+            </div>
+            <div class="lobby-version-actions">
+              <button
+                v-if="selectedOverrideCount"
+                type="button"
+                :disabled="loading || registryLoading"
+                @click="clearRoleVersionOverrides"
+              >
+                清除覆盖
+              </button>
+              <button
+                v-if="registryError"
+                type="button"
+                :disabled="registryLoading"
+                @click="loadRoleVersions"
+              >
+                {{ registryLoading ? '重试中' : '重试' }}
+              </button>
+              <button
+                v-if="roleRows.length"
+                type="button"
+                :disabled="registryLoading"
+                @click="roleVersionDrawerOpen = true"
+              >
+                配置
+              </button>
+            </div>
+          </div>
+        </section>
+      </div>
     </section>
 
     <section class="card-fan" aria-label="角色牌">
@@ -329,48 +372,6 @@ watch(loading, (isLoading) => {
     </section>
 
     <section class="lobby-actions">
-      <section
-        v-if="backendAvailable && (registryStatusText || roleRows.length)"
-        :class="['lobby-version-panel', registryStatusType]"
-        aria-label="角色版本"
-      >
-        <div class="lobby-version-status" role="status" aria-live="polite">
-          <div class="lobby-version-title">
-            <span>角色版本</span>
-            <strong>{{ registryStatusText }}</strong>
-            <small v-if="fallbackRoleCount">
-              {{ fallbackRoleCount }} 个角色使用本地兜底，正式评测前建议发布基线。
-            </small>
-          </div>
-          <div class="lobby-version-actions">
-            <button
-              v-if="selectedOverrideCount"
-              type="button"
-              :disabled="loading || registryLoading"
-              @click="clearRoleVersionOverrides"
-            >
-              清除覆盖
-            </button>
-            <button
-              v-if="registryError"
-              type="button"
-              :disabled="registryLoading"
-              @click="loadRoleVersions"
-            >
-              {{ registryLoading ? '重试中' : '重试' }}
-            </button>
-            <button
-              v-if="roleRows.length"
-              type="button"
-              :disabled="registryLoading"
-              @click="roleVersionDrawerOpen = true"
-            >
-              配置
-            </button>
-          </div>
-        </div>
-      </section>
-
       <button class="mode-card watch" :disabled="loading || !backendAvailable" @click="start('watch')">
         <span>观战模式</span>
         <strong>
@@ -495,6 +496,84 @@ watch(loading, (isLoading) => {
 </template>
 
 <style scoped>
+.lobby-subtitle-stack {
+  display: grid;
+  width: max-content;
+  max-width: calc(100vw - 42px);
+  gap: 8px;
+  justify-items: stretch;
+}
+
+.lobby-subtitle-stack > p {
+  width: 100%;
+  text-align: center;
+}
+
+.lobby-hero .lobby-version-panel {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lobby-hero .lobby-version-status {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+
+.lobby-hero .lobby-version-title {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+.lobby-hero .lobby-version-title span::after {
+  content: "：";
+}
+
+.lobby-hero .lobby-version-title strong {
+  flex: 0 1 auto;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.lobby-hero .lobby-version-title small {
+  display: none;
+}
+
+.lobby-hero .lobby-version-actions {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.lobby-hero .lobby-version-actions button {
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  color: rgba(244, 213, 142, 0.88);
+  background: transparent;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.lobby-hero .lobby-version-actions button:hover:not(:disabled) {
+  color: #f4d58e;
+  background: transparent;
+}
+
+:global(.lobby .card-fan) {
+  transform: translateY(-76px);
+}
+
 .lobby-version-panel {
   display: grid;
   grid-column: 1 / -1;

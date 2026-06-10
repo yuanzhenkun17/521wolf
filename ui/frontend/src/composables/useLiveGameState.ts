@@ -76,6 +76,7 @@ const judgeAnnouncementTypes = new Set([
   'game_end'
 ])
 const judgeSpeakers = new Set(['法官', '系统'])
+const JUDGE_AVATAR_URL = '/livehall-assets/props/judge-avatar.png'
 const typedRecordLabels = new Set([
   'action_request',
   'action_response',
@@ -267,7 +268,7 @@ export function createLiveGameState(refs: LooseRecord, helpers: LooseRecord) {
   }
 
   function visibleCardImage(player: LooseRecord | null | undefined) {
-    if (!player) return '/cards/judge.png'
+    if (!player) return JUDGE_AVATAR_URL
     return canSeePlayerRole(player) ? cardImage({ ...player, role_visible: true }) : '/cards/card-back.png'
   }
 
@@ -363,7 +364,7 @@ export function createLiveGameState(refs: LooseRecord, helpers: LooseRecord) {
       _seat: seat,
       _speaker: logSpeaker(log),
       _message: logMessage(log) || logText(log),
-      _roleIcon: player ? visibleRoleIcon(player) : '/cards/judge.png',
+      _roleIcon: player ? visibleRoleIcon(player) : JUDGE_AVATAR_URL,
       _speaking: Boolean(player?.id && player.id === effectiveCurrentSpeakerId())
     }
   }
@@ -460,7 +461,7 @@ export function createLiveGameState(refs: LooseRecord, helpers: LooseRecord) {
     const players = game.value?.players ?? []
     const current = computedState.speakingPlayer.value
     if (!players.length || !current) {
-      return [{ key: 'speaker-judge', label: '法官', image: '/cards/judge.png', tone: 'current' }]
+      return [{ key: 'speaker-judge', label: '法官', image: JUDGE_AVATAR_URL, tone: 'current' }]
     }
     const order = players.filter((p) => p.alive)
     const index = order.findIndex((p) => p.id === current.id)

@@ -561,19 +561,20 @@ function selectLegacyScope(targetType: TargetType) {
   --rail-danger-bg: var(--bench-danger-bg, rgba(153, 48, 38, 0.06));
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   height: 100%;
   min-height: 0;
-  padding: 12px;
+  padding: 0 14px 0 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: var(--rail-bg);
-  border: 1px solid var(--rail-line);
-  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  border-right: 1px solid rgba(91, 47, 18, 0.2);
+  border-radius: 0;
   color: var(--rail-text);
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
   scrollbar-gutter: stable;
@@ -586,10 +587,13 @@ function selectLegacyScope(targetType: TargetType) {
 }
 
 .suite-rail-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
   align-items: center;
+  gap: 10px;
   flex: 0 0 auto;
+  min-height: 57px;
+  padding: 10px 14px 12px 0;
+  border-bottom: 1px solid var(--rail-line);
 }
 
 .suite-rail-header h2 {
@@ -597,15 +601,17 @@ function selectLegacyScope(targetType: TargetType) {
 }
 
 .suite-rail-header h2 {
-  font-size: 17px;
-  line-height: 1.15;
+  color: var(--rail-text);
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1.05;
 }
 
 .suite-rail-alert,
 .suite-rail-empty {
   padding: 9px 10px;
   border: 1px solid rgba(90, 51, 25, 0.24);
-  border-radius: 6px;
+  border-radius: 0;
   background: rgba(90, 51, 25, 0.08);
   color: var(--rail-danger);
   font-size: 12px;
@@ -633,7 +639,7 @@ function selectLegacyScope(targetType: TargetType) {
   flex: 0 0 auto;
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 7px;
   min-height: 0;
   overflow: visible;
   padding-right: 2px;
@@ -655,12 +661,15 @@ function selectLegacyScope(targetType: TargetType) {
 
 .suite-group-title {
   display: block;
-  padding-top: 2px;
+  padding-top: 0;
+  color: var(--rail-accent);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .suite-group-title span {
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 800;
 }
 
 .suite-row {
@@ -668,26 +677,31 @@ function selectLegacyScope(targetType: TargetType) {
   align-content: start;
   width: 100%;
   min-width: 0;
+  min-height: 36px;
   padding: 9px 10px;
   overflow: hidden;
   text-align: left;
-  color: inherit;
-  background: var(--rail-panel);
-  border: 1px solid var(--rail-line);
-  border-left: 4px solid var(--rail-line-strong);
-  border-radius: 8px;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.42);
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
   cursor: pointer;
 }
 
 .suite-row:hover {
-  border-color: var(--rail-line-strong);
+  border-color: rgba(93, 48, 17, 0.32);
+  color: var(--rail-text);
+  background: rgba(255, 245, 214, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.82);
 }
 
 .suite-row.selected {
-  border-color: var(--rail-accent);
-  border-left-color: var(--rail-accent);
-  background: var(--rail-soft-strong);
-  box-shadow: inset 0 0 0 1px var(--rail-accent);
+  border-color: rgba(93, 48, 17, 0.45);
+  color: var(--rail-text);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
 }
 
 .suite-row.muted {
@@ -707,26 +721,30 @@ function selectLegacyScope(targetType: TargetType) {
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
   width: 100%;
-  min-height: 44px;
+  min-height: 36px;
   padding: 9px 10px;
   text-align: left;
-  color: inherit;
-  background: var(--rail-panel);
-  border: 1px solid var(--rail-line);
-  border-left: 4px solid var(--rail-line-strong);
-  border-radius: 8px;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.42);
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
   cursor: pointer;
 }
 
 .legacy-scope-row:hover {
-  border-color: var(--rail-line-strong);
+  border-color: rgba(93, 48, 17, 0.32);
+  color: var(--rail-text);
+  background: rgba(255, 245, 214, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.82);
 }
 
 .legacy-scope-row.selected {
-  border-color: var(--rail-accent);
-  border-left-color: var(--rail-accent);
-  background: var(--rail-soft-strong);
-  box-shadow: inset 0 0 0 1px var(--rail-accent);
+  border-color: rgba(93, 48, 17, 0.45);
+  color: var(--rail-text);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
 }
 
 .legacy-scope-row--model {
@@ -752,6 +770,7 @@ function selectLegacyScope(targetType: TargetType) {
 
 .legacy-scope-row strong {
   font-size: 13px;
+  font-weight: 800;
   line-height: 1.2;
 }
 
@@ -781,7 +800,9 @@ function selectLegacyScope(targetType: TargetType) {
   display: -webkit-box;
   max-width: 100%;
   overflow: hidden;
+  color: inherit;
   font-size: 13px;
+  font-weight: 800;
   line-height: 1.25;
   overflow-wrap: anywhere;
   white-space: normal;

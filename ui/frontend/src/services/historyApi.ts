@@ -3,8 +3,8 @@ import type { QueryParams, ServiceOptions } from '../types/api'
 import { defaultApiClient } from './api'
 
 const DEFAULT_HISTORY_PAGE_SIZE = 8
-const DEFAULT_PHASE_LOG_LIMIT = 300
-const DEFAULT_PHASE_DECISION_LIMIT = 200
+const DEFAULT_PHASE_LOG_LIMIT = 1000
+const DEFAULT_PHASE_DECISION_LIMIT = 500
 
 function historyQueryParams(query: HistoryQuery = {}): QueryParams {
   const params: QueryParams = {

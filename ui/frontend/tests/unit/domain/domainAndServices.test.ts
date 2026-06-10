@@ -766,9 +766,9 @@ describe('service endpoint contracts', () => {
             day: 2,
             phase: 'speech',
             log_offset: 0,
-            log_limit: 300,
+            log_limit: 1000,
             decision_offset: 0,
-            decision_limit: 200
+            decision_limit: 500
           }
         }
       },

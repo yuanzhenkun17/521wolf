@@ -2,7 +2,6 @@
 import { computed, type PropType } from 'vue'
 import DecisionDetail from './DecisionDetail.vue'
 import NightActionCard from './NightActionCard.vue'
-import VoteResults from './VoteResults.vue'
 
 interface HistoryDecision {
   id?: string | number
@@ -72,7 +71,6 @@ function selectDecision(decision: HistoryDecision) {
 <template>
   <section v-if="decisions.length || resultMessage" class="history-night-section">
     <div v-if="resultMessage" class="night-result-bar">{{ resultMessage }}</div>
-    <VoteResults :tally="tally" />
     <div v-if="decisions.length" class="night-two-col">
       <div class="night-left">
         <div class="night-action-grid">

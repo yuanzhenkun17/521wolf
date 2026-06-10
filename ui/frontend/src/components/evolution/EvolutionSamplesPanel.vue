@@ -345,9 +345,6 @@ function sampleEmptyText(evo: EvolutionSamplesModel) {
             <span>{{ game.dayLabel }} · {{ game.phaseLabel }} · {{ game.eventCount }} 事件 · {{ game.decisionCount }} 决策</span>
           </button>
           <div v-if="evo.sampleGameHasMore.value" class="evo-run-more">
-            <span>
-              已载入 {{ evo.selectedGameRows.value.length }} / {{ evo.selectedSamplePagination.value.total || evo.selectedGameRows.value.length }}
-            </span>
             <button
               type="button"
               class="evo-load-more"

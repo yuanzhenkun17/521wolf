@@ -1228,6 +1228,7 @@
     let playerRosterSignature = "";
     let queuedModelLoaders = [];
     let modelQueueTimer = null;
+    let modelQueueGeneration = 0;
     let speechByPlayer = {};
     let activeSpeakerId = null;
     let activeSeatLabel = null;
@@ -2818,7 +2819,13 @@
 
     function tryPlaySceneEffect(effectData: CouncilSceneEffectData = {}) {
       const id = sceneEffectDataId(effectData);
-      if (!id || !String(effectData.type || "")) return true;
+      const type = String(effectData.type || "");
+      if (!id || !type) return true;
+      if (sceneEffectChangesDeathState(type)) {
+        const target = sceneEffectTarget(effectData);
+        if (target) setSceneEffectDead({ target }, true);
+        return true;
+      }
       if (spawnSceneEffect(effectData)) return true;
       enqueueSceneEffect(effectData);
       return false;
@@ -2965,6 +2972,7 @@
 
       playerRosterSignature = nextSignature;
       queuedModelLoaders = [];
+      modelQueueGeneration += 1;
       if (modelQueueTimer) {
         clearTrackedTimeout(modelQueueTimer);
         modelQueueTimer = null;
@@ -3085,14 +3093,15 @@
     function scheduleModelQueue() {
       if (sceneDisposed || modelQueueTimer || !queuedModelLoaders.length) return;
       reportModelLoadProgress();
+      const queueGeneration = modelQueueGeneration;
       // Keep model loading parallel, with a short gap so the first visible render stays responsive.
       const batchSize = 6;
       modelQueueTimer = setTrackedTimeout(() => {
         modelQueueTimer = null;
-        if (sceneDisposed) return;
+        if (sceneDisposed || queueGeneration !== modelQueueGeneration) return;
         const batch = queuedModelLoaders.splice(0, batchSize);
         Promise.allSettled(batch.map((load) => load?.())).then(() => {
-          if (sceneDisposed) return;
+          if (sceneDisposed || queueGeneration !== modelQueueGeneration) return;
           reportModelLoadProgress();
           if (queuedModelLoaders.length) {
             scheduleModelQueue();
@@ -3109,6 +3118,7 @@
         modelQueueTimer = null;
       }
       const loaders = queuedModelLoaders.splice(0);
+      const queueGeneration = modelQueueGeneration;
       reportModelLoadProgress(loaders.length ? "加载角色模型" : "角色模型就绪");
       const waitForMountedModels = () => new Promise<void>((resolve) => {
         const startedAt = performance.now();
@@ -3131,7 +3141,7 @@
       const warmRenderModels = () => {
         return new Promise<void>((resolve) => {
           requestTrackedIdleCallback(() => {
-            if (sceneDisposed) {
+            if (sceneDisposed || queueGeneration !== modelQueueGeneration) {
               resolve();
               return;
             }
@@ -3161,6 +3171,7 @@
         ? Promise.allSettled(loaders.map((load) => load?.())).then(() => {})
         : Promise.resolve();
       return runLoaders.then(waitForMountedModels).then(warmRenderModels).then(() => {
+        if (sceneDisposed || queueGeneration !== modelQueueGeneration) return;
         emitLoadProgress({
           phase: "ready",
           label: "议事厅就绪",
@@ -3596,6 +3607,7 @@
         sceneDisposed = true;
         loadProgressHandler = null;
         queuedModelLoaders = [];
+        modelQueueGeneration += 1;
         if (animationFrameId) {
           cancelAnimationFrame(animationFrameId);
           animationFrameId = 0;

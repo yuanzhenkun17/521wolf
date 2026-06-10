@@ -196,7 +196,7 @@ function game(id, extra = {}) {
   }
 }
 
-function historyPhasePath(gameId, { day = 1, phase = 'setup', logOffset = 0, logLimit = 300, decisionOffset = 0, decisionLimit = 200 } = {}) {
+function historyPhasePath(gameId, { day = 1, phase = 'setup', logOffset = 0, logLimit = 1000, decisionOffset = 0, decisionLimit = 500 } = {}) {
   const params = new URLSearchParams()
   params.set('day', String(day))
   params.set('phase', phase)
@@ -2284,7 +2284,47 @@ test('history page changes select and load the first game on the new page', () =
     '/games?limit=2&offset=0',
     '/games?limit=2&offset=2',
     '/games/history-3?view=history-shell',
-    historyPhasePath('history-3')
+    historyPhasePath('history-3', { phase: 'ended' })
+  ])
+}))
+
+test('history shell defaults to the first visible phase instead of setup', () => withWindow(async () => {
+  const state = useGameState()
+  const requests = []
+  const apiFetch = async (path) => {
+    requests.push(path)
+    if (path === '/games/history-visible?view=history-shell') {
+      return game('history-visible', {
+        phases: [
+          { key: 'day-1-setup', day: 1, phase: 'setup', log_count: 1 },
+          { key: 'day-1-night', day: 1, phase: 'night', log_count: 2 }
+        ]
+      })
+    }
+    if (path === historyPhasePath('history-visible', { phase: 'night' })) {
+      return {
+        game_id: 'history-visible',
+        day: 1,
+        phase: 'night',
+        logs: [{ sequence: 2, day: 1, phase: 'night', event_type: 'night_start', message: 'night' }],
+        decisions: []
+      }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+  const history = useGameHistory(state, {
+    installLifecycle: false,
+    apiFetch
+  })
+
+  await history.selectHistoryGame('history-visible')
+
+  assert.equal(state.selectedHistoryPageKey.value, 'day-1-night')
+  assert.equal(state.selectedHistoryGame.value.__activePhaseKey, 'day-1-night')
+  assert.equal(state.selectedHistoryGame.value.phase, 'night')
+  assert.deepEqual(requests, [
+    '/games/history-visible?view=history-shell',
+    historyPhasePath('history-visible', { phase: 'night' })
   ])
 }))
 
@@ -2605,8 +2645,8 @@ test('history phase detail load more appends paginated logs and decisions', () =
         logs: [{ sequence: 1, day: 1, phase: 'speech', event_type: 'speech', message: 'first log' }],
         decisions: [{ id: 'decision-1', day: 1, phase: 'speech', action: 'speech', actor_id: 1 }],
         pagination: {
-          logs: { total: 3, offset: 0, limit: 300, returned: 1, has_more: true },
-          decisions: { total: 2, offset: 0, limit: 200, returned: 1, has_more: true }
+          logs: { total: 3, offset: 0, limit: 1000, returned: 1, has_more: true },
+          decisions: { total: 2, offset: 0, limit: 500, returned: 1, has_more: true }
         }
       }
     }
@@ -2622,8 +2662,8 @@ test('history phase detail load more appends paginated logs and decisions', () =
         ],
         decisions: [{ id: 'decision-2', day: 1, phase: 'speech', action: 'speech', actor_id: 2 }],
         pagination: {
-          logs: { total: 3, offset: 1, limit: 300, returned: 2, has_more: false },
-          decisions: { total: 2, offset: 1, limit: 200, returned: 1, has_more: false }
+          logs: { total: 3, offset: 1, limit: 1000, returned: 2, has_more: false },
+          decisions: { total: 2, offset: 1, limit: 500, returned: 1, has_more: false }
         }
       }
     }
@@ -2696,8 +2736,8 @@ test('history archive and review loaders surface local notices', () => withWindo
 
   assert.equal(state.archiveByGameId.value['history-1'].status, 'ok')
   assert.deepEqual(history.historyNotice.value, {
-    type: 'success',
-    message: '对局档案已载入。'
+    type: '',
+    message: ''
   })
 
   await history.loadReview()
@@ -2946,9 +2986,9 @@ test('history replay shows a notice when source detail cannot be loaded', () => 
   assert.equal(state.isReplayMode.value, false)
   assert.deepEqual(history.historyNotice.value, {
     type: 'error',
-    message: '回放源数据尚未载入，请稍后重试。'
+    message: '回放源数据尚未读取，请稍后重试。'
   })
-  assert.equal(state.error.value, '回放源数据尚未载入，请稍后重试。')
+  assert.equal(state.error.value, '回放源数据尚未读取，请稍后重试。')
 }))
 
 test('evolution workbench paginates runs and selected sample games', async () => {

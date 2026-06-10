@@ -146,6 +146,41 @@ test("LogsPage owns archive and review workspaces for evidence details", () => {
   ]);
 });
 
+test("GameArchivePanel keeps the staggered two-color phase index", () => {
+  const archivePanel = readSource("../src/components/history/GameArchivePanel.vue");
+
+  assertSourceContract(archivePanel, [
+    [
+      "archive sections animate when routed between casefile tabs",
+      /\.casefile-workbench-grid\[data-active-section="casefile-evidence"\] #casefile-evidence,[\s\S]*\.casefile-workbench-grid\[data-active-section="casefile-config"\] #casefile-config\s*\{[\s\S]*display:\s*grid;[\s\S]*animation:\s*casefile-section-shift 0\.18s ease;/,
+    ],
+    [
+      "archive section shift keyframes slide in from the right",
+      /@keyframes casefile-section-shift\s*\{[\s\S]*from\s*\{[\s\S]*opacity:\s*0;[\s\S]*transform:\s*translateX\(18px\);[\s\S]*to\s*\{[\s\S]*opacity:\s*1;[\s\S]*transform:\s*translateX\(0\);/,
+    ],
+    [
+      "archive overview uses three independent audit cards rather than one merged strip",
+      /\.casefile-audit-brief\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);[\s\S]*gap:\s*22px;[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;/,
+    ],
+    [
+      "archive audit cards keep the parchment card surface",
+      /\.casefile-audit-card\s*\{[\s\S]*min-height:\s*96px;[\s\S]*padding:\s*12px 10px;[\s\S]*border:\s*1px solid rgba\(93,\s*48,\s*17,\s*0\.18\);[\s\S]*border-radius:\s*8px;[\s\S]*box-shadow:/,
+    ],
+    [
+      "vertical archive phase buttons keep the target alternating offset",
+      /\.casefile-phase-strip--vertical \.casefile-phase-button:nth-child\(even\)\s*\{[\s\S]*margin-left:\s*82px[\s\S]*border-radius:\s*4px 30px 30px 30px[\s\S]*background:\s*#9884d7/,
+    ],
+    [
+      "vertical archive phase buttons keep the green odd-side cards",
+      /\.casefile-phase-strip--vertical \.casefile-phase-button:nth-child\(odd\)\s*\{[\s\S]*margin-left:\s*0[\s\S]*border-radius:\s*30px 30px 4px 30px[\s\S]*background:\s*#7bc58f/,
+    ],
+    [
+      "horizontal archive phase buttons keep the lower purple row",
+      /\.casefile-phase-strip--horizontal \.casefile-phase-button:nth-child\(even\)\s*\{[\s\S]*margin-top:\s*28px[\s\S]*border-radius:\s*28px 8px 28px 28px[\s\S]*background:\s*#9884d7/,
+    ],
+  ]);
+});
+
 test("EvidenceLink game targets point to Logs archive workspace", () => {
   const links = readSource("../src/components/history/evidenceLinks.ts");
 

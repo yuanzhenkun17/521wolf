@@ -37,8 +37,8 @@ const HISTORY_PHASE_ORDER = [
 const HISTORY_PHASE_RANK = new Map(HISTORY_PHASE_ORDER.map((phase, index) => [phase, index]))
 const HISTORY_WORKSPACE_TABS = new Set(['phase', 'review', 'archive'])
 const EMPTY_HISTORY_COUNTS = { all: 0, normal: 0, benchmark: 0, evolution: 0 }
-const DEFAULT_PHASE_LOG_LIMIT = 300
-const DEFAULT_PHASE_DECISION_LIMIT = 200
+const DEFAULT_PHASE_LOG_LIMIT = 1000
+const DEFAULT_PHASE_DECISION_LIMIT = 500
 
 export function normalizeHistoryWorkspaceTab(value: unknown, fallback: HistoryWorkspaceTab = 'phase'): HistoryWorkspaceTab {
   const text = stringValue(value).toLowerCase()

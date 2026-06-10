@@ -30,7 +30,7 @@ test('Benchmark Lab views keep narrow screens constrained by scrollable table ow
   const snapshotRelease = readSource('../src/components/benchmark/BenchmarkSnapshotReleasePanel.vue')
 
   assertSourceContract(benchmarkPage, [
-    ['Benchmark shell keeps suite, workspace, and context columns shrinkable', /\.bench-workbench-shell[\s\S]*--lab-rail-width:\s*300px[\s\S]*--lab-context-width:\s*300px[\s\S]*grid-template-columns:\s*var\(--lab-rail-width\) minmax\(0, 1fr\) var\(--lab-context-width\)/],
+    ['Benchmark shell keeps suite, workspace, and context columns shrinkable', /\.bench-workbench-shell[\s\S]*--lab-rail-width:\s*252px[\s\S]*--lab-context-width:\s*300px[\s\S]*grid-template-columns:\s*var\(--lab-rail-width\) minmax\(0, 1fr\) var\(--lab-context-width\)/],
     ['Benchmark context panel owns vertical overflow', /\.bench-context-panel\s*\{[\s\S]*min-width:\s*0[\s\S]*min-height:\s*0[\s\S]*overflow-y:\s*auto/],
     ['Benchmark context cards keep content-height rows inside the scrolling panel', /\.bench-context-panel\s*\{[\s\S]*align-items:\s*start[\s\S]*grid-auto-rows:\s*max-content/],
     ['Benchmark context values ellipsize long ids', /\.bench-context-gates b,[\s\S]*\.bench-context-artifacts em\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow:\s*hidden[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/],
@@ -104,9 +104,8 @@ test('Evolution Trust drawer and navigation keep mobile overflow local', () => {
   ])
 })
 
-test('History Review and Evidence context keep audit content inside narrow viewports', () => {
+test('History Review and detail context keep audit content inside narrow viewports', () => {
   const logsPage = readSource('../src/pages/LogsPage.vue')
-  const evidenceContext = readSource('../src/components/history/EvidenceContextBar.vue')
   const reviewReport = readSource('../src/components/history/ReviewReportPanel.vue')
 
   assertSourceContract(logsPage, [
@@ -114,19 +113,14 @@ test('History Review and Evidence context keep audit content inside narrow viewp
     ['Logs side column hides x overflow when stacked', /@media \(max-width: 1120px\)[\s\S]*\.detail-side-column\s*\{[\s\S]*grid-template-columns:\s*1fr[\s\S]*overflow-x:\s*hidden/],
     ['Logs shell suppresses x overflow on mobile', /@media \(max-width: 960px\)[\s\S]*\.battle-log-shell\s*\{[\s\S]*grid-template-columns:\s*1fr[\s\S]*overflow-x:\s*hidden/],
     ['Logs review/archive main columns hide x overflow', /\.detail-content\.workspace-review \.detail-main-column,[\s\S]*\.detail-content\.workspace-archive \.detail-main-column\s*\{[\s\S]*overflow-x:\s*hidden[\s\S]*scrollbar-gutter:\s*stable/],
-    ['Logs detail topbar keeps the shared evidence context phase-only', /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'[\s\S]*<div v-if="selectedHistoryGame" :class="\['detail-topbar', 'workspace-' \+ workspaceTab\]">[\s\S]*<EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" \/>/],
+    ['Logs detail topbar keeps compact metadata phase-only', /const detailMetaItems = computed\(\(\) =>[\s\S]*<div v-if="selectedHistoryGame" :class="\['detail-topbar', 'workspace-' \+ workspaceTab\]">[\s\S]*<div v-if="workspaceTab === 'phase'" class="detail-context-line" aria-label="对局配置">[\s\S]*v-for="item in detailMetaItems"/],
+    ['Logs compact metadata line clips dense ids', /\.detail-context-line\s*\{[\s\S]*flex-wrap:\s*nowrap[\s\S]*overflow:\s*hidden/],
+    ['Logs compact metadata values ellipsize long ids', /\.detail-context-line b\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow:\s*hidden[\s\S]*text-overflow:\s*ellipsis/],
+    ['Logs compact metadata stacks below review width', /@media \(max-width: 920px\)[\s\S]*\.detail-topbar\.workspace-phase\s*\{[\s\S]*grid-template-areas:\s*"workspace"\s*"context"\s*"phases"/],
     ['Logs phone layout keeps detail columns single-column', /@media \(max-width: 640px\)[\s\S]*\.detail-content,[\s\S]*\.detail-side-column\s*\{[\s\S]*grid-template-columns:\s*1fr/],
     ['Logs raw log headers wrap on phones', /@media \(max-width: 640px\)[\s\S]*\.history-raw-log header\s*\{[\s\S]*flex-wrap:\s*wrap/],
   ])
-
-  assertSourceContract(evidenceContext, [
-    ['Evidence context root is width-safe', /\.evidence-context-bar\s*\{[\s\S]*width:\s*100%[\s\S]*min-width:\s*0/],
-    ['Evidence context summary uses bounded columns', /\.evidence-context-summary\s*\{[\s\S]*grid-template-columns:[\s\S]*minmax\(160px, 1\.25fr\)[\s\S]*min-width:\s*0/],
-    ['Evidence context values ellipsize long ids', /\.evidence-context-item dd\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow:\s*hidden[\s\S]*text-overflow:\s*ellipsis/],
-    ['Evidence version chips wrap when dense', /\.evidence-context-version-value\s*\{[\s\S]*flex-wrap:\s*wrap/],
-    ['Evidence context collapses to two columns at review width', /@media \(max-width: 860px\)[\s\S]*\.evidence-context-summary\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/],
-    ['Evidence context collapses to one column on phones', /@media \(max-width: 560px\)[\s\S]*\.evidence-context-summary\s*\{[\s\S]*grid-template-columns:\s*1fr/],
-  ])
+  assert.doesNotMatch(logsPage, /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'/)
 
   assertSourceContract(reviewReport, [
     ['Review report does not duplicate the shared evidence context', /<section class="archive-review-panel">[\s\S]*<h3>复盘报告<\/h3>(?![\s\S]*review-evidence-context)/],
@@ -192,8 +186,9 @@ test('390px mobile fixture keeps review evidence and Lab tables from widening th
               border-radius: 8px;
               background: rgba(255, 252, 245, 0.76);
             }
-            .evidence-context-bar {
-              display: block;
+            .detail-topbar {
+              display: grid;
+              gap: 8px;
               width: 100%;
               min-width: 0;
               padding: 8px;
@@ -201,37 +196,36 @@ test('390px mobile fixture keeps review evidence and Lab tables from widening th
               border-radius: 8px;
               background: rgba(255, 249, 232, 0.72);
             }
-            .evidence-context-summary {
-              display: grid;
-              grid-template-columns: 1fr;
-              gap: 8px;
+            .detail-context-line {
+              display: flex;
+              flex-wrap: nowrap;
+              align-items: center;
+              gap: 10px;
               min-width: 0;
-              margin: 0;
+              overflow: hidden;
+              color: rgba(74, 37, 15, 0.72);
+              font-size: 12px;
+              font-weight: 900;
             }
-            .evidence-context-item {
-              display: grid;
-              gap: 5px;
+            .detail-context-line span {
+              display: inline-flex;
+              align-items: baseline;
+              flex: 0 1 auto;
+              gap: 2px;
+              max-width: 100%;
               min-width: 0;
-              min-height: 44px;
-              padding: 8px 10px;
-              border: 1px solid rgba(92, 54, 20, 0.1);
-              border-radius: 6px;
-              background: rgba(255, 255, 255, 0.52);
+              white-space: nowrap;
             }
-            .evidence-context-item dt {
-              color: rgba(61, 40, 24, 0.58);
-              font-size: 10px;
-              font-weight: 800;
-              text-transform: uppercase;
+            .detail-context-line small {
+              flex: 0 0 auto;
+              color: rgba(74, 37, 15, 0.58);
             }
-            .evidence-context-item dd {
+            .detail-context-line b {
               min-width: 0;
-              margin: 0;
               overflow: hidden;
               text-overflow: ellipsis;
               white-space: nowrap;
-              font-size: 12px;
-              font-weight: 850;
+              color: #3b1c09;
             }
             .review-summary-strip {
               display: grid;
@@ -309,21 +303,12 @@ test('390px mobile fixture keeps review evidence and Lab tables from widening th
         <body>
           <main class="mobile-audit-fixture">
             <section class="review-panel" aria-label="review evidence fixture">
-              <section class="evidence-context-bar" data-source="benchmark">
-                <dl class="evidence-context-summary">
-                  <div class="evidence-context-item">
-                    <dt>source</dt>
-                    <dd>benchmark_release_evidence_bundle_with_long_identifier</dd>
-                  </div>
-                  <div class="evidence-context-item">
-                    <dt>run</dt>
-                    <dd>benchmark_run_260609_mobile_safe_area_contract_long_hash</dd>
-                  </div>
-                  <div class="evidence-context-item">
-                    <dt>versions</dt>
-                    <dd>seer=v_prod_candidate_20260609, wolf=v_baseline_20260601</dd>
-                  </div>
-                </dl>
+              <section class="detail-topbar workspace-phase" data-source="benchmark">
+                <div class="detail-context-line" aria-label="对局配置">
+                  <span><small>来源：</small><b>benchmark_release_evidence_bundle_with_long_identifier</b></span>
+                  <span><small>运行：</small><b>benchmark_run_260609_mobile_safe_area_contract_long_hash</b></span>
+                  <span><small>版本：</small><b>seer=v_prod_candidate_20260609, wolf=v_baseline_20260601</b></span>
+                </div>
               </section>
               <div class="review-summary-strip">
                 <span class="review-summary-item"><small>winner</small><b>villagers_with_long_label</b></span>
@@ -374,8 +359,9 @@ test('390px mobile fixture keeps review evidence and Lab tables from widening th
       const selectors = [
         '.mobile-audit-fixture',
         '.review-panel',
-        '.evidence-context-bar',
-        '.evidence-context-summary',
+        '.detail-topbar',
+        '.detail-context-line',
+        '.detail-context-line span',
         '.review-summary-strip',
         '.review-judge-section',
         '.lab-panel',

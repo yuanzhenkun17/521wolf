@@ -367,6 +367,12 @@
   text-shadow: 0 0 14px rgba(157, 184, 255, 0.18);
 }
 
+.lycan-app.night:not(.lobbying) .topbar .brand strong,
+.lycan-app.night:not(.lobbying) .topbar .primary-nav button {
+  color: #f2ca50;
+  text-shadow: 0 0 14px rgba(242, 202, 80, 0.18);
+}
+
 .match-layout {
   position: relative;
   z-index: var(--z-scene);

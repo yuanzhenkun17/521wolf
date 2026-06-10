@@ -92,8 +92,8 @@ const VOTE_PHASE_BY_TYPE = {
 const REPLAY_SPEEDS = [0.5, 1, 2, 4]
 const REPLAY_BASE_INTERVAL_MS = 900
 const DEFAULT_HISTORY_PAGE_SIZE = 8
-const DEFAULT_PHASE_LOG_LIMIT = 300
-const DEFAULT_PHASE_DECISION_LIMIT = 200
+const DEFAULT_PHASE_LOG_LIMIT = 1000
+const DEFAULT_PHASE_DECISION_LIMIT = 500
 const DEFAULT_REPLAY_LIMIT = 500
 const EMPTY_HISTORY_COUNTS = { all: 0, normal: 0, benchmark: 0, evolution: 0 }
 
@@ -166,6 +166,15 @@ function parseHistoryPageKey(key = '') {
     day: normalizeHistoryDay(match[1]),
     phase: normalizeHistoryPhase(match[2])
   }
+}
+
+function isSetupHistoryPage(page) {
+  const parsed = parseHistoryPageKey(page?.key)
+  return normalizeHistoryPhase(page?.phase ?? parsed?.phase ?? '') === 'setup'
+}
+
+function firstVisibleHistoryPage(pages = []) {
+  return pages.find((page) => !isSetupHistoryPage(page)) || null
 }
 
 function numericHistoryId(value) {
@@ -764,7 +773,23 @@ function useGameHistory(state, options: LooseRecord = {}) {
       phases: source.__historyPages || source.history_pages || source.phases
     })
     const pages = basePages.map((page) => pageWithPhaseDetail(page, cache.get(page.key)))
-    const activeKey = activePageKey || pages[0]?.key || ''
+    const parsedActive = parseHistoryPageKey(activePageKey)
+    const requestedPage = pages.find((page) => page.key === activePageKey)
+      || (parsedActive ? pages.find((page) =>
+        normalizeHistoryDay(page.day) === parsedActive.day
+        && normalizeHistoryPhase(page.phase) === parsedActive.phase
+      ) : null)
+    const fallbackPage = firstVisibleHistoryPage(pages) || pages[0] || null
+    const normalizedActivePage = requestedPage && !isSetupHistoryPage(requestedPage) ? requestedPage : fallbackPage
+    const activeKey = normalizedActivePage?.key || ''
+    const selectedPage = findHistoryPageByKey(state.selectedHistoryPageKey.value)
+    if (
+      activeKey
+      && state.selectedHistoryPageKey.value !== activeKey
+      && (!state.selectedHistoryPageKey.value || isSetupHistoryPage(selectedPage))
+    ) {
+      state.selectedHistoryPageKey.value = activeKey
+    }
     const activeDetail = activeKey ? cache.get(activeKey) : null
     const activePage = pages.find((page) => page.key === activeKey)
     state.selectedHistoryGame.value = {
@@ -1322,7 +1347,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
       state.selectedHistoryShell.value = shell
       state.selectedHistoryGame.value = shell
       syncPhaseCacheState(key)
-      const defaultPage = shell.__historyPages?.[0] || null
+      const defaultPage = firstVisibleHistoryPage(shell.__historyPages || []) || shell.__historyPages?.[0] || null
       if (defaultPage) {
         state.selectedHistoryPageKey.value = defaultPage.key
         await ensureHistoryPhaseDetail(key, defaultPage)
@@ -1759,7 +1784,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     const gameId = typeof gameItem === 'object' ? gameItem?.game_id : gameItem
     const key = String(gameId || '')
     if (!key) {
-      const notice = { type: 'error', message: '回放源数据尚未载入，请稍后重试。' }
+      const notice = { type: 'error', message: '回放源数据尚未读取，请稍后重试。' }
       historyNotice.value = notice
       state.error.value = notice.message
       return
@@ -1775,7 +1800,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
       enterReplayAt(0, source)
     } catch {
       if (token.isLatest()) {
-        const notice = { type: 'error', message: '回放源数据尚未载入，请稍后重试。' }
+        const notice = { type: 'error', message: '回放源数据尚未读取，请稍后重试。' }
         historyNotice.value = notice
         state.error.value = notice.message
       }
@@ -1821,7 +1846,6 @@ function useGameHistory(state, options: LooseRecord = {}) {
       const archive = await apiFetch(`/games/${historyGamePath(gameId)}/archive`)
       if (!token.isLatest()) return
       state.archiveByGameId.value = { ...state.archiveByGameId.value, [gameId]: archive }
-      if (!silentSuccess) historyNotice.value = { type: 'success', message: '对局档案已载入。' }
     } catch (err) {
       if (token.isLatest()) {
         const notice = historyLoadNotice('error', err?.message, '对局档案读取失败，请重试。')

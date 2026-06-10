@@ -1064,12 +1064,12 @@ watch(viewStorageKey, () => {
   width: 100%;
   min-width: 980px;
   padding: 12px;
-  border: 1px solid var(--comparison-line);
-  border-radius: 8px;
+  border: 1px solid rgba(93, 48, 17, 0.15);
+  border-radius: 0;
   overflow: visible;
   background:
-    linear-gradient(135deg, rgba(255, 252, 245, 0.72), rgba(235, 199, 136, 0.2)),
-    var(--comparison-bg);
+    linear-gradient(180deg, rgba(255, 252, 245, 0.22), rgba(255, 239, 194, 0.1)),
+    rgba(255, 252, 245, 0.14);
   color: var(--comparison-text);
   font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
 }
@@ -1083,8 +1083,10 @@ watch(viewStorageKey, () => {
 .unrankable-panel,
 .empty-state {
   border: 1px solid var(--comparison-line);
-  border-radius: 8px;
-  background: var(--comparison-panel);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.12)),
+    rgba(255, 252, 245, 0.18);
 }
 
 .comparison-header {
@@ -1106,8 +1108,12 @@ watch(viewStorageKey, () => {
   text-transform: uppercase;
 }
 
+.comparison-header > div:first-child small {
+  display: none;
+}
+
 .comparison-header h2 {
-  margin: 2px 0 0;
+  margin: 0;
   color: var(--comparison-text);
   font-size: 18px;
   font-weight: 900;
@@ -1130,8 +1136,8 @@ watch(viewStorageKey, () => {
   min-height: 34px;
   padding: 5px 9px;
   border: 1px solid var(--comparison-line);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.72);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.32);
 }
 
 .compare-source-chip b,
@@ -1253,8 +1259,8 @@ watch(viewStorageKey, () => {
   min-height: 28px;
   padding: 0 9px;
   border: 1px solid var(--comparison-line);
-  border-radius: 6px;
-  background: var(--comparison-panel-solid);
+  border-radius: 4px;
+  background: rgba(255, 252, 245, 0.36);
   color: var(--comparison-text);
   font-size: 11px;
   font-weight: 900;
@@ -1274,8 +1280,8 @@ watch(viewStorageKey, () => {
   min-height: 28px;
   padding: 0 8px;
   border: 1px solid var(--comparison-line);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.82);
+  border-radius: 4px;
+  background: rgba(255, 250, 240, 0.36);
   color: var(--comparison-text);
   font-size: 11px;
   font-weight: 850;
@@ -1295,8 +1301,8 @@ watch(viewStorageKey, () => {
   min-width: 0;
   padding: 0 8px;
   border: 1px solid var(--comparison-line);
-  border-radius: 6px;
-  background: var(--comparison-panel-solid);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.46);
   color: var(--comparison-text);
   font-size: 11px;
   font-weight: 850;
@@ -1395,7 +1401,7 @@ watch(viewStorageKey, () => {
   min-height: 42px;
   padding: 7px 9px;
   border-bottom: 1px solid var(--comparison-line);
-  border-radius: 5px;
+  border-radius: 0;
 }
 
 .comparison-row:last-child {
@@ -1415,13 +1421,13 @@ watch(viewStorageKey, () => {
 }
 
 .comparison-row--baseline {
-  background: rgba(255, 245, 221, 0.78);
+  background: rgba(255, 245, 221, 0.36);
   box-shadow: inset 3px 0 0 var(--comparison-amber);
 }
 
 .comparison-row--unrankable {
   color: var(--comparison-muted);
-  background: rgba(255, 252, 245, 0.48);
+  background: rgba(255, 252, 245, 0.22);
 }
 
 .comparison-row span {
@@ -1463,7 +1469,7 @@ watch(viewStorageKey, () => {
   min-height: 22px;
   padding: 0 7px;
   border: 1px solid rgba(139, 94, 52, 0.32);
-  border-radius: 5px;
+  border-radius: 4px;
   background: rgba(139, 94, 52, 0.1);
   color: var(--comparison-positive);
   font-size: 11px;
@@ -1576,7 +1582,7 @@ watch(viewStorageKey, () => {
   min-height: 76px;
   padding: 9px 10px;
   border: 1px solid var(--comparison-danger-border);
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--comparison-danger-bg);
 }
 
@@ -1603,8 +1609,8 @@ watch(viewStorageKey, () => {
   width: fit-content;
   padding: 2px 6px;
   border: 1px solid rgba(139, 94, 52, 0.2);
-  border-radius: 5px;
-  background: rgba(255, 252, 245, 0.72);
+  border-radius: 4px;
+  background: rgba(255, 252, 245, 0.36);
   color: var(--comparison-positive);
   font-size: 10px;
   font-style: normal;
@@ -1637,8 +1643,8 @@ watch(viewStorageKey, () => {
   min-width: 0;
   padding: 6px 7px;
   border: 1px solid var(--comparison-line);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.68);
+  border-radius: 0;
+  background: rgba(255, 250, 240, 0.26);
 }
 
 .unrankable-row dt {
@@ -1681,8 +1687,8 @@ watch(viewStorageKey, () => {
   min-height: 30px;
   padding: 8px 10px;
   border: 1px dashed var(--comparison-line);
-  border-radius: 6px;
-  background: rgba(255, 250, 240, 0.68);
+  border-radius: 0;
+  background: rgba(255, 250, 240, 0.28);
 }
 
 .positive {

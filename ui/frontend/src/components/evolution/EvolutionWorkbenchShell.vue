@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import ApiErrorPanel from '../ApiErrorPanel.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../../composables/apiErrorDisplay.ts'
-import TaskArtifactPanel from '../tasks/TaskArtifactPanel.vue'
 
 interface EvolutionTab {
   key: string
@@ -63,15 +62,6 @@ const activeTabLabel = computed(() =>
 
 const runSummary = computed(() => props.selectedRunSummary || {})
 const selectedRun = computed(() => props.selectedRun || {})
-const selectedTaskId = computed(() =>
-  String(
-    runSummary.value.task_id ||
-    runSummary.value.queue_task_id ||
-    selectedRun.value.task_id ||
-    selectedRun.value.queue_task_id ||
-    ''
-  )
-)
 const selectedReview = computed(() => props.selectedProposalReview || {})
 const selectedGate = computed(() => selectedReview.value.gate || {})
 const selectedTrustBundle = computed(() => selectedReview.value.trustBundle || selectedReview.value.trust_bundle || {})
@@ -125,33 +115,6 @@ const contextDiagnostics = computed(() => {
   const diagnostics = Array.isArray(selectedRun.value.diagnostics) ? selectedRun.value.diagnostics : []
   return diagnostics.slice(0, 4)
 })
-const riskActionRows = computed(() => [
-  {
-    key: 'promote',
-    label: '晋升',
-    available: props.selectedCanPromote,
-    reason: props.selectedPromoteDisabledReason || (props.selectedCanPromote ? '门禁与信任包满足当前晋升条件。' : '等待运行进入可晋升状态。')
-  },
-  {
-    key: 'reject',
-    label: '拒绝运行',
-    available: props.selectedCanReject,
-    reason: props.selectedRejectDisabledReason || (props.selectedCanReject ? '当前运行可执行拒绝，相关提案会进入拒绝记录。' : '等待运行进入待评审状态。')
-  },
-  {
-    key: 'terminate',
-    label: '终止',
-    available: props.selectedCanTerminate,
-    reason: props.selectedTerminateDisabledReason || (props.selectedCanTerminate ? `将终止当前${runSummary.value.currentStageLabel || '阶段'}。` : '运行不可终止。')
-  },
-  {
-    key: 'rollback',
-    label: '回滚',
-    available: !props.selectedRollbackDisabledReason,
-    reason: props.selectedRollbackDisabledReason || '选中版本可回滚时会在版本页执行。'
-  }
-])
-
 function progressPercent(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
@@ -161,11 +124,6 @@ function progressPercent(value) {
 function displayText(value, fallback = '—') {
   const text = String(value ?? '').trim()
   return text || fallback
-}
-
-function shortRunId(value) {
-  const text = String(value || '').trim()
-  return text ? text.slice(0, 12) : '—'
 }
 
 function sampleCount(rows) {
@@ -249,12 +207,13 @@ function retryRefresh() {
             :class="['evo-role-chip', { selected: selectedRole === role.key }]"
             @click="emit('select-role', role.key)"
           >
-            <img :src="role.image" alt="" aria-hidden="true" />
-            <span class="evo-role-name">
+            <span class="evo-role-identity">
+              <img :src="role.image" alt="" aria-hidden="true" />
               <b>{{ role.label }}</b>
-              <small>
-                运行 {{ roleRunCounts(role.key).active }} · 待审 {{ roleRunCounts(role.key).reviewing }}
-              </small>
+            </span>
+            <span class="evo-role-statuses" aria-label="角色运行状态">
+              <small>运行 {{ roleRunCounts(role.key).active }}</small>
+              <small>待审 {{ roleRunCounts(role.key).reviewing }}</small>
             </span>
           </button>
         </div>
@@ -268,27 +227,27 @@ function retryRefresh() {
         </div>
         <div class="evo-command-metrics" aria-label="自进化工具状态条">
           <span>
-            <small>当前角色</small>
+            <small>当前角色：</small>
             <b>{{ selectedRoleRow?.label || '—' }}</b>
           </span>
           <span>
-            <small>当前运行</small>
-            <b>{{ shortRunId(runSummary.id) }}</b>
+            <small>当前运行：</small>
+            <b>{{ displayText(runSummary.id) }}</b>
           </span>
           <span>
-            <small>阶段</small>
+            <small>阶段：</small>
             <b>{{ runSummary.currentStageLabel || '—' }}</b>
           </span>
           <span>
-            <small>门禁</small>
+            <small>门禁：</small>
             <b>{{ contextGateLabel }}</b>
           </span>
           <span>
-            <small>信任包</small>
+            <small>信任包：</small>
             <b>{{ contextTrustLabel }}</b>
           </span>
           <span>
-            <small>进度</small>
+            <small>进度：</small>
             <b>{{ progressPercent(runSummary.overallProgressPercent) }}%</b>
           </span>
         </div>
@@ -367,14 +326,6 @@ function retryRefresh() {
           </div>
         </section>
 
-        <TaskArtifactPanel
-          v-if="selectedTaskId"
-          :task-id="selectedTaskId"
-          title="队列任务与产物"
-          eyebrow="ArtifactStore"
-          compact
-        />
-
         <section class="evo-context-section">
           <h3>发布审计</h3>
           <div class="evo-context-kpis two">
@@ -397,21 +348,6 @@ function retryRefresh() {
             <span class="wide">
               <small>证据强度</small>
               <b>{{ contextEvidenceLabel }}</b>
-            </span>
-          </div>
-        </section>
-
-        <section class="evo-context-section">
-          <h3>高风险动作</h3>
-          <div class="evo-context-action-list">
-            <span
-              v-for="item in riskActionRows"
-              :key="item.key"
-              :data-available="item.available ? 'true' : 'false'"
-            >
-              <small>{{ item.label }}</small>
-              <b>{{ item.available ? '可执行' : '不可执行' }}</b>
-              <em>{{ item.reason }}</em>
             </span>
           </div>
         </section>

@@ -66,16 +66,16 @@ test('TopNav buttons show current page state without changing App routing events
 test('TopNav Play and Lab segment styling stays compact on mobile', () => {
   const source = readSource('../src/components/TopNav.vue')
 
-  assert.match(source, /\.topbar \.primary-nav button\[data-work-line="play"\]\s*\{[\s\S]*--nav-button-accent:\s*#ffb4a8/)
-  assert.match(source, /\.topbar \.primary-nav button\[data-work-line="lab"\]\s*\{[\s\S]*--nav-button-accent:\s*#76c7a3/)
-  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]\s*\{[\s\S]*color:\s*var\(--nav-button-accent\)/)
-  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]:hover\s*\{[\s\S]*background:\s*rgba\(118,\s*199,\s*163,\s*0\.08\)/)
-  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]\.active:hover\s*\{[\s\S]*background:\s*rgba\(118,\s*199,\s*163,\s*0\.08\)/)
-  assert.match(source, /\.nav-line\s*\{[\s\S]*text-transform:\s*uppercase/)
+  assert.match(source, /\.topbar \.primary-nav button\[data-work-line="play"\]\s*\{[\s\S]*--nav-button-accent:\s*var\(--nav-accent\)/)
+  assert.match(source, /\.topbar \.primary-nav button\[data-work-line="lab"\]\s*\{[\s\S]*--nav-button-accent:\s*var\(--nav-accent\)/)
+  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]\s*\{[\s\S]*color:\s*var\(--nav-accent\)/)
+  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]:hover\s*\{[\s\S]*background:\s*rgba\(255,\s*180,\s*168,\s*0\.08\)/)
+  assert.match(source, /\.topbar--lobby \.primary-nav button\[data-work-line="lab"\]\.active:hover\s*\{[\s\S]*background:\s*rgba\(255,\s*180,\s*168,\s*0\.08\)/)
+  assert.match(source, /\.nav-line\s*\{[\s\S]*display:\s*none/)
   assert.match(source, /\.nav-label\s*\{[\s\S]*text-overflow:\s*ellipsis[\s\S]*white-space:\s*nowrap/)
-  assert.match(source, /\.nav-state\s*\{[\s\S]*position:\s*absolute[\s\S]*pointer-events:\s*none/)
+  assert.match(source, /\.nav-state\s*\{[\s\S]*display:\s*none/)
   assert.match(source, /@media \(max-width: 760px\)[\s\S]*\.topbar \.primary-nav button\s*\{[\s\S]*grid-template-rows:\s*9px 14px/)
-  assert.match(source, /@media \(max-width: 760px\)[\s\S]*\.nav-state\s*\{[\s\S]*width:\s*6px[\s\S]*font-size:\s*0/)
+  assert.match(source, /@media \(max-width: 760px\)[\s\S]*\.nav-state\s*\{[\s\S]*font-size:\s*0/)
 })
 
 test('TopNav Play/Lab contract does not remove existing stream status badge contract', () => {

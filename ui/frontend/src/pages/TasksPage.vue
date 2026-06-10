@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
 import TaskArtifactPanel from '../components/tasks/TaskArtifactPanel.vue'
 import { createTaskService } from '../services/taskApi'
 import type { TaskActionResponse, TaskEventRow, TaskQueueRow } from '../types/task'
 
 type StatusFilterKey = 'all' | 'active' | 'queued' | 'running' | 'terminal' | 'failed'
+type TaskWorkspaceKey = 'queue' | 'events'
 
 const STATUS_FILTERS: Array<{
   key: StatusFilterKey
@@ -48,6 +48,9 @@ const error = ref('')
 const detailError = ref('')
 const eventsError = ref('')
 const refreshedAt = ref('')
+const activeWorkspace = ref<TaskWorkspaceKey>('queue')
+const queueSectionRef = ref<HTMLElement | null>(null)
+const eventsSectionRef = ref<HTMLElement | null>(null)
 
 const selectedFilter = computed(() =>
   STATUS_FILTERS.find((item) => item.key === activeFilter.value) || STATUS_FILTERS[0]
@@ -76,6 +79,7 @@ const selectedListTask = computed(() =>
   tasks.value.find((task) => task.task_id === selectedTaskId.value || task.id === selectedTaskId.value) || null
 )
 const activeTask = computed(() => selectedTask.value || selectedListTask.value)
+const activeTaskProgressPercent = computed(() => normalizedPercent(activeTask.value?.progressPercent))
 const statusCounts = computed(() => {
   const counts: Record<string, number> = { all: tasks.value.length, active: 0, terminal: 0, failed: 0 }
   tasks.value.forEach((task) => {
@@ -184,8 +188,20 @@ function statusCountFor(filter: (typeof STATUS_FILTERS)[number]): number {
   return filter.statuses.reduce((total, status) => total + (statusCounts.value[status] || 0), 0)
 }
 
+function normalizedPercent(value: unknown): number {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.max(0, Math.min(100, Math.round(number)))
+}
+
 function selectFilter(filter: StatusFilterKey) {
   activeFilter.value = filter
+}
+
+function selectWorkspace(workspace: TaskWorkspaceKey) {
+  activeWorkspace.value = workspace
+  const target = workspace === 'events' ? eventsSectionRef.value : queueSectionRef.value
+  target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
 }
 
 function selectTask(task: TaskQueueRow | null) {
@@ -285,33 +301,35 @@ function eventPayload(event: TaskEventRow): string {
 
 <template>
   <section class="tasks-page" aria-label="任务中心">
-    <LabWorkbenchShell
-      workbench-key="tasks"
-      title="任务中心"
-      eyebrow="Task Queue"
-      :tabs="[]"
-      :meta="taskMetaRows"
-      action-label="刷新"
-      action-busy-label="刷新中"
-      :action-busy="loading"
-      :action-disabled="loading"
-      rail-label="任务筛选"
-      context-label="任务详情"
-      main-label="任务列表与事件"
-      @action="refreshAll"
-    >
-      <template #rail>
-        <aside class="tasks-rail">
-          <header>
-            <small>状态筛选</small>
-            <b>{{ visibleTasks.length }} / {{ tasks.length }}</b>
-          </header>
+    <section class="tasks-shell parchment-logbook">
+      <aside class="tasks-control-rail" aria-label="任务筛选">
+        <header class="tasks-rail-header">
+          <span>任务上下文</span>
+          <strong>{{ visibleTasks.length }} / {{ tasks.length }}</strong>
+        </header>
+
+        <div class="tasks-rail-summary" aria-label="任务概览">
+          <span v-for="item in taskMetaRows" :key="item.key">
+            <small>{{ item.label }}</small>
+            <b :title="String(item.value ?? '')">{{ item.value }}</b>
+          </span>
+        </div>
+
+        <div class="tasks-filter-panel">
+          <div class="tasks-filter-head">
+            <span class="tasks-rail-label">状态筛选</span>
+            <p v-if="refreshedAt" class="task-refresh-note">{{ formatDateTime(refreshedAt) }}</p>
+          </div>
+          <label class="task-search">
+            <input v-model="searchText" type="search" placeholder="搜索 task / kind / stage" aria-label="搜索任务" />
+          </label>
           <div class="task-filter-list">
             <button
               v-for="filter in STATUS_FILTERS"
               :key="filter.key"
               type="button"
-              :class="{ active: activeFilter === filter.key }"
+              :data-filter="filter.key"
+              :class="['task-filter-chip', { selected: activeFilter === filter.key }]"
               @click="selectFilter(filter.key)"
             >
               <span>
@@ -321,302 +339,885 @@ function eventPayload(event: TaskEventRow): string {
               <em>{{ statusCountFor(filter) }}</em>
             </button>
           </div>
-          <label class="task-search">
-            <span>搜索</span>
-            <input v-model="searchText" type="search" placeholder="task / kind / stage" />
-          </label>
-          <p v-if="refreshedAt" class="task-refresh-note">最后刷新 {{ formatDateTime(refreshedAt) }}</p>
-        </aside>
-      </template>
+        </div>
+      </aside>
 
-      <template #context>
-        <section class="tasks-context">
-          <article class="task-detail-panel">
-            <header>
-              <div>
-                <small>当前任务</small>
-                <h2 :title="activeTask?.task_id || ''">{{ shortTaskId(activeTask?.task_id) }}</h2>
+      <main class="tasks-detail-panel">
+        <header class="tasks-command-bar">
+          <div class="tasks-command-title">
+            <h2>任务工作台</h2>
+          </div>
+          <div class="tasks-command-metrics" aria-label="任务状态条">
+            <span v-for="item in taskMetaRows" :key="item.key">
+              <small>{{ item.label }}：</small>
+              <b :title="String(item.value ?? '')">{{ item.value }}</b>
+            </span>
+          </div>
+          <div class="tasks-command-actions">
+            <button type="button" class="tasks-refresh-button" :disabled="loading" @click="refreshAll">
+              <span aria-hidden="true">&#8635;</span> {{ loading ? '刷新中' : '刷新' }}
+            </button>
+          </div>
+        </header>
+
+        <div class="tasks-detail-topbar">
+          <nav class="tasks-nav detail-workspace-tabs" aria-label="任务视图">
+            <button
+              type="button"
+              :class="['tasks-nav-tab', { active: activeWorkspace === 'queue' }]"
+              @click="selectWorkspace('queue')"
+            >
+              <span>任务列表</span>
+            </button>
+            <button
+              type="button"
+              :class="['tasks-nav-tab', { active: activeWorkspace === 'events' }]"
+              @click="selectWorkspace('events')"
+            >
+              <span>事件时间线</span>
+            </button>
+          </nav>
+        </div>
+
+        <section class="tasks-main-pane">
+          <div class="tasks-scroll">
+            <div v-if="error" class="task-warning">{{ error }}</div>
+
+            <section ref="queueSectionRef" class="tasks-card task-list-panel" aria-label="任务列表">
+              <header>
+                <div>
+                  <small>任务列表</small>
+                  <h2>{{ visibleTasks.length }} 个任务</h2>
+                </div>
+                <b>{{ selectedFilter.label }}</b>
+              </header>
+              <div class="task-table">
+                <button
+                  v-for="task in visibleTasks"
+                  :key="task.task_id"
+                  type="button"
+                  :class="['task-row', { selected: selectedTaskId === task.task_id || selectedTaskId === task.id }]"
+                  :data-status="task.status"
+                  @click="selectTask(task)"
+                >
+                  <span class="task-status-dot" aria-hidden="true"></span>
+                  <span class="task-main-cell">
+                    <b :title="task.task_id">{{ shortTaskId(task.task_id) }}</b>
+                    <small :title="task.kind">{{ taskKindLabel(task.kind) }} / {{ task.stageLabel }}</small>
+                  </span>
+                  <span class="task-progress-cell">
+                    <b>{{ task.statusLabel }}</b>
+                    <i aria-hidden="true"><em :style="{ width: `${normalizedPercent(task.progressPercent)}%` }"></em></i>
+                  </span>
+                  <span class="task-time-cell">
+                    <b>{{ task.progressLabel }}</b>
+                    <small>{{ formatDateTime(task.updated_at || task.queued_at) || '未记录' }}</small>
+                  </span>
+                </button>
+                <div v-if="!visibleTasks.length && !loading" class="task-empty">当前筛选无任务。</div>
+                <div v-if="loading" class="task-empty">正在读取任务队列。</div>
               </div>
-              <b v-if="activeTask">{{ activeTask.statusLabel }}</b>
-            </header>
-            <div v-if="detailLoading" class="task-empty">正在读取任务详情。</div>
-            <div v-else-if="detailError" class="task-warning">{{ detailError }}</div>
-            <div v-else-if="activeTask" class="task-detail-grid">
-              <span v-for="item in contextRows" :key="item.key">
-                <small>{{ item.label }}</small>
-                <b :title="String(item.value || '')">{{ item.value }}</b>
-              </span>
-            </div>
-            <div v-else class="task-empty">未选择任务。</div>
-          </article>
+            </section>
+
+            <section ref="eventsSectionRef" class="tasks-card task-events-panel" aria-label="任务事件时间线">
+              <header>
+                <div>
+                  <small>事件时间线</small>
+                  <h2>{{ eventRows.length }} 条事件</h2>
+                </div>
+                <button type="button" class="tasks-card-action" :disabled="!selectedTaskId || eventsLoading" @click="loadSelectedTask">
+                  {{ eventsLoading ? '读取中' : '刷新事件' }}
+                </button>
+              </header>
+              <p v-if="eventsError" class="task-warning">{{ eventsError }}</p>
+              <ol v-else-if="eventRows.length" class="task-event-list">
+                <li v-for="event in eventRows" :key="event.key">
+                  <span>
+                    <b>{{ event.type }}</b>
+                    <small>{{ event.time || event.key }}</small>
+                  </span>
+                  <pre>{{ event.payload }}</pre>
+                </li>
+              </ol>
+              <div v-else class="task-empty">
+                {{ selectedTaskId ? '暂无任务事件。' : '选择任务后显示事件。' }}
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+
+      <aside class="tasks-context-rail" aria-label="任务详情" data-tasks-context-rail>
+        <div class="tasks-context-scroll">
+          <header class="tasks-context-head">
+            <span>
+              <small>当前任务</small>
+              <strong :title="activeTask?.task_id || activeTask?.id || ''">
+                {{ shortTaskId(activeTask?.task_id || activeTask?.id) }}
+              </strong>
+            </span>
+            <b>{{ activeTask?.statusLabel || '—' }}</b>
+          </header>
+
+          <section class="tasks-context-section">
+            <h3>任务摘要</h3>
+            <p v-if="detailLoading" class="tasks-context-empty">正在读取任务详情。</p>
+            <p v-else-if="detailError" class="task-warning">{{ detailError }}</p>
+            <template v-else-if="activeTask">
+              <div class="tasks-context-run-id">
+                <small>task_id</small>
+                <code>{{ activeTask.task_id || activeTask.id }}</code>
+              </div>
+              <div class="tasks-context-progress">
+                <span>
+                  <b>{{ activeTaskProgressPercent }}%</b>
+                  <small>{{ activeTask.progressLabel || '等待' }}</small>
+                </span>
+                <i aria-hidden="true">
+                  <em :style="{ width: `${activeTaskProgressPercent}%` }"></em>
+                </i>
+              </div>
+              <div class="tasks-context-kpis">
+                <span v-for="item in contextRows" :key="item.key" :class="{ wide: item.key === 'source' }">
+                  <small>{{ item.label }}</small>
+                  <b :title="String(item.value ?? '')">{{ item.value }}</b>
+                </span>
+              </div>
+            </template>
+            <p v-else class="tasks-context-empty">未选择任务。</p>
+          </section>
 
           <TaskArtifactPanel
-            v-if="selectedTaskId"
             :task-id="selectedTaskId"
+            class="tasks-artifact-panel"
             title="任务产物与控制"
             eyebrow="ArtifactStore"
             show-actions
             @action-complete="handleTaskAction"
           />
-        </section>
-      </template>
-
-      <section class="tasks-main">
-        <div v-if="error" class="task-warning">{{ error }}</div>
-        <div class="task-table" aria-label="任务列表">
-          <button
-            v-for="task in visibleTasks"
-            :key="task.task_id"
-            type="button"
-            :class="['task-row', { selected: selectedTaskId === task.task_id }]"
-            :data-status="task.status"
-            @click="selectTask(task)"
-          >
-            <span class="task-status-dot" aria-hidden="true"></span>
-            <span class="task-main-cell">
-              <b :title="task.task_id">{{ shortTaskId(task.task_id) }}</b>
-              <small :title="task.kind">{{ taskKindLabel(task.kind) }} / {{ task.stageLabel }}</small>
-            </span>
-            <span class="task-progress-cell">
-              <b>{{ task.statusLabel }}</b>
-              <i aria-hidden="true"><em :style="{ width: `${task.progressPercent}%` }"></em></i>
-            </span>
-            <span class="task-time-cell">
-              <b>{{ task.progressLabel }}</b>
-              <small>{{ formatDateTime(task.updated_at || task.queued_at) || '未记录' }}</small>
-            </span>
-          </button>
-          <div v-if="!visibleTasks.length && !loading" class="task-empty">当前筛选无任务。</div>
-          <div v-if="loading" class="task-empty">正在读取任务队列。</div>
         </div>
-
-        <section class="task-events-panel" aria-label="任务事件时间线">
-          <header>
-            <div>
-              <small>事件时间线</small>
-              <h2>{{ eventRows.length }} 条事件</h2>
-            </div>
-            <button type="button" :disabled="!selectedTaskId || eventsLoading" @click="loadSelectedTask">
-              {{ eventsLoading ? '读取中' : '刷新事件' }}
-            </button>
-          </header>
-          <p v-if="eventsError" class="task-warning">{{ eventsError }}</p>
-          <ol v-else-if="eventRows.length" class="task-event-list">
-            <li v-for="event in eventRows" :key="event.key">
-              <span>
-                <b>{{ event.type }}</b>
-                <small>{{ event.time || event.key }}</small>
-              </span>
-              <pre>{{ event.payload }}</pre>
-            </li>
-          </ol>
-          <div v-else class="task-empty">
-            {{ selectedTaskId ? '暂无任务事件。' : '选择任务后显示事件。' }}
-          </div>
-        </section>
-      </section>
-    </LabWorkbenchShell>
+      </aside>
+    </section>
   </section>
 </template>
 
 <style scoped>
 .tasks-page {
-  --tasks-bg: var(--logbook-bg, #f2dfae);
-  --tasks-panel: var(--logbook-panel, rgba(255, 252, 245, 0.82));
-  --tasks-panel-soft: var(--logbook-panel-soft, rgba(255, 250, 240, 0.58));
-  --tasks-border: var(--logbook-border, rgba(93, 48, 17, 0.18));
-  --tasks-border-strong: var(--logbook-border-strong, rgba(93, 48, 17, 0.34));
-  --tasks-text: var(--logbook-text, #3a2a18);
-  --tasks-muted: var(--logbook-muted, rgba(93, 48, 17, 0.66));
-  --tasks-accent: var(--logbook-accent-strong, #5a3319);
-  --tasks-danger: var(--logbook-danger, #993026);
-  --lab-rail-width: 276px;
-  --lab-context-width: 360px;
-  height: 100%;
-  min-height: 0;
+  --logbook-bg: #f2dfae;
+  --logbook-bg-texture:
+    repeating-linear-gradient(90deg, rgba(118, 71, 27, 0.024) 0 1px, transparent 1px 34px),
+    var(--logbook-bg);
+  --logbook-surface: rgba(255, 252, 245, 0.52);
+  --logbook-panel: rgba(255, 252, 245, 0.68);
+  --logbook-panel-solid: rgba(255, 250, 240, 0.76);
+  --logbook-panel-soft: rgba(255, 242, 210, 0.42);
+  --logbook-border: rgba(139, 94, 52, 0.15);
+  --logbook-border-strong: rgba(90, 51, 25, 0.34);
+  --logbook-text: #3a2a18;
+  --logbook-muted: #8b6b4a;
+  --logbook-accent: #8b5e34;
+  --logbook-accent-strong: #5a3319;
+  --logbook-input-bg: rgba(255, 255, 250, 0.58);
+  --logbook-input-border: rgba(139, 94, 52, 0.2);
+  --logbook-hover: rgba(139, 94, 52, 0.06);
+  --logbook-active-bg: rgba(139, 94, 52, 0.1);
+  --logbook-danger: #993026;
+  --logbook-warning: #76510e;
+  --evo-bg: var(--logbook-bg);
+  --evo-bg-texture: var(--logbook-bg-texture);
+  --evo-surface: var(--logbook-surface);
+  --evo-border: var(--logbook-border);
+  --evo-border-strong: var(--logbook-border-strong);
+  --evo-text: var(--logbook-text);
+  --evo-text-secondary: var(--logbook-muted);
+  --evo-accent: var(--logbook-accent);
+  --evo-accent-strong: var(--logbook-accent-strong);
+  --evo-input-bg: var(--logbook-input-bg);
+  --evo-input-border: var(--logbook-input-border);
+  --evo-hover: var(--logbook-hover);
+  --evo-active-bg: var(--logbook-active-bg);
+  --evo-card-bg: var(--logbook-surface);
+  --evo-code-bg: #2d2218;
+  --evo-success: #6a5f23;
+  --evo-danger: var(--logbook-danger);
+  --evo-warning: var(--logbook-warning);
+  --tasks-bg: var(--evo-bg);
+  --tasks-bg-texture: var(--evo-bg-texture);
+  --tasks-surface: var(--evo-surface);
+  --tasks-border: var(--evo-border);
+  --tasks-border-strong: var(--evo-border-strong);
+  --tasks-text: var(--evo-text);
+  --tasks-muted: var(--evo-text-secondary);
+  --tasks-accent: var(--evo-accent);
+  --tasks-accent-strong: var(--evo-accent-strong);
+  --tasks-input-bg: var(--evo-input-bg);
+  --tasks-input-border: var(--evo-input-border);
+  --tasks-hover: var(--evo-hover);
+  --tasks-active-bg: var(--evo-active-bg);
+  --tasks-danger: var(--evo-danger);
+  --tasks-font: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+  position: fixed;
+  z-index: 11;
+  top: 72px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
   background: transparent;
   color: var(--tasks-text);
+  font-family: var(--tasks-font);
+  -webkit-font-smoothing: auto;
+  text-rendering: auto;
 }
 
-.tasks-page :deep(.lab-workbench-shell--tasks) {
-  --lab-bg: var(--tasks-bg);
-  --lab-panel: var(--tasks-panel);
-  --lab-border: var(--tasks-border);
-  --lab-border-strong: var(--tasks-border-strong);
-  --lab-text: var(--tasks-text);
-  --lab-muted: var(--tasks-muted);
-  --lab-accent: var(--tasks-accent);
-  --lab-danger: var(--tasks-danger);
+.tasks-page *:not(svg):not(svg *) {
+  box-sizing: border-box;
+  font-family: var(--tasks-font);
 }
 
-.tasks-rail,
-.tasks-context,
-.tasks-main,
-.task-detail-panel,
-.task-events-panel {
+.tasks-page button,
+.tasks-page input,
+.tasks-page code,
+.tasks-page pre {
+  font-family: var(--tasks-font);
+}
+
+.tasks-shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr) 292px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    "rail command context"
+    "rail topbar context"
+    "rail pane context";
+  column-gap: 18px;
+  row-gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 26px;
+}
+
+.tasks-shell.parchment-logbook {
+  grid-template-columns: 248px minmax(0, 1fr) 292px;
+  background: var(--tasks-bg-texture);
+}
+
+.tasks-detail-panel {
+  display: contents;
+}
+
+.tasks-control-rail,
+.tasks-main-pane,
+.tasks-context-rail,
+.tasks-scroll,
+.tasks-context-scroll,
+.tasks-card,
+.task-table,
+.task-row {
   min-width: 0;
   min-height: 0;
 }
 
-.tasks-rail,
-.tasks-context {
+.tasks-command-bar {
+  grid-area: command;
   display: grid;
-  gap: 10px;
-  align-content: start;
-}
-
-.tasks-rail {
-  height: 100%;
-  padding: 12px;
-  border: 1px solid var(--tasks-border);
-  border-radius: 8px;
-  background: var(--tasks-panel);
-  overflow: auto;
-}
-
-.tasks-rail header,
-.task-detail-panel header,
-.task-events-panel header {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
+  grid-template-columns: minmax(108px, 0.32fr) minmax(0, 1fr) auto;
   align-items: center;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  padding: 18px 20px 16px;
+  border: 1px solid rgba(90, 51, 25, 0.18);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background:
+    linear-gradient(135deg, rgba(58, 42, 24, 0.96), rgba(90, 51, 25, 0.9)),
+    repeating-linear-gradient(90deg, rgba(232, 196, 132, 0.08) 0 1px, transparent 1px 18px);
+  box-shadow: 0 2px 8px rgba(91, 47, 18, 0.1);
+}
+
+.tasks-command-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 4px;
   min-width: 0;
 }
 
-.tasks-rail small,
-.task-detail-panel small,
-.task-events-panel small,
-.task-row small,
-.task-search span,
-.task-refresh-note {
-  color: var(--tasks-muted);
-  font-size: 11px;
-  font-weight: 850;
-  letter-spacing: 0;
-}
-
-.tasks-rail b,
-.task-detail-panel b,
-.task-events-panel b,
-.task-row b {
+.tasks-command-title h2 {
   min-width: 0;
   overflow: hidden;
-  color: var(--tasks-text);
-  font-size: 12px;
-  font-weight: 950;
+  margin: 0;
+  color: #fff4d9;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.task-filter-list {
-  display: grid;
-  gap: 7px;
+.tasks-command-metrics {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.task-filter-list button,
-.task-row,
-.task-events-panel button {
+.tasks-command-metrics span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  flex: 0 0 92px;
+  max-width: 128px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tasks-command-metrics span:nth-child(4) {
+  flex: 1 1 112px;
+  max-width: 160px;
+}
+
+.tasks-command-metrics small {
+  flex: 0 0 auto;
+  color: rgba(232, 210, 170, 0.68);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tasks-command-metrics b {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #fff4d9;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasks-command-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tasks-refresh-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 92px;
+  height: 42px;
+  padding: 0 15px;
+  border: 1px solid rgba(232, 196, 132, 0.24);
+  border-radius: 7px;
+  background: #e8c484;
+  color: #2d1e10;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 3px 10px rgba(18, 10, 5, 0.18);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  white-space: nowrap;
+}
+
+.tasks-refresh-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(18, 10, 5, 0.22);
+}
+
+.tasks-refresh-button:disabled,
+.tasks-card-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tasks-detail-topbar {
+  grid-area: topbar;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "workspace";
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 0;
+  padding: 10px 16px;
+  border-right: 1px solid var(--tasks-border);
+  border-left: 1px solid var(--tasks-border);
+  border-bottom: 1px solid var(--tasks-border);
+  background: rgba(255, 252, 245, 0.28);
+}
+
+.tasks-nav {
+  grid-area: workspace;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.tasks-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.tasks-nav-tab,
+.task-filter-chip,
+.tasks-refresh-button {
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  color: rgba(59, 28, 9, 0.78);
+  background: rgba(255, 239, 194, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+}
+
+.tasks-nav-tab:hover,
+.task-filter-chip:hover,
+.tasks-refresh-button:hover {
+  border-color: rgba(93, 48, 17, 0.32);
+  color: var(--tasks-text);
+  background: rgba(255, 245, 214, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.82);
+  transform: none;
+}
+
+.tasks-nav-tab.active,
+.task-filter-chip.selected {
+  border-color: rgba(93, 48, 17, 0.45);
+  color: var(--tasks-text);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
+}
+
+.tasks-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: auto;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tasks-control-rail {
+  grid-area: rail;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 14px 0 0;
+  border-right: 1px solid rgba(91, 47, 18, 0.2);
+  background: transparent;
+}
+
+.tasks-rail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--tasks-border);
+}
+
+.tasks-rail-header span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tasks-text);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasks-rail-header strong {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 11px;
+  background: var(--tasks-active-bg);
+  color: var(--tasks-accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.tasks-rail-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 0 2px;
+}
+
+.tasks-rail-summary span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
   border: 1px solid var(--tasks-border);
   border-radius: 7px;
-  background: var(--tasks-panel-soft);
+  background: rgba(255, 252, 245, 0.3);
+}
+
+.tasks-rail-summary small,
+.task-filter-chip small,
+.task-search span,
+.task-refresh-note,
+.task-row small,
+.tasks-card small,
+.tasks-context-head small,
+.tasks-context-section h3,
+.tasks-context-kpis small,
+.tasks-context-run-id small,
+.tasks-context-progress small {
+  color: var(--tasks-muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
+.tasks-rail-summary b,
+.task-filter-chip b,
+.task-row b,
+.tasks-card header b,
+.tasks-context-head strong,
+.tasks-context-head b,
+.tasks-context-kpis b,
+.tasks-context-run-id code {
+  min-width: 0;
+  overflow: hidden;
   color: var(--tasks-text);
-  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.task-filter-list button {
+.tasks-filter-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+}
+
+.tasks-filter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 10px;
-  align-items: center;
-  width: 100%;
-  padding: 9px;
-  text-align: left;
-}
-
-.task-filter-list button span {
-  display: grid;
-  gap: 2px;
   min-width: 0;
 }
 
-.task-filter-list button em {
-  display: inline-flex;
-  min-width: 28px;
-  min-height: 24px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: rgba(139, 94, 52, 0.1);
+.tasks-rail-label {
+  flex: 0 0 auto;
   color: var(--tasks-accent);
-  font-size: 11px;
-  font-style: normal;
-  font-weight: 950;
+  font-size: 12px;
+  font-weight: 800;
 }
 
-.task-filter-list button.active,
-.task-row.selected {
-  border-color: color-mix(in srgb, var(--tasks-accent) 42%, transparent);
-  background: color-mix(in srgb, var(--tasks-accent) 10%, var(--tasks-panel-soft));
+.task-filter-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: max-content;
+  gap: 7px;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.28) transparent;
+}
+
+.task-filter-chip {
+  --task-filter-color: var(--tasks-accent);
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  color: var(--tasks-muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-filter-chip::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 252, 228, 0.92) 0 2px, transparent 2px),
+    var(--task-filter-color);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 252, 228, 0.58),
+    0 1px 2px rgba(93, 48, 17, 0.12);
+}
+
+.task-filter-chip::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--task-filter-color);
+  opacity: 0.62;
+}
+
+.task-filter-chip[data-filter="active"],
+.task-filter-chip[data-filter="running"] {
+  --task-filter-color: #6a7a2c;
+}
+
+.task-filter-chip[data-filter="queued"] {
+  --task-filter-color: #b9852f;
+}
+
+.task-filter-chip[data-filter="terminal"] {
+  --task-filter-color: #7a6047;
+}
+
+.task-filter-chip[data-filter="failed"] {
+  --task-filter-color: var(--tasks-danger);
+}
+
+.task-filter-chip[data-filter="all"] {
+  --task-filter-color: var(--tasks-accent);
+}
+
+.task-filter-chip span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.task-filter-chip em {
+  flex: 0 0 auto;
+  min-width: max-content;
+  color: currentColor;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  opacity: 0.72;
+  white-space: nowrap;
 }
 
 .task-search {
-  display: grid;
-  gap: 5px;
+  display: block;
+  min-width: 0;
 }
 
 .task-search input {
   width: 100%;
   min-width: 0;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--tasks-border);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.64);
+  height: 30px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.12);
+  box-shadow: none;
   color: var(--tasks-text);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 850;
   outline: none;
 }
 
+.task-search input::placeholder {
+  color: rgba(74, 37, 15, 0.45);
+}
+
+.task-search:focus-within input {
+  border-bottom-color: rgba(93, 48, 17, 0.32);
+  background: rgba(255, 252, 245, 0.28);
+}
+
 .task-refresh-note {
+  min-width: 0;
   margin: 0;
-}
-
-.tasks-main {
-  display: grid;
-  grid-template-rows: minmax(190px, 0.9fr) minmax(220px, 1.1fr);
-  gap: 10px;
-  height: 100%;
   overflow: hidden;
+  font-size: 10px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.task-table,
-.task-events-panel,
-.task-detail-panel {
+.tasks-main-pane {
+  grid-area: pane;
+  align-self: start;
+  max-height: calc(100vh - 245px);
+  overflow: hidden;
   border: 1px solid var(--tasks-border);
-  border-radius: 8px;
-  background: var(--tasks-panel);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: rgba(255, 252, 245, 0.24);
+}
+
+.tasks-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: auto;
+  min-height: 0;
+  max-height: calc(100vh - 245px);
+  overflow-y: auto;
+  padding: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.34) transparent;
+}
+
+.tasks-scroll::-webkit-scrollbar,
+.tasks-context-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tasks-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tasks-scroll::-webkit-scrollbar-thumb,
+.tasks-context-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(139, 94, 52, 0.18);
+}
+
+.tasks-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 94, 52, 0.25);
+}
+
+.tasks-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.36), rgba(255, 239, 194, 0.18)),
+    rgba(255, 252, 245, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.48);
+}
+
+.tasks-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 38px;
+  margin: -2px 0 0;
+  padding: 0 0 10px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.14);
+}
+
+.tasks-card > header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.tasks-card h2 {
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasks-card header b {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 239, 194, 0.38);
+  color: rgba(74, 37, 15, 0.72);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.tasks-card-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 239, 194, 0.42);
+  color: rgba(59, 28, 9, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .task-table {
   display: grid;
   align-content: start;
-  gap: 6px;
-  min-height: 0;
-  padding: 10px;
-  overflow: auto;
+  gap: 7px;
 }
 
 .task-row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1.3fr) minmax(118px, 0.8fr) minmax(128px, 0.75fr);
-  gap: 10px;
   align-items: center;
+  gap: 10px;
   width: 100%;
-  min-height: 54px;
+  min-height: 50px;
   padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.5);
+  color: var(--tasks-text);
   text-align: left;
+  cursor: pointer;
+}
+
+.task-row:hover {
+  border-color: rgba(93, 48, 17, 0.26);
+  background: rgba(255, 245, 214, 0.54);
+}
+
+.task-row.selected {
+  border-color: rgba(93, 48, 17, 0.45);
+  background: rgba(224, 184, 111, 0.36);
 }
 
 .task-status-dot {
@@ -628,7 +1229,7 @@ function eventPayload(event: TaskEventRow): string {
 
 .task-row[data-status="queued"] .task-status-dot,
 .task-row[data-status="running"] .task-status-dot {
-  background: #7b8d42;
+  background: var(--evo-success);
 }
 
 .task-row[data-status="failed"] .task-status-dot,
@@ -642,6 +1243,11 @@ function eventPayload(event: TaskEventRow): string {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.task-row b {
+  color: #3b1c09;
+  font-weight: 900;
 }
 
 .task-progress-cell i {
@@ -659,57 +1265,6 @@ function eventPayload(event: TaskEventRow): string {
   background: var(--tasks-accent);
 }
 
-.task-events-panel,
-.task-detail-panel {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  min-height: 0;
-  padding: 12px;
-  overflow: auto;
-}
-
-.task-events-panel header h2,
-.task-detail-panel header h2 {
-  min-width: 0;
-  overflow: hidden;
-  margin: 0;
-  color: var(--tasks-text);
-  font-size: 16px;
-  font-weight: 950;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.task-events-panel button {
-  min-height: 30px;
-  padding: 0 10px;
-  color: var(--tasks-accent);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.task-events-panel button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.task-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-}
-
-.task-detail-grid span {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--tasks-border);
-  border-radius: 7px;
-  background: var(--tasks-panel-soft);
-}
-
 .task-event-list {
   display: grid;
   gap: 8px;
@@ -724,9 +1279,10 @@ function eventPayload(event: TaskEventRow): string {
   gap: 7px;
   min-width: 0;
   padding: 9px;
-  border: 1px solid var(--tasks-border);
-  border-radius: 7px;
-  background: var(--tasks-panel-soft);
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.5);
 }
 
 .task-event-list li span {
@@ -743,39 +1299,547 @@ function eventPayload(event: TaskEventRow): string {
   margin: 0;
   padding: 8px;
   border-radius: 7px;
-  background: rgba(45, 34, 24, 0.94);
+  background: var(--evo-code-bg);
   color: #f6e6c8;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
 }
 
+.tasks-context-rail {
+  grid-area: context;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding-left: 16px;
+  border-left: 1px solid rgba(93, 48, 17, 0.2);
+}
+
+.tasks-context-scroll {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  max-width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.3) transparent;
+}
+
+.tasks-context-head,
+.tasks-context-section,
+.tasks-context-scroll :deep(.task-artifact-panel) {
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.14)),
+    rgba(255, 252, 245, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.46);
+}
+
+.tasks-context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.tasks-context-head span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tasks-context-section {
+  display: grid;
+  gap: 10px;
+  padding: 11px 12px 12px;
+}
+
+.tasks-context-section h3 {
+  margin: 0;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  color: #3b1c09;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.tasks-context-run-id,
+.tasks-context-kpis span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.tasks-context-run-id {
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  background: rgba(255, 252, 245, 0.28);
+}
+
+.tasks-context-run-id code {
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.tasks-context-progress {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tasks-context-progress span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tasks-context-progress b {
+  color: var(--tasks-text);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.tasks-context-progress i {
+  display: block;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(84, 168, 107, 0.16);
+}
+
+.tasks-context-progress em {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #54a86b, #9ccb78);
+}
+
+.tasks-context-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+  min-width: 0;
+}
+
+.tasks-context-kpis .wide {
+  grid-column: 1 / -1;
+}
+
+.tasks-context-empty,
 .task-warning,
 .task-empty {
+  min-width: 0;
   margin: 0;
-  padding: 10px;
-  border: 1px dashed var(--tasks-border);
-  border-radius: 7px;
-  background: var(--tasks-panel-soft);
+  overflow-wrap: anywhere;
   color: var(--tasks-muted);
   font-size: 12px;
   font-weight: 850;
   line-height: 1.45;
 }
 
+.task-warning,
+.task-empty {
+  padding: 10px;
+  border: 1px dashed var(--tasks-border);
+  border-radius: 0;
+  background: rgba(255, 242, 210, 0.38);
+}
+
 .task-warning {
   color: var(--tasks-danger);
 }
 
+.tasks-context-scroll :deep(.task-artifact-panel) {
+  --task-panel-bg: transparent;
+  --task-panel-soft: rgba(255, 252, 245, 0.28);
+  --task-panel-line: rgba(93, 48, 17, 0.14);
+  --task-panel-text: var(--tasks-text);
+  --task-panel-muted: var(--tasks-muted);
+  --task-panel-accent: var(--tasks-accent);
+  --task-panel-danger: var(--tasks-danger);
+  padding: 11px 12px 12px;
+}
+
+.tasks-context-scroll :deep(.task-artifact-panel header) {
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+}
+
+.tasks-context-scroll :deep(.task-artifact-panel header b) {
+  color: #3b1c09;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.tasks-context-scroll :deep(.task-artifact-kpis span),
+.tasks-context-scroll :deep(.task-artifact-row) {
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.28);
+}
+
 @media (max-width: 1120px) {
-  .tasks-main {
-    grid-template-rows: auto auto;
-    overflow: auto;
+  .tasks-command-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    margin: 0 12px 10px;
+  }
+
+  .tasks-command-metrics,
+  .tasks-command-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .tasks-shell,
+  .tasks-shell.parchment-logbook {
+    grid-template-columns: 220px minmax(0, 1fr) 260px;
+    column-gap: 14px;
+  }
+
+  .tasks-detail-topbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "workspace";
+    align-items: stretch;
   }
 
   .task-row {
     grid-template-columns: 10px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 960px) {
+  .tasks-page {
+    right: 18px;
+    left: 18px;
+    padding: 0 0 18px;
+  }
+
+  .tasks-shell,
+  .tasks-shell.parchment-logbook {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "command"
+      "topbar"
+      "rail"
+      "pane"
+      "context";
+    gap: 8px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .tasks-command-bar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 10px;
+    margin: 0 12px 8px;
+    padding: 14px;
+  }
+
+  .tasks-command-actions {
+    grid-column: auto;
+  }
+
+  .tasks-control-rail {
+    grid-template-rows: auto auto auto;
+    gap: 8px;
+    padding: 0 0 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--tasks-border);
+  }
+
+  .task-filter-list {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-right: 0;
+    scrollbar-width: none;
+  }
+
+  .task-filter-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .task-filter-chip {
+    flex: 0 0 176px;
+  }
+
+  .tasks-detail-topbar {
+    overflow: hidden;
+    padding: 10px 12px;
+  }
+
+  .tasks-main-pane {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .tasks-scroll {
+    max-height: none;
+    overflow: visible;
+    padding: 12px;
+  }
+
+  .tasks-context-rail {
+    padding: 8px 0 0;
+    border-left: none;
+    border-top: 1px solid var(--tasks-border);
+  }
+
+  .tasks-context-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .tasks-page {
+    right: 10px;
+    left: 10px;
+    padding-bottom: 10px;
+  }
+
+  .tasks-shell,
+  .tasks-shell.parchment-logbook {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .tasks-command-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title action"
+      "metrics metrics";
+    gap: 6px;
+    margin: 0 10px 8px;
+    padding: 9px;
+  }
+
+  .tasks-command-title {
+    grid-area: title;
+  }
+
+  .tasks-command-actions {
+    grid-area: action;
+    align-self: center;
+    justify-content: end;
+  }
+
+  .tasks-command-metrics {
+    grid-area: metrics;
+    gap: 12px;
+    justify-content: flex-start;
+  }
+
+  .tasks-command-title h2 {
+    font-size: 18px;
+  }
+
+  .tasks-command-metrics small {
+    overflow: hidden;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tasks-command-metrics b {
+    font-size: 12px;
+  }
+
+  .tasks-refresh-button {
+    width: auto;
+    min-width: 64px;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .tasks-detail-topbar {
+    padding: 8px;
+  }
+
+  .tasks-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+    padding-bottom: 0;
+  }
+
+  .tasks-nav-tab {
+    width: 100%;
+    height: 30px;
+    justify-content: center;
+    padding: 0 6px;
+  }
+
+  .task-filter-chip {
+    flex-basis: 152px;
+  }
+
+  .tasks-scroll {
+    padding: 10px;
+  }
+
+  .tasks-context-kpis,
+  .tasks-rail-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 961px) {
+  .tasks-shell,
+  .tasks-shell.parchment-logbook {
+    grid-template-columns: 252px minmax(0, 1fr) 300px;
+    column-gap: 8px;
+    padding: 12px;
+  }
+
+  .tasks-control-rail {
+    gap: 10px;
+    padding-right: 14px;
+    border-right-color: rgba(93, 48, 17, 0.22);
+  }
+
+  .tasks-rail-header {
+    min-height: 57px;
+    padding: 10px 0 12px;
+    border-bottom-color: rgba(93, 48, 17, 0.2);
+  }
+
+  .tasks-rail-header span {
+    font-size: 22px;
+    font-weight: 950;
+  }
+
+  .tasks-rail-header strong {
+    height: auto;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--tasks-muted);
+    font-size: 13px;
+  }
+
+  .tasks-rail-summary {
+    gap: 8px;
+  }
+
+  .tasks-rail-summary span {
+    min-height: 44px;
+    padding: 7px 9px;
+    border-color: rgba(93, 48, 17, 0.16);
+    background: rgba(255, 239, 194, 0.42);
+  }
+
+  .task-filter-chip {
+    height: 36px;
+    padding: 0 11px;
+  }
+
+  .tasks-command-bar {
+    grid-template-columns: 188px minmax(0, 1fr) 78px;
+    gap: 20px;
+    min-height: 57px;
+    padding: 10px 0 12px;
+    border: 0;
+    border-bottom: 1px solid rgba(93, 48, 17, 0.2);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .tasks-command-title h2 {
+    color: var(--tasks-text);
+    font-size: 22px;
+    font-weight: 950;
+  }
+
+  .tasks-command-metrics {
+    gap: 8px;
+    justify-content: flex-end;
+    width: 100%;
+  }
+
+  .tasks-command-metrics span {
+    flex: 0 0 78px;
+    max-width: 78px;
+  }
+
+  .tasks-command-metrics span:nth-child(1) {
+    flex-basis: 84px;
+    max-width: 84px;
+  }
+
+  .tasks-command-metrics span:nth-child(4) {
+    flex: 0 0 106px;
+    max-width: 106px;
+  }
+
+  .tasks-command-metrics small {
+    color: var(--tasks-muted);
+    font-size: 11px;
+  }
+
+  .tasks-command-metrics b {
+    color: var(--tasks-text);
+    font-size: 13px;
+  }
+
+  .tasks-refresh-button {
+    min-width: 78px;
+    height: 34px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+
+  .tasks-detail-topbar {
+    padding: 10px 0;
+    border: 0;
+    border-bottom: 1px solid rgba(93, 48, 17, 0.16);
+    background: transparent;
+  }
+
+  .tasks-nav {
+    gap: 8px;
+    padding: 0;
+  }
+
+  .tasks-nav-tab {
+    height: 32px;
+    padding: 0 14px;
+  }
+
+  .tasks-main-pane {
+    align-self: stretch;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .tasks-scroll {
+    height: 100%;
+    max-height: none;
+    padding: 14px 0 12px;
   }
 }
 </style>

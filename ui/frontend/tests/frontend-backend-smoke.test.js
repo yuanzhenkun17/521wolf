@@ -314,7 +314,7 @@ test('MatchPage mobile safe-area source contract keeps errors on ApiErrorPanel',
   assert.match(apiErrorPanel, /<section :class="rootClass" role="alert" aria-live="polite">/)
 })
 
-test('EvidenceContextBar source contract stays in history detail and is absent from replay', () => {
+test('History detail context line stays phase-only and evidence context is absent from replay', () => {
   const matchPage = readSource(matchPageSourceUrl)
   const reviewPanel = readSource(reviewReportPanelSourceUrl)
   const logsPage = readSource(logsPageSourceUrl)
@@ -324,8 +324,10 @@ test('EvidenceContextBar source contract stays in history detail and is absent f
   assert.doesNotMatch(matchPage, /\.match-replay-evidence-context/)
   assert.match(matchPage, /<ReplayControls[\s\S]*v-if="isReplayMode"[\s\S]*class="match-replay-controls"/)
 
-  assert.match(logsPage, /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'/)
-  assert.match(logsPage, /<div v-if="selectedHistoryGame" :class="\['detail-topbar', 'workspace-' \+ workspaceTab\]">[\s\S]*<EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" \/>/)
+  assert.doesNotMatch(logsPage, /import EvidenceContextBar from '\.\.\/components\/history\/EvidenceContextBar\.vue'/)
+  assert.match(logsPage, /const detailMetaItems = computed\(\(\) =>/)
+  assert.match(logsPage, /<div v-if="selectedHistoryGame" :class="\['detail-topbar', 'workspace-' \+ workspaceTab\]">[\s\S]*<div v-if="workspaceTab === 'phase'" class="detail-context-line" aria-label="对局配置">[\s\S]*v-for="item in detailMetaItems"/)
+  assert.match(logsPage, /\.detail-context-line\s*\{[\s\S]*flex-wrap:\s*nowrap[\s\S]*overflow:\s*hidden/)
   assert.doesNotMatch(reviewPanel, /import EvidenceContextBar from '\.\/EvidenceContextBar\.vue'/)
   assert.doesNotMatch(reviewPanel, /review-evidence-context/)
 })
@@ -338,8 +340,11 @@ test('History phase summary and Evolution publish policy avoid misleading eviden
   assert.match(logsPage, /class="phase-evidence-title">阶段摘要<\/span>/)
   assert.doesNotMatch(logsPage, /class="phase-evidence-title">关键证据<\/span>/)
 
-  assert.match(consolePanel, /class="evo-policy-note"[\s\S]*<small>发布策略<\/small>[\s\S]*<b>评审门禁<\/b>[\s\S]*提案审核、门禁与信任包/)
-  assert.match(consolePanel, /<small>发布策略<\/small><b>\{\{ evo\.selectedRun\.value\.config\?\.auto_promote \? '评审门禁' : '仅训练记录' \}\}<\/b>/)
+  assert.doesNotMatch(consolePanel, /class="evo-policy-note"/)
+  assert.match(consolePanel, /class="evo-action evo-action-promote"[\s\S]*@click="evo\.runAction\(evo\.selectedRunId\.value, 'promote'\)"/)
+  assert.match(consolePanel, /class="evo-action evo-action-reject"[\s\S]*@click="evo\.runAction\(evo\.selectedRunId\.value, 'reject'\)"/)
+  assert.match(consolePanel, /class="evo-action evo-action-terminate"[\s\S]*@click="evo\.runAction\(evo\.selectedRunId\.value, 'terminate'\)"/)
+  assert.match(consolePanel, /class="evo-review-head-kpis"[\s\S]*<span><small>发布策略<\/small><b>\{\{ evo\.selectedRun\.value\.config\?\.auto_promote \? '评审门禁' : '仅训练记录' \}\}<\/b><\/span>/)
   assert.doesNotMatch(consolePanel, /<select v-model="evo\.form\.value\.auto_promote">/)
   assert.match(workbench, /function autoPromoteField\(\)[\s\S]*return Boolean\(form\.value\.auto_promote\)/)
   assert.match(workbench, /auto_promote:\s*autoPromoteField\(\)/)

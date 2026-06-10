@@ -80,6 +80,15 @@ function historyPageSortValue(page: LooseRecord | null | undefined) {
   return normalizeHistoryDay(page.day) * 100 + rank
 }
 
+function isSetupHistoryPage(page: LooseRecord | null | undefined) {
+  const keyPhase = String(page?.key || '').match(/^day-\d+-(.+)$/)?.[1]
+  return normalizeHistoryPhase(page?.phase || keyPhase || '') === 'setup'
+}
+
+function firstVisibleHistoryPage(pages: LooseRecord[] = []) {
+  return pages.find((page) => !isSetupHistoryPage(page)) || null
+}
+
 export function createHistoryDerivedState(refs: LooseRecord, computedState: LooseRecord, helpers: LooseRecord = {}) {
   const {
     selectedHistoryGame,
@@ -183,7 +192,9 @@ export function createHistoryDerivedState(refs: LooseRecord, computedState: Loos
           index
         }))
         .sort((a, b) => historyPageSortValue(a) - historyPageSortValue(b) || String(a.key).localeCompare(String(b.key)))
-      if (!selectedHistoryPageKey.value && pages.length) selectedHistoryPageKey.value = pages[0].key
+      if (!selectedHistoryPageKey.value && pages.length) {
+        selectedHistoryPageKey.value = (firstVisibleHistoryPage(pages) || pages[0]).key
+      }
       if (historyPhase.value === 'all') return pages
       if (historyPhase.value === 'vote') {
         return pages.filter((page) => ['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(page.phase))
@@ -220,7 +231,9 @@ export function createHistoryDerivedState(refs: LooseRecord, computedState: Loos
     pages.forEach((page) => {
       page.decisions = decisions.filter((decision) => historyDecisionMatchesPage(decision, page))
     })
-    if (!selectedHistoryPageKey.value && pages.length) selectedHistoryPageKey.value = pages[0].key
+    if (!selectedHistoryPageKey.value && pages.length) {
+      selectedHistoryPageKey.value = (firstVisibleHistoryPage(pages) || pages[0]).key
+    }
     if (historyPhase.value === 'all') return pages
     if (historyPhase.value === 'vote') {
       return pages.filter((page) => ['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(page.phase))
@@ -229,7 +242,9 @@ export function createHistoryDerivedState(refs: LooseRecord, computedState: Loos
   })
   computedState.selectedHistoryPage = computed(() => {
     const pages = computedState.historyPages.value
-    return pages.find((page) => page.key === selectedHistoryPageKey.value) || pages[0] || null
+    const selected = pages.find((page) => page.key === selectedHistoryPageKey.value)
+    if (selected && !isSetupHistoryPage(selected)) return selected
+    return firstVisibleHistoryPage(pages) || pages[0] || null
   })
   computedState.playerAliveAtPage = computed(() => {
     if (!selectedHistoryGame.value) return {}

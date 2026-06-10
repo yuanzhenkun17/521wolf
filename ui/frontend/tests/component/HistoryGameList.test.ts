@@ -76,9 +76,10 @@ describe('HistoryGameList Pinia fallback', () => {
     expect(items[1].classes()).toContain('active')
     expect(sourceTab(wrapper, '批量评测').classes()).toContain('active')
     expect(wrapper.find('.history-notice').text()).toContain('store notice')
-    expect(wrapper.find('.history-page-meta').text()).toContain('2-2 / 3 局')
+    expect(wrapper.find('.history-pagination').exists()).toBe(false)
+    expect(wrapper.find('.history-page-meta').exists()).toBe(false)
     expect(wrapper.find('.empty-log').exists()).toBe(false)
-    expect(wrapper.findAll('button.history-page-step').every((button) => button.attributes('disabled') !== undefined)).toBe(true)
+    expect(wrapper.findAll('button.history-page-step')).toHaveLength(0)
 
     await sourceTab(wrapper, '批量评测').trigger('click')
 
@@ -119,7 +120,8 @@ describe('HistoryGameList Pinia fallback', () => {
     expect(items[0].text()).toContain('评测来源')
     expect(sourceTab(wrapper, '全部').classes()).toContain('active')
     expect(wrapper.find('.history-notice').text()).toContain('prop notice')
-    expect(wrapper.find('.history-page-meta').text()).toContain('1-1 / 1 局')
+    expect(wrapper.find('.history-pagination').exists()).toBe(false)
+    expect(wrapper.find('.history-page-meta').exists()).toBe(false)
 
     await sourceTab(wrapper, '批量评测').trigger('click')
 
