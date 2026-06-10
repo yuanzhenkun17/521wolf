@@ -160,7 +160,7 @@ function useMatchUtils(state) {
   }
 
   function speakerImage(player) {
-    return player ? cardImage(player) : '/livehall-assets/props/judge-avatar.png'
+    return player ? cardImage(player) : '/livehall-assets/props/optimized/judge-avatar-160.webp'
   }
 
   return {

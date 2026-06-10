@@ -35,7 +35,7 @@ const messageKey = computed(() => `message-${props.game?.current_speaker_id || p
     </header>
     <div class="speaker-carousel">
       <article v-for="item in carousel" :key="item.key" :class="['speaker-avatar', item.tone]">
-        <img :src="item.image" alt="发言者" />
+        <img :src="item.image" alt="发言者" decoding="async" loading="lazy" />
         <strong>{{ item.label }}</strong>
       </article>
     </div>

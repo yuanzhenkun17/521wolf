@@ -353,7 +353,7 @@
       ctx.fillRect(0, 0, w, h);
     }, 256, 256);
 
-    function makeStarTexture(width = 1024, height = 1024) {
+    function makeStarTexture(width = 512, height = 512) {
       return makeCanvasTexture((ctx, w, h) => {
         const g = ctx.createRadialGradient(w * 0.5, h * 0.52, 0, w * 0.5, h * 0.52, w * 0.75);
         g.addColorStop(0, "#17132a");
@@ -362,19 +362,19 @@
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, w, h);
 
-        for (let i = 0; i < 2200; i++) {
+        for (let i = 0; i < 900; i++) {
           const x = Math.random() * w;
           const y = Math.random() * h;
-          const s = Math.random() * 1.8 + 0.15;
+          const s = Math.random() * 1.4 + 0.15;
           const a = Math.random() * 0.95;
           ctx.fillStyle = `rgba(255,236,190,${a})`;
           ctx.fillRect(x, y, s, s);
         }
 
-        for (let i = 0; i < 180; i++) {
+        for (let i = 0; i < 64; i++) {
           const x = Math.random() * w;
           const y = Math.random() * h;
-          const r = Math.random() * 22 + 6;
+          const r = Math.random() * 16 + 4;
           const glow = ctx.createRadialGradient(x, y, 0, x, y, r);
           glow.addColorStop(0, "rgba(98,75,210,.25)");
           glow.addColorStop(1, "rgba(98,75,210,0)");
@@ -1229,11 +1229,16 @@
     let queuedModelLoaders = [];
     let modelQueueTimer = null;
     let modelQueueGeneration = 0;
+    const MODEL_LOAD_BATCH_SIZE = 1;
+    const MODEL_LOAD_INITIAL_DELAY_MS = 2400;
+    const MODEL_LOAD_BATCH_DELAY_MS = 180;
+    let modelQueueStarted = false;
     let speechByPlayer = {};
     let activeSpeakerId = null;
     let activeSeatLabel = null;
     let nightMode = false;
     let playersRevealed = true;
+    let modelLoadingDeferred = false;
     let humanPlayerId = null;
     let humanSeatLabel = null;
     let humanSeatMesh = null;
@@ -1348,11 +1353,6 @@
       });
       modelCache.set(file, promise);
       return promise;
-    }
-
-    function primeRoleModelRequests(cutouts = []) {
-      const roleModels = [...new Set(cutouts.map((cfg) => cfg.model).filter(Boolean))];
-      roleModels.forEach((file) => loadModel(file).catch(() => {}));
     }
 
     function fitModelToStandee(model, targetHeight) {
@@ -1482,7 +1482,8 @@
       group.userData.speechText = speechText;
       group.userData.speechState = { fullText: "", visibleText: "", tone: "", timer: null };
 
-      const texture = getCutoutTexture(cfg.file);
+      const shouldLoadCutoutTexture = !useModelOnlyPlayers || !cfg.model;
+      const texture = shouldLoadCutoutTexture ? getCutoutTexture(cfg.file) : null;
 
       const outline = new THREE.Mesh(
         SHARED_PLANE_GEO,
@@ -1522,12 +1523,14 @@
       figure.renderOrder = 18;
       group.add(figure);
 
-      onCutoutAspectReady(cfg.file, (aspect) => {
-        if (!group.parent) return; // standee was removed
-        figure.scale.set(cfg.height * aspect, cfg.height, 1);
-        outline.scale.set(cfg.height * aspect * 1.1, cfg.height * 1.1, 1);
-        markDirty();
-      });
+      if (shouldLoadCutoutTexture) {
+        onCutoutAspectReady(cfg.file, (aspect) => {
+          if (!group.parent) return; // standee was removed
+          figure.scale.set(cfg.height * aspect, cfg.height, 1);
+          outline.scale.set(cfg.height * aspect * 1.1, cfg.height * 1.1, 1);
+          markDirty();
+        });
+      }
 
       const backPlate = new THREE.Mesh(
         new THREE.BoxGeometry(0.82, cfg.height * 0.92, 0.055),
@@ -1649,7 +1652,8 @@
           });
           return modelMountPromise;
         };
-        queuedModelLoaders.push(mountModel);
+        if (cfg.loadModelNow) queuedModelLoaders.unshift(mountModel);
+        else queuedModelLoaders.push(mountModel);
       }
 
       const glow = new THREE.PointLight(0xffc07a, 0.18, 2.6, 2);
@@ -1678,7 +1682,6 @@
         }
         group.userData.active = nextActive;
         callout.classList.toggle("active-speaker", nextActive);
-        if (nextActive && cfg.model && !modelOutline) mountModel();
         const speech = group.userData.dead ? "" : (speechByPlayer[group.userData.playerId] || "");
         const text = typeof speech === "string" ? speech : speech.text || "";
         const tone = typeof speech === "string" ? "" : speech.tone || "";
@@ -2965,7 +2968,7 @@
         updateDeadStates(displayPlayers);
         updateActiveSpeaker(currentSpeakerId);
         updateSelectableStandeeState();
-        if (playersRevealed) scheduleModelQueue();
+        if (playersRevealed && !modelLoadingDeferred) scheduleModelQueue();
         markDirty();
         return;
       }
@@ -2973,6 +2976,7 @@
       playerRosterSignature = nextSignature;
       queuedModelLoaders = [];
       modelQueueGeneration += 1;
+      modelQueueStarted = false;
       if (modelQueueTimer) {
         clearTrackedTimeout(modelQueueTimer);
         modelQueueTimer = null;
@@ -3048,7 +3052,6 @@
         });
 
       resetModelLoadProgress(cutouts.filter((cfg) => cfg.model).length);
-      primeRoleModelRequests(cutouts);
 
       cutouts.forEach((cfg, index) => {
         const standeeCfg = cfg as typeof cfg & { loadModelNow?: boolean };
@@ -3086,7 +3089,7 @@
       updateActiveSpeaker(currentSpeakerId);
       updateSelectableStandeeState();
       updateVoteBadges();
-      if (playersRevealed) scheduleModelQueue();
+      if (playersRevealed && !modelLoadingDeferred) scheduleModelQueue();
       markDirty();
     }
 
@@ -3094,11 +3097,14 @@
       if (sceneDisposed || modelQueueTimer || !queuedModelLoaders.length) return;
       reportModelLoadProgress();
       const queueGeneration = modelQueueGeneration;
-      // Keep model loading parallel, with a short gap so the first visible render stays responsive.
-      const batchSize = 6;
+      // Mount one model per turn so GLTF parsing, clone traversal, and GPU upload
+      // cannot monopolize the main thread during match entry.
+      const batchSize = MODEL_LOAD_BATCH_SIZE;
+      const delayMs = modelQueueStarted ? MODEL_LOAD_BATCH_DELAY_MS : MODEL_LOAD_INITIAL_DELAY_MS;
       modelQueueTimer = setTrackedTimeout(() => {
         modelQueueTimer = null;
         if (sceneDisposed || queueGeneration !== modelQueueGeneration) return;
+        modelQueueStarted = true;
         const batch = queuedModelLoaders.splice(0, batchSize);
         Promise.allSettled(batch.map((load) => load?.())).then(() => {
           if (sceneDisposed || queueGeneration !== modelQueueGeneration) return;
@@ -3109,7 +3115,7 @@
             scheduleFanBarrier();
           }
         });
-      }, 40);
+      }, delayMs);
     }
 
     function preloadQueuedModels() {
@@ -3561,11 +3567,12 @@
         loadProgressHandler = typeof handler === "function" ? handler : null;
         loadProgressHandler?.({ ...loadProgress });
       },
-      update({ players = [], currentSpeakerId = null, speechByPlayer: nextSpeechByPlayer = {}, isNight = false, revealPlayers = true, humanId = null, selectableIds: nextSelectableIds = [], selectedTargetId: nextSelectedTargetId = null, hoveredTargetId: nextHoveredTargetId = null, onPlayerSelect: nextOnPlayerSelect = null, voteTally: nextVoteTally = [], sceneEffects: nextSceneEffects = [], sceneKey: nextSceneKey = "", instantSpeech = false, playInitialSceneEffects = false } = {}) {
+      update({ players = [], currentSpeakerId = null, speechByPlayer: nextSpeechByPlayer = {}, isNight = false, revealPlayers = true, humanId = null, selectableIds: nextSelectableIds = [], selectedTargetId: nextSelectedTargetId = null, hoveredTargetId: nextHoveredTargetId = null, onPlayerSelect: nextOnPlayerSelect = null, voteTally: nextVoteTally = [], sceneEffects: nextSceneEffects = [], sceneKey: nextSceneKey = "", instantSpeech = false, playInitialSceneEffects = false, deferModelLoading = false } = {}) {
         speechByPlayer = nextSpeechByPlayer;
         instantSpeechText = Boolean(instantSpeech);
         bubbleLayer.classList.toggle("instant-speech", instantSpeechText);
         playersRevealed = revealPlayers;
+        modelLoadingDeferred = Boolean(deferModelLoading);
         humanPlayerId = humanId;
         selectableIds = new Set(nextSelectableIds);
         selectedTargetId = nextSelectedTargetId == null || nextSelectedTargetId === "" ? null : Number(nextSelectedTargetId);

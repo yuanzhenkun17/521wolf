@@ -98,7 +98,7 @@ const uiStore = useUiStore()
 const exitConfirming = ref(false)
 const topbarCharactersWebp = '/optimized/topbar-characters-320.webp'
 const topbarCharactersPng = '/topbar-characters.png'
-const judgeAvatarUrl = '/livehall-assets/props/judge-avatar.png'
+const judgeAvatarUrl = '/livehall-assets/props/optimized/judge-avatar-160.webp'
 
 const navItems = [
   { key: 'lobby', label: '大厅', line: 'play', lineLabel: 'Play', event: 'go-lobby' },

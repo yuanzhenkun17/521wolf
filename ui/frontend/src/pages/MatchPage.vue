@@ -168,6 +168,7 @@ let introRunId = 0
 let introTimer = 0
 let introRemoveTimer = 0
 let introSettledGameId: NullableId = null
+let introModelWarmupGameId: NullableId = null
 const introWaitTimers = new Set<IntroWaitEntry>()
 
 const MATCH_STORE_PROP_ALIASES = {
@@ -600,11 +601,11 @@ async function settleIntro() {
   }
   showIntroOverlay()
   if (!introReady.value) return
-  const models = sceneApi.value?.waitForCouncilModels?.()
-  await Promise.all([
-    models || Promise.resolve(),
-    wait(INTRO_MIN_VISIBLE_MS, runId)
-  ]).finally(() => clearIntroWaitTimers(runId))
+  if (gameId !== introModelWarmupGameId) {
+    introModelWarmupGameId = gameId
+    sceneApi.value?.scheduleSyncCouncilScene?.()
+  }
+  await wait(INTRO_MIN_VISIBLE_MS, runId).finally(() => clearIntroWaitTimers(runId))
   if (runId !== introRunId) return
   introSettledGameId = gameId
   if (gameId) settledIntroGameIds.add(gameId)
@@ -648,6 +649,7 @@ onBeforeUnmount(() => {
       :selectable-ids="sceneSelectableIds"
       :selected-target-id="selectedSceneTargetId"
       :hovered-target-id="hoveredTargetId"
+      :defer-model-loading="showIntro"
       @player-select="handleScenePlayerSelect"
       @loading-progress="handleCouncilLoadingProgress"
       @ready="handleCouncilReady"

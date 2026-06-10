@@ -151,6 +151,7 @@ interface ScenePayload {
   sceneEffects: SceneEffect[]
   instantSpeech: boolean
   playInitialSceneEffects: boolean
+  deferModelLoading: boolean
 }
 
 interface CouncilHallScene {
@@ -198,7 +199,8 @@ const props = defineProps({
   currentSpeakerId: [String, Number, null] as PropType<NullableId>,
   voteTally: { type: Array as PropType<VoteTallyRow[]>, default: () => [] },
   sceneEffects: { type: Array as PropType<SceneEffect[]>, default: () => [] },
-  speakerMessage: { type: String, default: '' }
+  speakerMessage: { type: String, default: '' },
+  deferModelLoading: Boolean
 })
 
 const emit = defineEmits(['ready', 'container-ready', 'player-select', 'loading-progress'])
@@ -545,7 +547,8 @@ function scenePayload(revealPlayers = props.roleAssignmentComplete || props.isRe
     voteTally: props.voteTally,
     sceneEffects: props.sceneEffects,
     instantSpeech: props.isReplayMode,
-    playInitialSceneEffects: props.isReplayMode
+    playInitialSceneEffects: props.isReplayMode,
+    deferModelLoading: props.deferModelLoading
   }
 }
 
@@ -612,7 +615,8 @@ function buildSceneSignature(revealPlayers = props.roleAssignmentComplete || pro
     playerSceneSignature(props.players),
     speechSceneSignature(speechByPlayer.value),
     voteSceneSignature(props.voteTally),
-    effectSceneSignature(props.sceneEffects)
+    effectSceneSignature(props.sceneEffects),
+    props.deferModelLoading ? 1 : 0
   ].join('||')
 }
 
@@ -648,7 +652,7 @@ async function waitForCouncilModels() {
 onMounted(() => {
   ensureScene().then(() => updateScene())
 })
-watch(() => [props.players, props.currentSpeakerId, props.isNight, props.roleAssignmentComplete, props.isReplayMode, props.selectableIds, props.selectedTargetId, props.hoveredTargetId, props.voteTally, props.sceneEffects, props.speakerMessage, speechByPlayer.value, effectiveCurrentSpeakerId.value], scheduleSyncCouncilScene)
+watch(() => [props.players, props.currentSpeakerId, props.isNight, props.roleAssignmentComplete, props.isReplayMode, props.selectableIds, props.selectedTargetId, props.hoveredTargetId, props.voteTally, props.sceneEffects, props.speakerMessage, props.deferModelLoading, speechByPlayer.value, effectiveCurrentSpeakerId.value], scheduleSyncCouncilScene)
 
 onBeforeUnmount(() => {
   disposed = true

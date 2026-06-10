@@ -76,7 +76,7 @@ const judgeAnnouncementTypes = new Set([
   'game_end'
 ])
 const judgeSpeakers = new Set(['法官', '系统'])
-const JUDGE_AVATAR_URL = '/livehall-assets/props/judge-avatar.png'
+const JUDGE_AVATAR_URL = '/livehall-assets/props/optimized/judge-avatar-160.webp'
 const typedRecordLabels = new Set([
   'action_request',
   'action_response',

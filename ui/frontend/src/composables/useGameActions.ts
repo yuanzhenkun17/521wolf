@@ -184,9 +184,14 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
 
   function preloadCouncilAssets() {
     if (typeof window === 'undefined') return
-    import('../CouncilHallScene.ts')
-      .then((module) => module.preloadCouncilRoleModels?.())
-      .catch(() => {})
+    const preload = () => {
+      import('../CouncilHallScene.ts').catch(() => {})
+    }
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(preload, { timeout: 1800 })
+      return
+    }
+    window.setTimeout(preload, 120)
   }
 
   function closeLiveTransport() {

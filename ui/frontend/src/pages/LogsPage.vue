@@ -127,7 +127,7 @@ const RAW_LOG_FILTERS = [
   { key: 'vote', label: '投票' },
   { key: 'error', label: '异常' }
 ]
-const JUDGE_AVATAR_SRC = '/livehall-assets/props/judge-avatar.png'
+const JUDGE_AVATAR_SRC = '/livehall-assets/props/optimized/judge-avatar-160.webp'
 
 function hasHistoryAction(name: HistoryActionName) {
   return historyStore.hasRuntimeAction(name) || typeof historyActionProps[name] === 'function'
