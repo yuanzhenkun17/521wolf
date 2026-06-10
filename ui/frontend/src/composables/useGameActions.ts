@@ -666,7 +666,6 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       return null
     }
     resetLiveState()
-    writeCurrentViewRoute(state.currentView, 'match')
     preloadCouncilAssets()
     const game = await request('/games', {
       method: 'POST',

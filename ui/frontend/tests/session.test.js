@@ -424,6 +424,36 @@ test('startMode reports a local notice when the backend is offline', () => withW
   assert.equal(state.error.value, '后端未连接，请先启动 FastAPI 服务。')
 }))
 
+test('startMode stays in the lobby when model preflight rejects game start', () => withWindow(async () => {
+  const state = useGameState()
+  state.backendMode.value = 'api'
+  state.currentView.value = 'lobby'
+  const paths = []
+  const message = '模型连接不可用，不能开始游戏。'
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path) => {
+      paths.push(path)
+      if (path === '/games') throw new Error(message)
+      if (path === '/health') return { mode: 'api', external: { supports_human: true } }
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  const started = await actions.startMode({ mode: 'watch' })
+
+  assert.equal(started, null)
+  assert.deepEqual(paths, ['/games', '/health'])
+  assert.equal(state.currentView.value, 'lobby')
+  assert.equal(window.location.hash, '')
+  assert.equal(state.liveGame.value, null)
+  assert.equal(state.loading.value, false)
+  assert.equal(state.judgeBoardStarted.value, false)
+  assert.equal(state.judgeBoardStarting.value, false)
+  assert.deepEqual(state.matchNotice.value, { type: 'error', message })
+  assert.equal(state.error.value, message)
+}))
+
 test('restoreStoredGame reloads a returnable game and skips the intro', () => withWindow(async () => {
   const state = useGameState()
   const restored = game('stored-game')
