@@ -2777,23 +2777,6 @@
   grid-template-rows: 28px minmax(0, 1fr);
 }
 
-.chat-log-panel:not(.expanded) .chat-log-body,
-.chat-log-panel:not(.expanded) .chat-log-scroll {
-  height: 100%;
-  min-height: 0;
-}
-
-.chat-log-panel:not(.expanded) .chat-log-scroll {
-  overflow-x: hidden;
-  overflow-y: scroll;
-  scrollbar-gutter: stable;
-}
-
-.chat-log-panel:not(.expanded) .chat-log-line {
-  min-height: 56px;
-  height: 56px;
-}
-
 /* Parchment phase picker. */
 .chat-log-actions {
   grid-template-columns: minmax(124px, 148px) 28px;

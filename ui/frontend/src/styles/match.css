@@ -1989,14 +1989,6 @@
   padding: 0 16px 0 0;
 }
 
-.chat-log-top span {
-  color: #4b250d;
-  font-size: 14px;
-  font-weight: 900;
-  letter-spacing: 0.03em;
-  text-shadow: 0 1px 0 rgba(255, 236, 183, 0.62);
-}
-
 .chat-log-toggle {
   display: grid;
   place-items: center;
@@ -2667,9 +2659,7 @@
   .square-board {
     width: min(640px, 52vw, calc(100vh - 150px));
   }
-}
 
-@media (max-width: 1320px) {
   :root {
     --panel-width: 288px;
   }

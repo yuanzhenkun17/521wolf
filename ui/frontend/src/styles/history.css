@@ -3,7 +3,6 @@
  * Former split-file rules are inlined here in cascade order.
  */
 
-
 .player-role-rail article.speaking img:not(.sheriff-badge) {
   animation: railPulse 1.6s ease-in-out infinite;
 }
@@ -438,7 +437,6 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
-
 
 .history-detail-header h2 {
   margin: 5px 0 0;

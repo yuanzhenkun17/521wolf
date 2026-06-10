@@ -986,9 +986,7 @@
     grid-column: 2;
     text-align: left;
   }
-}
 
-@media (max-width: 520px) {
   .lycan-app.logbook .topbar nav,
   .lycan-app.evolution .topbar nav,
   .lycan-app.battle .topbar nav {
