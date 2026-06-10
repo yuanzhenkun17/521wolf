@@ -22,6 +22,9 @@ LOCAL_GAME_ARTIFACT_FILENAMES = {
 LOCAL_GAME_ARTIFACT_ALLOWED_FILES = {
     ROOT / "app" / "util" / "json.py",
     ROOT / "app" / "tools" / "cleanup_runs.py",
+    ROOT / "app" / "tools" / "full_local_evidence_snapshot.py",
+    ROOT / "app" / "tools" / "run_full_local_samples.py",
+    ROOT / "app" / "tools" / "update_mvp_research_report.py",
 }
 EXPLICIT_EXPORT_NAME_RE = re.compile(r"\bexport\b|export_", re.IGNORECASE)
 
