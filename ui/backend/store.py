@@ -306,9 +306,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         self._role_overview_cache.clear()
 
     def _open_ui_task_connection(self) -> Any:
-        from storage.provider import open_wolf_connection
-
-        return open_wolf_connection(paths=self.paths)
+        return self.task_service.open_connection()
 
     @property
     def benchmark_service(self) -> BenchmarkService:

@@ -1117,8 +1117,9 @@ def test_backend_store_ui_task_connection_uses_wolf_helper(
     paths = PathConfig(root=tmp_path)
     store = store_mod.BackendStore(paths=paths)
 
+    assert store.task_service.open_connection() is conn
     assert store._open_ui_task_connection() is conn
-    assert seen_paths == [paths]
+    assert seen_paths == [paths, paths]
 
 
 def test_backend_game_read_connection_uses_wolf_helper(

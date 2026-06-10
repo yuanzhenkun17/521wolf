@@ -23,10 +23,15 @@ class TaskService:
     def __init__(self, store: Any) -> None:
         self._store = store
 
+    def open_connection(self) -> Any:
+        from storage.provider import open_wolf_connection
+
+        return open_wolf_connection(paths=getattr(self._store, "paths", None))
+
     @property
     def task_event_log(self) -> TaskEventLog:
         if self._store._task_event_log is None:
-            self._store._task_event_log = TaskEventLog(connection_factory=self._store._open_ui_task_connection)
+            self._store._task_event_log = TaskEventLog(connection_factory=self.open_connection)
             self._store._task_event_log.load()
         return self._store._task_event_log
 
@@ -148,7 +153,7 @@ class TaskService:
                 _log.warning("failed to publish task event for %s", self.task_entity_key(entity), exc_info=True)
 
     def persist_background_entities(self, payload: dict[str, Any]) -> None:
-        with from_connection_factory(self._store._open_ui_task_connection) as tx:
+        with from_connection_factory(self.open_connection) as tx:
             repo = BackgroundTaskRepository(tx.connection)
             for entity in [*payload.get("evolution_runs", []), *payload.get("evolution_batches", [])]:
                 if not isinstance(entity, dict):
@@ -210,7 +215,7 @@ class TaskService:
     def load_background_tasks(self) -> None:
         conn = None
         try:
-            conn = self._store._open_ui_task_connection()
+            conn = self.open_connection()
             rows = BackgroundTaskRepository(conn).list_all()
         except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
             _log.warning("failed to load ui backend task index from PostgreSQL", exc_info=True)
