@@ -135,6 +135,46 @@ def test_game_delete_can_defer_transaction_to_caller() -> None:
     assert len(conn.sql) == len(WOLF_GAME_CHILD_TABLES) + 1
 
 
+def test_benchmark_evaluation_helpers_own_write_transactions() -> None:
+    from storage.benchmark.evaluation_repo import (
+        persist_leaderboard_entry,
+        save_evaluation_batch,
+    )
+
+    conn = _TransactionalConn()
+
+    batch_warning = save_evaluation_batch(conn, {"batch_id": "batch-1"})
+    leaderboard_warning = persist_leaderboard_entry(
+        conn,
+        {"batch_id": "batch-1", "model_id": "model-a"},
+    )
+
+    assert batch_warning is None
+    assert leaderboard_warning is None
+    assert conn.begin_writes == 2
+    assert conn.commits == 2
+    assert conn.rollbacks == 0
+    assert any("INSERT INTO evaluation_batches" in sql for sql in conn.sql)
+    assert any("INSERT INTO benchmark_leaderboard" in sql for sql in conn.sql)
+
+
+def test_benchmark_leaderboard_helper_rolls_back_on_write_error() -> None:
+    from storage.benchmark.evaluation_repo import PersistenceWarning, persist_leaderboard_entry
+
+    conn = _TransactionalConn(fail_on_execute=1)
+
+    warning = persist_leaderboard_entry(
+        conn,
+        {"batch_id": "batch-1", "model_id": "model-a"},
+    )
+
+    assert isinstance(warning, PersistenceWarning)
+    assert "persist_leaderboard_entry failed: RuntimeError: write failed" in warning
+    assert conn.begin_writes == 1
+    assert conn.commits == 0
+    assert conn.rollbacks == 1
+
+
 def test_delete_game_from_provider_opens_and_closes_connection() -> None:
     from storage.game_store import WOLF_GAME_CHILD_TABLES, delete_game_from_provider
 

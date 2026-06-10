@@ -12,8 +12,9 @@ from storage.shared.database import StorageConnection
 class BenchmarkBatchRepository:
     """Persist and query benchmark evaluation batch runtime data."""
 
-    def __init__(self, conn: StorageConnection) -> None:
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
         self._conn = conn
+        self._autocommit = autocommit
 
     def save(self, batch: dict[str, Any]) -> None:
         """Persist an evaluation batch row to evaluation_batches."""
@@ -71,7 +72,8 @@ class BenchmarkBatchRepository:
                 created_at,
             ),
         )
-        self._conn.commit()
+        if self._autocommit:
+            self._conn.commit()
 
     def load_comparison_group(
         self,

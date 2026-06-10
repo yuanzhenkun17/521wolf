@@ -125,6 +125,24 @@ def test_benchmark_saved_view_repository_default_autocommits() -> None:
     assert conn.calls == ["execute", "commit", "execute", "commit"]
 
 
+def test_benchmark_batch_repository_autocommit_can_be_deferred() -> None:
+    conn = _Connection()
+
+    BenchmarkBatchRepository(conn, autocommit=False).save({"batch_id": "batch-1"})  # type: ignore[arg-type]
+
+    assert conn.calls == ["execute"]
+
+
+def test_benchmark_leaderboard_repository_autocommit_can_be_deferred() -> None:
+    conn = _Connection()
+
+    BenchmarkLeaderboardRepository(conn, autocommit=False).save(  # type: ignore[arg-type]
+        {"batch_id": "batch-1", "model_id": "model-a"}
+    )
+
+    assert conn.calls == ["execute"]
+
+
 def test_benchmark_storage_helpers_commit_with_unit_of_work() -> None:
     conn = _Connection()
 
@@ -265,7 +283,7 @@ def test_benchmark_evaluation_facade_batch_warning_rolls_back() -> None:
         "exception_type": "RuntimeError",
         "exception_message": "write failed",
     }
-    assert conn.calls == ["execute", "rollback"]
+    assert conn.calls == ["begin_write", "execute", "rollback"]
 
 
 def test_benchmark_evaluation_facade_commit_warning_rolls_back() -> None:
@@ -277,7 +295,7 @@ def test_benchmark_evaluation_facade_commit_warning_rolls_back() -> None:
     assert warning == "save_evaluation_batch failed: RuntimeError: commit failed"
     assert warning.diagnostic["stage"] == "persist_batch.save_evaluation_batch"
     assert warning.diagnostic["exception_message"] == "commit failed"
-    assert conn.calls == ["execute", "commit", "rollback"]
+    assert conn.calls == ["begin_write", "execute", "commit", "rollback"]
 
 
 def test_benchmark_evaluation_facade_leaderboard_warning_keeps_diagnostic() -> None:
@@ -295,7 +313,7 @@ def test_benchmark_evaluation_facade_leaderboard_warning_keeps_diagnostic() -> N
         "exception_type": "RuntimeError",
         "exception_message": "write failed",
     }
-    assert conn.calls == ["execute"]
+    assert conn.calls == ["begin_write", "execute", "rollback"]
 
 
 def test_score_persistence_facade_delegates_to_storage(monkeypatch) -> None:

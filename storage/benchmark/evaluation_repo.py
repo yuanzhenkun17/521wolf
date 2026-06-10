@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from storage.benchmark.batch_repo import BenchmarkBatchRepository
@@ -27,9 +28,9 @@ class PersistenceWarning(str):
 class BenchmarkEvaluationRepository:
     """Backward-compatible facade for benchmark batch and leaderboard repos."""
 
-    def __init__(self, conn: StorageConnection) -> None:
-        self._batch_repo = BenchmarkBatchRepository(conn)
-        self._leaderboard_repo = BenchmarkLeaderboardRepository(conn)
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
+        self._batch_repo = BenchmarkBatchRepository(conn, autocommit=autocommit)
+        self._leaderboard_repo = BenchmarkLeaderboardRepository(conn, autocommit=autocommit)
 
     def save_batch(self, batch: dict[str, Any]) -> None:
         self._batch_repo.save(batch)
@@ -104,13 +105,9 @@ def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
     Returns a warning string when the best-effort write fails.
     """
     try:
-        BenchmarkEvaluationRepository(conn).save_batch(batch)
+        _run_write_transaction(conn, lambda repo: repo.save_batch(batch))
         return None
     except Exception as exc:  # noqa: BLE001 - persistence is best-effort
-        try:
-            conn.rollback()
-        except Exception:  # noqa: BLE001 - keep original persistence warning
-            pass
         _log.warning("save_evaluation_batch failed", exc_info=True)
         return _persistence_warning("save_evaluation_batch", exc)
 
@@ -123,7 +120,7 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
     warning string when the best-effort write fails.
     """
     try:
-        BenchmarkEvaluationRepository(conn).save_leaderboard_entry(entry)
+        _run_write_transaction(conn, lambda repo: repo.save_leaderboard_entry(entry))
         return None
     except Exception as exc:  # noqa: BLE001 - leaderboard write is best-effort
         _log.warning("persist_leaderboard_entry failed", exc_info=True)
@@ -159,6 +156,35 @@ def _persistence_diagnostic(operation: str, exc: Exception, message: str) -> dic
 
 def _persistence_warning(operation: str, exc: Exception) -> PersistenceWarning:
     return PersistenceWarning(operation, exc)
+
+
+def _run_write_transaction(
+    conn: Any,
+    operation: Callable[[BenchmarkEvaluationRepository], None],
+) -> None:
+    try:
+        _begin_write_if_supported(conn)
+        operation(BenchmarkEvaluationRepository(conn, autocommit=False))
+        conn.commit()
+    except Exception:
+        _rollback_quietly(conn)
+        raise
+
+
+def _begin_write_if_supported(conn: Any) -> None:
+    begin_write = getattr(conn, "begin_write", None)
+    if callable(begin_write):
+        begin_write()
+
+
+def _rollback_quietly(conn: Any) -> None:
+    rollback = getattr(conn, "rollback", None)
+    if not callable(rollback):
+        return
+    try:
+        rollback()
+    except Exception:  # noqa: BLE001 - keep original persistence failure
+        pass
 
 
 __all__ = [
