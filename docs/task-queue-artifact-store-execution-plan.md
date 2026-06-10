@@ -68,7 +68,21 @@ PostgreSQL-backed task queue
 - `BackendStore.create_task_worker_loop()` 汇总当前支持的 task executors，并绑定 `TaskService.publish_task_queue_event`。
 - 已新增 worker CLI：`uv run python -m app.tools.run_ui_task_worker --once` 或去掉 `--once` 常驻运行。
 
-当前仍未迁移 evolution 执行路径，没有改前端；但 benchmark/evaluation 已具备可切换的 PG queue 桥接路径和正式 worker CLI。下一阶段应迁移 evolution。
+已完成 Phase E Evolution Queue Bridge：
+
+- `WOLF_USE_PG_TASK_QUEUE=true` 时，`POST /api/evolution-runs` 创建 `evolution_run` 或 `evolution_batch` PG task，不再交给 FastAPI `BackgroundTasks` 执行。
+- 默认未启用 flag 时仍保持旧 BackgroundTasks 行为，前端响应结构兼容。
+- `run_id`/`batch_id` 与 `task_id` 使用同一个稳定 id，方便本地 worker 和云端 UI backend 通过同一 PostgreSQL 观测同一任务。
+- `EvolutionRunService.task_executors()` 提供 `evolution_run` 与 `evolution_batch` executor，worker 复用现有 `run_queued_evolution` / `run_queued_evolution_batch`。
+- task payload 携带 run/batch runtime snapshot，worker 即使是独立进程、启动早于 API 入队，也能从 PG task payload 恢复执行所需的本地 runtime state。
+- queue-backed evolution background snapshot 带 `task_id` / `task_queue_status`，legacy `ui_background_tasks` restart recovery 不再把 PG queued/running 任务误标成 interrupted。
+- `/api/tasks/{task_id}/cancel` 的 `cancel_requested` 已接入 evolution runner `cancel_check`，任务运行中可通过 PG queue 取消检查停止。
+- evolution task 完成后写入 ArtifactStore：
+  - `evolution-result.json`
+  - `diagnostics.json`（存在 diagnostics 时；batch 会汇总 child run diagnostics）
+- `BackendStore.create_task_worker_loop()` 现在同时注册 benchmark 与 evolution executors。
+
+当前还未做 P4 的深收口：evolution list/detail 仍未完全以 `ui_task_queue` 为权威，gate report、trust bundle、paired battle table、scenario replay 等完整产物还未全部 artifact 化，也没有改前端任务中心。下一阶段应继续做 evolution 状态权威收口和完整 artifacts。
 
 已验证：
 
@@ -80,6 +94,15 @@ uv run pytest tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.p
 uv run pytest tests/test_ui_backend_app.py -q -k "benchmark and not snapshot"
 uv run pytest tests/test_api_contracts.py -q -k "benchmark and not snapshot"
 uv run pytest tests/test_task_worker_cli.py -q
+uv run ruff check ui/backend/routes/evolution.py ui/backend/services/evolution_run_service.py ui/backend/services/task_persistence_service.py ui/backend/store.py tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.py
+uv run pytest tests/test_ui_backend_app.py -q -k "evolution_start_uses_pg_task_queue or evolution_and_benchmark_create_and_list_contract"
+uv run pytest tests/test_ui_backend_store_facades.py -q -k "evolution_task_executor or evolution_batch_task_artifacts or queue_backed_background or task_worker_loop"
+uv run pytest tests/test_task_worker_cli.py tests/test_task_worker.py tests/test_task_queue_artifacts.py -q
+uv run pytest tests/test_ui_backend_app.py -q -k "evolution and not snapshot"
+uv run pytest tests/test_api_contracts.py -q -k "evolution and not snapshot"
+uv run pytest tests/test_postgres_adapter.py -q
+uv run pytest tests/test_api_contracts.py -q -k "benchmark or evolution or task"
+uv run pytest tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.py -q -k "benchmark or evolution or task_worker_loop or background_tasks_restore"
 ```
 
 ## 当前状态
@@ -427,11 +450,11 @@ Steps：
 
 Steps：
 
-1. `POST /api/evolution-runs` 创建 `evolution_run` 或 `evolution_batch` task。
-2. `run_id`/`batch_id` 与 `task_id` 建立稳定映射。
-3. worker 执行 `run_evolution`。
+1. `POST /api/evolution-runs` 创建 `evolution_run` 或 `evolution_batch` task。（已完成 bridge，受 `WOLF_USE_PG_TASK_QUEUE` 控制）
+2. `run_id`/`batch_id` 与 `task_id` 建立稳定映射。（已完成 bridge）
+3. worker 执行 `run_evolution`。（已完成 bridge，复用 queued evolution/batch 入口）
 4. progress_sink 写：
-   - `ui_task_queue.progress`
+   - `ui_task_queue.progress`（bridge 已写 stage heartbeat；细粒度 evolution progress 仍需继续收口）
    - `ui_task_events`
    - `evolution.evolution_runs.runtime_state`
 5. `GET /api/evolution-runs` 以 PostgreSQL 权威状态为主：
@@ -439,12 +462,12 @@ Steps：
    - final/runtime 从 `evolution.evolution_runs`。
    - legacy `ui_background_tasks` 只作为兼容输入。
 6. completion 写 artifacts：
-   - result.json
+   - result.json（已完成 bridge：`evolution-result.json`）
+   - diagnostics.json（已完成 bridge：存在 diagnostics 时；batch 汇总 child diagnostics）
    - gate-report.json
    - trust-bundle.json
    - paired-seed-battle-table.json
    - scenario-replay-report.json
-   - diagnostics.json
 7. proposal accept/reject/apply 继续作用于 evolution runtime state，并写审计事件。
 
 验收：

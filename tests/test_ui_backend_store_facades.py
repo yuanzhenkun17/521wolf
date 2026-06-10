@@ -9,10 +9,13 @@ import pytest
 
 from app.config import PathConfig
 import ui.backend.store as ui_backend_store
+from ui.backend.schemas import EvolutionStartRequest
 from ui.backend.services.benchmark_service import BenchmarkService
 from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
 from ui.backend.services.evolution_read_service import EvolutionReadService
+from ui.backend.services.evolution_run_service import EvolutionRunService
 from ui.backend.services.evolution_service import EvolutionService
+from ui.backend.services.task_persistence_service import TaskPersistenceService
 
 
 def test_game_read_gateway_facades_delegate_to_cached_gateway(
@@ -444,7 +447,7 @@ def test_task_service_facades_delegate_to_cached_service(
     ]
 
 
-def test_backend_store_creates_task_worker_loop_with_benchmark_executors(
+def test_backend_store_creates_task_worker_loop_with_registered_executors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -471,7 +474,215 @@ def test_backend_store_creates_task_worker_loop_with_benchmark_executors(
 
     loop = store.create_task_worker_loop(worker_id="worker-test", poll_interval_seconds=0, lease_seconds=30)
 
-    assert loop.registry.kinds() == ("benchmark_batch",)
+    assert loop.registry.kinds() == ("benchmark_batch", "evolution_batch", "evolution_run")
+
+
+class _FakeEvolutionTaskService:
+    def __init__(self) -> None:
+        self.enqueued_payload: dict[str, Any] | None = None
+        self.artifacts: list[dict[str, Any]] = []
+
+    def enqueue_task(self, **kwargs: Any) -> dict[str, Any]:
+        self.enqueued_payload = dict(kwargs["payload"])
+        return {"task_id": kwargs["task_id"], "status": "queued"}
+
+    def put_task_json_artifact(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        payload: Any,
+        artifact_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        artifact = {
+            "artifact_id": f"{task_id}:{name}",
+            "task_id": task_id,
+            "name": name,
+            "payload": payload,
+            "artifact_type": artifact_type,
+            "metadata": metadata or {},
+        }
+        self.artifacts.append(artifact)
+        return artifact
+
+
+class _FakeEvolutionRunContext:
+    def __init__(self, tmp_path: Path, runner: Any) -> None:
+        self.evolution_runs: dict[str, dict[str, Any]] = {}
+        self.evolution_batches: dict[str, dict[str, Any]] = {}
+        self.task_service = _FakeEvolutionTaskService()
+        self.paths = PathConfig(root=tmp_path)
+        self.runner = runner
+        self.persist_count = 0
+
+    def _persist_background_tasks(self) -> None:
+        self.persist_count += 1
+
+    def _touch_background_task(self, entity: dict[str, Any], *, timestamp: str | None = None) -> str:
+        heartbeat = timestamp or "2026-01-01T00:00:00+08:00"
+        entity["last_heartbeat_at"] = heartbeat
+        return heartbeat
+
+    def _task_progress_percent(self, entity: dict[str, Any]) -> float:
+        progress = entity.get("progress")
+        if isinstance(progress, dict):
+            return float(progress.get("percent") or 0.0)
+        return 0.0
+
+    def evolution_runner(self) -> Any:
+        return self.runner
+
+    def model_for_run(self) -> str:
+        return "test-model"
+
+
+def test_evolution_task_executor_restores_snapshot_before_running(tmp_path: Path) -> None:
+    async def runner(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "run_id": kwargs["run_id"],
+            "role": kwargs["role"],
+            "status": "reviewing",
+            "training_games": [],
+            "battle_games": [],
+            "diagnostics": [{"kind": "worker_restore_checked"}],
+        }
+
+    request = EvolutionStartRequest(roles=["seer"], training_games=0, battle_games=0, max_days=1)
+    api_context = _FakeEvolutionRunContext(tmp_path, runner)
+    api_service = EvolutionRunService(api_context)
+    queued = api_service.queue_evolution(request)
+    run_id = queued["run_id"]
+    api_service.queue_evolution_task(queued, request)
+
+    assert queued["status"] == "queued"
+    assert api_context.task_service.enqueued_payload is not None
+
+    worker_context = _FakeEvolutionRunContext(tmp_path, runner)
+    worker_service = EvolutionRunService(worker_context)
+    worker_task_context = SimpleNamespace(
+        heartbeat=lambda progress=None: True,
+        cancel_requested=lambda: False,
+    )
+
+    result = worker_service.execute_evolution_task(
+        {
+            "task_id": run_id,
+            "kind": "evolution_run",
+            "payload": api_context.task_service.enqueued_payload,
+        },
+        worker_task_context,
+    )
+
+    assert worker_context.evolution_runs[run_id]["status"] == "reviewing"
+    assert result["artifact_ids"] == [
+        f"{run_id}:evolution-result.json",
+        f"{run_id}:diagnostics.json",
+    ]
+    assert [artifact["name"] for artifact in worker_context.task_service.artifacts] == [
+        "evolution-result.json",
+        "diagnostics.json",
+    ]
+
+
+def test_evolution_task_executor_passes_queue_cancel_check(tmp_path: Path) -> None:
+    runner_called = False
+
+    async def runner(**kwargs: Any) -> dict[str, Any]:
+        nonlocal runner_called
+        runner_called = True
+        assert kwargs["cancel_check"]() is True
+        raise RuntimeError("stopped")
+
+    request = EvolutionStartRequest(roles=["seer"], training_games=1, battle_games=0, max_days=1)
+    api_context = _FakeEvolutionRunContext(tmp_path, runner)
+    api_service = EvolutionRunService(api_context)
+    queued = api_service.queue_evolution(request)
+    run_id = queued["run_id"]
+    api_service.queue_evolution_task(queued, request)
+
+    cancel_calls = 0
+
+    def cancel_requested() -> bool:
+        nonlocal cancel_calls
+        cancel_calls += 1
+        return cancel_calls >= 2
+
+    worker_context = _FakeEvolutionRunContext(tmp_path, runner)
+    worker_service = EvolutionRunService(worker_context)
+    worker_service.execute_evolution_task(
+        {
+            "task_id": run_id,
+            "kind": "evolution_run",
+            "payload": api_context.task_service.enqueued_payload,
+        },
+        SimpleNamespace(heartbeat=lambda progress=None: True, cancel_requested=cancel_requested),
+    )
+
+    run = worker_context.evolution_runs[run_id]
+    assert runner_called is True
+    assert run["status"] == "failed"
+    assert run["cancelled"] is True
+    assert run["current_stage"] == "stopped"
+
+
+def test_evolution_batch_task_artifacts_include_child_diagnostics(tmp_path: Path) -> None:
+    async def runner(**_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    context = _FakeEvolutionRunContext(tmp_path, runner)
+    service = EvolutionRunService(context)
+    context.evolution_runs["evolve_seer_child"] = {
+        "kind": "role_evolution_run",
+        "run_id": "evolve_seer_child",
+        "role": "seer",
+        "diagnostics": [{"kind": "child_warning"}],
+    }
+    batch = {
+        "kind": "role_evolution_batch",
+        "batch_id": "evo_batch_child_diag",
+        "status": "completed",
+        "runs": ["evolve_seer_child"],
+        "diagnostics": [],
+    }
+
+    service.persist_evolution_task_artifacts("evo_batch_child_diag", batch)
+
+    diagnostics_artifact = next(
+        artifact for artifact in context.task_service.artifacts if artifact["name"] == "diagnostics.json"
+    )
+    assert diagnostics_artifact["payload"] == [
+        {
+            "kind": "child_warning",
+            "run_id": "evolve_seer_child",
+            "role": "seer",
+        }
+    ]
+
+
+def test_queue_backed_background_tasks_are_not_recovered_as_interrupted() -> None:
+    run = {
+        "kind": "role_evolution_run",
+        "run_id": "evolve_pg",
+        "status": "queued",
+        "task_id": "evolve_pg",
+        "task_queue_status": "queued",
+        "progress": {"stage": "queued", "percent": 0.0},
+    }
+    store = SimpleNamespace(
+        evolution_runs={"evolve_pg": run},
+        evolution_batches={},
+        _task_event_fingerprints={},
+    )
+    service = TaskPersistenceService(
+        store,
+        open_connection=lambda: None,
+        task_event_log=lambda: None,
+    )
+
+    assert service.recover_background_tasks() == 0
+    assert run["status"] == "queued"
+    assert run["progress"]["stage"] == "queued"
 
 
 def test_evolution_service_persists_actions_through_task_service() -> None:

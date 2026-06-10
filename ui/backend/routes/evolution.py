@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request
@@ -27,7 +28,9 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
     async def start_evolution(request: EvolutionStartRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         request = automatic_evolution_request(request)
         queued = store.queue_evolution(request)
-        if queued.get("batch_id"):
+        if _use_pg_task_queue():
+            store.queue_evolution_task(queued, request)
+        elif queued.get("batch_id"):
             background_tasks.add_task(store.run_queued_evolution_batch, queued["batch_id"], request)
         else:
             background_tasks.add_task(store.run_queued_evolution, queued["run_id"], request)
@@ -120,3 +123,7 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         last_event_id = _last_event_id_from_request(request)
         stream = service.stream_events(run_id, last_event_id)
         return StreamingResponse(stream, media_type="text/event-stream")
+
+
+def _use_pg_task_queue() -> bool:
+    return os.environ.get("WOLF_USE_PG_TASK_QUEUE", "").strip().lower() in {"1", "true", "yes", "on"}

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections.abc import Callable
 from typing import Any
 
+from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.schemas import EvolutionStartRequest, automatic_evolution_request
@@ -70,15 +73,236 @@ class EvolutionRunService:
         self._persist_background_tasks()
         return batch
 
+    def queue_evolution_task(self, queued: dict[str, Any], request: EvolutionStartRequest) -> dict[str, Any]:
+        task_id = str(queued.get("batch_id") or queued.get("run_id") or "")
+        if not task_id:
+            raise RuntimeError("queued evolution entity is missing run_id/batch_id")
+        kind = "evolution_batch" if queued.get("batch_id") else "evolution_run"
+        self.mark_evolution_task_queued(queued, task_id=task_id, task_queue_status="queued")
+        task = self.task_service.enqueue_task(
+            task_id=task_id,
+            kind=kind,
+            payload={
+                "batch_id": queued.get("batch_id"),
+                "run_id": queued.get("run_id"),
+                "request": request.model_dump(mode="json", exclude_none=True),
+                "snapshot": self.evolution_task_snapshot(queued),
+            },
+            priority=40,
+            idempotency_key=f"{kind}:{task_id}",
+            source="ui_evolution",
+            metadata={
+                "roles": list(queued.get("roles") or ([queued.get("role")] if queued.get("role") else [])),
+                "kind": queued.get("kind"),
+            },
+        )
+        self.mark_evolution_task_queued(
+            queued,
+            task_id=str(task["task_id"]),
+            task_queue_status=str(task["status"]),
+        )
+        self._persist_background_tasks()
+        return task
+
+    def mark_evolution_task_queued(
+        self,
+        queued: dict[str, Any],
+        *,
+        task_id: str,
+        task_queue_status: str,
+    ) -> None:
+        entities = [queued]
+        if queued.get("batch_id"):
+            for run_id in queued.get("runs", []) or []:
+                run = self.evolution_runs.get(str(run_id))
+                if isinstance(run, dict):
+                    entities.append(run)
+        for entity in entities:
+            entity["task_id"] = task_id
+            entity["task_queue_status"] = task_queue_status
+            if str(task_queue_status).lower() == "queued":
+                entity["status"] = "queued"
+                entity["current_stage"] = "queued"
+                progress = entity.get("progress")
+                progress = dict(progress) if isinstance(progress, dict) else {}
+                progress["stage"] = "queued"
+                progress.setdefault("percent", 0.0)
+                progress["updated_at"] = beijing_now_iso()
+                entity["progress"] = progress
+                if isinstance(entity.get("overall_progress"), dict):
+                    entity["overall_progress"] = dict(entity["overall_progress"])
+                    entity["overall_progress"]["stage"] = "queued"
+                    entity["overall_progress"]["updated_at"] = progress["updated_at"]
+                _set_task_contract(entity, stop_requested=False, cancelled=False, interrupted=False, failed=False)
+
+    def evolution_task_snapshot(self, queued: dict[str, Any]) -> dict[str, Any]:
+        if queued.get("batch_id"):
+            run_ids = [str(run_id) for run_id in queued.get("runs", []) or []]
+            return {
+                "batch": to_jsonable(dict(queued)),
+                "runs": [
+                    to_jsonable(dict(self.evolution_runs[run_id]))
+                    for run_id in run_ids
+                    if run_id in self.evolution_runs
+                ],
+            }
+        run_id = str(queued.get("run_id") or "")
+        run = self.evolution_runs.get(run_id, queued)
+        return {"run": to_jsonable(dict(run))}
+
+    def task_executors(self) -> dict[str, Any]:
+        return {
+            "evolution_run": self.execute_evolution_task,
+            "evolution_batch": self.execute_evolution_task,
+        }
+
+    def execute_evolution_task(self, task: dict[str, Any], context: Any) -> dict[str, Any]:
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+        request = automatic_evolution_request(EvolutionStartRequest.model_validate(request_payload))
+        batch_id = str(payload.get("batch_id") or "")
+        run_id = str(payload.get("run_id") or "")
+        task_id = batch_id or run_id or str(task.get("task_id") or "")
+        self.restore_evolution_task_snapshot(
+            payload=payload,
+            request=request,
+            task_id=task_id,
+            batch_id=batch_id,
+            run_id=run_id,
+        )
+        context.heartbeat(progress={"stage": "evolution_running", "task_id": task_id})
+        if batch_id:
+            asyncio.run(self.run_queued_evolution_batch(batch_id, request, cancel_check=context.cancel_requested))
+            entity = self.evolution_batches.get(batch_id, {})
+        else:
+            asyncio.run(self.run_queued_evolution(run_id, request, cancel_check=context.cancel_requested))
+            entity = self.evolution_runs.get(run_id, {})
+        artifacts = self.persist_evolution_task_artifacts(task_id, entity)
+        return {
+            "task_id": task_id,
+            "status": entity.get("status") if isinstance(entity, dict) else None,
+            "artifact_ids": [artifact["artifact_id"] for artifact in artifacts],
+        }
+
+    def restore_evolution_task_snapshot(
+        self,
+        *,
+        payload: dict[str, Any],
+        request: EvolutionStartRequest,
+        task_id: str,
+        batch_id: str,
+        run_id: str,
+    ) -> None:
+        snapshot = payload.get("snapshot") if isinstance(payload.get("snapshot"), dict) else {}
+        restored = False
+        if batch_id:
+            batch_snapshot = snapshot.get("batch") if isinstance(snapshot.get("batch"), dict) else {}
+            if batch_id not in self.evolution_batches and batch_snapshot:
+                self.evolution_batches[batch_id] = dict(batch_snapshot)
+                restored = True
+            runs = snapshot.get("runs") if isinstance(snapshot.get("runs"), list) else []
+            for item in runs:
+                if not isinstance(item, dict):
+                    continue
+                child_run_id = str(item.get("run_id") or "")
+                if child_run_id and child_run_id not in self.evolution_runs:
+                    self.evolution_runs[child_run_id] = dict(item)
+                    restored = True
+            batch = self.evolution_batches.get(batch_id)
+            roles = request.roles or []
+            if isinstance(batch, dict):
+                for index, child_run_id in enumerate([str(item) for item in batch.get("runs", []) or []]):
+                    if child_run_id in self.evolution_runs:
+                        continue
+                    role = roles[index] if index < len(roles) else "villager"
+                    self.create_evolution_run(
+                        role,
+                        request,
+                        batch_id=batch_id,
+                        run_id=child_run_id,
+                        status="queued",
+                    )
+                    restored = True
+        elif run_id and run_id not in self.evolution_runs:
+            run_snapshot = snapshot.get("run") if isinstance(snapshot.get("run"), dict) else {}
+            if run_snapshot:
+                self.evolution_runs[run_id] = dict(run_snapshot)
+                restored = True
+            else:
+                role = (request.roles or ["villager"])[0]
+                self.create_evolution_run(role, request, run_id=run_id, status="queued")
+                restored = True
+        if restored:
+            entity = self.evolution_batches.get(batch_id) if batch_id else self.evolution_runs.get(run_id)
+            if isinstance(entity, dict):
+                self.mark_evolution_task_queued(
+                    entity,
+                    task_id=task_id,
+                    task_queue_status="running",
+                )
+            self._persist_background_tasks()
+
+    def persist_evolution_task_artifacts(self, task_id: str, entity: dict[str, Any]) -> list[dict[str, Any]]:
+        if not isinstance(entity, dict) or not task_id:
+            return []
+        artifacts = [
+            self.task_service.put_task_json_artifact(
+                task_id=task_id,
+                name="evolution-result.json",
+                payload=entity,
+                artifact_type="evolution_result",
+                metadata={
+                    "status": entity.get("status"),
+                    "kind": entity.get("kind"),
+                    "run_id": entity.get("run_id"),
+                    "batch_id": entity.get("batch_id"),
+                },
+            )
+        ]
+        diagnostics = self.evolution_task_diagnostics(entity)
+        if diagnostics:
+            artifacts.append(
+                self.task_service.put_task_json_artifact(
+                    task_id=task_id,
+                    name="diagnostics.json",
+                    payload=diagnostics,
+                    artifact_type="evolution_diagnostics",
+                    metadata={
+                        "status": entity.get("status"),
+                        "kind": entity.get("kind"),
+                    },
+                )
+            )
+        return artifacts
+
+    def evolution_task_diagnostics(self, entity: dict[str, Any]) -> list[dict[str, Any]]:
+        diagnostics: list[dict[str, Any]] = []
+        raw = entity.get("diagnostics")
+        if isinstance(raw, list):
+            diagnostics.extend([dict(item) for item in raw if isinstance(item, dict)])
+        if entity.get("kind") == "role_evolution_batch":
+            for run_id in entity.get("runs", []) or []:
+                run = self.evolution_runs.get(str(run_id))
+                if not isinstance(run, dict):
+                    continue
+                for item in run.get("diagnostics", []) or []:
+                    if isinstance(item, dict):
+                        diagnostic = dict(item)
+                        diagnostic.setdefault("run_id", str(run_id))
+                        diagnostic.setdefault("role", run.get("role"))
+                        diagnostics.append(diagnostic)
+        return diagnostics
+
     def create_evolution_run(
         self,
         role: str,
         request: EvolutionStartRequest,
         *,
         batch_id: str | None = None,
+        run_id: str | None = None,
         status: str = "running",
     ) -> dict[str, Any]:
-        run_id = f"evolve_{role}_{uuid.uuid4().hex[:8]}"
+        run_id = run_id or f"evolve_{role}_{uuid.uuid4().hex[:8]}"
         now = beijing_now_iso()
         stage = "queued"
         run = {
@@ -203,7 +427,9 @@ class EvolutionRunService:
         self.refresh_evolution_batch(run.get("batch_id"))
         self._persist_background_tasks()
 
-    def evolution_cancel_check(self, run_id: str) -> bool:
+    def evolution_cancel_check(self, run_id: str, external_cancel_check: Callable[[], bool] | None = None) -> bool:
+        if external_cancel_check is not None and external_cancel_check():
+            return True
         run = self.evolution_runs.get(run_id)
         if run is None:
             return True
@@ -295,12 +521,18 @@ class EvolutionRunService:
         elif entity.get("kind") == "role_evolution_batch":
             self.refresh_evolution_batch(entity.get("batch_id"))
 
-    async def run_queued_evolution(self, run_id: str, request: EvolutionStartRequest) -> None:
+    async def run_queued_evolution(
+        self,
+        run_id: str,
+        request: EvolutionStartRequest,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> None:
         run = self.evolution_runs.get(run_id)
         if run is None:
             return
         request = automatic_evolution_request(request)
-        if self.evolution_cancel_check(run_id):
+        if self.evolution_cancel_check(run_id, cancel_check):
             self.mark_evolution_stopped(run)
             self._persist_background_tasks()
             return
@@ -322,10 +554,10 @@ class EvolutionRunService:
                 model=self.model_for_run(),
                 paths=self.paths,
                 progress_sink=lambda snapshot: self.sync_evolution_progress(run_id, snapshot),
-                cancel_check=lambda: self.evolution_cancel_check(run_id),
+                cancel_check=lambda: self.evolution_cancel_check(run_id, cancel_check),
             )
         except Exception as exc:  # pragma: no cover - defensive background failure path
-            if self.evolution_cancel_check(run_id) or str(exc) == MANUAL_STOP_REASON:
+            if self.evolution_cancel_check(run_id, cancel_check) or str(exc) == MANUAL_STOP_REASON:
                 self.mark_evolution_stopped(run)
                 self.refresh_evolution_batch(run.get("batch_id"))
                 self._persist_background_tasks()
@@ -347,7 +579,7 @@ class EvolutionRunService:
             self._persist_background_tasks()
             return
 
-        if self.evolution_cancel_check(run_id):
+        if self.evolution_cancel_check(run_id, cancel_check):
             self.mark_evolution_stopped(run)
             self.refresh_evolution_batch(run.get("batch_id"))
             self._persist_background_tasks()
@@ -366,24 +598,42 @@ class EvolutionRunService:
         self.refresh_evolution_batch(run.get("batch_id"))
         self._persist_background_tasks()
 
-    async def run_queued_evolution_batch(self, batch_id: str, request: EvolutionStartRequest) -> None:
+    async def run_queued_evolution_batch(
+        self,
+        batch_id: str,
+        request: EvolutionStartRequest,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+    ) -> None:
         request = automatic_evolution_request(request)
         batch = self.evolution_batches.get(batch_id)
         if batch is None:
             return
+        if cancel_check is not None and cancel_check():
+            batch["stop_requested"] = True
+            batch["cancelled"] = True
         batch["status"] = "running"
-        _set_task_contract(batch, failed=False, cancelled=False, interrupted=False)
+        _set_task_contract(
+            batch,
+            stop_requested=bool(batch.get("stop_requested")),
+            cancelled=bool(batch.get("cancelled")),
+            failed=False,
+            interrupted=False,
+        )
         self.refresh_evolution_batch(batch_id)
         self._touch_background_task(batch)
         self._persist_background_tasks()
         try:
             for run_id in list(batch.get("runs", [])):
+                if cancel_check is not None and cancel_check():
+                    batch["stop_requested"] = True
+                    batch["cancelled"] = True
                 if batch.get("stop_requested") or batch.get("cancelled") or batch.get("status") in {"failed", "rejected"}:
                     break
                 self._touch_background_task(batch)
                 self.refresh_evolution_batch(batch_id)
                 self._persist_background_tasks()
-                await self.run_queued_evolution(str(run_id), request)
+                await self.run_queued_evolution(str(run_id), request, cancel_check=cancel_check)
                 self._touch_background_task(batch)
                 self.refresh_evolution_batch(batch_id)
                 self._persist_background_tasks()

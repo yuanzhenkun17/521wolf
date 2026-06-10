@@ -211,6 +211,8 @@ class TaskPersistenceService:
         recovered = 0
         for entity in [*self._store.evolution_runs.values(), *self._store.evolution_batches.values()]:
             status = str(entity.get("status") or "").lower()
+            if self.is_queue_backed_background_task(entity):
+                continue
             if status not in BACKGROUND_ACTIVE_STATUSES:
                 continue
             previous_stage = entity.get("current_stage") or (
@@ -267,6 +269,10 @@ class TaskPersistenceService:
         if recovered:
             self.persist_background_tasks()
         return recovered
+
+    @staticmethod
+    def is_queue_backed_background_task(entity: dict[str, Any]) -> bool:
+        return bool(entity.get("task_id") or entity.get("task_queue_status"))
 
     def restore_background_tasks(self) -> int:
         self.load_background_tasks()

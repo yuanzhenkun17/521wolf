@@ -262,6 +262,9 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     def queue_evolution(self, request: EvolutionStartRequest) -> dict[str, Any]:
         return self._evolution_run_service().queue_evolution(request)
 
+    def queue_evolution_task(self, queued: dict[str, Any], request: EvolutionStartRequest) -> dict[str, Any]:
+        return self._evolution_run_service().queue_evolution_task(queued, request)
+
     def _create_evolution_run(
         self,
         role: str,
@@ -317,6 +320,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     ) -> TaskWorkerLoop:
         executors: dict[str, Any] = {}
         executors.update(self.benchmark_service.task_executors())
+        executors.update(self._evolution_run_service().task_executors())
         return TaskWorkerLoop(
             connection_factory=self.task_service.open_connection,
             executors=executors,

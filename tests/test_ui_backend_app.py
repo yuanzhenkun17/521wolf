@@ -1782,6 +1782,58 @@ def test_benchmark_start_uses_pg_task_queue_when_enabled(
     ]
 
 
+def test_evolution_start_uses_pg_task_queue_when_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def fail_run_evolution(**_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("evolution should not run through FastAPI BackgroundTasks when PG queue is enabled")
+
+    monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
+    monkeypatch.setattr(ui_backend_store, "run_evolution", fail_run_evolution)
+
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_queue_evolution_task(queued: dict[str, Any], request: Any) -> dict[str, Any]:
+            entity_id = queued.get("batch_id") or queued["run_id"]
+            calls.append((entity_id, request.model_dump(mode="json", exclude_none=True)))
+            queued["task_id"] = entity_id
+            queued["task_queue_status"] = "queued"
+            return {"task_id": entity_id, "status": "queued"}
+
+        store.queue_evolution_task = fake_queue_evolution_task  # type: ignore[method-assign]
+        response = client.post(
+            "/api/evolution-runs",
+            json={
+                "roles": ["seer"],
+                "training_games": 0,
+                "battle_games": 0,
+                "max_days": 1,
+                "auto_promote": True,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"].startswith("evolve_seer_")
+    assert payload["task_id"] == payload["run_id"]
+    assert payload["task_queue_status"] == "queued"
+    assert calls == [
+        (
+            payload["run_id"],
+            {
+                "roles": ["seer"],
+                "training_games": 0,
+                "battle_games": 0,
+                "max_days": 1,
+                "auto_promote": True,
+            },
+        )
+    ]
+
+
 def test_evolution_start_normalizes_legacy_manual_defaults(
     tmp_path: Path,
     monkeypatch,
