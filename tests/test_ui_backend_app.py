@@ -4291,6 +4291,117 @@ def test_model_benchmark_queue_uses_model_scope_and_seed_registry(tmp_path: Path
     assert entry["strength_score"] == 6.8
 
 
+def test_benchmark_reports_sanitize_stored_model_runtime(tmp_path: Path, monkeypatch) -> None:
+    _write_model_benchmark_spec(tmp_path)
+
+    async def fake_run_evaluation(*, batch_config: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        return {
+            "batch_id": batch_config["batch_id"],
+            "config": dict(batch_config),
+            "game_count": batch_config["game_count"],
+            "completed": batch_config["game_count"],
+            "errored": 0,
+            "games": [],
+            "score_summary": {
+                "strength_score": 6.8,
+                "avg_role_score": 6.5,
+                "game_count": batch_config["game_count"],
+                "by_role_category": {"seer": 6.4, "witch": 6.6},
+                "fallback_rate": 0.02,
+                "llm_error_rate": 0.01,
+                "policy_adjusted_rate": 0.0,
+            },
+            "fairness": {"is_fair": True},
+            "rankable": True,
+            "rankable_reason": "ok",
+            "model_id": batch_config["model_id"],
+            "model_config_hash": batch_config["model_config_hash"],
+            "model_runtime": dict(batch_config["model_runtime"]),
+            "started_at": "2026-01-01T00:00:00+08:00",
+            "finished_at": "2026-01-01T00:00:00+08:00",
+        }
+
+    monkeypatch.setattr(ui_backend_store, "run_evaluation", fake_run_evaluation)
+
+    leaky_runtime = {
+        "source": "settings_profile",
+        "model_id": "leaky-model",
+        "model_config_hash": "leaky_hash",
+        "base_url": "https://leak.example/v1?token=hidden-token#fragment-secret",
+        "api_key": "sk-report-secret",
+        "secret_ref": "secret-ref-value",
+        "endpoint_url": "https://inner.example/v1?api_key=inner-hidden",
+        "hash_input": {
+            "base_url": "https://hash.example/v1?token=hash-hidden",
+            "metadata": {
+                "token": "nested-hidden-token",
+                "visible": "kept",
+            },
+        },
+    }
+
+    with _test_client(tmp_path) as client:
+        response = client.post(
+            "/api/benchmark",
+            json={
+                "benchmark_id": "model-baseline-v1",
+                "target_type": "model",
+                "model_id": "qwen-max",
+                "model_config_hash": "runtime_hash_v1",
+            },
+        )
+        assert response.status_code == 200
+        batch_id = response.json()["batch_id"]
+        store = client.app.state.backend_store
+        stored_batch = store.evolution_batches[batch_id]
+        runtime_payload = json.loads(json.dumps(leaky_runtime))
+        stored_batch["model_runtime"] = runtime_payload
+        stored_batch["config"]["model_runtime"] = json.loads(json.dumps(leaky_runtime))
+        stored_batch["run_plan"]["model_runtime"] = json.loads(json.dumps(leaky_runtime))
+        stored_batch["results"][0]["model_runtime"] = json.loads(json.dumps(leaky_runtime))
+        stored_batch["results"][0]["config"]["model_runtime"] = json.loads(json.dumps(leaky_runtime))
+
+        detail_response = client.get(f"/api/benchmark/batch/{batch_id}")
+        report_response = client.get(f"/api/benchmark/batch/{batch_id}/report")
+        markdown_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=markdown")
+        csv_response = client.get(f"/api/benchmark/batch/{batch_id}/report?format=csv")
+
+    assert detail_response.status_code == 200
+    assert report_response.status_code == 200
+    assert markdown_response.status_code == 200
+    assert csv_response.status_code == 200
+
+    detail = detail_response.json()
+    report = report_response.json()
+    markdown = markdown_response.json()
+    csv = csv_response.json()
+    assert detail["model_runtime"]["base_url"] == "https://leak.example/v1"
+    assert detail["batch"]["config"]["model_runtime"]["endpoint_url"] == "https://inner.example/v1"
+    assert detail["batch"]["run_plan"]["model_runtime"]["base_url"] == "https://leak.example/v1"
+    assert detail["results"][0]["config"]["model_runtime"]["hash_input"]["base_url"] == "https://hash.example/v1"
+    assert report["model_runtime"]["base_url"] == "https://leak.example/v1"
+    assert report["results"][0]["config"]["model_runtime"]["endpoint_url"] == "https://inner.example/v1"
+    assert report["reproducibility_manifest"]["request"]["model_runtime"]["base_url"] == "https://leak.example/v1"
+    assert report["reproducibility_manifest"]["planner"]["model_runtime"]["endpoint_url"] == "https://inner.example/v1"
+
+    serialized = json.dumps(
+        {"detail": detail, "report": report, "markdown": markdown, "csv": csv},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    for forbidden in (
+        "sk-report-secret",
+        "secret-ref-value",
+        "hidden-token",
+        "fragment-secret",
+        "inner-hidden",
+        "hash-hidden",
+        "nested-hidden-token",
+    ):
+        assert forbidden not in serialized
+
+
 def test_model_benchmark_queue_freezes_auto_runtime_provenance(tmp_path: Path, monkeypatch) -> None:
     class RuntimeModel(FakeModel):
         model_id = "runtime-model"

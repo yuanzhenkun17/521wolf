@@ -38,6 +38,10 @@ from ui.backend.services.benchmark_report_payloads import (
     _json_clone,
     _text_items,
 )
+from ui.backend.services.benchmark_payload_utils import (
+    sanitize_model_runtime,
+    sanitize_model_runtime_containers,
+)
 
 
 class BenchmarkReportServiceContextProtocol(Protocol):
@@ -62,9 +66,10 @@ class BenchmarkReportService:
         for result in results:
             summary = _benchmark_result_summary(result)
             if isinstance(summary, dict):
+                summary_payload = sanitize_model_runtime_containers(summary)
                 result_summaries.append(
                     {
-                        **summary,
+                        **summary_payload,
                         "result_batch_id": _benchmark_result_batch_id(result),
                         "target_role": _benchmark_result_role(result),
                         "game_count": _benchmark_result_game_count(result),
@@ -74,17 +79,19 @@ class BenchmarkReportService:
                 )
         games = _benchmark_games_for_batch(batch)
         langfuse = _benchmark_batch_langfuse_summary(batch, games=games)
+        batch_summary = sanitize_model_runtime_containers(_evolution_batch_summary(batch))
+        run_plan = sanitize_model_runtime_containers(batch.get("run_plan") if isinstance(batch.get("run_plan"), dict) else {})
         return {
             "kind": "benchmark_batch_detail",
             "schema_version": 1,
-            "batch": _evolution_batch_summary(batch),
+            "batch": batch_summary,
             "batch_id": batch_id,
             "status": batch.get("status"),
             "benchmark": batch.get("benchmark"),
             "target_type": batch.get("target_type"),
-            "model_runtime": _json_clone(batch.get("model_runtime") or {}),
+            "model_runtime": sanitize_model_runtime(batch.get("model_runtime") or {}),
             "roles": list(batch.get("roles", []) or []),
-            "run_plan": batch.get("run_plan"),
+            "run_plan": run_plan,
             "result_count": len(results),
             "results": result_summaries,
             "game_summary": _benchmark_game_summary(games),

@@ -12,6 +12,9 @@ from app.util.time import beijing_now_iso
 from ui.backend.services.benchmark_payload_utils import (
     dict_items as _dict_items,
     json_clone as _json_clone,
+    sanitize_config_model_runtime,
+    sanitize_model_runtime,
+    sanitize_model_runtime_containers,
     text_items as _text_items,
 )
 from ui.backend.services.benchmark_report_games import (
@@ -348,12 +351,13 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
         summary = _benchmark_result_summary(result)
         if not isinstance(summary, dict):
             summary = {}
+        summary_payload = sanitize_model_runtime_containers(summary)
         result_batch_id = _benchmark_result_batch_id(result) or f"{batch_id}_result_{index}"
         target_role = _benchmark_result_role(result)
         rankable = result.get("rankable")
         result_rows.append(
             {
-                **summary,
+                **summary_payload,
                 "result_batch_id": result_batch_id,
                 "target_role": target_role,
                 "target_version_id": result.get("target_version_id") or result_config.get("target_version_id"),
@@ -600,7 +604,7 @@ def _benchmark_report_model_runtime(
     )
     for candidate in candidates:
         if isinstance(candidate, dict) and candidate:
-            runtime = _json_clone(candidate)
+            runtime = sanitize_model_runtime(candidate)
             runtime.setdefault("model_id", meta.get("model_id") or first_result.get("model_id") or result_config.get("model_id"))
             runtime.setdefault(
                 "model_config_hash",
@@ -632,7 +636,9 @@ def _benchmark_run_report_reproducibility_manifest(
     benchmark = batch.get("benchmark") if isinstance(batch.get("benchmark"), dict) else {}
     config = batch.get("config") if isinstance(batch.get("config"), dict) else {}
     suite = report.get("suite") if isinstance(report.get("suite"), dict) else {}
-    model_runtime = report.get("model_runtime") if isinstance(report.get("model_runtime"), dict) else {}
+    model_runtime = sanitize_model_runtime(report.get("model_runtime") if isinstance(report.get("model_runtime"), dict) else {})
+    request_config = sanitize_config_model_runtime(config)
+    planner = sanitize_config_model_runtime(batch.get("run_plan") if isinstance(batch.get("run_plan"), dict) else {})
     content_hash = str(report.get("content_hash") or "")
     run_payload = {
         "benchmark": {
@@ -646,8 +652,8 @@ def _benchmark_run_report_reproducibility_manifest(
             "source_filter": config.get("source_filter") if isinstance(config.get("source_filter"), dict) else {},
         },
         "model_runtime": _json_clone(model_runtime),
-        "request": _json_clone(config),
-        "planner": _json_clone(batch.get("run_plan") if isinstance(batch.get("run_plan"), dict) else {}),
+        "request": _json_clone(request_config),
+        "planner": _json_clone(planner),
         "artifacts": {
             "content_hash": content_hash,
             "json": {"artifact_hash": content_hash},
