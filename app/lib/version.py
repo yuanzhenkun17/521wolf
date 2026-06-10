@@ -897,15 +897,9 @@ def version_registry_from_env(
     paths: Any | None = None,
 ) -> VersionRegistryProtocol:
     """Build the PostgreSQL-backed runtime registry."""
-    resolved_dir = _resolve_registry_dir(registry_dir, paths)
-    from storage.provider import storage_provider_from_env
+    from storage.registry.runtime import version_registry_from_env as storage_version_registry_from_env
 
-    provider = storage_provider_from_env(paths=paths)
-    return PostgresVersionRegistry(
-        provider.open_registry_connection(),
-        registry_dir=resolved_dir,
-        owns_conn=True,
-    )
+    return storage_version_registry_from_env(registry_dir, paths=paths)
 
 
 def build_baseline_config(registry: VersionRegistryProtocol) -> SkillVersionConfig:

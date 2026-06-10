@@ -558,6 +558,54 @@ def test_version_registry_from_env_selects_postgres_registry(
     assert provider.conn.closed is True
 
 
+def test_storage_registry_runtime_factory_selects_postgres_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.lib.version import PostgresVersionRegistry
+    from storage.registry.runtime import resolve_registry_dir, version_registry_from_env
+
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.conn = _FakeConn()
+            self.opened = 0
+
+        def open_wolf_connection(self) -> _FakeConn:
+            return _FakeConn()
+
+        def open_registry_connection(self) -> _FakeConn:
+            self.opened += 1
+            return self.conn
+
+        def open_evolution_connection(self) -> _FakeConn:
+            return _FakeConn()
+
+    provider = _FakeProvider()
+    seen_paths: list[Any] = []
+
+    def provider_from_env(*, paths: Any | None = None) -> _FakeProvider:
+        seen_paths.append(paths)
+        return provider
+
+    import storage.provider
+    from app.config import DEFAULT_PATHS
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", provider_from_env)
+    paths = SimpleNamespace(registry_dir=tmp_path / "registry")
+
+    registry = version_registry_from_env(paths=paths)
+
+    assert isinstance(registry, PostgresVersionRegistry)
+    assert registry.registry_dir == tmp_path / "registry"
+    assert resolve_registry_dir(tmp_path / "explicit", paths) == tmp_path / "explicit"
+    assert resolve_registry_dir(paths=paths) == tmp_path / "registry"
+    assert resolve_registry_dir() == DEFAULT_PATHS.registry_dir
+    assert provider.opened == 1
+    assert seen_paths == [paths]
+    registry.close()
+    assert provider.conn.closed is True
+
+
 def test_backend_store_caches_and_closes_registry(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
