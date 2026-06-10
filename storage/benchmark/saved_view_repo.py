@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
+from storage.postgres.unit_of_work import from_connection_factory
 from storage.shared.database import StorageConnection, StorageRow
 
 
@@ -105,6 +107,27 @@ class BenchmarkSavedViewRepository:
         return int(getattr(cursor, "rowcount", 0) or 0) > 0
 
 
+def persist_benchmark_saved_view(
+    connection_factory: Callable[[], StorageConnection],
+    view: dict[str, Any],
+) -> None:
+    """Persist a saved view in a storage-owned write transaction."""
+    with from_connection_factory(connection_factory) as tx:
+        BenchmarkSavedViewRepository(tx.connection, autocommit=False).save(view)
+        tx.commit()
+
+
+def delete_benchmark_saved_view(
+    connection_factory: Callable[[], StorageConnection],
+    view_key: str,
+) -> bool:
+    """Delete a saved view in a storage-owned write transaction."""
+    with from_connection_factory(connection_factory) as tx:
+        deleted = BenchmarkSavedViewRepository(tx.connection, autocommit=False).delete(view_key)
+        tx.commit()
+        return deleted
+
+
 def _view_from_row(row: StorageRow) -> dict[str, Any]:
     payload = _row_to_dict(row)
     return {
@@ -146,3 +169,10 @@ def _decode_json_field(value: Any, *, fallback: Any) -> Any:
 
 def _bounded_limit(limit: int) -> int:
     return max(1, min(int(limit or 50), 500))
+
+
+__all__ = [
+    "BenchmarkSavedViewRepository",
+    "delete_benchmark_saved_view",
+    "persist_benchmark_saved_view",
+]

@@ -10,9 +10,15 @@ from storage.benchmark.evaluation_repo import (
     save_evaluation_batch,
 )
 from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
-from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
-from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
-from storage.postgres.unit_of_work import UnitOfWork
+from storage.benchmark.saved_view_repo import (
+    BenchmarkSavedViewRepository,
+    delete_benchmark_saved_view,
+    persist_benchmark_saved_view,
+)
+from storage.benchmark.snapshot_repo import (
+    BenchmarkSnapshotRepository,
+    persist_benchmark_snapshot,
+)
 
 
 class _Cursor:
@@ -119,32 +125,35 @@ def test_benchmark_saved_view_repository_default_autocommits() -> None:
     assert conn.calls == ["execute", "commit", "execute", "commit"]
 
 
-def test_benchmark_repositories_can_be_committed_by_unit_of_work() -> None:
+def test_benchmark_storage_helpers_commit_with_unit_of_work() -> None:
     conn = _Connection()
 
-    with UnitOfWork(lambda: conn) as tx:
-        BenchmarkSnapshotRepository(tx.connection, autocommit=False).save(_snapshot())
-        BenchmarkSavedViewRepository(tx.connection, autocommit=False).save(_view())
-        deleted = BenchmarkSavedViewRepository(tx.connection, autocommit=False).delete("view-1")
-        tx.commit()
+    persist_benchmark_snapshot(lambda: conn, _snapshot())
+    persist_benchmark_saved_view(lambda: conn, _view())
+    deleted = delete_benchmark_saved_view(lambda: conn, "view-1")
 
     assert deleted is True
     assert conn.calls == [
         "begin_write",
         "execute",
+        "commit",
+        "close",
+        "begin_write",
         "execute",
+        "commit",
+        "close",
+        "begin_write",
         "execute",
         "commit",
         "close",
     ]
 
 
-def test_benchmark_repository_unit_of_work_rolls_back_on_write_error() -> None:
+def test_benchmark_storage_helper_rolls_back_on_write_error() -> None:
     conn = _Connection(fail_execute=True)
 
     try:
-        with UnitOfWork(lambda: conn) as tx:
-            BenchmarkSnapshotRepository(tx.connection, autocommit=False).save(_snapshot())
+        persist_benchmark_snapshot(lambda: conn, _snapshot())
     except RuntimeError as exc:
         assert str(exc) == "write failed"
     else:  # pragma: no cover - explicit failure path

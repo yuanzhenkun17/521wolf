@@ -12,9 +12,15 @@ from inspect import isawaitable
 from typing import Any, cast
 
 from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
-from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
-from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
-from storage.postgres.unit_of_work import from_connection_factory
+from storage.benchmark.saved_view_repo import (
+    BenchmarkSavedViewRepository,
+    delete_benchmark_saved_view,
+    persist_benchmark_saved_view,
+)
+from storage.benchmark.snapshot_repo import (
+    BenchmarkSnapshotRepository,
+    persist_benchmark_snapshot,
+)
 from ui.backend.schemas import (
     BenchmarkLifecycleRequest,
     BenchmarkRequest,
@@ -137,9 +143,7 @@ class BenchmarkService:
                 conn.close()
 
     def persist_benchmark_snapshot(self, snapshot: dict[str, Any]) -> None:
-        with from_connection_factory(self._open_connection) as tx:
-            BenchmarkSnapshotRepository(tx.connection, autocommit=False).save(snapshot)
-            tx.commit()
+        persist_benchmark_snapshot(self._open_connection, snapshot)
 
     def load_benchmark_snapshot_summaries(
         self,
@@ -174,9 +178,7 @@ class BenchmarkService:
                 conn.close()
 
     def persist_benchmark_saved_view(self, view: dict[str, Any]) -> None:
-        with from_connection_factory(self._open_connection) as tx:
-            BenchmarkSavedViewRepository(tx.connection, autocommit=False).save(view)
-            tx.commit()
+        persist_benchmark_saved_view(self._open_connection, view)
 
     def load_benchmark_saved_views(
         self,
@@ -204,10 +206,7 @@ class BenchmarkService:
                 conn.close()
 
     def delete_benchmark_saved_view(self, view_key: str) -> bool:
-        with from_connection_factory(self._open_connection) as tx:
-            deleted = BenchmarkSavedViewRepository(tx.connection, autocommit=False).delete(view_key)
-            tx.commit()
-            return deleted
+        return delete_benchmark_saved_view(self._open_connection, view_key)
 
     def _resolve(self, method_name: str) -> BenchmarkCallable:
         if method_name in self._callables:

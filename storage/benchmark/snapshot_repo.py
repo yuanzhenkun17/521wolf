@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
+from storage.postgres.unit_of_work import from_connection_factory
 from storage.shared.database import StorageConnection, StorageRow
 
 
@@ -98,6 +100,16 @@ class BenchmarkSnapshotRepository:
         return _snapshot_from_row(row) if row is not None else None
 
 
+def persist_benchmark_snapshot(
+    connection_factory: Callable[[], StorageConnection],
+    snapshot: dict[str, Any],
+) -> None:
+    """Persist a snapshot in a storage-owned write transaction."""
+    with from_connection_factory(connection_factory) as tx:
+        BenchmarkSnapshotRepository(tx.connection, autocommit=False).save(snapshot)
+        tx.commit()
+
+
 def _snapshot_from_row(row: StorageRow) -> dict[str, Any]:
     payload = _row_to_dict(row)
     rows = _decode_json_field(payload.get("rows_json"), fallback=[])
@@ -159,3 +171,6 @@ def _decode_json_field(value: Any, *, fallback: Any) -> Any:
 
 def _bounded_limit(limit: int) -> int:
     return max(1, min(int(limit or 50), 500))
+
+
+__all__ = ["BenchmarkSnapshotRepository", "persist_benchmark_snapshot"]

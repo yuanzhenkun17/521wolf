@@ -13,8 +13,12 @@ from storage.benchmark.evaluation_repo import (
     save_evaluation_batch,
 )
 from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
-from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
-from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
+from storage.benchmark.saved_view_repo import (
+    BenchmarkSavedViewRepository,
+    delete_benchmark_saved_view,
+    persist_benchmark_saved_view,
+)
+from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository, persist_benchmark_snapshot
 
 __all__ = [
     "BenchmarkBatchRepository",
@@ -23,9 +27,12 @@ __all__ = [
     "BenchmarkSavedViewRepository",
     "BenchmarkSnapshotRepository",
     "PersistenceWarning",
+    "delete_benchmark_saved_view",
     "load_comparison_group",
     "open_benchmark_connection",
     "open_eval_connection",
+    "persist_benchmark_saved_view",
+    "persist_benchmark_snapshot",
     "persist_leaderboard_entry",
     "save_evaluation_batch",
 ]
