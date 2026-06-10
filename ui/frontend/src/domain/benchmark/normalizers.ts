@@ -152,6 +152,7 @@ export function normalizeBenchmarkRequest(raw: Partial<BenchmarkRequest> = {}): 
   return {
     ...raw,
     target_type: normalizeBenchmarkTargetType(raw.target_type),
+    model_profile_id: firstString(raw.model_profile_id) || null,
     roles: arrayOrEmpty(raw.roles)
       .map((role) => stringValue(role).toLowerCase())
       .filter(Boolean),

@@ -61,7 +61,20 @@ class BenchmarkRunServiceContextProtocol(Protocol):
     def task_service(self) -> BackgroundTaskServiceProtocol:
         ...
 
-    def model_for_run(self) -> Any | None:
+    def model_for_run(
+        self,
+        *,
+        scope: str = "game_decision",
+        model_profile_id: str | None = None,
+    ) -> Any | None:
+        ...
+
+    def settings_model_runtime_for_scope(
+        self,
+        scope: str,
+        *,
+        model_profile_id: str | None = None,
+    ) -> dict[str, Any] | None:
         ...
 
     def invalidate_role_overview_cache(self) -> None:
@@ -96,6 +109,16 @@ class BenchmarkRunService:
     def plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
         """Return a launch plan and budget estimate for a benchmark request."""
         return self.benchmark_run_plan(request)
+
+    def model_for_benchmark_run(self, request: BenchmarkRequest) -> Any:
+        model_factory = getattr(self._context, "model_for_run")
+        try:
+            return model_factory(
+                scope="benchmark",
+                model_profile_id=request.model_profile_id,
+            )
+        except TypeError:
+            return model_factory()
 
     def benchmark_run_plan(self, request: BenchmarkRequest) -> dict[str, Any]:
         """Build the shared dry-run launch plan used by API and queue admission."""
@@ -448,7 +471,7 @@ class BenchmarkRunService:
                     await self._await_benchmark_step(
                         self._context.evaluate_benchmark_batch(
                             batch_config=self.benchmark_batch_config(batch_id, role, request, index),
-                            model=self._context.model_for_run(),
+                            model=self.model_for_benchmark_run(request),
                             paths=self._context.paths,
                         ),
                         batch=batch,
@@ -742,6 +765,34 @@ class BenchmarkRunService:
                 hash_input=hash_input,
                 hash_provided=bool(request_config_hash),
             )
+
+        settings_resolver = getattr(self._context, "settings_model_runtime_for_scope", None)
+        if callable(settings_resolver):
+            try:
+                settings_runtime = settings_resolver(
+                    "benchmark",
+                    model_profile_id=str(getattr(request, "model_profile_id", "") or "").strip() or None,
+                )
+            except (FileNotFoundError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=domain_error_detail(
+                        code="benchmark_model_profile_invalid",
+                        message="Benchmark model profile is unavailable.",
+                        detail=str(exc),
+                        diagnostics=[
+                            {
+                                "kind": "benchmark_model_profile_invalid",
+                                "model_profile_id": str(getattr(request, "model_profile_id", "") or ""),
+                                "reason": str(exc),
+                            }
+                        ],
+                    ),
+                ) from exc
+        else:
+            settings_runtime = None
+        if settings_runtime is not None:
+            return settings_runtime
 
         try:
             cfg = load_llm_config()

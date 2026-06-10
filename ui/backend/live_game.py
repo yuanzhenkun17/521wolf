@@ -161,6 +161,7 @@ class LiveGameSession:
     human: Any | None
     event_sink: BroadcastEventSink
     skill_dir: str | None = None
+    model_runtime: dict[str, Any] | None = None
     task: asyncio.Task | None = None
     status: str = "running"
     winner: str | None = None
@@ -347,6 +348,25 @@ class LiveGameSession:
             return None
         return _pending_action_payload(current)
 
+    def _snapshot_config(self) -> dict[str, Any]:
+        config = {
+            "seed": self.request.seed,
+            "max_days": self.request.max_days,
+            "enable_sheriff": self.request.enable_sheriff,
+            "skill_dir": self.skill_dir,
+            "role_versions": dict(self.request.role_versions),
+            "role_skill_dirs": dict(self.request.role_versions),
+            "player_count": self.request.player_count,
+            "human_player_id": self.request.human_player_id,
+        }
+        if self.request.model_profile_id:
+            config["model_profile_id"] = self.request.model_profile_id
+        if isinstance(self.model_runtime, dict) and self.model_runtime:
+            config["model_id"] = self.model_runtime.get("model_id")
+            config["model_config_hash"] = self.model_runtime.get("model_config_hash")
+            config["model_runtime"] = to_jsonable(dict(self.model_runtime.get("model_runtime") or self.model_runtime))
+        return config
+
     def result(self) -> dict[str, Any]:
         return {
             "game_id": self.game_id,
@@ -367,6 +387,7 @@ class LiveGameSession:
             "diagnostics": list(self.diagnostics),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "config": self._snapshot_config(),
             "error": self.error,
         }
 
@@ -435,15 +456,6 @@ class LiveGameSession:
             "role_skill_dirs": dict(self.request.role_versions),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
-            "config": {
-                "seed": self.request.seed,
-                "max_days": self.request.max_days,
-                "enable_sheriff": self.request.enable_sheriff,
-                "skill_dir": self.skill_dir,
-                "role_versions": dict(self.request.role_versions),
-                "role_skill_dirs": dict(self.request.role_versions),
-                "player_count": self.request.player_count,
-                "human_player_id": self.request.human_player_id,
-            },
+            "config": self._snapshot_config(),
             "error": self.error,
         }

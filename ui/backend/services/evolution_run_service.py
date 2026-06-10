@@ -7,9 +7,12 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from fastapi import HTTPException
+
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
+from ui.backend.errors import domain_error_detail
 from ui.backend.evolution_serializers import _evolution_gate_report
 from ui.backend.schemas import EvolutionStartRequest, automatic_evolution_request
 from ui.backend.services.evolution_read_service import EvolutionReadService
@@ -25,11 +28,53 @@ class EvolutionRunService:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._context, name)
 
+    def evolution_model_runtime(self, request: EvolutionStartRequest) -> dict[str, Any] | None:
+        resolver = getattr(self._context, "settings_model_runtime_for_scope", None)
+        if not callable(resolver):
+            return None
+        try:
+            return resolver(
+                "evolution",
+                model_profile_id=str(request.model_profile_id or "").strip() or None,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=domain_error_detail(
+                    code="evolution_model_profile_invalid",
+                    message="Evolution model profile is unavailable.",
+                    detail=str(exc),
+                    diagnostics=[
+                        {
+                            "kind": "evolution_model_profile_invalid",
+                            "model_profile_id": str(request.model_profile_id or ""),
+                            "reason": str(exc),
+                        }
+                    ],
+                ),
+            ) from exc
+
+    def model_for_evolution_run(self, request: EvolutionStartRequest) -> Any:
+        model_factory = getattr(self._context, "model_for_run")
+        try:
+            return model_factory(
+                scope="evolution",
+                model_profile_id=request.model_profile_id,
+            )
+        except TypeError:
+            return model_factory()
+
     def queue_evolution(self, request: EvolutionStartRequest) -> dict[str, Any]:
         request = automatic_evolution_request(request)
         roles = request.roles or ["villager"]
+        request_config = request.model_dump(exclude_none=True)
+        model_runtime = self.evolution_model_runtime(request)
+        if model_runtime is not None:
+            request_config["model_id"] = model_runtime["model_id"]
+            request_config["model_config_hash"] = model_runtime["model_config_hash"]
+            request_config["model_runtime"] = to_jsonable(dict(model_runtime["model_runtime"]))
         if len(roles) == 1:
-            return self.create_evolution_run(roles[0], request)
+            return self.create_evolution_run(roles[0], request, model_runtime=model_runtime)
 
         batch_id = f"evo_batch_{uuid.uuid4().hex[:10]}"
         now = beijing_now_iso()
@@ -66,11 +111,15 @@ class EvolutionRunService:
             "diagnostics": [],
             "runs": [],
             "run_summaries": [],
-            "config": request.model_dump(),
+            "config": request_config,
         }
+        if model_runtime is not None:
+            batch["model_id"] = model_runtime["model_id"]
+            batch["model_config_hash"] = model_runtime["model_config_hash"]
+            batch["model_runtime"] = to_jsonable(dict(model_runtime["model_runtime"]))
         self.evolution_batches[batch_id] = batch
         for role in roles:
-            run = self.create_evolution_run(role, request, batch_id=batch_id, status="queued")
+            run = self.create_evolution_run(role, request, batch_id=batch_id, status="queued", model_runtime=model_runtime)
             batch["runs"].append(run["run_id"])
         self._persist_background_tasks()
         return batch
@@ -473,10 +522,16 @@ class EvolutionRunService:
         batch_id: str | None = None,
         run_id: str | None = None,
         status: str = "running",
+        model_runtime: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         run_id = run_id or f"evolve_{role}_{uuid.uuid4().hex[:8]}"
         now = beijing_now_iso()
         stage = "queued"
+        request_config = request.model_dump(exclude_none=True)
+        if model_runtime is not None:
+            request_config["model_id"] = model_runtime["model_id"]
+            request_config["model_config_hash"] = model_runtime["model_config_hash"]
+            request_config["model_runtime"] = to_jsonable(dict(model_runtime["model_runtime"]))
         run = {
             "kind": "role_evolution_run",
             "schema_version": 1,
@@ -523,8 +578,12 @@ class EvolutionRunService:
                 "battle_requested_per_side": int(request.battle_games or 0),
                 "updated_at": now,
             },
-            "config": request.model_dump(),
+            "config": request_config,
         }
+        if model_runtime is not None:
+            run["model_id"] = model_runtime["model_id"]
+            run["model_config_hash"] = model_runtime["model_config_hash"]
+            run["model_runtime"] = to_jsonable(dict(model_runtime["model_runtime"]))
         self.evolution_runs[run_id] = run
         self._persist_background_tasks()
         return run
@@ -746,8 +805,9 @@ class EvolutionRunService:
                 max_days=request.max_days,
                 auto_promote=request.auto_promote,
                 run_id=run_id,
-                model=self.model_for_run(),
+                model=self.model_for_evolution_run(request),
                 paths=self.paths,
+                config=run.get("config") if isinstance(run.get("config"), dict) else None,
                 progress_sink=sync_progress,
                 cancel_check=lambda: self.evolution_cancel_check(run_id, cancel_check),
             )
@@ -782,6 +842,10 @@ class EvolutionRunService:
         run.update(result)
         run["run_id"] = result.get("run_id") or run_id
         run["role"] = role
+        if isinstance(run.get("config"), dict) and isinstance(run["config"].get("model_runtime"), dict):
+            run["model_id"] = run["config"].get("model_id")
+            run["model_config_hash"] = run["config"].get("model_config_hash")
+            run["model_runtime"] = to_jsonable(dict(run["config"]["model_runtime"]))
         run["status"] = result.get("status", "reviewing")
         _set_task_contract(run, failed=run["status"] == "failed", cancelled=False, interrupted=False)
         run["started_at"] = run.get("started_at") or beijing_now_iso()
@@ -887,12 +951,17 @@ class EvolutionRunService:
             max_days=request.max_days,
             auto_promote=request.auto_promote,
             run_id=run_id,
-            model=self.model_for_run(),
+            model=self.model_for_evolution_run(request),
             paths=self.paths,
+            config=run.get("config") if isinstance(run.get("config"), dict) else None,
         )
         run.update(result)
         run["run_id"] = result.get("run_id") or run_id
         run["role"] = role
+        if isinstance(run.get("config"), dict) and isinstance(run["config"].get("model_runtime"), dict):
+            run["model_id"] = run["config"].get("model_id")
+            run["model_config_hash"] = run["config"].get("model_config_hash")
+            run["model_runtime"] = to_jsonable(dict(run["config"]["model_runtime"]))
         run["status"] = result.get("status", "reviewing")
         _set_task_contract(run, failed=run["status"] == "failed", cancelled=False, interrupted=False)
         run["started_at"] = run.get("started_at") or beijing_now_iso()

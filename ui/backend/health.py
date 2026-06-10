@@ -90,6 +90,18 @@ def llm_config_check(store: Any) -> dict[str, Any]:
             "degraded_features": ["real model play", "benchmark", "evolution"],
             "actions": ["Unset UI_BACKEND_USE_FAKE_LLM for real model runs."],
         }
+    settings_runtime = _settings_model_runtime(store, scope="game_decision")
+    if settings_runtime is not None:
+        runtime = settings_runtime.get("model_runtime") if isinstance(settings_runtime.get("model_runtime"), dict) else {}
+        return {
+            "status": _OK,
+            "message": "LLM configuration is available from local Settings.",
+            "source": "settings_profile",
+            "model": str(settings_runtime.get("model_id") or ""),
+            "model_profile_id": runtime.get("model_profile_id"),
+            "base_url_host": runtime.get("base_url_host"),
+            "model_config_hash": settings_runtime.get("model_config_hash"),
+        }
     try:
         config = load_llm_config()
     except Exception as exc:  # noqa: BLE001 - health diagnostics should fail open to payloads.
@@ -324,7 +336,21 @@ def _probe_model(store: Any) -> Any:
         return store.model
     if _env_true("UI_BACKEND_USE_FAKE_LLM"):
         return store.model_for_run()
+    model_for_run = getattr(store, "model_for_run", None)
+    if callable(model_for_run):
+        return model_for_run(scope="game_decision")
     return create_llm()
+
+
+def _settings_model_runtime(store: Any, *, scope: str) -> dict[str, Any] | None:
+    resolver = getattr(store, "settings_model_runtime_for_scope", None)
+    if not callable(resolver):
+        return None
+    try:
+        runtime = resolver(scope)
+    except Exception:  # noqa: BLE001 - health must keep reporting public fallback diagnostics.
+        return None
+    return runtime if isinstance(runtime, dict) and runtime else None
 
 
 def _llm_probe_cache(store: Any) -> dict[str, Any] | None:

@@ -28,6 +28,7 @@ from ui.backend.services import (
     LiveGameLifecycleCoordinator,
     TaskService,
 )
+from ui.backend.settings_model_profiles import SettingsModelProfileStore
 from ui.backend.services.task_worker import TaskWorkerLoop
 from ui.backend.live_game import LiveGameSession
 from ui.backend.task_events import TaskEventLog
@@ -214,12 +215,34 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
         return self.benchmark_service.get_benchmark_spec_summary(benchmark_id)
 
-    def model_for_run(self) -> Any | None:
+    def settings_model_runtime_for_scope(
+        self,
+        scope: str,
+        *,
+        model_profile_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        return SettingsModelProfileStore.from_backend_store(self).model_runtime_payload(
+            scope=scope,
+            profile_id=model_profile_id,
+        )
+
+    def model_for_run(
+        self,
+        *,
+        scope: str = "game_decision",
+        model_profile_id: str | None = None,
+    ) -> Any | None:
         if self.model is not None:
             return self.model
         use_fake = os.environ.get("UI_BACKEND_USE_FAKE_LLM", "").lower() in {"1", "true", "yes"}
         if use_fake:
             return _FakeModel()
+        settings_model = SettingsModelProfileStore.from_backend_store(self).create_llm_for_scope(
+            scope=scope,
+            profile_id=model_profile_id,
+        )
+        if settings_model is not None:
+            return settings_model
         try:
             return create_llm()
         except RuntimeError:

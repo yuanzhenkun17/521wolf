@@ -70,6 +70,13 @@ class GameStartRequest(BaseModel):
     skill_dir: str | None = None
     human_player_id: int | None = None
     role_versions: dict[str, str] = Field(default_factory=dict)
+    model_profile_id: str | None = Field(default=None, max_length=200)
+
+    @field_validator("model_profile_id", mode="before")
+    @classmethod
+    def normalize_model_profile_id(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
 
 
 class HumanActionRequest(BaseModel):
@@ -85,11 +92,18 @@ class EvolutionStartRequest(BaseModel):
     battle_games: int = Field(default=DEFAULT_EVOLUTION_BATTLE_GAMES, ge=0, le=200)
     max_days: int = Field(default=5, ge=1, le=100)
     auto_promote: bool = True
+    model_profile_id: str | None = Field(default=None, max_length=200)
 
     @field_validator("roles", mode="before")
     @classmethod
     def normalize_roles(cls, value: Any) -> Any:
         return _normalize_requested_roles(value)
+
+    @field_validator("model_profile_id", mode="before")
+    @classmethod
+    def normalize_model_profile_id(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
 
 
 def automatic_evolution_request(request: EvolutionStartRequest) -> EvolutionStartRequest:
@@ -132,6 +146,7 @@ class BenchmarkRequest(BaseModel):
     battle_games: int | None = Field(default=None, ge=0, le=200)
     max_days: int | None = Field(default=None, ge=1, le=100)
     target_versions: dict[str, str] = Field(default_factory=dict)
+    model_profile_id: str | None = Field(default=None, max_length=200)
     model_id: str | None = None
     model_config_hash: str | None = None
     budget_limit_units: int | None = Field(default=None, ge=0, le=1_000_000)
@@ -173,7 +188,13 @@ class BenchmarkRequest(BaseModel):
             normalized[role] = version
         return normalized
 
-    @field_validator("langfuse_dataset_name", "langfuse_experiment_name", "langfuse_run_name", mode="before")
+    @field_validator(
+        "model_profile_id",
+        "langfuse_dataset_name",
+        "langfuse_experiment_name",
+        "langfuse_run_name",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_text(cls, value: Any) -> str | None:
         text = str(value or "").strip()

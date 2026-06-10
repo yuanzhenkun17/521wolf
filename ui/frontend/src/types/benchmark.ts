@@ -251,6 +251,7 @@ export interface BenchmarkRequest {
   battle_games?: number | null
   max_days?: number | null
   target_versions?: Record<string, string>
+  model_profile_id?: string | null
   model_id?: string | null
   model_config_hash?: string | null
   budget_limit_units?: number | null

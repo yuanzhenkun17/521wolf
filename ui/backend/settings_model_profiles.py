@@ -9,6 +9,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from app.services.llm import create_llm
 from app.util.redaction import redact_text
@@ -49,6 +50,70 @@ class SettingsModelProfileStore:
             "providers": sorted(MODEL_PROFILE_PROVIDERS),
             "variables": runtime_variables_payload(),
         }
+
+    def model_runtime_payload(
+        self,
+        *,
+        scope: str,
+        profile_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        resolved = self._resolve_runtime_profile(scope=scope, profile_id=profile_id)
+        if resolved is None:
+            return None
+        profile, secret, default_scope_matched = resolved
+        if not secret:
+            if profile_id:
+                raise ValueError("model profile has no saved API key")
+            return None
+        model_id = str(profile.get("model") or "").strip()
+        runtime_hash = model_config_hash(profile)
+        hash_input = model_profile_hash_input(profile)
+        return {
+            "model_id": model_id,
+            "model_config_hash": runtime_hash,
+            "model_runtime": {
+                "schema_version": 1,
+                "source": "settings_profile",
+                "hash_source": "settings_profile",
+                "hash_algorithm": "sha256",
+                "hash_input_schema_version": 1,
+                "model_id": model_id,
+                "model_config_hash": runtime_hash,
+                "model_profile_id": str(profile.get("profile_id") or ""),
+                "provider": str(profile.get("provider") or ""),
+                "base_url_host": base_url_host(profile.get("base_url")),
+                "scope": normalize_scope(scope),
+                "default_scope_matched": bool(default_scope_matched),
+                "hash_provided": False,
+                "externally_provided": False,
+                "hash_input": hash_input,
+            },
+        }
+
+    def create_llm_for_scope(
+        self,
+        *,
+        scope: str,
+        profile_id: str | None = None,
+    ) -> Any | None:
+        resolved = self._resolve_runtime_profile(scope=scope, profile_id=profile_id)
+        if resolved is None:
+            return None
+        profile, secret, _default_scope_matched = resolved
+        if not secret:
+            if profile_id:
+                raise ValueError("model profile has no saved API key")
+            return None
+        return create_llm(
+            env_path=None,
+            api_key=secret,
+            base_url=str(profile.get("base_url") or ""),
+            model=str(profile.get("model") or ""),
+            temperature=float(profile.get("temperature") if profile.get("temperature") is not None else 0.4),
+            timeout=float(profile.get("timeout_seconds") or 60),
+            runtime_timeout=float(profile.get("timeout_seconds") or 60),
+            max_retries=int(profile.get("max_retries") or 0),
+        )
 
     def create_profile(self, request: ModelProfileCreateRequest) -> dict[str, Any]:
         profiles = self._read_profiles()
@@ -219,6 +284,47 @@ class SettingsModelProfileStore:
                 return profile
         raise FileNotFoundError("model profile not found")
 
+    def _resolve_runtime_profile(
+        self,
+        *,
+        scope: str,
+        profile_id: str | None = None,
+    ) -> tuple[dict[str, Any], str, bool] | None:
+        normalized_scope = normalize_scope(scope)
+        normalized_profile_id = str(profile_id or "").strip()
+        profiles = self._read_profiles()
+        secrets = self._read_secrets()
+        env_locked = any(env_locks_payload()["sources"].values())
+
+        if env_locked:
+            if normalized_profile_id:
+                raise ValueError("environment LLM config is locked; model_profile_id override is not allowed")
+            return None
+
+        if normalized_profile_id:
+            profile = self._find_profile(profiles, normalized_profile_id)
+            if not bool(profile.get("enabled", True)):
+                raise ValueError("model profile is disabled")
+            secret = secrets.get(str(profile.get("api_key_secret_ref") or ""), "")
+            return profile, secret, bool((profile.get("default_scopes") or {}).get(normalized_scope))
+
+        for profile in profiles:
+            if not bool(profile.get("enabled", True)):
+                continue
+            if not bool((profile.get("default_scopes") or {}).get(normalized_scope)):
+                continue
+            secret = secrets.get(str(profile.get("api_key_secret_ref") or ""), "")
+            if secret:
+                return profile, secret, True
+
+        for profile in profiles:
+            if not bool(profile.get("enabled", True)):
+                continue
+            secret = secrets.get(str(profile.get("api_key_secret_ref") or ""), "")
+            if secret:
+                return profile, secret, False
+        return None
+
     def _public_profile(self, profile: dict[str, Any], *, secrets: dict[str, str] | None = None) -> dict[str, Any]:
         secret_map = secrets if secrets is not None else self._read_secrets()
         secret = secret_map.get(str(profile.get("api_key_secret_ref") or ""))
@@ -306,6 +412,11 @@ def normalize_provider(value: str) -> str:
     return provider if provider in MODEL_PROFILE_PROVIDERS else "custom"
 
 
+def normalize_scope(value: str) -> str:
+    scope = str(value or "").strip()
+    return scope if scope in MODEL_PROFILE_SCOPES else "game_decision"
+
+
 def normalize_bool_map(
     value: dict[str, Any] | None,
     keys: tuple[str, ...],
@@ -343,7 +454,7 @@ def mask_secret(value: str | None) -> str:
 def model_config_hash(profile: dict[str, Any]) -> str:
     public_config = {
         "provider": profile.get("provider"),
-        "base_url": _hostish(profile.get("base_url")),
+        "base_url_host": base_url_host(profile.get("base_url")),
         "model": profile.get("model"),
         "temperature": profile.get("temperature"),
         "timeout_seconds": profile.get("timeout_seconds"),
@@ -353,11 +464,31 @@ def model_config_hash(profile: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def _hostish(value: Any) -> str:
-    text = str(value or "").strip().rstrip("/")
+def model_profile_hash_input(profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "source": "settings_profile",
+        "provider": str(profile.get("provider") or ""),
+        "base_url_host": base_url_host(profile.get("base_url")),
+        "model": str(profile.get("model") or ""),
+        "temperature": profile.get("temperature"),
+        "timeout_seconds": profile.get("timeout_seconds"),
+        "max_retries": profile.get("max_retries"),
+        "capabilities": normalize_bool_map(profile.get("capabilities"), MODEL_PROFILE_CAPABILITIES),
+    }
+
+
+def base_url_host(value: Any) -> str:
+    text = str(value or "").strip()
     if not text:
         return ""
-    return redact_text(text, context="public")
+    parsed = urlparse(text)
+    if parsed.hostname:
+        host = parsed.hostname
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return host
+    return text.split("/")[0]
 
 
 def _new_profile_id(name: str) -> str:

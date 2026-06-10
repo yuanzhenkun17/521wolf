@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 from ui.backend.live_game import (
     LIVE_GAME_TERMINAL_STATUSES,
@@ -55,6 +56,25 @@ class LiveGameLifecycleCoordinator:
         human_player_id = request.human_player_id
         if human_player_id is not None and (human_player_id < 1 or human_player_id > request.player_count):
             raise HTTPException(status_code=400, detail="human_player_id must be a valid player seat")
+        try:
+            model_runtime = store.settings_model_runtime_for_scope(
+                "game_decision",
+                model_profile_id=request.model_profile_id,
+            )
+            runtime_model = store.model_for_run(
+                scope="game_decision",
+                model_profile_id=request.model_profile_id,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "game_model_profile_invalid",
+                    "message": "游戏模型 Profile 不可用。",
+                    "detail": str(exc),
+                    "model_profile_id": request.model_profile_id,
+                },
+            ) from exc
 
         from app.lib.game import create_agents, create_engine
         from app.lib.store import AgentDecisionRecorder
@@ -62,21 +82,23 @@ class LiveGameLifecycleCoordinator:
 
         config = replace(STANDARD_12, max_days=request.max_days, enable_sheriff=request.enable_sheriff)
         roles = assign_roles(config, seed=request.seed)
-        persistence = store._create_game_persistence(
-            game_id,
-            run_metadata={
-                "mode": "play" if human_player_id is not None else "watch",
-                "source_run_id": game_id,
-                "ruleset_version": "werewolf_12p_v1",
-            },
-        )
+        run_metadata = {
+            "mode": "play" if human_player_id is not None else "watch",
+            "source_run_id": game_id,
+            "ruleset_version": "werewolf_12p_v1",
+        }
+        if isinstance(model_runtime, dict) and model_runtime:
+            run_metadata["model_id"] = model_runtime.get("model_id")
+            run_metadata["model_config_hash"] = model_runtime.get("model_config_hash")
+            run_metadata["model_runtime"] = to_jsonable(dict(model_runtime.get("model_runtime") or model_runtime))
+        persistence = store._create_game_persistence(game_id, run_metadata=run_metadata)
         event_sink = BroadcastEventSink()
         db_event_sink = persistence.create_event_sink()
         db_decision_sink = persistence.create_decision_sink()
         recorder = AgentDecisionRecorder(sink=_FanoutSink(event_sink, db_decision_sink))
         agents = create_agents(
             roles,
-            client=store.model_for_run(),
+            client=runtime_model,
             decision_recorder=recorder,
             game_id=game_id,
             skill_dir=skill_dir,
@@ -100,6 +122,7 @@ class LiveGameLifecycleCoordinator:
             human=agents.get(human_player_id) if human_player_id is not None else None,
             event_sink=event_sink,
             skill_dir=skill_dir,
+            model_runtime=model_runtime,
         )
         setattr(session, "persistence", persistence)
         self.persist_start(session)

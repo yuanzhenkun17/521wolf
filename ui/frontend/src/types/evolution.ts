@@ -316,6 +316,7 @@ export interface EvolutionStartRequest {
   battle_games?: number
   max_days?: number
   auto_promote?: boolean
+  model_profile_id?: string | null
 }
 
 export interface EvolutionChildRun {

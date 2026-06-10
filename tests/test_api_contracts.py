@@ -1786,6 +1786,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
     assert game_start["role_versions"]["additionalProperties"] == {"type": "string"}
     assert game_start["skill_dir"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
     assert game_start["human_player_id"]["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+    assert game_start["model_profile_id"]["anyOf"] == [{"type": "string", "maxLength": 200}, {"type": "null"}]
 
     human_action = _schema_properties(doc, "HumanActionRequest")
     assert human_action["action_type"]["default"] == ""
@@ -1803,6 +1804,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
     assert evolution_start["battle_games"]["maximum"] == 200
     assert evolution_start["max_days"]["default"] == 5
     assert evolution_start["auto_promote"]["default"] is True
+    assert evolution_start["model_profile_id"]["anyOf"] == [{"type": "string", "maxLength": 200}, {"type": "null"}]
 
     benchmark = _schema_properties(doc, "BenchmarkRequest")
     assert benchmark["benchmark_id"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
@@ -1817,6 +1819,7 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
     assert max_days_integer["minimum"] == 1
     assert max_days_integer["maximum"] == 100
     assert benchmark["target_versions"]["additionalProperties"] == {"type": "string"}
+    assert benchmark["model_profile_id"]["anyOf"] == [{"type": "string", "maxLength": 200}, {"type": "null"}]
     assert benchmark["model_id"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
     assert benchmark["model_config_hash"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
     assert {"type": "null"} in benchmark["budget_limit_units"]["anyOf"]

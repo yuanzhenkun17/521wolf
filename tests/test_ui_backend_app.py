@@ -1218,6 +1218,97 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
     assert final_response.json()["profiles"] == []
 
 
+def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import ui.backend.settings_model_profiles as settings_model_profiles
+
+    class ProfileModel(FakeModel):
+        model_id = "settings-runtime-model"
+
+    create_calls: list[dict[str, Any]] = []
+
+    def fake_create_llm(**kwargs: Any) -> ProfileModel:
+        create_calls.append(dict(kwargs))
+        return ProfileModel()
+
+    monkeypatch.delenv("UI_BACKEND_USE_FAKE_LLM", raising=False)
+    for key in ("WEREWOLF_LLM_API_KEY", "WEREWOLF_LLM_BASE_URL", "WEREWOLF_LLM_MODEL"):
+        monkeypatch.setenv(key, "")
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
+    _write_model_benchmark_spec(tmp_path)
+
+    app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=None)
+    store = app.state.backend_store
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Runtime Qwen",
+                "provider": "openai_compatible",
+                "base_url": "https://token.example.test/v1?api_key=hidden",
+                "model": "qwen-runtime",
+                "api_key": "sk-runtime-secret",
+                "temperature": 0.25,
+                "timeout_seconds": 33,
+                "max_retries": 2,
+                "default_scopes": {"game_decision": True, "benchmark": True, "evolution": True},
+                "capabilities": {"chat": True, "json_mode": True},
+            },
+        )
+        health_response = client.get("/api/health")
+
+    assert create_response.status_code == 200
+    profile_id = create_response.json()["profile"]["profile_id"]
+    health = health_response.json()
+    assert health["checks"]["llm_config"]["source"] == "settings_profile"
+    assert health["checks"]["llm_config"]["model"] == "qwen-runtime"
+    assert health["checks"]["llm_config"]["model_profile_id"] == profile_id
+    assert health["gates"]["game_start"]["ready"] is True
+
+    benchmark_request = BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model")
+    batch = store.benchmark_service.queue_benchmark(benchmark_request)
+    benchmark_runtime = batch["model_runtime"]
+    assert benchmark_runtime["source"] == "settings_profile"
+    assert benchmark_runtime["model_profile_id"] == profile_id
+    assert benchmark_runtime["base_url_host"] == "token.example.test"
+    assert benchmark_runtime["hash_input"]["base_url_host"] == "token.example.test"
+    assert benchmark_runtime["model_id"] == "qwen-runtime"
+    assert batch["config"]["model_runtime"] == benchmark_runtime
+
+    model = store.model_for_run(scope="benchmark")
+    assert isinstance(model, ProfileModel)
+    assert create_calls[-1]["api_key"] == "sk-runtime-secret"
+    assert create_calls[-1]["base_url"] == "https://token.example.test/v1?api_key=hidden"
+    assert create_calls[-1]["model"] == "qwen-runtime"
+
+    evolution = store.queue_evolution(EvolutionStartRequest(roles=["seer"], training_games=0, battle_games=0))
+    evolution_runtime = evolution["model_runtime"]
+    assert evolution_runtime["source"] == "settings_profile"
+    assert evolution_runtime["model_profile_id"] == profile_id
+    assert evolution["config"]["model_runtime"] == evolution_runtime
+
+    public_payload = json.dumps({"batch": batch, "evolution": evolution, "health": health}, ensure_ascii=False)
+    assert "sk-runtime-secret" not in public_payload
+    assert "api_key=hidden" not in public_payload
+    assert "api_key" not in public_payload
+
+    monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "env-secret")
+    with pytest.raises(HTTPException) as exc_info:
+        store.benchmark_service.benchmark_model_runtime(
+            BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model", model_profile_id=profile_id)
+        )
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "benchmark_model_profile_invalid"
+    assert "override is not allowed" in exc_info.value.detail["detail"]
+
+
 def test_error_handlers_keep_detail_and_add_error_shape(tmp_path: Path) -> None:
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=FakeModel())
 
