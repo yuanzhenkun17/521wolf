@@ -1,7 +1,14 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue';
+
+interface RoleStat {
+  role: string;
+  alive: number;
+  total: number;
+}
+
 defineProps({
-  stats: { type: Array, default: () => [] },
+  stats: { type: Array as PropType<RoleStat[]>, default: () => [] },
   livingCount: { type: Number, default: 0 },
   totalCount: { type: Number, default: 0 }
 });

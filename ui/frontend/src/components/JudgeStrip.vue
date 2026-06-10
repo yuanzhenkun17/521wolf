@@ -1,17 +1,28 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { ref } from 'vue'
 
-defineProps({
-  messages: { type: Array, default: () => [] },
-  judgeBoardStarted: Boolean,
-  judgeBoardStarting: Boolean
+interface JudgeStripMessage {
+  message: string
+}
+
+withDefaults(defineProps<{
+  messages?: JudgeStripMessage[]
+  judgeBoardStarted?: boolean
+  judgeBoardStarting?: boolean
+}>(), {
+  messages: () => [],
+  judgeBoardStarted: false,
+  judgeBoardStarting: false
 })
 
-const emit = defineEmits(['start'])
-const judgeStripRef = ref(null)
+const emit = defineEmits<{
+  (event: 'start'): void
+}>()
+const judgeStripRef = ref<HTMLDivElement | null>(null)
 
-defineExpose({ judgeStripRef });
+defineExpose<{
+  judgeStripRef: typeof judgeStripRef
+}>({ judgeStripRef })
 </script>
 
 <template>

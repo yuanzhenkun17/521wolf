@@ -1,17 +1,29 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue'
+
+interface PlayerIdentityBoardPlayer {
+  id?: string | number
+  displaySeat?: unknown
+  speaking?: unknown
+  alive?: boolean
+  isSheriff?: unknown
+  roleIcon?: string
+  role_hint?: string
+  [key: string]: unknown
+}
+
 const props = defineProps({
-  players: { type: Array, default: () => [] },
+  players: { type: Array as PropType<PlayerIdentityBoardPlayer[]>, default: () => [] },
   activeSeat: { type: [String, Number], default: '' },
-  selectedTargetId: { type: [String, Number, null], default: null },
+  selectedTargetId: { type: [String, Number, null] as unknown as PropType<string | number | null>, default: null },
   panelHeight: { type: Number, default: 146 }
 })
 
-function isActiveSeat(player) {
+function isActiveSeat(player: PlayerIdentityBoardPlayer): boolean {
   return Boolean(props.activeSeat) && String(player?.displaySeat ?? '') === String(props.activeSeat)
 }
 
-function isSelectedTarget(player) {
+function isSelectedTarget(player: PlayerIdentityBoardPlayer): boolean {
   if (props.selectedTargetId == null || props.selectedTargetId === '') return false
   return Number(player?.id) === Number(props.selectedTargetId)
 }

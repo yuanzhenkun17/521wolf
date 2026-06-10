@@ -1,11 +1,24 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed } from 'vue'
+import type { PropType } from 'vue'
+
+interface CarouselGame {
+  day?: number | string
+  current_speaker_id?: number | string | null
+  phase?: string | null
+}
+
+interface CarouselItem {
+  key: number | string
+  tone?: string
+  image: string
+  label: string
+}
 
 const props = defineProps({
-  game: Object,
+  game: Object as PropType<CarouselGame | null>,
   isNight: Boolean,
-  carousel: { type: Array, default: () => [] },
+  carousel: { type: Array as PropType<CarouselItem[]>, default: () => [] },
   message: { type: String, default: '' }
 })
 
