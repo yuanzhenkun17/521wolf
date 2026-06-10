@@ -14,7 +14,7 @@ from storage.replay import (
     read_decisions_for_artifact,
     read_events_for_artifact,
 )
-from storage.runtime import GamePersistence
+from storage.runtime import GamePersistence, create_game_persistence
 
 
 class _Cursor:
@@ -731,6 +731,40 @@ def test_game_persistence_rejects_conflicting_provider_sources() -> None:
             provider=provider,
             evolution_conn=conn,
         )
+
+
+def test_create_game_persistence_resolves_provider_with_paths(monkeypatch, tmp_path: Path) -> None:
+    import storage.provider as provider_mod
+    from storage.run_policy import RunType
+
+    provider = _Provider()
+    calls: list[Any] = []
+
+    def provider_from_env(*, paths: Any | None = None) -> _Provider:
+        calls.append(paths)
+        return provider
+
+    monkeypatch.setattr(provider_mod, "storage_provider_from_env", provider_from_env)
+
+    persistence = create_game_persistence(
+        game_id="factory_game",
+        game_dir=tmp_path / "game",
+        paths=tmp_path,
+        source_game_id="source_game",
+        run_type="evolution_training",
+        run_metadata={"source_run_id": "run_1", "mode": "formal"},
+    )
+    try:
+        assert persistence.game_id == "factory_game"
+        assert persistence.game_dir == tmp_path / "game"
+        assert persistence.source_game_id == "source_game"
+        assert persistence.run_policy is not None
+        assert persistence.run_policy.run_type is RunType.EVOLUTION_TRAINING
+        assert persistence.run_metadata == {"source_run_id": "run_1", "mode": "formal"}
+        assert provider.wolf_calls == 1
+        assert calls == [tmp_path]
+    finally:
+        persistence.close()
 
 
 def test_injected_evolution_connection_is_not_closed() -> None:

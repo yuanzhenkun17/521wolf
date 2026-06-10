@@ -819,21 +819,17 @@ def _ensure_game_persistence(state: dict) -> Any | None:
     if existing is not None:
         return existing
 
-    from storage.provider import storage_provider_from_env
-    from storage.run_policy import RunType, policy_for_run_type
-    from storage.runtime import GamePersistence
+    from storage.runtime import create_game_persistence
 
     game_id = str(state.get("game_id") or "unknown")
-    run_type = RunType(_storage_run_type(state))
-    run_metadata = _run_metadata(state, game_id=game_id)
-    provider = state.get("storage_provider") or storage_provider_from_env(paths=state.get("paths"))
-    persistence = GamePersistence(
+    persistence = create_game_persistence(
         game_id=game_id,
         game_dir=state.get("game_dir"),
-        provider=provider,
+        storage_provider=state.get("storage_provider"),
+        paths=state.get("paths"),
         source_game_id=str(state.get("source_game_id") or game_id),
-        run_policy=policy_for_run_type(run_type),
-        run_metadata=run_metadata,
+        run_type=_storage_run_type(state),
+        run_metadata=_run_metadata(state, game_id=game_id),
     )
     state["game_persistence"] = persistence
     state["game_persistence_owner"] = True

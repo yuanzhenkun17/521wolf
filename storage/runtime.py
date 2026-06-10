@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from storage.interfaces import DecisionRecordData, storage_timestamp
-from storage.run_policy import RunPolicy, RunType
+from storage.run_policy import RunPolicy, RunType, policy_for_run_type
 from storage.public_events import public_events_only
 from storage.shared.database import StorageConnection
 
@@ -41,6 +41,38 @@ class EventEntry(Protocol):
 
 def open_storage_connection(provider: StorageProvider | None = None) -> StorageConnection:
     return (provider or storage_provider_from_env()).open_wolf_connection()
+
+
+def create_game_persistence(
+    *,
+    game_id: str,
+    game_dir: Path | str | None = None,
+    storage_provider: StorageProvider | None = None,
+    paths: Any | None = None,
+    source_game_id: str | None = None,
+    run_type: RunType | str = RunType.ORDINARY_GAME,
+    run_metadata: dict[str, Any] | None = None,
+    commit_every: int = DEFAULT_COMMIT_EVERY,
+) -> "GamePersistence":
+    """Create a runtime persistence handle with the route policy wired in."""
+    import storage.provider as provider_mod
+
+    resolved_run_type = run_type if isinstance(run_type, RunType) else RunType(str(run_type))
+    if storage_provider:
+        provider = storage_provider
+    elif paths is None:
+        provider = provider_mod.storage_provider_from_env()
+    else:
+        provider = provider_mod.storage_provider_from_env(paths=paths)
+    return GamePersistence(
+        game_id=game_id,
+        game_dir=game_dir,
+        provider=provider,
+        source_game_id=source_game_id or game_id,
+        run_policy=policy_for_run_type(resolved_run_type),
+        run_metadata=run_metadata,
+        commit_every=commit_every,
+    )
 
 
 class DatabaseEventSink:

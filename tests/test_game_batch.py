@@ -365,6 +365,48 @@ def test_run_game_batch_empty():
     assert asyncio.run(run_game_batch(Never(), 0, lambda i: {}, label="t")) == []
 
 
+def test_game_persistence_is_created_through_storage_runtime(monkeypatch, tmp_path):
+    import app.graphs.subgraphs.game.nodes as game_nodes
+
+    class FakePersistence:
+        pass
+
+    created = {}
+    persistence = FakePersistence()
+    provider = object()
+
+    def create_game_persistence(**kwargs):
+        created.update(kwargs)
+        return persistence
+
+    monkeypatch.setattr(
+        "storage.runtime.create_game_persistence",
+        create_game_persistence,
+    )
+
+    state = {
+        "game_id": "g_factory",
+        "game_dir": tmp_path / "game",
+        "paths": tmp_path,
+        "source_game_id": "source_game",
+        "storage_provider": provider,
+        "storage_run_type": "evaluation_batch",
+        "model_id": "model-a",
+    }
+
+    assert game_nodes._ensure_game_persistence(state) is persistence
+    assert state["game_persistence"] is persistence
+    assert state["game_persistence_owner"] is True
+    assert created["game_id"] == "g_factory"
+    assert created["game_dir"] == tmp_path / "game"
+    assert created["paths"] == tmp_path
+    assert created["source_game_id"] == "source_game"
+    assert created["storage_provider"] is provider
+    assert created["run_type"] == "evaluation_batch"
+    assert created["run_metadata"]["source_run_id"] == "g_factory"
+    assert created["run_metadata"]["model_id"] == "model-a"
+
+
 def test_game_loop_node_records_timeout_and_returns_failed_state():
     from app.graphs.subgraphs.game.nodes import game_loop_node
 
