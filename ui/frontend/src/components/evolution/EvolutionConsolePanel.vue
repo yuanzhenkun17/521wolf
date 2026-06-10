@@ -411,82 +411,97 @@ function childRunKey(run: ChildRunRow, index: number): string | number {
 
 <template>
   <div class="evo-tab-panel">
-    <article class="evo-card">
+    <article class="evo-card evo-console-card">
       <header>
         <h2>进化控制台</h2>
       </header>
 
-      <div class="evo-form-grid">
-        <label>训练局数<input v-model.number="evo.form.value.training_games" type="number" min="1" max="200" inputmode="numeric" /></label>
-        <label>对战局数<input v-model.number="evo.form.value.battle_games" type="number" min="1" max="200" inputmode="numeric" /></label>
-        <label>最大天数<input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" /></label>
+      <div class="evo-form-grid evo-console-grid">
+        <div class="evo-console-fields" aria-label="进化启动参数">
+          <label class="evo-console-field">
+            <span>训练局数</span>
+            <input v-model.number="evo.form.value.training_games" type="number" min="1" max="200" inputmode="numeric" />
+          </label>
+          <label class="evo-console-field">
+            <span>对战局数</span>
+            <input v-model.number="evo.form.value.battle_games" type="number" min="1" max="200" inputmode="numeric" />
+          </label>
+          <label class="evo-console-field">
+            <span>最大天数</span>
+            <input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" />
+          </label>
+        </div>
         <div
           v-if="evo.runtimeHealthGateReason?.value"
           class="evo-runtime-gate"
           :data-blocked="String(Boolean(evo.runtimeHealthGateBlocked?.value))"
           role="status"
         >
-          <strong>{{ evo.runtimeHealthGateBlocked?.value ? '启动已阻断' : '启动预检' }}</strong>
-          <span>{{ evo.runtimeHealthGateReason.value }}</span>
+          <i aria-hidden="true"></i>
+          <div>
+            <strong>{{ evo.runtimeHealthGateBlocked?.value ? '启动已阻断' : '启动预检' }}</strong>
+            <span>{{ evo.runtimeHealthGateReason.value }}</span>
+          </div>
           <small v-if="evo.runtimeHealthGate?.value?.actions?.length">
             {{ evo.runtimeHealthGate.value.actions[0] }}
           </small>
         </div>
-        <div class="evo-start-panel">
-          <button
-            type="button"
-            class="evo-action evo-start-action"
-            :disabled="Boolean(evo.actionLoading.value) || !evo.selectedRole.value || Boolean(evo.runtimeHealthGateBlocked?.value)"
-            @click="evo.startSingle()"
-          >
-            启动
-          </button>
-          <em v-if="evo.loading.value || evo.actionLoading.value">
-            {{ actionLoadingText(evo.actionLoading.value, evo.loading.value) }}
-          </em>
+        <div class="evo-console-actions">
+          <div class="evo-start-panel">
+            <button
+              type="button"
+              class="evo-action evo-start-action"
+              :disabled="Boolean(evo.actionLoading.value) || !evo.selectedRole.value || Boolean(evo.runtimeHealthGateBlocked?.value)"
+              @click="evo.startSingle()"
+            >
+              启动
+            </button>
+            <em v-if="evo.loading.value || evo.actionLoading.value">
+              {{ actionLoadingText(evo.actionLoading.value, evo.loading.value) }}
+            </em>
+          </div>
+          <div v-if="evo.hasSelection.value" class="evo-run-actions" aria-label="候选操作">
+            <span
+              class="evo-action-tooltip"
+              :title="selectedPromoteDisabledReason || undefined"
+            >
+              <button
+                type="button"
+                class="evo-action evo-action-promote"
+                :disabled="!selectedCanPromote || Boolean(evo.actionLoading.value)"
+                @click="evo.runAction(evo.selectedRunId.value, 'promote')"
+              >
+                晋升
+              </button>
+            </span>
+            <span
+              class="evo-action-tooltip"
+              title="拒绝：运行已完成但不采纳候选结果，候选版本不会晋升。"
+            >
+              <button
+                type="button"
+                class="evo-action evo-action-reject"
+                :disabled="!selectedCanReview || Boolean(evo.actionLoading.value)"
+                @click="evo.runAction(evo.selectedRunId.value, 'reject')"
+              >
+                拒绝
+              </button>
+            </span>
+            <span
+              class="evo-action-tooltip"
+              title="终止：停止仍在执行或卡住的运行，不代表评审通过或拒绝。"
+            >
+              <button
+                type="button"
+                class="evo-action evo-action-terminate"
+                :disabled="!selectedCanTerminate || Boolean(evo.actionLoading.value)"
+                @click="evo.runAction(evo.selectedRunId.value, 'terminate')"
+              >
+                终止
+              </button>
+            </span>
+          </div>
         </div>
-        <span
-          v-if="evo.hasSelection.value"
-          class="evo-action-tooltip"
-          :title="selectedPromoteDisabledReason || undefined"
-        >
-          <button
-            type="button"
-            class="evo-action evo-action-promote"
-            :disabled="!selectedCanPromote || Boolean(evo.actionLoading.value)"
-            @click="evo.runAction(evo.selectedRunId.value, 'promote')"
-          >
-            晋升
-          </button>
-        </span>
-        <span
-          v-if="evo.hasSelection.value"
-          class="evo-action-tooltip"
-          title="拒绝：运行已完成但不采纳候选结果，候选版本不会晋升。"
-        >
-          <button
-            type="button"
-            class="evo-action evo-action-reject"
-            :disabled="!selectedCanReview || Boolean(evo.actionLoading.value)"
-            @click="evo.runAction(evo.selectedRunId.value, 'reject')"
-          >
-            拒绝
-          </button>
-        </span>
-        <span
-          v-if="evo.hasSelection.value"
-          class="evo-action-tooltip"
-          title="终止：停止仍在执行或卡住的运行，不代表评审通过或拒绝。"
-        >
-          <button
-            type="button"
-            class="evo-action evo-action-terminate"
-            :disabled="!selectedCanTerminate || Boolean(evo.actionLoading.value)"
-            @click="evo.runAction(evo.selectedRunId.value, 'terminate')"
-          >
-            终止
-          </button>
-        </span>
       </div>
     </article>
 

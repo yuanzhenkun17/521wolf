@@ -1249,58 +1249,126 @@ onBeforeUnmount(() => {
    ======================================== */
 .evo-form-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(96px, 0.72fr)) repeat(4, 82px);
-  align-items: end;
+  grid-template-columns: minmax(280px, 1fr) minmax(238px, auto);
+  grid-template-areas:
+    "fields actions"
+    "gate actions";
+  align-items: stretch;
   gap: 12px;
 }
 
+.evo-console-card {
+  overflow: hidden;
+}
+
+.evo-console-card > header {
+  margin-bottom: 12px;
+}
+
+.evo-console-grid {
+  align-items: stretch;
+}
+
+.evo-console-fields {
+  grid-area: fields;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.48);
+}
+
 .evo-form-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
   color: var(--evo-text-secondary);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
+.evo-console-field {
+  padding: 3px 8px 5px;
+  border-left: 3px solid rgba(139, 94, 52, 0.28);
+  background: rgba(255, 239, 194, 0.22);
+}
+
+.evo-console-field span {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.62);
+  font-size: 11px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .evo-form-grid input,
 .evo-form-grid select {
   box-sizing: border-box;
   width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--evo-input-border);
-  border-radius: 6px;
-  background: var(--evo-input-bg);
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background: transparent;
   color: var(--evo-text);
-  font-size: 13px;
+  font-size: 16px;
+  font-weight: 950;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .evo-form-grid input:focus,
 .evo-form-grid select:focus {
   outline: none;
-  border-color: var(--evo-accent);
-  box-shadow: 0 0 0 3px rgba(139, 94, 52, 0.1);
+  border-color: rgba(93, 48, 17, 0.36);
+  box-shadow: 0 2px 0 rgba(139, 94, 52, 0.08);
 }
 
 .evo-runtime-gate {
+  grid-area: gate;
   display: grid;
-  grid-column: 1 / -1;
-  gap: 4px;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-content: center;
+  gap: 4px 10px;
   min-width: 0;
+  min-height: 58px;
   padding: 10px 12px;
   border: 1px solid var(--evo-warning-border);
-  border-radius: 6px;
-  background: var(--evo-warning-bg);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.2), rgba(255, 239, 194, 0.14)),
+    var(--evo-warning-bg);
   color: var(--evo-warning);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.48);
 }
 
 .evo-runtime-gate[data-blocked="true"] {
   border-color: rgba(153, 48, 38, 0.26);
   background: rgba(153, 48, 38, 0.08);
   color: var(--evo-danger);
+}
+
+.evo-runtime-gate i {
+  grid-row: 1 / span 2;
+  width: 10px;
+  height: 10px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.evo-runtime-gate div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
 .evo-runtime-gate strong,
@@ -1324,23 +1392,51 @@ onBeforeUnmount(() => {
   opacity: 0.82;
 }
 
+.evo-runtime-gate small {
+  grid-column: 2;
+  padding-top: 1px;
+  opacity: 0.68;
+}
+
+.evo-console-actions {
+  grid-area: actions;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  align-content: stretch;
+  gap: 8px;
+  min-width: 0;
+  width: 238px;
+  padding: 8px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.48);
+}
+
 .evo-start-panel {
   display: grid;
-  align-content: end;
-  justify-self: end;
-  gap: 6px;
+  align-content: stretch;
+  gap: 5px;
   min-width: 0;
-  min-height: 34px;
-  width: 82px;
+  min-height: 0;
+  width: auto;
   padding: 0;
+}
+
+.evo-run-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  min-width: 0;
 }
 
 .evo-action-tooltip {
   display: flex;
-  align-self: end;
-  justify-self: end;
+  align-self: stretch;
+  justify-self: stretch;
   min-width: 0;
-  width: 82px;
+  width: auto;
 }
 
 .evo-form-grid > .evo-action,
@@ -1350,7 +1446,7 @@ onBeforeUnmount(() => {
 .evo-start-panel .evo-start-action {
   width: 100%;
   min-width: 0;
-  height: 38px;
+  height: 100%;
   min-height: 38px;
   padding-inline: 10px;
   justify-content: center;
@@ -1377,11 +1473,12 @@ onBeforeUnmount(() => {
   color: var(--evo-text-secondary);
   font-size: 11px;
   font-style: normal;
+  text-align: center;
 }
 
 .evo-start-action {
   width: 100%;
-  min-height: 34px;
+  min-height: 46px;
   padding-inline: 12px;
 }
 
@@ -3020,6 +3117,14 @@ onBeforeUnmount(() => {
     grid-template-areas: "workspace";
     align-items: stretch;
   }
+
+  .evo-console-grid {
+    grid-template-columns: minmax(260px, 1fr) minmax(220px, auto);
+  }
+
+  .evo-console-actions {
+    width: 220px;
+  }
 }
 
 @media (max-width: 960px) {
@@ -3076,6 +3181,19 @@ onBeforeUnmount(() => {
   .evo-detail-topbar {
     padding: 10px 12px;
     overflow: hidden;
+  }
+
+  .evo-console-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "fields"
+      "gate"
+      "actions";
+  }
+
+  .evo-console-actions {
+    grid-template-columns: minmax(96px, 0.45fr) minmax(0, 1fr);
+    width: 100%;
   }
 
   .evo-nav-tab {
@@ -3232,6 +3350,19 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "workspace";
     padding: 8px;
+  }
+
+  .evo-console-fields {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .evo-console-field {
+    padding: 3px 6px 5px;
+  }
+
+  .evo-console-actions {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .evo-nav {
@@ -3414,26 +3545,19 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.evo-form-grid {
-  grid-template-columns: repeat(3, minmax(96px, 0.72fr)) repeat(4, 82px);
-  gap: 10px;
-}
-
-.evo-form-grid label {
+.evo-console-field span {
   color: rgba(74, 37, 15, 0.62);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0;
 }
 
-.evo-form-grid input,
-.evo-form-grid select {
-  height: 38px;
-  border-color: rgba(93, 48, 17, 0.16);
-  border-radius: 0;
-  background: rgba(255, 252, 245, 0.52);
-  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.46);
-  font-weight: 850;
+.evo-console-field input {
+  height: 30px;
+  border-bottom-color: rgba(93, 48, 17, 0.16);
+  background: transparent;
+  box-shadow: none;
+  font-weight: 950;
 }
 
 .evo-progress-card,
