@@ -31,13 +31,24 @@ PostgreSQL-backed task queue
 - 已更新 PostgreSQL adapter JSONB 列映射。
 - 已新增聚焦测试 `tests/test_task_queue_artifacts.py`。
 
-本阶段没有接入 benchmark/evolution 路由，没有改前端，也没有启动 worker。后续接线必须等前后端重构边界稳定后再做。
+已完成 Phase B 只读 API 与 worker 骨架：
+
+- 已新增 `ui/backend/services/task_worker.py`，提供单机 `TaskWorker`、`TaskExecutorRegistry`、heartbeat、cancel checkpoint、成功/失败/取消终态写回。
+- 已在 `TaskService` 增加 `list_task_queue_rows`、`get_task_queue_row`、`list_task_artifacts` facade，请求内打开并关闭 PostgreSQL 连接，不在 `BackendStore` 长期持有 repo/connection。
+- 已新增并注册 `ui/backend/routes/tasks.py`：
+  - `GET /api/tasks`
+  - `GET /api/tasks/{task_id}`
+  - `GET /api/tasks/{task_id}/artifacts`
+- 已新增 route/worker 聚焦测试，并更新 OpenAPI contract。
+
+当前仍未迁移 benchmark/evolution 执行路径，没有改前端，也没有启动常驻 worker 进程。后续接线必须等前后端重构边界稳定后再做。
 
 已验证：
 
 ```text
 uv run pytest tests/test_task_queue_artifacts.py -q
 uv run pytest tests/test_postgres_adapter.py -q
+uv run pytest tests/test_task_worker.py tests/test_task_routes.py -q
 ```
 
 ## 当前状态

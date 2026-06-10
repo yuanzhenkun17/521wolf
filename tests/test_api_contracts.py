@@ -1581,6 +1581,23 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "/api/games/{game_id}/stop": {
             "post": ("stop_game_api_games__game_id__stop_post", None, [("game_id", "path", True)]),
         },
+        "/api/tasks": {
+            "get": (
+                "list_tasks_api_tasks_get",
+                None,
+                [("status", "query", False), ("limit", "query", False)],
+            ),
+        },
+        "/api/tasks/{task_id}": {
+            "get": ("get_task_api_tasks__task_id__get", None, [("task_id", "path", True)]),
+        },
+        "/api/tasks/{task_id}/artifacts": {
+            "get": (
+                "list_task_artifacts_api_tasks__task_id__artifacts_get",
+                None,
+                [("task_id", "path", True)],
+            ),
+        },
         "/api/health": {
             "get": ("health_api_health_get", None, []),
         },

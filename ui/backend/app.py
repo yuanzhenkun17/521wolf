@@ -19,13 +19,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import DEFAULT_PATHS, PathConfig
-from ui.backend.constants import ROLE_ORDER
+from ui.backend.constants import ROLE_ORDER  # noqa: F401 - compatibility re-export
 from ui.backend.routes.benchmark import register_benchmark_routes
 from ui.backend.routes.core import register_core_routes
 from ui.backend.routes.evolution import register_evolution_routes
 from ui.backend.routes.games import register_game_routes
 from ui.backend.routes.roles import register_role_routes
-from ui.backend.store import BackendStore, _FakeModel
+from ui.backend.routes.tasks import register_task_routes
+from ui.backend.store import BackendStore
 
 _log = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ def create_app(
     register_role_routes(api, store)
     register_evolution_routes(api, store)
     register_benchmark_routes(api, store)
+    register_task_routes(api, store)
 
     return api
 

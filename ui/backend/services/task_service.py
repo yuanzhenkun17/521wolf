@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Protocol
 
+from storage.ui import TaskArtifactRepository, TaskQueueRepository
 from ui.backend.services.task_persistence_service import TaskPersistenceService
 from ui.backend.task_events import TaskEventLog
 
@@ -12,6 +14,20 @@ class BackgroundTaskServiceProtocol(Protocol):
     """Task operations exposed to backend services and routes."""
 
     def open_connection(self) -> Any:
+        ...
+
+    def list_task_queue_rows(
+        self,
+        *,
+        statuses: Iterable[str] | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def get_task_queue_row(self, task_id: str) -> dict[str, Any] | None:
+        ...
+
+    def list_task_artifacts(self, task_id: str) -> list[dict[str, Any]]:
         ...
 
     @property
@@ -64,6 +80,32 @@ class TaskService:
         from storage.provider import open_wolf_connection
 
         return open_wolf_connection(paths=getattr(self._store, "paths", None))
+
+    def list_task_queue_rows(
+        self,
+        *,
+        statuses: Iterable[str] | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        conn = self.open_connection()
+        try:
+            return TaskQueueRepository(conn).list_recent(statuses=statuses, limit=limit)
+        finally:
+            conn.close()
+
+    def get_task_queue_row(self, task_id: str) -> dict[str, Any] | None:
+        conn = self.open_connection()
+        try:
+            return TaskQueueRepository(conn).get(task_id)
+        finally:
+            conn.close()
+
+    def list_task_artifacts(self, task_id: str) -> list[dict[str, Any]]:
+        conn = self.open_connection()
+        try:
+            return TaskArtifactRepository(conn).list_for_task(task_id)
+        finally:
+            conn.close()
 
     @property
     def task_event_log(self) -> TaskEventLog:

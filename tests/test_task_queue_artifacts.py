@@ -125,6 +125,61 @@ def test_task_queue_repository_marks_expired_running_tasks_interrupted() -> None
     assert repo.get("task_a")["status"] == "queued"  # type: ignore[index]
 
 
+def test_task_queue_repository_cancels_queued_tasks_without_worker_claim() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    repo.enqueue(
+        task_id="task_cancel",
+        kind="benchmark_batch",
+        payload={},
+        queued_at="2026-06-10T10:00:00+08:00",
+    )
+
+    assert repo.request_cancel(task_id="task_cancel", updated_at="2026-06-10T10:00:01+08:00")
+
+    task = repo.get("task_cancel")
+    assert task is not None
+    assert task["status"] == "cancelled"
+    assert task["finished_at"] == "2026-06-10T10:00:01+08:00"
+    assert task["cancel_requested"] == 1
+    assert task["error"] == {
+        "kind": "cancelled",
+        "message": "task cancellation requested",
+    }
+    assert repo.claim_next(
+        worker_id="worker-1",
+        now="2026-06-10T10:00:02+08:00",
+        lease_expires_at="2026-06-10T10:05:02+08:00",
+    ) is None
+
+
+def test_task_queue_repository_cancels_interrupted_tasks_without_retry_loop() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    repo.enqueue(
+        task_id="task_interrupted",
+        kind="benchmark_batch",
+        payload={},
+        queued_at="2026-06-10T10:00:00+08:00",
+    )
+    assert repo.claim_next(
+        worker_id="worker-1",
+        now="2026-06-10T10:00:01+08:00",
+        lease_expires_at="2026-06-10T10:01:00+08:00",
+    )
+    assert repo.mark_expired_running_interrupted(now="2026-06-10T10:02:00+08:00") == 1
+
+    assert repo.request_cancel(task_id="task_interrupted", updated_at="2026-06-10T10:03:00+08:00")
+
+    task = repo.get("task_interrupted")
+    assert task is not None
+    assert task["status"] == "cancelled"
+    assert task["finished_at"] == "2026-06-10T10:03:00+08:00"
+    assert task["cancel_requested"] == 1
+    assert task["error"]["kind"] == "cancelled"
+    assert repo.retry_interrupted(task_id="task_interrupted", updated_at="2026-06-10T10:04:00+08:00") is False
+
+
 def test_local_artifact_store_writes_indexes_and_reads_json(tmp_path) -> None:
     conn = _connect()
     repo = TaskArtifactRepository(conn)

@@ -211,8 +211,20 @@ class TaskQueueRepository:
 
     def request_cancel(self, *, task_id: str, updated_at: str) -> bool:
         cursor = self._conn.execute(
-            "UPDATE ui_task_queue SET cancel_requested = ?, updated_at = ? WHERE task_id = ?",
-            (True, updated_at, task_id),
+            "UPDATE ui_task_queue SET "
+            "cancel_requested = ?, "
+            "status = CASE WHEN status IN ('queued', 'interrupted') THEN 'cancelled' ELSE status END, "
+            "finished_at = CASE WHEN status IN ('queued', 'interrupted') THEN ? ELSE finished_at END, "
+            "error = CASE WHEN status IN ('queued', 'interrupted') THEN ? ELSE error END, "
+            "updated_at = ? "
+            "WHERE task_id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')",
+            (
+                True,
+                updated_at,
+                _json_dumps({"kind": "cancelled", "message": "task cancellation requested"}),
+                updated_at,
+                task_id,
+            ),
         )
         return cursor.rowcount > 0
 
