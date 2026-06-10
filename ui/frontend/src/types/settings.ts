@@ -39,9 +39,15 @@ export interface SettingsVariable {
   key: string
   label: string
   value: string
+  raw_value?: boolean | number | string | null
+  value_type?: 'boolean' | 'integer' | 'number' | 'secret' | string
   state: string
   locked: boolean
+  editable?: boolean
   secret: boolean
+  source?: string
+  description?: string
+  updated_at?: string | null
 }
 
 export interface SettingsModelProfilesResponse {
@@ -70,6 +76,23 @@ export interface ModelProfilePayload {
   default_scopes?: Record<string, boolean>
   capabilities?: Record<string, boolean>
   metadata?: Record<string, unknown>
+}
+
+export interface SettingsRuntimeVariablePayload {
+  value: boolean | number | string
+}
+
+export interface SettingsRuntimeVariablesResponse {
+  kind: string
+  schema_version: number
+  variables: SettingsVariable[]
+  admin: SettingsAdminState
+}
+
+export interface SettingsRuntimeVariableResponse {
+  kind: string
+  schema_version: number
+  variable: SettingsVariable
 }
 
 export interface ModelProfileResponse {

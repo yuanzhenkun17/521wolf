@@ -729,6 +729,8 @@ describe('service endpoint contracts', () => {
     const settings = createSettingsService({ client })
 
     await settings.listModelProfiles()
+    await settings.listRuntimeVariables()
+    await settings.updateRuntimeVariable('TASK_WORKER_REQUIRED', { value: true }, 'token')
     await settings.createModelProfile({
       name: 'Qwen',
       provider: 'openai_compatible',
@@ -743,6 +745,15 @@ describe('service endpoint contracts', () => {
 
     expect(requests).toEqual([
       { path: '/settings/model-profiles', options: {} },
+      { path: '/settings/runtime-variables', options: {} },
+      {
+        path: '/settings/runtime-variables/TASK_WORKER_REQUIRED',
+        options: {
+          method: 'PATCH',
+          headers: { 'X-Settings-Admin-Token': 'token' },
+          body: { value: true }
+        }
+      },
       {
         path: '/settings/model-profiles',
         options: {

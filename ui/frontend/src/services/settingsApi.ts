@@ -3,7 +3,10 @@ import type {
   ModelProfilePayload,
   ModelProfileResponse,
   ModelProfileTestResponse,
-  SettingsModelProfilesResponse
+  SettingsModelProfilesResponse,
+  SettingsRuntimeVariablePayload,
+  SettingsRuntimeVariableResponse,
+  SettingsRuntimeVariablesResponse
 } from '../types/settings'
 import { defaultApiClient } from './api'
 
@@ -18,6 +21,16 @@ export function createSettingsService(options: ServiceOptions = {}) {
   return {
     async listModelProfiles(): Promise<SettingsModelProfilesResponse> {
       return client.fetch('/settings/model-profiles')
+    },
+    async listRuntimeVariables(): Promise<SettingsRuntimeVariablesResponse> {
+      return client.fetch('/settings/runtime-variables')
+    },
+    async updateRuntimeVariable(settingKey: string, payload: SettingsRuntimeVariablePayload, token = ''): Promise<SettingsRuntimeVariableResponse> {
+      return client.fetch(`/settings/runtime-variables/${encodeURIComponent(settingKey)}`, {
+        method: 'PATCH',
+        headers: adminHeaders(token),
+        body: payload
+      })
     },
     async createModelProfile(payload: ModelProfilePayload, token = ''): Promise<ModelProfileResponse> {
       return client.fetch('/settings/model-profiles', {

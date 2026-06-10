@@ -56,10 +56,12 @@ const adminToken = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const savingVariableKey = ref('')
 const error = ref('')
 const notice = ref('')
 const refreshedAt = ref('')
 const form = reactive({ ...DEFAULT_FORM })
+const variableDrafts = reactive<Record<string, boolean | number | string>>({})
 
 const selectedProfile = computed(() =>
   profiles.value.find((profile) => profile.profile_id === selectedProfileId.value) || null
@@ -135,6 +137,7 @@ function applySettings(payload: SettingsModelProfilesResponse) {
   scopes.value = Array.isArray(payload.scopes) ? payload.scopes : []
   providers.value = Array.isArray(payload.providers) && payload.providers.length ? payload.providers : providers.value
   variables.value = Array.isArray(payload.variables) ? payload.variables : []
+  syncVariableDrafts(variables.value)
   envLocks.value = payload.env_locks || {}
   if (selectedProfileId.value && profiles.value.some((profile) => profile.profile_id === selectedProfileId.value)) {
     loadProfileToForm(selectedProfile.value)
@@ -283,6 +286,72 @@ async function deleteSelectedProfile() {
   }
 }
 
+async function saveRuntimeVariable(variable: SettingsVariable) {
+  if (!canWrite.value) {
+    notice.value = adminWriteHint()
+    return
+  }
+  if (!variableCanEdit(variable)) {
+    notice.value = variable.locked ? '该变量由环境变量锁定。' : '该变量不可在设置页修改。'
+    return
+  }
+  savingVariableKey.value = variable.key
+  error.value = ''
+  notice.value = ''
+  try {
+    const response = await settingsService.updateRuntimeVariable(
+      variable.key,
+      { value: variablePayloadValue(variable) },
+      adminToken.value
+    )
+    upsertVariable(response.variable)
+    notice.value = `${variable.label} 已保存。`
+    await refreshSettings()
+  } catch (err) {
+    error.value = errorMessage(err, '保存运行变量失败')
+  } finally {
+    savingVariableKey.value = ''
+  }
+}
+
+function syncVariableDrafts(items: SettingsVariable[]) {
+  for (const variable of items) {
+    variableDrafts[variable.key] = variableInitialValue(variable)
+  }
+}
+
+function upsertVariable(variable: SettingsVariable) {
+  const index = variables.value.findIndex((item) => item.key === variable.key)
+  if (index >= 0) variables.value.splice(index, 1, variable)
+  else variables.value.push(variable)
+  variableDrafts[variable.key] = variableInitialValue(variable)
+}
+
+function variableInitialValue(variable: SettingsVariable): boolean | number | string {
+  if (variable.value_type === 'boolean') return Boolean(variable.raw_value)
+  if (variable.value_type === 'integer' || variable.value_type === 'number') {
+    const parsed = Number(variable.raw_value ?? variable.value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return String(variable.raw_value ?? variable.value ?? '')
+}
+
+function variablePayloadValue(variable: SettingsVariable): boolean | number | string {
+  const draft = variableDrafts[variable.key]
+  if (variable.value_type === 'boolean') return Boolean(draft)
+  if (variable.value_type === 'integer') return Math.round(Number(draft))
+  if (variable.value_type === 'number') return Number(draft)
+  return String(draft ?? '')
+}
+
+function variableCanEdit(variable: SettingsVariable): boolean {
+  return Boolean(canWrite.value && variable.editable && !variable.locked && !variable.secret)
+}
+
+function variableDirty(variable: SettingsVariable): boolean {
+  return variablePayloadValue(variable) !== variableInitialValue(variable)
+}
+
 function upsertProfile(profile: ModelProfile) {
   const index = profiles.value.findIndex((item) => item.profile_id === profile.profile_id)
   if (index >= 0) profiles.value.splice(index, 1, profile)
@@ -328,6 +397,13 @@ function statusLabel(status: unknown): string {
   if (text === 'stale') return '需复测'
   if (text === 'untested') return '未测试'
   if (text === 'unknown') return '未知'
+  if (text === 'immediate') return '立即生效'
+  if (text === 'next_task') return '下次任务'
+  if (text === 'requires_restart') return '需重启'
+  if (text === 'env_locked') return '环境锁定'
+  if (text === 'settings') return '本地设置'
+  if (text === 'environment') return '环境变量'
+  if (text === 'default') return '默认值'
   return String(status || '未知')
 }
 
@@ -576,17 +652,45 @@ function shortId(value: unknown): string {
                   <small>运行变量</small>
                   <h2>{{ variables.length }} 个变量</h2>
                 </div>
-                <b>本地只读</b>
+                <b>{{ canWrite ? '可编辑' : '只读' }}</b>
               </header>
               <div class="settings-variable-list">
                 <div v-for="variable in variables" :key="variable.key" class="settings-variable-row">
                   <span>
                     <b>{{ variable.label }}</b>
-                    <small>{{ variable.key }}</small>
+                    <small>{{ variable.description || variable.key }}</small>
                   </span>
-                  <em>{{ variable.value }}</em>
-                  <strong>{{ variable.locked ? '环境锁定' : statusLabel(variable.state) }}</strong>
+                  <label v-if="variable.value_type === 'boolean'" class="settings-variable-toggle">
+                    <input
+                      v-model="variableDrafts[variable.key]"
+                      :disabled="!variableCanEdit(variable)"
+                      type="checkbox"
+                    />
+                    <b>{{ variableDrafts[variable.key] ? '开启' : '关闭' }}</b>
+                  </label>
+                  <input
+                    v-else-if="variable.value_type === 'integer' || variable.value_type === 'number'"
+                    v-model.number="variableDrafts[variable.key]"
+                    :disabled="!variableCanEdit(variable)"
+                    class="settings-variable-input"
+                    type="number"
+                    step="1"
+                  />
+                  <em v-else>{{ variable.value }}</em>
+                  <strong :title="variable.key">
+                    {{ variable.locked ? '环境锁定' : statusLabel(variable.source || variable.state) }}
+                    <small>{{ statusLabel(variable.state) }}</small>
+                  </strong>
+                  <button
+                    type="button"
+                    class="settings-card-action"
+                    :disabled="!variableCanEdit(variable) || savingVariableKey === variable.key || !variableDirty(variable)"
+                    @click="saveRuntimeVariable(variable)"
+                  >
+                    {{ savingVariableKey === variable.key ? '保存中' : '保存' }}
+                  </button>
                 </div>
+                <div v-if="!variables.length" class="settings-empty">暂无运行变量。</div>
               </div>
             </section>
 
@@ -1267,7 +1371,7 @@ function shortId(value: unknown): string {
 .settings-variable-row,
 .settings-health-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, auto) minmax(90px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.24fr) minmax(116px, 0.22fr) auto;
   align-items: center;
   gap: 12px;
   min-height: 56px;
@@ -1288,9 +1392,59 @@ function shortId(value: unknown): string {
 }
 
 .settings-variable-row strong {
+  display: grid;
+  gap: 2px;
   justify-self: end;
   color: var(--settings-muted);
   font-size: 12px;
+  text-align: right;
+}
+
+.settings-variable-row strong small {
+  max-width: 118px;
+}
+
+.settings-variable-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  min-width: 104px;
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid rgba(139, 94, 52, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 252, 245, 0.4);
+  color: var(--settings-accent-strong);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.settings-variable-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--settings-accent);
+}
+
+.settings-variable-input {
+  justify-self: end;
+  width: min(128px, 100%);
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--settings-input-border);
+  border-radius: 6px;
+  background: var(--settings-input-bg);
+  color: var(--settings-text);
+  font-size: 13px;
+  font-weight: 800;
+  outline: none;
+}
+
+.settings-variable-input:disabled,
+.settings-variable-toggle input:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .settings-empty,
