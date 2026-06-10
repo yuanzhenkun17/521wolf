@@ -11,9 +11,7 @@ from ui.backend.task_events import TaskEventLog
 class BackgroundTaskStoreMixin:
     @property
     def task_service(self) -> TaskService:
-        if self._task_service is None:
-            self._task_service = TaskService(self)
-        return self._task_service
+        return self._task_service()
 
     @property
     def task_event_log(self) -> TaskEventLog:
