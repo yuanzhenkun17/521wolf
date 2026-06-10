@@ -1168,6 +1168,107 @@ def test_backend_game_read_connection_uses_wolf_helper(
     assert seen_paths == [paths]
 
 
+def test_backend_game_read_gateway_reuses_and_closes_wolf_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import storage.provider
+    import ui.backend.store as store_mod
+
+    class _ReadConn:
+        def __init__(self) -> None:
+            self.closed = False
+            self.commits = 0
+            self.rollbacks = 0
+
+        def commit(self) -> None:
+            self.commits += 1
+
+        def rollback(self) -> None:
+            self.rollbacks += 1
+
+        def close(self) -> None:
+            self.closed = True
+
+    opened: list[_ReadConn] = []
+    seen_paths: list[Any] = []
+
+    def open_conn(provider: Any | None = None, *, paths: Any | None = None) -> _ReadConn:
+        assert provider is None
+        seen_paths.append(paths)
+        conn = _ReadConn()
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(storage.provider, "open_wolf_connection", open_conn)
+    paths = PathConfig(root=tmp_path)
+    store = store_mod.BackendStore(paths=paths)
+
+    assert store._read_wolf_repository(lambda _repo: "ok") == "ok"
+    assert store._read_wolf_repository(lambda _repo: "again") == "again"
+    assert len(opened) == 1
+    assert opened[0].commits == 2
+    assert opened[0].closed is False
+
+    with pytest.raises(RuntimeError, match="boom"):
+        store._read_wolf_repository(lambda _repo: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert opened[0].rollbacks == 1
+    assert opened[0].closed is True
+
+    assert store._read_wolf_repository(lambda _repo: "after") == "after"
+    assert len(opened) == 2
+    assert opened[1].commits == 1
+    assert seen_paths == [paths, paths]
+
+    store._close_wolf_read_connection()
+    assert opened[1].closed is True
+
+
+def test_backend_game_read_gateway_closes_when_rollback_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import storage.provider
+    import ui.backend.store as store_mod
+
+    class _ReadConn:
+        def __init__(self, *, rollback_fails: bool = False) -> None:
+            self.closed = False
+            self.rollback_fails = rollback_fails
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            if self.rollback_fails:
+                raise RuntimeError("rollback failed")
+
+        def close(self) -> None:
+            self.closed = True
+
+    opened: list[_ReadConn] = []
+
+    def open_conn(provider: Any | None = None, *, paths: Any | None = None) -> _ReadConn:
+        assert provider is None
+        assert paths is not None
+        conn = _ReadConn(rollback_fails=not opened)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(storage.provider, "open_wolf_connection", open_conn)
+    store = store_mod.BackendStore(paths=PathConfig(root=tmp_path))
+
+    with pytest.raises(RuntimeError, match="read failed"):
+        store._read_wolf_repository(lambda _repo: (_ for _ in ()).throw(RuntimeError("read failed")))
+    assert opened[0].closed is True
+
+    assert store._read_wolf_repository(lambda _repo: "fresh") == "fresh"
+    assert len(opened) == 2
+    assert opened[1].closed is False
+
+
 def test_postgres_backend_skips_local_checkpointer() -> None:
     from app.graphs.main import builder
 

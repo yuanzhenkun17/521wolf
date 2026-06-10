@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 import uuid
 from collections import Counter
 from typing import Any
@@ -15,7 +14,6 @@ from app.util.time import beijing_now_iso
 from app.lib.version import ReleaseStageNotAllowedError
 from storage.game_store import delete_game_from_env
 from storage.game_read_model import (
-    GameReadRepository,
     death_target_ids,
     history_phase_key,
     history_phase_title,
@@ -37,6 +35,7 @@ from ui.backend.live_game import (
     live_game_heartbeat_timed_out,
 )
 from ui.backend.schemas import GameStartRequest, HumanActionRequest
+from ui.backend.services.game_read_service import GameReadGateway
 from ui.backend.serializers import (
     _dead_players,
     _fallback_version,
@@ -215,46 +214,26 @@ class GameStoreMixin:
     def prewarm_game_history_index(self) -> None:
         self._game_history_index().rows()
 
-    def _wolf_read_lock(self) -> threading.RLock:
-        lock = getattr(self, "_wolf_read_connection_lock", None)
-        if lock is None:
-            lock = threading.RLock()
-            setattr(self, "_wolf_read_connection_lock", lock)
-        return lock
+    def _game_read_gateway(self) -> GameReadGateway:
+        gateway = getattr(self, "_game_read_gateway_cache", None)
+        if gateway is None:
+            gateway = GameReadGateway(self)
+            setattr(self, "_game_read_gateway_cache", gateway)
+        return gateway
+
+    def _wolf_read_lock(self) -> Any:
+        return self._game_read_gateway().lock
 
     def _close_wolf_read_connection(self) -> None:
-        with self._wolf_read_lock():
-            conn = getattr(self, "_wolf_read_connection", None)
-            if conn is None:
-                return
-            setattr(self, "_wolf_read_connection", None)
-            close = getattr(conn, "close", None)
-            if callable(close):
-                close()
+        gateway = getattr(self, "_game_read_gateway_cache", None)
+        if gateway is not None:
+            gateway.close()
 
     def _open_wolf_read_connection(self) -> Any:
-        conn = getattr(self, "_wolf_read_connection", None)
-        if conn is not None and not getattr(conn, "closed", False):
-            return conn
-        conn = self._open_wolf_connection()
-        setattr(self, "_wolf_read_connection", conn)
-        return conn
+        return self._game_read_gateway().open_connection()
 
     def _read_wolf_repository(self, read: Any) -> Any:
-        with self._wolf_read_lock():
-            conn = self._open_wolf_read_connection()
-            try:
-                result = read(GameReadRepository(conn))
-                commit = getattr(conn, "commit", None)
-                if callable(commit):
-                    commit()
-                return result
-            except Exception:
-                rollback = getattr(conn, "rollback", None)
-                if callable(rollback):
-                    rollback()
-                self._close_wolf_read_connection()
-                raise
+        return self._game_read_gateway().read_repository(read)
 
     def _game_history_fingerprint(self) -> dict[str, Any]:
         return {
@@ -298,7 +277,7 @@ class GameStoreMixin:
         try:
             return {
                 "available": True,
-                **self._read_wolf_repository(lambda repo: repo.history_fingerprint()),
+                **self._game_read_gateway().history_fingerprint(),
             }
         except Exception as exc:  # noqa: BLE001 - history cache invalidation is best-effort.
             return {"available": False, "error": type(exc).__name__}
@@ -309,10 +288,10 @@ class GameStoreMixin:
         return provider_mod.open_wolf_connection(paths=self.paths)
 
     def _load_game_from_pg(self, game_id: str) -> dict[str, Any] | None:
-        return self._read_wolf_repository(lambda repo: repo.load_game_detail(game_id))
+        return self._game_read_gateway().load_game_detail(game_id)
 
     def _load_game_history_shell_from_pg(self, game_id: str) -> dict[str, Any] | None:
-        return self._read_wolf_repository(lambda repo: repo.load_game_history_shell(game_id))
+        return self._game_read_gateway().load_game_history_shell(game_id)
 
     def _load_game_phase_detail_from_pg(
         self,
@@ -325,7 +304,7 @@ class GameStoreMixin:
         decision_offset: int = 0,
         decision_limit: int | None = _DEFAULT_PHASE_DECISION_LIMIT,
     ) -> dict[str, Any] | None:
-        return self._read_wolf_repository(lambda repo: repo.load_game_phase_detail(
+        return self._game_read_gateway().load_game_phase_detail(
             game_id,
             day=day,
             phase=phase,
@@ -333,10 +312,10 @@ class GameStoreMixin:
             log_limit=log_limit,
             decision_offset=decision_offset,
             decision_limit=decision_limit,
-        ))
+        )
 
     def _load_game_flow_data_from_pg(self, game_id: str) -> dict[str, Any] | None:
-        return self._read_wolf_repository(lambda repo: repo.load_game_flow_data(game_id))
+        return self._game_read_gateway().load_game_flow_data(game_id)
 
     def _load_game_replay_from_pg(
         self,
@@ -345,13 +324,13 @@ class GameStoreMixin:
         cursor: int = 0,
         limit: int | None = _DEFAULT_REPLAY_LIMIT,
     ) -> dict[str, Any] | None:
-        return self._read_wolf_repository(lambda repo: repo.load_game_replay(game_id, cursor=cursor, limit=limit))
+        return self._game_read_gateway().load_game_replay(game_id, cursor=cursor, limit=limit)
 
     def _load_game_review_from_pg(self, game_id: str) -> dict[str, Any] | None:
-        return self._read_wolf_repository(lambda repo: repo.load_game_review(game_id))
+        return self._game_read_gateway().load_game_review(game_id)
 
     def _list_games_from_pg(self) -> list[dict[str, Any]]:
-        return self._read_wolf_repository(lambda repo: repo.list_history_rows())
+        return self._game_read_gateway().list_history_rows()
 
     def _live_game_heartbeat_timeout_seconds(self) -> float:
         value = getattr(self, "live_game_heartbeat_timeout_seconds", LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS)
