@@ -1,6 +1,18 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, useSlots } from 'vue'
+
+interface LabTab {
+  key: string
+  label: string
+  disabled?: boolean
+}
+
+interface LabMetaItem {
+  key?: string
+  label: string
+  value?: unknown
+  tone?: string
+}
 
 const props = defineProps({
   title: { type: String, required: true },
@@ -25,6 +37,8 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab', 'action'])
 const slots = useSlots()
+const tabs = computed(() => props.tabs as LabTab[])
+const meta = computed(() => props.meta as LabMetaItem[])
 const hasContext = computed(() => Boolean(slots.context))
 const hasTabsActions = computed(() => Boolean(slots['tabs-actions']))
 
@@ -39,7 +53,7 @@ const resolvedAriaLabel = computed(() =>
 )
 
 const activeTabLabel = computed(() =>
-  props.tabs.find((tab) => tab.key === props.activeTab)?.label || props.title
+  tabs.value.find((tab) => tab.key === props.activeTab)?.label || props.title
 )
 
 function selectTab(tab) {

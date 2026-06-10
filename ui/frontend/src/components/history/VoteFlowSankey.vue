@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import * as echarts from 'echarts/core'
 import { HeatmapChart, SankeyChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -8,18 +7,94 @@ import { GridComponent, TooltipComponent, VisualMapComponent } from 'echarts/com
 
 echarts.use([SankeyChart, HeatmapChart, CanvasRenderer, GridComponent, TooltipComponent, VisualMapComponent])
 
+type SeatId = string | number
+type HeatmapScore = number | '-'
+type HeatmapDataPoint = [number, number, HeatmapScore]
+
+interface DecisionLike {
+  action?: unknown
+  action_type?: unknown
+  actor_id?: unknown
+  candidates?: unknown
+  confidence?: unknown
+  day?: unknown
+  message?: unknown
+  phase?: unknown
+  player_id?: unknown
+  private_reasoning?: unknown
+  public_summary?: unknown
+  reason?: unknown
+  selected_target?: unknown
+  target_id?: unknown
+}
+
+interface PlayerLike {
+  id?: unknown
+}
+
+interface FilterItem {
+  key: string
+  label: string
+}
+
+interface PhaseRound {
+  key: string
+  label: string
+}
+
+interface HeatmapCell {
+  key: string
+  rows: DecisionLike[]
+  score: HeatmapScore
+  empty: boolean
+}
+
+interface HeatmapRow {
+  playerId: string
+  cells: HeatmapCell[]
+}
+
+interface SankeyNode {
+  name: string
+  label: { position: 'left' | 'right' }
+  itemStyle: { color: string }
+}
+
+interface SankeyAccumulatedLink {
+  source: string
+  target: string
+  value: number
+  sourceId: string
+  targetId: string
+}
+
+interface ChartFormatterParam {
+  data?: unknown
+  dataType?: string
+  name?: unknown
+  value?: unknown
+}
+
+function formatterParam(params: ChartFormatterParam | ChartFormatterParam[]): ChartFormatterParam {
+  return Array.isArray(params) ? (params[0] || {}) : params
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 const props = defineProps({
-  decisions: { type: Array, default: () => [] },
-  players: { type: Array, default: () => [] }
+  decisions: { type: Array as PropType<DecisionLike[]>, default: () => [] },
+  players: { type: Array as PropType<PlayerLike[]>, default: () => [] }
 })
 
-const chartEl = ref(null)
-const heatmapEl = ref(null)
+const chartEl = ref<HTMLElement | null>(null)
+const heatmapEl = ref<HTMLElement | null>(null)
 const activeKey = ref('all')
-let chart = null
-let heatmapChart = null
-let resizeObserver = null
-let heatmapResizeObserver = null
+let chart: ReturnType<typeof echarts.init> | null = null
+let heatmapChart: ReturnType<typeof echarts.init> | null = null
+let resizeObserver: ResizeObserver | null = null
+let heatmapResizeObserver: ResizeObserver | null = null
 
 const VOTE_ACTIONS = new Set(['sheriff_vote', 'exile_vote', 'pk_vote', 'vote'])
 const NIGHT_ACTIONS = new Set(['kill', 'werewolf_kill', 'guard', 'guard_protect', 'inspect', 'seer_check', 'poison', 'witch_act', 'antidote', 'shoot', 'hunter_shoot'])
@@ -42,24 +117,24 @@ const NODE_COLORS = [
   '#7b91d1'
 ]
 
-function actionType(decision) {
+function actionType(decision: DecisionLike) {
   return String(decision?.action || decision?.action_type || '')
 }
 
-function voteAction(decision) {
+function voteAction(decision: DecisionLike) {
   return actionType(decision)
 }
 
-function voteDay(decision) {
+function voteDay(decision: DecisionLike) {
   const day = Number(decision?.day)
   return Number.isFinite(day) && day > 0 ? day : 1
 }
 
-function voterId(decision) {
+function voterId(decision: DecisionLike) {
   return decision?.actor_id ?? decision?.player_id
 }
 
-function targetId(decision) {
+function targetId(decision: DecisionLike) {
   return decision?.target_id ?? decision?.selected_target
 }
 
@@ -74,7 +149,7 @@ const behaviorDecisions = computed(() =>
 )
 
 const filters = computed(() => {
-  const items = [{ key: 'all', label: '全部' }]
+  const items: FilterItem[] = [{ key: 'all', label: '全部' }]
   if (votes.value.some((vote) => voteAction(vote) === 'sheriff_vote')) {
     items.push({ key: 'sheriff', label: '警长竞选' })
   }
@@ -110,7 +185,7 @@ const heatmapPlayers = computed(() => {
   return [...ids].sort((a, b) => Number(a) - Number(b))
 })
 
-function roundVotes(roundKey) {
+function roundVotes(roundKey: string) {
   if (roundKey === 'sheriff') return votes.value.filter((vote) => voteAction(vote) === 'sheriff_vote')
   if (roundKey === 'pk') return votes.value.filter((vote) => voteAction(vote) === 'pk_vote')
   if (roundKey.startsWith('exile-')) {
@@ -120,7 +195,7 @@ function roundVotes(roundKey) {
   return votes.value
 }
 
-const heatmapRows = computed(() =>
+const heatmapRows = computed<HeatmapRow[]>(() =>
   heatmapPlayers.value.map((playerId) => ({
     playerId,
     cells: phaseRounds.value.map((round) => {
@@ -138,9 +213,9 @@ const heatmapRows = computed(() =>
   }))
 )
 
-const heatmapData = computed(() =>
+const heatmapData = computed<HeatmapDataPoint[]>(() =>
   heatmapRows.value.flatMap((row, yIndex) =>
-    row.cells.map((cell, xIndex) => [
+    row.cells.map((cell, xIndex): HeatmapDataPoint => [
       xIndex,
       yIndex,
       cell.empty ? '-' : cell.score
@@ -148,7 +223,7 @@ const heatmapData = computed(() =>
   )
 )
 
-function heatmapCellRows(xIndex, yIndex) {
+function heatmapCellRows(xIndex: number, yIndex: number) {
   return heatmapRows.value[yIndex]?.cells?.[xIndex]?.rows || []
 }
 
@@ -166,31 +241,31 @@ const heatmapHeight = computed(() =>
 
 const hasFlowAnalysis = computed(() => votes.value.length > 0 || (behaviorDecisions.value.length > 0 && heatmapRows.value.length > 0))
 
-function seatLabel(id) {
+function seatLabel(id: unknown) {
   return `${id}号`
 }
 
-function actorId(decision) {
+function actorId(decision: DecisionLike) {
   return decision?.actor_id ?? decision?.player_id
 }
 
-function decisionText(decision) {
+function decisionText(decision: DecisionLike) {
   return [
     decision?.public_summary,
     decision?.private_reasoning,
     decision?.reason,
     decision?.message
-  ].filter(Boolean).join(' ')
+  ].filter(Boolean).map(String).join(' ')
 }
 
-function confidenceScore(decision) {
+function confidenceScore(decision: DecisionLike) {
   const value = Number(decision?.confidence)
   if (!Number.isFinite(value)) return 70
   if (value <= 1) return Math.round(value * 100)
   return Math.max(0, Math.min(Math.round(value), 100))
 }
 
-function phaseKeyForDecision(decision) {
+function phaseKeyForDecision(decision: DecisionLike) {
   const action = actionType(decision)
   const phase = String(decision?.phase || '').toLowerCase()
   const day = voteDay(decision)
@@ -203,7 +278,7 @@ function phaseKeyForDecision(decision) {
   return ''
 }
 
-const phaseRounds = computed(() => {
+const phaseRounds = computed<PhaseRound[]>(() => {
   const days = new Set([1])
   behaviorDecisions.value.forEach((decision) => {
     const day = voteDay(decision)
@@ -222,14 +297,14 @@ const phaseRounds = computed(() => {
 })
 
 const voteConsensusByPhase = computed(() => {
-  const map = new Map()
+  const map = new Map<string, string>()
   for (const round of phaseRounds.value) {
     if (!round.key.startsWith('vote-') && round.key !== 'sheriff') continue
     const rows = behaviorDecisions.value.filter((decision) => {
       const action = actionType(decision)
       return phaseKeyForDecision(decision) === round.key && VOTE_ACTIONS.has(action) && targetId(decision) != null
     })
-    const tally = new Map()
+    const tally = new Map<string, number>()
     rows.forEach((decision) => {
       const target = String(targetId(decision))
       tally.set(target, (tally.get(target) || 0) + 1)
@@ -240,7 +315,7 @@ const voteConsensusByPhase = computed(() => {
   return map
 })
 
-function phaseScore(rows, phaseKey) {
+function phaseScore(rows: DecisionLike[], phaseKey: string): HeatmapScore {
   if (!rows.length) return '-'
   const textLength = rows.reduce((sum, row) => sum + decisionText(row).length, 0)
   const avgConfidence = rows.reduce((sum, row) => sum + confidenceScore(row), 0) / rows.length
@@ -281,15 +356,15 @@ function phaseScore(rows, phaseKey) {
   return Math.max(0, Math.min(100, Math.round(score)))
 }
 
-function seatColor(id) {
+function seatColor(id: unknown) {
   const index = Math.max(Number(id) - 1, 0)
   return NODE_COLORS[index % NODE_COLORS.length]
 }
 
 function sankeyData() {
-  const sources = new Set()
-  const targets = new Set()
-  const links = new Map()
+  const sources = new Set<string>()
+  const targets = new Set<string>()
+  const links = new Map<string, SankeyAccumulatedLink>()
 
   selectedVotes.value.forEach((vote) => {
     const sourceId = String(voterId(vote))
@@ -310,7 +385,7 @@ function sankeyData() {
     })
   })
 
-  const sortSeats = (a, b) => Number(a) - Number(b)
+  const sortSeats = (a: string, b: string) => Number(a) - Number(b)
   return {
     data: [
       ...[...sources].sort(sortSeats).map((id) => ({
@@ -339,20 +414,21 @@ function sankeyData() {
 }
 
 function renderChart() {
-  if (!(chartEl.value instanceof Element)) return
+  if (!(chartEl.value instanceof HTMLElement)) return
   if (!chart) chart = echarts.init(chartEl.value)
   const { data, links } = sankeyData()
   chart.setOption({
     tooltip: {
       trigger: 'item',
       triggerOn: 'mousemove',
-      formatter(params) {
-        if (params.dataType === 'edge') {
-          const source = String(params.data.source).split(':')[1]
-          const target = String(params.data.target).split(':')[1]
-          return `${seatLabel(source)} → ${seatLabel(target)}：${params.data.value}票`
+      formatter(params: ChartFormatterParam | ChartFormatterParam[]) {
+        const item = formatterParam(params)
+        if (item.dataType === 'edge' && isRecord(item.data)) {
+          const source = String(item.data.source).split(':')[1]
+          const target = String(item.data.target).split(':')[1]
+          return `${seatLabel(source)} → ${seatLabel(target)}：${item.data.value}票`
         }
-        return seatLabel(String(params.name).split(':')[1])
+        return seatLabel(String(item.name).split(':')[1])
       }
     },
     series: [{
@@ -370,7 +446,7 @@ function renderChart() {
         color: 'rgba(59, 28, 9, 0.78)',
         fontSize: 12,
         fontWeight: 700,
-        formatter: ({ name }) => seatLabel(String(name).split(':')[1])
+        formatter: ({ name }: { name: unknown }) => seatLabel(String(name).split(':')[1])
       },
       itemStyle: {
         borderWidth: 0,
@@ -390,7 +466,7 @@ function renderChart() {
 }
 
 function renderHeatmap() {
-  if (!(heatmapEl.value instanceof Element)) return
+  if (!(heatmapEl.value instanceof HTMLElement)) return
   if (!heatmapChart) heatmapChart = echarts.init(heatmapEl.value)
   const rounds = phaseRounds.value.map((round) => round.label)
   const players = heatmapPlayers.value.map(seatLabel)
@@ -398,11 +474,14 @@ function renderHeatmap() {
   heatmapChart.setOption({
     tooltip: {
       trigger: 'item',
-      formatter(params) {
-        const value = params.value || []
-        const round = rounds[value[0]] || ''
-        const player = players[value[1]] || ''
-        const rows = heatmapCellRows(value[0], value[1])
+      formatter(params: ChartFormatterParam | ChartFormatterParam[]) {
+        const item = formatterParam(params)
+        const value = Array.isArray(item.value) ? item.value : []
+        const xIndex = Number(value[0])
+        const yIndex = Number(value[1])
+        const round = rounds[xIndex] || ''
+        const player = players[yIndex] || ''
+        const rows = heatmapCellRows(xIndex, yIndex)
         if (!rows.length) return `${player} · ${round}<br/>暂无行为记录`
         const score = Number(value[2])
         const actions = rows.map((row) => actionType(row)).filter(Boolean)
@@ -497,11 +576,11 @@ function renderHeatmap() {
   }, true)
 }
 
-function syncChartElement(element) {
+function syncChartElement(element: HTMLElement | null) {
   resizeObserver?.disconnect()
   resizeObserver = null
 
-  if (!(element instanceof Element)) {
+  if (!(element instanceof HTMLElement)) {
     chart?.dispose()
     chart = null
     return
@@ -512,11 +591,11 @@ function syncChartElement(element) {
   resizeObserver.observe(element)
 }
 
-function syncHeatmapElement(element) {
+function syncHeatmapElement(element: HTMLElement | null) {
   heatmapResizeObserver?.disconnect()
   heatmapResizeObserver = null
 
-  if (!(element instanceof Element)) {
+  if (!(element instanceof HTMLElement)) {
     heatmapChart?.dispose()
     heatmapChart = null
     return

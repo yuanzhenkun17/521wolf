@@ -1,8 +1,164 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { PropType } from 'vue'
 import { createCouncilHallScene } from '../CouncilHallScene.ts'
 import { displayActionLabel } from './history/historyDisplay.ts'
+
+type IdValue = string | number
+type NullableId = IdValue | null
+
+interface PlayerLike {
+  id?: NullableId
+  name?: string | null
+  displayName?: string | null
+  displaySeat?: string | number | null
+  role_hint?: string | null
+  roleIcon?: string | null
+  isSheriff?: boolean | null
+  speaking?: boolean | null
+  alive?: boolean | null
+  [key: string]: unknown
+}
+
+interface LogPayload {
+  message?: unknown
+  text?: unknown
+  target_id?: unknown
+  protected_target?: unknown
+  killed_target?: unknown
+  poisoned_target?: unknown
+  [key: string]: unknown
+}
+
+interface LogEntry {
+  type?: unknown
+  event_type?: unknown
+  action?: unknown
+  action_type?: unknown
+  kind?: unknown
+  _chatKind?: unknown
+  phase?: unknown
+  event_phase?: unknown
+  stage?: unknown
+  _message?: unknown
+  message?: unknown
+  content?: unknown
+  text?: unknown
+  public_summary?: unknown
+  public_text?: unknown
+  payload?: LogPayload | null
+  actor_id?: unknown
+  actor?: unknown
+  player_id?: unknown
+  playerId?: unknown
+  speaker_id?: unknown
+  speakerId?: unknown
+  agent_id?: unknown
+  seat?: unknown
+  _seat?: unknown
+  _speaker?: unknown
+  speaker?: unknown
+  actor_name?: unknown
+  player_name?: unknown
+  name?: unknown
+  visibility?: unknown
+  day?: unknown
+  target_id?: unknown
+  selected_target?: unknown
+  target?: unknown
+  [key: string]: unknown
+}
+
+interface PendingHumanAction {
+  action_type?: unknown
+  type?: unknown
+  player_id?: unknown
+  actor_id?: unknown
+  speaker_id?: unknown
+  seat?: unknown
+  [key: string]: unknown
+}
+
+interface GameLike {
+  day?: unknown
+  phase?: unknown
+  waiting_for?: unknown
+  pending_human_action?: PendingHumanAction | null
+  current_speaker_id?: unknown
+  currentSpeakerId?: unknown
+  speaker_id?: unknown
+  speakerId?: unknown
+  logs?: LogEntry[]
+  events?: LogEntry[]
+  decisions?: LogEntry[]
+  game_id?: unknown
+  id?: unknown
+  human_player_id?: unknown
+  [key: string]: unknown
+}
+
+interface SpeechPayload {
+  text: string
+  tone: string
+}
+
+type SpeechByPlayer = Record<string | number, string | SpeechPayload>
+
+interface VoteTallyRow {
+  target_id?: unknown
+  targetId?: unknown
+  count?: unknown
+  voter_ids?: unknown[]
+  voters?: unknown[]
+  voter_labels?: unknown[]
+  [key: string]: unknown
+}
+
+interface SceneEffect {
+  id?: unknown
+  type?: unknown
+  actorId?: unknown
+  targetId?: unknown
+  day?: unknown
+  sequence?: unknown
+  [key: string]: unknown
+}
+
+interface LoadProgress {
+  phase?: string
+  label?: string
+  loaded?: number
+  total?: number
+  progress?: number
+  ready?: boolean
+  [key: string]: unknown
+}
+
+interface ScenePayload {
+  players: PlayerLike[]
+  currentSpeakerId: number | null
+  speechByPlayer: SpeechByPlayer
+  isNight: boolean
+  revealPlayers: boolean
+  sceneKey: unknown
+  humanId: unknown
+  selectableIds: NullableId[]
+  selectedTargetId?: NullableId
+  hoveredTargetId?: NullableId
+  onPlayerSelect: (id: IdValue) => void
+  pageVoteTally: VoteTallyRow[]
+  voteTally: VoteTallyRow[]
+  sceneEffects: SceneEffect[]
+  instantSpeech: boolean
+  playInitialSceneEffects: boolean
+}
+
+interface CouncilHallScene {
+  setLoadProgressHandler?: (handler: ((progress: LoadProgress) => void) | null) => void
+  update?: (payload: ScenePayload) => void
+  preloadModels?: () => Promise<unknown> | unknown
+  dispose?: () => void
+}
 
 const SPEECH_EVENT_TYPES = new Set([
   'speech',
@@ -29,27 +185,27 @@ const NIGHT_ACTION_TYPES = new Set([
 ])
 
 const props = defineProps({
-  game: Object,
+  game: Object as PropType<GameLike | null>,
   isNight: Boolean,
   isWatch: Boolean,
   isReplayMode: Boolean,
   roleAssignmentComplete: Boolean,
   judgeBoardStarted: Boolean,
-  players: { type: Array, default: () => [] },
-  selectableIds: { type: Array, default: () => [] },
-  selectedTargetId: [String, Number, null],
-  hoveredTargetId: [String, Number, null],
-  currentSpeakerId: [String, Number, null],
-  voteTally: { type: Array, default: () => [] },
-  sceneEffects: { type: Array, default: () => [] },
+  players: { type: Array as PropType<PlayerLike[]>, default: () => [] },
+  selectableIds: { type: Array as PropType<NullableId[]>, default: () => [] },
+  selectedTargetId: [String, Number, null] as PropType<NullableId>,
+  hoveredTargetId: [String, Number, null] as PropType<NullableId>,
+  currentSpeakerId: [String, Number, null] as PropType<NullableId>,
+  voteTally: { type: Array as PropType<VoteTallyRow[]>, default: () => [] },
+  sceneEffects: { type: Array as PropType<SceneEffect[]>, default: () => [] },
   speakerMessage: { type: String, default: '' }
 })
 
 const emit = defineEmits(['ready', 'container-ready', 'player-select', 'loading-progress'])
-const containerRef = ref(null)
-let scene = null
+const containerRef = ref<HTMLDivElement | null>(null)
+let scene: CouncilHallScene | null = null
 let rafId = 0
-let sceneReadyPromise = null
+let sceneReadyPromise: Promise<CouncilHallScene | null> | null = null
 let disposed = false
 let lastSceneSignature = ''
 const sceneApi = { waitForCouncilModels, syncCouncilScene, scheduleSyncCouncilScene }
@@ -357,7 +513,7 @@ async function ensureScene() {
     sceneReadyPromise = (async () => {
       if (disposed || !containerRef.value) return null
       if (!scene) {
-        scene = createCouncilHallScene(containerRef.value)
+        scene = createCouncilHallScene(containerRef.value) as CouncilHallScene
         scene.setLoadProgressHandler?.(handleLoadingProgress)
       }
       return scene
@@ -409,7 +565,7 @@ function playerSceneSignature(players = []) {
   ].join(':')).join('|')
 }
 
-function speechSceneSignature(value = {}) {
+function speechSceneSignature(value: SpeechByPlayer = {}) {
   return Object.entries(value)
     .sort(([a], [b]) => Number(a) - Number(b))
     .map(([id, speech]) => {
