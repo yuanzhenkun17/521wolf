@@ -18,6 +18,7 @@ from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.errors import domain_error_detail, release_stage_diagnostic
 from ui.backend.schemas import BenchmarkRequest
+from ui.backend.settings_runtime_variables import WORKFLOW_GAME_CONCURRENCY_KEY, runtime_setting_int_for_store
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
 from ui.backend.services.task_service import BackgroundTaskServiceProtocol
 from ui.backend.services.benchmark_run_payloads import (
@@ -128,6 +129,7 @@ class BenchmarkRunService:
         target_type = spec.target_type if spec else request.target_type
         self.validate_benchmark_target_versions(roles, request, target_type=target_type)
         model_runtime = self.benchmark_model_runtime(request)
+        workflow_game_concurrency = self.workflow_game_concurrency()
         if spec is not None:
             game_count = _benchmark_effective_game_count(int(spec.game_count))
             max_days = int(spec.max_days)
@@ -166,6 +168,7 @@ class BenchmarkRunService:
             judge_enabled=judge_enabled,
             judge_decision_units=judge_decision_units,
             judge_concurrency=judge.get("judge_concurrency"),
+            game_concurrency=workflow_game_concurrency,
         )
         expected_duration_seconds = int(concurrency_policy["expected_duration_seconds"])
         budget = _benchmark_budget_payload(
@@ -270,6 +273,9 @@ class BenchmarkRunService:
         roles = self.benchmark_roles(request, spec)
         model_runtime = self._benchmark_model_runtime_from_plan(run_plan) or self.benchmark_model_runtime(request)
         request_config = self.benchmark_request_config(request, spec)
+        workflow_game_concurrency = self.workflow_game_concurrency()
+        if workflow_game_concurrency is not None:
+            request_config["game_concurrency"] = workflow_game_concurrency
         if spec is not None or request.target_type == "model" or request.model_id or request.model_config_hash:
             request_config["model_id"] = model_runtime["model_id"]
             request_config["model_config_hash"] = model_runtime["model_config_hash"]
@@ -732,6 +738,10 @@ class BenchmarkRunService:
         if payload.get("target_type") == "role_version" and not payload.get("benchmark_id"):
             payload.pop("target_type", None)
         return payload
+
+    def workflow_game_concurrency(self) -> int | None:
+        value = runtime_setting_int_for_store(self._context, WORKFLOW_GAME_CONCURRENCY_KEY, default=0)
+        return value if value > 0 else None
 
     @staticmethod
     def _benchmark_model_runtime_from_plan(run_plan: dict[str, Any]) -> dict[str, Any] | None:

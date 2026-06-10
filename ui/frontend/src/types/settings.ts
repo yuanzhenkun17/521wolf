@@ -53,6 +53,8 @@ export interface SettingsVariable {
   secret: boolean
   source?: string
   description?: string
+  minimum?: number | null
+  maximum?: number | null
   updated_at?: string | null
 }
 

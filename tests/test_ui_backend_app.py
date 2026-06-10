@@ -1554,9 +1554,14 @@ def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
     assert list_response.status_code == 200
     listed = list_response.json()["variables"]
     worker_var = next(item for item in listed if item["key"] == "TASK_WORKER_REQUIRED")
+    concurrency_var = next(item for item in listed if item["key"] == "WEREWOLF_GAME_CONCURRENCY")
     assert worker_var["editable"] is True
     assert worker_var["value"] == "false"
     assert worker_var["source"] == "default"
+    assert concurrency_var["label"] == "多局并发数"
+    assert concurrency_var["raw_value"] == 0
+    assert concurrency_var["minimum"] == 0
+    assert concurrency_var["maximum"] == 64
 
     assert update_response.status_code == 200
     updated = update_response.json()["variable"]
@@ -3290,6 +3295,87 @@ def test_benchmark_uses_battle_games_for_game_count(tmp_path: Path, monkeypatch)
     listed = next(item for item in listed_response.json()["batches"] if item["batch_id"] == batch_id)
     assert listed["config"] == {"roles": ["seer"], "battle_games": 3, "max_days": 1}
     assert listed["result"]["game_count"] == 3
+
+
+def test_workflow_game_concurrency_setting_feeds_benchmark_and_evolution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    benchmark_config: dict[str, Any] = {}
+    evolution_config: dict[str, Any] = {}
+
+    async def fake_run_evaluation(*, batch_config: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        benchmark_config.update(batch_config)
+        return {
+            "batch_id": batch_config["batch_id"],
+            "config": batch_config,
+            "game_count": batch_config["game_count"],
+            "completed": batch_config["game_count"],
+            "errored": 0,
+            "games": [],
+            "score_summary": {"game_count": batch_config["game_count"]},
+            "fairness": {"is_fair": True},
+            "rankable": True,
+            "started_at": "2026-01-01T00:00:00+08:00",
+            "finished_at": "2026-01-01T00:00:00+08:00",
+        }
+
+    async def fake_run_evolution(
+        *,
+        role: str,
+        training_games: int,
+        battle_games: int,
+        run_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        evolution_config.update(kwargs.get("config") or {})
+        return {
+            "run_id": run_id,
+            "role": role,
+            "status": "reviewing",
+            "training_games": [{"game_id": "train-1"}] if training_games else [],
+            "battle_games": [{"game_id": "battle-1"}] if battle_games else [],
+            "battle_result": {"completed": battle_games},
+            "proposals": [],
+            "diff": [],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(ui_backend_store, "run_evaluation", fake_run_evaluation)
+    monkeypatch.setattr(ui_backend_store, "run_evolution", fake_run_evolution)
+    monkeypatch.delenv("WEREWOLF_GAME_CONCURRENCY", raising=False)
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        update_response = client.patch(
+            "/api/settings/runtime-variables/WEREWOLF_GAME_CONCURRENCY",
+            headers=headers,
+            json={"value": 4},
+        )
+        plan_response = client.post(
+            "/api/benchmark/plan",
+            json={"roles": ["seer"], "battle_games": 8, "max_days": 1},
+        )
+        benchmark_response = client.post(
+            "/api/benchmark",
+            json={"roles": ["seer"], "battle_games": 8, "max_days": 1},
+        )
+        evolution_response = client.post(
+            "/api/evolution-runs",
+            json={"roles": ["seer"], "training_games": 1, "battle_games": 1, "max_days": 1},
+        )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["variable"]["raw_value"] == 4
+    assert plan_response.status_code == 200
+    assert plan_response.json()["concurrency_policy"]["game_concurrency"] == 4
+    assert benchmark_response.status_code == 200
+    assert benchmark_config["game_concurrency"] == 4
+    assert evolution_response.status_code == 200
+    assert evolution_config["game_concurrency"] == 4
 
 
 def test_benchmark_request_accepts_suite_and_target_versions() -> None:

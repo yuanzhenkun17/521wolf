@@ -15,6 +15,7 @@ from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.errors import domain_error_detail
 from ui.backend.evolution_serializers import _evolution_gate_report
 from ui.backend.schemas import EvolutionStartRequest, automatic_evolution_request
+from ui.backend.settings_runtime_variables import WORKFLOW_GAME_CONCURRENCY_KEY, runtime_setting_int_for_store
 from ui.backend.services.evolution_read_service import EvolutionReadService
 from ui.backend.task_state import _set_task_contract
 
@@ -68,6 +69,9 @@ class EvolutionRunService:
         request = automatic_evolution_request(request)
         roles = request.roles or ["villager"]
         request_config = request.model_dump(exclude_none=True)
+        workflow_game_concurrency = self.workflow_game_concurrency()
+        if workflow_game_concurrency is not None:
+            request_config["game_concurrency"] = workflow_game_concurrency
         model_runtime = self.evolution_model_runtime(request)
         if model_runtime is not None:
             request_config["model_id"] = model_runtime["model_id"]
@@ -528,6 +532,9 @@ class EvolutionRunService:
         now = beijing_now_iso()
         stage = "queued"
         request_config = request.model_dump(exclude_none=True)
+        workflow_game_concurrency = self.workflow_game_concurrency()
+        if workflow_game_concurrency is not None:
+            request_config["game_concurrency"] = workflow_game_concurrency
         if model_runtime is not None:
             request_config["model_id"] = model_runtime["model_id"]
             request_config["model_config_hash"] = model_runtime["model_config_hash"]
@@ -587,6 +594,10 @@ class EvolutionRunService:
         self.evolution_runs[run_id] = run
         self._persist_background_tasks()
         return run
+
+    def workflow_game_concurrency(self) -> int | None:
+        value = runtime_setting_int_for_store(self._context, WORKFLOW_GAME_CONCURRENCY_KEY, default=0)
+        return value if value > 0 else None
 
     @staticmethod
     def count_evolution_games(value: Any) -> int:

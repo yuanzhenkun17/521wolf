@@ -16,6 +16,7 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _SETTINGS_ADMIN_KEYS = ("SETTINGS_ADMIN_ENABLED", "SETTINGS_ADMIN_TOKEN")
 _LLM_ENV_LOCK_KEYS = ("WEREWOLF_LLM_API_KEY", "WEREWOLF_LLM_BASE_URL", "WEREWOLF_LLM_MODEL")
+WORKFLOW_GAME_CONCURRENCY_KEY = "WEREWOLF_GAME_CONCURRENCY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,16 @@ _RUNTIME_VARIABLES: tuple[RuntimeVariableDefinition, ...] = (
         default=False,
         state="next_task",
         description="开启后新 Benchmark/Evolution 任务进入 PostgreSQL durable queue。",
+    ),
+    RuntimeVariableDefinition(
+        key=WORKFLOW_GAME_CONCURRENCY_KEY,
+        label="多局并发数",
+        value_type="integer",
+        default=0,
+        state="next_task",
+        description="控制 Benchmark、自进化训练和自进化对战的并发对局数；0 表示使用系统默认。",
+        minimum=0,
+        maximum=64,
     ),
     RuntimeVariableDefinition(
         key="HEALTH_LLM_PROBE_TTL_SECONDS",
@@ -158,6 +169,8 @@ class SettingsRuntimeVariableStore:
             "secret": False,
             "source": source,
             "description": definition.description,
+            "minimum": definition.minimum,
+            "maximum": definition.maximum,
             "updated_at": _updated_at_for(definition.key, values),
         }
 
@@ -251,6 +264,13 @@ def runtime_setting_float_for_store(store: Any, key: str, *, default: float) -> 
         return float(SettingsRuntimeVariableStore.from_backend_store(store).value(key, default))
     except Exception:
         return _env_float(key, default=default)
+
+
+def runtime_setting_int_for_store(store: Any, key: str, *, default: int) -> int:
+    try:
+        return int(SettingsRuntimeVariableStore.from_backend_store(store).value(key, default))
+    except Exception:
+        return _env_int(key, default=default)
 
 
 def _coerce_value(definition: RuntimeVariableDefinition, value: Any) -> bool | int | float | str:
@@ -379,6 +399,16 @@ def _env_float(name: str, *, default: float) -> float:
         return default
     try:
         return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, *, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(float(raw))
     except ValueError:
         return default
 

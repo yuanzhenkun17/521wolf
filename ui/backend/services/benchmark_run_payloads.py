@@ -68,8 +68,10 @@ def _benchmark_concurrency_policy(
     judge_enabled: bool,
     judge_decision_units: int,
     judge_concurrency: Any,
+    game_concurrency: Any = None,
 ) -> dict[str, Any]:
-    game_concurrency = max(1, min(_BENCHMARK_DEFAULT_GAME_CONCURRENCY, max(1, int(game_count or 1))))
+    requested_game_concurrency = _positive_int(game_concurrency) or _BENCHMARK_DEFAULT_GAME_CONCURRENCY
+    game_concurrency = max(1, min(requested_game_concurrency, max(1, int(game_count or 1))))
     effective_judge_concurrency = 0
     if judge_enabled:
         effective_judge_concurrency = _positive_int(judge_concurrency) or _BENCHMARK_DEFAULT_JUDGE_CONCURRENCY

@@ -724,6 +724,8 @@ function shortId(value: unknown): string {
                     v-else-if="variable.value_type === 'integer' || variable.value_type === 'number'"
                     v-model.number="variableDrafts[variable.key]"
                     :disabled="!variableCanEdit(variable)"
+                    :min="variable.minimum ?? undefined"
+                    :max="variable.maximum ?? undefined"
                     class="settings-variable-input"
                     type="number"
                     step="1"
@@ -804,7 +806,7 @@ function shortId(value: unknown): string {
                 </div>
                 <b>{{ healthReady ? 'ready' : 'not ready' }}</b>
               </header>
-              <div class="settings-health-grid">
+              <div class="settings-health-grid settings-health-grid--system">
                 <div v-for="item in healthChecks" :key="item.key" class="settings-health-row">
                   <span>
                     <b>{{ item.label }}</b>
@@ -1619,6 +1621,28 @@ function shortId(value: unknown): string {
   box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.5);
 }
 
+.settings-health-grid--system {
+  max-height: min(610px, calc(100dvh - 238px));
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.3) transparent;
+}
+
+.settings-health-grid--system::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-health-grid--system::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(139, 94, 52, 0.18);
+}
+
+.settings-health-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .settings-variable-row em,
 .settings-health-row em {
   justify-self: end;
@@ -1882,6 +1906,10 @@ function shortId(value: unknown): string {
   .settings-variable-row,
   .settings-health-row {
     grid-template-columns: 12px minmax(0, 1fr);
+  }
+
+  .settings-health-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .settings-variable-row strong,
