@@ -7,6 +7,11 @@ from typing import Any, Protocol
 from fastapi import HTTPException
 
 from ui.backend.task_state import _filter_values, _match_filter, _pagination
+from ui.backend.services.benchmark_report_exports import (
+    _benchmark_run_report_csv,
+    _benchmark_run_report_markdown,
+    _text_content_hash,
+)
 from ui.backend.services.benchmark_report_payloads import (
     _benchmark_annotated_diagnostic,
     _benchmark_batch_boundary,
@@ -25,17 +30,15 @@ from ui.backend.services.benchmark_report_payloads import (
     _benchmark_result_game_count,
     _benchmark_result_role,
     _benchmark_results,
-    _benchmark_run_report_csv,
-    _benchmark_run_report_markdown,
     _benchmark_run_report_payload,
     _benchmark_run_report_reproducibility_manifest,
     _benchmark_run_report_summary,
     _benchmark_run_sort_key,
     _dict_items,
     _json_clone,
-    _text_content_hash,
     _text_items,
 )
+
 
 class BenchmarkReportServiceContextProtocol(Protocol):
     """Context capabilities required by ``BenchmarkReportService``."""
