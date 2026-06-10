@@ -4401,6 +4401,36 @@ function mockTaskArtifactPayload(taskId, artifactId) {
   }
 }
 
+function mockTaskEvents(taskId) {
+  const task = mockTaskRow(taskId)
+  if (!task) return []
+  const artifacts = mockTaskArtifacts(taskId)
+  return [
+    {
+      event_id: 1,
+      event_type: 'queued',
+      created_at: task.queued_at,
+      payload: { task_id: taskId, kind: task.kind, source: task.source }
+    },
+    {
+      event_id: 2,
+      event_type: 'progress',
+      created_at: task.updated_at || task.started_at || task.queued_at,
+      payload: { stage: task.progress?.stage || task.status, progress: task.progress }
+    },
+    ...artifacts.slice(0, 3).map((artifact, index) => ({
+      event_id: 3 + index,
+      event_type: 'artifact_created',
+      created_at: artifact.created_at,
+      payload: {
+        artifact_id: artifact.artifact_id,
+        artifact_type: artifact.artifact_type,
+        name: artifact.name
+      }
+    }))
+  ]
+}
+
 function mockBenchmarkBatchReportPayload(batchId) {
   const batch = findMockBenchmarkBatch(batchId)
   const detail = mockBenchmarkBatchDetail(batchId)
@@ -5487,12 +5517,13 @@ export async function mockApiFetch(path, options: LooseRecord = {}) {
   if (taskEventsMatch) {
     const taskId = decodeURIComponent(taskEventsMatch[1])
     const query = new URLSearchParams(queryString)
+    const afterEventId = Number(query.get('after_event_id') || 0)
     return {
       kind: 'task_events',
       schema_version: 1,
       task_id: taskId,
-      after_event_id: Number(query.get('after_event_id') || 0),
-      events: []
+      after_event_id: afterEventId,
+      events: mockTaskEvents(taskId).filter((event) => Number(event.event_id || 0) > afterEventId)
     }
   }
 

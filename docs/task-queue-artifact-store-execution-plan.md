@@ -121,12 +121,14 @@ PostgreSQL-backed task queue
 - 默认 cleanup 范围不变，不会误扫 `runs/tasks`。
 - 显式开启后，`runs/tasks/<task_id>` 会进入 age/size retention plan，并沿用 dry-run 默认、安全 path 校验和 execute 清理流程。
 
-已完成 Phase I Frontend Task/Artifact UI 起步：
+已完成 Phase I Frontend Task/Artifact UI：
 
 - 新增前端 task domain normalizers、task API service 与类型导出，覆盖 list/detail/cancel/retry/events/artifacts/download URL。
 - 新增共享 `TaskArtifactPanel`，展示 queue status、progress、stage、error、artifact list、JSON inline preview 与下载入口。
 - Benchmark 工作台右侧上下文栏按选中/活跃 run 的 `task_id`、`queue_task_id`、`run_id`、`batch_id` 只读展示队列任务和 ArtifactStore 产物。
 - Evolution 工作台右侧上下文栏按 selected run/run summary 的稳定 id 只读展示队列任务和 ArtifactStore 产物。
+- 新增独立 `/tasks` 任务中心，支持状态筛选、搜索、任务详情、显式 cancel/retry、artifact 下载/JSON preview 和 event timeline。
+- 顶栏新增任务中心入口，`/tasks` 与 `#tasks?task_id=...` 都可保持刷新后的选中任务。
 - mock API 已补齐 `/tasks`、`/tasks/{task_id}`、`/tasks/{task_id}/events`、`/tasks/{task_id}/artifacts`、`/tasks/{task_id}/artifacts/{artifact_id}` 与 cancel/retry 响应，便于前端离线验证。
 - 通用 task events 当前是 JSON replay；Benchmark/Evolution 原有实时进度仍沿用领域 SSE/状态刷新，后续如需要统一实时流再做 SSE/WebSocket 收口。
 
@@ -156,6 +158,9 @@ uv run pytest tests/test_ui_backend_app.py::test_langfuse_task_routes_enqueue_pg
 uv run pytest tests/test_langfuse_experiment_verification.py tests/test_langfuse_annotation_export.py tests/test_langfuse_link_manifest.py -q
 uv run pytest tests/test_api_contracts.py -q -k "openapi or langfuse or task"
 uv run pytest tests/test_tools_cleanup_runs.py -q
+npm run test:unit --prefix ui/frontend -- tests/unit/domain/domainAndServices.test.ts tests/unit/router/legacyViewNavigation.test.ts tests/unit/router/legacyHashRedirect.test.ts tests/unit/stores/coreStores.test.ts
+npm run test:component --prefix ui/frontend -- tests/component/TopNav.test.ts tests/component/AppRouterPinia.test.ts
+npm run typecheck --prefix ui/frontend
 ```
 
 ## 当前状态
@@ -558,7 +563,7 @@ Steps：
 
 Steps：
 
-1. 新增 task service：（已完成起步）
+1. 新增 task service：（已完成）
    - list tasks
    - get task
    - cancel
@@ -566,7 +571,7 @@ Steps：
    - events
    - artifacts
 2. Benchmark/Evolution 页面仍保留领域视图，但共享 task 状态组件。（已完成只读上下文栏接入）
-3. 任务详情展示：（已完成起步）
+3. 任务详情展示：（已完成）
    - status
    - progress
    - current stage
@@ -576,7 +581,7 @@ Steps：
    - JSON inline preview
    - CSV/Markdown download
    - zip download
-5. 后续完整任务中心：
+5. 完整任务中心：（已完成）
    - 独立 Task Center 页面，支持队列筛选、任务详情抽屉、cancel/retry 显式操作和 event timeline。
    - 如前端需要统一实时进度，再把 `/api/tasks/{task_id}/events` 从 JSON replay 扩展为 SSE/WebSocket；当前阶段不改变后端实时协议。
 
@@ -720,7 +725,6 @@ curl http://127.0.0.1:8000/api/tasks
 可以暂缓：
 
 - Langfuse 工具任务化。
-- 完整前端任务中心。
 - artifact retention UI。
 - 多 worker 高级调度。
 

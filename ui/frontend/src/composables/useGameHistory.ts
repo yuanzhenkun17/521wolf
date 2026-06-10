@@ -1377,6 +1377,11 @@ function useGameHistory(state, options: LooseRecord = {}) {
     syncHistoryViewToLegacyHash('benchmark')
   }
 
+  function openTasksPage({ rememberOrigin = true } = {}) {
+    state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
+    syncHistoryViewToLegacyHash('tasks')
+  }
+
   function hashRouteInfo() {
     return routeSource
       ? historyDeepLinkFromRoute(routeSource)
@@ -1401,6 +1406,10 @@ function useGameHistory(state, options: LooseRecord = {}) {
     }
     if (route.routeHash === '#benchmark') {
       openBenchmarkPage({ rememberOrigin })
+      return
+    }
+    if (route.routeHash === '#tasks') {
+      openTasksPage({ rememberOrigin })
       return
     }
     if (route.routeHash === '#match' && isReturnableGame(state.liveGame.value)) {
@@ -1862,7 +1871,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     let removeHashChangeListener = () => {}
     onMounted(() => {
       const route = hashRouteInfo()
-      if (['#logs', '#evolution', '#benchmark', '#match'].includes(route.routeHash)) {
+      if (['#logs', '#evolution', '#benchmark', '#tasks', '#match'].includes(route.routeHash)) {
         syncHashRoute({ rememberOrigin: false })
       } else if (options.prefetchHistoryOnMount === true) {
         refreshHistoryList({ silent: true })
@@ -1901,6 +1910,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     openLogPage,
     openEvolutionPage,
     openBenchmarkPage,
+    openTasksPage,
     syncHashRoute,
     goLobby,
     backToMatch,

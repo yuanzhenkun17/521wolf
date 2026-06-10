@@ -21,6 +21,7 @@ async function createTestRouter(path: string): Promise<Router> {
       { path: '/logs', name: 'logs', component: EmptyRoute },
       { path: '/benchmark', name: 'benchmark', component: EmptyRoute },
       { path: '/evolution', name: 'evolution', component: EmptyRoute },
+      { path: '/tasks', name: 'tasks', component: EmptyRoute },
       { path: '/missing', name: 'missing', component: EmptyRoute },
     ],
   })
@@ -180,5 +181,16 @@ describe('TopNav router active state', () => {
     await navButton(wrapper, '评测').trigger('click')
 
     expect(wrapper.emitted('open-benchmark')).toHaveLength(1)
+  })
+
+  it('exposes the task center navigation event', async () => {
+    const wrapper = await mountTopNav('/tasks')
+    const taskButton = navButton(wrapper, '任务')
+
+    expect(taskButton.classes()).toContain('active')
+
+    await taskButton.trigger('click')
+
+    expect(wrapper.emitted('open-tasks')).toHaveLength(1)
   })
 })

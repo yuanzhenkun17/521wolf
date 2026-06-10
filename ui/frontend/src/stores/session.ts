@@ -30,6 +30,7 @@ export const useSessionStore = defineStore('session', () => {
   const inLogs = computed(() => currentView.value === 'logs')
   const inBenchmark = computed(() => currentView.value === 'benchmark')
   const inEvolution = computed(() => currentView.value === 'evolution')
+  const inTasks = computed(() => currentView.value === 'tasks')
   const backendAvailable = computed(() => backendMode.value !== 'offline')
 
   function setView(view: AppView): void {
@@ -70,6 +71,7 @@ export const useSessionStore = defineStore('session', () => {
     inLogs,
     inBenchmark,
     inEvolution,
+    inTasks,
     backendAvailable,
     setView,
     setBackendMode,

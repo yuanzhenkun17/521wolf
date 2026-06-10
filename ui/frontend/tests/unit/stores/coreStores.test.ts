@@ -146,9 +146,14 @@ test('session store hydrates runtime state and updates view/session actions', ()
   assert.equal(store.inLogs, false)
   assert.equal(store.inBenchmark, true)
 
+  store.setView('tasks')
+
+  assert.equal(store.inBenchmark, false)
+  assert.equal(store.inTasks, true)
+
   store.hydrateFromRuntime({ currentView: 'unknown-view' })
 
-  assert.equal(store.currentView, 'benchmark')
+  assert.equal(store.currentView, 'tasks')
 
   store.hydrateFromRuntime({ backendMode: null, activeSession: null, returnToMatchAvailable: null })
 

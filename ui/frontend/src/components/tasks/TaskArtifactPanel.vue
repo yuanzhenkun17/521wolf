@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { createTaskService } from '../../services/taskApi'
-import type { TaskArtifact, TaskQueueRow } from '../../types/task'
+import type { TaskActionResponse, TaskArtifact, TaskQueueRow } from '../../types/task'
 
 const props = withDefaults(defineProps<{
   taskId?: string
@@ -16,6 +16,9 @@ const props = withDefaults(defineProps<{
   compact: false,
   showActions: false
 })
+const emit = defineEmits<{
+  'action-complete': [response: TaskActionResponse]
+}>()
 
 const taskService = createTaskService()
 const task = ref<TaskQueueRow | null>(null)
@@ -117,6 +120,7 @@ async function runAction(action: 'cancel' | 'retry') {
       : await taskService.retry(taskId)
     task.value = result.task
     await refresh()
+    emit('action-complete', result)
   } catch (err) {
     error.value = errorMessage(err, action === 'cancel' ? '取消任务失败' : '重试任务失败')
   } finally {

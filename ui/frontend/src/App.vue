@@ -23,6 +23,7 @@ type RuntimeRecord = Record<string, any>
 const LogsPage = defineAsyncComponent(() => import('./pages/LogsPage.vue'))
 const BenchmarkPage = defineAsyncComponent(() => import('./pages/BenchmarkPage.vue'))
 const EvolutionPage = defineAsyncComponent(() => import('./pages/EvolutionPage.vue'))
+const TasksPage = defineAsyncComponent(() => import('./pages/TasksPage.vue'))
 const LobbyPage = defineAsyncComponent(() => import('./pages/LobbyPage.vue'))
 const MatchPage = defineAsyncComponent(() => import('./pages/MatchPage.vue'))
 
@@ -70,6 +71,7 @@ const inMatch = computed(() => activeAppView.value === 'match')
 const inLogs = computed(() => activeAppView.value === 'logs')
 const inBenchmark = computed(() => activeAppView.value === 'benchmark')
 const inEvolution = computed(() => activeAppView.value === 'evolution')
+const inTasks = computed(() => activeAppView.value === 'tasks')
 const isNight = computed(() => gameStore.isNight)
 const toastError = computed(() => uiStore.errorMessage)
 const showMatchBoot = computed(() => {
@@ -98,6 +100,7 @@ const {
   goLobby,
   openBenchmarkPage,
   openEvolutionPage,
+  openTasksPage,
   openLogPage,
   pauseReplay,
   playReplay,
@@ -123,7 +126,7 @@ const {
 </script>
 
 <template>
-<main :class="['lycan-app', { night: isNight, day: !isNight, lobbying: inLobby && !inLogs && !inBenchmark, logbook: inLogs, benchmark: inBenchmark, evolution: inEvolution }]">
+<main :class="['lycan-app', { night: isNight, day: !isNight, lobbying: inLobby && !inLogs && !inBenchmark && !inEvolution && !inTasks, logbook: inLogs, benchmark: inBenchmark, evolution: inEvolution, tasks: inTasks }]">
       <div class="atmosphere"></div>
       <div class="noise"></div>
 
@@ -134,6 +137,7 @@ const {
         @open-logs="openLogPage()"
         @open-benchmark="openBenchmarkPage"
         @open-evolution="openEvolutionPage"
+        @open-tasks="openTasksPage"
         @back-to-match="backToMatch"
         @toggle-audio="toggleAudio"
         @toggle-tts="toggleTts"
@@ -168,6 +172,9 @@ const {
         @back-to-match="backToMatch"
         @open-sample-log="openLogPage($event)"
         @replay-sample-game="replayHistoryGame($event)"
+      />
+      <TasksPage
+        v-if="inTasks"
       />
       <LobbyPage
         v-if="inLobby"

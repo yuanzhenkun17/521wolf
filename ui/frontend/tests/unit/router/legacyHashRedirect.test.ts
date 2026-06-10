@@ -28,6 +28,7 @@ test("maps new router paths to the matching app view", () => {
   assert.equal(appViewFromRoute({ path: "/logs" }), "logs");
   assert.equal(appViewFromRoute({ path: "/benchmark" }), "benchmark");
   assert.equal(appViewFromRoute({ path: "/evolution" }), "evolution");
+  assert.equal(appViewFromRoute({ path: "/tasks" }), "tasks");
 });
 
 test("falls back to lobby for unknown routes", () => {
@@ -55,6 +56,14 @@ test("resolves active app views from router source before runtime state", () => 
       hash: "#logs?game_id=game-7",
     }),
     "benchmark",
+  );
+  assert.equal(
+    appViewFromRouteSource({
+      name: "tasks",
+      path: "/tasks",
+      hash: "#benchmark?batch_id=bench-7",
+    }),
+    "tasks",
   );
   assert.equal(
     appViewFromRouteSource({ name: "missing", path: "/missing", hash: "" }),
@@ -86,6 +95,10 @@ test("builds legacy hashes and preserves query parameters", () => {
   assert.equal(
     legacyHashForView("evolution", "?run_id=run-3&proposal_id=proposal-b"),
     "#evolution?run_id=run-3&proposal_id=proposal-b",
+  );
+  assert.equal(
+    legacyHashForView("tasks", "task_id=task-9"),
+    "#tasks?task_id=task-9",
   );
 });
 
@@ -119,12 +132,19 @@ test("syncs explicit router paths over stale or invalid legacy hashes", () => {
     "?run_id=run-3",
     "#evidence?game_id=game-1",
   );
+  const taskLocation = locationLike(
+    "/tasks",
+    "?task_id=task-7",
+    "#benchmark?batch_id=bench-1",
+  );
 
   syncInitialRouteToLegacyHash(staleHashLocation as Location);
   syncInitialRouteToLegacyHash(invalidHashLocation as Location);
+  syncInitialRouteToLegacyHash(taskLocation as Location);
 
   assert.equal(staleHashLocation.hash, "#benchmark?batch_id=bench-7");
   assert.equal(invalidHashLocation.hash, "#evolution?run_id=run-3");
+  assert.equal(taskLocation.hash, "#tasks?task_id=task-7");
 });
 
 test("keeps matching legacy hash deep links when the router query is empty", () => {

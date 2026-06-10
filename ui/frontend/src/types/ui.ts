@@ -1,4 +1,4 @@
-export type AppView = 'lobby' | 'match' | 'logs' | 'benchmark' | 'evolution'
+export type AppView = 'lobby' | 'match' | 'logs' | 'benchmark' | 'evolution' | 'tasks'
 export type NoticeType = '' | 'info' | 'success' | 'warning' | 'error'
 
 export interface NoticeState {

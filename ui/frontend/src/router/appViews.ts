@@ -1,7 +1,7 @@
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import type { AppView } from '../types/ui'
 
-export const APP_VIEWS: AppView[] = ['lobby', 'match', 'logs', 'benchmark', 'evolution']
+export const APP_VIEWS: AppView[] = ['lobby', 'match', 'logs', 'benchmark', 'evolution', 'tasks']
 const APP_VIEW_SET = new Set<string>(APP_VIEWS)
 
 const VIEW_PATHS: Record<AppView, string> = {
@@ -9,7 +9,8 @@ const VIEW_PATHS: Record<AppView, string> = {
   match: '/match',
   logs: '/logs',
   benchmark: '/benchmark',
-  evolution: '/evolution'
+  evolution: '/evolution',
+  tasks: '/tasks'
 }
 
 const VIEW_HASHES: Record<AppView, string> = {
@@ -17,7 +18,8 @@ const VIEW_HASHES: Record<AppView, string> = {
   match: 'match',
   logs: 'logs',
   benchmark: 'benchmark',
-  evolution: 'evolution'
+  evolution: 'evolution',
+  tasks: 'tasks'
 }
 
 const PATH_VIEWS = Object.fromEntries(
