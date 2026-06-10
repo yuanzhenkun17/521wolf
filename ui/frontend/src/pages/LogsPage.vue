@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import type { PropType } from 'vue'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import HistoryGameList from '../components/HistoryGameList.vue'
 import MultiAssess from '../components/MultiAssess.vue'
@@ -22,36 +22,43 @@ import {
 const GameArchivePanel = defineAsyncComponent(() => import('../components/history/GameArchivePanel.vue'))
 const ReviewReportPanel = defineAsyncComponent(() => import('../components/history/ReviewReportPanel.vue'))
 
+type LooseRecord = Record<string, any>
+type LooseFn = (...args: any[]) => any
+type RowFilterOptions = {
+  includeTarget?: boolean
+  includeText?: boolean
+}
+
 const props = defineProps({
   returnToMatchAvailable: Boolean,
-  gameHistory: { type: Array, default: () => [] },
+  gameHistory: { type: Array as PropType<LooseRecord[]>, default: () => [] },
   selectedHistoryGameId: [String, Number, null],
-  selectedHistoryGame: Object,
+  selectedHistoryGame: Object as PropType<LooseRecord | null>,
   historyLoading: Boolean,
-  historyPagination: { type: Object, default: () => ({}) },
+  historyPagination: { type: Object as PropType<LooseRecord>, default: () => ({}) },
   historyLoadingMore: Boolean,
   historySourceFilter: { type: String, default: 'all' },
-  historyCounts: { type: Object, default: () => ({}) },
-  historyFacets: { type: Object, default: () => ({}) },
-  historyNotice: { type: Object, default: () => ({}) },
+  historyCounts: { type: Object as PropType<LooseRecord>, default: () => ({}) },
+  historyFacets: { type: Object as PropType<LooseRecord>, default: () => ({}) },
+  historyNotice: { type: Object as PropType<LooseRecord>, default: () => ({}) },
   historyHasMore: Boolean,
   historyCurrentPage: { type: Number, default: 1 },
   historyTotalPages: { type: Number, default: 1 },
-  historyPages: { type: Array, default: () => [] },
+  historyPages: { type: Array as PropType<LooseRecord[]>, default: () => [] },
   selectedHistoryPageKey: { type: String, default: '' },
   historyWorkspaceTab: { type: String, default: 'phase' },
-  selectedHistoryPage: Object,
-  phaseLoadingByKey: { type: Object, default: () => ({}) },
-  historyLogs: { type: Array, default: () => [] },
-  pageNightActions: { type: Array, default: () => [] },
-  pageSpeechDecisions: { type: Array, default: () => [] },
-  sheriffVotes: { type: Array, default: () => [] },
-  voteDecisions: { type: Array, default: () => [] },
-  currentVoteTally: { type: Array, default: () => [] },
-  sheriffVoteTally: { type: Array, default: () => [] },
-  pageLastWords: { type: Array, default: () => [] },
+  selectedHistoryPage: Object as PropType<LooseRecord | null>,
+  phaseLoadingByKey: { type: Object as PropType<LooseRecord>, default: () => ({}) },
+  historyLogs: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  pageNightActions: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  pageSpeechDecisions: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  sheriffVotes: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  voteDecisions: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  currentVoteTally: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  sheriffVoteTally: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  pageLastWords: { type: Array as PropType<LooseRecord[]>, default: () => [] },
   nightResult: { type: String, default: '' },
-  sheriffResult: Object,
+  sheriffResult: Object as PropType<LooseRecord | null>,
   isReplayMode: Boolean,
   replayCursor: { type: Number, default: 0 },
   replayPlaying: Boolean,
@@ -59,32 +66,32 @@ const props = defineProps({
   replayTotal: { type: Number, default: 0 },
   replayEventLabel: { type: String, default: '' },
   assessDimension: { type: String, default: 'speech' },
-  playerAssessmentScores: { type: Array, default: () => [] },
-  activeAssessScores: { type: Array, default: () => [] },
-  selectedDecision: Object,
+  playerAssessmentScores: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  activeAssessScores: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  selectedDecision: Object as PropType<LooseRecord | null>,
   detailTab: { type: String, default: 'summary' },
-  roleIconImage: Function,
-  historyPageTitle: Function,
-  historyPhaseName: Function,
-  historyLogSpeaker: Function,
-  historyNormalizeText: Function,
-  nightActionDetail: Function,
-  playerAliveAtPage: { type: Object, default: () => ({}) },
-  archiveByGameId: { type: Object, default: () => ({}) },
-  reviewByGameId: { type: Object, default: () => ({}) },
-  flowDataByGameId: { type: Object, default: () => ({}) },
-  flowLoadingByGameId: { type: Object, default: () => ({}) },
+  roleIconImage: Function as PropType<(player: any) => string>,
+  historyPageTitle: Function as PropType<(page: LooseRecord) => string>,
+  historyPhaseName: Function as PropType<(phase: any) => string>,
+  historyLogSpeaker: Function as PropType<(log: LooseRecord) => string>,
+  historyNormalizeText: Function as PropType<(text: any) => string>,
+  nightActionDetail: Function as PropType<(decision: LooseRecord) => unknown>,
+  playerAliveAtPage: { type: Object as PropType<LooseRecord>, default: () => ({}) },
+  archiveByGameId: { type: Object as PropType<LooseRecord>, default: () => ({}) },
+  reviewByGameId: { type: Object as PropType<LooseRecord>, default: () => ({}) },
+  flowDataByGameId: { type: Object as PropType<LooseRecord>, default: () => ({}) },
+  flowLoadingByGameId: { type: Object as PropType<LooseRecord>, default: () => ({}) },
   archiveLoading: Boolean,
   reviewLoading: Boolean,
-  loadMoreHistory: Function,
-  loadMoreHistoryPhaseDetail: Function,
-  goHistoryPage: Function,
-  setHistorySourceFilter: Function,
-  deleteHistoryGame: Function,
-  loadArchive: Function,
-  loadReview: Function,
-  loadFlowData: Function,
-  formatJson: Function
+  loadMoreHistory: Function as PropType<LooseFn>,
+  loadMoreHistoryPhaseDetail: Function as PropType<LooseFn>,
+  goHistoryPage: Function as PropType<LooseFn>,
+  setHistorySourceFilter: Function as PropType<LooseFn>,
+  deleteHistoryGame: Function as PropType<LooseFn>,
+  loadArchive: Function as PropType<LooseFn>,
+  loadReview: Function as PropType<LooseFn>,
+  loadFlowData: Function as PropType<LooseFn>,
+  formatJson: Function as PropType<LooseFn>
 })
 
 const emit = defineEmits([
@@ -106,10 +113,10 @@ const emit = defineEmits([
   'set-replay-speed'
 ])
 
-const selectedAssessPlayerId = ref(null)
+const selectedAssessPlayerId = ref<any>(null)
 const workspaceTab = ref('phase')
 const rawLogFilter = ref('all')
-const expandedPhaseEvidenceKeys = ref(new Set())
+const expandedPhaseEvidenceKeys = ref<Set<string>>(new Set())
 const WORKSPACE_TAB_KEYS = new Set(['phase', 'review', 'archive'])
 const NIGHT_PHASES = new Set(['night'])
 const SPEECH_PHASES = new Set(['speech', 'sheriff'])
@@ -127,6 +134,9 @@ const canShowRawLogs = computed(() =>
   props.historyLogs.length > 0
   && props.selectedHistoryPage
 )
+const gameHistoryForList = computed<any[]>(() => props.gameHistory)
+const historyPagesForTabs = computed<any[]>(() => props.historyPages)
+const activeAssessScoresForPanel = computed<any[]>(() => props.activeAssessScores)
 const focusedPlayerId = computed(() => normalizePlayerId(selectedAssessPlayerId.value))
 const focusedPlayer = computed(() => {
   const id = focusedPlayerId.value
@@ -214,7 +224,7 @@ const phaseMoreMeta = computed(() => {
   return parts.join(' · ')
 })
 
-function assessOverallScore(item) {
+function assessOverallScore(item: any) {
   const value = Number(item?.role_score ?? item?.score ?? 0)
   if (!Number.isFinite(value)) return 0
   return Math.max(0, Math.min(100, value))
@@ -408,6 +418,7 @@ const phaseEvidenceBodyId = computed(() =>
 const phaseEvidenceExpanded = computed(() =>
   expandedPhaseEvidenceKeys.value.has(phaseEvidenceKey.value)
 )
+const phaseEvidenceExpandedAttr = computed(() => String(phaseEvidenceExpanded.value) as 'true' | 'false')
 
 const phaseEvidenceScope = computed(() =>
   hasPlayerFocus.value ? focusLabel.value : '全员'
@@ -524,12 +535,12 @@ const workspaceTabs = computed(() => [
   { key: 'archive', label: '对局档案', ...archiveTabState.value }
 ])
 
-function normalizeWorkspaceTab(tab) {
+function normalizeWorkspaceTab(tab: any) {
   const text = String(tab || '').trim().toLowerCase()
   return WORKSPACE_TAB_KEYS.has(text) ? text : 'phase'
 }
 
-function setWorkspaceTab(tab, { emitUpdate = true, load = true } = {}) {
+function setWorkspaceTab(tab: any, { emitUpdate = true, load = true }: { emitUpdate?: boolean, load?: boolean } = {}) {
   const next = normalizeWorkspaceTab(tab)
   if (workspaceTab.value !== next) workspaceTab.value = next
   if (emitUpdate && props.historyWorkspaceTab !== next) emit('update:historyWorkspaceTab', next)
@@ -572,35 +583,35 @@ function togglePhaseEvidence() {
   expandedPhaseEvidenceKeys.value = next
 }
 
-function phaseName(phase) {
+function phaseName(phase: any) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : (phase || '未知阶段')
 }
 
-function pageTitle(page) {
+function pageTitle(page: any) {
   return props.historyPageTitle ? props.historyPageTitle(page) : page.key
 }
 
-function logSpeaker(log) {
+function logSpeaker(log: any) {
   return props.historyLogSpeaker ? props.historyLogSpeaker(log) : (log?.speaker || '系统')
 }
 
-function normalizeText(text) {
+function normalizeText(text: any) {
   const value = props.historyNormalizeText ? props.historyNormalizeText(text) : (text || '')
   return normalizeHistoryDisplayText(value) || '—'
 }
 
-function winnerLabel(winner) {
+function winnerLabel(winner: any) {
   return displayWinnerLabel(winner)
 }
 
-function formatGameDate(value, options = {}) {
+function formatGameDate(value: any, options: { fallback?: string } = {}) {
   if (!value) return options.fallback || '时间未知'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return options.fallback || '时间未知'
   const now = new Date()
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  const dayDiff = Math.round((startOfToday - startOfDate) / 86400000)
+  const dayDiff = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86400000)
   const time = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
   if (dayDiff === 0) return `今天 ${time}`
   if (dayDiff === 1) return `昨天 ${time}`
@@ -610,18 +621,18 @@ function formatGameDate(value, options = {}) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
 }
 
-function roleLabel(role) {
+function roleLabel(role: any) {
   return displayRoleLabel(role)
 }
 
-function actionLabel(value) {
+function actionLabel(value: any) {
   const action = typeof value === 'object' && value !== null
     ? value.action || value.action_type || value.event_type || value.type || value.selected_action || value.phase
     : value
   return displayActionLabel(action) || normalizeHistoryDisplayText(action) || '行动'
 }
 
-function normalizePlayerId(value) {
+function normalizePlayerId(value: any) {
   const raw = value && typeof value === 'object'
     ? value.id ?? value.player_id ?? value.actor_id ?? value.seat ?? value.target_id ?? value.value
     : value
@@ -634,13 +645,13 @@ function normalizePlayerId(value) {
   return Number.isFinite(num) ? num : text
 }
 
-function samePlayer(a, b) {
+function samePlayer(a: any, b: any) {
   const left = normalizePlayerId(a)
   const right = normalizePlayerId(b)
   return left != null && right != null && String(left) === String(right)
 }
 
-function rowActorId(row = {}) {
+function rowActorId(row: any = {}) {
   return normalizePlayerId(
     row.actor_id
     ?? row.player_id
@@ -653,7 +664,7 @@ function rowActorId(row = {}) {
   )
 }
 
-function rowTargetId(row = {}) {
+function rowTargetId(row: any = {}) {
   return normalizePlayerId(
     row.target_id
     ?? row.selected_target
@@ -665,7 +676,7 @@ function rowTargetId(row = {}) {
   )
 }
 
-function rowTargetIds(row = {}) {
+function rowTargetIds(row: any = {}) {
   return [
     rowTargetId(row),
     row.target,
@@ -675,7 +686,7 @@ function rowTargetIds(row = {}) {
   ].map((item) => normalizePlayerId(item)).filter((item) => item != null)
 }
 
-function rowText(row = {}) {
+function rowText(row: any = {}) {
   return normalizeHistoryDisplayText([
     row.message,
     row.public_summary,
@@ -691,14 +702,14 @@ function rowText(row = {}) {
   ].filter(Boolean).join(' '))
 }
 
-function rowMentionsPlayer(row = {}, playerId) {
+function rowMentionsPlayer(row: any = {}, playerId: any) {
   const id = normalizePlayerId(playerId)
   if (id == null) return false
   const text = rowText(row)
   return text.includes(`${id}号`) || text.includes(`#${id}`) || text.includes(`玩家${id}`)
 }
 
-function rowMatchesFocusedPlayer(row = {}, options = {}) {
+function rowMatchesFocusedPlayer(row: any = {}, options: RowFilterOptions = {}) {
   if (!hasPlayerFocus.value) return true
   const id = focusedPlayerId.value
   if (samePlayer(rowActorId(row), id)) return true
@@ -710,7 +721,7 @@ function rowMatchesFocusedPlayer(row = {}, options = {}) {
   return false
 }
 
-function rawLogKind(log = {}) {
+function rawLogKind(log: any = {}) {
   const type = String(log.event_type || log.type || log.action || log.action_type || log.kind || '').toLowerCase()
   const phase = String(log.phase || '').toLowerCase()
   const text = rowText(log).toLowerCase()
@@ -720,7 +731,7 @@ function rawLogKind(log = {}) {
   return 'system'
 }
 
-function decisionKey(decision, index = 0) {
+function decisionKey(decision: any, index = 0) {
   if (!decision) return `empty-${index}`
   return [
     decision.id ?? decision.decision_id ?? decision.sequence ?? decision.index ?? index,
@@ -732,14 +743,14 @@ function decisionKey(decision, index = 0) {
   ].map((part) => String(part)).join('|')
 }
 
-function actorLabel(row = {}) {
+function actorLabel(row: any = {}) {
   const name = row.actorName || row.actor_name || row.player_name || row.name || row.speaker
   if (name) return normalizeHistoryDisplayText(name)
   const id = rowActorId(row)
   return id == null ? '系统' : `${id}号`
 }
 
-function targetLabel(row = {}) {
+function targetLabel(row: any = {}) {
   const named = row.targetName || row.target_name || row.selected_target_name || row.target
   if (named != null && named !== '') {
     const text = normalizeHistoryDisplayText(named)
@@ -749,20 +760,20 @@ function targetLabel(row = {}) {
   return id == null ? '' : `${id}号`
 }
 
-function decisionSummary(row = {}) {
+function decisionSummary(row: any = {}) {
   return normalizeText(row.public_summary || row.public_text || row.summary || row.reason || row.private_reasoning || row.message || '')
 }
 
-function confidencePercent(row = {}) {
+function confidencePercent(row: any = {}) {
   const value = Number(row.confidence)
   if (!Number.isFinite(value)) return null
   return Math.round(Math.max(0, Math.min(value > 1 ? value : value * 100, 100)))
 }
 
-function speechTags(row = {}) {
+function speechTags(row: any = {}) {
   const text = decisionSummary(row).toLowerCase()
-  const tags = []
-  const tests = [
+  const tags: string[] = []
+  const tests: Array<[string, RegExp]> = [
     ['跳身份', /(我是|跳|身份|预言家|女巫|猎人|守卫|seer|witch|hunter|guard)/],
     ['查验', /(查验|验了|金水|查杀|银水|checked|inspect)/],
     ['踩人', /(怀疑|偏狼|像狼|出|踩|投|wolf)/],
@@ -776,7 +787,7 @@ function speechTags(row = {}) {
   return tags.slice(0, 4)
 }
 
-function voteCount(item = {}) {
+function voteCount(item: any = {}) {
   const count = Number(item.count)
   if (Number.isFinite(count) && count > 0) return count
   if (Array.isArray(item.votes)) return item.votes.length
@@ -785,14 +796,14 @@ function voteCount(item = {}) {
   return 0
 }
 
-function voterLabels(item = {}) {
+function voterLabels(item: any = {}) {
   if (Array.isArray(item.voters) && item.voters.length) return item.voters.map((value) => normalizeHistoryDisplayText(value)).filter(Boolean)
   if (Array.isArray(item.votes) && item.votes.length) return item.votes.map(actorLabel).filter(Boolean)
   if (Array.isArray(item.voter_ids) && item.voter_ids.length) return item.voter_ids.map((id) => `${id}号`)
   return []
 }
 
-function tallyVoteRows(votes = []) {
+function tallyVoteRows(votes: any[] = []) {
   const map = new Map()
   votes.forEach((vote) => {
     const target = targetLabel(vote) || '无目标'
@@ -806,34 +817,34 @@ function tallyVoteRows(votes = []) {
   return [...map.values()].sort((a, b) => voteCount(b) - voteCount(a) || String(a.target).localeCompare(String(b.target)))
 }
 
-function rawLogPhaseName(log) {
+function rawLogPhaseName(log: any) {
   const phase = log?.phase || log?.event_type || log?.type || props.selectedHistoryPage?.phase
   return displayPhaseLabel(phase) || normalizeHistoryDisplayText(phaseName(phase))
 }
 
-function setupInitMessage(log) {
+function setupInitMessage(log: any) {
   return normalizeText(log?.message || '').replace(/^游戏初始化[：:]\s*/, '')
 }
 
-function rawLogDayLabel(log) {
+function rawLogDayLabel(log: any) {
   const day = log?.day || props.selectedHistoryPage?.day
   return day ? `第${day}天` : '对局'
 }
 
-function candidateLabel(item) {
+function candidateLabel(item: any) {
   return `${item.seat}号${roleLabel(item.role)}`
 }
 
-function updatePage(key) {
+function updatePage(key: any) {
   emit('update:selectedHistoryPageKey', key)
   emit('select-page', key)
 }
 
-function updateDecision(decision) {
+function updateDecision(decision: any) {
   emit('update:selectedDecision', decision)
 }
 
-function updateDetailTab(tab) {
+function updateDetailTab(tab: any) {
   emit('update:detailTab', tab)
 }
 
@@ -869,11 +880,11 @@ function retrySelectedDetail() {
   return loadMoreSelectedPhase()
 }
 
-function selectWorkspaceTab(tab) {
+function selectWorkspaceTab(tab: any) {
   setWorkspaceTab(tab)
 }
 
-function selectAssessPlayer(player) {
+function selectAssessPlayer(player: any) {
   const nextId = player?.id ?? player?.seat ?? null
   selectedAssessPlayerId.value = samePlayer(selectedAssessPlayerId.value, nextId) ? null : nextId
   rawLogFilter.value = 'all'
@@ -889,7 +900,7 @@ function clearPlayerFocus() {
   <section class="battle-log-page" aria-label="对战日志">
     <section class="battle-log-shell parchment-logbook">
       <HistoryGameList
-        :games="gameHistory"
+        :games="gameHistoryForList"
         :selected-game-id="selectedHistoryGameId"
         :loading="historyLoading"
         :loading-more="historyLoadingMore"
@@ -952,7 +963,7 @@ function clearPlayerFocus() {
           <EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" />
           <PhaseTabs
             v-if="workspaceTab === 'phase'"
-            :pages="historyPages"
+            :pages="historyPagesForTabs"
             :selected-page-key="selectedHistoryPage?.key || selectedHistoryPageKey"
             :page-title="pageTitle"
             @update:selectedPageKey="updatePage"
@@ -991,7 +1002,7 @@ function clearPlayerFocus() {
                   <button
                     type="button"
                     class="phase-evidence-toggle"
-                    :aria-expanded="String(phaseEvidenceExpanded)"
+                    :aria-expanded="phaseEvidenceExpandedAttr"
                     :aria-controls="phaseEvidenceBodyId"
                     @click="togglePhaseEvidence"
                   >
@@ -1261,7 +1272,7 @@ function clearPlayerFocus() {
               <div class="history-side-card--assess">
                 <MultiAssess
                   v-if="playerAssessmentScores.length"
-                  :scores="activeAssessScores"
+                  :scores="activeAssessScoresForPanel"
                   :dimension="assessDimension"
                   :role-icon-image="props.roleIconImage"
                   :selected-player-id="activeAssessPlayerId"
