@@ -2462,19 +2462,16 @@ def test_benchmark_batch_detail_games_and_diagnostics_after_launch(tmp_path: Pat
     assert diagnostics_status["summary"]["total"] == 1
 
 
-def test_benchmark_service_requires_complete_store_implementations(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_benchmark_service_no_longer_requires_store_callable_map(tmp_path: Path) -> None:
     store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
-    monkeypatch.setattr(
-        ui_backend_store,
-        "BENCHMARK_PUBLIC_METHODS",
-        ("missing_benchmark_method",),
-    )
 
-    with pytest.raises(RuntimeError, match="missing_benchmark_method"):
-        _ = store.benchmark_service
+    service = store.benchmark_service
+
+    assert store.benchmark_service is service
+    assert isinstance(service, benchmark_service_module.BenchmarkService)
+    assert not hasattr(ui_backend_store, "BENCHMARK_PUBLIC_METHODS")
+    assert not hasattr(benchmark_service_module, "BENCHMARK_PUBLIC_METHODS")
+    assert not hasattr(store, "_create_benchmark_snapshot")
 
 
 def test_benchmark_service_facade_preserves_public_monkeypatch_compatibility(tmp_path: Path) -> None:

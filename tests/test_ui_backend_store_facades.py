@@ -620,9 +620,8 @@ def test_benchmark_facades_delegate_to_cached_service(
     instances: list[Any] = []
 
     class FakeBenchmarkService:
-        def __init__(self, store: Any, *, callables: dict[str, Any]) -> None:
+        def __init__(self, store: Any) -> None:
             self.store = store
-            self.callables = callables
             self.calls: list[tuple[Any, ...]] = []
             instances.append(self)
 
@@ -648,21 +647,14 @@ def test_benchmark_facades_delegate_to_cached_service(
             self.calls.append(("benchmark_batch_games", batch_id, kwargs))
             return {"batch_id": batch_id, "kwargs": kwargs}
 
-    monkeypatch.setattr(ui_backend_store, "BENCHMARK_PUBLIC_METHODS", ("facade_probe",))
     monkeypatch.setattr(ui_backend_store, "BenchmarkService", FakeBenchmarkService)
     store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
-
-    def facade_probe() -> str:
-        return "probe"
-
-    store._facade_probe = facade_probe  # type: ignore[attr-defined]
 
     service = store.benchmark_service
 
     assert store.benchmark_service is service
     assert instances == [service]
     assert service.store is store
-    assert service.callables == {"facade_probe": facade_probe}
     assert store.leaderboard_entries(
         scope="role_version",
         evaluation_set_id="eval-1",
@@ -722,22 +714,17 @@ def test_benchmark_snapshot_facades_delegate_to_snapshot_service(tmp_path: Path)
 
         return call
 
-    def fail_report_callable(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("benchmark report methods should use BenchmarkReportService")
+    class FakeSnapshotService:
+        create_benchmark_snapshot = staticmethod(recorder("create_benchmark_snapshot"))
+        list_benchmark_snapshots = staticmethod(recorder("list_benchmark_snapshots"))
+        get_benchmark_snapshot = staticmethod(recorder("get_benchmark_snapshot"))
+        benchmark_snapshot_export = staticmethod(recorder("benchmark_snapshot_export"))
+        benchmark_snapshot_compare = staticmethod(recorder("benchmark_snapshot_compare"))
+        save_benchmark_view = staticmethod(recorder("save_benchmark_view"))
+        list_benchmark_views = staticmethod(recorder("list_benchmark_views"))
+        get_benchmark_view = staticmethod(recorder("get_benchmark_view"))
+        delete_benchmark_view = staticmethod(recorder("delete_benchmark_view"))
 
-    callables = {
-        "benchmark_batch_report": fail_report_callable,
-        "benchmark_reports": fail_report_callable,
-        "create_benchmark_snapshot": recorder("create_benchmark_snapshot"),
-        "list_benchmark_snapshots": recorder("list_benchmark_snapshots"),
-        "get_benchmark_snapshot": recorder("get_benchmark_snapshot"),
-        "benchmark_snapshot_export": recorder("benchmark_snapshot_export"),
-        "benchmark_snapshot_compare": recorder("benchmark_snapshot_compare"),
-        "save_benchmark_view": recorder("save_benchmark_view"),
-        "list_benchmark_views": recorder("list_benchmark_views"),
-        "get_benchmark_view": recorder("get_benchmark_view"),
-        "delete_benchmark_view": recorder("delete_benchmark_view"),
-    }
     batch = {
         "kind": "benchmark_batch",
         "batch_id": "batch-1",
@@ -771,7 +758,8 @@ def test_benchmark_snapshot_facades_delegate_to_snapshot_service(tmp_path: Path)
         ],
     }
     context = SimpleNamespace(paths=PathConfig(root=tmp_path), evolution_batches={"batch-1": batch})
-    service = BenchmarkService(context, callables=callables)
+    service = BenchmarkService(context)
+    service._snapshots = FakeSnapshotService()  # type: ignore[attr-defined]
     snapshot_request = object()
     view_request = object()
 

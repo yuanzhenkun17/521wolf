@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Mapping
-from inspect import isawaitable
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from fastapi import HTTPException
@@ -26,24 +25,7 @@ from ui.backend.services.task_service import BackgroundTaskServiceProtocol
 from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import _set_task_contract
 
-BenchmarkCallable = Callable[..., Any]
 _TERMINAL_BENCHMARK_SSE_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
-
-BENCHMARK_PUBLIC_METHODS: tuple[str, ...] = (
-    "plan_benchmark",
-    "queue_benchmark",
-    "run_queued_benchmark",
-    "benchmark_model_runtime",
-    "create_benchmark_snapshot",
-    "list_benchmark_snapshots",
-    "get_benchmark_snapshot",
-    "benchmark_snapshot_export",
-    "benchmark_snapshot_compare",
-    "save_benchmark_view",
-    "list_benchmark_views",
-    "get_benchmark_view",
-    "delete_benchmark_view",
-)
 
 
 class BenchmarkServiceContextProtocol(Protocol):
@@ -60,21 +42,13 @@ class BenchmarkServiceContextProtocol(Protocol):
 class BenchmarkService:
     """Compatibility facade for benchmark-facing ``BackendStore`` methods."""
 
-    def __init__(
-        self,
-        context: BenchmarkServiceContextProtocol,
-        callables: Mapping[str, BenchmarkCallable] | None = None,
-        *,
-        allow_context_fallback: bool = False,
-    ) -> None:
+    def __init__(self, context: BenchmarkServiceContextProtocol) -> None:
         self._context = context
-        self._callables = dict(callables or {})
-        self._allow_context_fallback = allow_context_fallback
         self._catalog = BenchmarkCatalogService(context)
         self._leaderboards = BenchmarkLeaderboardService(context)
         self._reports = BenchmarkReportService(context)
         self._runs = BenchmarkRunService(context, catalog=self._catalog)
-        self._snapshots = BenchmarkSnapshotService(context, self._callables, resolver=self._resolve)
+        self._snapshots = BenchmarkSnapshotService(context)
 
     @property
     def context(self) -> BenchmarkServiceContextProtocol:
@@ -165,28 +139,6 @@ class BenchmarkService:
 
     def delete_benchmark_saved_view(self, view_key: str) -> bool:
         return self._snapshots.delete_benchmark_saved_view(view_key)
-
-    def _resolve(self, method_name: str) -> BenchmarkCallable:
-        if method_name in self._callables:
-            target = self._callables[method_name]
-            if callable(target):
-                return target
-            raise TypeError(f"BenchmarkService callable is not callable: {method_name}")
-
-        if self._allow_context_fallback:
-            target = getattr(self._context, method_name, None)
-            if callable(target):
-                return target
-        raise AttributeError(f"BenchmarkService cannot resolve benchmark method: {method_name}")
-
-    def _call(self, method_name: str, /, *args: Any, **kwargs: Any) -> Any:
-        return self._resolve(method_name)(*args, **kwargs)
-
-    async def _acall(self, method_name: str, /, *args: Any, **kwargs: Any) -> Any:
-        result = self._resolve(method_name)(*args, **kwargs)
-        if isawaitable(result):
-            return await result
-        return result
 
     @staticmethod
     def sse_event(status: Any) -> str:

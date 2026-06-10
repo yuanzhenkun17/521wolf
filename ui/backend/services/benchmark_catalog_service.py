@@ -343,6 +343,9 @@ class BenchmarkCatalogService:
     ) -> list[dict[str, Any]]:
         loader = getattr(self._context, "_load_benchmark_snapshot_summaries", None)
         if not callable(loader):
+            benchmark_service = getattr(self._context, "benchmark_service", None)
+            loader = getattr(benchmark_service, "load_benchmark_snapshot_summaries", None)
+        if not callable(loader):
             return []
         return loader(
             scope=scope,

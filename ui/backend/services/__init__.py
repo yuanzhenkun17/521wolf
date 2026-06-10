@@ -1,7 +1,6 @@
 """Backend service facades."""
 
 from ui.backend.services.benchmark_service import (
-    BENCHMARK_PUBLIC_METHODS,
     BenchmarkService,
     BenchmarkServiceContextProtocol,
 )
@@ -35,7 +34,6 @@ from ui.backend.services.task_persistence_service import TaskPersistenceService
 from ui.backend.services.task_service import BackgroundTaskServiceProtocol, TaskService
 
 __all__ = [
-    "BENCHMARK_PUBLIC_METHODS",
     "BackgroundTaskServiceProtocol",
     "BenchmarkCatalogService",
     "BenchmarkLeaderboardService",
