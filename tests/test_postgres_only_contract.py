@@ -145,7 +145,7 @@ class _LocalGameArtifactVisitor(ast.NodeVisitor):
             artifact_names = sorted(
                 filename
                 for filename in LOCAL_GAME_ARTIFACT_FILENAMES
-                if filename in node.value
+                if _mentions_artifact_filename(node.value, filename)
             )
             if artifact_names and not self._is_explicit_export_context():
                 self._add(node, f"references local game artifact(s): {', '.join(artifact_names)}")
@@ -168,3 +168,10 @@ class _LocalGameArtifactVisitor(ast.NodeVisitor):
     def _add(self, node: ast.AST, message: str) -> None:
         rel = self.path.relative_to(ROOT)
         self.findings.append(f"{rel}:{getattr(node, 'lineno', '?')}: {message}")
+
+
+def _mentions_artifact_filename(value: str, filename: str) -> bool:
+    if value == filename:
+        return True
+    escaped = re.escape(filename)
+    return re.search(rf"(^|[\\/]){escaped}($|[\\/\s\"'])", value) is not None
