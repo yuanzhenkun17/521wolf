@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createGameApi } from './gameApi.ts'
 import { normalizeGameSnapshot } from './gameSnapshot.ts'
@@ -25,6 +24,8 @@ import {
   eventTargetId,
   sheriffIdAfterLog
 } from './gameTimeline.ts'
+
+type LooseRecord = Record<string, any>
 
 const HISTORY_PHASE_ALIASES = {
   result: 'night',
@@ -173,7 +174,7 @@ function actorId(row) {
   return numericHistoryId(row?.actor_id ?? row?.player_id ?? row?.actor ?? row?.playerId ?? row?.payload?.actor_id)
 }
 
-function rowType(row = {}) {
+function rowType(row: LooseRecord = {}) {
   return String(row.type || row.event_type || row.action || row.action_type || row.kind || '').trim()
 }
 
@@ -181,7 +182,7 @@ function voteActionPhase(row) {
   return VOTE_PHASE_BY_TYPE[rowType(row)] || ''
 }
 
-function rowHistoryPhase(row = {}, fallback = 'setup') {
+function rowHistoryPhase(row: LooseRecord = {}, fallback = 'setup') {
   const rawPhase = normalizeHistoryPhase(row?.phase ?? fallback)
   const votePhase = voteActionPhase(row)
   if (rawPhase === 'vote' && votePhase && votePhase !== 'sheriff_vote') return votePhase
@@ -198,7 +199,7 @@ function votePhaseMatches(row, pagePhase) {
   return false
 }
 
-function replayVotesForPage(rows = [], page = {}) {
+function replayVotesForPage(rows = [], page: LooseRecord = {}) {
   const currentDay = normalizeHistoryDay(page.day)
   const currentPhase = normalizeHistoryPhase(page.phase)
   return rows.reduce((votes, row, index) => {
@@ -229,7 +230,7 @@ function tallyReplayVotes(votes = []) {
   return [...grouped.values()].sort((a, b) => b.count - a.count || a.target_id - b.target_id)
 }
 
-function hasReplayVoteResultLog(logs = [], page = {}) {
+function hasReplayVoteResultLog(logs = [], page: LooseRecord = {}) {
   const currentDay = normalizeHistoryDay(page.day)
   const currentPhase = normalizeHistoryPhase(page.phase)
   return logs.some((log) =>
@@ -239,7 +240,7 @@ function hasReplayVoteResultLog(logs = [], page = {}) {
   )
 }
 
-function buildReplayVoteTally(decisions = [], page = {}, logs = [], sourceLogs = logs) {
+function buildReplayVoteTally(decisions = [], page: LooseRecord = {}, logs = [], sourceLogs = logs) {
   const currentPhase = normalizeHistoryPhase(page.phase)
   if (!REPLAY_VOTE_PHASES.has(currentPhase)) return []
 
@@ -258,7 +259,7 @@ function historyGameShellPath(gameId) {
   return `${historyGamePath(gameId)}?view=history-shell`
 }
 
-function historyGamePhasePath(gameId, page, pagination = {}) {
+function historyGamePhasePath(gameId, page, pagination: LooseRecord = {}) {
   const params = new URLSearchParams()
   params.set('day', String(normalizeHistoryDay(page?.day)))
   params.set('phase', normalizeHistoryPhase(page?.phase))
@@ -338,7 +339,7 @@ function mergeHistoryGames(existing, incoming) {
   })
 }
 
-function historyPageFromSummary(summary = {}, index = 0) {
+function historyPageFromSummary(summary: LooseRecord = {}, index = 0) {
   const parsed = parseHistoryPageKey(summary.key || summary.phase_key)
   const day = normalizeHistoryDay(summary.day ?? summary.day_number ?? parsed?.day ?? 1)
   const phase = normalizeHistoryPhase(summary.phase ?? summary.name ?? parsed?.phase ?? 'setup')
@@ -355,7 +356,7 @@ function historyPageFromSummary(summary = {}, index = 0) {
   }
 }
 
-function historyPagesFromRows(logs = [], decisions = [], source = {}) {
+function historyPagesFromRows(logs = [], decisions = [], source: LooseRecord = {}) {
   const map = new Map()
   const ensurePage = (day, phase) => {
     const normalizedDay = normalizeHistoryDay(day)
@@ -397,7 +398,7 @@ function historyPagesFromRows(logs = [], decisions = [], source = {}) {
     .map((page, index) => ({ ...page, index }))
 }
 
-function historyPagesFromShell(source = {}) {
+function historyPagesFromShell(source: LooseRecord = {}) {
   const explicitPages = source.phases || source.history_pages || source.phase_index || source.pages
   if (Array.isArray(explicitPages) && explicitPages.length) {
     return explicitPages
@@ -414,7 +415,7 @@ function historyPageTotals(pages = [], field) {
   return pages.reduce((total, page) => total + (Number(page?.[field]) || 0), 0)
 }
 
-function phaseDetailKey(page = {}) {
+function phaseDetailKey(page: LooseRecord = {}) {
   return String(page.key || historyPageKey(page.day, page.phase))
 }
 
@@ -422,7 +423,7 @@ function phaseRequestKey(gameId, page) {
   return `${gameId}:${phaseDetailKey(page)}`
 }
 
-function phaseFetchKey(gameId, page, pagination = {}) {
+function phaseFetchKey(gameId, page, pagination: LooseRecord = {}) {
   return [
     phaseRequestKey(gameId, page),
     Number(pagination.log_offset ?? 0) || 0,
@@ -432,7 +433,7 @@ function phaseFetchKey(gameId, page, pagination = {}) {
   ].join(':')
 }
 
-function phasePagePagination(raw = {}, rows = [], fallback = {}) {
+function phasePagePagination(raw: LooseRecord = {}, rows = [], fallback: LooseRecord = {}) {
   const returned = Number(raw.returned ?? rows.length ?? 0)
   const offset = Math.max(0, Number(raw.offset ?? fallback.offset ?? 0) || 0)
   const limit = Math.max(1, Number(raw.limit ?? fallback.limit ?? rows.length ?? 1) || 1)
@@ -446,7 +447,7 @@ function phasePagePagination(raw = {}, rows = [], fallback = {}) {
   }
 }
 
-function phasePaginationFromResponse(raw = {}, logs = [], decisions = {}, request = {}) {
+function phasePaginationFromResponse(raw: LooseRecord = {}, logs = [], decisions = {}, request: LooseRecord = {}) {
   const pagination = raw?.pagination && typeof raw.pagination === 'object' ? raw.pagination : {}
   const logRows = Array.isArray(logs) ? logs : []
   const decisionRows = Array.isArray(decisions) ? decisions : []
@@ -482,7 +483,7 @@ function historyPhaseDetailsObject(cache) {
   return Object.fromEntries([...cache.entries()])
 }
 
-function replayEventIdentity(row = {}) {
+function replayEventIdentity(row: LooseRecord = {}) {
   const stable = row.id ?? row.event_id ?? row.idx ?? row.sequence
   if (stable != null) return String(stable)
   return [
@@ -495,7 +496,7 @@ function replayEventIdentity(row = {}) {
   ].join(':')
 }
 
-function replayDecisionIdentity(row = {}) {
+function replayDecisionIdentity(row: LooseRecord = {}) {
   const stable = row.id ?? row.decision_id
   if (stable != null) return String(stable)
   return [
@@ -543,7 +544,7 @@ function mergeReplayDecisions(existingRows = [], chunkRows = []) {
     })
 }
 
-function normalizeHistoryShell(raw = {}, cache = new Map()) {
+function normalizeHistoryShell(raw: LooseRecord = {}, cache = new Map()) {
   const pages = historyPagesFromShell(raw)
   const normalized = normalizeGameSnapshot({
     ...raw,
@@ -570,7 +571,7 @@ function normalizeHistoryShell(raw = {}, cache = new Map()) {
   }
 }
 
-function normalizePhaseDetail(raw = {}, page = {}, shell = {}, request = {}) {
+function normalizePhaseDetail(raw: LooseRecord = {}, page: LooseRecord = {}, shell: LooseRecord = {}, request: LooseRecord = {}) {
   const logs = Array.isArray(raw.logs)
     ? raw.logs
     : (Array.isArray(raw.events) ? raw.events : [])
@@ -600,7 +601,7 @@ function normalizePhaseDetail(raw = {}, page = {}, shell = {}, request = {}) {
   }
 }
 
-function useGameHistory(state, options = {}) {
+function useGameHistory(state, options: LooseRecord = {}) {
   const { apiFetch } = options.apiFetch ? { apiFetch: options.apiFetch } : createGameApi(options.apiBase)
   let actionApi = options.actionApi || {}
   let sceneApi = options.sceneApi || {}
@@ -912,8 +913,8 @@ function useGameHistory(state, options = {}) {
     }
   }
 
-  function normalizeReplaySource(raw = {}, gameId = '', existing = null) {
-    const payload = raw?.game || raw?.replay || raw?.data || raw
+  function normalizeReplaySource(raw: LooseRecord = {}, gameId = '', existing = null) {
+    const payload: LooseRecord = raw?.game || raw?.replay || raw?.data || raw
     const chunkLogs = Array.isArray(payload.logs) ? payload.logs : (Array.isArray(payload.events) ? payload.events : [])
     const existingLogs = replayEvents(existing)
     const existingDecisions = Array.isArray(existing?.decisions) ? existing.decisions : []
@@ -1012,8 +1013,8 @@ function useGameHistory(state, options = {}) {
     return promise
   }
 
-  function normalizeFlowData(raw = {}, gameId = '') {
-    const payload = raw?.data || raw
+  function normalizeFlowData(raw: LooseRecord = {}, gameId = '') {
+    const payload: LooseRecord = raw?.data || raw
     const normalized = normalizeGameSnapshot({
       ...payload,
       game_id: payload.game_id || gameId,
