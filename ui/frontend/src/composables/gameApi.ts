@@ -1,8 +1,11 @@
-// @ts-nocheck
-const viteEnv = import.meta.env || {}
+import type { ApiErrorPayload } from '../types/api'
+
+const viteEnv = import.meta.env
 const API = viteEnv.VITE_API_BASE || '/api'
 const USE_FRONTEND_MOCK = viteEnv.VITE_USE_FRONTEND_MOCK === 'true'
-let mockApiFetchPromise = null
+type LegacyRequestOptions = RequestInit & Record<string, any>
+
+let mockApiFetchPromise: Promise<(path: string, options?: LegacyRequestOptions) => Promise<unknown>> | null = null
 
 const REQUEST_ID_HEADERS = ['x-request-id', 'x-correlation-id', 'x-trace-id']
 const STATUS_ERROR_CODES = {
@@ -18,6 +21,14 @@ const STATUS_ERROR_CODES = {
 }
 
 class ApiError extends Error {
+  status: number
+  code: string
+  detail: unknown
+  diagnostics: unknown[]
+  requestId: string | null
+  payload: unknown
+  body: string
+
   constructor({
     status = 0,
     code = '',
@@ -27,6 +38,15 @@ class ApiError extends Error {
     requestId = null,
     payload = null,
     body = ''
+  }: {
+    status?: number
+    code?: string
+    message?: string
+    detail?: unknown
+    diagnostics?: unknown[]
+    requestId?: string | null
+    payload?: unknown
+    body?: string
   } = {}) {
     super(message || (status ? `HTTP ${status}` : 'API request failed'))
     this.name = 'ApiError'
@@ -40,7 +60,7 @@ class ApiError extends Error {
   }
 }
 
-async function apiFetchMock(path, options = {}) {
+async function apiFetchMock(path: string, options: LegacyRequestOptions = {}) {
   if (!mockApiFetchPromise) {
     mockApiFetchPromise = import('../mockAgentGame.ts').then((module) => module.mockApiFetch)
   }
@@ -48,15 +68,15 @@ async function apiFetchMock(path, options = {}) {
   return mockApiFetch(path, options)
 }
 
-function isObject(value) {
+function isObject(value: unknown): value is Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function hasOwn(value, key) {
+function hasOwn(value: unknown, key: string) {
   return Object.prototype.hasOwnProperty.call(value, key)
 }
 
-function firstText(...values) {
+function firstText(...values: unknown[]): string {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value
     if (value != null && typeof value !== 'object') {
@@ -67,13 +87,13 @@ function firstText(...values) {
   return ''
 }
 
-function httpErrorCode(status) {
+function httpErrorCode(status: unknown): string {
   const normalized = Number(status)
   if (STATUS_ERROR_CODES[normalized]) return STATUS_ERROR_CODES[normalized]
   return normalized ? `http_${normalized}` : 'api_error'
 }
 
-function requestIdFromHeaders(headers) {
+function requestIdFromHeaders(headers: Headers | null | undefined): string | null {
   if (!headers || typeof headers.get !== 'function') return null
   for (const header of REQUEST_ID_HEADERS) {
     const value = headers.get(header)
@@ -82,7 +102,7 @@ function requestIdFromHeaders(headers) {
   return null
 }
 
-function requestIdFromPayload(payload) {
+function requestIdFromPayload(payload: unknown): string | null {
   if (!isObject(payload)) return null
   const error = isObject(payload.error) ? payload.error : {}
   return firstText(
@@ -95,7 +115,7 @@ function requestIdFromPayload(payload) {
   ) || null
 }
 
-function stringifyFallback(value) {
+function stringifyFallback(value: unknown): string {
   if (value == null) return ''
   if (typeof value === 'string') return value
   if (typeof value !== 'object') return String(value)
@@ -106,7 +126,7 @@ function stringifyFallback(value) {
   }
 }
 
-function messageFromDetail(detail) {
+function messageFromDetail(detail: unknown): string {
   if (typeof detail === 'string') return detail
   if (Array.isArray(detail)) {
     return detail
@@ -126,7 +146,7 @@ function messageFromDetail(detail) {
   return stringifyFallback(detail)
 }
 
-async function readErrorPayload(response) {
+async function readErrorPayload(response: Response): Promise<{ payload: ApiErrorPayload | null; text: string; requestId: string | null }> {
   const text = await response.text().catch(() => '')
   if (!text) {
     return {
@@ -150,7 +170,17 @@ async function readErrorPayload(response) {
   }
 }
 
-function normalizeApiError({ response = null, payload = null, text = '', requestId = null } = {}) {
+function normalizeApiError({
+  response = null,
+  payload = null,
+  text = '',
+  requestId = null
+}: {
+  response?: Response | null
+  payload?: ApiErrorPayload | null
+  text?: string
+  requestId?: string | null
+} = {}) {
   const status = Number(response?.status || 0)
   const error = isObject(payload?.error) ? payload.error : {}
   const detail = isObject(payload) && hasOwn(payload, 'detail')
@@ -184,7 +214,7 @@ function normalizeApiError({ response = null, payload = null, text = '', request
 }
 
 function createGameApi(apiBase = API) {
-  async function apiFetch(path, options = {}) {
+  async function apiFetch(path: string, options: LegacyRequestOptions = {}) {
     if (USE_FRONTEND_MOCK) {
       return apiFetchMock(path, options)
     }

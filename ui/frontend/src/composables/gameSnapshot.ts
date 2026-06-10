@@ -1,4 +1,17 @@
-// @ts-nocheck
+import type {
+  Decision,
+  Game,
+  GameLog,
+  GamePhase,
+  PendingAction,
+  PendingActionOption,
+  PendingHumanAction,
+  Player,
+  SkillState
+} from '../types/game'
+
+type LooseRecord = Record<string, any>
+
 const ROLE_LABELS = {
   white_wolf_king: '白狼王',
   werewolf: '狼人',
@@ -74,100 +87,119 @@ const ACTION_PROMPTS = {
   hunter_shoot: '请选择开枪目标。'
 }
 
-function normalizePhase(phase) {
-  return PHASE_ALIASES[phase] || phase || 'setup'
+function isRecord(value: unknown): value is LooseRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function normalizeRole(role) {
-  return ROLE_LABELS[role] || role || '未知'
+function objectOrEmpty(value: unknown): LooseRecord {
+  return isRecord(value) ? value : {}
 }
 
-function normalizeLogEntry(log = {}) {
-  const actorId = log.actor_id ?? log.actor ?? log.player_id ?? log.playerId ?? log.speaker_id ?? log.speakerId
-  const targetId = log.target_id ?? log.target
-  const message = log.message ?? log._message ?? log.content ?? log.text ?? log.public_summary ?? log.public_text ?? ''
+function arrayOrEmpty<T = unknown>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : []
+}
+
+function normalizePhase(phase: unknown): GamePhase {
+  const text = typeof phase === 'string' ? phase : String(phase || '')
+  return PHASE_ALIASES[text] || text || 'setup'
+}
+
+function normalizeRole(role: unknown): string {
+  const text = typeof role === 'string' ? role : String(role || '')
+  return ROLE_LABELS[text] || text || '未知'
+}
+
+function normalizeLogEntry(log: unknown = {}): GameLog {
+  const source = objectOrEmpty(log)
+  const actorId = source.actor_id ?? source.actor ?? source.player_id ?? source.playerId ?? source.speaker_id ?? source.speakerId
+  const targetId = source.target_id ?? source.target
+  const message = source.message ?? source._message ?? source.content ?? source.text ?? source.public_summary ?? source.public_text ?? ''
   return {
-    ...log,
-    sequence: log.sequence ?? log.index ?? 0,
-    phase: normalizePhase(log.phase),
-    type: log.type || log.event_type || log.action || log.action_type || log.kind || '',
+    ...source,
+    sequence: source.sequence ?? source.index ?? 0,
+    phase: normalizePhase(source.phase),
+    type: source.type || source.event_type || source.action || source.action_type || source.kind || '',
     actor_id: actorId,
     target_id: targetId,
-    speaker: log.speaker || log._speaker || log.actor_name || log.player_name || (actorId ? `${actorId}号` : '法官'),
-    visibility: log.visibility || (log.public === false ? 'private' : 'public'),
+    speaker: source.speaker || source._speaker || source.actor_name || source.player_name || (actorId ? `${actorId}号` : '法官'),
+    visibility: source.visibility || (source.public === false ? 'private' : 'public'),
     message
   }
 }
 
-function normalizeDecisionEntry(decision = {}, index = 0) {
-  const action = decision.action || decision.action_type || ''
-  const actorId = decision.actor_id ?? decision.player_id
-  const targetId = decision.target_id ?? decision.selected_target
-  const publicSummary = decision.public_summary || decision.public_text || decision.text || ''
-  const selectedSkills = decision.selected_skills || []
+function normalizeDecisionEntry(decision: unknown = {}, index = 0): Decision {
+  const source = objectOrEmpty(decision)
+  const action = source.action || source.action_type || ''
+  const actorId = source.actor_id ?? source.player_id
+  const targetId = source.target_id ?? source.selected_target
+  const publicSummary = source.public_summary || source.public_text || source.text || ''
+  const selectedSkills = arrayOrEmpty(source.selected_skills)
   return {
-    ...decision,
-    index: decision.index ?? index,
-    id: decision.id || decision.decision_id || `decision_${index}`,
+    ...source,
+    index: source.index ?? index,
+    id: source.id || source.decision_id || `decision_${index}`,
     actor_id: actorId,
-    player_id: decision.player_id ?? actorId,
+    player_id: source.player_id ?? actorId,
     target_id: targetId,
     action,
     action_type: action,
-    phase: normalizePhase(decision.phase),
+    phase: normalizePhase(source.phase),
     public_summary: publicSummary,
-    reason: decision.reason || decision.private_reasoning || publicSummary,
-    selected_skill: decision.selected_skill || selectedSkills[0] || null,
-    memory_refs: decision.memory_refs || decision.memory_summary || [],
-    belief_snapshot: decision.belief_snapshot || {},
-    source: decision.source || 'llm',
-    confidence: decision.confidence ?? 0
+    reason: source.reason || source.private_reasoning || publicSummary,
+    selected_skill: source.selected_skill || selectedSkills[0] || null,
+    memory_refs: source.memory_refs || source.memory_summary || [],
+    belief_snapshot: source.belief_snapshot || {},
+    source: source.source || 'llm',
+    confidence: source.confidence ?? 0
   }
 }
 
-function normalizePlayer(player = {}, humanPlayerId = null) {
-  const id = Number(player.id ?? player.seat ?? 0)
-  const role = player.role || player.role_hint || ''
+function normalizePlayer(player: unknown = {}, humanPlayerId: unknown = null): Player {
+  const source = objectOrEmpty(player)
+  const id = Number(source.id ?? source.seat ?? 0)
+  const role = source.role || source.role_hint || ''
   return {
-    ...player,
+    ...source,
     id,
-    seat: player.seat || id,
-    name: player.name || (id ? `${id}号` : '玩家'),
-    role_hint: player.role_hint || normalizeRole(role),
-    alive: player.alive !== false,
-    is_human: player.is_human || (humanPlayerId != null && id === Number(humanPlayerId)),
-    is_sheriff: Boolean(player.is_sheriff)
+    seat: source.seat || id,
+    name: source.name || (id ? `${id}号` : '玩家'),
+    role_hint: source.role_hint || normalizeRole(role),
+    alive: source.alive !== false,
+    is_human: source.is_human || (humanPlayerId != null && id === Number(humanPlayerId)),
+    is_sheriff: Boolean(source.is_sheriff)
   }
 }
 
-function choiceOptionsForAction(actionType, metadata = {}) {
-  if (actionType === 'speech_order' && Array.isArray(metadata.choices) && metadata.choices.length) {
-    return metadata.choices.map((value) => ({
-      value,
+function choiceOptionsForAction(actionType: unknown, metadata: unknown = {}): PendingActionOption[] {
+  const source = objectOrEmpty(metadata)
+  if (actionType === 'speech_order' && Array.isArray(source.choices) && source.choices.length) {
+    return source.choices.map((value) => ({
+      value: String(value),
       label: value === 'reverse' ? '逆序发言' : '顺序发言'
     }))
   }
-  return CHOICE_ACTIONS[actionType] || []
+  return CHOICE_ACTIONS[String(actionType || '')] || []
 }
 
-function targetRequiredForAction(actionType, metadata = {}) {
+function targetRequiredForAction(actionType: unknown, metadata: unknown = {}): boolean {
+  const source = objectOrEmpty(metadata)
   const action = canonicalActionType(actionType)
-  if (typeof metadata.target_required === 'boolean') return metadata.target_required
-  if (typeof metadata.allow_no_target === 'boolean') return !metadata.allow_no_target
+  if (typeof source.target_required === 'boolean') return source.target_required
+  if (typeof source.allow_no_target === 'boolean') return !source.allow_no_target
   if (OPTIONAL_TARGET_ACTIONS.has(action)) return false
   return REQUIRED_TARGET_ACTIONS.has(action)
 }
 
-function normalizeCandidateIds(value = []) {
+function normalizeCandidateIds(value: unknown = []): number[] {
   if (!Array.isArray(value)) return []
   return value
-    .map((item) => Number(typeof item === 'object' && item !== null ? (item.id ?? item.player_id ?? item.seat) : item))
+    .map((item) => Number(isRecord(item) ? (item.id ?? item.player_id ?? item.seat) : item))
     .filter((id) => Number.isFinite(id) && id > 0)
 }
 
-function normalizeSkillState(game, pending = null) {
+function normalizeSkillState(game: Partial<Game>, pending: PendingHumanAction | null = null): SkillState {
   const human = game.players?.find((player) => player.id === Number(game.human_player_id))
-  const roleState = human?.role_state || pending?.observation?.role_state || {}
+  const roleState = objectOrEmpty(human?.role_state ?? pending?.observation?.role_state)
   const antidoteUsed = roleState.antidote_available === false || Boolean(roleState.antidote_history?.length)
   const poisonUsed = roleState.poison_available === false || Boolean(roleState.poison_history?.length)
   return {
@@ -178,7 +210,12 @@ function normalizeSkillState(game, pending = null) {
   }
 }
 
-function normalizePendingHumanAction(pending) {
+function normalizePendingHumanAction(pending: unknown): {
+  waiting_for: string
+  pending_action: PendingAction | null
+  pending_human_action: PendingHumanAction | null
+  current_speaker_id?: number | null
+} {
   if (!pending) {
     return {
       waiting_for: 'none',
@@ -187,24 +224,25 @@ function normalizePendingHumanAction(pending) {
     }
   }
 
-  const actionType = canonicalActionType(pending.action_type || pending.type || '')
-  const metadata = pending.metadata || {}
-  const roleState = pending.observation?.role_state || {}
-  const candidates = normalizeCandidateIds(pending.candidate_ids || pending.candidates || [])
+  const source = objectOrEmpty(pending)
+  const actionType = canonicalActionType(source.action_type || source.type || '')
+  const metadata = objectOrEmpty(source.metadata)
+  const roleState = objectOrEmpty(source.observation?.role_state)
+  const candidates = normalizeCandidateIds(source.candidate_ids || source.candidates || [])
   const targetRequired = targetRequiredForAction(actionType, {
     ...metadata,
-    target_required: pending.target_required ?? metadata.target_required,
-    allow_no_target: pending.allow_no_target ?? metadata.allow_no_target
+    target_required: source.target_required ?? metadata.target_required,
+    allow_no_target: source.allow_no_target ?? metadata.allow_no_target
   })
   const allowNoTarget = !targetRequired
   const normalizedPending = {
-    ...pending,
+    ...source,
     action_type: actionType,
     type: actionType,
     candidate_ids: candidates,
     target_required: targetRequired,
     allow_no_target: allowNoTarget
-  }
+  } as PendingHumanAction
   const waitingFor = SPEECH_ACTIONS.has(actionType)
     ? 'speech'
     : (VOTE_ACTIONS.has(actionType) ? 'vote' : 'action')
@@ -216,7 +254,7 @@ function normalizePendingHumanAction(pending) {
       ? null
       : {
           type: actionType,
-          prompt: pending.prompt || ACTION_PROMPTS[actionType] || '请选择本轮行动。',
+          prompt: source.prompt || ACTION_PROMPTS[actionType] || '请选择本轮行动。',
           candidate_ids: candidates,
           target_required: targetRequired,
           allow_no_target: allowNoTarget,
@@ -230,35 +268,37 @@ function normalizePendingHumanAction(pending) {
             attacked_player: metadata.attacked_player ?? null
           }
         },
-    current_speaker_id: SPEECH_ACTIONS.has(actionType) ? normalizedPending.player_id : null
+    current_speaker_id: SPEECH_ACTIONS.has(actionType) ? normalizedPending.player_id ?? null : null
   }
 }
 
-function normalizeGameSnapshot(raw, options = {}) {
-  if (!raw) return raw
+function normalizeGameSnapshot(raw: unknown, options: { mode?: string; pending?: unknown } = {}): Game | null {
+  if (!raw) return raw as null
 
-  const pending = options.pending !== undefined ? options.pending : raw.pending_human_action
-  const humanPlayerId = raw.human_player_id ?? pending?.player_id ?? null
-  const events = Array.isArray(raw.logs)
-    ? raw.logs
-    : (Array.isArray(raw.events) ? raw.events : [])
+  const source = objectOrEmpty(raw)
+  const pending = options.pending !== undefined ? options.pending : source.pending_human_action
+  const pendingSource = objectOrEmpty(pending)
+  const humanPlayerId = source.human_player_id ?? pendingSource.player_id ?? null
+  const events = Array.isArray(source.logs)
+    ? source.logs
+    : (Array.isArray(source.events) ? source.events : [])
   const game = {
-    ...raw,
-    mode: raw.mode || options.mode || (humanPlayerId ? 'play' : 'watch'),
+    ...source,
+    mode: source.mode || options.mode || (humanPlayerId ? 'play' : 'watch'),
     human_player_id: humanPlayerId,
-    phase: normalizePhase(raw.phase),
+    phase: normalizePhase(source.phase),
     logs: events.map(normalizeLogEntry),
-    decisions: (raw.decisions || []).map((decision, index) => normalizeDecisionEntry(decision, index + 1)),
-    players: (raw.players || []).map((player) => normalizePlayer(player, humanPlayerId)),
-    player_count: raw.player_count || raw.players?.length || 12,
-    waiting_for: raw.waiting_for || 'none',
-    pending_action: raw.pending_action || null
-  }
+    decisions: (source.decisions || []).map((decision: unknown, index: number) => normalizeDecisionEntry(decision, index + 1)),
+    players: (source.players || []).map((player: unknown) => normalizePlayer(player, humanPlayerId)),
+    player_count: source.player_count || source.players?.length || 12,
+    waiting_for: source.waiting_for || 'none',
+    pending_action: source.pending_action || null
+  } as Game
 
   if (pending !== undefined) {
     const normalizedPending = normalizePendingHumanAction(pending)
-    game.waiting_for = pending ? normalizedPending.waiting_for : (raw.waiting_for || 'none')
-    game.pending_action = pending ? normalizedPending.pending_action : (raw.pending_action || null)
+    game.waiting_for = pending ? normalizedPending.waiting_for : (source.waiting_for || 'none')
+    game.pending_action = pending ? normalizedPending.pending_action : (source.pending_action || null)
     game.pending_human_action = pending ? normalizedPending.pending_human_action : null
     if (normalizedPending.current_speaker_id !== undefined) {
       game.current_speaker_id = normalizedPending.current_speaker_id
@@ -269,18 +309,18 @@ function normalizeGameSnapshot(raw, options = {}) {
   return game
 }
 
-function isSpeechAction(actionType) {
-  return SPEECH_ACTIONS.has(actionType)
+function isSpeechAction(actionType: unknown): boolean {
+  return SPEECH_ACTIONS.has(canonicalActionType(actionType))
 }
 
-function canonicalActionType(actionType) {
+function canonicalActionType(actionType: unknown): string {
   if (actionType === 'white_wolf_burst') return 'white_wolf_explode'
   if (actionType === 'white_wolf_explosion') return 'white_wolf_explode'
   if (actionType === 'vote') return 'exile_vote'
-  return actionType || ''
+  return actionType ? String(actionType) : ''
 }
 
-function canonicalChoice(actionType, choice) {
+function canonicalChoice(actionType: unknown, choice: unknown): string | null {
   if (choice === '') return null
   const action = canonicalActionType(actionType)
   if (action === 'witch_act') {
@@ -288,8 +328,9 @@ function canonicalChoice(actionType, choice) {
     if (choice === 'skip') return 'none'
   }
   if (action === 'white_wolf_explode' && choice === 'burst') return 'explode'
-  return choice ?? null
+  return choice == null ? null : String(choice)
 }
+
 
 export {
   canonicalActionType,

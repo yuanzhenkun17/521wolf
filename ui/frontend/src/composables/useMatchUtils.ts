@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { computed } from 'vue'
 import { normalizeHistoryDisplayText } from '../components/history/historyDisplay.ts'
 

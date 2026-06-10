@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { computed, ref } from 'vue'
 import { currentLegacyView } from '../router/legacyViewNavigation'
 import { roleIconSpecs, roleMatches } from './useMatchUtils.ts'
