@@ -1,8 +1,15 @@
-// @ts-nocheck
 ﻿import * as THREE from "three";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
     import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
     import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
+
+    type CouncilSceneEffectData = Record<string, unknown> & {
+      id?: unknown;
+      type?: unknown;
+      targetId?: unknown;
+      day?: unknown;
+      sequence?: unknown;
+    };
 
     export const COUNCIL_ROLE_MODEL_URLS = [
       "/livehall-assets/models/villager.glb",
@@ -46,15 +53,15 @@
     export function createCouncilHallScene(container) {
     THREE.Cache.enabled = true;
     const app = container;
-    const loading = { style: {}, remove() {} };
+    const loading = { style: { opacity: "" }, remove() {} };
     let animationFrameId = 0;
     let slowFrameTimer = 0;
     let sceneDisposed = false;
     let loadProgressHandler = null;
     let modelLoadTotal = 0;
     let modelLoadLoaded = 0;
-    const trackedTimeouts = new Set();
-    const trackedIdleCallbacks = new Set();
+    const trackedTimeouts = new Set<number>();
+    const trackedIdleCallbacks = new Set<number>();
     const loadProgress = {
       phase: "scene",
       label: "搭建议事厅",
@@ -380,7 +387,7 @@
     }
 
     const starTexture = makeStarTexture();
-    const SHARED_TEXTURES = new Set([EFFECT_GLOW_TEXTURE]);
+    const SHARED_TEXTURES = new Set<THREE.Texture>([EFFECT_GLOW_TEXTURE]);
 
     const MAT_BLACK = new THREE.MeshStandardMaterial({
       color: 0x060607,
@@ -992,7 +999,7 @@
     function disposeSceneObject(object, { disposeShared = false } = {}) {
       const disposedGeometries = new Set();
       const disposedMaterials = new Set();
-      const disposedTextures = new Set();
+      const disposedTextures = new Set<THREE.Texture>();
       object.traverse((child) => {
         const fromCachedModel = child.userData.fromCachedModel === true;
         const geometry = child.geometry;
@@ -1005,20 +1012,21 @@
           geometry.dispose?.();
           disposedGeometries.add(geometry);
         }
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        const liveMaterials = Array.isArray(child.userData.liveMaterial)
+        const materials = (Array.isArray(child.material) ? child.material : [child.material]) as THREE.Material[];
+        const liveMaterials = (Array.isArray(child.userData.liveMaterial)
           ? child.userData.liveMaterial
-          : [child.userData.liveMaterial];
+          : [child.userData.liveMaterial]) as THREE.Material[];
         liveMaterials.filter(Boolean).forEach((material) => {
           if (materials.includes(material)) return;
           materials.push(material);
         });
         materials.filter(Boolean).forEach((material) => {
           if (!fromCachedModel) {
-            Object.values(material).forEach((value) => {
-              if (value?.isTexture && !SHARED_TEXTURES.has(value) && !disposedTextures.has(value)) {
-                value.dispose();
-                disposedTextures.add(value);
+            Object.values(material as Record<string, unknown>).forEach((value) => {
+              const texture = value as THREE.Texture | undefined;
+              if (texture?.isTexture && !SHARED_TEXTURES.has(texture) && !disposedTextures.has(texture)) {
+                texture.dispose();
+                disposedTextures.add(texture);
               }
             });
           }
@@ -1237,7 +1245,7 @@
     let sceneEffectKey = "";
     let initialEffectsPrimed = false;
     const seenSceneEffectIds = new Set();
-    const pendingSceneEffects = new Map();
+    const pendingSceneEffects = new Map<string, { effectData: CouncilSceneEffectData; queuedAt: number }>();
     const activeSceneEffects = [];
     let sceneEffectRetryTimer = 0;
     const SCENE_EFFECT_RETRY_DELAY = 90;
@@ -2170,7 +2178,7 @@
       const offsets = target?.userData?.sceneEffectOffsets;
       if (!target || !base || !offsets) return;
       const next = base.clone();
-      Object.values(offsets).forEach((offset) => {
+      Object.values(offsets as Record<string, Partial<THREE.Vector3>>).forEach((offset) => {
         next.x += offset.x || 0;
         next.y += offset.y || 0;
         next.z += offset.z || 0;
@@ -2523,18 +2531,18 @@
       return 1.08;
     }
 
-    function sceneEffectDataId(effectData = {}) {
+    function sceneEffectDataId(effectData: CouncilSceneEffectData = {}) {
       const type = String(effectData.type || "");
       if (effectData.id) return String(effectData.id);
       if (!type) return "";
       return `${type}:${effectData.targetId}:${effectData.day || ""}:${effectData.sequence || ""}`;
     }
 
-    function sceneEffectTarget(effectData = {}) {
+    function sceneEffectTarget(effectData: CouncilSceneEffectData = {}) {
       return standeeByPlayerId(effectData.targetId) || seatByPlayerId(effectData.targetId);
     }
 
-    function spawnSceneEffect(effectData = {}) {
+    function spawnSceneEffect(effectData: CouncilSceneEffectData = {}) {
       const target = sceneEffectTarget(effectData);
       const type = String(effectData.type || "");
       if (!target) return false;
@@ -2764,7 +2772,8 @@
       const p = clamp01((t - effect.start) / effect.duration);
       effect.group.position.copy(sceneEffectWorldPosition(effect.target));
       Object.values(effect.parts).flat().forEach((part) => {
-        if (part?.userData?.billboard) orientBillboard(part);
+        const objectPart = part as THREE.Object3D | undefined;
+        if (objectPart?.userData?.billboard) orientBillboard(objectPart);
       });
       if (["wolf_kill", "wolf_saved", "wolf_guarded", "night_death"].includes(effect.type)) {
         updateSlashEffect(effect, p);
@@ -2800,14 +2809,14 @@
       }, SCENE_EFFECT_RETRY_DELAY);
     }
 
-    function enqueueSceneEffect(effectData = {}) {
+    function enqueueSceneEffect(effectData: CouncilSceneEffectData = {}) {
       const id = sceneEffectDataId(effectData);
       if (!id || pendingSceneEffects.has(id)) return;
       pendingSceneEffects.set(id, { effectData, queuedAt: clock.getElapsedTime() });
       scheduleSceneEffectRetry();
     }
 
-    function tryPlaySceneEffect(effectData = {}) {
+    function tryPlaySceneEffect(effectData: CouncilSceneEffectData = {}) {
       const id = sceneEffectDataId(effectData);
       if (!id || !String(effectData.type || "")) return true;
       if (spawnSceneEffect(effectData)) return true;
@@ -3034,10 +3043,11 @@
       primeRoleModelRequests(cutouts);
 
       cutouts.forEach((cfg, index) => {
-        cfg.loadModelNow = cfg.playerId === currentSpeakerId;
+        const standeeCfg = cfg as typeof cfg & { loadModelNow?: boolean };
+        standeeCfg.loadModelNow = cfg.playerId === currentSpeakerId;
         // 使用原始 12 人布局中的位置
         const seatIdx = cfg._visualIndex;
-        const standee = createPlayerStandee(cfg, seatIdx, 12);
+        const standee = createPlayerStandee(standeeCfg, seatIdx, 12);
         if (humanPlayer) {
           const seat = shiftedSeat(seatIdx, playerModeSeatShift);
           standee.position.x = seat.x;
@@ -3100,7 +3110,7 @@
       }
       const loaders = queuedModelLoaders.splice(0);
       reportModelLoadProgress(loaders.length ? "加载角色模型" : "角色模型就绪");
-      const waitForMountedModels = () => new Promise((resolve) => {
+      const waitForMountedModels = () => new Promise<void>((resolve) => {
         const startedAt = performance.now();
         const check = () => {
           if (sceneDisposed) {
@@ -3119,7 +3129,7 @@
         check();
       });
       const warmRenderModels = () => {
-        return new Promise((resolve) => {
+        return new Promise<void>((resolve) => {
           requestTrackedIdleCallback(() => {
             if (sceneDisposed) {
               resolve();
@@ -3561,9 +3571,9 @@
                   ? row.voter_ids.map((id) => `${Number(id)}号`).filter((label) => !label.startsWith("NaN"))
                   : [];
               const count = Math.max(Number(row?.count) || 0, voterLabels.length);
-              return [targetId, { ...row, target_id: targetId, count, voters: voterLabels }];
+              return [targetId, { ...row, target_id: targetId, count, voters: voterLabels }] as const;
             })
-            .filter(Boolean)
+            .filter((entry): entry is readonly [number, any] => Boolean(entry))
         );
         if (nightMode !== isNight) {
           nightMode = isNight;
