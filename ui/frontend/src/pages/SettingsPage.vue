@@ -164,7 +164,7 @@ async function probeRuntimeModel() {
       scope: DEFAULT_RUNTIME_PROBE_SCOPE,
       model_scope: runtimeProbeModelScope(),
       model_profile_id: selectedProfileId.value || undefined
-    })
+    }, adminToken.value)
     notice.value = runtimeProbeNotice(result)
     await refreshSettings()
   } catch (err) {

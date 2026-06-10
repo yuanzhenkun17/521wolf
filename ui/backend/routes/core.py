@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.config import load_tts_config
 from ui.backend.health import build_health_payload, probe_llm_connectivity
 from ui.backend.schemas import TtsSpeechRequest
+from ui.backend.settings_model_profiles import settings_admin_authorized, settings_admin_payload
 from ui.backend.tts_dashscope import (
     prepare_dashscope_realtime_request,
     stream_dashscope_realtime_audio,
@@ -26,7 +27,9 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
         scope: str = "game_start",
         model_scope: str | None = None,
         model_profile_id: str | None = None,
+        x_settings_admin_token: str | None = Header(default=None),
     ) -> dict[str, Any]:
+        _require_settings_probe_admin(x_settings_admin_token)
         normalized_profile_id = str(model_profile_id or "").strip() or None
         return await probe_llm_connectivity(
             store,
@@ -105,3 +108,26 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
             "source": "app",
             "source_type": "app",
         }
+
+
+def _require_settings_probe_admin(token: str | None) -> None:
+    if settings_admin_authorized(token):
+        return
+    admin = settings_admin_payload()
+    if not admin["write_available"]:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "settings_admin_disabled",
+                "message": "settings admin writes are disabled",
+                "detail": "settings admin is disabled or token is not configured",
+            },
+        )
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "settings_admin_required",
+            "message": "settings admin token is required",
+            "detail": "missing or invalid settings admin token",
+        },
+    )

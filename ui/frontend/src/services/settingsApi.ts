@@ -46,9 +46,10 @@ export function createSettingsService(options: ServiceOptions = {}) {
     async listRuntimeVariables(): Promise<SettingsRuntimeVariablesResponse> {
       return client.fetch('/settings/runtime-variables')
     },
-    async probeRuntimeModel(options: string | SettingsRuntimeModelProbeOptions = DEFAULT_RUNTIME_PROBE_SCOPE): Promise<RuntimeHealthProbeResult> {
+    async probeRuntimeModel(options: string | SettingsRuntimeModelProbeOptions = DEFAULT_RUNTIME_PROBE_SCOPE, token = ''): Promise<RuntimeHealthProbeResult> {
       return client.fetch('/health/probes/llm', {
         method: 'POST',
+        headers: adminHeaders(token),
         query: normalizeProbeRuntimeModelQuery(options)
       })
     },

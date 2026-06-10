@@ -1233,14 +1233,21 @@ def test_health_reports_optional_langfuse_and_tts_without_blocking_launch_gates(
         assert "tts_config" not in gate["blockers"]
 
 
-def test_health_probe_llm_updates_connectivity_cache(tmp_path: Path) -> None:
+def test_health_probe_llm_updates_connectivity_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    headers = {"X-Settings-Admin-Token": "token-123"}
     with _test_client(tmp_path) as client:
         before_response = client.get("/api/health")
-        probe_response = client.post("/api/health/probes/llm?scope=settings_model_test")
+        forbidden_response = client.post("/api/health/probes/llm?scope=settings_model_test")
+        probe_response = client.post("/api/health/probes/llm?scope=settings_model_test", headers=headers)
         after_response = client.get("/api/health")
 
     assert before_response.status_code == 200
     assert before_response.json()["checks"]["llm_connectivity"]["status"] == "unknown"
+
+    assert forbidden_response.status_code == 403
+    assert forbidden_response.json()["error"]["code"] == "settings_admin_required"
 
     assert probe_response.status_code == 200
     probe = probe_response.json()
