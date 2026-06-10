@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from time import monotonic
-from typing import Any
+from typing import Any, Literal, TypedDict, cast
 
 from app.lib.version import is_experimental_release_stage
 from ui.backend.constants import ROLE_ORDER
@@ -15,6 +15,74 @@ _ROLE_OVERVIEW_CACHE_TTL_SECONDS = 10.0
 _ROLE_CONFIDENCE_LEVEL = 0.95
 _ROLE_Z_95 = 1.96
 _ROLE_MIN_CONFIDENT_SAMPLE_SIZE = 30
+
+
+RoleVersionPayload = dict[str, Any]
+RoleScorePayload = Mapping[str, Any]
+RoleScoresByVersion = Mapping[str, RoleScorePayload]
+RoleBulkScores = Mapping[str, RoleScoresByVersion]
+RoleVersionsByRole = dict[str, list[RoleVersionPayload]]
+
+
+class RoleConfidenceIntervalPayload(TypedDict):
+    low: float
+    high: float
+    level: float
+
+
+class RoleStatisticsPayload(TypedDict):
+    sample_size: int
+    paired_sample_size: int
+    win_rate_ci: RoleConfidenceIntervalPayload
+    ci_low: float
+    ci_high: float
+    standard_error: float
+    paired_delta: Any
+    significant: bool
+    significance_label: str
+    warnings: list[str]
+
+
+class RoleLeaderboardBaseEntry(TypedDict):
+    hash: str
+    role: str
+    target_role: str
+    target_version_id: str
+    target_role_role_weighted_score: float
+    target_side_win_rate: float
+    target_role_fallback_rate: float
+    rankable: bool
+    game_count: int
+    is_baseline: bool
+    release_stage: Any
+    delta_vs_baseline: dict[str, Any]
+
+
+class RoleLeaderboardEntry(RoleLeaderboardBaseEntry, RoleStatisticsPayload):
+    pass
+
+
+class RoleLeaderboardPayload(TypedDict):
+    kind: Literal["role_leaderboard"]
+    schema_version: Literal[1]
+    role: str
+    evaluation_set_id: str | None
+    source: Literal["app"]
+    entries: list[RoleLeaderboardEntry]
+
+
+class RoleOverviewPayload(TypedDict):
+    kind: Literal["role_overview"]
+    schema_version: Literal[1]
+    roles: list[str]
+    versions: RoleVersionsByRole
+    leaderboards: dict[str, RoleLeaderboardPayload]
+    evaluation_set_id: str | None
+
+
+class RoleOverviewCacheEntry(TypedDict):
+    cached_at: float
+    payload: RoleOverviewPayload
 
 
 class RoleService:
@@ -30,7 +98,7 @@ class RoleService:
     def available_roles(self) -> list[str]:
         return sorted({*ROLE_ORDER, *self._store.registry.list_roles()}, key=self.role_order_key)
 
-    def role_versions(self, role: str) -> list[dict[str, Any]]:
+    def role_versions(self, role: str) -> list[RoleVersionPayload]:
         versions = [_version_summary_payload(v.to_dict()) for v in self._store.registry.list_versions(role)]
         if not versions:
             versions = [_version_summary_payload(_fallback_version(role))]
@@ -69,7 +137,7 @@ class RoleService:
         return max(0.0, min(1.0, number))
 
     @classmethod
-    def role_wilson_interval(cls, win_rate: float, sample_size: int) -> dict[str, float]:
+    def role_wilson_interval(cls, win_rate: float, sample_size: int) -> RoleConfidenceIntervalPayload:
         if sample_size <= 0:
             return {"low": 0.0, "high": 0.0, "level": _ROLE_CONFIDENCE_LEVEL}
         probability = cls.role_probability(win_rate)
@@ -108,7 +176,13 @@ class RoleService:
         return result
 
     @classmethod
-    def role_statistics_payload(cls, score: dict[str, Any], *, game_count: int, win_rate: float) -> dict[str, Any]:
+    def role_statistics_payload(
+        cls,
+        score: RoleScorePayload,
+        *,
+        game_count: int,
+        win_rate: float,
+    ) -> RoleStatisticsPayload:
         summary = score.get("summary") if isinstance(score.get("summary"), Mapping) else {}
         sample_size = cls.role_int(
             score.get("sample_size"),
@@ -151,12 +225,12 @@ class RoleService:
     def leaderboard_payload(
         cls,
         role: str,
-        versions: list[dict[str, Any]],
-        scores: dict[str, dict[str, Any]],
+        versions: list[RoleVersionPayload],
+        scores: RoleScoresByVersion,
         *,
         evaluation_set_id: str | None = None,
-    ) -> dict[str, Any]:
-        entries = []
+    ) -> RoleLeaderboardPayload:
+        entries: list[RoleLeaderboardEntry] = []
         for version in versions:
             release_stage = cls.version_release_stage(version)
             if is_experimental_release_stage(release_stage):
@@ -165,7 +239,7 @@ class RoleService:
             score = scores.get(vid, {})
             game_count = int(score.get("games_played", 0))
             win_rate = float(score.get("target_side_win_rate", 0.0))
-            entry = {
+            base_entry: RoleLeaderboardBaseEntry = {
                 "hash": vid,
                 "role": role,
                 "target_role": role,
@@ -179,7 +253,10 @@ class RoleService:
                 "release_stage": release_stage or version.get("release_stage"),
                 "delta_vs_baseline": {},
             }
-            entry.update(cls.role_statistics_payload(score, game_count=game_count, win_rate=win_rate))
+            entry = cast(
+                RoleLeaderboardEntry,
+                {**base_entry, **cls.role_statistics_payload(score, game_count=game_count, win_rate=win_rate)},
+            )
             entries.append(entry)
         entries.sort(key=lambda e: (e["rankable"], e["target_role_role_weighted_score"]), reverse=True)
         return {
@@ -198,7 +275,7 @@ class RoleService:
             return
         setattr(self._store, "_role_overview_cache", {})
 
-    def cached_overview(self, evaluation_set_id: str | None) -> dict[str, Any] | None:
+    def cached_overview(self, evaluation_set_id: str | None) -> RoleOverviewPayload | None:
         cache = getattr(self._store, "_role_overview_cache", None)
         if not isinstance(cache, dict):
             return None
@@ -210,24 +287,27 @@ class RoleService:
             cache.pop(evaluation_set_id or "", None)
             return None
         payload = entry.get("payload")
-        return payload if isinstance(payload, dict) else None
+        return cast(RoleOverviewPayload, payload) if isinstance(payload, dict) else None
 
-    def store_overview(self, evaluation_set_id: str | None, payload: dict[str, Any]) -> dict[str, Any]:
+    def store_overview(self, evaluation_set_id: str | None, payload: RoleOverviewPayload) -> RoleOverviewPayload:
         cache = getattr(self._store, "_role_overview_cache", None)
         if not isinstance(cache, dict):
             cache = {}
             setattr(self._store, "_role_overview_cache", cache)
-        cache[evaluation_set_id or ""] = {"cached_at": monotonic(), "payload": payload}
+        cache[evaluation_set_id or ""] = RoleOverviewCacheEntry(cached_at=monotonic(), payload=payload)
         return payload
 
-    def overview_payload(self, evaluation_set_id: str | None = None) -> dict[str, Any]:
+    def overview_payload(self, evaluation_set_id: str | None = None) -> RoleOverviewPayload:
         cached = self.cached_overview(evaluation_set_id)
         if cached is not None:
             return cached
         roles = self.available_roles()
-        versions_by_role = {role: self.role_versions(role) for role in roles}
-        bulk_scores = self._store.leaderboard_scores_for_roles(roles, evaluation_set_id=evaluation_set_id)
-        leaderboards = {
+        versions_by_role: RoleVersionsByRole = {role: self.role_versions(role) for role in roles}
+        bulk_scores = cast(
+            RoleBulkScores,
+            self._store.leaderboard_scores_for_roles(roles, evaluation_set_id=evaluation_set_id),
+        )
+        leaderboards: dict[str, RoleLeaderboardPayload] = {
             role: self.leaderboard_payload(
                 role,
                 versions_by_role[role],
@@ -236,14 +316,12 @@ class RoleService:
             )
             for role in roles
         }
-        return self.store_overview(
-            evaluation_set_id,
-            {
-                "kind": "role_overview",
-                "schema_version": 1,
-                "roles": roles,
-                "versions": versions_by_role,
-                "leaderboards": leaderboards,
-                "evaluation_set_id": evaluation_set_id,
-            },
-        )
+        payload: RoleOverviewPayload = {
+            "kind": "role_overview",
+            "schema_version": 1,
+            "roles": roles,
+            "versions": versions_by_role,
+            "leaderboards": leaderboards,
+            "evaluation_set_id": evaluation_set_id,
+        }
+        return self.store_overview(evaluation_set_id, payload)
