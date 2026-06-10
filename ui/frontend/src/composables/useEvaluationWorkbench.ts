@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
@@ -13,6 +12,8 @@ import {
   sourceText,
   statusText
 } from './workbenchShared.ts'
+
+type LooseRecord = Record<string, any>
 
 const BENCHMARK_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 const BENCHMARK_ACTIVE_STATUSES = new Set(['queued', 'running', 'rate_limited'])
@@ -286,7 +287,8 @@ function benchmarkErrorMessage(err, fallback) {
 }
 
 function benchmarkBudgetExceededValue(budget = {}) {
-  const exceeded = budget?.exceeded
+  const record = budget as LooseRecord
+  const exceeded = record.exceeded
   if (exceeded && typeof exceeded === 'object' && !Array.isArray(exceeded)) {
     return Boolean(exceeded.value)
   }
@@ -517,7 +519,7 @@ function normalizeBenchmarkRoleVersion(version, score = null) {
 function normalizeBenchmarkRoleVersions(versions = [], leaderboardEntries = []) {
   const scoreByVersion = new Map(
     leaderboardEntries
-      .map((entry) => [leaderboardVersionKey(entry), entry])
+      .map((entry) => [leaderboardVersionKey(entry), entry] as [string, any])
       .filter(([versionId]) => versionId)
   )
   return versions.map((version) =>
@@ -528,7 +530,7 @@ function normalizeBenchmarkRoleVersions(versions = [], leaderboardEntries = []) 
 function normalizeBenchmarkRoleLeaderboardRows(leaderboardEntries = [], versions = []) {
   const versionById = new Map(
     versions
-      .map((version) => [String(version?.version_id || '').trim(), version])
+      .map((version) => [String(version?.version_id || '').trim(), version] as [string, any])
       .filter(([versionId]) => versionId)
   )
   return leaderboardEntries
@@ -750,13 +752,13 @@ function normalizeBenchmarkSnapshotExport(data) {
 function compareBenchmarkSnapshotRows(currentRows, snapshotRows, scope) {
   const current = currentRows.map((row, index) => normalizeBenchmarkLeaderboardRow(row, index, scope))
   const frozen = snapshotRows.map((row, index) => normalizeBenchmarkLeaderboardRow(row, index, scope))
-  const currentByKey = new Map(current.map((row) => [row.key, row]))
-  const frozenByKey = new Map(frozen.map((row) => [row.key, row]))
+  const currentByKey = new Map(current.map((row) => [row.key, row] as [string, any]))
+  const frozenByKey = new Map(frozen.map((row) => [row.key, row] as [string, any]))
   const changed = []
   const added = []
   const removed = []
   for (const row of current) {
-    const previous = frozenByKey.get(row.key)
+    const previous = frozenByKey.get(row.key) as LooseRecord | undefined
     if (!previous) {
       added.push(row)
       continue
@@ -1060,24 +1062,25 @@ function upsertBatchRun(runs, patch) {
 }
 
 function defaultBenchmarkViewPreferences(overrides = {}) {
-  const viewConfig = normalizeBenchmarkViewConfig(overrides.view_config || overrides)
+  const record = overrides as LooseRecord
+  const viewConfig = normalizeBenchmarkViewConfig(record.view_config || record)
   return {
     kind: 'benchmark_saved_view',
     schema_version: 1,
-    view_key: String(overrides.view_key || ''),
-    name: String(overrides.name || '默认视图'),
-    scope: normalizeBenchmarkTargetType(overrides.scope),
-    benchmark_id: overrides.benchmark_id || null,
-    evaluation_set_id: overrides.evaluation_set_id || null,
-    target_role: overrides.target_role || null,
+    view_key: String(record.view_key || ''),
+    name: String(record.name || '默认视图'),
+    scope: normalizeBenchmarkTargetType(record.scope),
+    benchmark_id: record.benchmark_id || null,
+    evaluation_set_id: record.evaluation_set_id || null,
+    target_role: record.target_role || null,
     view_config: viewConfig,
-    created_at: overrides.created_at || null,
-    updated_at: overrides.updated_at || null
+    created_at: record.created_at || null,
+    updated_at: record.updated_at || null
   }
 }
 
 function normalizeBenchmarkViewConfig(raw = {}) {
-  const config = raw && typeof raw === 'object' ? raw : {}
+  const config: LooseRecord = raw && typeof raw === 'object' ? raw as LooseRecord : {}
   const columns = Array.isArray(config.columns)
     ? config.columns.map((item) => String(item || '').trim()).filter(Boolean)
     : []
@@ -1096,21 +1099,23 @@ function normalizeBenchmarkViewConfig(raw = {}) {
 
 function normalizeBenchmarkView(raw, scopeFallback = 'role_version') {
   if (!raw || typeof raw !== 'object') return null
-  const viewKey = String(raw.view_key || '').trim()
+  const record = raw as LooseRecord
+  const viewKey = String(record.view_key || '').trim()
   if (!viewKey) return null
   return defaultBenchmarkViewPreferences({
-    ...raw,
+    ...record,
     view_key: viewKey,
-    name: String(raw.name || '默认视图'),
-    scope: normalizeBenchmarkTargetType(raw.scope || scopeFallback),
-    view_config: normalizeBenchmarkViewConfig(raw.view_config || {})
+    name: String(record.name || '默认视图'),
+    scope: normalizeBenchmarkTargetType(record.scope || scopeFallback),
+    view_config: normalizeBenchmarkViewConfig(record.view_config || {})
   })
 }
 
 function useEvaluationWorkbench(options = {}) {
-  const { apiFetch, apiBase } = options.apiFetch
-    ? { apiFetch: options.apiFetch, apiBase: options.apiBase || '/api' }
-    : createGameApi(options.apiBase)
+  const workbenchOptions = options as LooseRecord
+  const { apiFetch, apiBase } = workbenchOptions.apiFetch
+    ? { apiFetch: workbenchOptions.apiFetch, apiBase: workbenchOptions.apiBase || '/api' }
+    : createGameApi(workbenchOptions.apiBase)
 
   const benchmarkSuites = ref([])
   const benchmarkSeedSets = ref([])
@@ -1129,7 +1134,7 @@ function useEvaluationWorkbench(options = {}) {
   const error = ref('')
   const notice = ref({ type: '', message: '' })
   const noticeAutoDismiss = createNoticeAutoDismiss(notice, {
-    enabled: options.installLifecycle !== false,
+    enabled: workbenchOptions.installLifecycle !== false,
     onDismiss(dismissed) {
       if (dismissed.type !== 'error' && error.value === dismissed.message) error.value = ''
     }
@@ -1444,13 +1449,14 @@ function useEvaluationWorkbench(options = {}) {
   }
 
   function benchmarkSnapshotRequestPayload(overrides = {}) {
+    const request = overrides as LooseRecord
     const suite = selectedBenchmarkSuite.value || {}
     const benchmarkVersion = Number(suite.version)
     const evaluationSetId = selectedBenchmarkEvaluationSetId.value
     const scope = benchmarkSnapshotScope.value
     const activeView = normalizeBenchmarkViewConfig({
       ...activeBenchmarkViewConfig.value,
-      ...(overrides.view_config || overrides.viewConfig || {}),
+      ...(request.view_config || request.viewConfig || {}),
       mode: scope
     })
     const defaultColumns = scope === 'model'
@@ -1458,8 +1464,8 @@ function useEvaluationWorkbench(options = {}) {
       : ['target_version_id', 'avg_role_score', 'target_side_win_rate', 'rankable']
     const snapshotColumns = activeView.columns.length ? activeView.columns : defaultColumns
     return {
-      title: String(overrides.title || '').trim() || defaultSnapshotTitle(),
-      release_notes: String(overrides.release_notes || overrides.releaseNotes || '').trim(),
+      title: String(request.title || '').trim() || defaultSnapshotTitle(),
+      release_notes: String(request.release_notes || request.releaseNotes || '').trim(),
       scope,
       ...(selectedBenchmarkId.value ? { benchmark_id: selectedBenchmarkId.value } : {}),
       ...(Number.isFinite(benchmarkVersion) ? { benchmark_version: benchmarkVersion } : {}),
@@ -1490,7 +1496,7 @@ function useEvaluationWorkbench(options = {}) {
         role: scope === 'role_version' ? selectedRole.value : '',
         columns: snapshotColumns
       },
-      limit: Number(overrides.limit || 100)
+      limit: Number(request.limit || 100)
     }
   }
 
@@ -1637,7 +1643,8 @@ function useEvaluationWorkbench(options = {}) {
       ? benchmarkViewPreferences.value
       : currentDefaultBenchmarkView()
     const boundary = benchmarkViewBoundaryPayload()
-    const { name, view_config: viewConfigPatch, ...configPatch } = patch || {}
+    const patchRecord = patch as LooseRecord
+    const { name, view_config: viewConfigPatch, ...configPatch } = patchRecord || {}
     const nextConfig = normalizeBenchmarkViewConfig({
       ...current.view_config,
       ...configPatch,
@@ -2040,7 +2047,7 @@ function useEvaluationWorkbench(options = {}) {
   function benchmarkSeedRegistryById() {
     return new Map(
       benchmarkSeedSets.value
-        .map((seedSet) => [String(seedSet?.id || seedSet?.seed_set_id || '').trim(), seedSet])
+        .map((seedSet) => [String(seedSet?.id || seedSet?.seed_set_id || '').trim(), seedSet] as [string, any])
         .filter(([id]) => id)
     )
   }
@@ -2373,7 +2380,7 @@ function useEvaluationWorkbench(options = {}) {
   }
 
   function loadNextBenchmarkBatchGamesPage() {
-    const pagination = benchmarkBatchGamePagination.value || {}
+    const pagination = (benchmarkBatchGamePagination.value || {}) as LooseRecord
     if (!pagination.has_more || benchmarkBatchGamesLoading.value) return false
     const offset = Number(pagination.offset || 0) + Number(pagination.returned || benchmarkBatchGames.value.length || 0)
     const limit = Number(pagination.limit || 20) || 20
@@ -2685,7 +2692,8 @@ function useEvaluationWorkbench(options = {}) {
   }
 
   async function saveBenchmarkView(payload = {}) {
-    const viewKey = String(payload.view_key || '').trim()
+    const record = payload as LooseRecord
+    const viewKey = String(record.view_key || '').trim()
     if (!viewKey) return null
     const saved = normalizeBenchmarkView(await apiFetch('/benchmark/views', {
       method: 'POST',
@@ -2705,20 +2713,21 @@ function useEvaluationWorkbench(options = {}) {
   }
 
   async function saveCurrentBenchmarkView(overrides = {}) {
+    const request = overrides as LooseRecord
     const token = benchmarkViewActionRequests.next()
     const boundary = benchmarkViewBoundaryPayload()
     const current = setBenchmarkViewPreference({
-      ...(overrides.name == null ? {} : { name: overrides.name }),
-      ...(overrides.view_config || {})
+      ...(request.name == null ? {} : { name: request.name }),
+      ...(request.view_config || {})
     })
-    const viewKey = String(overrides.view_key || current.view_key || currentBenchmarkViewKey.value).trim()
+    const viewKey = String(request.view_key || current.view_key || currentBenchmarkViewKey.value).trim()
     const payload = {
       view_key: viewKey,
-      name: String(overrides.name || current.name || '默认视图'),
+      name: String(request.name || current.name || '默认视图'),
       ...boundary,
       view_config: normalizeBenchmarkViewConfig({
         ...current.view_config,
-        ...(overrides.view_config || {}),
+        ...(request.view_config || {}),
         mode: boundary.scope
       })
     }
@@ -2992,7 +3001,7 @@ function useEvaluationWorkbench(options = {}) {
     }
   }
 
-  if (options.installLifecycle !== false) {
+  if (workbenchOptions.installLifecycle !== false) {
     onBeforeUnmount(() => {
       closeAllBenchmarkEventSources()
       noticeAutoDismiss.dispose()
