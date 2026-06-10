@@ -24,7 +24,7 @@ from app.config import PathConfig
 from storage.public_events import public_events_only
 import ui.backend.app as ui_backend_app
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
-from ui.backend.schemas import BenchmarkRequest, EvolutionStartRequest, GameStartRequest
+from ui.backend.schemas import BenchmarkLifecycleRequest, BenchmarkRequest, EvolutionStartRequest, GameStartRequest
 import ui.backend.services.benchmark_service as benchmark_service_module
 from ui.backend.services.role_service import RoleService
 from ui.backend.sse import stream_queue_sse
@@ -2590,6 +2590,39 @@ def test_benchmark_service_uses_minimal_context_protocol(
         }
     ]
     assert connections and connections[0].closed is True
+
+
+def test_benchmark_service_catalog_does_not_require_store_callables(tmp_path: Path) -> None:
+    _write_benchmark_spec(tmp_path)
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path), evolution_batches={})
+    service = benchmark_service_module.BenchmarkService(context)
+
+    specs_payload = service.benchmark_specs_payload()
+    spec_ids = {item["id"] for item in specs_payload["items"]}
+    assert specs_payload["kind"] == "benchmark_specs"
+    assert "role-baseline-v1" in spec_ids
+
+    summary = service.get_benchmark_spec_summary("role-baseline-v1")
+    assert summary["id"] == "role-baseline-v1"
+    assert summary["seed_set_id"] == "role-baseline-quick-202606"
+    assert summary["last_run"] is None
+    assert summary["latest_snapshot"] is None
+
+    seed_sets = service.list_benchmark_seed_sets()
+    seed_set = next(item for item in seed_sets["items"] if item["id"] == "role-baseline-quick-202606")
+    assert seed_set["enabled"] is True
+
+    seed_set_detail = service.get_benchmark_seed_set("role-baseline-quick-202606")
+    assert seed_set_detail["item"]["seeds"] == [260600, 260607, 260619]
+
+    lifecycle = service.update_benchmark_lifecycle(
+        "role-baseline-v1",
+        BenchmarkLifecycleRequest(status="disabled", reason="service catalog test"),
+    )
+    assert lifecycle["kind"] == "benchmark_suite_lifecycle"
+    assert lifecycle["benchmark_id"] == "role-baseline-v1"
+    assert lifecycle["status"] == "disabled"
+    assert lifecycle["launchable"] is False
 
 
 def test_leaderboard_real_store_isolates_scope_evaluation_role_and_formal_rows(

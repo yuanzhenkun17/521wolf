@@ -1,9 +1,4 @@
-"""Benchmark service facade for the UI backend.
-
-The facade keeps the R2 service boundary importable without moving benchmark
-business logic yet. BackendStore injects the current private implementations so
-missing methods fail fast instead of falling back into public wrapper recursion.
-"""
+"""Benchmark service facade for the UI backend."""
 
 from __future__ import annotations
 
@@ -24,6 +19,7 @@ from storage.benchmark.snapshot_repo import (
     BenchmarkSnapshotRepository,
     persist_benchmark_snapshot,
 )
+from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
 from ui.backend.schemas import (
     BenchmarkLifecycleRequest,
     BenchmarkRequest,
@@ -46,11 +42,6 @@ BENCHMARK_PUBLIC_METHODS: tuple[str, ...] = (
     "leaderboard_unrankable_evidence",
     "leaderboard_compare",
     "leaderboard_scores_for_roles",
-    "list_benchmark_specs",
-    "get_benchmark_spec_summary",
-    "update_benchmark_lifecycle",
-    "list_benchmark_seed_sets",
-    "get_benchmark_seed_set",
     "plan_benchmark",
     "queue_benchmark",
     "run_queued_benchmark",
@@ -97,6 +88,7 @@ class BenchmarkService:
         self._context = context
         self._callables = dict(callables or {})
         self._allow_context_fallback = allow_context_fallback
+        self._catalog = BenchmarkCatalogService(context)
 
     @property
     def context(self) -> BenchmarkServiceContextProtocol:
@@ -417,23 +409,35 @@ class BenchmarkService:
         )
 
     def list_benchmark_specs(self) -> list[dict[str, Any]]:
-        return cast(list[dict[str, Any]], self._call("list_benchmark_specs"))
+        return self._catalog.list_benchmark_specs()
 
     def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("get_benchmark_spec_summary", benchmark_id))
+        return self._catalog.get_benchmark_spec_summary(benchmark_id)
 
     def update_benchmark_lifecycle(
         self,
         benchmark_id: str,
         request: BenchmarkLifecycleRequest,
     ) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("update_benchmark_lifecycle", benchmark_id, request))
+        return self._catalog.update_benchmark_lifecycle(benchmark_id, request)
 
     def list_benchmark_seed_sets(self) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("list_benchmark_seed_sets"))
+        return self._catalog.list_benchmark_seed_sets()
 
     def get_benchmark_seed_set(self, seed_set_id: str) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("get_benchmark_seed_set", seed_set_id))
+        return self._catalog.get_benchmark_seed_set(seed_set_id)
+
+    def benchmark_spec_with_lifecycle(self, benchmark_id: str) -> tuple[Any, dict[str, Any] | None]:
+        return self._catalog.benchmark_spec_with_lifecycle(benchmark_id)
+
+    def resolve_benchmark_spec(self, request: BenchmarkRequest) -> tuple[Any, Any]:
+        return self._catalog.resolve_benchmark_spec(request)
+
+    def benchmark_summary(self, spec: Any, seed_set: Any | None = None) -> dict[str, Any]:
+        return self._catalog.benchmark_summary(spec, seed_set)
+
+    def benchmark_metadata(self, spec: Any, seed_set: Any | None = None) -> dict[str, Any]:
+        return self._catalog.benchmark_metadata(spec, seed_set)
 
     def plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
         return cast(dict[str, Any], self._call("plan_benchmark", request))

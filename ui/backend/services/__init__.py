@@ -5,6 +5,7 @@ from ui.backend.services.benchmark_service import (
     BenchmarkService,
     BenchmarkServiceContextProtocol,
 )
+from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
 from ui.backend.services.evolution_service import EvolutionService
 from ui.backend.services.game_delete_service import GameDeleteCoordinator
 from ui.backend.services.game_read_service import GameReadGateway
@@ -15,6 +16,7 @@ from ui.backend.services.task_service import BackgroundTaskServiceProtocol, Task
 __all__ = [
     "BENCHMARK_PUBLIC_METHODS",
     "BackgroundTaskServiceProtocol",
+    "BenchmarkCatalogService",
     "BenchmarkService",
     "BenchmarkServiceContextProtocol",
     "EvolutionService",
