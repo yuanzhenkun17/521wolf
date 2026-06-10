@@ -5338,6 +5338,30 @@ function mockHealthPayload() {
       alembic: { status: 'ok', message: 'mock migration ready' },
       llm_config: { status: 'ok', source: 'frontend-mock' },
       llm_connectivity: { status: 'unknown', source: 'frontend-mock' },
+      langfuse_config: {
+        status: 'degraded',
+        message: 'Langfuse tracing is configured with warnings.',
+        enabled: true,
+        source: 'environment',
+        base_url: 'https://langfuse.mock',
+        capture_input_output: false,
+        sample_rate: 1,
+        environment_configured: true,
+        release_configured: false,
+        warnings: ['capture_input_output_disabled', 'release_missing'],
+        actions: ['Set LANGFUSE_CAPTURE_INPUT_OUTPUT=true if trace input/output should be visible.']
+      },
+      tts_config: {
+        status: 'degraded',
+        message: 'TTS is not configured.',
+        source: 'missing_config',
+        provider: 'dashscope',
+        model: '',
+        voice: '',
+        sample_rate: 24000,
+        mode: 'realtime',
+        actions: ['Set WEREWOLF_TTS_API_KEY to enable speech playback.']
+      },
       task_worker: { status: 'degraded', worker_fresh: false },
       artifact_root: { status: 'ok', writable: true }
     },

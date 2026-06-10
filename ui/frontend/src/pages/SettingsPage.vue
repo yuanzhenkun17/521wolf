@@ -5,6 +5,13 @@ import type { RuntimeHealthProbeResult } from '../types/health'
 import type { ModelProfile, ModelProfilePayload, SettingsAdminState, SettingsModelProfilesResponse, SettingsStorageState, SettingsVariable } from '../types/settings'
 
 type SettingsGroupKey = 'models' | 'variables' | 'benchmark' | 'evolution' | 'langfuse' | 'tts' | 'system'
+type IntegrationDetailRow = {
+  key: string
+  label: string
+  value: string
+  detail: string
+  severity: 'ok' | 'warning' | 'error' | 'unknown'
+}
 
 const DEFAULT_RUNTIME_PROBE_SCOPE = 'settings_model_test'
 const DEFAULT_MODEL_PROBE_SCOPE = 'prompt_test'
@@ -147,6 +154,17 @@ const healthChecks = computed(() => {
     }
   })
 })
+const activeIntegrationChecks = computed(() =>
+  healthChecks.value.filter((check) =>
+    activeGroup.value === 'tts' ? check.key.includes('tts') : check.key.includes('langfuse')
+  )
+)
+const activeIntegrationDetailRows = computed(() =>
+  integrationDetailRows(activeGroup.value, activeIntegrationChecks.value)
+)
+const activeIntegrationGuidanceRows = computed(() =>
+  integrationGuidanceRows(activeGroup.value, activeIntegrationChecks.value)
+)
 const gateRows = computed(() => {
   const gates = health.value.gates && typeof health.value.gates === 'object' ? health.value.gates : {}
   return Object.entries(gates).map(([key, value]) => {
@@ -643,6 +661,163 @@ function storageHint(state: SettingsStorageState, action: string): string {
   return message || '恢复设置存储后再写入。'
 }
 
+function integrationDetailRows(group: SettingsGroupKey, checks: Array<{ key: string; raw: Record<string, any> }>): IntegrationDetailRow[] {
+  const raw = integrationPrimaryRaw(group, checks)
+  if (!Object.keys(raw).length) return []
+  return group === 'tts' ? ttsDetailRows(raw) : langfuseDetailRows(raw)
+}
+
+function integrationGuidanceRows(group: SettingsGroupKey, checks: Array<{ key: string; raw: Record<string, any> }>): string[] {
+  const raw = integrationPrimaryRaw(group, checks)
+  const rows: string[] = []
+  if (!Object.keys(raw).length) return rows
+  if (group === 'langfuse') {
+    if (raw.enabled && raw.capture_input_output === false) {
+      rows.push('Langfuse 输入/输出捕获已关闭；generation 的 Input/Output 会显示为空。')
+    }
+    const missing = textArray(raw.missing)
+    if (missing.length) rows.push(`缺少配置：${missing.join('、')}。`)
+    rows.push(...textArray(raw.warnings).map(langfuseWarningText))
+  }
+  rows.push(...textArray(raw.actions).map(integrationActionText))
+  return Array.from(new Set(rows.filter(Boolean))).slice(0, 5)
+}
+
+function integrationPrimaryRaw(group: SettingsGroupKey, checks: Array<{ key: string; raw: Record<string, any> }>): Record<string, any> {
+  const preferredKey = group === 'tts' ? 'tts_config' : 'langfuse_config'
+  return checks.find((item) => item.key === preferredKey)?.raw || checks[0]?.raw || {}
+}
+
+function langfuseDetailRows(raw: Record<string, any>): IntegrationDetailRow[] {
+  const enabled = Boolean(raw.enabled)
+  const capture = raw.capture_input_output === true
+  const rows: IntegrationDetailRow[] = [
+    {
+      key: 'enabled',
+      label: 'Tracing',
+      value: enabled ? '已启用' : '未启用',
+      detail: enabled ? 'Langfuse tracing 已打开。' : '当前不会写入 Langfuse trace。',
+      severity: enabled ? 'ok' : 'unknown'
+    }
+  ]
+  if (raw.base_url) {
+    rows.push({
+      key: 'base_url',
+      label: 'Base URL',
+      value: shortId(raw.base_url),
+      detail: String(raw.base_url),
+      severity: 'ok'
+    })
+  }
+  if (enabled) {
+    rows.push({
+      key: 'capture_input_output',
+      label: '输入/输出',
+      value: capture ? '已捕获' : '未捕获',
+      detail: capture ? 'Langfuse 会显示 generation Input/Output。' : 'Input/Output 会为空；需要 LANGFUSE_CAPTURE_INPUT_OUTPUT=true。',
+      severity: capture ? 'ok' : 'warning'
+    })
+    rows.push({
+      key: 'sample_rate',
+      label: '采样率',
+      value: raw.sample_rate === null || raw.sample_rate === undefined ? '未显式配置' : String(raw.sample_rate),
+      detail: '决定 trace 是否可能被采样丢弃。',
+      severity: raw.sample_rate === null || raw.sample_rate === undefined ? 'warning' : 'ok'
+    })
+    rows.push({
+      key: 'environment',
+      label: 'Environment',
+      value: raw.environment_configured ? '已配置' : '未配置',
+      detail: '用于区分 dev/staging/prod 的 trace。',
+      severity: raw.environment_configured ? 'ok' : 'warning'
+    })
+    rows.push({
+      key: 'release',
+      label: 'Release',
+      value: raw.release_configured ? '已配置' : '未配置',
+      detail: '用于把 trace 关联到部署版本。',
+      severity: raw.release_configured ? 'ok' : 'warning'
+    })
+  }
+  const missing = textArray(raw.missing)
+  if (missing.length) {
+    rows.push({
+      key: 'missing',
+      label: '缺失变量',
+      value: `${missing.length} 项`,
+      detail: missing.join('、'),
+      severity: 'error'
+    })
+  }
+  return rows
+}
+
+function ttsDetailRows(raw: Record<string, any>): IntegrationDetailRow[] {
+  return [
+    {
+      key: 'provider',
+      label: 'Provider',
+      value: String(raw.provider || 'DashScope'),
+      detail: String(raw.source || 'environment'),
+      severity: statusSeverity(raw.status)
+    },
+    {
+      key: 'model',
+      label: '模型',
+      value: String(raw.model || '未配置'),
+      detail: `Voice：${String(raw.voice || '未配置')}`,
+      severity: raw.model ? 'ok' : 'warning'
+    },
+    {
+      key: 'sample_rate',
+      label: '采样率',
+      value: raw.sample_rate ? `${raw.sample_rate} Hz` : '未知',
+      detail: `模式：${String(raw.mode || '未知')}`,
+      severity: raw.sample_rate ? 'ok' : 'unknown'
+    },
+    {
+      key: 'max_chars',
+      label: '单次长度',
+      value: raw.max_chars ? `${raw.max_chars} 字符` : '未限制',
+      detail: raw.ws_url ? `WebSocket：${shortId(raw.ws_url)}` : '未提供 WebSocket 地址',
+      severity: 'ok'
+    }
+  ]
+}
+
+function statusSeverity(status: unknown): IntegrationDetailRow['severity'] {
+  const text = String(status || '').toLowerCase()
+  if (text === 'ok') return 'ok'
+  if (text === 'degraded' || text === 'stale' || text === 'warning') return 'warning'
+  if (text === 'error') return 'error'
+  return 'unknown'
+}
+
+function langfuseWarningText(value: unknown): string {
+  const text = String(value || '')
+  if (text === 'capture_input_output_disabled') return '输入/输出捕获关闭：Langfuse generation Input/Output 会为空。'
+  if (text === 'sample_rate_missing') return '未显式配置 LANGFUSE_SAMPLE_RATE，建议设置为 1 或合理采样率。'
+  if (text === 'sample_rate_invalid') return 'LANGFUSE_SAMPLE_RATE 不是合法数字。'
+  if (text === 'sample_rate_zero') return 'LANGFUSE_SAMPLE_RATE 为 0，trace 会被采样掉。'
+  if (text === 'environment_missing') return '未配置 LANGFUSE_ENVIRONMENT，线上排查会缺少环境维度。'
+  if (text === 'release_missing') return '未配置 LANGFUSE_RELEASE，trace 无法关联部署版本。'
+  return text
+}
+
+function integrationActionText(value: unknown): string {
+  const text = String(value || '').trim()
+  const key = text.toLowerCase()
+  if (!text) return ''
+  if (key.includes('langfuse_capture_input_output=true')) return '设置 LANGFUSE_CAPTURE_INPUT_OUTPUT=true 并重启，Langfuse 才会显示 Input/Output。'
+  if (key.includes('langfuse_public_key') || key.includes('langfuse_secret_key') || key.includes('langfuse_base_url')) return '配置 LANGFUSE_PUBLIC_KEY、LANGFUSE_SECRET_KEY、LANGFUSE_BASE_URL。'
+  if (key.includes('langfuse_sample_rate') && key.includes('above 0')) return '设置 LANGFUSE_SAMPLE_RATE 大于 0，避免 trace 被采样掉。'
+  if (key.includes('langfuse_sample_rate')) return '设置 LANGFUSE_SAMPLE_RATE 为 0 到 1 之间的数字。'
+  if (key.includes('dashscope package')) return '安装 dashscope 依赖以启用 TTS。'
+  if (key.includes('qwen_tts_realtime')) return '安装包含 qwen_tts_realtime 的 dashscope 版本。'
+  if (key.includes('werewolf_tts_api_key')) return '配置 WEREWOLF_TTS_API_KEY 后重启。'
+  return text
+}
+
 function runtimeProbeNotice(result: RuntimeHealthProbeResult): string {
   if (String(result.status || '').toLowerCase() === 'ok') {
     const latency = Number(result.latency_ms)
@@ -668,6 +843,7 @@ function statusLabel(status: unknown): string {
   if (text === 'settings') return '本地设置'
   if (text === 'environment') return '环境变量'
   if (text === 'default') return '默认值'
+  if (text === 'warning') return '警告'
   return String(status || '未知')
 }
 
@@ -711,6 +887,12 @@ function gateActionLabels(value: unknown): string[] {
         const key = text.replace(/\.$/, '').trim().toLowerCase()
         return text ? HEALTH_GATE_ACTION_LABELS[key] || text : ''
       }).filter(Boolean)
+    : []
+}
+
+function textArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item || '').trim()).filter(Boolean)
     : []
 }
 
@@ -1028,14 +1210,26 @@ function shortId(value: unknown): string {
                 <b>只读</b>
               </header>
               <div class="settings-health-grid">
-                <div v-for="item in healthChecks.filter((check) => activeGroup === 'tts' ? check.key.includes('tts') : check.key.includes('langfuse'))" :key="item.key" class="settings-health-row">
+                <div v-for="item in activeIntegrationChecks" :key="item.key" class="settings-health-row">
                   <span>
                     <b>{{ item.label }}</b>
                     <small>{{ item.message || '未提供详情' }}</small>
                   </span>
                   <em :data-status="item.status">{{ statusLabel(item.status) }}</em>
                 </div>
-                <div class="settings-empty">当前 health payload 暂未提供更多 {{ activeGroupInfo.label }} 检查。</div>
+                <div v-if="!activeIntegrationChecks.length" class="settings-empty">当前 health payload 暂未提供 {{ activeGroupInfo.label }} 检查。</div>
+              </div>
+              <div v-if="activeIntegrationDetailRows.length" class="settings-integration-grid" aria-label="集成配置详情">
+                <div v-for="row in activeIntegrationDetailRows" :key="row.key" :data-status="row.severity">
+                  <span>
+                    <b>{{ row.label }}</b>
+                    <small>{{ row.detail }}</small>
+                  </span>
+                  <em>{{ row.value }}</em>
+                </div>
+              </div>
+              <div v-if="activeIntegrationGuidanceRows.length" class="settings-guardrail" aria-label="集成恢复建议">
+                <span v-for="row in activeIntegrationGuidanceRows" :key="row">{{ row }}</span>
               </div>
             </section>
 
@@ -1913,6 +2107,73 @@ function shortId(value: unknown): string {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.settings-integration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-integration-grid > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 9px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  background: rgba(255, 252, 245, 0.34);
+}
+
+.settings-integration-grid > div[data-status="warning"] {
+  border-color: rgba(185, 133, 47, 0.26);
+  background: rgba(255, 239, 194, 0.36);
+}
+
+.settings-integration-grid > div[data-status="error"] {
+  border-color: rgba(153, 48, 38, 0.22);
+  background: rgba(153, 48, 38, 0.07);
+}
+
+.settings-integration-grid span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-integration-grid b,
+.settings-integration-grid small,
+.settings-integration-grid em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-integration-grid b {
+  color: var(--settings-text);
+  font-size: 12px;
+  font-weight: 920;
+}
+
+.settings-integration-grid small {
+  color: var(--settings-muted);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.settings-integration-grid em {
+  justify-self: end;
+  max-width: 132px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(139, 94, 52, 0.08);
+  color: var(--settings-accent-strong);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  text-align: right;
+}
+
 .settings-gate-grid {
   display: grid;
   gap: 8px;
@@ -2335,6 +2596,10 @@ function shortId(value: unknown): string {
   }
 
   .settings-health-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-integration-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
