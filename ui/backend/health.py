@@ -23,9 +23,18 @@ _UNKNOWN = "unknown"
 _STALE = "stale"
 _PROBE_PROMPT = "Return exactly: ok"
 _DOTENV_LOADED = False
+_PRESERVED_HEALTH_ENV_KEYS = ("SETTINGS_ADMIN_ENABLED", "SETTINGS_ADMIN_TOKEN")
 
 
 def build_health_payload(store: Any) -> dict[str, Any]:
+    preserved_env = _snapshot_env(_PRESERVED_HEALTH_ENV_KEYS)
+    try:
+        return _build_health_payload(store)
+    finally:
+        _restore_env(preserved_env)
+
+
+def _build_health_payload(store: Any) -> dict[str, Any]:
     """Build the public /api/health payload.
 
     The endpoint is intentionally read-mostly. It exposes cached probe state and
@@ -807,6 +816,18 @@ def _load_project_env_once() -> None:
         return
     load_dotenv(LLM_ENV_PATH, override=False)
     _DOTENV_LOADED = True
+
+
+def _snapshot_env(keys: tuple[str, ...]) -> dict[str, str | None]:
+    return {key: os.environ.get(key) for key in keys}
+
+
+def _restore_env(snapshot: dict[str, str | None]) -> None:
+    for key, value in snapshot.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def _langfuse_sample_rate() -> dict[str, Any]:
