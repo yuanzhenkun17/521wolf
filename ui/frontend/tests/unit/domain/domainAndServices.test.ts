@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   arrayOrEmpty,
   booleanValue,
@@ -129,6 +129,21 @@ describe('domain common helpers', () => {
       incoming[2],
       incoming[3]
     ])
+  })
+
+  it('keeps helper type contracts narrow for readonly inputs', () => {
+    type StableRow = { id?: string; fallback_id?: string; value: number }
+
+    const existing: readonly StableRow[] = [{ id: 'a', value: 1 }]
+    const incoming: readonly StableRow[] = [{ fallback_id: 'legacy', value: 2 }]
+    const pagination = normalizePagination({}, existing)
+    const merged = mergeByStableId(existing, incoming, ['id', 'fallback_id'])
+
+    expectTypeOf(pagination.limit).toEqualTypeOf<number | null>()
+    expectTypeOf(merged).toEqualTypeOf<StableRow[]>()
+
+    // @ts-expect-error Stable id fields must exist on row types without index signatures.
+    mergeByStableId<StableRow>(existing, incoming, 'missing_id')
   })
 })
 

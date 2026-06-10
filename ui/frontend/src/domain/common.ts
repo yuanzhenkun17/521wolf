@@ -66,7 +66,7 @@ export function firstNumber(...values: unknown[]): number | null {
   return null
 }
 
-export function uniqueStrings(values: unknown[]): string[] {
+export function uniqueStrings(values: readonly unknown[]): string[] {
   const seen = new Set<string>()
   const result: string[] = []
   for (const value of values.flatMap((item) => (Array.isArray(item) ? item : [item]))) {
@@ -84,7 +84,7 @@ export function shortId(value: unknown, length = 8): string {
   return text.length <= length ? text : text.slice(0, length)
 }
 
-export function normalizePagination(raw: unknown, rows: unknown[] = [], fallback: Partial<Pagination> = {}): Pagination {
+export function normalizePagination(raw: unknown, rows: readonly unknown[] = [], fallback: Partial<Pagination> = {}): Pagination {
   const source = objectOrEmpty(raw)
   const returned = integerValue(source.returned, rows.length)
   const offset = Math.max(0, integerValue(source.offset, fallback.offset ?? 0))
@@ -118,7 +118,13 @@ function appendQueryValue(search: URLSearchParams, key: string, value: QueryValu
   search.append(key, String(value))
 }
 
-export function mergeByStableId<T extends UnknownRecord>(existing: T[], incoming: T[], fields: string | string[]): T[] {
+type StableIdField<T extends UnknownRecord> = Extract<keyof T, string>
+
+export function mergeByStableId<T extends UnknownRecord>(
+  existing: readonly T[],
+  incoming: readonly T[],
+  fields: StableIdField<T> | readonly StableIdField<T>[]
+): T[] {
   const idFields = Array.isArray(fields) ? fields : [fields]
   const seen = new Set<string>()
   return [...existing, ...incoming].filter((item) => {

@@ -71,15 +71,31 @@ test('sync handles trailing slashes and skips lobby because it has no legacy has
   assert.equal(lobbyLocation.hash, '')
 })
 
-test('does not overwrite existing hashes, including invalid legacy hashes', () => {
-  const invalidHashLocation = locationLike('/benchmark', '?batch_id=bench-7', '#evidence?game_id=game-2')
-  const validHashLocation = locationLike('/evolution', '?run_id=run-3', '#logs?game_id=game-1')
+test('syncs explicit router paths over stale or invalid legacy hashes', () => {
+  const staleHashLocation = locationLike('/benchmark', '?batch_id=bench-7', '#logs?game_id=game-2')
+  const invalidHashLocation = locationLike('/evolution', '?run_id=run-3', '#evidence?game_id=game-1')
 
+  syncInitialRouteToLegacyHash(staleHashLocation as Location)
   syncInitialRouteToLegacyHash(invalidHashLocation as Location)
-  syncInitialRouteToLegacyHash(validHashLocation as Location)
 
-  assert.equal(invalidHashLocation.hash, '#evidence?game_id=game-2')
-  assert.equal(validHashLocation.hash, '#logs?game_id=game-1')
+  assert.equal(staleHashLocation.hash, '#benchmark?batch_id=bench-7')
+  assert.equal(invalidHashLocation.hash, '#evolution?run_id=run-3')
+})
+
+test('keeps matching legacy hash deep links when the router query is empty', () => {
+  const location = locationLike('/logs', '', '#logs?game_id=legacy-game&workspace=archive')
+
+  syncInitialRouteToLegacyHash(location as Location)
+
+  assert.equal(location.hash, '#logs?game_id=legacy-game&workspace=archive')
+})
+
+test('syncs route query over matching legacy hash query on explicit router paths', () => {
+  const location = locationLike('/logs', '?game_id=route-game&workspace=review', '#logs?game_id=hash-game&workspace=archive')
+
+  syncInitialRouteToLegacyHash(location as Location)
+
+  assert.equal(location.hash, '#logs?game_id=route-game&workspace=review')
 })
 
 test('does not redirect unknown initial paths', () => {
@@ -105,20 +121,25 @@ test('router bridge writes legacy hashes after navigation while preserving query
   assert.equal(window.location.hash, '#match?mode=play')
 })
 
-test('router bridge ignores existing and unknown hashes instead of misrouting', () => {
+test('router bridge syncs explicit routes over stale hashes and preserves legacy fallback routes', () => {
   const callbacks: Array<(to: { path: string }) => void> = []
   const router = {
     afterEach(callback: (to: { path: string }) => void) {
       callbacks.push(callback)
     }
   }
-  globalThis.window = { location: locationLike('/benchmark', '?batch_id=bench-7', '#evidence?game_id=game-2') } as Window & typeof globalThis
+  globalThis.window = { location: locationLike('/benchmark', '?batch_id=bench-7', '#logs?game_id=game-2') } as Window & typeof globalThis
 
   installLegacyHashBridge(router as Parameters<typeof installLegacyHashBridge>[0])
   callbacks[0]({ path: '/benchmark' })
-  assert.equal(window.location.hash, '#evidence?game_id=game-2')
+  assert.equal(window.location.hash, '#benchmark?batch_id=bench-7')
 
-  window.location.hash = ''
+  window.location.search = ''
+  window.location.hash = '#logs?game_id=legacy-game&workspace=archive'
+  callbacks[0]({ path: '/logs' })
+  assert.equal(window.location.hash, '#logs?game_id=legacy-game&workspace=archive')
+
+  window.location.hash = '#logs?game_id=legacy-game'
   callbacks[0]({ path: '/evidence' })
-  assert.equal(window.location.hash, '')
+  assert.equal(window.location.hash, '#logs?game_id=legacy-game')
 })

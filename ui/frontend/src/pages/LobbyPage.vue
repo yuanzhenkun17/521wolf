@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, getCurrentInstance, onMounted, ref, watch, type PropType } from 'vue'
 import { type GameStartRoleVersionMode, gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
 import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
+import { useGameStore, useSessionStore } from '../stores'
 
 type RoleVersionModeOption = {
   key: GameStartRoleVersionMode
   label: string
 }
+
+type ExternalStatus = {
+  supports_human?: boolean
+} & Record<string, unknown>
 
 type StartModeOptions = {
   player_count: number
@@ -16,14 +21,34 @@ type StartModeOptions = {
 
 const props = defineProps({
   backendMode: { type: String, default: 'mock' },
-  externalStatus: { type: Object, default: null },
+  externalStatus: { type: Object as PropType<ExternalStatus | null>, default: null },
   loading: Boolean,
   playerCount: { type: Number, default: 12 },
   apiFetch: { type: Function, default: null }
 })
 
 const emit = defineEmits(['start-mode'])
-const backendAvailable = computed(() => props.backendMode !== 'offline')
+const instance = getCurrentInstance()
+const sessionStore = useSessionStore()
+const gameStore = useGameStore()
+
+const LOBBY_STORE_PROP_ALIASES = {
+  backendMode: ['backendMode', 'backend-mode'],
+  loading: ['loading']
+} as const
+
+function hasExplicitLobbyProp(propName: keyof typeof LOBBY_STORE_PROP_ALIASES) {
+  const rawProps = instance?.vnode.props || {}
+  return LOBBY_STORE_PROP_ALIASES[propName].some((key) => Object.prototype.hasOwnProperty.call(rawProps, key))
+}
+
+const backendMode = computed(() => (
+  hasExplicitLobbyProp('backendMode') ? props.backendMode : sessionStore.backendMode
+))
+const backendAvailable = computed(() => (
+  hasExplicitLobbyProp('backendMode') ? backendMode.value !== 'offline' : sessionStore.backendAvailable
+))
+const loading = computed(() => hasExplicitLobbyProp('loading') ? props.loading : gameStore.loading)
 const supportsHuman = computed(() => props.externalStatus?.supports_human !== false)
 const roles = ref([])
 const versionsByRole = ref({})
@@ -234,11 +259,11 @@ async function loadRoleVersions() {
 }
 
 onMounted(loadRoleVersions)
-watch(() => props.backendMode, () => {
+watch(backendMode, () => {
   loadRoleVersions()
 })
-watch(() => props.loading, (loading) => {
-  if (!loading) startingMode.value = ''
+watch(loading, (isLoading) => {
+  if (!isLoading) startingMode.value = ''
 })
 </script>
 
@@ -253,52 +278,52 @@ watch(() => props.loading, (loading) => {
     <section class="card-fan" aria-label="角色牌">
       <figure class="role-card-art werewolf" aria-label="狼人角色牌">
         <picture class="lobby-card-image">
-          <source type="image/webp" srcset="/lobby-cards/optimized/werewolf-512.webp" />
-          <img src="/lobby-cards/werewolf.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/werewolf-512.webp'" />
+          <img :src="'/lobby-cards/werewolf.png'" alt="" decoding="async" />
         </picture>
         <picture class="lobby-card-frame">
-          <source type="image/webp" srcset="/lobby-cards/optimized/frame-512.webp" />
-          <img src="/lobby-cards/frame.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/frame-512.webp'" />
+          <img :src="'/lobby-cards/frame.png'" alt="" decoding="async" />
         </picture>
       </figure>
       <figure class="role-card-art villager" aria-label="村民角色牌">
         <picture class="lobby-card-image">
-          <source type="image/webp" srcset="/lobby-cards/optimized/villager-512.webp" />
-          <img src="/lobby-cards/villager.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/villager-512.webp'" />
+          <img :src="'/lobby-cards/villager.png'" alt="" decoding="async" />
         </picture>
         <picture class="lobby-card-frame">
-          <source type="image/webp" srcset="/lobby-cards/optimized/frame-512.webp" />
-          <img src="/lobby-cards/frame.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/frame-512.webp'" />
+          <img :src="'/lobby-cards/frame.png'" alt="" decoding="async" />
         </picture>
       </figure>
       <figure class="role-card-art judge" aria-label="法官角色牌">
         <picture class="lobby-card-image">
-          <source type="image/webp" srcset="/lobby-cards/optimized/judge-512.webp" />
-          <img src="/lobby-cards/judge.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/judge-512.webp'" />
+          <img :src="'/lobby-cards/judge.png'" alt="" decoding="async" />
         </picture>
         <picture class="lobby-card-frame">
-          <source type="image/webp" srcset="/lobby-cards/optimized/frame-512.webp" />
-          <img src="/lobby-cards/frame.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/frame-512.webp'" />
+          <img :src="'/lobby-cards/frame.png'" alt="" decoding="async" />
         </picture>
       </figure>
       <figure class="role-card-art hunter" aria-label="猎人角色牌">
         <picture class="lobby-card-image">
-          <source type="image/webp" srcset="/lobby-cards/optimized/hunter-512.webp" />
-          <img src="/lobby-cards/hunter.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/hunter-512.webp'" />
+          <img :src="'/lobby-cards/hunter.png'" alt="" decoding="async" />
         </picture>
         <picture class="lobby-card-frame">
-          <source type="image/webp" srcset="/lobby-cards/optimized/frame-512.webp" />
-          <img src="/lobby-cards/frame.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/frame-512.webp'" />
+          <img :src="'/lobby-cards/frame.png'" alt="" decoding="async" />
         </picture>
       </figure>
       <figure class="role-card-art witch" aria-label="女巫角色牌">
         <picture class="lobby-card-image">
-          <source type="image/webp" srcset="/lobby-cards/optimized/witch-512.webp" />
-          <img src="/lobby-cards/witch.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/witch-512.webp'" />
+          <img :src="'/lobby-cards/witch.png'" alt="" decoding="async" />
         </picture>
         <picture class="lobby-card-frame">
-          <source type="image/webp" srcset="/lobby-cards/optimized/frame-512.webp" />
-          <img src="/lobby-cards/frame.png" alt="" decoding="async" />
+          <source type="image/webp" :srcset="'/lobby-cards/optimized/frame-512.webp'" />
+          <img :src="'/lobby-cards/frame.png'" alt="" decoding="async" />
         </picture>
       </figure>
     </section>
