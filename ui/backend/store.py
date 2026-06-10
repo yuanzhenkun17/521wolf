@@ -7,12 +7,11 @@ import logging
 import math
 import os
 import uuid
-import asyncio
 import threading
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from fastapi import HTTPException
 
@@ -42,7 +41,6 @@ from app.util.time import beijing_now_iso
 from ui.backend.background_store import BackgroundTaskStoreMixin
 from ui.backend.constants import (
     MANUAL_STOP_REASON,
-    ROLE_ORDER,
 )
 from ui.backend.errors import domain_error_detail, release_stage_diagnostic
 from ui.backend.game_store import GameStoreMixin
@@ -54,8 +52,15 @@ from ui.backend.schemas import (
     EvolutionStartRequest,
     automatic_evolution_request,
 )
-from ui.backend.services import BENCHMARK_PUBLIC_METHODS, BenchmarkService, TaskService
-from ui.backend.live_game import BroadcastEventSink, LiveGameSession
+from ui.backend.services import (
+    BENCHMARK_PUBLIC_METHODS,
+    BenchmarkService,
+    GameDeleteCoordinator,
+    GameReadGateway,
+    LiveGameLifecycleCoordinator,
+    TaskService,
+)
+from ui.backend.live_game import LiveGameSession
 from ui.backend.task_events import TaskEventLog
 from ui.backend.task_state import (
     _filter_values,
@@ -77,6 +82,7 @@ _BENCHMARK_CURRENCY = "USD"
 _BENCHMARK_GAME_UNIT_SECONDS = 1.2
 _BENCHMARK_JUDGE_DECISION_SECONDS = 1.0
 _BENCHMARK_EVAL_BATCH_SETUP_SECONDS = 10.0
+_ComponentT = TypeVar("_ComponentT")
 
 
 class _FakeModel:
@@ -279,11 +285,52 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     _background_state_fingerprint: str | None = field(default=None, init=False, repr=False)
     _task_event_fingerprints: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _task_event_log: TaskEventLog | None = field(default=None, init=False, repr=False)
-    _task_service: TaskService | None = field(default=None, init=False, repr=False)
-    _benchmark_service: BenchmarkService | None = field(default=None, init=False, repr=False)
+    _task_service_cache: TaskService | None = field(default=None, init=False, repr=False)
+    _benchmark_service_cache: BenchmarkService | None = field(default=None, init=False, repr=False)
+    _game_read_gateway_cache: GameReadGateway | None = field(default=None, init=False, repr=False)
+    _game_delete_coordinator_cache: GameDeleteCoordinator | None = field(default=None, init=False, repr=False)
+    _live_game_lifecycle_cache: LiveGameLifecycleCoordinator | None = field(default=None, init=False, repr=False)
     _registry: VersionRegistryProtocol | None = field(default=None, init=False, repr=False)
     _role_overview_cache: dict[str, dict[str, Any]] = field(default_factory=dict, init=False, repr=False)
     startup_checks: dict[str, Any] = field(default_factory=default_startup_checks)
+
+    def _cached_component(self, cache_attr: str, factory: Callable[[], _ComponentT]) -> _ComponentT:
+        component = getattr(self, cache_attr, None)
+        if component is None:
+            component = factory()
+            setattr(self, cache_attr, component)
+        return component
+
+    def _task_service(self) -> TaskService:
+        return self._cached_component("_task_service_cache", lambda: TaskService(self))
+
+    def _benchmark_service(self) -> BenchmarkService:
+        def factory() -> BenchmarkService:
+            missing = [
+                method_name
+                for method_name in BENCHMARK_PUBLIC_METHODS
+                if not hasattr(self, f"_{method_name}")
+            ]
+            if missing:
+                raise RuntimeError(f"BenchmarkService missing BackendStore implementations: {', '.join(missing)}")
+            return BenchmarkService(
+                self,
+                callables={
+                    method_name: getattr(self, f"_{method_name}")
+                    for method_name in BENCHMARK_PUBLIC_METHODS
+                },
+            )
+
+        return self._cached_component("_benchmark_service_cache", factory)
+
+    def _game_read_gateway(self) -> GameReadGateway:
+        return self._cached_component("_game_read_gateway_cache", lambda: GameReadGateway(self))
+
+    def _game_delete_coordinator(self) -> GameDeleteCoordinator:
+        return self._cached_component("_game_delete_coordinator_cache", lambda: GameDeleteCoordinator(self))
+
+    def _live_game_lifecycle(self) -> LiveGameLifecycleCoordinator:
+        return self._cached_component("_live_game_lifecycle_cache", lambda: LiveGameLifecycleCoordinator(self))
 
     @property
     def registry(self) -> VersionRegistryProtocol:
@@ -310,22 +357,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
     @property
     def benchmark_service(self) -> BenchmarkService:
-        if self._benchmark_service is None:
-            missing = [
-                method_name
-                for method_name in BENCHMARK_PUBLIC_METHODS
-                if not hasattr(self, f"_{method_name}")
-            ]
-            if missing:
-                raise RuntimeError(f"BenchmarkService missing BackendStore implementations: {', '.join(missing)}")
-            self._benchmark_service = BenchmarkService(
-                self,
-                callables={
-                    method_name: getattr(self, f"_{method_name}")
-                    for method_name in BENCHMARK_PUBLIC_METHODS
-                },
-            )
-        return self._benchmark_service
+        return self._benchmark_service()
 
     def leaderboard_scores_for_role(
         self,
@@ -1624,7 +1656,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         target_type = spec.target_type if spec else request.target_type
         self._validate_benchmark_target_versions(roles, request, target_type=target_type)
         if spec is not None:
-            game_count = int(spec.game_count)
+            game_count = _benchmark_effective_game_count(int(spec.game_count))
             max_days = int(spec.max_days)
             judge = spec.judge.model_dump(mode="json")
             benchmark = benchmark_spec_summary(spec, seed_set)
@@ -2881,7 +2913,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         benchmark_meta = batch.get("benchmark") if isinstance(batch.get("benchmark"), dict) else {}
         target_type = str(batch.get("target_type") or request.target_type or "role_version")
         if spec_snapshot:
-            game_count = int(spec_snapshot.get("game_count", request.battle_games or 0) or 0)
+            game_count = _benchmark_effective_game_count(int(spec_snapshot.get("game_count", 0) or 0))
             max_days = int(spec_snapshot.get("max_days", request.max_days or 5) or request.max_days or 5)
             seed_sequence = _benchmark_seed_sequence(spec_snapshot, game_count)
             seed_start = (
@@ -3084,6 +3116,10 @@ def _benchmark_result_game_count(result: dict[str, Any]) -> int:
             continue
     games = result.get("games")
     return len([item for item in games if isinstance(item, dict)]) if isinstance(games, list) else 0
+
+
+def _benchmark_effective_game_count(spec_game_count: int) -> int:
+    return max(0, int(spec_game_count or 0))
 
 
 def _benchmark_eval_batch_id(batch_id: str, role: str | None) -> str:

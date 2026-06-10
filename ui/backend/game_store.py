@@ -32,9 +32,6 @@ from ui.backend.live_game import (
     LiveGameSession,
 )
 from ui.backend.schemas import GameStartRequest, HumanActionRequest
-from ui.backend.services.game_delete_service import GameDeleteCoordinator
-from ui.backend.services.game_read_service import GameReadGateway
-from ui.backend.services.live_game_lifecycle import LiveGameLifecycleCoordinator
 from ui.backend.serializers import (
     _dead_players,
     _fallback_version,
@@ -195,27 +192,6 @@ class GameStoreMixin:
 
     def prewarm_game_history_index(self) -> None:
         self._game_history_index().rows()
-
-    def _game_read_gateway(self) -> GameReadGateway:
-        gateway = getattr(self, "_game_read_gateway_cache", None)
-        if gateway is None:
-            gateway = GameReadGateway(self)
-            setattr(self, "_game_read_gateway_cache", gateway)
-        return gateway
-
-    def _game_delete_coordinator(self) -> GameDeleteCoordinator:
-        coordinator = getattr(self, "_game_delete_coordinator_cache", None)
-        if coordinator is None:
-            coordinator = GameDeleteCoordinator(self)
-            setattr(self, "_game_delete_coordinator_cache", coordinator)
-        return coordinator
-
-    def _live_game_lifecycle(self) -> LiveGameLifecycleCoordinator:
-        coordinator = getattr(self, "_live_game_lifecycle_cache", None)
-        if coordinator is None:
-            coordinator = LiveGameLifecycleCoordinator(self)
-            setattr(self, "_live_game_lifecycle_cache", coordinator)
-        return coordinator
 
     def _wolf_read_lock(self) -> Any:
         return self._game_read_gateway().lock

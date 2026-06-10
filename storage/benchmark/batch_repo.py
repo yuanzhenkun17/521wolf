@@ -12,7 +12,7 @@ from storage.shared.database import StorageConnection
 class BenchmarkBatchRepository:
     """Persist and query benchmark evaluation batch runtime data."""
 
-    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = False) -> None:
         self._conn = conn
         self._autocommit = autocommit
 

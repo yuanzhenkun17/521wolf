@@ -3,24 +3,145 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from time import monotonic
-from typing import Any
+from typing import Any, Literal, Protocol, TypedDict, cast
 
-from app.lib.version import is_experimental_release_stage
+from fastapi import HTTPException
+
+from app.lib.version import (
+    ReleaseStageNotAllowedError,
+    ensure_version_allowed_for_default_use,
+    is_experimental_release_stage,
+    promote_version,
+)
 from ui.backend.constants import ROLE_ORDER
-from ui.backend.serializers import _fallback_version, _version_summary_payload
+from ui.backend.errors import domain_error_detail, release_stage_not_allowed_detail
+from ui.backend.serializers import _fallback_version, _version_detail_payload, _version_summary_payload
 
 _ROLE_OVERVIEW_CACHE_TTL_SECONDS = 10.0
 _ROLE_CONFIDENCE_LEVEL = 0.95
 _ROLE_Z_95 = 1.96
 _ROLE_MIN_CONFIDENT_SAMPLE_SIZE = 30
+_VERSION_DETAIL_SUMMARY_KEYS = (
+    "version_id",
+    "role",
+    "source",
+    "created_at",
+    "is_baseline",
+    "status",
+    "release_stage",
+    "provenance",
+    "metrics",
+    "trust_bundle_id",
+    "gate_report_id",
+    "attribution_report_id",
+    "source_run_id",
+    "bundle_hash",
+)
+
+
+class _RoleVersionSummaryLike(Protocol):
+    def to_dict(self) -> dict[str, Any]:
+        ...
+
+
+class _RoleServiceRegistryProtocol(Protocol):
+    def list_roles(self) -> Sequence[str]:
+        ...
+
+    def list_versions(self, role: str) -> Sequence[_RoleVersionSummaryLike]:
+        ...
+
+
+class RoleServiceStoreProtocol(Protocol):
+    """Store capabilities required by ``RoleService``."""
+
+    @property
+    def registry(self) -> _RoleServiceRegistryProtocol:
+        ...
+
+    def leaderboard_scores_for_roles(
+        self,
+        roles: list[str],
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        ...
+
+
+RoleVersionPayload = dict[str, Any]
+RoleScorePayload = Mapping[str, Any]
+RoleScoresByVersion = Mapping[str, RoleScorePayload]
+RoleBulkScores = Mapping[str, RoleScoresByVersion]
+RoleVersionsByRole = dict[str, list[RoleVersionPayload]]
+
+
+class RoleConfidenceIntervalPayload(TypedDict):
+    low: float
+    high: float
+    level: float
+
+
+class RoleStatisticsPayload(TypedDict):
+    sample_size: int
+    paired_sample_size: int
+    win_rate_ci: RoleConfidenceIntervalPayload
+    ci_low: float
+    ci_high: float
+    standard_error: float
+    paired_delta: Any
+    significant: bool
+    significance_label: str
+    warnings: list[str]
+
+
+class RoleLeaderboardBaseEntry(TypedDict):
+    hash: str
+    role: str
+    target_role: str
+    target_version_id: str
+    target_role_role_weighted_score: float
+    target_side_win_rate: float
+    target_role_fallback_rate: float
+    rankable: bool
+    game_count: int
+    is_baseline: bool
+    release_stage: Any
+    delta_vs_baseline: dict[str, Any]
+
+
+class RoleLeaderboardEntry(RoleLeaderboardBaseEntry, RoleStatisticsPayload):
+    pass
+
+
+class RoleLeaderboardPayload(TypedDict):
+    kind: Literal["role_leaderboard"]
+    schema_version: Literal[1]
+    role: str
+    evaluation_set_id: str | None
+    source: Literal["app"]
+    entries: list[RoleLeaderboardEntry]
+
+
+class RoleOverviewPayload(TypedDict):
+    kind: Literal["role_overview"]
+    schema_version: Literal[1]
+    roles: list[str]
+    versions: RoleVersionsByRole
+    leaderboards: dict[str, RoleLeaderboardPayload]
+    evaluation_set_id: str | None
+
+
+class RoleOverviewCacheEntry(TypedDict):
+    cached_at: float
+    payload: RoleOverviewPayload
 
 
 class RoleService:
     """Build role/version API payloads and own role overview caching."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: RoleServiceStoreProtocol) -> None:
         self._store = store
 
     @staticmethod
@@ -30,11 +151,66 @@ class RoleService:
     def available_roles(self) -> list[str]:
         return sorted({*ROLE_ORDER, *self._store.registry.list_roles()}, key=self.role_order_key)
 
-    def role_versions(self, role: str) -> list[dict[str, Any]]:
+    def role_versions(self, role: str) -> list[RoleVersionPayload]:
         versions = [_version_summary_payload(v.to_dict()) for v in self._store.registry.list_versions(role)]
         if not versions:
             versions = [_version_summary_payload(_fallback_version(role))]
         return versions
+
+    @staticmethod
+    def summary_dict(version: Any) -> dict[str, Any]:
+        if hasattr(version, "to_dict"):
+            try:
+                data = version.to_dict()
+            except Exception:
+                data = {}
+            result = dict(data) if isinstance(data, Mapping) else {}
+        elif isinstance(version, Mapping):
+            result = dict(version)
+        else:
+            result = {}
+        for key in _VERSION_DETAIL_SUMMARY_KEYS:
+            if key not in result and hasattr(version, key):
+                result[key] = getattr(version, key)
+        return result
+
+    def version_summary_for_detail(self, role: str, version_id: str) -> dict[str, Any] | None:
+        list_versions = getattr(self._store.registry, "list_versions", None)
+        if not callable(list_versions):
+            return None
+        try:
+            versions = list_versions(role)
+        except Exception:
+            return None
+        for version in versions:
+            summary = self.summary_dict(version)
+            if str(summary.get("version_id") or "") == version_id:
+                return _version_summary_payload(summary)
+        return None
+
+    def version_detail(self, role: str, version_id: str) -> dict[str, Any]:
+        try:
+            contents = self._store.registry.read_skill_contents(role, version_id)
+            summary = self.version_summary_for_detail(role, version_id)
+            return _version_detail_payload(
+                role=role,
+                version_id=version_id,
+                contents=contents,
+                source="app-registry",
+                summary=summary,
+            )
+        except (FileNotFoundError, ValueError):
+            fallback = _fallback_version(role)
+            if version_id == fallback["version_id"]:
+                return _version_detail_payload(
+                    role=role,
+                    version_id=version_id,
+                    contents={},
+                    source="app-fallback",
+                    status="missing_registry",
+                    summary=_version_summary_payload(fallback),
+                )
+            raise HTTPException(status_code=404, detail="version not found")
 
     @staticmethod
     def version_release_stage(version: dict[str, Any]) -> str:
@@ -69,7 +245,7 @@ class RoleService:
         return max(0.0, min(1.0, number))
 
     @classmethod
-    def role_wilson_interval(cls, win_rate: float, sample_size: int) -> dict[str, float]:
+    def role_wilson_interval(cls, win_rate: float, sample_size: int) -> RoleConfidenceIntervalPayload:
         if sample_size <= 0:
             return {"low": 0.0, "high": 0.0, "level": _ROLE_CONFIDENCE_LEVEL}
         probability = cls.role_probability(win_rate)
@@ -108,7 +284,13 @@ class RoleService:
         return result
 
     @classmethod
-    def role_statistics_payload(cls, score: dict[str, Any], *, game_count: int, win_rate: float) -> dict[str, Any]:
+    def role_statistics_payload(
+        cls,
+        score: RoleScorePayload,
+        *,
+        game_count: int,
+        win_rate: float,
+    ) -> RoleStatisticsPayload:
         summary = score.get("summary") if isinstance(score.get("summary"), Mapping) else {}
         sample_size = cls.role_int(
             score.get("sample_size"),
@@ -151,12 +333,12 @@ class RoleService:
     def leaderboard_payload(
         cls,
         role: str,
-        versions: list[dict[str, Any]],
-        scores: dict[str, dict[str, Any]],
+        versions: list[RoleVersionPayload],
+        scores: RoleScoresByVersion,
         *,
         evaluation_set_id: str | None = None,
-    ) -> dict[str, Any]:
-        entries = []
+    ) -> RoleLeaderboardPayload:
+        entries: list[RoleLeaderboardEntry] = []
         for version in versions:
             release_stage = cls.version_release_stage(version)
             if is_experimental_release_stage(release_stage):
@@ -165,7 +347,7 @@ class RoleService:
             score = scores.get(vid, {})
             game_count = int(score.get("games_played", 0))
             win_rate = float(score.get("target_side_win_rate", 0.0))
-            entry = {
+            base_entry: RoleLeaderboardBaseEntry = {
                 "hash": vid,
                 "role": role,
                 "target_role": role,
@@ -179,7 +361,10 @@ class RoleService:
                 "release_stage": release_stage or version.get("release_stage"),
                 "delta_vs_baseline": {},
             }
-            entry.update(cls.role_statistics_payload(score, game_count=game_count, win_rate=win_rate))
+            entry = cast(
+                RoleLeaderboardEntry,
+                {**base_entry, **cls.role_statistics_payload(score, game_count=game_count, win_rate=win_rate)},
+            )
             entries.append(entry)
         entries.sort(key=lambda e: (e["rankable"], e["target_role_role_weighted_score"]), reverse=True)
         return {
@@ -198,7 +383,7 @@ class RoleService:
             return
         setattr(self._store, "_role_overview_cache", {})
 
-    def cached_overview(self, evaluation_set_id: str | None) -> dict[str, Any] | None:
+    def cached_overview(self, evaluation_set_id: str | None) -> RoleOverviewPayload | None:
         cache = getattr(self._store, "_role_overview_cache", None)
         if not isinstance(cache, dict):
             return None
@@ -210,24 +395,27 @@ class RoleService:
             cache.pop(evaluation_set_id or "", None)
             return None
         payload = entry.get("payload")
-        return payload if isinstance(payload, dict) else None
+        return cast(RoleOverviewPayload, payload) if isinstance(payload, dict) else None
 
-    def store_overview(self, evaluation_set_id: str | None, payload: dict[str, Any]) -> dict[str, Any]:
+    def store_overview(self, evaluation_set_id: str | None, payload: RoleOverviewPayload) -> RoleOverviewPayload:
         cache = getattr(self._store, "_role_overview_cache", None)
         if not isinstance(cache, dict):
             cache = {}
             setattr(self._store, "_role_overview_cache", cache)
-        cache[evaluation_set_id or ""] = {"cached_at": monotonic(), "payload": payload}
+        cache[evaluation_set_id or ""] = RoleOverviewCacheEntry(cached_at=monotonic(), payload=payload)
         return payload
 
-    def overview_payload(self, evaluation_set_id: str | None = None) -> dict[str, Any]:
+    def overview_payload(self, evaluation_set_id: str | None = None) -> RoleOverviewPayload:
         cached = self.cached_overview(evaluation_set_id)
         if cached is not None:
             return cached
         roles = self.available_roles()
-        versions_by_role = {role: self.role_versions(role) for role in roles}
-        bulk_scores = self._store.leaderboard_scores_for_roles(roles, evaluation_set_id=evaluation_set_id)
-        leaderboards = {
+        versions_by_role: RoleVersionsByRole = {role: self.role_versions(role) for role in roles}
+        bulk_scores = cast(
+            RoleBulkScores,
+            self._store.leaderboard_scores_for_roles(roles, evaluation_set_id=evaluation_set_id),
+        )
+        leaderboards: dict[str, RoleLeaderboardPayload] = {
             role: self.leaderboard_payload(
                 role,
                 versions_by_role[role],
@@ -236,14 +424,48 @@ class RoleService:
             )
             for role in roles
         }
-        return self.store_overview(
-            evaluation_set_id,
-            {
-                "kind": "role_overview",
-                "schema_version": 1,
-                "roles": roles,
-                "versions": versions_by_role,
-                "leaderboards": leaderboards,
-                "evaluation_set_id": evaluation_set_id,
-            },
-        )
+        payload: RoleOverviewPayload = {
+            "kind": "role_overview",
+            "schema_version": 1,
+            "roles": roles,
+            "versions": versions_by_role,
+            "leaderboards": leaderboards,
+            "evaluation_set_id": evaluation_set_id,
+        }
+        return self.store_overview(evaluation_set_id, payload)
+
+    def leaderboard(self, role: str, evaluation_set_id: str | None = None) -> dict[str, Any]:
+        versions = self.role_versions(role)
+        scores = self._store.leaderboard_scores_for_role(role, evaluation_set_id=evaluation_set_id)
+        return self.leaderboard_payload(role, versions, scores, evaluation_set_id=evaluation_set_id)
+
+    def rollback(self, role: str, version_id: str) -> dict[str, Any]:
+        try:
+            ensure_version_allowed_for_default_use(self._store.registry, role, version_id)
+            promote_version(self._store.registry, role, version_id)
+        except ReleaseStageNotAllowedError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=domain_error_detail(
+                    code="role_version_release_stage_not_allowed",
+                    message="Role version is not allowed for rollback.",
+                    detail=f"version not allowed: {exc}",
+                    diagnostics=[exc.diagnostic(kind="role_rollback_version_not_allowed")],
+                ),
+            ) from exc
+        except ValueError as exc:
+            release_stage_detail = release_stage_not_allowed_detail(
+                exc,
+                code="role_version_release_stage_not_allowed",
+                message="Role version is not allowed for rollback.",
+                detail_prefix="version not allowed",
+                kind="role_rollback_version_not_allowed",
+            )
+            if release_stage_detail is not None:
+                raise HTTPException(status_code=409, detail=release_stage_detail) from exc
+            raise HTTPException(status_code=409, detail=f"version not allowed: {exc}") from exc
+        except (FileNotFoundError, RuntimeError):
+            if version_id != _fallback_version(role)["version_id"]:
+                raise HTTPException(status_code=404, detail="version not found")
+        self.clear_overview_cache()
+        return {"kind": "role_rollback", "schema_version": 1, "role": role, "new_baseline": version_id}

@@ -1,0 +1,389 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from app.config import PathConfig
+import ui.backend.store as ui_backend_store
+
+
+def test_game_read_gateway_facades_delegate_to_cached_gateway(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class FakeGameReadGateway:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+            self.lock = object()
+            self.calls: list[tuple[Any, ...]] = []
+            instances.append(self)
+
+        def open_connection(self) -> str:
+            self.calls.append(("open_connection",))
+            return "wolf-connection"
+
+        def read_repository(self, read: Any) -> Any:
+            self.calls.append(("read_repository", read))
+            return read("wolf-repository")
+
+        def load_game_detail(self, game_id: str) -> dict[str, Any]:
+            self.calls.append(("load_game_detail", game_id))
+            return {"method": "load_game_detail", "game_id": game_id}
+
+        def load_game_history_shell(self, game_id: str) -> dict[str, Any]:
+            self.calls.append(("load_game_history_shell", game_id))
+            return {"method": "load_game_history_shell", "game_id": game_id}
+
+        def load_game_phase_detail(self, game_id: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("load_game_phase_detail", game_id, kwargs))
+            return {"method": "load_game_phase_detail", "game_id": game_id, "kwargs": kwargs}
+
+        def load_game_flow_data(self, game_id: str) -> dict[str, Any]:
+            self.calls.append(("load_game_flow_data", game_id))
+            return {"method": "load_game_flow_data", "game_id": game_id}
+
+        def load_game_replay(self, game_id: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("load_game_replay", game_id, kwargs))
+            return {"method": "load_game_replay", "game_id": game_id, "kwargs": kwargs}
+
+        def load_game_review(self, game_id: str) -> dict[str, Any]:
+            self.calls.append(("load_game_review", game_id))
+            return {"method": "load_game_review", "game_id": game_id}
+
+        def list_history_rows(self) -> list[dict[str, Any]]:
+            self.calls.append(("list_history_rows",))
+            return [{"game_id": "from-pg"}]
+
+        def close(self) -> None:
+            self.calls.append(("close",))
+
+    monkeypatch.setattr(ui_backend_store, "GameReadGateway", FakeGameReadGateway)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+
+    gateway = store._game_read_gateway()
+
+    assert store._game_read_gateway() is gateway
+    assert instances == [gateway]
+    assert gateway.store is store
+    assert store._wolf_read_lock() is gateway.lock
+    assert store._open_wolf_read_connection() == "wolf-connection"
+
+    def read(repository: str) -> str:
+        return f"read:{repository}"
+
+    assert store._read_wolf_repository(read) == "read:wolf-repository"
+    assert store._load_game_from_pg("game-1") == {"method": "load_game_detail", "game_id": "game-1"}
+    assert store._load_game_history_shell_from_pg("game-2") == {
+        "method": "load_game_history_shell",
+        "game_id": "game-2",
+    }
+    assert store._load_game_phase_detail_from_pg(
+        "game-3",
+        day=2,
+        phase="night",
+        log_offset=3,
+        log_limit=4,
+        decision_offset=5,
+        decision_limit=6,
+    ) == {
+        "method": "load_game_phase_detail",
+        "game_id": "game-3",
+        "kwargs": {
+            "day": 2,
+            "phase": "night",
+            "log_offset": 3,
+            "log_limit": 4,
+            "decision_offset": 5,
+            "decision_limit": 6,
+        },
+    }
+    assert store._load_game_flow_data_from_pg("game-4") == {"method": "load_game_flow_data", "game_id": "game-4"}
+    assert store._load_game_replay_from_pg("game-5", cursor=7, limit=8) == {
+        "method": "load_game_replay",
+        "game_id": "game-5",
+        "kwargs": {"cursor": 7, "limit": 8},
+    }
+    assert store._load_game_review_from_pg("game-6") == {"method": "load_game_review", "game_id": "game-6"}
+    assert store._list_games_from_pg() == [{"game_id": "from-pg"}]
+
+    store._close_wolf_read_connection()
+
+    assert gateway.calls == [
+        ("open_connection",),
+        ("read_repository", read),
+        ("load_game_detail", "game-1"),
+        ("load_game_history_shell", "game-2"),
+        (
+            "load_game_phase_detail",
+            "game-3",
+            {
+                "day": 2,
+                "phase": "night",
+                "log_offset": 3,
+                "log_limit": 4,
+                "decision_offset": 5,
+                "decision_limit": 6,
+            },
+        ),
+        ("load_game_flow_data", "game-4"),
+        ("load_game_replay", "game-5", {"cursor": 7, "limit": 8}),
+        ("load_game_review", "game-6"),
+        ("list_history_rows",),
+        ("close",),
+    ]
+
+
+def test_live_game_lifecycle_facades_delegate_to_cached_coordinator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class FakeLiveGameLifecycleCoordinator:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+            self.calls: list[tuple[Any, ...]] = []
+            instances.append(self)
+
+        async def start_game(self, request: Any) -> dict[str, Any]:
+            self.calls.append(("start_game", request))
+            return {"method": "start_game", "request": request}
+
+        async def start_live_game(self, *, game_id: str, request: Any, skill_dir: str | None) -> dict[str, Any]:
+            self.calls.append(("start_live_game", game_id, request, skill_dir))
+            return {
+                "method": "start_live_game",
+                "game_id": game_id,
+                "request": request,
+                "skill_dir": skill_dir,
+            }
+
+        async def run_live_session(self, game_id: str) -> None:
+            self.calls.append(("run_live_session", game_id))
+
+        def check_watchdog(self, *, timeout_seconds: float | None = None) -> list[dict[str, Any]]:
+            self.calls.append(("check_watchdog", timeout_seconds))
+            return [{"timeout_seconds": timeout_seconds}]
+
+        def live_session_waiting_for_human_within_timeout(self, session: Any) -> bool:
+            self.calls.append(("live_session_waiting_for_human_within_timeout", session))
+            return bool(session.waiting)
+
+        def stop_game(self, game_id: str) -> dict[str, Any]:
+            self.calls.append(("stop_game", game_id))
+            return {"method": "stop_game", "game_id": game_id}
+
+        def persist_start(self, session: Any) -> None:
+            self.calls.append(("persist_start", session))
+
+        def persist_session(self, session: Any, snapshot: dict[str, Any] | None) -> None:
+            self.calls.append(("persist_session", session, snapshot))
+
+    monkeypatch.setattr(ui_backend_store, "LiveGameLifecycleCoordinator", FakeLiveGameLifecycleCoordinator)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+    request = SimpleNamespace(kind="request")
+    session = SimpleNamespace(waiting=True)
+    snapshot = {"game_id": "game-live"}
+
+    coordinator = store._live_game_lifecycle()
+
+    assert store._live_game_lifecycle() is coordinator
+    assert instances == [coordinator]
+    assert coordinator.store is store
+    assert asyncio.run(store.start_game(request)) == {"method": "start_game", "request": request}
+    assert asyncio.run(store.start_live_game(game_id="game-live", request=request, skill_dir="skills")) == {
+        "method": "start_live_game",
+        "game_id": "game-live",
+        "request": request,
+        "skill_dir": "skills",
+    }
+    asyncio.run(store.run_live_session("game-live"))
+    assert store.check_live_game_watchdog(timeout_seconds=7.5) == [{"timeout_seconds": 7.5}]
+    assert store._live_session_waiting_for_human_within_timeout(session) is True
+    assert store.stop_game("game-live") == {"method": "stop_game", "game_id": "game-live"}
+    store._persist_live_session_start(session)
+    store.persist_live_session(session, snapshot)
+
+    assert coordinator.calls == [
+        ("start_game", request),
+        ("start_live_game", "game-live", request, "skills"),
+        ("run_live_session", "game-live"),
+        ("check_watchdog", 7.5),
+        ("live_session_waiting_for_human_within_timeout", session),
+        ("stop_game", "game-live"),
+        ("persist_start", session),
+        ("persist_session", session, snapshot),
+    ]
+
+
+def test_game_delete_facade_delegates_to_cached_coordinator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class FakeGameDeleteCoordinator:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+            self.calls: list[tuple[str, bool]] = []
+            instances.append(self)
+
+        def delete_game(self, game_id: str, *, force: bool = False) -> dict[str, Any]:
+            self.calls.append((game_id, force))
+            return {"game_id": game_id, "force": force}
+
+    monkeypatch.setattr(ui_backend_store, "GameDeleteCoordinator", FakeGameDeleteCoordinator)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+
+    coordinator = store._game_delete_coordinator()
+
+    assert store._game_delete_coordinator() is coordinator
+    assert instances == [coordinator]
+    assert coordinator.store is store
+    assert store.delete_game("game-a") == {"game_id": "game-a", "force": False}
+    assert store.delete_game("game-b", force=True) == {"game_id": "game-b", "force": True}
+    assert coordinator.calls == [("game-a", False), ("game-b", True)]
+
+
+def test_task_service_facades_delegate_to_cached_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class FakeTaskService:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+            self.task_event_log = "task-events"
+            self.calls: list[tuple[Any, ...]] = []
+            instances.append(self)
+
+        def open_connection(self) -> str:
+            self.calls.append(("open_connection",))
+            return "task-connection"
+
+        def touch_background_task(self, entity: dict[str, Any], *, timestamp: str | None = None) -> str:
+            self.calls.append(("touch_background_task", entity, timestamp))
+            return "touched"
+
+    monkeypatch.setattr(ui_backend_store, "TaskService", FakeTaskService)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+    entity = {"run_id": "run-1"}
+
+    service = store.task_service
+
+    assert store.task_service is service
+    assert instances == [service]
+    assert service.store is store
+    assert store._open_ui_task_connection() == "task-connection"
+    assert store.task_event_log == "task-events"
+    assert store._touch_background_task(entity, timestamp="now") == "touched"
+    assert service.calls == [
+        ("open_connection",),
+        ("touch_background_task", entity, "now"),
+    ]
+
+
+def test_benchmark_facades_delegate_to_cached_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class FakeBenchmarkService:
+        def __init__(self, store: Any, *, callables: dict[str, Any]) -> None:
+            self.store = store
+            self.callables = callables
+            self.calls: list[tuple[Any, ...]] = []
+            instances.append(self)
+
+        def leaderboard_entries(
+            self,
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, Any]]:
+            self.calls.append(("leaderboard_entries", scope, evaluation_set_id, target_role, limit))
+            return [
+                {
+                    "scope": scope,
+                    "evaluation_set_id": evaluation_set_id,
+                    "target_role": target_role,
+                    "limit": limit,
+                }
+            ]
+
+        def benchmark_batch_games(self, batch_id: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("benchmark_batch_games", batch_id, kwargs))
+            return {"batch_id": batch_id, "kwargs": kwargs}
+
+    monkeypatch.setattr(ui_backend_store, "BENCHMARK_PUBLIC_METHODS", ("facade_probe",))
+    monkeypatch.setattr(ui_backend_store, "BenchmarkService", FakeBenchmarkService)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+
+    def facade_probe() -> str:
+        return "probe"
+
+    store._facade_probe = facade_probe  # type: ignore[attr-defined]
+
+    service = store.benchmark_service
+
+    assert store.benchmark_service is service
+    assert instances == [service]
+    assert service.store is store
+    assert service.callables == {"facade_probe": facade_probe}
+    assert store.leaderboard_entries(
+        scope="role_version",
+        evaluation_set_id="eval-1",
+        target_role="seer",
+        limit=3,
+    ) == [
+        {
+            "scope": "role_version",
+            "evaluation_set_id": "eval-1",
+            "target_role": "seer",
+            "limit": 3,
+        }
+    ]
+    assert store.benchmark_batch_games(
+        "batch-1",
+        result_batch_id="result-1",
+        target_role="seer",
+        status="completed",
+        seed="42",
+        limit=10,
+        offset=5,
+    ) == {
+        "batch_id": "batch-1",
+        "kwargs": {
+            "result_batch_id": "result-1",
+            "target_role": "seer",
+            "status": "completed",
+            "seed": "42",
+            "limit": 10,
+            "offset": 5,
+        },
+    }
+    assert service.calls == [
+        ("leaderboard_entries", "role_version", "eval-1", "seer", 3),
+        (
+            "benchmark_batch_games",
+            "batch-1",
+            {
+                "result_batch_id": "result-1",
+                "target_role": "seer",
+                "status": "completed",
+                "seed": "42",
+                "limit": 10,
+                "offset": 5,
+            },
+        ),
+    ]
