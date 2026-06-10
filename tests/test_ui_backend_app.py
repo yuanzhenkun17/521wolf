@@ -1089,6 +1089,135 @@ def test_game_start_blocks_when_llm_probe_fails(tmp_path: Path) -> None:
     assert _FakeGamePersistence.instances == []
 
 
+def test_settings_model_profiles_are_read_only_without_admin(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("SETTINGS_ADMIN_ENABLED", raising=False)
+    monkeypatch.delenv("SETTINGS_ADMIN_TOKEN", raising=False)
+
+    with _test_client(tmp_path) as client:
+        list_response = client.get("/api/settings/model-profiles")
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            json={
+                "name": "Qwen Prod",
+                "provider": "openai_compatible",
+                "base_url": "https://example.com/v1",
+                "model": "qwen-plus",
+                "api_key": "sk-secret-readonly",
+            },
+        )
+
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    assert payload["kind"] == "settings_model_profiles"
+    assert payload["profiles"] == []
+    assert payload["admin"] == {
+        "enabled": False,
+        "token_configured": False,
+        "write_available": False,
+    }
+    assert payload["health"]["schema_version"] == 2
+
+    assert create_response.status_code == 403
+    assert create_response.json()["error"]["code"] == "settings_admin_disabled"
+
+
+def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import ui.backend.settings_model_profiles as settings_model_profiles
+
+    class ProbeModel:
+        async def ainvoke(self, messages: Any) -> Any:
+            assert messages == settings_model_profiles.MODEL_PROFILE_TEST_PROMPT
+            return type("Result", (), {"content": "ok"})()
+
+    create_calls: list[dict[str, Any]] = []
+
+    def fake_create_llm(**kwargs: Any) -> ProbeModel:
+        create_calls.append(dict(kwargs))
+        return ProbeModel()
+
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        forbidden_response = client.post(
+            "/api/settings/model-profiles",
+            json={
+                "name": "DeepSeek Dev",
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
+                "api_key": "sk-secret-denied",
+            },
+        )
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "DeepSeek Dev",
+                "provider": "openai_compatible",
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
+                "api_key": "sk-secret-123456",
+                "temperature": 0.3,
+                "timeout_seconds": 45,
+                "max_retries": 1,
+                "default_scopes": {"benchmark": True, "prompt_test": True},
+                "capabilities": {"chat": True, "json_mode": True},
+            },
+        )
+        profile = create_response.json()["profile"]
+        profile_id = profile["profile_id"]
+        patch_response = client.patch(
+            f"/api/settings/model-profiles/{profile_id}",
+            headers=headers,
+            json={"model": "deepseek-chat-v2"},
+        )
+        test_response = client.post(f"/api/settings/model-profiles/{profile_id}/test", headers=headers)
+        disable_response = client.post(f"/api/settings/model-profiles/{profile_id}/disable", headers=headers)
+        list_response = client.get("/api/settings/model-profiles")
+        delete_response = client.delete(f"/api/settings/model-profiles/{profile_id}", headers=headers)
+        final_response = client.get("/api/settings/model-profiles")
+
+    assert forbidden_response.status_code == 403
+    assert forbidden_response.json()["error"]["code"] == "settings_admin_required"
+
+    assert create_response.status_code == 200
+    assert profile["name"] == "DeepSeek Dev"
+    assert profile["api_key_masked"] == "sk-****3456"
+    assert profile["has_api_key"] is True
+    assert profile["default_scopes"]["benchmark"] is True
+    assert profile["default_scopes"]["evolution"] is False
+    assert "sk-secret" not in json.dumps(create_response.json(), ensure_ascii=False)
+
+    assert patch_response.status_code == 200
+    patched = patch_response.json()["profile"]
+    assert patched["model"] == "deepseek-chat-v2"
+    assert patched["last_test_status"] == "stale"
+
+    assert test_response.status_code == 200
+    assert test_response.json()["ok"] is True
+    assert test_response.json()["model"] == "deepseek-chat-v2"
+    assert create_calls[-1]["api_key"] == "sk-secret-123456"
+    assert create_calls[-1]["model"] == "deepseek-chat-v2"
+    assert create_calls[-1]["base_url"] == "https://api.deepseek.com/v1"
+
+    assert disable_response.status_code == 200
+    assert disable_response.json()["profile"]["enabled"] is False
+    listed = list_response.json()["profiles"]
+    assert [item["profile_id"] for item in listed] == [profile_id]
+    assert listed[0]["last_test_status"] == "ok"
+    assert listed[0]["api_key_masked"] == "sk-****3456"
+    assert "sk-secret" not in json.dumps(list_response.json(), ensure_ascii=False)
+
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+    assert final_response.json()["profiles"] == []
+
+
 def test_error_handlers_keep_detail_and_add_error_shape(tmp_path: Path) -> None:
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=FakeModel())
 

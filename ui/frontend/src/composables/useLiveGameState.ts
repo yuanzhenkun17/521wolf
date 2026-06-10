@@ -374,9 +374,10 @@ export function createLiveGameState(refs: LooseRecord, helpers: LooseRecord) {
   computedState.inBenchmark = computed(() => currentView.value === 'benchmark')
   computedState.inEvolution = computed(() => currentView.value === 'evolution')
   computedState.inTasks = computed(() => currentView.value === 'tasks')
+  computedState.inSettings = computed(() => currentView.value === 'settings')
   computedState.inLobby = computed(() =>
     currentView.value === 'lobby'
-    || (!game.value && currentView.value !== 'match' && !computedState.inLogs.value && !computedState.inBenchmark.value && !computedState.inEvolution.value && !computedState.inTasks.value)
+    || (!game.value && currentView.value !== 'match' && !computedState.inLogs.value && !computedState.inBenchmark.value && !computedState.inEvolution.value && !computedState.inTasks.value && !computedState.inSettings.value)
   )
   computedState.inMatch = computed(() => currentView.value === 'match')
   computedState.isWatch = computed(() => game.value?.mode === 'watch')

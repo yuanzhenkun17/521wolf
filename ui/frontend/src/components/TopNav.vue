@@ -10,7 +10,7 @@ import type { AppView } from '../types/ui'
 type TopNavVariant = 'lobby' | 'match' | 'section'
 type NavItemKey = Exclude<AppView, 'match'>
 type NavWorkLine = 'play' | 'lab'
-type NavItemEmit = 'go-lobby' | 'open-logs' | 'open-benchmark' | 'open-evolution' | 'open-tasks'
+type NavItemEmit = 'go-lobby' | 'open-logs' | 'open-benchmark' | 'open-evolution' | 'open-tasks' | 'open-settings'
 type TopNavEmit = NavItemEmit | 'back-to-match' | 'toggle-audio' | 'toggle-tts' | 'exit-game'
 type StreamBadgeStatus = 'idle' | 'stopped' | 'polling' | 'reconnecting' | 'live' | 'background'
 
@@ -88,7 +88,7 @@ const props = withDefaults(defineProps<TopNavProps>(), {
   exitDisabled: false
 })
 
-const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'open-tasks', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
+const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'open-tasks', 'open-settings', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
 const instance = getCurrentInstance()
 const route = useRoute()
 const sessionStore = useSessionStore()
@@ -105,7 +105,8 @@ const navItems = [
   { key: 'logs', label: '日志', line: 'play', lineLabel: 'Play', event: 'open-logs' },
   { key: 'benchmark', label: '评测', line: 'lab', lineLabel: 'Lab', event: 'open-benchmark' },
   { key: 'evolution', label: '自进化', line: 'lab', lineLabel: 'Lab', event: 'open-evolution' },
-  { key: 'tasks', label: '任务', line: 'lab', lineLabel: 'Lab', event: 'open-tasks' }
+  { key: 'tasks', label: '任务', line: 'lab', lineLabel: 'Lab', event: 'open-tasks' },
+  { key: 'settings', label: '设置', line: 'lab', lineLabel: 'Lab', event: 'open-settings' }
 ] as const satisfies readonly NavItem[]
 
 const RECONNECTING_STREAM_STATUSES: ReadonlySet<string> = new Set(['connecting', 'reconnect', 'reconnecting', 'retrying'])

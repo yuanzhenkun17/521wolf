@@ -5326,21 +5326,121 @@ function applyMockSelfplayAction(runId, action) {
   return cloneSelfplayRun(run)
 }
 
+function mockHealthPayload() {
+  return {
+    schema_version: 2,
+    ok: true,
+    status: 'degraded',
+    ready: true,
+    mode: 'mock',
+    checks: {
+      postgresql: { status: 'ok', message: 'mock storage ready' },
+      alembic: { status: 'ok', message: 'mock migration ready' },
+      llm_config: { status: 'ok', source: 'frontend-mock' },
+      llm_connectivity: { status: 'unknown', source: 'frontend-mock' },
+      task_worker: { status: 'degraded', worker_fresh: false },
+      artifact_root: { status: 'ok', writable: true }
+    },
+    gates: {
+      game_start: { ready: true, status: 'degraded', blockers: [], warnings: ['llm_connectivity'] },
+      benchmark_start: { ready: true, status: 'degraded', blockers: [], warnings: ['llm_connectivity'] },
+      evolution_start: { ready: true, status: 'degraded', blockers: [], warnings: ['llm_connectivity'] }
+    },
+    external: {
+      provider: 'frontend-mock',
+      latency: 'simulated',
+      agents: BASE_PLAYERS.length,
+      supports_human: true,
+      supports_sse: true
+    }
+  }
+}
+
+function mockSettingsProfiles() {
+  return {
+    kind: 'settings_model_profiles',
+    schema_version: 1,
+    profiles: [
+      {
+        profile_id: 'model_mock_qwen',
+        name: 'Mock Qwen',
+        provider: 'openai_compatible',
+        base_url: 'https://mock.local/v1',
+        model: 'mock-qwen-plus',
+        api_key_masked: 'sk-****mock',
+        has_api_key: true,
+        temperature: 0.4,
+        timeout_seconds: 60,
+        max_retries: 0,
+        enabled: true,
+        default_scopes: { game_decision: true, judge: false, benchmark: true, evolution: true, prompt_test: true },
+        capabilities: { chat: true, json_mode: true, tool_calling: false, streaming: false, vision: false },
+        last_test_status: 'ok',
+        last_tested_at: '2026-06-11T10:00:00+08:00',
+        last_test_error: '',
+        model_config_hash: 'mockconfig1234'
+      }
+    ],
+    env_locks: { game_decision: false, judge: false, benchmark: false, evolution: false, prompt_test: false, sources: {} },
+    admin: { enabled: true, token_configured: true, write_available: true },
+    scopes: [
+      { key: 'game_decision', label: '游戏决策' },
+      { key: 'judge', label: 'Judge' },
+      { key: 'benchmark', label: 'Benchmark' },
+      { key: 'evolution', label: 'Evolution' },
+      { key: 'prompt_test', label: 'Prompt/工具测试' }
+    ],
+    providers: ['openai_compatible', 'dashscope', 'deepseek', 'ollama', 'custom'],
+    variables: [
+      { key: 'SETTINGS_ADMIN_ENABLED', label: '设置写权限', value: 'true', state: 'requires_restart', locked: true, secret: false },
+      { key: 'WEREWOLF_LLM_*', label: '环境变量模型', value: '未锁定', state: 'editable_next_task', locked: false, secret: true }
+    ],
+    health: mockHealthPayload()
+  }
+}
+
 export async function mockApiFetch(path, options: LooseRecord = {}) {
   const body = parseBody(options)
   const method = String(options.method || 'GET').toUpperCase()
   const [routePath, queryString = ''] = String(path).split('?')
 
   if (path === '/health') {
-    return {
-      ok: true,
-      mode: 'mock',
-      external: {
-        provider: 'frontend-mock',
-        latency: 'simulated',
-        agents: BASE_PLAYERS.length
+    return mockHealthPayload()
+  }
+
+  if (routePath === '/settings/model-profiles') {
+    if (method === 'POST') {
+      const created = {
+        ...mockSettingsProfiles().profiles[0],
+        ...body,
+        profile_id: `model_mock_${Date.now()}`,
+        api_key_masked: body.api_key ? 'sk-****mock' : '',
+        has_api_key: Boolean(body.api_key),
+        last_test_status: 'untested'
       }
+      return { kind: 'settings_model_profile', schema_version: 1, profile: created }
     }
+    return mockSettingsProfiles()
+  }
+
+  const settingsProfileActionMatch = routePath.match(/^\/settings\/model-profiles\/([^/]+)(?:\/(test|disable))?$/)
+  if (settingsProfileActionMatch) {
+    const profileId = decodeURIComponent(settingsProfileActionMatch[1])
+    const action = settingsProfileActionMatch[2] || ''
+    if (method === 'DELETE') {
+      return { kind: 'settings_model_profile_deleted', schema_version: 1, profile_id: profileId, deleted: true }
+    }
+    if (action === 'test' && method === 'POST') {
+      return { ok: true, status: 'ok', checked_at: new Date().toISOString(), latency_ms: 32, profile_id: profileId, model: 'mock-qwen-plus', message: '连接正常' }
+    }
+    const profile = {
+      ...mockSettingsProfiles().profiles[0],
+      ...body,
+      profile_id: profileId,
+      enabled: action === 'disable' ? false : body.enabled ?? true,
+      last_test_status: action === 'disable' ? 'ok' : 'stale'
+    }
+    return { kind: 'settings_model_profile', schema_version: 1, profile }
   }
 
   if (routePath === '/leaderboards') {

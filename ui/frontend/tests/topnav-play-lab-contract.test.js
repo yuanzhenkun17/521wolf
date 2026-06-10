@@ -13,6 +13,7 @@ test('TopNav exposes Play and Lab as primary work lines', () => {
   assert.match(source, /key: 'logs'[\s\S]*line: 'play'[\s\S]*lineLabel: 'Play'[\s\S]*event: 'open-logs'/)
   assert.match(source, /key: 'benchmark'[\s\S]*line: 'lab'[\s\S]*lineLabel: 'Lab'[\s\S]*event: 'open-benchmark'/)
   assert.match(source, /key: 'evolution'[\s\S]*line: 'lab'[\s\S]*lineLabel: 'Lab'[\s\S]*event: 'open-evolution'/)
+  assert.match(source, /key: 'settings'[\s\S]*line: 'lab'[\s\S]*lineLabel: 'Lab'[\s\S]*event: 'open-settings'/)
 })
 
 test('TopNav buttons show current page state without changing App routing events', () => {
@@ -61,6 +62,7 @@ test('TopNav buttons show current page state without changing App routing events
   assert.match(appSource, /@open-logs="openLogPage\(\)"/)
   assert.match(appSource, /@open-benchmark="openBenchmarkPage"/)
   assert.match(appSource, /@open-evolution="openEvolutionPage"/)
+  assert.match(appSource, /@open-settings="openSettingsPage"/)
 })
 
 test('TopNav Play and Lab segment styling stays compact on mobile', () => {

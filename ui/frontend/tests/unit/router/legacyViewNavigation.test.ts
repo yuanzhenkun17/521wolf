@@ -65,6 +65,7 @@ test("maps legacy app views to router paths", () => {
   assert.equal(routePathForView("benchmark"), "/benchmark");
   assert.equal(routePathForView("evolution"), "/evolution");
   assert.equal(routePathForView("tasks"), "/tasks");
+  assert.equal(routePathForView("settings"), "/settings");
 });
 
 test("maps app views to legacy hashes and parses legacy hash routes", () => {
@@ -74,6 +75,7 @@ test("maps app views to legacy hashes and parses legacy hash routes", () => {
   assert.equal(hashForView("benchmark"), "benchmark");
   assert.equal(hashForView("evolution"), "evolution");
   assert.equal(hashForView("tasks"), "tasks");
+  assert.equal(hashForView("settings"), "settings");
 
   assert.equal(
     routeHashFromLegacyHash("#evolution?run_id=run-1"),
@@ -92,6 +94,7 @@ test("maps app views to legacy hashes and parses legacy hash routes", () => {
   assert.equal(viewFromHash("#logs?game_id=game-7"), "logs");
   assert.equal(viewFromHash("#benchmark?batch_id=bench-1"), "benchmark");
   assert.equal(viewFromHash("#tasks?task_id=task-1"), "tasks");
+  assert.equal(viewFromHash("#settings"), "settings");
   assert.equal(viewFromHash("#evidence?game_id=game-2"), "lobby");
 });
 

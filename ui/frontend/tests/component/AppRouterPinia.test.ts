@@ -112,6 +112,14 @@ vi.mock('../../src/pages/TasksPage.vue', () => ({
   },
 }))
 
+vi.mock('../../src/pages/SettingsPage.vue', () => ({
+  __esModule: true,
+  default: {
+    name: 'SettingsPage',
+    template: '<section data-test="settings-page" />',
+  },
+}))
+
 vi.mock('../../src/pages/LobbyPage.vue', () => ({
   __esModule: true,
   default: {
@@ -186,6 +194,7 @@ async function createTestRouter(path: string): Promise<Router> {
       { path: '/benchmark', name: 'benchmark', component: EmptyRoute },
       { path: '/evolution', name: 'evolution', component: EmptyRoute },
       { path: '/tasks', name: 'tasks', component: EmptyRoute },
+      { path: '/settings', name: 'settings', component: EmptyRoute },
     ],
   })
   await router.push(path)
@@ -238,6 +247,16 @@ describe('App router and Pinia takeover', () => {
     const { wrapper } = await mountAppAt('/tasks?task_id=task-1')
 
     expect(wrapper.find('[data-test="tasks-page"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="match-page"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="top-nav"]').attributes('data-variant')).toBe('section')
+  })
+
+  it('renders the settings console from router-owned settings routes', async () => {
+    mockRuntimeState.currentView.value = 'match'
+
+    const { wrapper } = await mountAppAt('/settings')
+
+    expect(wrapper.find('[data-test="settings-page"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="match-page"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="top-nav"]').attributes('data-variant')).toBe('section')
   })

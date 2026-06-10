@@ -264,6 +264,63 @@ class BenchmarkViewRequest(BaseModel):
         return role
 
 
+class ModelProfileCreateRequest(BaseModel):
+    name: str = Field(default="", min_length=1, max_length=120)
+    provider: str = Field(default="openai_compatible", max_length=80)
+    base_url: str = Field(default="", min_length=1, max_length=1000)
+    model: str = Field(default="", min_length=1, max_length=240)
+    api_key: str | None = Field(default=None, max_length=4000)
+    temperature: float | None = Field(default=0.4, ge=0.0, le=2.0)
+    timeout_seconds: int | None = Field(default=60, ge=1, le=600)
+    max_retries: int | None = Field(default=0, ge=0, le=10)
+    enabled: bool = True
+    default_scopes: dict[str, bool] = Field(default_factory=dict)
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name", "provider", "base_url", "model", mode="before")
+    @classmethod
+    def normalize_required_text(cls, value: Any) -> str:
+        return str(value or "").strip()
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def normalize_optional_secret(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
+
+
+class ModelProfileUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    provider: str | None = Field(default=None, max_length=80)
+    base_url: str | None = Field(default=None, min_length=1, max_length=1000)
+    model: str | None = Field(default=None, min_length=1, max_length=240)
+    api_key: str | None = Field(default=None, max_length=4000)
+    clear_api_key: bool = False
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=600)
+    max_retries: int | None = Field(default=None, ge=0, le=10)
+    enabled: bool | None = None
+    default_scopes: dict[str, bool] | None = None
+    capabilities: dict[str, bool] | None = None
+    metadata: dict[str, Any] | None = None
+
+    @field_validator("name", "provider", "base_url", "model", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value or "").strip()
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def normalize_optional_secret(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value or "").strip()
+        return text or None
+
+
 class TtsSpeechRequest(BaseModel):
     text: str = Field(default="", max_length=2000)
     speaker: str = Field(default="", max_length=64)

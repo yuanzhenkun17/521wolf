@@ -27,6 +27,7 @@ import { ApiError, normalizeApiError, readErrorPayload } from '../../../src/serv
 import { createBenchmarkService } from '../../../src/services/benchmarkApi'
 import { createEvolutionService } from '../../../src/services/evolutionApi'
 import { createHistoryService } from '../../../src/services/historyApi'
+import { createSettingsService } from '../../../src/services/settingsApi'
 import { createTaskService } from '../../../src/services/taskApi'
 import type { ApiClient, ApiRequestOptions } from '../../../src/types/api'
 import type { EvolutionRun, ProposalReview } from '../../../src/types/evolution'
@@ -720,6 +721,62 @@ describe('service endpoint contracts', () => {
       },
       { path: '/tasks/task%20id%2F1/artifacts', options: {} },
       { path: '/tasks/task%20id%2F1/artifacts/artifact%20id%2F2', options: {} }
+    ])
+  })
+
+  it('maps settings service calls to local model profile backend routes', async () => {
+    const { client, requests } = recordingClient({ profile: { profile_id: 'model-1' } })
+    const settings = createSettingsService({ client })
+
+    await settings.listModelProfiles()
+    await settings.createModelProfile({
+      name: 'Qwen',
+      provider: 'openai_compatible',
+      base_url: 'https://example.com/v1',
+      model: 'qwen-plus',
+      api_key: 'sk-secret'
+    }, 'token')
+    await settings.updateModelProfile('model/1', { model: 'qwen-max' }, 'token')
+    await settings.testModelProfile('model/1', 'token')
+    await settings.disableModelProfile('model/1', 'token')
+    await settings.deleteModelProfile('model/1', 'token')
+
+    expect(requests).toEqual([
+      { path: '/settings/model-profiles', options: {} },
+      {
+        path: '/settings/model-profiles',
+        options: {
+          method: 'POST',
+          headers: { 'X-Settings-Admin-Token': 'token' },
+          body: {
+            name: 'Qwen',
+            provider: 'openai_compatible',
+            base_url: 'https://example.com/v1',
+            model: 'qwen-plus',
+            api_key: 'sk-secret'
+          }
+        }
+      },
+      {
+        path: '/settings/model-profiles/model%2F1',
+        options: {
+          method: 'PATCH',
+          headers: { 'X-Settings-Admin-Token': 'token' },
+          body: { model: 'qwen-max' }
+        }
+      },
+      {
+        path: '/settings/model-profiles/model%2F1/test',
+        options: { method: 'POST', headers: { 'X-Settings-Admin-Token': 'token' } }
+      },
+      {
+        path: '/settings/model-profiles/model%2F1/disable',
+        options: { method: 'POST', headers: { 'X-Settings-Admin-Token': 'token' } }
+      },
+      {
+        path: '/settings/model-profiles/model%2F1',
+        options: { method: 'DELETE', headers: { 'X-Settings-Admin-Token': 'token' } }
+      }
     ])
   })
 

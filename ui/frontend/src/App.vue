@@ -24,6 +24,7 @@ const LogsPage = defineAsyncComponent(() => import('./pages/LogsPage.vue'))
 const BenchmarkPage = defineAsyncComponent(() => import('./pages/BenchmarkPage.vue'))
 const EvolutionPage = defineAsyncComponent(() => import('./pages/EvolutionPage.vue'))
 const TasksPage = defineAsyncComponent(() => import('./pages/TasksPage.vue'))
+const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue'))
 const LobbyPage = defineAsyncComponent(() => import('./pages/LobbyPage.vue'))
 const MatchPage = defineAsyncComponent(() => import('./pages/MatchPage.vue'))
 
@@ -72,6 +73,7 @@ const inLogs = computed(() => activeAppView.value === 'logs')
 const inBenchmark = computed(() => activeAppView.value === 'benchmark')
 const inEvolution = computed(() => activeAppView.value === 'evolution')
 const inTasks = computed(() => activeAppView.value === 'tasks')
+const inSettings = computed(() => activeAppView.value === 'settings')
 const isNight = computed(() => gameStore.isNight)
 const toastError = computed(() => uiStore.errorMessage)
 const showMatchBoot = computed(() => {
@@ -101,6 +103,7 @@ const {
   openBenchmarkPage,
   openEvolutionPage,
   openTasksPage,
+  openSettingsPage,
   openLogPage,
   pauseReplay,
   playReplay,
@@ -126,7 +129,7 @@ const {
 </script>
 
 <template>
-<main :class="['lycan-app', { night: isNight, day: !isNight, lobbying: inLobby && !inLogs && !inBenchmark && !inEvolution && !inTasks, logbook: inLogs, benchmark: inBenchmark, evolution: inEvolution, tasks: inTasks }]">
+<main :class="['lycan-app', { night: isNight, day: !isNight, lobbying: inLobby && !inLogs && !inBenchmark && !inEvolution && !inTasks && !inSettings, logbook: inLogs, benchmark: inBenchmark, evolution: inEvolution, tasks: inTasks, settings: inSettings }]">
       <div class="atmosphere"></div>
       <div class="noise"></div>
 
@@ -138,6 +141,7 @@ const {
         @open-benchmark="openBenchmarkPage"
         @open-evolution="openEvolutionPage"
         @open-tasks="openTasksPage"
+        @open-settings="openSettingsPage"
         @back-to-match="backToMatch"
         @toggle-audio="toggleAudio"
         @toggle-tts="toggleTts"
@@ -175,6 +179,9 @@ const {
       />
       <TasksPage
         v-if="inTasks"
+      />
+      <SettingsPage
+        v-if="inSettings"
       />
       <LobbyPage
         v-if="inLobby"

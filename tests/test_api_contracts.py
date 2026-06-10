@@ -1645,6 +1645,40 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "/api/health/probes/llm": {
             "post": ("probe_llm_api_health_probes_llm_post", None, [("scope", "query", False)]),
         },
+        "/api/settings/model-profiles": {
+            "get": ("list_model_profiles_api_settings_model_profiles_get", None, []),
+            "post": (
+                "create_model_profile_api_settings_model_profiles_post",
+                "ModelProfileCreateRequest",
+                [("x-settings-admin-token", "header", False)],
+            ),
+        },
+        "/api/settings/model-profiles/{profile_id}": {
+            "patch": (
+                "update_model_profile_api_settings_model_profiles__profile_id__patch",
+                "ModelProfileUpdateRequest",
+                [("profile_id", "path", True), ("x-settings-admin-token", "header", False)],
+            ),
+            "delete": (
+                "delete_model_profile_api_settings_model_profiles__profile_id__delete",
+                None,
+                [("profile_id", "path", True), ("x-settings-admin-token", "header", False)],
+            ),
+        },
+        "/api/settings/model-profiles/{profile_id}/test": {
+            "post": (
+                "test_model_profile_api_settings_model_profiles__profile_id__test_post",
+                None,
+                [("profile_id", "path", True), ("x-settings-admin-token", "header", False)],
+            ),
+        },
+        "/api/settings/model-profiles/{profile_id}/disable": {
+            "post": (
+                "disable_model_profile_api_settings_model_profiles__profile_id__disable_post",
+                None,
+                [("profile_id", "path", True), ("x-settings-admin-token", "header", False)],
+            ),
+        },
         "/api/leaderboards": {
             "get": (
                 "leaderboards_api_leaderboards_get",
@@ -1733,9 +1767,11 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "EvolutionStartRequest",
         "GameStartRequest",
         "HTTPValidationError",
-            "HumanActionRequest",
-            "LangfuseTaskRequest",
-            "TtsSpeechRequest",
+        "HumanActionRequest",
+        "LangfuseTaskRequest",
+        "ModelProfileCreateRequest",
+        "ModelProfileUpdateRequest",
+        "TtsSpeechRequest",
         "ValidationError",
     }
 

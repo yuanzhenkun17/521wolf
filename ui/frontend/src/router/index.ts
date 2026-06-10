@@ -21,6 +21,7 @@ const LogsPage = lazyPage('../pages/LogsPage.vue')
 const BenchmarkPage = lazyPage('../pages/BenchmarkPage.vue')
 const EvolutionPage = lazyPage('../pages/EvolutionPage.vue')
 const TasksPage = lazyPage('../pages/TasksPage.vue')
+const SettingsPage = lazyPage('../pages/SettingsPage.vue')
 
 export const routes: RouteRecordRaw[] = [
   { path: '/', name: 'lobby', component: LobbyPage },
@@ -28,7 +29,8 @@ export const routes: RouteRecordRaw[] = [
   { path: '/logs', name: 'logs', component: LogsPage },
   { path: '/benchmark', name: 'benchmark', component: BenchmarkPage },
   { path: '/evolution', name: 'evolution', component: EvolutionPage },
-  { path: '/tasks', name: 'tasks', component: TasksPage }
+  { path: '/tasks', name: 'tasks', component: TasksPage },
+  { path: '/settings', name: 'settings', component: SettingsPage }
 ]
 
 if (typeof window !== 'undefined') {
