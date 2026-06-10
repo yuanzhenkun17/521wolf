@@ -2150,7 +2150,7 @@ def test_run_queued_benchmark_uses_queued_spec_snapshot_after_spec_changes(
             roles=["seer"],
             target_versions={"seer": "seer_candidate_v2"},
         )
-        batch = store.queue_benchmark(request)
+        batch = store.benchmark_service.queue_benchmark(request)
         queued_benchmark = dict(batch["benchmark"])
         queued_snapshot = dict(queued_benchmark["spec_snapshot"])
 
@@ -2165,7 +2165,7 @@ def test_run_queued_benchmark_uses_queued_spec_snapshot_after_spec_changes(
             encoding="utf-8",
         )
 
-        asyncio.run(store.run_queued_benchmark(batch["batch_id"], request))
+        asyncio.run(store.benchmark_service.run_queued_benchmark(batch["batch_id"], request))
 
     assert queued_snapshot["game_count"] == 3
     assert queued_snapshot["max_days"] == 5
@@ -3020,14 +3020,14 @@ def test_model_benchmark_queue_freezes_auto_runtime_provenance(tmp_path: Path, m
     monkeypatch.setattr(ui_backend_store, "run_evaluation", fake_run_evaluation)
 
     request = BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model")
-    batch = store.queue_benchmark(request)
+    batch = store.benchmark_service.queue_benchmark(request)
     queued_runtime = batch["model_runtime"]
     queued_hash = queued_runtime["model_config_hash"]
     model.temperature = 0.9
     model.model_kwargs["public_label"] = "mutated"
     model.model_kwargs["new_public"] = "after-queue"
 
-    asyncio.run(store.run_queued_benchmark(batch["batch_id"], request))
+    asyncio.run(store.benchmark_service.run_queued_benchmark(batch["batch_id"], request))
 
     assert queued_runtime["source"] == "injected_model"
     assert queued_runtime["hash_source"] == "injected_model"
@@ -3058,11 +3058,11 @@ def test_model_runtime_hash_uses_public_config_and_ignores_secrets(tmp_path: Pat
     store = app.state.backend_store
     request = BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model")
 
-    first = store.benchmark_model_runtime(request)["model_runtime"]
+    first = store.benchmark_service.benchmark_model_runtime(request)["model_runtime"]
     monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "secret-b")
-    same_public_config = store.benchmark_model_runtime(request)["model_runtime"]
+    same_public_config = store.benchmark_service.benchmark_model_runtime(request)["model_runtime"]
     monkeypatch.setenv("WEREWOLF_LLM_TEMPERATURE", "0.9")
-    changed_public_config = store.benchmark_model_runtime(request)["model_runtime"]
+    changed_public_config = store.benchmark_service.benchmark_model_runtime(request)["model_runtime"]
 
     assert first["source"] == "configured_llm"
     assert first["hash_input"]["model"] == "qwen-runtime-a"
@@ -3490,10 +3490,10 @@ def test_stopped_benchmark_is_not_overwritten_by_background_result(tmp_path: Pat
             battle_games=2,
             max_days=1,
         )
-        batch = store.queue_benchmark(request)
+        batch = store.benchmark_service.queue_benchmark(request)
         batch["status"] = "failed"
         batch["stop_requested"] = True
-        asyncio.run(store.run_queued_benchmark(batch["batch_id"], request))
+        asyncio.run(store.benchmark_service.run_queued_benchmark(batch["batch_id"], request))
 
     assert called is False
     assert batch["status"] == "failed"
@@ -3507,7 +3507,7 @@ def test_stopped_benchmark_is_not_overwritten_by_background_result(tmp_path: Pat
 def test_benchmark_stop_surfaces_progress_in_summary(tmp_path: Path) -> None:
     with _test_client(tmp_path) as client:
         store = client.app.state.backend_store
-        batch = store.queue_benchmark(
+        batch = store.benchmark_service.queue_benchmark(
             BenchmarkRequest(
                 roles=["seer"],
                 battle_games=2,
@@ -3547,7 +3547,7 @@ def test_background_tasks_persist_skips_unchanged_state(
     paths = PathConfig(root=tmp_path)
     store = ui_backend_store.BackendStore(paths=paths, model=FakeModel())
 
-    batch = store.queue_benchmark(
+    batch = store.benchmark_service.queue_benchmark(
         BenchmarkRequest(
             roles=["seer"],
             battle_games=1,
@@ -3636,7 +3636,7 @@ def test_background_tasks_restore_active_runs_as_interrupted(tmp_path: Path) -> 
     )
     active_batch = store.queue_evolution(request)
     active_run_id = active_batch["runs"][0]
-    benchmark = store.queue_benchmark(
+    benchmark = store.benchmark_service.queue_benchmark(
         BenchmarkRequest(
             roles=["seer"],
             battle_games=0,

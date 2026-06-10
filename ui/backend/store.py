@@ -21,7 +21,6 @@ from ui.backend.constants import (
 )
 from ui.backend.game_store import GameStoreMixin
 from ui.backend.schemas import (
-    BenchmarkRequest,
     EvolutionStartRequest,
     automatic_evolution_request,
 )
@@ -214,36 +213,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
     def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
         return self.benchmark_service.get_benchmark_spec_summary(benchmark_id)
-
-    def benchmark_batch_games(
-        self,
-        batch_id: str,
-        *,
-        result_batch_id: str | None = None,
-        target_role: str | None = None,
-        status: str | None = None,
-        seed: str | None = None,
-        limit: int | None = None,
-        offset: int = 0,
-    ) -> dict[str, Any]:
-        return self.benchmark_service.benchmark_batch_games(
-            batch_id,
-            result_batch_id=result_batch_id,
-            target_role=target_role,
-            status=status,
-            seed=seed,
-            limit=limit,
-            offset=offset,
-        )
-
-    def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
-        return self.benchmark_service.benchmark_model_runtime(request)
-
-    def queue_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
-        return self.benchmark_service.queue_benchmark(request)
-
-    async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
-        await self.benchmark_service.run_queued_benchmark(batch_id, request)
 
     def model_for_run(self) -> Any | None:
         if self.model is not None:

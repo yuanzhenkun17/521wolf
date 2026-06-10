@@ -643,10 +643,6 @@ def test_benchmark_facades_delegate_to_cached_service(
                 }
             ]
 
-        def benchmark_batch_games(self, batch_id: str, **kwargs: Any) -> dict[str, Any]:
-            self.calls.append(("benchmark_batch_games", batch_id, kwargs))
-            return {"batch_id": batch_id, "kwargs": kwargs}
-
     monkeypatch.setattr(ui_backend_store, "BenchmarkService", FakeBenchmarkService)
     store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
 
@@ -668,39 +664,8 @@ def test_benchmark_facades_delegate_to_cached_service(
             "limit": 3,
         }
     ]
-    assert store.benchmark_batch_games(
-        "batch-1",
-        result_batch_id="result-1",
-        target_role="seer",
-        status="completed",
-        seed="42",
-        limit=10,
-        offset=5,
-    ) == {
-        "batch_id": "batch-1",
-        "kwargs": {
-            "result_batch_id": "result-1",
-            "target_role": "seer",
-            "status": "completed",
-            "seed": "42",
-            "limit": 10,
-            "offset": 5,
-        },
-    }
     assert service.calls == [
         ("leaderboard_entries", "role_version", "eval-1", "seer", 3),
-        (
-            "benchmark_batch_games",
-            "batch-1",
-            {
-                "result_batch_id": "result-1",
-                "target_role": "seer",
-                "status": "completed",
-                "seed": "42",
-                "limit": 10,
-                "offset": 5,
-            },
-        ),
     ]
 
 
