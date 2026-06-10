@@ -730,6 +730,7 @@ describe('service endpoint contracts', () => {
 
     await settings.listModelProfiles()
     await settings.listRuntimeVariables()
+    await settings.probeRuntimeModel('settings_model_test')
     await settings.updateRuntimeVariable('TASK_WORKER_REQUIRED', { value: true }, 'token')
     await settings.createModelProfile({
       name: 'Qwen',
@@ -746,6 +747,13 @@ describe('service endpoint contracts', () => {
     expect(requests).toEqual([
       { path: '/settings/model-profiles', options: {} },
       { path: '/settings/runtime-variables', options: {} },
+      {
+        path: '/health/probes/llm',
+        options: {
+          method: 'POST',
+          query: { scope: 'settings_model_test' }
+        }
+      },
       {
         path: '/settings/runtime-variables/TASK_WORKER_REQUIRED',
         options: {

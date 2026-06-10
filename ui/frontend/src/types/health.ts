@@ -23,6 +23,23 @@ export interface RuntimeHealthPayload {
   [key: string]: unknown
 }
 
+export interface RuntimeHealthProbeResult {
+  status?: string
+  scope?: string
+  checked_at?: string
+  latency_ms?: number
+  message?: string
+  source?: string
+  model?: string
+  base_url?: string
+  actions?: unknown[]
+  error?: {
+    type?: string
+    message?: string
+  }
+  [key: string]: unknown
+}
+
 export interface RuntimeHealthGateSummary {
   scope: RuntimeHealthGateScope
   known: boolean

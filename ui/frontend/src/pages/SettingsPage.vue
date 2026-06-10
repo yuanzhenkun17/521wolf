@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { createSettingsService } from '../services/settingsApi'
+import type { RuntimeHealthProbeResult } from '../types/health'
 import type { ModelProfile, ModelProfilePayload, SettingsAdminState, SettingsModelProfilesResponse, SettingsVariable } from '../types/settings'
 
 type SettingsGroupKey = 'models' | 'variables' | 'benchmark' | 'evolution' | 'langfuse' | 'tts' | 'system'
@@ -56,6 +57,7 @@ const adminToken = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const healthProbeTesting = ref(false)
 const savingVariableKey = ref('')
 const error = ref('')
 const notice = ref('')
@@ -127,6 +129,21 @@ async function refreshSettings() {
     error.value = errorMessage(err, '设置读取失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function probeRuntimeModel() {
+  healthProbeTesting.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const result = await settingsService.probeRuntimeModel('settings_model_test')
+    notice.value = runtimeProbeNotice(result)
+    await refreshSettings()
+  } catch (err) {
+    error.value = errorMessage(err, '当前模型连接测试失败')
+  } finally {
+    healthProbeTesting.value = false
   }
 }
 
@@ -389,6 +406,14 @@ function adminWriteHint(): string {
   return '输入管理员令牌后才能修改本地模型配置。'
 }
 
+function runtimeProbeNotice(result: RuntimeHealthProbeResult): string {
+  if (String(result.status || '').toLowerCase() === 'ok') {
+    const latency = Number(result.latency_ms)
+    return Number.isFinite(latency) ? `当前模型连接正常，耗时 ${latency}ms。` : '当前模型连接正常。'
+  }
+  return String(result.error?.message || result.message || '当前模型连接失败。')
+}
+
 function statusLabel(status: unknown): string {
   const text = String(status || '').toLowerCase()
   if (text === 'ok') return '正常'
@@ -495,6 +520,9 @@ function shortId(value: unknown): string {
             </span>
           </div>
           <div class="settings-command-actions">
+            <button type="button" class="settings-refresh-button" :disabled="healthProbeTesting || loading" @click="probeRuntimeModel">
+              <span aria-hidden="true">&#9678;</span> {{ healthProbeTesting ? '测试中' : '测试当前模型' }}
+            </button>
             <button type="button" class="settings-refresh-button" :disabled="loading" @click="refreshSettings">
               <span aria-hidden="true">&#8635;</span> {{ loading ? '刷新中' : '刷新' }}
             </button>

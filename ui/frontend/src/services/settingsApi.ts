@@ -1,4 +1,5 @@
 import type { ServiceOptions } from '../types/api'
+import type { RuntimeHealthProbeResult } from '../types/health'
 import type {
   ModelProfilePayload,
   ModelProfileResponse,
@@ -24,6 +25,12 @@ export function createSettingsService(options: ServiceOptions = {}) {
     },
     async listRuntimeVariables(): Promise<SettingsRuntimeVariablesResponse> {
       return client.fetch('/settings/runtime-variables')
+    },
+    async probeRuntimeModel(scope = 'settings_model_test'): Promise<RuntimeHealthProbeResult> {
+      return client.fetch('/health/probes/llm', {
+        method: 'POST',
+        query: { scope }
+      })
     },
     async updateRuntimeVariable(settingKey: string, payload: SettingsRuntimeVariablePayload, token = ''): Promise<SettingsRuntimeVariableResponse> {
       return client.fetch(`/settings/runtime-variables/${encodeURIComponent(settingKey)}`, {
