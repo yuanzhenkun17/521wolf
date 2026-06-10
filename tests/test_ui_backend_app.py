@@ -1338,6 +1338,63 @@ def test_game_start_blocks_when_llm_probe_fails(tmp_path: Path) -> None:
     assert _FakeGamePersistence.instances == []
 
 
+def test_http_launch_entrypoints_share_runtime_gate_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def failing_preflight(store: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append({"store": store, **kwargs})
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "runtime_not_ready",
+                "message": "运行环境未就绪。",
+                "scope": kwargs.get("scope"),
+                "model_scope": kwargs.get("model_scope"),
+                "model_profile_id": kwargs.get("model_profile_id"),
+                "blockers": ["llm_connectivity"],
+                "actions": ["Open Settings and test the model connection."],
+            },
+        )
+
+    monkeypatch.setattr("ui.backend.services.live_game_lifecycle.require_runtime_ready", failing_preflight)
+    monkeypatch.setattr("ui.backend.routes.benchmark.require_runtime_ready", failing_preflight)
+    monkeypatch.setattr("ui.backend.routes.evolution.require_runtime_ready", failing_preflight)
+
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        responses = [
+            client.post("/api/games", json={"seed": 2, "max_days": 1, "player_count": 12}),
+            client.post("/api/benchmark", json={"roles": ["seer"], "battle_games": 1, "max_days": 1}),
+            client.post("/api/benchmark/batch", json={"roles": ["seer"], "battle_games": 1, "max_days": 1}),
+            client.post("/api/evolution-runs", json={"roles": ["seer"], "training_games": 0, "battle_games": 0}),
+        ]
+
+    assert [response.status_code for response in responses] == [503, 503, 503, 503]
+    for response in responses:
+        payload = response.json()
+        assert payload["error"]["code"] == "runtime_not_ready"
+        assert payload["detail"]["blockers"] == ["llm_connectivity"]
+        assert payload["detail"]["actions"] == ["Open Settings and test the model connection."]
+
+    assert [
+        (call["scope"], call["model_scope"], call["model_profile_id"])
+        for call in calls
+    ] == [
+        ("game_start", "game_decision", None),
+        ("benchmark_start", "benchmark", None),
+        ("benchmark_start", "benchmark", None),
+        ("evolution_start", "evolution", None),
+    ]
+    assert all(call["store"] is store for call in calls)
+    assert store.live_sessions == {}
+    assert store.games == {}
+    assert store.evolution_runs == {}
+    assert store.evolution_batches == {}
+
+
 def test_settings_model_profiles_are_read_only_without_admin(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("SETTINGS_ADMIN_ENABLED", raising=False)
     monkeypatch.delenv("SETTINGS_ADMIN_TOKEN", raising=False)
