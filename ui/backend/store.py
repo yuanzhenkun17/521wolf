@@ -21,10 +21,7 @@ from ui.backend.constants import (
 )
 from ui.backend.game_store import GameStoreMixin
 from ui.backend.schemas import (
-    BenchmarkLifecycleRequest,
     BenchmarkRequest,
-    BenchmarkSnapshotRequest,
-    BenchmarkViewRequest,
     EvolutionStartRequest,
     automatic_evolution_request,
 )
@@ -187,23 +184,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             limit=limit,
         )
 
-    def leaderboard_unrankable_evidence(
-        self,
-        *,
-        scope: str | None = None,
-        evaluation_set_id: str | None = None,
-        target_role: str | None = None,
-        limit: int = 100,
-        rows: list[dict[str, Any]] | None = None,
-    ) -> list[dict[str, Any]]:
-        return self.benchmark_service.leaderboard_unrankable_evidence(
-            scope=scope,
-            evaluation_set_id=evaluation_set_id,
-            target_role=target_role,
-            limit=limit,
-            rows=rows,
-        )
-
     def leaderboard_compare(
         self,
         *,
@@ -232,90 +212,8 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             evaluation_set_id=evaluation_set_id,
         )
 
-    def create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
-        return self.benchmark_service.create_benchmark_snapshot(request)
-
-    def list_benchmark_snapshots(
-        self,
-        *,
-        scope: str | None = None,
-        evaluation_set_id: str | None = None,
-        benchmark_id: str | None = None,
-        target_role: str | None = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
-        return self.benchmark_service.list_benchmark_snapshots(
-            scope=scope,
-            evaluation_set_id=evaluation_set_id,
-            benchmark_id=benchmark_id,
-            target_role=target_role,
-            limit=limit,
-        )
-
-    def get_benchmark_snapshot(self, snapshot_id: str) -> dict[str, Any]:
-        return self.benchmark_service.get_benchmark_snapshot(snapshot_id)
-
-    def benchmark_snapshot_export(self, snapshot_id: str, *, format: str = "json") -> dict[str, Any]:
-        return self.benchmark_service.benchmark_snapshot_export(snapshot_id, format=format)
-
-    def benchmark_snapshot_compare(
-        self,
-        snapshot_id: str,
-        *,
-        against_snapshot_id: str | None = None,
-        limit: int = 100,
-    ) -> dict[str, Any]:
-        return self.benchmark_service.benchmark_snapshot_compare(
-            snapshot_id,
-            against_snapshot_id=against_snapshot_id,
-            limit=limit,
-        )
-
-    def save_benchmark_view(self, request: BenchmarkViewRequest) -> dict[str, Any]:
-        return self.benchmark_service.save_benchmark_view(request)
-
-    def list_benchmark_views(
-        self,
-        *,
-        scope: str | None = None,
-        evaluation_set_id: str | None = None,
-        benchmark_id: str | None = None,
-        target_role: str | None = None,
-        view_key: str | None = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
-        return self.benchmark_service.list_benchmark_views(
-            scope=scope,
-            evaluation_set_id=evaluation_set_id,
-            benchmark_id=benchmark_id,
-            target_role=target_role,
-            view_key=view_key,
-            limit=limit,
-        )
-
-    def get_benchmark_view(self, view_key: str) -> dict[str, Any]:
-        return self.benchmark_service.get_benchmark_view(view_key)
-
-    def delete_benchmark_view(self, view_key: str) -> dict[str, Any]:
-        return self.benchmark_service.delete_benchmark_view(view_key)
-
-    def list_benchmark_specs(self) -> list[dict[str, Any]]:
-        return self.benchmark_service.list_benchmark_specs()
-
     def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
         return self.benchmark_service.get_benchmark_spec_summary(benchmark_id)
-
-    def update_benchmark_lifecycle(self, benchmark_id: str, request: BenchmarkLifecycleRequest) -> dict[str, Any]:
-        return self.benchmark_service.update_benchmark_lifecycle(benchmark_id, request)
-
-    def list_benchmark_seed_sets(self) -> dict[str, Any]:
-        return self.benchmark_service.list_benchmark_seed_sets()
-
-    def get_benchmark_seed_set(self, seed_set_id: str) -> dict[str, Any]:
-        return self.benchmark_service.get_benchmark_seed_set(seed_set_id)
-
-    def plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
-        return self.benchmark_service.plan_benchmark(request)
 
     def benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
         return self.benchmark_service.benchmark_batch_detail(batch_id)
