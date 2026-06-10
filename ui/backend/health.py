@@ -33,7 +33,7 @@ def build_health_payload(store: Any) -> dict[str, Any]:
     probe/preflight calls.
     """
     startup_checks = _mapping(getattr(store, "startup_checks", None))
-    task_control = _task_control_health(store)
+    task_control = _public_task_control_health(_task_control_health(store))
     llm_config = llm_config_check(store)
     llm_connectivity = llm_connectivity_status(store)
     langfuse_config = langfuse_config_check()
@@ -459,7 +459,7 @@ def _checks_from(
             "status": _worker_status(task_control, store=store),
             "message": _worker_message(task_control, store=store),
             "worker_fresh": bool(task_control.get("worker_fresh")),
-            "workers": _list(task_control.get("workers")),
+            "worker_count": int(task_control.get("worker_count") or 0),
         },
         "artifact_root": artifact_root or {
             "status": _UNKNOWN,
@@ -631,6 +631,47 @@ def _task_control_health(store: Any) -> dict[str, Any]:
             "worker_fresh": False,
             "workers": [],
         }
+
+
+def _public_task_control_health(value: Any) -> dict[str, Any]:
+    raw = _mapping(value)
+    workers = _list(raw.get("workers"))
+    worker_count = raw.get("worker_count")
+    if worker_count is None:
+        worker_count = len(workers)
+    try:
+        worker_count_int = int(worker_count)
+    except (TypeError, ValueError):
+        worker_count_int = 0
+
+    return {
+        "status": str(raw.get("status") or _UNKNOWN),
+        "message": str(raw.get("message") or "Task control status is unknown."),
+        "queue_status_counts": _mapping(raw.get("queue_status_counts")),
+        "stale_running_count": int(raw.get("stale_running_count") or 0),
+        "worker_fresh": bool(raw.get("worker_fresh")),
+        "worker_count": max(0, worker_count_int),
+        "artifact_root": _public_artifact_root_health(raw.get("artifact_root")),
+        "actions": _list(raw.get("actions")),
+    }
+
+
+def _public_artifact_root_health(value: Any) -> dict[str, Any]:
+    raw = _mapping(value)
+    if not raw:
+        return {
+            "status": _UNKNOWN,
+            "message": "Artifact root status is unknown.",
+        }
+    payload: dict[str, Any] = {
+        "status": str(raw.get("status") or _UNKNOWN),
+        "message": str(raw.get("message") or "Artifact root status is available."),
+    }
+    if "writable" in raw:
+        payload["writable"] = bool(raw.get("writable"))
+    if raw.get("actions"):
+        payload["actions"] = _list(raw.get("actions"))
+    return payload
 
 
 def _legacy_llm_status(store: Any) -> str:

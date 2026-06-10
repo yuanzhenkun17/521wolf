@@ -1166,9 +1166,11 @@ def test_health_and_roles_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert checks["task_queue"]["stale_running_count"] == 0
     assert checks["task_worker"]["status"] == "degraded"
     assert checks["task_worker"]["worker_fresh"] is False
-    assert checks["task_worker"]["workers"] == []
+    assert checks["task_worker"]["worker_count"] == 0
+    assert "workers" not in checks["task_worker"]
     assert checks["artifact_root"]["status"] == "ok"
     assert checks["artifact_root"]["writable"] is True
+    assert "path" not in checks["artifact_root"]
     assert health["gates"]["game_start"]["ready"] is True
     assert health["gates"]["game_start"]["blockers"] == []
     assert "llm_connectivity" in health["gates"]["game_start"]["warnings"]
@@ -1187,15 +1189,60 @@ def test_health_and_roles_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert task_control["queue_status_counts"] == {}
     assert task_control["stale_running_count"] == 0
     assert task_control["worker_fresh"] is False
-    assert task_control["workers"] == []
+    assert task_control["worker_count"] == 0
+    assert "workers" not in task_control
     assert task_control["artifact_root"]["status"] == "ok"
     assert task_control["artifact_root"]["writable"] is True
+    assert "path" not in task_control["artifact_root"]
 
     assert roles_response.status_code == 200
     roles = roles_response.json()["roles"]
     assert "villager" in roles
     assert "werewolf" in roles
     assert "seer" in roles
+
+
+def test_health_public_task_control_omits_artifact_paths_and_worker_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
+    monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
+    worker_secret = "worker-secret-id"
+    task_secret = "task-secret-id"
+    metadata_secret = "sk-worker-health-secret"
+    _fake_ui_pg_provider.db.task_workers[worker_secret] = {
+        "worker_id": worker_secret,
+        "status": "running",
+        "last_heartbeat_at": beijing_now_iso(),
+        "lease_seconds": 300,
+        "current_task_id": task_secret,
+        "metadata": {"api_key": metadata_secret},
+    }
+
+    with _test_client(tmp_path) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    checks = payload["checks"]
+    task_control = payload["external"]["task_control"]
+
+    assert checks["task_worker"]["status"] == "ok"
+    assert checks["task_worker"]["worker_fresh"] is True
+    assert checks["task_worker"]["worker_count"] == 1
+    assert "workers" not in checks["task_worker"]
+    assert "path" not in checks["artifact_root"]
+    assert task_control["worker_fresh"] is True
+    assert task_control["worker_count"] == 1
+    assert "workers" not in task_control
+    assert "path" not in task_control["artifact_root"]
+
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    assert worker_secret not in serialized
+    assert task_secret not in serialized
+    assert metadata_secret not in serialized
+    assert str(tmp_path) not in serialized
 
 
 def test_health_reports_optional_langfuse_and_tts_without_blocking_launch_gates(
