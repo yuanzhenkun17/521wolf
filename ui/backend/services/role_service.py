@@ -7,14 +7,38 @@ from collections.abc import Mapping
 from time import monotonic
 from typing import Any
 
-from app.lib.version import is_experimental_release_stage
+from fastapi import HTTPException
+
+from app.lib.version import (
+    ReleaseStageNotAllowedError,
+    ensure_version_allowed_for_default_use,
+    is_experimental_release_stage,
+    promote_version,
+)
 from ui.backend.constants import ROLE_ORDER
-from ui.backend.serializers import _fallback_version, _version_summary_payload
+from ui.backend.errors import domain_error_detail, release_stage_not_allowed_detail
+from ui.backend.serializers import _fallback_version, _version_detail_payload, _version_summary_payload
 
 _ROLE_OVERVIEW_CACHE_TTL_SECONDS = 10.0
 _ROLE_CONFIDENCE_LEVEL = 0.95
 _ROLE_Z_95 = 1.96
 _ROLE_MIN_CONFIDENT_SAMPLE_SIZE = 30
+_VERSION_DETAIL_SUMMARY_KEYS = (
+    "version_id",
+    "role",
+    "source",
+    "created_at",
+    "is_baseline",
+    "status",
+    "release_stage",
+    "provenance",
+    "metrics",
+    "trust_bundle_id",
+    "gate_report_id",
+    "attribution_report_id",
+    "source_run_id",
+    "bundle_hash",
+)
 
 
 class RoleService:
@@ -35,6 +59,61 @@ class RoleService:
         if not versions:
             versions = [_version_summary_payload(_fallback_version(role))]
         return versions
+
+    @staticmethod
+    def summary_dict(version: Any) -> dict[str, Any]:
+        if hasattr(version, "to_dict"):
+            try:
+                data = version.to_dict()
+            except Exception:
+                data = {}
+            result = dict(data) if isinstance(data, Mapping) else {}
+        elif isinstance(version, Mapping):
+            result = dict(version)
+        else:
+            result = {}
+        for key in _VERSION_DETAIL_SUMMARY_KEYS:
+            if key not in result and hasattr(version, key):
+                result[key] = getattr(version, key)
+        return result
+
+    def version_summary_for_detail(self, role: str, version_id: str) -> dict[str, Any] | None:
+        list_versions = getattr(self._store.registry, "list_versions", None)
+        if not callable(list_versions):
+            return None
+        try:
+            versions = list_versions(role)
+        except Exception:
+            return None
+        for version in versions:
+            summary = self.summary_dict(version)
+            if str(summary.get("version_id") or "") == version_id:
+                return _version_summary_payload(summary)
+        return None
+
+    def version_detail(self, role: str, version_id: str) -> dict[str, Any]:
+        try:
+            contents = self._store.registry.read_skill_contents(role, version_id)
+            summary = self.version_summary_for_detail(role, version_id)
+            return _version_detail_payload(
+                role=role,
+                version_id=version_id,
+                contents=contents,
+                source="app-registry",
+                summary=summary,
+            )
+        except (FileNotFoundError, ValueError):
+            fallback = _fallback_version(role)
+            if version_id == fallback["version_id"]:
+                return _version_detail_payload(
+                    role=role,
+                    version_id=version_id,
+                    contents={},
+                    source="app-fallback",
+                    status="missing_registry",
+                    summary=_version_summary_payload(fallback),
+                )
+            raise HTTPException(status_code=404, detail="version not found")
 
     @staticmethod
     def version_release_stage(version: dict[str, Any]) -> str:
@@ -247,3 +326,39 @@ class RoleService:
                 "evaluation_set_id": evaluation_set_id,
             },
         )
+
+    def leaderboard(self, role: str, evaluation_set_id: str | None = None) -> dict[str, Any]:
+        versions = self.role_versions(role)
+        scores = self._store.leaderboard_scores_for_role(role, evaluation_set_id=evaluation_set_id)
+        return self.leaderboard_payload(role, versions, scores, evaluation_set_id=evaluation_set_id)
+
+    def rollback(self, role: str, version_id: str) -> dict[str, Any]:
+        try:
+            ensure_version_allowed_for_default_use(self._store.registry, role, version_id)
+            promote_version(self._store.registry, role, version_id)
+        except ReleaseStageNotAllowedError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=domain_error_detail(
+                    code="role_version_release_stage_not_allowed",
+                    message="Role version is not allowed for rollback.",
+                    detail=f"version not allowed: {exc}",
+                    diagnostics=[exc.diagnostic(kind="role_rollback_version_not_allowed")],
+                ),
+            ) from exc
+        except ValueError as exc:
+            release_stage_detail = release_stage_not_allowed_detail(
+                exc,
+                code="role_version_release_stage_not_allowed",
+                message="Role version is not allowed for rollback.",
+                detail_prefix="version not allowed",
+                kind="role_rollback_version_not_allowed",
+            )
+            if release_stage_detail is not None:
+                raise HTTPException(status_code=409, detail=release_stage_detail) from exc
+            raise HTTPException(status_code=409, detail=f"version not allowed: {exc}") from exc
+        except (FileNotFoundError, RuntimeError):
+            if version_id != _fallback_version(role)["version_id"]:
+                raise HTTPException(status_code=404, detail="version not found")
+        self.clear_overview_cache()
+        return {"kind": "role_rollback", "schema_version": 1, "role": role, "new_baseline": version_id}

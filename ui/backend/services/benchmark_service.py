@@ -7,10 +7,13 @@ missing methods fail fast instead of falling back into public wrapper recursion.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from inspect import isawaitable
 from typing import Any, cast
 
+from fastapi import HTTPException
+
+from app.util.time import beijing_now_iso
 from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 from storage.benchmark.saved_view_repo import (
     BenchmarkSavedViewRepository,
@@ -27,8 +30,13 @@ from ui.backend.schemas import (
     BenchmarkSnapshotRequest,
     BenchmarkViewRequest,
 )
+from ui.backend.constants import MANUAL_STOP_REASON
+from ui.backend.evolution_serializers import _evolution_batch_summary
+from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
+from ui.backend.task_state import _set_task_contract
 
 BenchmarkCallable = Callable[..., Any]
+_TERMINAL_BENCHMARK_SSE_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 
 BENCHMARK_PUBLIC_METHODS: tuple[str, ...] = (
     "leaderboard_scores_for_role",
@@ -229,6 +237,73 @@ class BenchmarkService:
         if isawaitable(result):
             return await result
         return result
+
+    @staticmethod
+    def sse_event(status: Any) -> str:
+        status_text = str(status or "").lower()
+        if status_text in _TERMINAL_BENCHMARK_SSE_STATUSES:
+            return status_text
+        return "progress"
+
+    @classmethod
+    def task_event_name(cls, item: dict[str, Any]) -> str:
+        event_name = str(item.get("event") or cls.sse_event(item.get("status")))
+        if event_name == "progress":
+            return cls.sse_event(item.get("status"))
+        return event_name
+
+    def _batch(self, batch_id: str) -> dict[str, Any]:
+        batch = self._context.evolution_batches.get(batch_id)
+        if batch is None:
+            raise HTTPException(status_code=404, detail="batch not found")
+        return batch
+
+    def benchmark_specs_payload(self) -> dict[str, Any]:
+        return {"kind": "benchmark_specs", "schema_version": 1, "items": self.list_benchmark_specs()}
+
+    def stop_benchmark(self, batch_id: str) -> dict[str, Any]:
+        batch = self._batch(batch_id)
+        batch["status"] = "failed"
+        batch["stop_requested"] = True
+        _set_task_contract(batch, stop_requested=True, cancelled=True, interrupted=False, failed=False)
+        batch["finished_at"] = beijing_now_iso()
+        batch["error"] = batch.get("error") or MANUAL_STOP_REASON
+        self._context._mark_benchmark_stage(
+            batch,
+            "stopped",
+            status="failed",
+            percent=self._context._task_progress_percent(batch),
+            completed_roles=int(batch.get("progress", {}).get("completed_roles", 0)) if isinstance(batch.get("progress"), dict) else 0,
+            role_count=len(batch.get("roles", []) or []),
+            diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
+        )
+        self._context._persist_background_tasks()
+        return batch
+
+    def stream_benchmark_events(self, batch_id: str, last_event_id: int) -> AsyncIterator[str]:
+        batch = self._batch(batch_id)
+
+        async def stream() -> AsyncIterator[str]:
+            if task_event_log_matches_entity(
+                self._context.task_event_log,
+                batch_id,
+                batch,
+                terminal_statuses=_TERMINAL_BENCHMARK_SSE_STATUSES,
+            ):
+                async for frame in stream_task_event_log_sse(
+                    self._context.task_event_log,
+                    batch_id,
+                    after_event_id=last_event_id,
+                    ping_payload=lambda: {"batch_id": batch_id, "status": batch.get("status")},
+                    event_name=self.task_event_name,
+                    terminal_statuses=_TERMINAL_BENCHMARK_SSE_STATUSES,
+                ):
+                    yield frame
+                return
+            if last_event_id < 1:
+                yield _sse(self.sse_event(batch.get("status")), _evolution_batch_summary(batch), event_id=1)
+
+        return stream()
 
     def leaderboard_scores_for_role(
         self,
