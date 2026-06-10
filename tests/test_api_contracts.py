@@ -1642,6 +1642,9 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "/api/health": {
             "get": ("health_api_health_get", None, []),
         },
+        "/api/health/probes/llm": {
+            "post": ("probe_llm_api_health_probes_llm_post", None, [("scope", "query", False)]),
+        },
         "/api/leaderboards": {
             "get": (
                 "leaderboards_api_leaderboards_get",

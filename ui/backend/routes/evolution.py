@@ -15,6 +15,7 @@ from ui.backend.schemas import (
     automatic_evolution_request,
 )
 from ui.backend.services import EvolutionService
+from ui.backend.preflight import require_runtime_ready
 from ui.backend.task_state import (
     _history_query_requested,
     _last_event_id_from_request,
@@ -26,6 +27,7 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/evolution-runs")
     async def start_evolution(request: EvolutionStartRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+        await require_runtime_ready(store, scope="evolution_start")
         request = automatic_evolution_request(request)
         queued = store.queue_evolution(request)
         if _use_pg_task_queue():

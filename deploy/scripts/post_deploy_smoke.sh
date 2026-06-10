@@ -80,6 +80,8 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 if payload.get("status") == "error":
     raise SystemExit(1)
+if payload.get("ready") is False:
+    raise SystemExit(1)
 if os.environ.get("CHECK_TASK_QUEUE", "true").lower() != "false":
     task_control = payload.get("external", {}).get("task_control", {})
     if not isinstance(task_control, dict):

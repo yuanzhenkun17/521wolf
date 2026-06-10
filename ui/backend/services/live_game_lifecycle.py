@@ -16,6 +16,7 @@ from ui.backend.live_game import (
     LiveGameSession,
     live_game_heartbeat_timed_out,
 )
+from ui.backend.preflight import require_runtime_ready
 from ui.backend.schemas import GameStartRequest
 
 
@@ -43,6 +44,7 @@ class LiveGameLifecycleCoordinator:
         self._store = store
 
     async def start_game(self, request: GameStartRequest) -> dict[str, Any]:
+        await require_runtime_ready(self._store, scope="game_start")
         game_id = f"ui_{uuid.uuid4().hex[:12]}"
         skill_dir = self._store.skill_dir_for_request(request)
         return await self.start_live_game(game_id=game_id, request=request, skill_dir=skill_dir)

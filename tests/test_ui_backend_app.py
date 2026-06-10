@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.config import PathConfig
+from app.util.time import beijing_now_iso
 from storage.public_events import public_events_only
 import ui.backend.app as ui_backend_app
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
@@ -320,6 +321,12 @@ class FakeModel:
         if action_type in {"exile_vote", "pk_vote", "sheriff_vote"}:
             return None, max(candidates) if candidates else None
         return None, None
+
+
+class FailingModel(FakeModel):
+    async def ainvoke(self, messages: Any) -> Any:
+        del messages
+        raise TimeoutError("model probe timed out with api_key=secret")
 
 
 class _FakePersistenceSink:
@@ -624,6 +631,17 @@ def _test_client(tmp_path: Path) -> TestClient:
     store._load_game_from_pg = lambda game_id: store.games.get(game_id)
     store._list_games_from_pg = lambda: [store._game_list_row(game) for game in pg_games()]
     return TestClient(app)
+
+
+def _seed_fresh_task_worker(db: _UiMemoryDatabase, worker_id: str = "worker-health-test") -> None:
+    db.task_workers[worker_id] = {
+        "worker_id": worker_id,
+        "status": "running",
+        "last_heartbeat_at": beijing_now_iso(),
+        "lease_seconds": 300,
+        "current_task_id": None,
+        "metadata": {},
+    }
 
 
 def _seer_skill(body: str = "body") -> dict[str, str]:
@@ -969,7 +987,31 @@ def test_health_and_roles_contract(tmp_path: Path) -> None:
     assert health_response.status_code == 200
     health = health_response.json()
     assert health["ok"] is True
+    assert health["schema_version"] == 2
+    assert health["ready"] is True
+    assert health["status"] == "degraded"
     assert health["mode"] == "api"
+    checks = health["checks"]
+    assert checks["postgresql"]["status"] == "ok"
+    assert checks["alembic"]["status"] == "ok"
+    assert checks["registry_baseline"]["status"] == "degraded"
+    assert "seer" in checks["registry_baseline"]["missing_roles"]
+    assert checks["llm"]["status"] == "ok"
+    assert checks["llm_config"]["status"] == "ok"
+    assert checks["llm_config"]["source"] == "injected_model"
+    assert checks["llm_connectivity"]["status"] == "unknown"
+    assert checks["llm_connectivity"]["source"] == "injected_model"
+    assert checks["task_queue"]["status"] == "degraded"
+    assert checks["task_queue"]["queue_status_counts"] == {}
+    assert checks["task_queue"]["stale_running_count"] == 0
+    assert checks["task_worker"]["status"] == "degraded"
+    assert checks["task_worker"]["worker_fresh"] is False
+    assert checks["task_worker"]["workers"] == []
+    assert checks["artifact_root"]["status"] == "ok"
+    assert checks["artifact_root"]["writable"] is True
+    assert health["gates"]["game_start"]["ready"] is True
+    assert health["gates"]["game_start"]["blockers"] == []
+    assert "llm_connectivity" in health["gates"]["game_start"]["warnings"]
     assert health["external"]["provider"] == "app-langgraph"
     assert health["external"]["supports_human"] is True
     assert health["external"]["supports_sse"] is True
@@ -994,6 +1036,57 @@ def test_health_and_roles_contract(tmp_path: Path) -> None:
     assert "villager" in roles
     assert "werewolf" in roles
     assert "seer" in roles
+
+
+def test_health_probe_llm_updates_connectivity_cache(tmp_path: Path) -> None:
+    with _test_client(tmp_path) as client:
+        before_response = client.get("/api/health")
+        probe_response = client.post("/api/health/probes/llm?scope=settings_model_test")
+        after_response = client.get("/api/health")
+
+    assert before_response.status_code == 200
+    assert before_response.json()["checks"]["llm_connectivity"]["status"] == "unknown"
+
+    assert probe_response.status_code == 200
+    probe = probe_response.json()
+    assert probe["status"] == "ok"
+    assert probe["scope"] == "settings_model_test"
+    assert probe["source"] == "injected_model"
+    assert isinstance(probe["latency_ms"], int)
+    assert probe["checked_at"]
+
+    assert after_response.status_code == 200
+    llm_connectivity = after_response.json()["checks"]["llm_connectivity"]
+    assert llm_connectivity["status"] == "ok"
+    assert llm_connectivity["scope"] == "settings_model_test"
+    assert llm_connectivity["source"] == "injected_model"
+
+
+def test_game_start_blocks_when_llm_probe_fails(tmp_path: Path) -> None:
+    app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=FailingModel())
+    store = app.state.backend_store
+    store._registry = FakeVersionRegistry(tmp_path)
+    _FakeGamePersistence.instances.clear()
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            "/api/games",
+            json={"seed": 2, "max_days": 1, "player_count": 12},
+        )
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["error"]["code"] == "runtime_not_ready"
+    assert payload["error"]["message"] == "模型连接不可用，不能开始游戏。"
+    detail = payload["detail"]
+    assert detail["scope"] == "game_start"
+    assert detail["blockers"] == ["llm_connectivity"]
+    assert detail["checks"]["llm_connectivity"]["status"] == "error"
+    assert detail["checks"]["llm_connectivity"]["error"]["type"] == "TimeoutError"
+    assert "secret" not in json.dumps(detail, ensure_ascii=False)
+    assert store.live_sessions == {}
+    assert store.games == {}
+    assert _FakeGamePersistence.instances == []
 
 
 def test_error_handlers_keep_detail_and_add_error_shape(tmp_path: Path) -> None:
@@ -1740,12 +1833,14 @@ def test_evolution_and_benchmark_create_and_list_contract(
 def test_benchmark_start_uses_pg_task_queue_when_enabled(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     async def fail_run_evaluation(**_kwargs: Any) -> dict[str, Any]:
         raise AssertionError("benchmark should not run through FastAPI BackgroundTasks when PG queue is enabled")
 
     monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
     monkeypatch.setattr(ui_backend_store, "run_evaluation", fail_run_evaluation)
+    _seed_fresh_task_worker(_fake_ui_pg_provider.db)
 
     with _test_client(tmp_path) as client:
         store = client.app.state.backend_store
@@ -1782,15 +1877,44 @@ def test_benchmark_start_uses_pg_task_queue_when_enabled(
     ]
 
 
+def test_benchmark_start_requires_fresh_worker_when_pg_task_queue_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
+
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+
+        def fail_queue_benchmark(_request: Any) -> dict[str, Any]:
+            raise AssertionError("benchmark should be blocked before batch creation when worker is missing")
+
+        store.benchmark_service.queue_benchmark = fail_queue_benchmark  # type: ignore[method-assign]
+        response = client.post(
+            "/api/benchmark",
+            json={"roles": ["seer"], "battle_games": 0, "max_days": 1},
+        )
+
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["error"]["code"] == "runtime_not_ready"
+    assert payload["error"]["message"] == "任务 worker 不可用，不能启动长任务。"
+    assert payload["detail"]["scope"] == "benchmark_start"
+    assert payload["detail"]["blockers"] == ["task_worker"]
+    assert payload["detail"]["checks"]["task_worker"]["status"] == "error"
+
+
 def test_evolution_start_uses_pg_task_queue_when_enabled(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     async def fail_run_evolution(**_kwargs: Any) -> dict[str, Any]:
         raise AssertionError("evolution should not run through FastAPI BackgroundTasks when PG queue is enabled")
 
     monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
     monkeypatch.setattr(ui_backend_store, "run_evolution", fail_run_evolution)
+    _seed_fresh_task_worker(_fake_ui_pg_provider.db)
 
     with _test_client(tmp_path) as client:
         store = client.app.state.backend_store

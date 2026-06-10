@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, FastAPI, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ui.backend.schemas import BenchmarkLifecycleRequest, BenchmarkRequest, BenchmarkSnapshotRequest, BenchmarkViewRequest
+from ui.backend.preflight import require_runtime_ready
 from ui.backend.task_state import _last_event_id_from_request
 
 
@@ -112,6 +113,7 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/benchmark")
     async def start_benchmark(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+        await require_runtime_ready(store, scope="benchmark_start")
         batch = store.benchmark_service.queue_benchmark(request)
         if _use_pg_task_queue():
             store.benchmark_service.queue_benchmark_task(batch, request)
@@ -121,6 +123,7 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/benchmark/batch")
     async def start_benchmark_batch(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+        await require_runtime_ready(store, scope="benchmark_start")
         batch = store.benchmark_service.queue_benchmark(request)
         if _use_pg_task_queue():
             store.benchmark_service.queue_benchmark_task(batch, request)

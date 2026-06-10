@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.config import load_tts_config
+from ui.backend.health import build_health_payload, probe_llm_connectivity
 from ui.backend.schemas import TtsSpeechRequest
 from ui.backend.tts_dashscope import (
     prepare_dashscope_realtime_request,
@@ -18,29 +19,11 @@ from ui.backend.tts_dashscope import (
 def register_core_routes(api: FastAPI, store: Any) -> None:
     @api.get("/api/health")
     def health() -> dict[str, Any]:
-        return {
-            "ok": True,
-            "status": "ok",
-            "mode": "api",
-            "external": {
-                "provider": "app-langgraph",
-                "supports_human": True,
-                "supports_sse": True,
-                "active_game_id": next(
-                    (
-                        game_id
-                        for game_id, session in store.live_sessions.items()
-                        if session.status == "running"
-                    ),
-                    None,
-                ),
-                "llm": store.llm_status(),
-                "tts": store.tts_status(),
-                "tts_streaming": store.tts_streaming_available(),
-                "startup_checks": store.startup_checks,
-                "task_control": store.task_service.task_control_health(),
-            },
-        }
+        return build_health_payload(store)
+
+    @api.post("/api/health/probes/llm")
+    async def probe_llm(scope: str = "game_start") -> dict[str, Any]:
+        return await probe_llm_connectivity(store, scope=scope)
 
     @api.post("/api/tts/speech/stream")
     async def tts_speech_stream(request: TtsSpeechRequest) -> StreamingResponse:
