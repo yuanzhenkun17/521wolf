@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { computed } from 'vue'
 import { decisionActionText, phaseLabel } from './gameStateShared.ts'
 import {
@@ -7,6 +6,8 @@ import {
   normalizeHistoryDisplayText
 } from '../components/history/historyDisplay.ts'
 import { AUTHORITATIVE_DEATH_EVENTS, deathTargetIds } from './gameTimeline.ts'
+
+type LooseRecord = Record<string, any>
 
 const HISTORY_PHASE_ALIASES = {
   result: 'night',
@@ -42,24 +43,25 @@ const VOTE_ACTION_PHASES = {
 }
 
 const HISTORY_PHASE_RANK = new Map(HISTORY_PHASE_ORDER.map((phase, index) => [phase, index]))
-function normalizeHistoryPhase(phase = 'setup') {
-  return HISTORY_PHASE_ALIASES[phase] || phase || 'setup'
+function normalizeHistoryPhase(phase: unknown = 'setup') {
+  const key = String(phase || '')
+  return HISTORY_PHASE_ALIASES[key] || key || 'setup'
 }
 
-function normalizeHistoryDay(day) {
+function normalizeHistoryDay(day: unknown) {
   const value = Number(day)
   return Number.isFinite(value) && value > 0 ? value : 1
 }
 
-function rowType(row = {}) {
+function rowType(row: LooseRecord = {}) {
   return String(row?.type || row?.event_type || row?.action || row?.action_type || row?.kind || '').trim()
 }
 
-function votePhaseForRow(row = {}) {
+function votePhaseForRow(row: LooseRecord = {}) {
   return VOTE_ACTION_PHASES[rowType(row)] || ''
 }
 
-function rowHistoryPhase(row = {}, fallback = 'setup') {
+function rowHistoryPhase(row: LooseRecord = {}, fallback = 'setup') {
   const rawPhase = normalizeHistoryPhase(row?.phase ?? fallback)
   const votePhase = votePhaseForRow(row)
   if (rawPhase === 'vote' && votePhase && votePhase !== 'sheriff_vote') return votePhase
@@ -67,18 +69,18 @@ function rowHistoryPhase(row = {}, fallback = 'setup') {
   return rawPhase
 }
 
-function historyPageKey(day, phase) {
+function historyPageKey(day: unknown, phase: unknown) {
   return `day-${normalizeHistoryDay(day)}-${normalizeHistoryPhase(phase)}`
 }
 
-function historyPageSortValue(page) {
+function historyPageSortValue(page: LooseRecord | null | undefined) {
   if (!page) return 0
   const phase = normalizeHistoryPhase(page.phase)
   const rank = HISTORY_PHASE_RANK.has(phase) ? HISTORY_PHASE_RANK.get(phase) : HISTORY_PHASE_ORDER.length
   return normalizeHistoryDay(page.day) * 100 + rank
 }
 
-export function createHistoryDerivedState(refs, computedState, helpers = {}) {
+export function createHistoryDerivedState(refs: LooseRecord, computedState: LooseRecord, helpers: LooseRecord = {}) {
   const {
     selectedHistoryGame,
     selectedHistoryShell,
@@ -404,8 +406,8 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     return rows.length ? rows : [{ speaker: '法官', message: '等待法官记录。' }]
   })
 
-  function tallyByTargetName(votes) {
-    const tally = {}
+  function tallyByTargetName(votes: LooseRecord[]) {
+    const tally: Record<string, { target: string; targetName: string; count: number; voters: string[] }> = {}
     votes.forEach((vote) => {
       const key = vote.targetName || '未知'
       if (!tally[key]) tally[key] = { target: key, targetName: key, count: 0, voters: [] }
@@ -416,7 +418,7 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     return Object.values(tally).sort((a, b) => b.count - a.count)
   }
 
-  function nightActionDetail(action) {
+  function nightActionDetail(action: LooseRecord) {
     const actor = action.actorName
     const target = action.targetName
     const currentAction = action.action
@@ -431,7 +433,7 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     return hasTarget ? `${actor}${displayActionLabel(currentAction)}${target}` : `${actor}${displayActionLabel(currentAction)}`
   }
 
-  function normalizeReviewScoreRows(payload) {
+  function normalizeReviewScoreRows(payload: LooseRecord | null | undefined) {
     if (!payload || payload.error) return []
     const candidates = [
       payload.player_evaluations,
@@ -446,7 +448,7 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
       }
       if (candidate && typeof candidate === 'object' && Object.keys(candidate).length) {
         return Object.entries(candidate).map(([seat, score]) => {
-          const row = score && typeof score === 'object' ? score : { overall_score: score }
+          const row: LooseRecord = score && typeof score === 'object' ? score as LooseRecord : { overall_score: score }
           return {
             player_seat: row.player_seat ?? row.player_id ?? row.seat ?? seat,
             ...row,
@@ -458,7 +460,7 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     return []
   }
 
-  function playerForReviewScore(score) {
+  function playerForReviewScore(score: LooseRecord) {
     const rawId = score.player_seat ?? score.player_id ?? score.seat ?? score.id
     const players = selectedHistoryGame.value?.players ?? []
     const player = players.find((item) =>
@@ -471,14 +473,14 @@ export function createHistoryDerivedState(refs, computedState, helpers = {}) {
     }
   }
 
-  function firstReviewScoreValue(score, fields, fallback = 0) {
+  function firstReviewScoreValue(score: LooseRecord, fields: string[], fallback: unknown = 0) {
     for (const field of fields) {
       if (score?.[field] != null) return score[field]
     }
     return fallback
   }
 
-  function reviewScorePercent(value) {
+  function reviewScorePercent(value: unknown) {
     const number = Number(value)
     if (!Number.isFinite(number)) return 0
     if (number <= 1) return Math.round(Math.max(0, Math.min(number * 100, 100)))
