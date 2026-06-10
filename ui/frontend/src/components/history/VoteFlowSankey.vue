@@ -102,6 +102,33 @@ const selectedVotes = computed(() => {
 
 const voteRounds = computed(() => filters.value.filter((item) => item.key !== 'all'))
 
+const actionFlowRows = computed(() =>
+  behaviorDecisions.value.filter((decision) =>
+    !VOTE_ACTIONS.has(actionType(decision)) && actorId(decision) != null && targetId(decision) != null
+  )
+)
+
+const sankeyRows = computed(() => {
+  if (selectedVotes.value.length) {
+    return selectedVotes.value.map((decision) => ({
+      sourceId: voterId(decision),
+      targetId: targetId(decision),
+      action: actionType(decision)
+    }))
+  }
+  return actionFlowRows.value.map((decision) => ({
+    sourceId: actorId(decision),
+    targetId: targetId(decision),
+    action: actionType(decision)
+  }))
+})
+
+const hasSankeyFlow = computed(() => sankeyRows.value.length > 0)
+
+const sankeyTitle = computed(() => votes.value.length ? '投票流向分析' : '行动流向分析')
+
+const sankeyUnit = computed(() => votes.value.length ? '票' : '次')
+
 const heatmapPlayers = computed(() => {
   const ids = new Set(props.players.map((player) => player?.id).filter((id) => id != null).map(String))
   behaviorDecisions.value.forEach((decision) => ids.add(String(actorId(decision))))
@@ -162,8 +189,6 @@ const heatmapValueRange = computed(() => {
 const heatmapHeight = computed(() =>
   Math.max(190, Math.min(420, 82 + heatmapPlayers.value.length * 26))
 )
-
-const hasFlowAnalysis = computed(() => votes.value.length > 0 || (behaviorDecisions.value.length > 0 && heatmapRows.value.length > 0))
 
 function seatLabel(id) {
   return `${id}号`
@@ -290,23 +315,28 @@ function sankeyData() {
   const targets = new Set()
   const links = new Map()
 
-  selectedVotes.value.forEach((vote) => {
-    const sourceId = String(voterId(vote))
-    const targetIdValue = String(targetId(vote))
+  sankeyRows.value.forEach((row) => {
+    const sourceId = String(row.sourceId)
+    const targetIdValue = String(row.targetId)
     const source = `source:${sourceId}`
     const target = `target:${targetIdValue}`
     sources.add(sourceId)
     targets.add(targetIdValue)
     const key = `${source}|${target}`
     const existing = links.get(key)
-    if (existing) existing.value += 1
-    else links.set(key, {
-      source,
-      target,
-      value: 1,
-      sourceId,
-      targetId: targetIdValue
-    })
+    if (existing) {
+      existing.value += 1
+      if (row.action) existing.actions.add(row.action)
+    } else {
+      links.set(key, {
+        source,
+        target,
+        value: 1,
+        sourceId,
+        targetId: targetIdValue,
+        actions: new Set([row.action].filter(Boolean))
+      })
+    }
   })
 
   const sortSeats = (a, b) => Number(a) - Number(b)
@@ -327,6 +357,7 @@ function sankeyData() {
       source: link.source,
       target: link.target,
       value: link.value,
+      actions: [...(link.actions || [])],
       lineStyle: {
         color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
           { offset: 0, color: seatColor(link.sourceId) },
@@ -349,20 +380,23 @@ function renderChart() {
         if (params.dataType === 'edge') {
           const source = String(params.data.source).split(':')[1]
           const target = String(params.data.target).split(':')[1]
-          return `${seatLabel(source)} → ${seatLabel(target)}：${params.data.value}票`
+          const actions = Array.isArray(params.data.actions) && params.data.actions.length
+            ? `<br/>行为：${params.data.actions.join('、')}`
+            : ''
+          return `${seatLabel(source)} → ${seatLabel(target)}：${params.data.value}${sankeyUnit.value}${actions}`
         }
         return seatLabel(String(params.name).split(':')[1])
       }
     },
     series: [{
       type: 'sankey',
-      left: 26,
-      right: 26,
-      top: 18,
+      left: 4,
+      right: 8,
+      top: 22,
       bottom: 16,
-      nodeWidth: 14,
-      nodeGap: 14,
-      layoutIterations: 32,
+      nodeWidth: 18,
+      nodeGap: 18,
+      layoutIterations: 64,
       data,
       links,
       label: {
@@ -529,7 +563,7 @@ function syncHeatmapElement(element) {
 watch(filters, (items) => {
   if (!items.some((item) => item.key === activeKey.value)) activeKey.value = 'all'
 })
-watch([selectedVotes, activeKey], () => nextTick(renderChart), { deep: true })
+watch([sankeyRows, activeKey], () => nextTick(renderChart), { deep: true })
 watch([heatmapData, phaseRounds, heatmapPlayers], () => nextTick(renderHeatmap), { deep: true })
 watch(chartEl, syncChartElement, { flush: 'post' })
 watch(heatmapEl, syncHeatmapElement, { flush: 'post' })
@@ -545,13 +579,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section v-if="hasFlowAnalysis" class="vote-flow-analysis">
-    <template v-if="votes.length">
-      <header>
-        <h4>投票流向分析</h4>
-        <b>{{ selectedVotes.length }} 票</b>
-      </header>
-      <nav aria-label="投票轮次筛选">
+  <section v-if="hasSankeyFlow" class="vote-flow-analysis" aria-label="玩家行动流向图">
+    <header>
+      <h4>{{ sankeyTitle }}</h4>
+    </header>
+    <div class="vote-chart-body">
+      <nav v-if="votes.length" aria-label="投票轮次筛选">
         <button
           v-for="item in filters"
           :key="item.key"
@@ -562,52 +595,66 @@ onBeforeUnmount(() => {
           {{ item.label }}
         </button>
       </nav>
-      <div ref="chartEl" class="vote-flow-chart" role="img" aria-label="投票流向桑基图"></div>
-    </template>
+      <div ref="chartEl" class="vote-flow-chart" role="img" :aria-label="`${sankeyTitle}桑基图`"></div>
+    </div>
+  </section>
 
-    <section
-      v-if="heatmapRows.length"
-      class="vote-round-heatmap"
-      :class="{ standalone: !votes.length }"
-      aria-label="玩家回合投票热力图"
-    >
-      <header>
-        <h4>玩家 × 回合热力图</h4>
-      </header>
+  <section
+    v-if="heatmapRows.length"
+    class="vote-round-heatmap"
+    aria-label="玩家回合投票热力图"
+  >
+    <header>
+      <h4>玩家 × 回合热力图</h4>
+    </header>
+    <div class="vote-chart-body">
       <div ref="heatmapEl" class="vote-heatmap-chart" :style="{ height: heatmapHeight + 'px' }" role="img" aria-label="玩家回合投票热力图"></div>
-    </section>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.vote-flow-analysis {
+.vote-flow-analysis,
+.vote-round-heatmap {
   display: grid;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 12px 14px 10px;
-  border: 1px solid rgba(93, 48, 17, 0.18);
-  border-radius: 8px;
-  background: rgba(255, 239, 194, 0.42);
+  grid-template-rows: auto auto;
+  gap: 0;
+  margin-top: 12px;
+  border: 1px solid var(--log-border, rgba(93, 48, 17, 0.18));
+  border-radius: 0;
+  background: var(--log-surface, rgba(255, 252, 245, 0.42));
+  box-shadow: 0 1px 3px rgba(91, 47, 18, 0.04);
+  overflow: hidden;
 }
 
-.vote-flow-analysis header {
+.vote-flow-analysis header,
+.vote-round-heatmap header {
   display: flex;
   align-items: end;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   min-height: 0;
+  padding: 8px 0 6px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.12);
+  background: transparent;
 }
 
-.vote-flow-analysis h4 {
+.vote-flow-analysis h4,
+.vote-round-heatmap h4 {
   margin: 0;
   padding: 0;
   border: 0;
   font-size: 15px;
+  color: #3b1c09;
+  font-weight: 950;
 }
 
-.vote-flow-analysis header b {
-  color: #7f2430;
-  font-size: 12px;
+.vote-chart-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 10px 14px;
+  background: rgba(255, 252, 245, 0.32);
 }
 
 .vote-flow-analysis nav {
@@ -652,36 +699,9 @@ onBeforeUnmount(() => {
 
 .vote-flow-chart {
   width: 100%;
-  height: 270px;
-  min-height: 230px;
+  height: 340px;
+  min-height: 300px;
   margin: 0;
-}
-
-.vote-round-heatmap {
-  display: grid;
-  gap: 8px;
-  margin-top: 6px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(93, 48, 17, 0.14);
-}
-
-.vote-round-heatmap.standalone {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
-}
-
-.vote-round-heatmap header {
-  display: flex;
-  align-items: baseline;
-  justify-content: flex-start;
-}
-
-.vote-round-heatmap h4 {
-  margin: 0;
-  color: #3b1c09;
-  font-size: 14px;
-  font-weight: 950;
 }
 
 .vote-heatmap-chart {

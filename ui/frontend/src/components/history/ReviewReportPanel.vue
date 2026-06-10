@@ -42,6 +42,7 @@ const reviewFlowDecisions = computed(() => {
   if (flowRows.length) return dedupeDecisions(flowRows)
   const candidates = [
     reviewData.value?.flow_data?.decisions,
+    props.game?.decisions,
     reviewData.value?.decisions,
     reviewData.value?.archive?.decisions,
     reviewData.value?.game?.decisions,
@@ -55,6 +56,7 @@ const flowDecisionCount = computed(() => {
     flowDataPayload.value?.decision_count
     ?? reviewData.value?.game_summary?.decision_count
     ?? props.game?.decision_count
+    ?? props.game?.decisions?.length
     ?? reviewFlowDecisions.value.length
   )
   return Number.isFinite(value) ? Math.max(0, value) : 0
@@ -504,27 +506,27 @@ function jsonText(value) {
         <ReviewScoreStackedBar :cards="reviewScoreCards" />
       </section>
 
-      <section v-if="canShowFlowChartGate" class="review-flow-gate">
-        <header class="review-flow-gate-head">
-          <div>
-            <h4>图表分析</h4>
-          </div>
-          <button v-if="flowDataError" type="button" :disabled="flowLoading" @click="retryFlowCharts">
-            重试
-          </button>
-          <small v-else>{{ flowChartStatusLabel }}</small>
-        </header>
-        <p v-if="flowDataError" class="review-flow-gate-copy">
-          {{ flowDataError }}
-        </p>
-        <p v-else-if="flowLoading && !showFlowCharts" class="review-flow-gate-copy">
-          正在读取投票流向与回合热力图。
-        </p>
-        <p v-else-if="!showFlowCharts" class="review-flow-gate-copy">
-          暂无可生成的投票流向或回合热力图。
-        </p>
+      <template v-if="canShowFlowChartGate">
         <VoteFlowSankey v-if="showFlowCharts" :decisions="reviewFlowDecisions" :players="game.players || []" />
-      </section>
+        <section v-else class="review-flow-status">
+          <header class="review-flow-status-head">
+            <h4>流向图</h4>
+            <button v-if="flowDataError" type="button" :disabled="flowLoading" @click="retryFlowCharts">
+              重试
+            </button>
+            <small v-else>{{ flowChartStatusLabel }}</small>
+          </header>
+          <p v-if="flowDataError" class="review-flow-status-copy">
+            {{ flowDataError }}
+          </p>
+          <p v-else-if="flowLoading" class="review-flow-status-copy">
+            正在读取投票流向与回合热力图。
+          </p>
+          <p v-else class="review-flow-status-copy">
+            暂无可生成的投票流向或回合热力图。
+          </p>
+        </section>
+      </template>
 
       <section v-if="showDecisionJudge" class="review-judge-section">
         <header class="review-judge-head">
@@ -819,31 +821,31 @@ function jsonText(value) {
   white-space: nowrap;
 }
 
-.review-flow-gate {
+.review-flow-status {
   display: grid;
   gap: 9px;
   margin-top: 12px;
   padding: 12px;
   border: 1px solid rgba(93, 48, 17, 0.18);
-  border-radius: 8px;
-  background: rgba(255, 239, 194, 0.32);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.42);
 }
 
-.review-flow-gate-head {
+.review-flow-status-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
 
-.review-flow-gate-head h4 {
+.review-flow-status-head h4 {
   margin: 0;
   color: var(--log-text);
   font-size: 14px;
   font-weight: 900;
 }
 
-.review-flow-gate-head small {
+.review-flow-status-head small {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -860,7 +862,7 @@ function jsonText(value) {
   white-space: nowrap;
 }
 
-.review-flow-gate-head button {
+.review-flow-status-head button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -878,18 +880,18 @@ function jsonText(value) {
   cursor: pointer;
 }
 
-.review-flow-gate-head button:hover {
+.review-flow-status-head button:hover {
   border-color: rgba(93, 48, 17, 0.36);
   background: rgba(255, 252, 245, 0.92);
 }
 
-.review-flow-gate-head button:disabled {
+.review-flow-status-head button:disabled {
   color: var(--log-accent);
   background: rgba(139, 94, 52, 0.08);
   cursor: default;
 }
 
-.review-flow-gate-copy {
+.review-flow-status-copy {
   margin: 0;
   color: var(--log-text-secondary);
   font-size: 12px;

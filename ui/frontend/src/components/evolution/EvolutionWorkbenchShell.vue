@@ -207,12 +207,13 @@ function retryRefresh() {
             :class="['evo-role-chip', { selected: selectedRole === role.key }]"
             @click="emit('select-role', role.key)"
           >
-            <img :src="role.image" alt="" aria-hidden="true" />
-            <span class="evo-role-name">
+            <span class="evo-role-identity">
+              <img :src="role.image" alt="" aria-hidden="true" />
               <b>{{ role.label }}</b>
-              <small>
-                运行 {{ roleRunCounts(role.key).active }} · 待审 {{ roleRunCounts(role.key).reviewing }}
-              </small>
+            </span>
+            <span class="evo-role-statuses" aria-label="角色运行状态">
+              <small>运行 {{ roleRunCounts(role.key).active }}</small>
+              <small>待审 {{ roleRunCounts(role.key).reviewing }}</small>
             </span>
           </button>
         </div>
@@ -226,27 +227,27 @@ function retryRefresh() {
         </div>
         <div class="evo-command-metrics" aria-label="自进化工具状态条">
           <span>
-            <small>当前角色</small>
+            <small>当前角色：</small>
             <b>{{ selectedRoleRow?.label || '—' }}</b>
           </span>
           <span>
-            <small>当前运行</small>
-            <b>{{ shortRunId(runSummary.id) }}</b>
+            <small>当前运行：</small>
+            <b>{{ displayText(runSummary.id) }}</b>
           </span>
           <span>
-            <small>阶段</small>
+            <small>阶段：</small>
             <b>{{ runSummary.currentStageLabel || '—' }}</b>
           </span>
           <span>
-            <small>门禁</small>
+            <small>门禁：</small>
             <b>{{ contextGateLabel }}</b>
           </span>
           <span>
-            <small>信任包</small>
+            <small>信任包：</small>
             <b>{{ contextTrustLabel }}</b>
           </span>
           <span>
-            <small>进度</small>
+            <small>进度：</small>
             <b>{{ progressPercent(runSummary.overallProgressPercent) }}%</b>
           </span>
         </div>
@@ -347,21 +348,6 @@ function retryRefresh() {
             <span class="wide">
               <small>证据强度</small>
               <b>{{ contextEvidenceLabel }}</b>
-            </span>
-          </div>
-        </section>
-
-        <section class="evo-context-section">
-          <h3>高风险动作</h3>
-          <div class="evo-context-action-list">
-            <span
-              v-for="item in riskActionRows"
-              :key="item.key"
-              :data-available="item.available ? 'true' : 'false'"
-            >
-              <small>{{ item.label }}</small>
-              <b>{{ item.available ? '可执行' : '不可执行' }}</b>
-              <em>{{ item.reason }}</em>
             </span>
           </div>
         </section>

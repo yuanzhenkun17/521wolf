@@ -1820,7 +1820,6 @@ function useGameHistory(state, options = {}) {
       const archive = await apiFetch(`/games/${historyGamePath(gameId)}/archive`)
       if (!token.isLatest()) return
       state.archiveByGameId.value = { ...state.archiveByGameId.value, [gameId]: archive }
-      if (!silentSuccess) historyNotice.value = { type: 'success', message: '对局档案已载入。' }
     } catch (err) {
       if (token.isLatest()) {
         const notice = historyLoadNotice('error', err?.message, '对局档案读取失败，请重试。')

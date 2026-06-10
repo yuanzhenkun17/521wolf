@@ -72,6 +72,7 @@ function selectTab(tab) {
               <span
                 v-for="item in meta"
                 :key="item.key || item.label"
+                :data-meta-key="item.key || item.label"
                 :data-tone="item.tone || 'neutral'"
               >
                 <small>{{ item.label }}</small>

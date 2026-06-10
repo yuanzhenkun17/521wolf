@@ -124,9 +124,9 @@
   z-index: 2;
   display: grid;
   justify-items: center;
-  gap: 8px;
+  gap: 12px;
   text-align: center;
-  transform: translateY(-18px);
+  transform: translateY(-22px);
 }
 
 .hero-mark {
@@ -141,13 +141,17 @@
   filter: drop-shadow(0 0 12px rgba(255, 180, 168, 0.22));
 }
 
-.lobby-hero h1 {
+.lobby-hero h1,
+.lobby-hero-title {
+  box-sizing: border-box;
   margin: 0;
   color: var(--lobby-accent);
   font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
   font-size: clamp(38px, 5.6vw, 68px);
   font-weight: 800;
   letter-spacing: 0.04em;
+  line-height: 1;
+  text-align: center;
   text-transform: uppercase;
   text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.08), -1px -1px 0 rgba(0, 0, 0, 0.82);
 }
@@ -156,8 +160,8 @@
   margin: 0;
   color: rgba(255, 180, 168, 0.78);
   font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 900;
+  font-size: clamp(14px, 1.25vw, 20px);
+  font-weight: 400;
   letter-spacing: 0.18em;
   text-transform: uppercase;
 }

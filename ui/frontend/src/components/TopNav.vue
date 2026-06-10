@@ -16,7 +16,6 @@ const props = defineProps({
 
 const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
 const exitConfirming = ref(false)
-let exitConfirmTimer = 0
 
 const navItems = [
   { key: 'lobby', label: '大厅', line: 'play', lineLabel: 'Play', event: 'go-lobby' },
@@ -122,22 +121,18 @@ const streamStatusBadge = computed(() => {
 })
 
 function clearExitConfirm() {
-  if (exitConfirmTimer) {
-    window.clearTimeout(exitConfirmTimer)
-    exitConfirmTimer = 0
-  }
   exitConfirming.value = false
 }
 
 function requestExitGame() {
   if (props.exitDisabled) return
-  if (exitConfirming.value) {
-    clearExitConfirm()
-    emit('exit-game')
-    return
-  }
   exitConfirming.value = true
-  exitConfirmTimer = window.setTimeout(clearExitConfirm, 1800)
+}
+
+function confirmExitGame() {
+  if (props.exitDisabled) return
+  clearExitConfirm()
+  emit('exit-game')
 }
 
 watch(() => [props.activeView, props.variant, props.showExitGame], clearExitConfirm)
@@ -240,11 +235,10 @@ onBeforeUnmount(clearExitConfirm)
       <button
         v-if="showExitGame"
         class="topbar-exit-game"
-        :class="{ confirming: exitConfirming }"
         type="button"
         :disabled="exitDisabled"
-        :title="exitConfirming ? '再次点击确认退出游戏' : '退出游戏'"
-        :aria-label="exitConfirming ? '再次点击确认退出游戏' : '退出游戏'"
+        title="退出游戏"
+        aria-label="退出游戏"
         @click="requestExitGame"
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -253,15 +247,43 @@ onBeforeUnmount(clearExitConfirm)
       </button>
     </div>
   </header>
+
+  <Teleport to="body">
+    <div
+      v-if="exitConfirming"
+      class="exit-confirm-backdrop"
+      role="presentation"
+      @click.self="clearExitConfirm"
+    >
+      <section
+        class="exit-confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="exit-confirm-title"
+      >
+        <span class="exit-confirm-mark" aria-hidden="true">
+          <img src="/livehall-assets/props/judge-avatar.png" alt="" />
+        </span>
+        <div class="exit-confirm-copy">
+          <h2 id="exit-confirm-title">是否要退出对局？</h2>
+          <p>退出后会停止当前对局并返回大厅。</p>
+        </div>
+        <div class="exit-confirm-actions">
+          <button type="button" class="exit-confirm-secondary" @click="clearExitConfirm">取消</button>
+          <button type="button" class="exit-confirm-primary" @click="confirmExitGame">退出</button>
+        </div>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .topbar {
-  --nav-accent: #f2ca50;
-  --nav-accent-soft: rgba(242, 202, 80, 0.15);
-  --nav-fg: #f6ead2;
-  --nav-muted: rgba(246, 234, 210, 0.58);
-  --nav-border: rgba(246, 214, 142, 0.16);
+  --nav-accent: #ffb4a8;
+  --nav-accent-soft: rgba(255, 180, 168, 0.15);
+  --nav-fg: #ffe1dc;
+  --nav-muted: rgba(255, 225, 220, 0.58);
+  --nav-border: rgba(255, 180, 168, 0.16);
   --nav-panel: rgba(12, 10, 8, 0.68);
   position: fixed;
   top: 0;
@@ -281,7 +303,7 @@ onBeforeUnmount(clearExitConfirm)
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.26), inset 0 -1px 0 rgba(255, 241, 192, 0.04);
   backdrop-filter: blur(18px);
   color: var(--nav-fg);
-  font-family: "Microsoft YaHei", Arial, sans-serif;
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
   user-select: none;
 }
 
@@ -330,9 +352,9 @@ onBeforeUnmount(clearExitConfirm)
   margin: 0px 0px 0px 0px;
   font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
   color: var(--nav-accent);
-  font-size: 26px;
+  font-size: 24px;
   font-style: normal;
-  font-weight: 400;
+  font-weight: 100;
   line-height: 1;
   letter-spacing: 0;
   white-space: nowrap;
@@ -372,21 +394,22 @@ onBeforeUnmount(clearExitConfirm)
   --nav-button-accent: var(--nav-accent);
   position: relative;
   display: inline-grid;
-  grid-template-rows: 11px 17px;
+  grid-template-rows: 1fr;
   align-items: center;
   align-content: center;
   justify-content: center;
   gap: 1px;
-  min-width: 72px;
+  min-width: 86px;
   height: 32px;
-  padding: 0 13px;
+  padding: 0 8px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
   color: var(--nav-muted);
   box-shadow: none;
+  font-family: "Microsoft YaHei", Arial, sans-serif;
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0;
   white-space: nowrap;
   cursor: pointer;
@@ -394,11 +417,11 @@ onBeforeUnmount(clearExitConfirm)
 }
 
 .topbar .primary-nav button[data-work-line="play"] {
-  --nav-button-accent: #ffb4a8;
+  --nav-button-accent: var(--nav-accent);
 }
 
 .topbar .primary-nav button[data-work-line="lab"] {
-  --nav-button-accent: #76c7a3;
+  --nav-button-accent: var(--nav-accent);
 }
 
 .topbar .primary-nav button:hover {
@@ -426,39 +449,18 @@ onBeforeUnmount(clearExitConfirm)
 }
 
 .nav-line {
-  color: var(--nav-button-accent);
-  font-size: 9px;
-  font-weight: 900;
-  line-height: 1;
-  opacity: 0.78;
-  text-transform: uppercase;
+  display: none;
 }
 
 .nav-label {
   color: inherit;
-  font-size: 13px;
-  font-weight: 850;
+  font-size: inherit;
+  font-weight: 800;
   line-height: 1;
 }
 
 .nav-state {
-  position: absolute;
-  top: 3px;
-  right: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  height: 14px;
-  padding: 0 5px;
-  border: 1px solid color-mix(in srgb, var(--nav-button-accent) 42%, transparent);
-  border-radius: 7px;
-  background: rgba(0, 0, 0, 0.28);
-  color: var(--nav-button-accent);
-  font-size: 9px;
-  font-weight: 900;
-  line-height: 1;
-  pointer-events: none;
+  display: none;
 }
 
 /* ---- lobby variant ---- */
@@ -478,7 +480,7 @@ onBeforeUnmount(clearExitConfirm)
   position: absolute;
   right: 8px;
   justify-self: auto;
-  width: 430px;
+  width: 350px;
   height: 48px;
   gap: 0;
   padding: 0;
@@ -492,21 +494,19 @@ onBeforeUnmount(clearExitConfirm)
 .topbar--section .primary-nav button {
   position: relative;
   flex: 1 1 0;
-  width: auto;
-  min-width: 0;
+  width: 56px;
+  min-width: 56px;
   height: 48px;
-  padding: 0;
+  padding: 0 8px;
   border: 0;
   border-radius: 0;
   color: var(--nav-accent);
   background: transparent;
   box-shadow: none;
+  font-family: "Microsoft YaHei", Arial, sans-serif;
+  font-size: 17px;
+  font-weight: 800;
   text-shadow: 0 0 12px rgba(255, 180, 168, 0.14);
-}
-
-.topbar--lobby .primary-nav button[data-work-line="lab"] {
-  color: var(--nav-button-accent);
-  text-shadow: 0 0 14px rgba(118, 199, 163, 0.18);
 }
 
 .topbar--lobby .primary-nav button:hover {
@@ -517,15 +517,10 @@ onBeforeUnmount(clearExitConfirm)
   transform: none;
 }
 
-.topbar--lobby .primary-nav button[data-work-line="lab"]:hover {
-  color: var(--nav-button-accent);
-  background: rgba(118, 199, 163, 0.08);
-}
-
 .topbar--lobby .primary-nav button.active,
 .topbar--section .primary-nav button.active {
   border: 0;
-  color: var(--nav-button-accent);
+  color: var(--nav-accent);
   background: transparent;
   box-shadow: none;
   transform: none;
@@ -540,13 +535,13 @@ onBeforeUnmount(clearExitConfirm)
 }
 
 .topbar--section .primary-nav button {
-  color: var(--nav-button-accent);
+  color: var(--nav-accent);
   text-shadow: 0 0 14px rgba(242, 202, 80, 0.18);
 }
 
 .topbar--section .primary-nav button:hover {
   border: 0;
-  color: var(--nav-button-accent);
+  color: var(--nav-accent);
   background: rgba(242, 202, 80, 0.08);
   box-shadow: none;
   transform: none;
@@ -554,10 +549,6 @@ onBeforeUnmount(clearExitConfirm)
 
 .topbar--lobby .primary-nav button.active:hover {
   background: rgba(255, 180, 168, 0.08);
-}
-
-.topbar--lobby .primary-nav button[data-work-line="lab"].active:hover {
-  background: rgba(118, 199, 163, 0.08);
 }
 
 .topbar--section .primary-nav button.active:hover {
@@ -687,6 +678,178 @@ onBeforeUnmount(clearExitConfirm)
   width: 20px;
   height: 20px;
   fill: currentColor;
+}
+
+.exit-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(214, 154, 78, 0.18), transparent 32%),
+    radial-gradient(circle at 50% 62%, rgba(76, 38, 18, 0.26), transparent 42%),
+    rgba(18, 10, 4, 0.58);
+  backdrop-filter: blur(5px);
+}
+
+.exit-confirm-dialog {
+  --exit-wood-bg:
+    radial-gradient(ellipse at 22% 18%, rgba(255, 252, 229, 0.72), transparent 38%) padding-box,
+    radial-gradient(ellipse at 78% 88%, rgba(181, 116, 48, 0.1), transparent 44%) padding-box,
+    linear-gradient(180deg, rgba(246, 222, 166, 0.98), rgba(233, 197, 128, 0.96) 52%, rgba(218, 174, 102, 0.96)) padding-box,
+    repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
+  position: relative;
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 14px 18px;
+  width: min(470px, calc(100vw - 40px));
+  padding: 22px 26px 22px 22px;
+  border: 5px solid transparent;
+  border-radius: 0;
+  background: var(--exit-wood-bg);
+  color: #3f2714;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.46),
+    inset 0 0 0 1px rgba(255, 239, 183, 0.54),
+    inset 0 0 28px rgba(88, 42, 14, 0.2);
+  backdrop-filter: none;
+}
+
+.exit-confirm-dialog::before {
+  content: "";
+  position: absolute;
+  inset: 9px 10px;
+  z-index: 0;
+  display: block;
+  border: 1px solid rgba(77, 38, 16, 0.34);
+  border-radius: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(72, 37, 15, 0.08), transparent 12% 88%, rgba(72, 37, 15, 0.1)),
+    repeating-linear-gradient(0deg, rgba(92, 48, 18, 0.035) 0 1px, transparent 1px 7px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 241, 194, 0.42),
+    inset 0 0 24px rgba(87, 43, 15, 0.18);
+}
+
+.exit-confirm-dialog::after {
+  display: none;
+}
+
+.exit-confirm-mark {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  align-self: center;
+  border: 1px solid rgba(77, 38, 16, 0.38);
+  border-radius: 0;
+  background:
+    radial-gradient(ellipse at 28% 18%, rgba(255, 248, 213, 0.58), transparent 42%),
+    linear-gradient(180deg, rgba(255, 241, 194, 0.56), rgba(170, 101, 40, 0.18));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 241, 194, 0.42),
+    inset 0 0 18px rgba(87, 43, 15, 0.16);
+  overflow: hidden;
+}
+
+.exit-confirm-mark img {
+  width: 66px;
+  height: 66px;
+  object-fit: cover;
+  object-position: center 26%;
+  border-radius: 0;
+  filter: saturate(0.95) contrast(1.04) drop-shadow(0 2px 2px rgba(45, 21, 6, 0.35));
+}
+
+.exit-confirm-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  align-self: center;
+}
+
+.exit-confirm-copy h2 {
+  margin: 0;
+  color: #4b250d;
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 28px;
+  font-weight: 950;
+  line-height: 1.1;
+  letter-spacing: 0;
+  text-shadow: 0 1px 0 rgba(255, 236, 183, 0.62);
+}
+
+.exit-confirm-copy p {
+  margin: 9px 0 0;
+  color: rgba(75, 37, 13, 0.76);
+  font-family: "Microsoft YaHei", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.55;
+}
+
+.exit-confirm-actions {
+  position: relative;
+  z-index: 1;
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.exit-confirm-actions button {
+  height: 40px;
+  min-width: 92px;
+  padding: 0 18px;
+  border-radius: 5px;
+  font-family: "Microsoft YaHei", Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.exit-confirm-actions button:hover {
+  transform: translateY(-1px);
+}
+
+.exit-confirm-secondary {
+  border: 1px solid rgba(93, 48, 17, 0.38);
+  color: #5b2b10;
+  background:
+    linear-gradient(180deg, rgba(255, 241, 194, 0.72), rgba(188, 123, 46, 0.22)),
+    rgba(233, 197, 128, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 224, 0.62);
+}
+
+.exit-confirm-secondary:hover {
+  border-color: rgba(91, 47, 18, 0.62);
+  background:
+    linear-gradient(180deg, rgba(255, 246, 213, 0.86), rgba(200, 142, 66, 0.28)),
+    rgba(233, 197, 128, 0.7);
+}
+
+.exit-confirm-primary {
+  border: 1px solid #7c321f;
+  color: #fff2d0;
+  background:
+    linear-gradient(180deg, #b75b33, #8f3a23 54%, #6f2918);
+  box-shadow:
+    0 10px 22px rgba(115, 43, 18, 0.28),
+    inset 0 1px 0 rgba(255, 215, 148, 0.38);
+  text-shadow: 0 1px 1px rgba(38, 13, 4, 0.48);
+}
+
+.exit-confirm-primary:hover {
+  border-color: #9d4328;
+  background:
+    linear-gradient(180deg, #cf7044, #a84429 54%, #78301d);
 }
 
 .audio-icon {
@@ -953,6 +1116,36 @@ onBeforeUnmount(clearExitConfirm)
 
   .session-copy {
     display: none;
+  }
+
+  .exit-confirm-dialog {
+    grid-template-columns: 64px minmax(0, 1fr);
+    width: min(380px, calc(100vw - 28px));
+    padding: 18px 18px 18px 16px;
+  }
+
+  .exit-confirm-mark {
+    width: 64px;
+    height: 64px;
+  }
+
+  .exit-confirm-mark img {
+    width: 58px;
+    height: 58px;
+  }
+
+  .exit-confirm-copy h2 {
+    font-size: 24px;
+  }
+
+  .exit-confirm-actions {
+    gap: 8px;
+  }
+
+  .exit-confirm-actions button {
+    min-width: 80px;
+    height: 38px;
+    padding: 0 14px;
   }
 }
 </style>

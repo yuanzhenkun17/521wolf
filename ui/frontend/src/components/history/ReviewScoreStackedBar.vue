@@ -125,8 +125,6 @@ function segmentTitle(row, dimension) {
 
     <div class="rsb-list" role="list">
       <div v-for="row in rows" :key="'score-row-' + row.key" class="rsb-row" role="listitem">
-        <span class="rsb-rank">{{ row.rank }}</span>
-
         <span class="rsb-player">
           <img
             class="rsb-avatar"
@@ -168,7 +166,6 @@ function segmentTitle(row, dimension) {
 
         <span class="rsb-total">
           <b>{{ scoreLabel(row.overall) }}</b>
-          <small>综合</small>
         </span>
       </div>
     </div>
@@ -185,16 +182,17 @@ function segmentTitle(row, dimension) {
   display: grid;
   gap: 10px;
   min-width: 0;
-  padding: 12px 14px 14px;
+  padding: 12px 10px 14px;
   background: rgba(255, 252, 245, 0.32);
 }
 
 .rsb-legend {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 8px 16px;
   min-width: 0;
-  padding: 0 0 9px 88px;
+  padding: 0 0 9px;
   border-bottom: 1px solid rgba(93, 48, 17, 0.12);
 }
 
@@ -225,9 +223,9 @@ function segmentTitle(row, dimension) {
 
 .rsb-row {
   display: grid;
-  grid-template-columns: 30px 154px minmax(160px, 1fr) 58px;
+  grid-template-columns: 92px minmax(360px, 1fr) 34px;
   align-items: center;
-  gap: 12px;
+  gap: 4px;
   min-width: 0;
   min-height: 50px;
   padding: 7px 0;
@@ -238,30 +236,17 @@ function segmentTitle(row, dimension) {
   border-bottom: 0;
 }
 
-.rsb-rank {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid rgba(93, 48, 17, 0.2);
-  background: rgba(255, 239, 194, 0.48);
-  color: rgba(59, 28, 9, 0.76);
-  font-size: 12px;
-  font-weight: 950;
-  line-height: 1;
-}
-
 .rsb-player {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   min-width: 0;
 }
 
 .rsb-avatar {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
   border: 1px solid rgba(93, 48, 17, 0.2);
   background: rgba(255, 248, 220, 0.62);
@@ -303,7 +288,7 @@ function segmentTitle(row, dimension) {
   position: relative;
   display: block;
   width: 100%;
-  height: 22px;
+  height: 24px;
   background:
     repeating-linear-gradient(
       90deg,
@@ -337,21 +322,13 @@ function segmentTitle(row, dimension) {
 
 .rsb-total {
   display: grid;
-  justify-items: end;
-  gap: 3px;
+  justify-items: start;
   min-width: 0;
-}
-
-.rsb-total small {
-  color: rgba(59, 28, 9, 0.46);
-  font-size: 10px;
-  font-weight: 850;
-  line-height: 1;
 }
 
 .rsb-total b {
   color: #7f2430;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 950;
   line-height: 1;
 }
@@ -366,13 +343,13 @@ function segmentTitle(row, dimension) {
   }
 
   .rsb-row {
-    grid-template-columns: 30px minmax(0, 1fr) 54px;
+    grid-template-columns: minmax(0, 1fr) 42px;
     gap: 8px;
     min-height: 76px;
   }
 
   .rsb-track-cell {
-    grid-column: 2 / -1;
+    grid-column: 1 / -1;
   }
 
   .rsb-player {

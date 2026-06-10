@@ -143,9 +143,12 @@ function versionOptionText(version) {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
-  border: 1px solid var(--target-border);
-  border-radius: 8px;
-  background: var(--target-bg);
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.3), rgba(255, 239, 194, 0.14)),
+    rgba(255, 252, 245, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.44);
   overflow: hidden;
 }
 
@@ -155,13 +158,17 @@ function versionOptionText(version) {
   align-items: center;
   min-height: 52px;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--target-border);
-  background: var(--target-surface);
+  border-bottom: 1px solid rgba(93, 48, 17, 0.12);
+  background: transparent;
 }
 
 .benchmark-target-selector h2,
 .benchmark-target-selector small {
   margin: 0;
+}
+
+.benchmark-target-selector > header small {
+  display: none;
 }
 
 .benchmark-target-selector small,
@@ -172,7 +179,7 @@ function versionOptionText(version) {
 }
 
 .benchmark-target-selector h2 {
-  margin-top: 2px;
+  margin-top: 0;
   color: var(--target-text);
   font-size: 15px;
   font-weight: 900;
@@ -200,9 +207,9 @@ function versionOptionText(version) {
   height: 34px;
   min-width: 0;
   padding: 0 10px;
-  border: 1px solid var(--target-border);
-  border-radius: 6px;
-  background: var(--target-surface);
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.46);
   color: var(--target-text);
   font-size: 13px;
   font-weight: 800;
@@ -214,9 +221,9 @@ function versionOptionText(version) {
   height: 34px;
   min-width: 0;
   padding: 0 10px;
-  border: 1px solid var(--target-border);
-  border-radius: 6px;
-  background: var(--target-surface);
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.46);
   color: var(--target-text);
   font-size: 13px;
   font-weight: 800;
@@ -247,8 +254,8 @@ function versionOptionText(version) {
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--target-border);
-  border-radius: 6px;
-  background: var(--target-surface);
+  border-radius: 4px;
+  background: rgba(255, 252, 245, 0.36);
   color: var(--target-text);
   font-size: 12px;
   font-weight: 900;
@@ -291,8 +298,8 @@ function versionOptionText(version) {
   height: 30px;
   padding: 0 8px;
   border: 1px solid var(--target-border);
-  border-radius: 6px;
-  background: var(--target-surface);
+  border-radius: 4px;
+  background: rgba(255, 252, 245, 0.36);
   color: var(--target-text);
   font-size: 11px;
   font-weight: 900;
@@ -323,7 +330,7 @@ function versionOptionText(version) {
 
 .target-version-chip.canary {
   border-color: rgba(90, 51, 25, 0.32);
-  background: rgba(255, 252, 245, 0.7);
+  background: rgba(255, 252, 245, 0.46);
 }
 
 .target-version-chip.shadow,
@@ -339,7 +346,7 @@ function versionOptionText(version) {
   margin: 0;
   padding: 7px 9px;
   border: 1px solid rgba(90, 51, 25, 0.24);
-  border-radius: 6px;
+  border-radius: 0;
   background: rgba(90, 51, 25, 0.08);
   color: var(--target-accent);
   font-size: 12px;

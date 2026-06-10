@@ -1679,8 +1679,14 @@ function clearTransientState(stateRef) {
   text-transform: uppercase;
 }
 
+.report-title small,
+.report-section-heading small,
+.report-empty-state small {
+  display: none;
+}
+
 .report-title h2 {
-  margin: 2px 0 0;
+  margin: 0;
   overflow: hidden;
   color: var(--report-ink);
   font-size: 20px;
@@ -1808,7 +1814,7 @@ function clearTransientState(stateRef) {
 
 .report-section-heading span {
   display: grid;
-  gap: 2px;
+  gap: 0;
   min-width: 0;
 }
 
@@ -2142,7 +2148,7 @@ function clearTransientState(stateRef) {
 }
 
 .report-empty-state h2 {
-  margin: 3px 0 0;
+  margin: 0;
   color: var(--report-ink);
   font-size: 20px;
   font-weight: 950;
