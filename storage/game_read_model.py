@@ -5,8 +5,6 @@ from __future__ import annotations
 from typing import Any, TypeAlias
 
 from storage.game_history_rules import (
-    AUTHORITATIVE_DEATH_EVENTS as _AUTHORITATIVE_DEATH_EVENTS,
-    NIGHT_OUTCOME_EVENTS as _NIGHT_OUTCOME_EVENTS,
     SHELL_STATE_EVENT_TYPES as _SHELL_STATE_EVENT_TYPES,
     VOTE_ACTION_TYPES as _VOTE_ACTION_TYPES,
     death_target_ids,
@@ -19,8 +17,6 @@ from storage.game_history_rules import (
     phase_sort as _phase_sort,
     replay_window_phase_filters as _replay_window_phase_filters,
     row_history_phase,
-    row_type as _row_type,
-    sheriff_id_after_log,
 )
 from storage.game_read_payloads import (
     EVOLUTION_RUN_TYPES,
@@ -41,6 +37,10 @@ from storage.game_read_payloads import (
     paginate_rows as _paginate_rows,
     player_row as _player_row,
     row_dict as _row_dict,
+)
+from storage.game_read_projection import (
+    attach_history_phase_state as _attach_history_phase_state,
+    history_phase_map as _history_phase_map,
 )
 from storage.public_events import public_events_only
 from storage.shared.database import StorageConnection
@@ -613,7 +613,7 @@ class GameReadRepository:
         diagnostics = _json_array(_first_value(final_state.get("diagnostics"), game.get("diagnostics")))
         manifest = _json_object(_first_value(final_state.get("manifest"), game.get("manifest")))
         role_map = {int(player["seat"]): str(player.get("role") or "") for player in players if player.get("seat") is not None}
-        phase_map = self._history_phase_map(event_phase_rows, decision_phase_rows)
+        phase_map = _history_phase_map(event_phase_rows, decision_phase_rows)
         phases = sorted(
             phase_map.values(),
             key=lambda item: (
@@ -625,7 +625,7 @@ class GameReadRepository:
             fallback_phase = normalize_history_phase(_first_text(final_state.get("phase"), game.get("phase"), "setup"))
             fallback_day = _normalize_history_day(_first_value(final_state.get("day"), game.get("total_rounds"), 1))
             phases = [_empty_phase_summary(fallback_day, fallback_phase)]
-        self._attach_history_phase_state(phases, players, state_event_rows)
+        _attach_history_phase_state(phases, players, state_event_rows)
         default_phase_key = _first_text(phases[0].get("key")) or history_phase_key(1, "setup")
         latest = phases[-1] if phases else {}
         log_time = _first_text(
@@ -689,90 +689,6 @@ class GameReadRepository:
             "config": config,
             "error": _first_text(final_state.get("error"), game.get("error")),
         }
-
-    def _history_phase_map(
-        self,
-        event_phase_rows: list[dict[str, Any]],
-        decision_phase_rows: list[dict[str, Any]],
-    ) -> dict[str, dict[str, Any]]:
-        phases: dict[str, dict[str, Any]] = {}
-
-        def ensure(day: Any, phase: Any) -> dict[str, Any]:
-            normalized_day = _normalize_history_day(day)
-            normalized_phase = normalize_history_phase(phase)
-            key = history_phase_key(normalized_day, normalized_phase)
-            if key not in phases:
-                phases[key] = _empty_phase_summary(normalized_day, normalized_phase)
-            return phases[key]
-
-        ensure(1, "setup")
-        for row in event_phase_rows:
-            phase = ensure(row.get("day"), row_history_phase(row))
-            log_count = _int_or_none(row.get("log_count")) or 0
-            first_index = _int_or_none(row.get("first_event_index"))
-            last_index = _int_or_none(row.get("last_event_index"))
-            event_type = _row_type(row)
-            phase["log_count"] += log_count
-            phase["has_logs"] = phase["log_count"] > 0
-            phase["has_deaths"] = bool(phase.get("has_deaths")) or event_type in _AUTHORITATIVE_DEATH_EVENTS or event_type in _NIGHT_OUTCOME_EVENTS
-            if first_index is not None:
-                current = _int_or_none(phase.get("first_event_index"))
-                phase["first_event_index"] = first_index if current is None else min(current, first_index)
-            if last_index is not None:
-                current = _int_or_none(phase.get("last_event_index"))
-                phase["last_event_index"] = last_index if current is None else max(current, last_index)
-
-        for row in decision_phase_rows:
-            phase = ensure(row.get("day"), row_history_phase(row))
-            count = _int_or_none(row.get("decision_count")) or 0
-            action_type = _row_type(row)
-            phase["decision_count"] += count
-            phase["has_decisions"] = phase["decision_count"] > 0
-            phase["has_votes"] = bool(phase.get("has_votes")) or action_type in _VOTE_ACTION_TYPES
-
-        return phases
-
-    def _attach_history_phase_state(
-        self,
-        phases: list[dict[str, Any]],
-        players: list[dict[str, Any]],
-        state_event_rows: list[dict[str, Any]],
-    ) -> None:
-        state_events = [_event_row(row) for row in state_event_rows]
-        state_events.sort(key=lambda item: (_phase_sort(_normalize_history_day(item.get("day")), row_history_phase(item)), _int_or_none(item.get("idx")) or 0))
-        alive: dict[int, bool] = {}
-        for player in players:
-            player_id = _int_or_none(_first_value(player.get("id"), player.get("seat")))
-            if player_id is not None:
-                alive[player_id] = True
-        sheriff_id: int | None = None
-        event_index = 0
-        has_authoritative_deaths = any(_row_type(log) in _AUTHORITATIVE_DEATH_EVENTS for log in state_events)
-        for phase in phases:
-            phase_day = _normalize_history_day(phase.get("day"))
-            phase_name = normalize_history_phase(phase.get("phase"))
-            phase_sort = _phase_sort(phase_day, phase_name)
-            phase_last_index = _int_or_none(phase.get("last_event_index"))
-            while event_index < len(state_events):
-                event = state_events[event_index]
-                event_sort = _phase_sort(_normalize_history_day(event.get("day")), row_history_phase(event, phase_name))
-                event_idx = _int_or_none(event.get("idx")) or 0
-                if event_sort > phase_sort or (event_sort == phase_sort and phase_last_index is not None and event_idx > phase_last_index):
-                    break
-                for target_id in death_target_ids(event, has_authoritative_deaths):
-                    alive[target_id] = False
-                sheriff_id = sheriff_id_after_log(event, sheriff_id)
-                event_index += 1
-            alive_ids = sorted(player_id for player_id, is_alive in alive.items() if is_alive)
-            dead_ids = sorted(player_id for player_id, is_alive in alive.items() if not is_alive)
-            phase["alive_player_ids"] = alive_ids
-            phase["dead_player_ids"] = dead_ids
-            phase["sheriff_id"] = sheriff_id
-            phase["state_after"] = {
-                "alive": alive_ids,
-                "dead": dead_ids,
-                "sheriff_id": sheriff_id,
-            }
 
     def load_game_review(self, game_id: str) -> dict[str, Any] | None:
         game_row = self._conn.execute("SELECT * FROM games WHERE id = ?", (game_id,)).fetchone()
