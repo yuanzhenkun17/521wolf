@@ -1,18 +1,48 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue'
 import {
   displayChoiceLabel,
   displayRoleLabel,
   normalizeHistoryDisplayText
 } from './history/historyDisplay.ts'
 
+type CandidateValue = string | number | Candidate
+
+type Candidate = {
+  id?: string | number
+  player_id?: string | number
+  seat?: string | number
+  seat_id?: string | number
+  target_id?: string | number
+  name?: string | number
+  role?: string
+  role_hint?: string
+  identity?: string
+}
+
+type DecisionDetail = {
+  private_reasoning?: unknown
+  reason?: unknown
+  public_summary?: unknown
+  targetName?: string
+  candidates?: CandidateValue[]
+  alternatives?: unknown[]
+  memory_summary?: unknown[]
+  selected_skill?: unknown
+  policy_adjustments?: unknown[]
+  errors?: unknown[]
+  raw_output?: unknown
+}
+
 const props = defineProps({
-  decision: Object,
+  decision: Object as PropType<DecisionDetail | null>,
   detailTab: { type: String, default: 'summary' },
   emptyText: { type: String, default: '点击左侧卡片查看详情' }
 })
 
-const emit = defineEmits(['update:detailTab'])
+const emit = defineEmits<{
+  'update:detailTab': [key: string]
+}>()
 
 const tabs = [
   { key: 'summary', label: '理由' },
@@ -24,17 +54,17 @@ const tabs = [
   { key: 'raw', label: '原始' }
 ]
 
-function setTab(key) {
+function setTab(key: string) {
   emit('update:detailTab', key)
 }
 
-function rawOutput(value) {
+function rawOutput(value: unknown) {
   if (value == null || value === '') return '无原始输出数据'
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
   return normalizeHistoryDisplayText(text) || '无可展示内容'
 }
 
-function decisionText(...values) {
+function decisionText(...values: unknown[]) {
   for (const value of values) {
     const text = normalizeHistoryDisplayText(value || '')
     if (text) return text
@@ -42,15 +72,15 @@ function decisionText(...values) {
   return '暂无可展示内容'
 }
 
-function roleText(role) {
+function roleText(role: unknown) {
   return displayRoleLabel(role)
 }
 
-function skillText(skill) {
+function skillText(skill: unknown) {
   return displayChoiceLabel(skill)
 }
 
-function candidateSeat(candidate) {
+function candidateSeat(candidate: CandidateValue) {
   const raw = typeof candidate === 'object' && candidate !== null
     ? (candidate.seat ?? candidate.seat_id ?? candidate.id ?? candidate.player_id ?? candidate.target_id ?? candidate.name)
     : candidate
@@ -59,19 +89,20 @@ function candidateSeat(candidate) {
   return normalizeHistoryDisplayText(raw) || '未知'
 }
 
-function candidateRole(candidate) {
+function candidateRole(candidate: CandidateValue) {
   if (typeof candidate !== 'object' || candidate === null) return '未知'
   return roleText(candidate.role ?? candidate.role_hint ?? candidate.identity ?? '')
 }
 
-function candidateKey(candidate, index = 0) {
+function candidateKey(candidate: CandidateValue, index = 0): string | number {
   if (typeof candidate === 'object' && candidate !== null) {
     return candidate.id ?? candidate.player_id ?? candidate.seat ?? candidate.name ?? index
   }
-  return candidate ?? index
+  if (typeof candidate === 'number') return candidate
+  return String(candidate)
 }
 
-function normalizedList(items = []) {
+function normalizedList(items: unknown[] = []) {
   return items.map((item) => normalizeHistoryDisplayText(item)).filter(Boolean)
 }
 </script>

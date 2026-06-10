@@ -1,27 +1,36 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue'
+
+interface PhasePage {
+  key: string
+  phase?: string
+  day?: number | string
+}
+
+type PageTitle = (page: PhasePage) => string
+
 const props = defineProps({
-  pages: { type: Array, default: () => [] },
+  pages: { type: Array as PropType<PhasePage[]>, default: () => [] },
   selectedPageKey: { type: String, default: '' },
-  pageTitle: Function
+  pageTitle: Function as PropType<PageTitle>
 })
 
 const emit = defineEmits(['select-page', 'update:selectedPageKey'])
 
-function title(page) {
+function title(page: PhasePage) {
   return props.pageTitle ? props.pageTitle(page) : page.key
 }
 
-function phaseName(page) {
+function phaseName(page: PhasePage) {
   return String(page?.phase || '').toLowerCase()
 }
 
-function dayNumber(page) {
+function dayNumber(page: PhasePage) {
   const value = Number(page?.day || 1)
   return Number.isFinite(value) && value > 0 ? value : 1
 }
 
-function stepContext(page) {
+function stepContext(page: PhasePage) {
   const phase = phaseName(page)
   if (phase === 'setup') return '开局'
   if (phase === 'ended' || phase === 'result' || phase === 'finished') return '终局'
@@ -29,9 +38,9 @@ function stepContext(page) {
   return `第${dayNumber(page)}天`
 }
 
-function stepLabel(page) {
+function stepLabel(page: PhasePage) {
   const phase = phaseName(page)
-  const map = {
+  const map: Record<string, string> = {
     setup: '准备',
     night: '夜晚',
     sheriff: '竞选',
@@ -48,12 +57,12 @@ function stepLabel(page) {
   return map[phase] || title(page)
 }
 
-function stepClass(page) {
+function stepClass(page: PhasePage) {
   const phase = phaseName(page) || 'unknown'
   return `phase-${phase.replace(/[^a-z0-9_-]/g, '-')}`
 }
 
-function selectPage(key) {
+function selectPage(key: string) {
   emit('update:selectedPageKey', key)
   emit('select-page', key)
 }

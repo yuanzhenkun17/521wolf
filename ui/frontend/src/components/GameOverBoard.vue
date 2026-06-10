@@ -1,15 +1,24 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { displayWinnerLabel } from './history/historyDisplay.ts'
 
+type GameOverInfo = {
+  winner?: string | number | null
+  day?: string | number | null
+  player_count?: number | null
+}
+
 const props = defineProps({
-  game: Object,
+  game: Object as PropType<GameOverInfo | null>,
   loading: Boolean,
   livingCount: { type: Number, default: 0 }
 })
 
-const emit = defineEmits(['reset-game', 'exit-game', 'close'])
+const emit = defineEmits<{
+  'reset-game': []
+  'exit-game': []
+  close: []
+}>()
 
 const winnerText = computed(() => {
   const label = displayWinnerLabel(props.game?.winner)

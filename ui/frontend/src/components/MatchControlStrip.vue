@@ -1,27 +1,39 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import JudgeStrip from './JudgeStrip.vue'
 
+interface MatchControlGame {
+  day?: number | string
+  phase?: unknown
+  winner?: unknown
+}
+
+interface JudgeStripMessage {
+  message: string
+}
+
+type HistoryPhaseName = (phase: unknown) => string
+
 const props = defineProps({
-  game: Object,
+  game: { type: Object as PropType<MatchControlGame>, default: () => ({}) },
   loading: Boolean,
   backendMode: { type: String, default: 'mock' },
   isNight: Boolean,
   watchRunning: Boolean,
   promptText: { type: String, default: '' },
-  judgeStripMessage: { type: Array, default: () => [] },
+  judgeStripMessage: { type: Array as PropType<JudgeStripMessage[]>, default: () => [] },
   judgeBoardStarted: Boolean,
   judgeBoardStarting: Boolean,
   isReplayMode: Boolean,
-  historyPhaseName: Function
+  historyPhaseName: Function as PropType<HistoryPhaseName>
 })
 
 const emit = defineEmits(['toggle-watch', 'reset-game', 'start-from-judge-board'])
 const dayText = computed(() => props.isReplayMode ? '回放' : `第    ${props.game?.day ?? '-'}    天`)
+const hasWinner = computed(() => Boolean(props.game?.winner))
 
-function phaseName(phase) {
-  return props.historyPhaseName ? props.historyPhaseName(phase) : (phase || '')
+function phaseName(phase: unknown) {
+  return props.historyPhaseName ? props.historyPhaseName(phase) : String(phase || '')
 }
 </script>
 
@@ -50,7 +62,7 @@ function phaseName(phase) {
       @start="emit('start-from-judge-board')"
     />
     <div v-if="!isReplayMode" class="strip-controls" aria-label="观战控制">
-      <button class="icon-button primary" :disabled="!watchRunning && game.winner" :title="watchRunning ? '暂停' : '开始'" @click="emit('toggle-watch')">
+      <button class="icon-button primary" :disabled="!watchRunning && hasWinner" :title="watchRunning ? '暂停' : '开始'" @click="emit('toggle-watch')">
         <svg v-if="watchRunning" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" /></svg>
         <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
       </button>

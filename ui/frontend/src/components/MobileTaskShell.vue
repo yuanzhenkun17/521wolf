@@ -1,9 +1,12 @@
 <script setup lang="ts">
-// @ts-nocheck
-defineProps({
-  mode: { type: String, default: 'match' },
-  hasTask: Boolean,
-  replay: Boolean
+withDefaults(defineProps<{
+  mode?: string
+  hasTask?: boolean
+  replay?: boolean
+}>(), {
+  mode: 'match',
+  hasTask: false,
+  replay: false
 })
 </script>
 

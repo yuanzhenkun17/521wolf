@@ -1,23 +1,53 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { displayPhaseLabel } from './history/historyDisplay.ts'
 
+type ChatLogEntry = {
+  id?: string | number
+  index?: string | number
+  sequence?: string | number
+  day?: string | number
+  phase?: string
+  event_phase?: string
+  stage?: string
+  type?: string
+  event_type?: string
+  speaker?: string
+  message?: string
+  _speaker?: string
+  _message?: string
+  _kindLabel?: string
+  _seat?: string | number
+  _chatKind?: string
+  _speaking?: boolean
+  _roleIcon?: string
+}
+
+type PhaseOption = {
+  key: string
+  label: string
+  count: number
+}
+
 const props = defineProps({
-  logs: { type: Array, default: () => [] },
+  logs: { type: Array as PropType<ChatLogEntry[]>, default: () => [] },
   expanded: Boolean,
   activeSeat: { type: [String, Number], default: '' },
-  logSpeaker: Function,
-  logMessage: Function
+  logSpeaker: Function as PropType<(log: ChatLogEntry) => string>,
+  logMessage: Function as PropType<(log: ChatLogEntry) => string>
 })
 
-const emit = defineEmits(['toggle-expand', 'update:expanded', 'compact-height'])
-const panelRef = ref(null)
-const chatListRef = ref(null)
+const emit = defineEmits<{
+  'toggle-expand': []
+  'update:expanded': [value: boolean]
+  'compact-height': [height: number]
+}>()
+const panelRef = ref<HTMLElement | null>(null)
+const chatListRef = ref<HTMLElement | null>(null)
 const selectedPhaseKey = ref('latest')
 const phaseMenuOpen = ref(false)
-let compactResizeObserver = null
-const phaseFallbackLabel = {
+let compactResizeObserver: ResizeObserver | null = null
+const phaseFallbackLabel: Record<string, string> = {
   day_speech: '白天发言',
   night_result: '黑夜结果',
   exile_vote: '放逐投票',
@@ -26,13 +56,13 @@ const phaseFallbackLabel = {
   last_word: '遗言'
 }
 
-function phaseKey(log) {
+function phaseKey(log: ChatLogEntry) {
   const day = log?.day ?? 0
   const phase = String(log?.phase || log?.event_phase || log?.stage || 'unknown')
   return `${day}-${phase}`
 }
 
-function phaseText(log) {
+function phaseText(log: ChatLogEntry) {
   const day = log?.day ? `第${log.day}天` : '阶段'
   const phase = String(log?.phase || log?.event_phase || log?.stage || 'unknown')
   return `${day} ${phaseFallbackLabel[phase] || displayPhaseLabel(phase)}`
@@ -40,13 +70,14 @@ function phaseText(log) {
 
 const phaseOptions = computed(() => {
   const options = [{ key: 'latest', label: '最新', count: props.logs.length }]
-  const byPhase = new Map()
+  const byPhase = new Map<string, PhaseOption>()
   props.logs.forEach((log) => {
     const key = phaseKey(log)
     if (!byPhase.has(key)) {
       byPhase.set(key, { key, label: phaseText(log), count: 0 })
     }
-    byPhase.get(key).count += 1
+    const option = byPhase.get(key)
+    if (option) option.count += 1
   })
   return [...options, ...byPhase.values()]
 })
@@ -62,27 +93,27 @@ const visibleLogs = computed(() => {
   if (props.expanded) return filteredLogs.value
   return filteredLogs.value.slice(-2)
 })
-function speaker(log) {
+function speaker(log: ChatLogEntry) {
   return log?._speaker || (props.logSpeaker ? props.logSpeaker(log) : (log?.speaker || ''))
 }
 
-function message(log) {
+function message(log: ChatLogEntry) {
   return log?._message || (props.logMessage ? props.logMessage(log) : (log?.message || ''))
 }
 
-function kindLabel(log) {
+function kindLabel(log: ChatLogEntry) {
   return log?._kindLabel || '记录'
 }
 
-function isLinkedSeat(log) {
+function isLinkedSeat(log: ChatLogEntry) {
   return Boolean(props.activeSeat) && String(log?._seat ?? '') === String(props.activeSeat)
 }
 
-function isLatestVisible(index) {
+function isLatestVisible(index: number) {
   return index === visibleLogs.value.length - 1
 }
 
-function logKey(log, index) {
+function logKey(log: ChatLogEntry, index: number) {
   return log?.sequence || log?.index || log?.id || `${log?.day || 0}-${log?.phase || 'phase'}-${log?.type || log?.event_type || 'log'}-${index}`
 }
 
@@ -91,9 +122,13 @@ function toggleExpanded() {
   emit('toggle-expand')
 }
 
-function selectPhase(key) {
+function selectPhase(key: string) {
   selectedPhaseKey.value = key
   phaseMenuOpen.value = false
+}
+
+function selectPhaseFromEvent(event: Event) {
+  selectPhase((event.target as HTMLSelectElement | null)?.value || 'latest')
 }
 
 async function scrollToLatest() {
@@ -166,7 +201,7 @@ defineExpose({ chatListRef });
             class="chat-log-phase-select"
             :value="selectedPhaseKey"
             aria-label="选择记录阶段"
-            @change="selectPhase($event.target.value)"
+            @change="selectPhaseFromEvent"
           >
             <option v-for="option in phaseOptions" :key="option.key" :value="option.key">
               {{ option.label }} · {{ option.count }}

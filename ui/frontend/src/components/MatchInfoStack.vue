@@ -1,22 +1,43 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue'
 import RoleStats from './RoleStats.vue'
 
+interface GroupedJudgeLogEntry {
+  speaker?: string
+  message?: string
+}
+
+interface GroupedJudgeLog {
+  key: string | number
+  day: number | string
+  phaseLabel: string
+  phase: string
+  logs: GroupedJudgeLogEntry[]
+}
+
+interface RoleStat {
+  role: string
+  alive: number
+  total: number
+}
+
+type LogFormatter = (log: GroupedJudgeLogEntry) => string
+
 const props = defineProps({
-  groupedJudgeLogs: { type: Array, default: () => [] },
+  groupedJudgeLogs: { type: Array as PropType<GroupedJudgeLog[]>, default: () => [] },
   displayPhase: { type: String, default: '' },
-  roleStats: { type: Array, default: () => [] },
+  roleStats: { type: Array as PropType<RoleStat[]>, default: () => [] },
   livingCount: { type: Number, default: 0 },
   totalCount: { type: Number, default: 0 },
-  logSpeaker: Function,
-  logMessage: Function
+  logSpeaker: Function as PropType<LogFormatter>,
+  logMessage: Function as PropType<LogFormatter>
 })
 
-function speaker(log) {
+function speaker(log: GroupedJudgeLogEntry) {
   return props.logSpeaker ? props.logSpeaker(log) : (log?.speaker || '')
 }
 
-function message(log) {
+function message(log: GroupedJudgeLogEntry) {
   return props.logMessage ? props.logMessage(log) : (log?.message || '')
 }
 </script>
