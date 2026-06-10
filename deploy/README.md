@@ -151,6 +151,22 @@ The script:
 - Seeds missing default baselines.
 - Restarts the `521wolf` systemd service when systemd is available.
 - Checks `http://127.0.0.1:8000/api/health`.
+- Runs `deploy/scripts/post_deploy_smoke.sh` unless `POST_DEPLOY_SMOKE=false`.
+
+The post-deploy smoke is intentionally black-box. It does not require new
+backend response fields. It checks the API health URL, the nginx-served app
+shell, referenced JS/CSS assets, nginx config, the systemd service, and the
+HTTP listener. Useful overrides:
+
+```text
+APP_BASE_URL=http://127.0.0.1
+API_HEALTH_URL=http://127.0.0.1/api/health
+POST_DEPLOY_SMOKE=true
+CHECK_NGINX=true
+CHECK_SYSTEMD=true
+CHECK_PORTS=true
+REQUIRE_HTTPS=false
+```
 
 ## GitHub Secrets And Variables
 
@@ -189,6 +205,13 @@ DEPLOY_ENV_FILE=/opt/521wolf/.env
 DEPLOY_SERVICE_NAME=521wolf
 DEPLOY_HEALTH_URL=http://127.0.0.1:8000/api/health
 DEPLOY_HEALTH_TIMEOUT_SECONDS=60
+DEPLOY_APP_BASE_URL=http://127.0.0.1
+DEPLOY_API_HEALTH_URL=http://127.0.0.1/api/health
+POST_DEPLOY_SMOKE=true
+POST_DEPLOY_CHECK_NGINX=true
+POST_DEPLOY_CHECK_SYSTEMD=true
+POST_DEPLOY_CHECK_PORTS=true
+POST_DEPLOY_REQUIRE_HTTPS=false
 PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 UV_RELOCK_FOR_INDEX=true

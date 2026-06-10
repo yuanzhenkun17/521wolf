@@ -7,6 +7,10 @@ ENV_FILE="${ENV_FILE:-/opt/521wolf/.env}"
 SERVICE_NAME="${SERVICE_NAME:-521wolf}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/api/health}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-60}"
+POST_DEPLOY_SMOKE="${POST_DEPLOY_SMOKE:-true}"
+POST_DEPLOY_SMOKE_SCRIPT="${POST_DEPLOY_SMOKE_SCRIPT:-$APP_DIR/deploy/scripts/post_deploy_smoke.sh}"
+APP_BASE_URL="${APP_BASE_URL:-http://127.0.0.1}"
+API_HEALTH_URL="${API_HEALTH_URL:-${APP_BASE_URL%/}/api/health}"
 PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
 NPM_CONFIG_REGISTRY="${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}"
 UV_RELOCK_FOR_INDEX="${UV_RELOCK_FOR_INDEX:-true}"
@@ -61,8 +65,23 @@ if command -v systemctl >/dev/null 2>&1; then
   sudo systemctl restart "$SERVICE_NAME"
 fi
 
+run_post_deploy_smoke() {
+  if [ "$POST_DEPLOY_SMOKE" = "false" ]; then
+    return 0
+  fi
+  if [ ! -f "$POST_DEPLOY_SMOKE_SCRIPT" ]; then
+    echo "Post-deploy smoke script not found: $POST_DEPLOY_SMOKE_SCRIPT" >&2
+    return 1
+  fi
+  APP_BASE_URL="$APP_BASE_URL" \
+  API_HEALTH_URL="$API_HEALTH_URL" \
+  SERVICE_NAME="$SERVICE_NAME" \
+  bash "$POST_DEPLOY_SMOKE_SCRIPT"
+}
+
 for _ in $(seq 1 "$HEALTH_TIMEOUT_SECONDS"); do
   if curl -fsS "$HEALTH_URL" >/dev/null; then
+    run_post_deploy_smoke
     echo "Deploy completed: $HEALTH_URL"
     exit 0
   fi
@@ -70,4 +89,5 @@ for _ in $(seq 1 "$HEALTH_TIMEOUT_SECONDS"); do
 done
 
 curl -fsS "$HEALTH_URL" >/dev/null
+run_post_deploy_smoke
 echo "Deploy completed: $HEALTH_URL"
