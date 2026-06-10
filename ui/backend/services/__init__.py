@@ -1,7 +1,14 @@
 """Backend service facades."""
 
 from ui.backend.services.benchmark_service import BENCHMARK_PUBLIC_METHODS, BenchmarkService
+from ui.backend.services.game_delete_service import GameDeleteCoordinator
 from ui.backend.services.game_read_service import GameReadGateway
 from ui.backend.services.task_service import TaskService
 
-__all__ = ["BENCHMARK_PUBLIC_METHODS", "BenchmarkService", "GameReadGateway", "TaskService"]
+__all__ = [
+    "BENCHMARK_PUBLIC_METHODS",
+    "BenchmarkService",
+    "GameDeleteCoordinator",
+    "GameReadGateway",
+    "TaskService",
+]

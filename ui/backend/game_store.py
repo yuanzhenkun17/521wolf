@@ -35,6 +35,7 @@ from ui.backend.live_game import (
     live_game_heartbeat_timed_out,
 )
 from ui.backend.schemas import GameStartRequest, HumanActionRequest
+from ui.backend.services.game_delete_service import GameDeleteCoordinator
 from ui.backend.services.game_read_service import GameReadGateway
 from ui.backend.serializers import (
     _dead_players,
@@ -220,6 +221,13 @@ class GameStoreMixin:
             gateway = GameReadGateway(self)
             setattr(self, "_game_read_gateway_cache", gateway)
         return gateway
+
+    def _game_delete_coordinator(self) -> GameDeleteCoordinator:
+        coordinator = getattr(self, "_game_delete_coordinator_cache", None)
+        if coordinator is None:
+            coordinator = GameDeleteCoordinator(self)
+            setattr(self, "_game_delete_coordinator_cache", coordinator)
+        return coordinator
 
     def _wolf_read_lock(self) -> Any:
         return self._game_read_gateway().lock
@@ -1168,40 +1176,7 @@ class GameStoreMixin:
         return stopped
 
     def delete_game(self, game_id: str, *, force: bool = False) -> dict[str, Any]:
-        self.check_live_game_watchdog()
-        live = self.live_sessions.get(game_id)
-        game = live.snapshot() if live is not None else self.games.get(game_id)
-        if game is None:
-            game = self._load_game_from_pg(game_id)
-        if game is None:
-            raise HTTPException(status_code=404, detail="game not found")
-
-        log_source = self._snapshot_log_source(game)
-        if log_source != "normal" and not force:
-            raise HTTPException(
-                status_code=409,
-                detail=f"{log_source} game requires force delete",
-            )
-
-        if live is not None:
-            self._mark_game_deleted(game_id)
-            live.cancel()
-            self.live_sessions.pop(game_id, None)
-            persistence = getattr(live, "persistence", None)
-            close = getattr(persistence, "close", None)
-            if callable(close):
-                close()
-
-        self._delete_game_from_pg(game_id)
-        self._mark_game_deleted(game_id)
-        self.games.pop(game_id, None)
-        self.invalidate_game_history_index()
-        return {
-            "game_id": game_id,
-            "deleted": True,
-            "log_source": log_source,
-            "force": bool(force),
-        }
+        return self._game_delete_coordinator().delete_game(game_id, force=force)
 
     def _snapshot_log_source(self, snapshot: dict[str, Any]) -> str:
         config = snapshot.get("config") if isinstance(snapshot.get("config"), dict) else {}

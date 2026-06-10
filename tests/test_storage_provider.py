@@ -1269,6 +1269,171 @@ def test_backend_game_read_gateway_closes_when_rollback_fails(
     assert opened[1].closed is False
 
 
+def test_backend_game_delete_coordinator_uses_store_delete_hook(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import ui.backend.store as store_mod
+
+    store = store_mod.BackendStore(paths=PathConfig(root=tmp_path))
+    store.games["delete_me"] = {"game_id": "delete_me", "log_source": "normal"}
+    deleted: list[str] = []
+    invalidated = 0
+
+    def delete_from_pg(game_id: str) -> None:
+        deleted.append(game_id)
+
+    def invalidate() -> None:
+        nonlocal invalidated
+        invalidated += 1
+
+    monkeypatch.setattr(store, "_delete_game_from_pg", delete_from_pg)
+    monkeypatch.setattr(store, "invalidate_game_history_index", invalidate)
+
+    payload = store.delete_game("delete_me")
+
+    assert payload == {
+        "game_id": "delete_me",
+        "deleted": True,
+        "log_source": "normal",
+        "force": False,
+    }
+    assert deleted == ["delete_me"]
+    assert "delete_me" not in store.games
+    assert store._is_game_deleted("delete_me") is True
+    assert invalidated == 1
+
+
+def test_backend_game_delete_coordinator_preserves_state_when_storage_delete_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import ui.backend.store as store_mod
+
+    store = store_mod.BackendStore(paths=PathConfig(root=tmp_path))
+    store.games["fail_delete"] = {"game_id": "fail_delete", "log_source": "normal"}
+    invalidated = 0
+
+    def fail_delete(_game_id: str) -> None:
+        raise RuntimeError("delete failed")
+
+    def invalidate() -> None:
+        nonlocal invalidated
+        invalidated += 1
+
+    monkeypatch.setattr(store, "_delete_game_from_pg", fail_delete)
+    monkeypatch.setattr(store, "invalidate_game_history_index", invalidate)
+
+    with pytest.raises(RuntimeError, match="delete failed"):
+        store.delete_game("fail_delete")
+
+    assert "fail_delete" in store.games
+    assert store._is_game_deleted("fail_delete") is False
+    assert invalidated == 0
+
+
+def test_backend_game_delete_coordinator_deletes_persisted_only_game(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import ui.backend.store as store_mod
+
+    store = store_mod.BackendStore(paths=PathConfig(root=tmp_path))
+    loaded: list[str] = []
+    deleted: list[str] = []
+    invalidated = 0
+
+    def load_from_pg(game_id: str) -> dict[str, Any] | None:
+        loaded.append(game_id)
+        return {"game_id": game_id, "config": {"log_source": "normal"}}
+
+    def delete_from_pg(game_id: str) -> None:
+        deleted.append(game_id)
+
+    def invalidate() -> None:
+        nonlocal invalidated
+        invalidated += 1
+
+    monkeypatch.setattr(store, "_load_game_from_pg", load_from_pg)
+    monkeypatch.setattr(store, "_delete_game_from_pg", delete_from_pg)
+    monkeypatch.setattr(store, "invalidate_game_history_index", invalidate)
+
+    payload = store.delete_game("persisted_only")
+
+    assert payload == {
+        "game_id": "persisted_only",
+        "deleted": True,
+        "log_source": "normal",
+        "force": False,
+    }
+    assert loaded == ["persisted_only"]
+    assert deleted == ["persisted_only"]
+    assert store._is_game_deleted("persisted_only") is True
+    assert invalidated == 1
+
+
+def test_backend_game_delete_coordinator_cancels_live_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import ui.backend.store as store_mod
+
+    class _Persistence:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _LiveSession:
+        def __init__(self) -> None:
+            self.cancelled = False
+            self.persistence = _Persistence()
+
+        def snapshot(self) -> dict[str, Any]:
+            return {"game_id": "live_delete", "log_source": "normal"}
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    store = store_mod.BackendStore(paths=PathConfig(root=tmp_path))
+    live = _LiveSession()
+    store.live_sessions["live_delete"] = live
+    store.games["live_delete"] = {"game_id": "live_delete", "log_source": "normal"}
+    deleted: list[str] = []
+    invalidated = 0
+
+    def delete_from_pg(game_id: str) -> None:
+        deleted.append(game_id)
+
+    def invalidate() -> None:
+        nonlocal invalidated
+        invalidated += 1
+
+    monkeypatch.setattr(store, "_delete_game_from_pg", delete_from_pg)
+    monkeypatch.setattr(store, "invalidate_game_history_index", invalidate)
+
+    payload = store.delete_game("live_delete")
+
+    assert payload == {
+        "game_id": "live_delete",
+        "deleted": True,
+        "log_source": "normal",
+        "force": False,
+    }
+    assert deleted == ["live_delete"]
+    assert live.cancelled is True
+    assert live.persistence.closed is True
+    assert "live_delete" not in store.live_sessions
+    assert "live_delete" not in store.games
+    assert store._is_game_deleted("live_delete") is True
+    assert invalidated == 1
+
+
 def test_postgres_backend_skips_local_checkpointer() -> None:
     from app.graphs.main import builder
 
