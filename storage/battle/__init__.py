@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from storage.battle.game_repo import GameStore
-from storage.battle.event_repo import GameEventStore
-from storage.battle.decision_repo import DecisionStore
-from storage.battle.evaluation_repo import EvaluationStore
-from storage.battle.review_repo import DecisionReviewStore, CounterfactualStore
+from storage.decision_store import DecisionStore
+from storage.evaluation_store import EvaluationStore
+from storage.game_event_store import GameEventStore
+from storage.game_store import GameStore
+from storage.review_store import CounterfactualStore, DecisionReviewStore
 from storage.battle.report_repo import ReportStore
 from storage.battle.leaderboard_repo import BattleLeaderboardStore
 
