@@ -906,7 +906,7 @@ describe('service endpoint contracts', () => {
       },
       {
         path: '/benchmark',
-        options: { method: 'POST', body: { ...payload, target_versions: {} } }
+        options: { method: 'POST', body: { ...payload, model_profile_id: null, target_versions: {} } }
       },
       { path: '/benchmark/batch/bench%20id%2F1', options: {} },
       {
