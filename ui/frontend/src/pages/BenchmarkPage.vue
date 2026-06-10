@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.ts'
@@ -15,6 +14,8 @@ import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSele
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 import { addLegacyHashChangeListener, currentLegacyHash } from '../router/legacyViewNavigation.ts'
 import { benchmarkBatchIdFromHash, benchmarkBatchIdFromRoute } from '../router/workbenchDeepLinks.ts'
+
+type LooseRecord = Record<string, any>
 
 defineOptions({
   inheritAttrs: false
@@ -264,7 +265,7 @@ const contextRunProgressLabel = computed(() => {
   if (completed != null && total != null && total > 0) return `${formatNumber(completed)}/${formatNumber(total)}`
   return contextRun.value?.isActive ? '进度待回传' : '已结束或待详情'
 })
-const contextDiagnosticSummary = computed(() => benchmark.benchmarkDiagnosticAggregateSummary.value || {})
+const contextDiagnosticSummary = computed(() => (benchmark.benchmarkDiagnosticAggregateSummary.value || {}) as LooseRecord)
 const contextDiagnosticTotal = computed(() => {
   const value = numberOrNull(contextDiagnosticSummary.value.total)
   return value == null ? benchmark.benchmarkDiagnosticAggregateDiagnostics.value.length : value
@@ -571,8 +572,9 @@ function formatBenchmarkGateValue(key, value) {
 }
 
 function suiteRoleScopeLabel(suite = {}) {
-  if (suite.target_type === 'model') return '全角色覆盖'
-  const roles = Array.isArray(suite.roles) ? suite.roles.filter(Boolean) : []
+  const record = suite as LooseRecord
+  if (record.target_type === 'model') return '全角色覆盖'
+  const roles = Array.isArray(record.roles) ? record.roles.filter(Boolean) : []
   if (!roles.length) return '全角色'
   return roles.length > 4 ? `${roles.length} 个角色` : roles.join('、')
 }
@@ -604,9 +606,10 @@ function formatBudgetMetricValue(value, metric) {
 }
 
 function budgetEvidenceCaption(item = {}) {
-  const metric = String(item.metric || '').trim()
-  const delta = item.delta == null ? '' : `超出 ${formatBudgetMetricValue(item.delta, metric)}`
-  const unit = item.unit ? `单位 ${item.unit}` : '预算证据'
+  const record = item as LooseRecord
+  const metric = String(record.metric || '').trim()
+  const delta = record.delta == null ? '' : `超出 ${formatBudgetMetricValue(record.delta, metric)}`
+  const unit = record.unit ? `单位 ${record.unit}` : '预算证据'
   return [delta, unit].filter(Boolean).join(' · ')
 }
 
