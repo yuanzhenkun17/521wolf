@@ -4,7 +4,6 @@ Facade: re-exports the active storage modules and shared data interfaces.
 """
 
 from storage.game_store import GameStore
-from storage.game_event_store import GameEventStore
 from storage.decision_store import DecisionStore
 from storage.version_store import VersionStoreDB
 from storage.evolution.run_repo import EvolutionStore
@@ -47,7 +46,6 @@ from storage.evolution.rejected_repo import RejectedProposalStore
 __all__ = [
     # Core
     "GameStore",
-    "GameEventStore",
     "DecisionStore",
     "VersionStoreDB",
     "EvolutionStore",
