@@ -12,6 +12,7 @@ from ui.backend.services.game_delete_service import GameDeleteCoordinator
 from ui.backend.services.game_read_service import GameHistoryService, GameReadGateway
 from ui.backend.services.live_game_lifecycle import LiveGameLifecycleCoordinator
 from ui.backend.services.role_service import RoleService, RoleServiceStoreProtocol
+from ui.backend.services.task_persistence_service import TaskPersistenceService
 from ui.backend.services.task_service import BackgroundTaskServiceProtocol, TaskService
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     "LiveGameLifecycleCoordinator",
     "RoleService",
     "RoleServiceStoreProtocol",
+    "TaskPersistenceService",
     "TaskService",
 ]
