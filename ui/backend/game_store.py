@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 from app.lib.version import ReleaseStageNotAllowedError
-from storage.game_store import GameStore as WolfGameStore
+from storage.game_store import delete_game_from_env
 from storage.game_read_model import (
     GameReadRepository,
     death_target_ids,
@@ -1228,11 +1228,7 @@ class GameStoreMixin:
         return str(source or "normal").lower()
 
     def _delete_game_from_pg(self, game_id: str) -> None:
-        conn = self._open_wolf_connection()
-        try:
-            WolfGameStore(conn).delete_game(game_id)
-        finally:
-            conn.close()
+        delete_game_from_env(game_id, paths=self.paths)
 
     def _persist_live_session_start(self, session: LiveGameSession) -> None:
         self._persist_snapshot_to_pg(

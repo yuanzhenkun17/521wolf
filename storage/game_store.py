@@ -261,3 +261,14 @@ def delete_game_from_provider(provider: Any, game_id: str) -> None:
         GameStore(conn).delete_game(game_id)
     finally:
         conn.close()
+
+
+def delete_game_from_env(game_id: str, *, paths: Any | None = None) -> None:
+    """Resolve the configured storage provider and delete one game."""
+    import storage.provider as provider_mod
+
+    if paths is None:
+        provider = provider_mod.storage_provider_from_env()
+    else:
+        provider = provider_mod.storage_provider_from_env(paths=paths)
+    delete_game_from_provider(provider, game_id)

@@ -182,6 +182,37 @@ def test_delete_game_from_provider_closes_connection_on_delete_failure() -> None
     assert conn.closes == 1
 
 
+def test_delete_game_from_env_resolves_provider_with_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    import storage.provider as provider_mod
+    from storage.game_store import WOLF_GAME_CHILD_TABLES, delete_game_from_env
+
+    conn = _TransactionalConn()
+    calls: list[Any] = []
+
+    class _Provider:
+        def open_wolf_connection(self) -> _TransactionalConn:
+            return conn
+
+    def provider_from_env(*, paths: Any = None) -> _Provider:
+        calls.append(paths)
+        return _Provider()
+
+    paths = object()
+    monkeypatch.setattr(provider_mod, "storage_provider_from_env", provider_from_env)
+
+    delete_game_from_env("game-delete-1", paths=paths)
+
+    expected_sql = [
+        f"DELETE FROM {table} WHERE game_id = ?"
+        for table in WOLF_GAME_CHILD_TABLES
+    ]
+    expected_sql.append("DELETE FROM games WHERE id = ?")
+    assert calls == [paths]
+    assert conn.sql == expected_sql
+    assert conn.commits == 1
+    assert conn.closes == 1
+
+
 def test_evaluation_save_batch_rolls_back_whole_batch_on_failure() -> None:
     from storage.battle.evaluation_repo import EvaluationStore
 
