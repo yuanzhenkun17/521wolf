@@ -7,7 +7,6 @@ loggers/recorders from here instead of constructing storage objects directly.
 
 from __future__ import annotations
 
-import logging
 import json
 import hashlib
 from pathlib import Path

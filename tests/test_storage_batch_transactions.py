@@ -175,6 +175,71 @@ def test_benchmark_leaderboard_helper_rolls_back_on_write_error() -> None:
     assert conn.rollbacks == 1
 
 
+def test_benchmark_uow_rolls_back_combined_writes_on_later_failure() -> None:
+    from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository
+    from storage.postgres.unit_of_work import UnitOfWork
+
+    conn = _TransactionalConn(fail_on_execute=2)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        with UnitOfWork(lambda: conn) as tx:
+            repo = BenchmarkEvaluationRepository(tx.connection, autocommit=False)
+            repo.save_batch({"batch_id": "batch-1"})
+            repo.save_leaderboard_entry(
+                {"batch_id": "batch-1", "model_id": "model-a"}
+            )
+            tx.commit()
+
+    assert conn.begin_writes == 1
+    assert conn.commits == 0
+    assert conn.rollbacks == 1
+    assert conn.closes == 1
+    assert len(conn.sql) == 1
+    assert "INSERT INTO evaluation_batches" in conn.sql[0]
+
+
+def test_benchmark_uow_default_repo_defers_commit_to_owned_transaction() -> None:
+    from storage.benchmark.batch_repo import BenchmarkBatchRepository
+    from storage.postgres.unit_of_work import UnitOfWork
+
+    conn = _TransactionalConn()
+
+    with UnitOfWork(lambda: conn) as tx:
+        BenchmarkBatchRepository(tx.connection).save({"batch_id": "batch-1"})
+        assert conn.commits == 0
+        tx.commit()
+
+    assert conn.begin_writes == 1
+    assert conn.commits == 1
+    assert conn.rollbacks == 0
+    assert conn.closes == 1
+    assert len(conn.sql) == 1
+    assert "INSERT INTO evaluation_batches" in conn.sql[0]
+
+
+def test_benchmark_uow_rejects_explicit_autocommit_repo_inside_owned_transaction() -> None:
+    from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository
+    from storage.postgres.unit_of_work import UnitOfWork, UnitOfWorkBoundaryError
+
+    conn = _TransactionalConn()
+
+    with pytest.raises(
+        UnitOfWorkBoundaryError,
+        match="commit must be called on UnitOfWork",
+    ):
+        with UnitOfWork(lambda: conn) as tx:
+            BenchmarkEvaluationRepository(tx.connection, autocommit=True).save_batch(
+                {"batch_id": "batch-1"}
+            )
+
+    assert conn.begin_writes == 1
+    assert conn.commits == 0
+    assert conn.rollbacks == 1
+    assert conn.closes == 1
+    assert len(conn.sql) == 1
+    assert "INSERT INTO evaluation_batches" in conn.sql[0]
+
+
 def test_delete_game_from_provider_opens_and_closes_connection() -> None:
     from storage.game_store import WOLF_GAME_CHILD_TABLES, delete_game_from_provider
 
