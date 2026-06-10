@@ -21,6 +21,7 @@ const props = defineProps({
 const selectedPlayerFilter = ref('all')
 const selectedPhaseFilter = ref('all')
 const selectedSignalFilter = ref('all')
+const activeArchiveSectionId = ref('casefile-players')
 
 const ARCHIVE_KIND_LABELS = {
   game_trace_archive: '对局轨迹档案',
@@ -254,12 +255,12 @@ const auditBriefRows = computed(() => {
 })
 
 const archiveNavigationRows = computed(() => [
-  { id: 'casefile-overview', label: '总览', count: `${archiveCompleteness.value}%` },
   { id: 'casefile-players', label: '玩家', count: playerRows.value.length || '无' },
   { id: 'casefile-evidence', label: '证据', count: evidenceTimelineRows.value.length },
   { id: 'casefile-decisions', label: '决策', count: filteredDecisionLedgerRows.value.length },
   { id: 'casefile-quality', label: '审计', count: archiveErrorCount.value + archiveFallbackCount.value },
-  { id: 'casefile-config', label: '配置', count: archiveConfigRows.value.length }
+  { id: 'casefile-config', label: '配置', count: archiveConfigRows.value.length },
+  { id: 'casefile-raw-data', label: '原始', count: 1 }
 ])
 
 const archiveKpis = computed(() => [
@@ -866,82 +867,42 @@ function jsonText(value) {
   return JSON.stringify(value, null, 2)
 }
 
-function scrollCasefileSection(id) {
-  const target = typeof document !== 'undefined' ? document.getElementById(id) : null
-  target?.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' })
+function selectArchiveSection(id) {
+  activeArchiveSectionId.value = id
 }
 </script>
 
 <template>
   <section class="casefile-archive-panel" aria-label="对局档案">
     <template v-if="archiveData">
-      <header class="casefile-dossier">
-        <div class="casefile-heading">
-          <small>{{ archiveKindLabel }}</small>
-          <h3>{{ archiveTitle }}</h3>
-          <p>{{ archiveSummary }}</p>
-          <div v-if="archiveIdentityChips.length" class="casefile-chip-row" aria-label="档案索引">
-            <span v-for="chip in archiveIdentityChips" :key="chip.label" class="casefile-chip">
-              <small>{{ chip.label }}</small>
-              <b :title="chip.value">{{ chip.value }}</b>
-            </span>
-          </div>
-          <div class="casefile-kpi-grid casefile-kpi-grid--dossier" aria-label="档案指标">
-            <article v-for="item in archiveKpis" :key="item.label" class="casefile-kpi-card" :data-tone="item.tone">
-              <small>{{ item.label }}</small>
-              <b>{{ item.value }}</b>
-            </article>
-          </div>
+      <section class="casefile-top-overview" aria-label="档案摘要">
+        <div class="casefile-audit-brief">
+          <article v-for="item in auditBriefRows" :key="item.label" class="casefile-audit-card" :data-tone="item.tone">
+            <small>{{ item.label }}</small>
+            <b :title="String(item.value)">{{ item.value }}</b>
+            <span>{{ item.note }}</span>
+          </article>
         </div>
-        <div class="casefile-verdict" :data-side="winnerKind(archiveWinner)">
-          <small>最终裁定</small>
-          <b>{{ displayWinnerLabel(archiveWinner) }}</b>
-          <span>{{ archiveModeLabel }}</span>
-        </div>
-      </header>
+      </section>
 
-      <div class="casefile-command-strip" aria-label="档案工具条">
-        <nav class="casefile-nav-list" aria-label="档案章节">
-          <button
-            v-for="item in archiveNavigationRows"
-            :key="item.id"
-            type="button"
-            class="casefile-nav-button"
-            @click="scrollCasefileSection(item.id)"
-          >
-            <span>{{ item.label }}</span>
-            <b>{{ item.count }}</b>
-          </button>
-        </nav>
-        <section class="casefile-filter-stack casefile-filter-stack--command" aria-label="账本筛选">
-          <label class="casefile-filter-field">
-            <span>玩家</span>
-            <select v-model="selectedPlayerFilter" class="casefile-select">
-              <option v-for="item in playerFilterOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
-          </label>
-          <label class="casefile-filter-field">
-            <span>阶段</span>
-            <select v-model="selectedPhaseFilter" class="casefile-select">
-              <option v-for="item in phaseFilterOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
-          </label>
-          <label class="casefile-filter-field">
-            <span>信号</span>
-            <select v-model="selectedSignalFilter" class="casefile-select">
-              <option v-for="item in signalFilterOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
-          </label>
-        </section>
-      </div>
+      <div class="casefile-archive-routing-shell">
+        <div class="casefile-route-column">
+          <div class="casefile-command-strip" aria-label="档案工具条">
+            <nav class="casefile-nav-list" aria-label="档案章节">
+              <button
+                v-for="item in archiveNavigationRows"
+                :key="item.id"
+                type="button"
+                class="casefile-nav-button"
+                :class="{ active: activeArchiveSectionId === item.id }"
+                @click="selectArchiveSection(item.id)"
+              >
+                <span>{{ item.label }}</span>
+              </button>
+            </nav>
+          </div>
 
-      <section v-if="archivePhaseRows.length" class="casefile-phase-strip casefile-phase-strip--horizontal" aria-label="阶段索引">
+          <section v-if="archivePhaseRows.length" class="casefile-phase-strip casefile-phase-strip--horizontal" aria-label="阶段索引">
         <button
           v-for="item in archivePhaseRows"
           :key="item.key"
@@ -954,20 +915,10 @@ function scrollCasefileSection(id) {
           <b>{{ item.events }} 事 · {{ item.decisions }} 策</b>
           <em v-if="item.signals">{{ item.signals }} 个信号</em>
         </button>
-      </section>
-
-      <div class="casefile-workbench-grid">
-        <main class="casefile-main-evidence">
-          <section id="casefile-overview" class="casefile-section casefile-overview-section">
-            <div class="casefile-audit-brief">
-              <article v-for="item in auditBriefRows" :key="item.label" class="casefile-audit-card" :data-tone="item.tone">
-                <small>{{ item.label }}</small>
-                <b :title="String(item.value)">{{ item.value }}</b>
-                <span>{{ item.note }}</span>
-              </article>
-            </div>
           </section>
 
+          <div class="casefile-workbench-grid" :data-active-section="activeArchiveSectionId">
+            <main class="casefile-main-evidence">
           <section id="casefile-evidence" class="casefile-section casefile-section--timeline">
             <header class="casefile-section-header">
               <div>
@@ -1003,15 +954,6 @@ function scrollCasefileSection(id) {
           </section>
 
           <section id="casefile-decisions" class="casefile-section casefile-ledger-section">
-            <header class="casefile-section-header">
-              <div>
-                <h4>决策账本</h4>
-                <small>{{ ledgerFilterSummary }}</small>
-              </div>
-              <span>
-                显示 {{ decisionLedgerRows.length }} 条<template v-if="ledgerHiddenCount">，另有 {{ ledgerHiddenCount }} 条</template>
-              </span>
-            </header>
             <div v-if="decisionLedgerRows.length" class="casefile-ledger" role="table" aria-label="决策账本">
               <div class="casefile-ledger-head" role="row">
                 <span>行动</span>
@@ -1041,9 +983,13 @@ function scrollCasefileSection(id) {
               <span>当前筛选条件下没有账本记录。</span>
             </div>
           </section>
-        </main>
 
-        <aside class="casefile-context-rail" aria-label="档案上下文">
+          <section id="casefile-raw-data" class="casefile-section casefile-raw-section">
+            <pre class="casefile-raw casefile-raw--route">{{ jsonText(archive) }}</pre>
+          </section>
+            </main>
+
+            <aside class="casefile-context-rail" aria-label="档案上下文">
           <section id="casefile-players" class="casefile-section casefile-player-section">
             <header class="casefile-section-header">
               <div>
@@ -1150,6 +1096,21 @@ function scrollCasefileSection(id) {
           </section>
         </aside>
       </div>
+        </div>
+
+        <section v-if="archivePhaseRows.length" class="casefile-phase-strip casefile-phase-strip--vertical" aria-label="阶段索引">
+          <button
+            v-for="item in archivePhaseRows"
+            :key="item.key"
+            type="button"
+            class="casefile-phase-button"
+            :class="{ active: activePhaseFilter === item.key }"
+            @click="selectedPhaseFilter = item.key"
+          >
+            <span>{{ item.label }}</span>
+          </button>
+        </section>
+      </div>
 
       <details v-if="archiveExtraFields.length" class="casefile-extra-fields">
         <summary>补充字段</summary>
@@ -1161,10 +1122,6 @@ function scrollCasefileSection(id) {
         </div>
       </details>
 
-      <details class="casefile-raw-details">
-        <summary>原始数据</summary>
-        <pre>{{ jsonText(archive) }}</pre>
-      </details>
     </template>
 
     <pre v-else class="casefile-raw">{{ jsonText(archive) }}</pre>
@@ -1203,6 +1160,8 @@ function scrollCasefileSection(id) {
 }
 
 .casefile-dossier,
+.casefile-archive-routing-shell,
+.casefile-route-column,
 .casefile-command-strip,
 .casefile-workbench-grid,
 .casefile-main-evidence,
@@ -1406,11 +1365,30 @@ function scrollCasefileSection(id) {
   color: var(--case-red);
 }
 
+.casefile-archive-routing-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(224px, 248px);
+  gap: 18px;
+  align-items: stretch;
+  height: clamp(520px, 64vh, 720px);
+  min-width: 0;
+  min-height: 0;
+}
+
+.casefile-route-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .casefile-command-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(390px, 0.75fr);
-  gap: 12px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  align-items: start;
   min-width: 0;
   padding: 0 0 12px;
   border: 0;
@@ -1422,10 +1400,23 @@ function scrollCasefileSection(id) {
 
 .casefile-nav-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 8px;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0 2px;
   border: 0;
+  scrollbar-width: none;
+}
+
+.casefile-top-overview {
+  display: grid;
+  min-width: 0;
+}
+
+.casefile-nav-list::-webkit-scrollbar {
+  display: none;
 }
 
 .casefile-nav-button,
@@ -1435,45 +1426,37 @@ function scrollCasefileSection(id) {
 }
 
 .casefile-nav-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid transparent;
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  flex: 0 0 auto;
+  min-width: 68px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
   border-radius: 8px;
-  color: var(--case-muted);
-  background: transparent;
+  color: rgba(58, 27, 8, 0.78);
+  background: rgba(255, 244, 217, 0.56);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 245, 0.46);
 }
 
 .casefile-nav-button:hover,
-.casefile-nav-button:focus-visible {
-  border-color: rgba(93, 48, 17, 0.26);
-  color: var(--case-teal);
-  background: rgba(255, 244, 207, 0.62);
+.casefile-nav-button:focus-visible,
+.casefile-nav-button.active {
+  border-color: rgba(93, 48, 17, 0.28);
+  color: var(--case-ink);
+  background: rgba(231, 190, 112, 0.84);
   outline: none;
 }
 
 .casefile-nav-button span {
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 820;
+  font-size: 13px;
+  font-weight: 880;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.casefile-nav-button b {
-  min-width: 0;
-  padding: 0;
-  color: var(--case-soft);
-  background: transparent;
-  font-size: 10px;
-  font-weight: 820;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
 }
 
 .casefile-filter-stack {
@@ -1515,38 +1498,146 @@ function scrollCasefileSection(id) {
 
 .casefile-phase-strip--horizontal {
   display: flex;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 0;
   min-width: 0;
   overflow-x: auto;
-  padding: 0 0 11px;
+  overflow-y: hidden;
+  padding: 6px 12px 18px;
   border: 0;
   border-bottom: 1px solid var(--case-line);
   background: transparent;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.casefile-phase-strip--horizontal::-webkit-scrollbar {
+  display: none;
+}
+
+.casefile-command-strip + .casefile-phase-strip--horizontal {
+  display: none;
+}
+
+.casefile-phase-strip--vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 0;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0 18px 18px;
+  border-left: 1px solid var(--case-line);
+  scrollbar-width: none;
+}
+
+.casefile-phase-strip--vertical::-webkit-scrollbar {
+  display: none;
 }
 
 .casefile-phase-strip--horizontal .casefile-phase-button {
   flex: 0 0 auto;
-  display: grid;
-  gap: 2px;
-  min-width: 116px;
-  min-height: 0;
-  padding: 7px 9px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--case-muted);
-  background: transparent;
+  display: inline-grid;
+  place-items: center;
+  min-width: 128px;
+  height: 58px;
+  margin-left: -12px;
+  padding: 0 16px;
+  border: 2px solid rgba(218, 240, 224, 0.72);
+  border-radius: 28px 28px 8px 28px;
+  color: #f5fff6;
+  background: #7bc58f;
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.32),
+    0 4px 0 rgba(93, 48, 17, 0.08);
   cursor: pointer;
-  text-align: left;
+  text-align: center;
+  transition: transform 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease;
+}
+
+.casefile-phase-strip--vertical .casefile-phase-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 150px;
+  height: 90px;
+  min-height: 0;
+  margin-top: -30px;
+  padding: 0 14px;
+  border: 3px solid rgba(218, 240, 224, 0.76);
+  border-radius: 30px 30px 4px 30px;
+  color: #f7fff7;
+  background: #7bc58f;
+  cursor: pointer;
+  text-align: center;
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.34),
+    0 5px 0 rgba(93, 48, 17, 0.08);
+  transition: transform 0.16s ease, filter 0.16s ease, box-shadow 0.16s ease;
+}
+
+.casefile-phase-strip--vertical .casefile-phase-button:first-child {
+  margin-top: 0;
+}
+
+.casefile-phase-strip--vertical .casefile-phase-button:nth-child(odd) {
+  margin-left: 0;
+  z-index: 2;
+  background: #7bc58f;
+  border-color: rgba(218, 240, 224, 0.78);
+}
+
+.casefile-phase-strip--vertical .casefile-phase-button:nth-child(even) {
+  margin-left: 82px;
+  z-index: 1;
+  border-color: rgba(226, 221, 246, 0.78);
+  border-radius: 4px 30px 30px 30px;
+  color: #fffaff;
+  background: #9884d7;
+}
+
+.casefile-phase-strip--vertical .casefile-phase-button:hover,
+.casefile-phase-strip--vertical .casefile-phase-button:focus-visible,
+.casefile-phase-strip--vertical .casefile-phase-button.active {
+  filter: brightness(1.035);
+  transform: translateY(-3px);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.44),
+    0 7px 0 rgba(93, 48, 17, 0.12);
+  outline: none;
+}
+
+.casefile-phase-strip--horizontal .casefile-phase-button:first-child {
+  margin-left: 0;
+}
+
+.casefile-phase-strip--horizontal .casefile-phase-button:nth-child(even) {
+  margin-top: 28px;
+  border-color: rgba(226, 221, 246, 0.76);
+  border-radius: 28px 8px 28px 28px;
+  background: #9884d7;
+  color: #fffaff;
 }
 
 .casefile-phase-strip--horizontal .casefile-phase-button:hover,
 .casefile-phase-strip--horizontal .casefile-phase-button:focus-visible,
 .casefile-phase-strip--horizontal .casefile-phase-button.active {
-  border-color: rgba(93, 48, 17, 0.26);
-  color: var(--case-teal);
-  background: rgba(255, 244, 207, 0.62);
+  filter: brightness(1.035);
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.42),
+    0 6px 0 rgba(93, 48, 17, 0.12);
   outline: none;
+}
+
+.casefile-phase-strip--horizontal .casefile-phase-button:nth-child(even):hover,
+.casefile-phase-strip--horizontal .casefile-phase-button:nth-child(even):focus-visible,
+.casefile-phase-strip--horizontal .casefile-phase-button:nth-child(even).active {
+  transform: translateY(-2px);
 }
 
 .casefile-phase-button span,
@@ -1558,8 +1649,12 @@ function scrollCasefileSection(id) {
 }
 
 .casefile-phase-button span {
-  font-size: 11px;
-  font-weight: 820;
+  max-width: 138px;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  line-height: 1.15;
+  text-shadow: 0 1px 1px rgba(45, 24, 9, 0.24);
 }
 
 .casefile-phase-button b,
@@ -1576,10 +1671,20 @@ function scrollCasefileSection(id) {
 
 .casefile-workbench-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(294px, 326px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   align-items: start;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  scrollbar-width: none;
+}
+
+.casefile-workbench-grid::-webkit-scrollbar {
+  display: none;
 }
 
 .casefile-main-evidence,
@@ -1604,8 +1709,74 @@ function scrollCasefileSection(id) {
 }
 
 .casefile-context-rail {
-  padding-left: 18px;
-  border-left: 1px solid var(--case-line);
+  padding: 14px;
+  border: 1px solid var(--case-line);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 244, 217, 0.8), rgba(250, 233, 186, 0.58));
+}
+
+.casefile-workbench-grid[data-active-section="casefile-decisions"] .casefile-main-evidence,
+.casefile-workbench-grid[data-active-section="casefile-raw-data"] .casefile-main-evidence {
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.casefile-workbench-grid[data-active-section="casefile-raw-data"] {
+  overflow: hidden;
+}
+
+.casefile-workbench-grid[data-active-section="casefile-raw-data"] .casefile-main-evidence,
+.casefile-workbench-grid[data-active-section="casefile-raw-data"] #casefile-raw-data {
+  min-height: 0;
+  height: 100%;
+}
+
+.casefile-workbench-grid[data-active-section="casefile-evidence"] .casefile-context-rail,
+.casefile-workbench-grid[data-active-section="casefile-decisions"] .casefile-context-rail,
+.casefile-workbench-grid[data-active-section="casefile-raw-data"] .casefile-context-rail {
+  display: none;
+}
+
+.casefile-workbench-grid[data-active-section="casefile-players"] .casefile-main-evidence,
+.casefile-workbench-grid[data-active-section="casefile-quality"] .casefile-main-evidence,
+.casefile-workbench-grid[data-active-section="casefile-config"] .casefile-main-evidence {
+  display: none;
+}
+
+.casefile-workbench-grid[data-active-section] .casefile-section {
+  display: none;
+}
+
+.casefile-workbench-grid[data-active-section="casefile-evidence"] #casefile-evidence,
+.casefile-workbench-grid[data-active-section="casefile-decisions"] #casefile-decisions,
+.casefile-workbench-grid[data-active-section="casefile-raw-data"] #casefile-raw-data,
+.casefile-workbench-grid[data-active-section="casefile-players"] #casefile-players,
+.casefile-workbench-grid[data-active-section="casefile-quality"] #casefile-quality,
+.casefile-workbench-grid[data-active-section="casefile-config"] #casefile-config {
+  display: grid;
+  animation: casefile-section-shift 0.18s ease;
+}
+
+.casefile-workbench-grid[data-active-section="casefile-decisions"] #casefile-decisions,
+.casefile-workbench-grid[data-active-section="casefile-raw-data"] #casefile-raw-data,
+.casefile-workbench-grid[data-active-section="casefile-quality"] #casefile-quality,
+.casefile-workbench-grid[data-active-section="casefile-config"] #casefile-config {
+  padding-top: 0;
+  border-top: 0;
+}
+
+@keyframes casefile-section-shift {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .casefile-section {
@@ -1658,45 +1829,45 @@ function scrollCasefileSection(id) {
 .casefile-audit-brief {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
+  align-items: start;
+  gap: 22px;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--case-line);
+  border: 0;
   border-radius: 8px;
-  background: var(--case-surface-soft);
+  background: transparent;
 }
 
 .casefile-audit-card {
   display: grid;
   gap: 6px;
   min-width: 0;
-  min-height: 92px;
-  padding: 12px;
-  border: 0;
-  border-left: 3px solid rgba(93, 48, 17, 0.18);
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
+  min-height: 96px;
+  padding: 12px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 248, 226, 0.56), rgba(242, 223, 174, 0.24)),
+    rgba(255, 244, 217, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 252, 245, 0.52),
+    0 4px 10px rgba(93, 48, 17, 0.08);
 }
 
 .casefile-audit-card + .casefile-audit-card {
-  border-left-width: 1px;
+  margin-left: 0;
 }
 
-.casefile-audit-card[data-tone="ok"] {
-  border-left-color: var(--case-green);
+.casefile-audit-card:nth-child(1) {
+  z-index: 3;
 }
 
-.casefile-audit-card[data-tone="warning"] {
-  border-left-color: var(--case-amber);
+.casefile-audit-card:nth-child(2) {
+  z-index: 2;
 }
 
-.casefile-audit-card[data-tone="error"] {
-  border-left-color: var(--case-red);
-}
-
-.casefile-audit-card[data-tone="event"] {
-  border-left-color: var(--case-teal);
+.casefile-audit-card:nth-child(3) {
+  z-index: 1;
 }
 
 .casefile-audit-card small {
@@ -2366,13 +2537,30 @@ function scrollCasefileSection(id) {
   margin-top: 8px;
 }
 
+.casefile-raw--route {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+}
+
 @media (max-width: 1180px) {
+  .casefile-archive-routing-shell {
+    grid-template-columns: 1fr;
+  }
+
   .casefile-command-strip {
     grid-template-columns: 1fr;
   }
 
   .casefile-workbench-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 0.78fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .casefile-phase-strip--vertical {
+    max-height: 180px;
+    padding: 0 0 12px;
+    border-left: 0;
+    border-bottom: 1px solid var(--case-line);
   }
 }
 
@@ -2400,8 +2588,8 @@ function scrollCasefileSection(id) {
   }
 
   .casefile-audit-card + .casefile-audit-card {
-    border-top: 1px solid var(--case-line);
-    border-left-width: 3px;
+    margin-left: 0;
+    margin-top: 8px;
   }
 }
 

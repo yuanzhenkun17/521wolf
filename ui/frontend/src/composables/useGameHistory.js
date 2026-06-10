@@ -81,8 +81,8 @@ const VOTE_PHASE_BY_TYPE = {
 const REPLAY_SPEEDS = [0.5, 1, 2, 4]
 const REPLAY_BASE_INTERVAL_MS = 900
 const DEFAULT_HISTORY_PAGE_SIZE = 8
-const DEFAULT_PHASE_LOG_LIMIT = 300
-const DEFAULT_PHASE_DECISION_LIMIT = 200
+const DEFAULT_PHASE_LOG_LIMIT = 1000
+const DEFAULT_PHASE_DECISION_LIMIT = 500
 const DEFAULT_REPLAY_LIMIT = 500
 const EMPTY_HISTORY_COUNTS = { all: 0, normal: 0, benchmark: 0, evolution: 0 }
 const HISTORY_WORKSPACE_TABS = new Set(['phase', 'review', 'archive'])
@@ -1820,7 +1820,6 @@ function useGameHistory(state, options = {}) {
       const archive = await apiFetch(`/games/${historyGamePath(gameId)}/archive`)
       if (!token.isLatest()) return
       state.archiveByGameId.value = { ...state.archiveByGameId.value, [gameId]: archive }
-      if (!silentSuccess) historyNotice.value = { type: 'success', message: '对局档案已载入。' }
     } catch (err) {
       if (token.isLatest()) {
         const notice = historyLoadNotice('error', err?.message, '对局档案读取失败，请重试。')

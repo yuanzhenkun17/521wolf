@@ -696,7 +696,7 @@ function diagnosticReplayHash(item) {
   --bench-hover: var(--logbook-hover, rgba(139, 94, 52, 0.06));
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   min-height: 0;
   color: var(--bench-text);
 }
@@ -712,10 +712,12 @@ function diagnosticReplayHash(item) {
   gap: 5px;
   min-height: 70px;
   padding: 10px 12px;
-  border: 1px solid var(--bench-border);
-  border-radius: 8px;
-  background: var(--bench-surface);
-  box-shadow: 0 1px 3px rgba(91, 47, 18, 0.04);
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.12)),
+    rgba(255, 252, 245, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.42);
 }
 
 .bench-run-stats small,
@@ -759,8 +761,8 @@ function diagnosticReplayHash(item) {
   min-height: 44px;
   padding: 0 12px;
   border: 1px solid var(--bench-border);
-  border-radius: 8px;
-  background: rgba(255, 252, 245, 0.48);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.26);
 }
 
 .bench-run-empty strong,
@@ -786,10 +788,12 @@ function diagnosticReplayHash(item) {
 .bench-card {
   display: grid;
   grid-template-rows: auto auto;
-  background: var(--bench-surface);
-  border: 1px solid var(--bench-border);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(91, 47, 18, 0.04);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.12)),
+    rgba(255, 252, 245, 0.18);
+  border: 1px solid rgba(93, 48, 17, 0.15);
+  border-radius: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.42);
   overflow: hidden;
 }
 
@@ -800,8 +804,8 @@ function diagnosticReplayHash(item) {
   gap: 10px;
   min-height: 58px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--bench-border);
-  background: rgba(255, 252, 245, 0.42);
+  border-bottom: 1px solid rgba(93, 48, 17, 0.12);
+  background: transparent;
 }
 
 .bench-card header h2 {
@@ -814,9 +818,9 @@ function diagnosticReplayHash(item) {
 .bench-card header b {
   max-width: 160px;
   overflow: hidden;
-  padding: 2px 8px;
-  border-radius: 5px;
-  background: rgba(139, 94, 52, 0.08);
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--bench-accent);
   font-size: 12px;
   font-weight: 700;
@@ -867,7 +871,7 @@ function diagnosticReplayHash(item) {
   align-items: center;
   min-width: 880px;
   padding: 9px 10px;
-  border-radius: 6px;
+  border-radius: 0;
   border-bottom: 1px solid rgba(139, 94, 52, 0.08);
   color: var(--bench-text);
   font-size: 13px;
@@ -963,8 +967,8 @@ function diagnosticReplayHash(item) {
   height: 34px;
   padding: 0 18px;
   border: 1px solid rgba(90, 51, 25, 0.18);
-  border-radius: 6px;
-  background: var(--bench-accent-strong);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(113, 72, 38, 0.96), rgba(79, 43, 20, 0.96));
   color: #f8f0e0;
   font-size: 13px;
   font-weight: 800;
@@ -994,7 +998,7 @@ function diagnosticReplayHash(item) {
 
 .bench-action.secondary {
   color: var(--bench-accent-strong);
-  background: rgba(255, 245, 214, 0.78);
+  background: rgba(255, 245, 214, 0.38);
 }
 
 .bench-status-grid,
@@ -1011,9 +1015,9 @@ function diagnosticReplayHash(item) {
   gap: 4px;
   min-height: 54px;
   padding: 9px 10px;
-  border: 1px solid rgba(139, 94, 52, 0.11);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.42);
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.22);
 }
 
 .bench-status-grid small,
@@ -1067,8 +1071,8 @@ function diagnosticReplayHash(item) {
   height: 28px;
   min-width: 92px;
   border: 1px solid var(--bench-input-border);
-  border-radius: 6px;
-  background: var(--bench-input-bg);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.46);
 }
 
 .bench-filter-row {
@@ -1083,8 +1087,8 @@ function diagnosticReplayHash(item) {
   min-width: 0;
   height: 28px;
   border: 1px solid var(--bench-input-border);
-  border-radius: 6px;
-  background: var(--bench-input-bg);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.46);
   color: var(--bench-text);
   font-size: 11px;
   font-weight: 800;
@@ -1102,7 +1106,7 @@ function diagnosticReplayHash(item) {
 .bench-load-more {
   height: 28px;
   border: 1px solid var(--bench-accent-strong);
-  border-radius: 6px;
+  border-radius: 4px;
   background: rgba(139, 94, 52, 0.08);
   color: var(--bench-accent-strong);
   font-size: 11px;
@@ -1193,7 +1197,7 @@ function diagnosticReplayHash(item) {
   margin: 12px;
   padding: 9px 10px;
   border: 1px solid rgba(90, 51, 25, 0.28);
-  border-radius: 7px;
+  border-radius: 0;
   background: rgba(139, 94, 52, 0.08);
   color: var(--bench-accent-strong);
   font-size: 12px;
@@ -1208,9 +1212,9 @@ function diagnosticReplayHash(item) {
   gap: 4px;
   min-height: 40px;
   padding: 8px 9px;
-  border: 1px solid rgba(139, 94, 52, 0.11);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.42);
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.22);
 }
 
 .bench-detail-kv {
@@ -1305,7 +1309,7 @@ function diagnosticReplayHash(item) {
   min-height: 24px;
   padding: 0 8px;
   border: 1px solid var(--bench-accent-strong);
-  border-radius: 6px;
+  border-radius: 4px;
   background: rgba(139, 94, 52, 0.08);
   color: var(--bench-accent-strong);
   text-decoration: none;

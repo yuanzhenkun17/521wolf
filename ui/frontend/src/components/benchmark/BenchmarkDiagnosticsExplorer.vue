@@ -803,10 +803,10 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 0;
   padding: 14px 16px;
   border: 1px solid var(--diag-line);
-  border-radius: 8px;
+  border-radius: 0;
   background:
-    linear-gradient(90deg, rgba(139, 94, 52, 0.08), rgba(255, 252, 245, 0) 44%),
-    var(--diag-panel);
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.12)),
+    rgba(255, 252, 245, 0.18);
 }
 
 .diagnostics-header div,
@@ -830,8 +830,13 @@ function suggestedActionsForDiagnostic(item) {
   text-transform: uppercase;
 }
 
+.diagnostics-header small,
+.diagnostics-empty-state small {
+  display: none;
+}
+
 .diagnostics-header h2 {
-  margin: 2px 0 0;
+  margin: 0;
   overflow: hidden;
   color: var(--diag-ink);
   font-size: 20px;
@@ -856,8 +861,8 @@ function suggestedActionsForDiagnostic(item) {
   min-height: 34px;
   padding: 0 12px;
   border: 1px solid var(--diag-accent-strong);
-  border-radius: 7px;
-  background: var(--diag-accent-strong);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(113, 72, 38, 0.96), rgba(79, 43, 20, 0.96));
   color: #f8f0e0;
   font-size: 12px;
   font-weight: 900;
@@ -876,8 +881,8 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 0;
   padding: 10px;
   border: 1px solid var(--diag-line);
-  border-radius: 8px;
-  background: var(--diag-panel);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.22);
 }
 
 .diagnostics-filter-row select,
@@ -885,8 +890,8 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 0;
   height: 30px;
   border: 1px solid rgba(139, 94, 52, 0.2);
-  border-radius: 6px;
-  background: rgba(255, 255, 250, 0.8);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.46);
   color: var(--diag-ink);
   font-size: 11px;
   font-weight: 850;
@@ -899,7 +904,7 @@ function suggestedActionsForDiagnostic(item) {
 .diagnostics-filter-clear {
   height: 30px;
   border: 1px solid var(--diag-accent-strong);
-  border-radius: 6px;
+  border-radius: 4px;
   background: rgba(139, 94, 52, 0.08);
   color: var(--diag-accent-strong);
   font-size: 11px;
@@ -926,8 +931,10 @@ function suggestedActionsForDiagnostic(item) {
   min-height: 74px;
   padding: 10px 12px;
   border: 1px solid var(--diag-line);
-  border-radius: 8px;
-  background: var(--diag-panel);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.12)),
+    rgba(255, 252, 245, 0.18);
 }
 
 .diagnostics-summary-card b {
@@ -966,8 +973,10 @@ function suggestedActionsForDiagnostic(item) {
 .diagnostics-list-panel,
 .side-section {
   border: 1px solid var(--diag-line);
-  border-radius: 8px;
-  background: var(--diag-panel);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.26), rgba(255, 239, 194, 0.1)),
+    rgba(255, 252, 245, 0.16);
 }
 
 .diagnostics-groups {
@@ -1016,8 +1025,8 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 0;
   padding: 9px 10px;
   border: 1px solid transparent;
-  border-radius: 7px;
-  background: var(--diag-soft);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.2);
   color: var(--diag-ink);
   text-align: left;
   cursor: pointer;
@@ -1053,7 +1062,7 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 26px;
   padding: 3px 6px;
   border-radius: 999px;
-  background: var(--diag-panel);
+  background: rgba(255, 252, 245, 0.32);
   color: var(--diag-accent);
   font-size: 11px;
   font-style: normal;
@@ -1088,9 +1097,9 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 0;
   padding: 11px 12px;
   border: 1px solid var(--diag-line);
-  border-left: 4px solid rgba(139, 94, 52, 0.36);
-  border-radius: 8px;
-  background: var(--diag-panel);
+  border-left: 3px solid rgba(139, 94, 52, 0.36);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.22);
   cursor: pointer;
 }
 
@@ -1102,7 +1111,7 @@ function suggestedActionsForDiagnostic(item) {
 
 .diagnostic-entry.level-warning {
   border-left-color: var(--diag-warning);
-  background: rgba(255, 252, 245, 0.78);
+  background: rgba(255, 252, 245, 0.3);
 }
 
 .diagnostic-entry.level-error,
@@ -1157,8 +1166,8 @@ function suggestedActionsForDiagnostic(item) {
   gap: 2px;
   min-width: 0;
   padding: 6px 7px;
-  border-radius: 6px;
-  background: rgba(255, 252, 245, 0.7);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.26);
 }
 
 .diagnostic-entry dd {
@@ -1190,8 +1199,8 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 0;
   padding: 9px 10px;
   border: 1px solid var(--diag-line);
-  border-radius: 7px;
-  background: var(--diag-soft);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.2);
 }
 
 .selected-diagnostic-card strong,
@@ -1233,8 +1242,8 @@ function suggestedActionsForDiagnostic(item) {
 .inspect-games-button {
   min-height: 32px;
   border: 1px solid var(--diag-accent-strong);
-  border-radius: 7px;
-  background: var(--diag-accent-strong);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(113, 72, 38, 0.96), rgba(79, 43, 20, 0.96));
   color: #f8f0e0;
   font-size: 12px;
   font-weight: 900;
@@ -1252,8 +1261,8 @@ function suggestedActionsForDiagnostic(item) {
 .affected-run-button {
   min-width: 0;
   border: 1px solid var(--diag-line);
-  border-radius: 7px;
-  background: var(--diag-soft);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.2);
 }
 
 .problem-game-card {
@@ -1297,7 +1306,7 @@ function suggestedActionsForDiagnostic(item) {
   min-height: 24px;
   padding: 0 8px;
   border: 1px solid var(--diag-accent);
-  border-radius: 6px;
+  border-radius: 4px;
   background: rgba(139, 94, 52, 0.08);
   color: var(--diag-accent);
   font-size: 11px;
@@ -1361,7 +1370,7 @@ function suggestedActionsForDiagnostic(item) {
   min-width: 28px;
   padding: 4px 7px;
   border-radius: 999px;
-  background: var(--diag-panel);
+  background: rgba(255, 252, 245, 0.32);
   color: var(--diag-accent);
   font-size: 11px;
   font-style: normal;
@@ -1385,8 +1394,8 @@ function suggestedActionsForDiagnostic(item) {
   place-content: center;
   padding: 28px;
   border: 1px dashed rgba(139, 94, 52, 0.28);
-  border-radius: 8px;
-  background: var(--diag-soft);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.18);
   text-align: center;
 }
 

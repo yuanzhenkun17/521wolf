@@ -234,43 +234,5 @@ function selectSource(source) {
       </div>
     </div>
     <p v-if="!sourceFilteredGames.length && !loading" class="empty-log">暂无历史对局</p>
-    <footer class="history-pagination" aria-label="历史对局分页">
-      <div class="history-page-meta">
-        <span>{{ pageSummary }}</span>
-        <small>{{ pageIndexSummary }}</small>
-      </div>
-      <div class="history-page-controls">
-        <button
-          type="button"
-          class="history-page-step"
-          :disabled="loading || loadingMore || currentPage <= 1"
-          aria-label="上一页"
-          @click="changePage(currentPage - 1)"
-        >
-          ‹
-        </button>
-        <button
-          v-for="page in pageWindow"
-          :key="page"
-          type="button"
-          class="history-page-number"
-          :class="{ active: page === currentPage }"
-          :disabled="loading || loadingMore || page === currentPage"
-          :aria-current="page === currentPage ? 'page' : undefined"
-          @click="changePage(page)"
-        >
-          {{ page }}
-        </button>
-        <button
-          type="button"
-          class="history-page-step"
-          :disabled="loading || loadingMore || currentPage >= totalPages"
-          aria-label="下一页"
-          @click="changePage(currentPage + 1)"
-        >
-          ›
-        </button>
-      </div>
-    </footer>
   </aside>
 </template>

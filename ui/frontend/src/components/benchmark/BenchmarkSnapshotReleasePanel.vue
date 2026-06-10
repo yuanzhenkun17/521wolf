@@ -1001,7 +1001,7 @@ function clearTransientState() {
 }
 
 .snapshot-header h2 {
-  margin: 2px 0 0;
+  margin: 0;
   color: var(--snapshot-ink);
   font-size: 20px;
   font-weight: 950;
@@ -1163,6 +1163,12 @@ function clearTransientState() {
   padding: 12px;
 }
 
+.snapshot-header small,
+.snapshot-section-title small,
+.snapshot-gate-head small {
+  display: none;
+}
+
 .snapshot-section-title {
   display: flex;
   align-items: start;
@@ -1177,7 +1183,7 @@ function clearTransientState() {
 
 .snapshot-section-title span {
   display: grid;
-  gap: 2px;
+  gap: 0;
   min-width: 0;
 }
 
@@ -1263,7 +1269,7 @@ function clearTransientState() {
 
 .snapshot-gate-head span {
   display: grid;
-  gap: 2px;
+  gap: 0;
   min-width: 0;
 }
 

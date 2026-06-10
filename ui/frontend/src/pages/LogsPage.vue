@@ -8,7 +8,6 @@ import PhaseTabs from '../components/PhaseTabs.vue'
 import SeatLedger from '../components/SeatLedger.vue'
 import SpeechSection from '../components/SpeechSection.vue'
 import VoteSection from '../components/VoteSection.vue'
-import EvidenceContextBar from '../components/history/EvidenceContextBar.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.js'
 import {
   displayActionLabel,
@@ -137,7 +136,7 @@ const rawLogsForFocus = computed(() => props.historyLogs.filter((log) => rowMatc
 const filteredRawLogs = computed(() =>
   rawLogsForFocus.value.filter((log) => rawLogFilter.value === 'all' || rawLogKind(log) === rawLogFilter.value)
 )
-const visibleRawLogs = computed(() => filteredRawLogs.value.slice(0, 180))
+const visibleRawLogs = computed(() => filteredRawLogs.value)
 const rawLogFilters = computed(() =>
   RAW_LOG_FILTERS.map((item) => ({
     ...item,
@@ -150,6 +149,24 @@ const selectedReview = computed(() => props.reviewByGameId[props.selectedHistory
 const selectedArchive = computed(() => props.archiveByGameId[props.selectedHistoryGame?.game_id] || null)
 const selectedFlowData = computed(() => props.flowDataByGameId[props.selectedHistoryGame?.game_id] || null)
 const selectedFlowLoading = computed(() => Boolean(props.flowLoadingByGameId[props.selectedHistoryGame?.game_id]))
+const selectedReviewGame = computed(() => {
+  const game = props.selectedHistoryGame || {}
+  const rows = mergeReviewDecisions([
+    ...(Array.isArray(game.decisions) ? game.decisions : []),
+    ...props.pageNightActions,
+    ...props.pageSpeechDecisions,
+    ...props.sheriffVotes,
+    ...props.voteDecisions,
+    ...props.pageLastWords,
+    ...props.historyLogs
+  ])
+  if (!rows.length) return game
+  return {
+    ...game,
+    decisions: rows,
+    decision_count: game.decision_count ?? rows.length
+  }
+})
 const detailInlineNotice = computed(() => inlineNoticeForDisplay(props.historyNotice))
 const detailErrorNotice = computed(() => noticeErrorForPanel(props.historyNotice))
 const selectedGameConfig = computed(() => {
@@ -169,6 +186,20 @@ const selectedGameConfig = computed(() => {
 const reviewLoaded = computed(() => Boolean(selectedReview.value && !selectedReview.value.error))
 const archiveLoaded = computed(() => Boolean(selectedArchive.value && !selectedArchive.value.error))
 const selectedPhasePagination = computed(() => props.selectedHistoryPage?.pagination || {})
+const detailMetaItems = computed(() => {
+  const config = selectedGameConfig.value || {}
+  const roleCoverage = config.role_skill_dirs && typeof config.role_skill_dirs === 'object' && !Array.isArray(config.role_skill_dirs)
+    ? Object.keys(config.role_skill_dirs).filter((key) => String(config.role_skill_dirs[key] ?? '').trim()).length
+    : 0
+  const skillDir = normalizeHistoryDisplayText(config.skill_dir) || '默认技能'
+  return [
+    { label: '随机种子', value: config.seed == null || config.seed === '' ? '随机' : normalizeHistoryDisplayText(config.seed) },
+    { label: '人数', value: config.player_count || props.selectedHistoryGame?.players?.length || 12 },
+    { label: '最大天数', value: config.max_days || 20 },
+    { label: '技能目录', value: skillDir === 'default' ? '默认技能' : skillDir },
+    { label: '角色覆盖', value: roleCoverage ? `${roleCoverage} 项` : '无' }
+  ]
+})
 const phaseHasMore = computed(() =>
   Boolean(selectedPhasePagination.value.logs?.has_more || selectedPhasePagination.value.decisions?.has_more)
 )
@@ -526,6 +557,41 @@ const workspaceTabs = computed(() => [
 function normalizeWorkspaceTab(tab) {
   const text = String(tab || '').trim().toLowerCase()
   return WORKSPACE_TAB_KEYS.has(text) ? text : 'phase'
+}
+
+function reviewDecisionCandidates(row = {}) {
+  if (!row || typeof row !== 'object') return []
+  return [
+    row.decision,
+    row.vote,
+    row.payload?.decision,
+    row.payload,
+    row
+  ].filter((item) => item && typeof item === 'object')
+}
+
+function mergeReviewDecisions(rows = []) {
+  const seen = new Set()
+  const merged = []
+  rows.flatMap(reviewDecisionCandidates).forEach((row, index) => {
+    const actor = rowActorId(row)
+    const target = rowTargetId(row)
+    const action = row.action || row.action_type || row.type || row.event_type || ''
+    if (actor == null && target == null && !action) return
+    const normalized = {
+      ...row,
+      actor_id: actor ?? row.actor_id ?? row.player_id ?? null,
+      target_id: target ?? row.target_id ?? row.selected_target ?? null,
+      action: action || row.action || row.action_type || '',
+      phase: row.phase || row.stage || row.round_phase || props.selectedHistoryPage?.phase || '',
+      day: row.day ?? row.round ?? props.selectedHistoryPage?.day ?? 1
+    }
+    const key = decisionKey(normalized, index)
+    if (seen.has(key)) return
+    seen.add(key)
+    merged.push(normalized)
+  })
+  return merged
 }
 
 function setWorkspaceTab(tab, { emitUpdate = true, load = true } = {}) {
@@ -939,16 +1005,14 @@ function clearPlayerFocus() {
               @click="selectWorkspaceTab(item.key)"
             >
               <span>{{ item.label }}</span>
-              <small
-                v-if="item.badge"
-                class="detail-workspace-badge"
-                :data-state="item.state"
-              >
-                {{ item.badge }}
-              </small>
             </button>
           </nav>
-          <EvidenceContextBar v-if="workspaceTab === 'phase'" :game="selectedHistoryGame" />
+          <div v-if="workspaceTab === 'phase'" class="detail-context-line" aria-label="对局配置">
+            <span v-for="item in detailMetaItems" :key="item.label">
+              <small>{{ item.label }}：</small>
+              <b>{{ item.value }}</b>
+            </span>
+          </div>
           <PhaseTabs
             v-if="workspaceTab === 'phase'"
             :pages="historyPages"
@@ -962,29 +1026,10 @@ function clearPlayerFocus() {
         <div v-if="selectedHistoryGame" :class="['detail-content', 'workspace-' + workspaceTab]">
           <div class="detail-main-column">
             <!-- Phase content -->
-            <section v-if="workspaceTab === 'phase' && selectedHistoryPage" class="history-page-detail">
-              <header class="phase-overview" :data-phase="phaseCategory">
-                <div class="phase-overview-copy">
-                  <small>{{ selectedPhaseKind }}</small>
-                  <h3>{{ selectedPhaseTitle }}</h3>
-                  <p>{{ phaseConclusion }}</p>
-                  <button
-                    v-if="hasPlayerFocus"
-                    type="button"
-                    class="phase-focus-clear"
-                    @click="clearPlayerFocus"
-                  >
-                    {{ focusLabel }} · 清除聚焦
-                  </button>
-                </div>
-                <div class="phase-overview-stats" aria-label="阶段摘要">
-                  <span v-for="item in phaseSummaryCards" :key="item.label">
-                    <small>{{ item.label }}</small>
-                    <b>{{ item.value }}</b>
-                  </span>
-                </div>
-              </header>
-
+            <section
+              v-if="workspaceTab === 'phase' && selectedHistoryPage"
+              class="history-page-detail"
+            >
               <section :class="['phase-evidence-panel', { 'is-expanded': phaseEvidenceExpanded }]">
                 <header class="phase-section-head phase-evidence-head">
                   <button
@@ -1080,7 +1125,6 @@ function clearPlayerFocus() {
               <section v-if="canShowPhaseDecisionPanel" class="phase-decision-panel">
                 <header class="phase-section-head">
                   <h4>决策明细</h4>
-                  <span>{{ phaseDecisionPanelMeta }}</span>
                 </header>
 
                 <NightSection
@@ -1168,7 +1212,7 @@ function clearPlayerFocus() {
                     ]"
                   >
                     <span class="timeline-rail" aria-hidden="true">
-                      <img v-if="!log.role_assignments" src="/livehall-assets/props/optimized/judge-avatar-160.webp" alt="" />
+                      <img v-if="!log.role_assignments" src="/livehall-assets/props/judge-avatar.png" alt="" />
                       <i v-else></i>
                     </span>
                     <div class="timeline-card">
@@ -1214,7 +1258,7 @@ function clearPlayerFocus() {
             <section v-else-if="workspaceTab === 'review'" class="history-page-detail">
               <ReviewReportPanel
                 :report="reviewByGameId[selectedHistoryGame.game_id]"
-                :game="selectedHistoryGame"
+                :game="selectedReviewGame"
                 :flow-data="selectedFlowData"
                 :flow-loading="selectedFlowLoading"
                 :load-flow-data="loadSelectedFlowData"
@@ -1881,7 +1925,7 @@ function clearPlayerFocus() {
 
 .history-side-card--assess {
   min-height: 410px;
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -1895,7 +1939,7 @@ function clearPlayerFocus() {
   min-height: 0;
   height: 100%;
   border: none;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
   overflow: hidden;
@@ -1983,7 +2027,7 @@ function clearPlayerFocus() {
   gap: 0;
   min-height: 100%;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: rgba(255, 252, 245, 0.2);
   overflow: hidden;
 }
@@ -1994,7 +2038,7 @@ function clearPlayerFocus() {
   min-width: 0;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   overflow: hidden;
 }
@@ -2034,7 +2078,7 @@ function clearPlayerFocus() {
   min-width: 0;
   overflow: hidden;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   padding: 8px;
 }
@@ -2139,7 +2183,7 @@ function clearPlayerFocus() {
   column-gap: 8px;
   min-height: 286px;
   padding: 0 12px 18px;
-  border-radius: 8px;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -4610,6 +4654,13 @@ function clearPlayerFocus() {
   box-shadow: none;
 }
 
+.history-page-detail :deep(.archive-review-panel .vote-flow-analysis),
+.history-page-detail :deep(.archive-review-panel .vote-round-heatmap) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .history-page-detail :deep(.review-score-panel-head) {
   padding: 8px 0;
   border: 0;
@@ -5155,11 +5206,31 @@ function clearPlayerFocus() {
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs) {
   align-items: center;
   gap: 0;
-  height: 70px;
-  min-height: 70px;
-  max-height: 70px;
-  padding: 11px 10px 11px 0;
+  height: 82px;
+  min-height: 82px;
+  max-height: 82px;
+  padding: 11px 10px 17px 0;
   border: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: rgba(116, 68, 28, 0.78) rgba(116, 68, 28, 0.16);
+  scrollbar-width: thin;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs)::-webkit-scrollbar {
+  display: block;
+  height: 8px;
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs)::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(116, 68, 28, 0.12), rgba(255, 244, 209, 0.32));
+}
+
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs)::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: linear-gradient(90deg, #6e3b1c, #a9682a 52%, #6e3b1c);
+  box-shadow: inset 0 1px 0 rgba(255, 232, 177, 0.55);
 }
 
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step) {
@@ -5193,7 +5264,23 @@ function clearPlayerFocus() {
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(10)) { z-index: 21; }
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(11)) { z-index: 20; }
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(12)) { z-index: 19; }
-.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(n + 13)) { z-index: 18; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(13)) { z-index: 18; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(14)) { z-index: 17; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(15)) { z-index: 16; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(16)) { z-index: 15; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(17)) { z-index: 14; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(18)) { z-index: 13; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(19)) { z-index: 12; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(20)) { z-index: 11; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(21)) { z-index: 10; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(22)) { z-index: 9; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(23)) { z-index: 8; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(24)) { z-index: 7; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(25)) { z-index: 6; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(26)) { z-index: 5; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(27)) { z-index: 4; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(28)) { z-index: 3; }
+.history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:nth-child(n + 29)) { z-index: 2; }
 
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step:first-child) {
   padding-left: 10px;
@@ -5280,7 +5367,6 @@ function clearPlayerFocus() {
 }
 
 .history-detail-panel .detail-topbar :deep(.history-phase-tabs .phase-step.active) {
-  z-index: 40;
   color: #fffdf3;
   filter: brightness(1.12) saturate(1.08) drop-shadow(0 2px 3px rgba(74, 37, 15, 0.32));
 }
@@ -5317,6 +5403,7 @@ function clearPlayerFocus() {
 
 .history-side-card {
   border-left: 1px solid rgba(93, 48, 17, 0.18);
+  border-right: 1px solid rgba(93, 48, 17, 0.18);
 }
 
 .history-side-card--seats,
@@ -5348,6 +5435,15 @@ function clearPlayerFocus() {
   border-color: rgba(93, 48, 17, 0.22);
   background: linear-gradient(90deg, rgba(255, 237, 188, 0.38), transparent);
   box-shadow: inset 3px 0 0 #70401e;
+}
+
+.history-side-card--seats {
+  border-top: 1px solid rgba(93, 48, 17, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.42);
+}
+
+.history-side-card--seats .history-side-card-header {
+  border-bottom: 1px solid rgba(93, 48, 17, 0.18);
 }
 
 /* Player seats use the same compact wood-button language as history filters. */
@@ -5950,8 +6046,9 @@ function clearPlayerFocus() {
 .history-page-detail :deep(.archive-review-panel .vote-flow-analysis header),
 .history-page-detail :deep(.archive-review-panel .vote-round-heatmap header) {
   min-height: 0;
-  padding: 0;
+  padding: 0 0 8px;
   border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.12);
 }
 
 .history-page-detail :deep(.archive-review-panel .vote-heatmap-head span) {
@@ -6071,7 +6168,7 @@ function clearPlayerFocus() {
 .phase-evidence-panel {
   display: grid;
   gap: 8px;
-  padding: 10px 14px 12px;
+  padding: 14px 14px 12px;
   border-top: 1px solid rgba(93, 48, 17, 0.14);
   background: rgba(255, 252, 245, 0.34);
 }
@@ -6432,9 +6529,10 @@ function clearPlayerFocus() {
 .phase-decision-panel {
   display: grid;
   gap: 10px;
-  padding: 12px 14px 14px;
-  border-top: 1px solid rgba(93, 48, 17, 0.14);
-  background: rgba(255, 248, 232, 0.5);
+  margin-top: 12px;
+  padding: 10px 14px 12px;
+  border-top: 0;
+  background: rgba(255, 252, 245, 0.34);
 }
 
 .phase-decision-panel :deep(.history-night-section) {
@@ -6455,19 +6553,21 @@ function clearPlayerFocus() {
   height: auto;
   min-height: 280px;
   max-height: min(560px, calc(100vh - 330px));
-  border: 1px solid rgba(93, 48, 17, 0.14);
+  border: 0;
   border-radius: 0;
-  background: rgba(255, 252, 245, 0.36);
+  background: transparent;
+  gap: 12px;
 }
 
 .phase-decision-panel :deep(.night-left) {
-  padding: 10px 8px 10px 10px;
-  border-right: 1px solid rgba(93, 48, 17, 0.12);
+  padding: 2px 0;
+  border-right: 0;
 }
 
 .phase-decision-panel :deep(.night-action-grid) {
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
+  gap: 10px;
+  padding: 0 2px 2px 0;
 }
 
 .phase-decision-panel :deep(.night-mini-card),
@@ -6476,10 +6576,46 @@ function clearPlayerFocus() {
   border-radius: 0;
 }
 
+.phase-decision-panel :deep(.night-mini-card) {
+  padding: 12px 14px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  background: rgba(255, 252, 245, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.64);
+}
+
+.phase-decision-panel :deep(.night-mini-card:hover) {
+  border-color: rgba(93, 48, 17, 0.3);
+  background: rgba(255, 245, 214, 0.72);
+}
+
+.phase-decision-panel :deep(.night-mini-card.sel) {
+  border-color: rgba(93, 48, 17, 0.36);
+  background: rgba(224, 184, 111, 0.34);
+  box-shadow: inset 3px 0 0 #70401e, inset 0 1px 0 rgba(255, 252, 228, 0.6);
+}
+
 .phase-decision-panel :deep(.night-right) {
   min-width: 0;
-  border-left: 0;
+  border: 1px solid rgba(93, 48, 17, 0.14);
   background: rgba(255, 252, 245, 0.42);
+}
+
+.phase-decision-panel :deep(.nmc-tabs) {
+  border-bottom-color: rgba(93, 48, 17, 0.14);
+  background: transparent;
+}
+
+.phase-decision-panel :deep(.nmc-tab) {
+  padding-top: 6px;
+}
+
+.phase-decision-panel :deep(.nmc-detail-body) {
+  padding: 12px 16px;
+  background: transparent;
+}
+
+.phase-decision-panel :deep(.nmc-dt) {
+  margin-bottom: 10px;
 }
 
 .phase-decision-panel :deep(.sheriff-bar-chart) {
@@ -6506,8 +6642,9 @@ function clearPlayerFocus() {
 
 .history-page-detail details.history-raw-section {
   display: grid;
-  margin-top: 0;
-  border-top: 1px solid rgba(93, 48, 17, 0.14);
+  margin-top: 12px;
+  border-top: 0;
+  background: rgba(255, 252, 245, 0.34);
 }
 
 .history-page-detail details.history-raw-section > summary {
@@ -6517,7 +6654,7 @@ function clearPlayerFocus() {
   min-height: 38px;
   padding: 0 14px;
   color: #3b1c09;
-  background: rgba(255, 239, 194, 0.36);
+  background: transparent;
   font-size: 13px;
   font-weight: 950;
   cursor: pointer;
@@ -6604,7 +6741,147 @@ function clearPlayerFocus() {
   font-size: 10px;
 }
 
+/* Final compact log detail header: tabs on the left, game metadata on the right. */
+.detail-topbar.workspace-phase {
+  display: grid;
+  grid-template-columns: minmax(360px, max-content) minmax(0, 1fr);
+  grid-template-areas:
+    "workspace context"
+    "phases phases";
+  align-items: center;
+  row-gap: 12px;
+  column-gap: 24px;
+}
+
+.detail-context-line {
+  grid-area: context;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: clamp(12px, 1.55vw, 24px);
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.7);
+  font-size: 12.5px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.detail-context-line span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  max-width: 220px;
+  min-width: 0;
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+.detail-context-line small {
+  flex: 0 0 auto;
+  color: rgba(74, 37, 15, 0.58);
+  font-size: inherit;
+  font-weight: 900;
+}
+
+.detail-context-line b {
+  min-width: 0;
+  overflow: hidden;
+  color: #3b1c09;
+  font-size: inherit;
+  font-weight: 950;
+  text-overflow: ellipsis;
+}
+
+.history-page-detail .phase-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 72px;
+  padding: 16px 20px;
+}
+
+.history-page-detail .phase-overview-copy {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.history-page-detail .phase-overview-copy h3 {
+  margin: 0;
+  color: #321606;
+  font-size: 25px;
+  font-weight: 950;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.history-page-detail .phase-overview-stats {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: clamp(14px, 2.7vw, 42px);
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+
+.history-page-detail .phase-overview-stats span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.history-page-detail .phase-overview-stats small {
+  color: rgba(74, 37, 15, 0.56);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.history-page-detail .phase-overview-stats b {
+  color: #321606;
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-main-column,
+.detail-side-column,
+.detail-main-column > .history-page-detail {
+  scrollbar-width: none;
+}
+
+.detail-main-column::-webkit-scrollbar,
+.detail-side-column::-webkit-scrollbar {
+  display: none;
+}
+
+.detail-main-column > .history-page-detail::-webkit-scrollbar {
+  display: none;
+}
+
 @media (max-width: 920px) {
+  .detail-topbar.workspace-phase {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "workspace"
+      "context"
+      "phases";
+  }
+
+  .detail-context-line {
+    justify-content: flex-start;
+  }
+
   .history-page-detail .phase-overview,
   .phase-speech-row,
   .phase-matrix-head,
@@ -6612,8 +6889,13 @@ function clearPlayerFocus() {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .phase-overview-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .history-page-detail .phase-overview {
+    flex-wrap: wrap;
+  }
+
+  .history-page-detail .phase-overview-stats {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .phase-evidence-toggle {

@@ -238,35 +238,84 @@ function childRunKey(run, index) {
         <label>训练局数<input v-model.number="evo.form.value.training_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>对战局数<input v-model.number="evo.form.value.battle_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>最大天数<input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" /></label>
-        <div class="evo-policy-note">
-          <small>发布策略</small>
-          <b>评审门禁</b>
-          <span>晋升必须经过提案审核、门禁与信任包。</span>
-        </div>
         <div class="evo-start-panel">
-          <span>
-            <small>启动对象</small>
-            <b>{{ evo.selectedRoleLabel.value || '当前角色' }}</b>
-          </span>
           <button
             type="button"
             class="evo-action evo-start-action"
             :disabled="Boolean(evo.actionLoading.value) || !evo.selectedRole.value"
             @click="evo.startSingle()"
           >
-            <span aria-hidden="true">&#9654;</span> 启动当前角色
+            启动
           </button>
           <em v-if="evo.loading.value || evo.actionLoading.value">
             {{ actionLoadingText(evo.actionLoading.value, evo.loading.value) }}
           </em>
         </div>
+        <span
+          v-if="evo.hasSelection.value"
+          class="evo-action-tooltip"
+          :title="selectedPromoteDisabledReason || undefined"
+        >
+          <button
+            type="button"
+            class="evo-action evo-action-promote"
+            :disabled="!selectedCanPromote || Boolean(evo.actionLoading.value)"
+            @click="evo.runAction(evo.selectedRunId.value, 'promote')"
+          >
+            晋升
+          </button>
+        </span>
+        <span
+          v-if="evo.hasSelection.value"
+          class="evo-action-tooltip"
+          title="拒绝：运行已完成但不采纳候选结果，候选版本不会晋升。"
+        >
+          <button
+            type="button"
+            class="evo-action evo-action-reject"
+            :disabled="!selectedCanReview || Boolean(evo.actionLoading.value)"
+            @click="evo.runAction(evo.selectedRunId.value, 'reject')"
+          >
+            拒绝
+          </button>
+        </span>
+        <span
+          v-if="evo.hasSelection.value"
+          class="evo-action-tooltip"
+          title="终止：停止仍在执行或卡住的运行，不代表评审通过或拒绝。"
+        >
+          <button
+            type="button"
+            class="evo-action evo-action-terminate"
+            :disabled="!selectedCanTerminate || Boolean(evo.actionLoading.value)"
+            @click="evo.runAction(evo.selectedRunId.value, 'terminate')"
+          >
+            终止
+          </button>
+        </span>
       </div>
     </article>
 
-    <article class="evo-card">
+    <article class="evo-card evo-review-card">
       <header>
         <h2>评审面板</h2>
-        <b>{{ evo.selectedRun.value?.statusLabel || '—' }}</b>
+        <div v-if="evo.hasSelection.value" class="evo-review-head-kpis">
+          <template v-if="selectedIsBatch">
+            <span><small>角色完成</small><b>{{ evo.selectedRun.value.completedRoleCount || 0 }} / {{ evo.selectedRun.value.roleCount || 0 }}</b></span>
+            <span><small>子运行</small><b>{{ evo.selectedRun.value.childRunCount || 0 }}</b></span>
+            <span><small>训练</small><b>{{ evo.selectedRun.value.trainingProgressLabel }}</b></span>
+            <span><small>对战</small><b>{{ evo.selectedRun.value.battleProgressLabel }}</b></span>
+          </template>
+          <template v-else>
+            <span><small>父版本</small><b>{{ evo.selectedRun.value.parentShort }}</b></span>
+            <span><small>候选版本</small><b>{{ evo.selectedRun.value.candidateShort }}</b></span>
+            <span><small>发布阶段</small><b>{{ evo.selectedRun.value.publishedReleaseStageLabel || '—' }}</b></span>
+            <span><small>训练</small><b>{{ evo.selectedRun.value.trainingGameCompleted || 0 }} / {{ evo.selectedRun.value.trainingGameRequested || 0 }}</b></span>
+            <span><small>对战</small><b>{{ evo.selectedRun.value.battleGameCompleted || 0 }} / {{ evo.selectedRun.value.battleGameRequested || 0 }}</b></span>
+          </template>
+          <span class="status"><small>状态</small><b>{{ evo.selectedRun.value?.statusLabel || '—' }}</b></span>
+        </div>
+        <b v-else>{{ evo.selectedRun.value?.statusLabel || '—' }}</b>
       </header>
 
       <div v-if="!evo.hasSelection.value" class="evo-empty">选择一个运行</div>
@@ -308,68 +357,14 @@ function childRunKey(run, index) {
           </div>
         </div>
 
-        <div v-if="selectedIsBatch" class="evo-kpis">
-          <span><small>角色完成</small><b>{{ evo.selectedRun.value.completedRoleCount || 0 }} / {{ evo.selectedRun.value.roleCount || 0 }}</b></span>
-          <span><small>子运行</small><b>{{ evo.selectedRun.value.childRunCount || 0 }}</b></span>
-          <span><small>训练</small><b>{{ evo.selectedRun.value.trainingProgressLabel }}</b></span>
-          <span><small>对战</small><b>{{ evo.selectedRun.value.battleProgressLabel }}</b></span>
-        </div>
-        <div v-else class="evo-kpis">
-          <span><small>父版本</small><b>{{ evo.selectedRun.value.parentShort }}</b></span>
-          <span><small>候选版本</small><b>{{ evo.selectedRun.value.candidateShort }}</b></span>
-          <span><small>发布阶段</small><b>{{ evo.selectedRun.value.publishedReleaseStageLabel || '—' }}</b></span>
-          <span><small>训练</small><b>{{ evo.selectedRun.value.trainingGameCompleted || 0 }} / {{ evo.selectedRun.value.trainingGameRequested || 0 }}</b></span>
-          <span><small>对战</small><b>{{ evo.selectedRun.value.battleGameCompleted || 0 }} / {{ evo.selectedRun.value.battleGameRequested || 0 }}</b></span>
-        </div>
-
         <div class="evo-config-grid">
-          <span><small>类型</small><b>{{ evo.selectedRun.value.entityLabel }}</b></span>
-          <span><small>最大天数</small><b>{{ evo.selectedRun.value.config?.max_days || 5 }}</b></span>
           <span><small>发布策略</small><b>{{ evo.selectedRun.value.config?.auto_promote ? '评审门禁' : '仅训练记录' }}</b></span>
-          <span><small>阶段</small><b>{{ stageLabel(evo) }}</b></span>
-          <span><small>推荐</small><b>{{ selectedIsBatch ? '—' : recommendationLabel(evo.selectedRun.value) }}</b></span>
           <span><small>开始</small><b>{{ timeLabel(evo.selectedRun.value.startedLabel) }}</b></span>
           <span><small>心跳</small><b>{{ timeLabel(evo.selectedRun.value.heartbeatLabel) }}</b></span>
           <span><small>结束</small><b>{{ timeLabel(evo.selectedRun.value.finishedLabel) }}</b></span>
           <span><small>变更</small><b>{{ selectedIsBatch ? '进入子运行查看' : `${evo.selectedRun.value.proposalCount || 0} 提案 · ${evo.selectedRun.value.diffCount || 0} diff` }}</b></span>
           <span><small>诊断</small><b>{{ evo.selectedRun.value.diagnosticCount || 0 }} 诊断 · {{ evo.selectedRun.value.warningCount || 0 }} 警告 · {{ evo.selectedRun.value.errorCount || 0 }} 错误</b></span>
         </div>
-
-        <div class="evo-review-actions">
-          <button
-            type="button"
-            class="evo-action"
-            :disabled="!selectedCanPromote || Boolean(evo.actionLoading.value)"
-            :aria-describedby="selectedPromoteDisabledReason ? 'evo-promote-disabled-reason' : undefined"
-            :title="selectedPromoteDisabledReason || undefined"
-            @click="evo.runAction(evo.selectedRunId.value, 'promote')"
-          >
-            <span aria-hidden="true">&#8593;</span> 晋升
-          </button>
-          <button
-            type="button"
-            class="evo-action danger"
-            :disabled="!selectedCanReview || Boolean(evo.actionLoading.value)"
-            @click="evo.runAction(evo.selectedRunId.value, 'reject')"
-          >
-            <span aria-hidden="true">&#215;</span> 拒绝
-          </button>
-          <button
-            type="button"
-            class="evo-ghost-action danger"
-            :disabled="!selectedCanTerminate || Boolean(evo.actionLoading.value)"
-            @click="evo.runAction(evo.selectedRunId.value, 'terminate')"
-          >
-            终止
-          </button>
-        </div>
-        <p
-          v-if="selectedPromoteDisabledReason"
-          id="evo-promote-disabled-reason"
-          class="evo-action-reason"
-        >
-          {{ selectedPromoteDisabledReason }}
-        </p>
 
         <div v-if="selectedIsBatch" class="evo-batch-detail">
           <h3>批量子运行</h3>
