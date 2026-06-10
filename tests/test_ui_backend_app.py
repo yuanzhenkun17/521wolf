@@ -310,6 +310,7 @@ class _FakeGamePersistence:
         self.decision_sink = _FakePersistenceSink()
         self.saved_results: list[dict[str, Any]] = []
         self.closed = False
+        self.close_calls = 0
         self.instances.append(self)
 
     def create_event_sink(self) -> _FakePersistenceSink:
@@ -322,6 +323,7 @@ class _FakeGamePersistence:
         self.saved_results.append(kwargs)
 
     def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
 
 
@@ -512,7 +514,10 @@ def _fake_ui_pg_provider(monkeypatch: pytest.MonkeyPatch) -> _UiFakeStorageProvi
     import ui.backend.game_store as ui_backend_game_store
 
     provider = _UiFakeStorageProvider()
-    provider_from_env = lambda *, paths=None: provider
+
+    def provider_from_env(*, paths=None):
+        return provider
+
     monkeypatch.setattr(provider_mod, "storage_provider_from_env", provider_from_env)
     monkeypatch.setattr(ui_backend_game_store, "storage_provider_from_env", provider_from_env)
     return provider
@@ -3929,6 +3934,136 @@ def test_game_live_sse_resumes_until_terminal_and_unsubscribes(tmp_path: Path) -
     assert "id: 3" in response.text
     assert "event: done" in response.text
     assert not sink.subscribers
+
+
+def _live_session_for_persistence_test(
+    game_id: str,
+    *,
+    status: str = "running",
+    event_sink: BroadcastEventSink | None = None,
+) -> LiveGameSession:
+    engine = SimpleNamespace(
+        logger=SimpleNamespace(entries=[]),
+        state=SimpleNamespace(
+            players={},
+            phase="night",
+            day=1,
+            sheriff_id=None,
+            winner=None,
+        ),
+    )
+    session = LiveGameSession(
+        game_id=game_id,
+        request=GameStartRequest(max_days=1),
+        engine=engine,
+        recorder=SimpleNamespace(records=[]),
+        human=None,
+        event_sink=event_sink or BroadcastEventSink(),
+    )
+    session.status = status
+    if status in {"completed", "cancelled", "interrupted", "failed"}:
+        session.finished_at = "2026-01-01T00:00:00+08:00"
+    return session
+
+
+def test_live_terminal_persistence_closes_once_and_skips_duplicate_write(tmp_path: Path) -> None:
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        session = _live_session_for_persistence_test("live_terminal_once", status="completed")
+        persistence = _FakeGamePersistence()
+        setattr(session, "persistence", persistence)
+        snapshot = session.snapshot()
+
+        store.persist_live_session(session, snapshot)
+        store.persist_live_session(session, snapshot)
+
+    assert session.files_written is True
+    assert len(persistence.saved_results) == 1
+    assert persistence.closed is True
+    assert persistence.close_calls == 1
+
+
+def test_live_terminal_persistence_failure_rolls_back_files_written_for_retry(tmp_path: Path) -> None:
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        session = _live_session_for_persistence_test("live_terminal_retry", status="completed")
+        persistence = _FakeGamePersistence()
+        setattr(session, "persistence", persistence)
+        snapshot = session.snapshot()
+
+        def fail_save(**_kwargs: Any) -> None:
+            raise RuntimeError("pg unavailable")
+
+        persistence.save_game_result = fail_save
+        with pytest.raises(RuntimeError, match="pg unavailable"):
+            store.persist_live_session(session, snapshot)
+
+        assert session.files_written is False
+        assert persistence.closed is False
+        assert persistence.close_calls == 0
+
+        def record_save(**kwargs: Any) -> None:
+            persistence.saved_results.append(kwargs)
+
+        persistence.save_game_result = record_save
+        store.persist_live_session(session, snapshot)
+
+    assert session.files_written is True
+    assert len(persistence.saved_results) == 1
+    assert persistence.closed is True
+    assert persistence.close_calls == 1
+
+
+def test_stop_live_game_cancels_closes_and_persists_terminal_session_without_task(tmp_path: Path) -> None:
+    game_id = "live_stop_persist"
+    sink = BroadcastEventSink()
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        session = _live_session_for_persistence_test(game_id, event_sink=sink)
+        persistence = _FakeGamePersistence()
+        setattr(session, "persistence", persistence)
+        store.live_sessions[game_id] = session
+
+        stopped = store.stop_game(game_id)
+
+    assert stopped["status"] == "cancelled"
+    assert stopped["stop_requested"] is True
+    assert stopped["cancelled"] is True
+    assert stopped["error"] == "cancelled"
+    assert sink.closed is True
+    assert session.files_written is True
+    assert len(persistence.saved_results) == 1
+    assert persistence.saved_results[0]["final_state"]["status"] == "cancelled"
+    assert persistence.closed is True
+    assert persistence.close_calls == 1
+
+
+def test_live_watchdog_persistence_failure_rolls_back_and_cleans_session(tmp_path: Path) -> None:
+    game_id = "live_watchdog_persist_failure"
+    sink = BroadcastEventSink()
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        session = _live_session_for_persistence_test(game_id, event_sink=sink)
+        session.last_heartbeat_at = "2026-01-01T00:00:00+08:00"
+        persistence = _FakeGamePersistence()
+
+        def fail_save(**_kwargs: Any) -> None:
+            raise RuntimeError("pg down")
+
+        persistence.save_game_result = fail_save
+        setattr(session, "persistence", persistence)
+        store.live_sessions[game_id] = session
+
+        interrupted = store.check_live_game_watchdog(timeout_seconds=0.001)
+
+    assert len(interrupted) == 1
+    assert interrupted[0]["status"] == "interrupted"
+    assert store.games[game_id]["status"] == "interrupted"
+    assert game_id not in store.live_sessions
+    assert sink.closed is True
+    assert session.files_written is False
+    assert persistence.closed is False
+    assert persistence.close_calls == 0
 
 
 def test_live_game_watchdog_marks_stale_sessions_interrupted(tmp_path: Path) -> None:
