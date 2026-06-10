@@ -201,3 +201,44 @@ def test_evolution_state_gateway_runtime_state_close_error_is_best_effort(
     EvolutionStateGateway(provider=_FakeProvider()).save_runtime_state(_run("run-close"))
 
     assert calls == [("save_run", "run-close")]
+
+
+def test_evolution_state_gateway_get_trust_bundle_uses_store_and_closes(
+    monkeypatch: Any,
+) -> None:
+    import storage.evolution.run_repo as run_repo
+    from storage.evolution.state_gateway import EvolutionStateGateway
+
+    opened: list["_FakeConn"] = []
+    calls: list[tuple[str, str]] = []
+
+    class _FakeConn:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _FakeProvider:
+        def open_evolution_connection(self) -> _FakeConn:
+            conn = _FakeConn()
+            opened.append(conn)
+            return conn
+
+    class _FakeEvolutionStore:
+        def __init__(self, conn: _FakeConn) -> None:
+            self._conn = conn
+
+        def get_trust_bundle(self, run_id: str) -> dict[str, Any] | None:
+            assert self._conn.closed is False
+            calls.append(("get_trust_bundle", run_id))
+            return {"kind": "evolution_trust_bundle", "run_id": run_id}
+
+    monkeypatch.setattr(run_repo, "EvolutionStore", _FakeEvolutionStore)
+
+    payload = EvolutionStateGateway(provider=_FakeProvider()).get_trust_bundle("run-1")
+
+    assert payload == {"kind": "evolution_trust_bundle", "run_id": "run-1"}
+    assert calls == [("get_trust_bundle", "run-1")]
+    assert len(opened) == 1
+    assert opened[0].closed is True

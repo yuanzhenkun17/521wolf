@@ -49,6 +49,13 @@ class EvolutionStateGateway:
         finally:
             conn.close()
 
+    def get_trust_bundle(self, run_id_or_bundle_id: str) -> dict[str, Any] | None:
+        conn = self._open_connection()
+        try:
+            return self._store(conn).get_trust_bundle(run_id_or_bundle_id)
+        finally:
+            self._close_best_effort(conn)
+
     def list_runs(
         self,
         *,

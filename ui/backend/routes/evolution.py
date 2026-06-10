@@ -138,23 +138,14 @@ def _trust_bundle_payload(store: Any, run_id: str) -> dict[str, Any]:
     if run_id in store.evolution_batches:
         raise HTTPException(status_code=400, detail="batch does not support trust bundle; select a child run")
     run = store.evolution_runs.get(run_id)
-    conn = None
     try:
-        from storage.evolution.run_repo import EvolutionStore
-        from storage.provider import storage_provider_from_env
+        from storage.evolution.state_gateway import EvolutionStateGateway
 
-        conn = storage_provider_from_env(paths=getattr(store, "paths", None)).open_evolution_connection()
-        payload = EvolutionStore(conn).get_trust_bundle(run_id)
+        payload = EvolutionStateGateway(paths=getattr(store, "paths", None)).get_trust_bundle(run_id)
         if isinstance(payload, dict):
             return payload
     except Exception as exc:  # noqa: BLE001 - API falls back to in-memory run artifact
         _log.debug("failed to load trust bundle from PostgreSQL for %s: %s", run_id, exc)
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
-                _log.debug("failed to close trust bundle connection for %s: %s", run_id, exc)
 
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
