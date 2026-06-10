@@ -68,7 +68,35 @@ def open_wolf_connection(
     return storage_provider_from_env(paths=paths).open_wolf_connection()
 
 
+def open_registry_connection(
+    provider: StorageProvider | None = None,
+    *,
+    paths: Any | None = None,
+) -> StorageConnection:
+    """Open a registry-domain storage connection through the active provider."""
+    if provider is not None:
+        return provider.open_registry_connection()
+    if paths is None:
+        return storage_provider_from_env().open_registry_connection()
+    return storage_provider_from_env(paths=paths).open_registry_connection()
+
+
+def open_evolution_connection(
+    provider: StorageProvider | None = None,
+    *,
+    paths: Any | None = None,
+) -> StorageConnection:
+    """Open an evolution-domain storage connection through the active provider."""
+    if provider is not None:
+        return provider.open_evolution_connection()
+    if paths is None:
+        return storage_provider_from_env().open_evolution_connection()
+    return storage_provider_from_env(paths=paths).open_evolution_connection()
+
+
 __all__ = [
+    "open_evolution_connection",
+    "open_registry_connection",
     "open_wolf_connection",
     "PostgresStorageProvider",
     "StorageProvider",

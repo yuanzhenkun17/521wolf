@@ -6,7 +6,13 @@ from typing import Any
 
 import pytest
 
-from storage.provider import PostgresStorageProvider, open_wolf_connection, storage_provider_from_env
+from storage.provider import (
+    PostgresStorageProvider,
+    open_evolution_connection,
+    open_registry_connection,
+    open_wolf_connection,
+    storage_provider_from_env,
+)
 
 
 class _FakeConn:
@@ -114,6 +120,120 @@ def test_open_wolf_connection_preserves_no_arg_provider_lookup(
     monkeypatch.setattr(storage.provider, "storage_provider_from_env", lambda: provider)
 
     assert open_wolf_connection() is provider.conn
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "domain"),
+    [
+        ("open_registry_connection", "registry"),
+        ("open_evolution_connection", "evolution"),
+    ],
+)
+def test_domain_connection_helpers_use_injected_provider_without_env_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    helper_name: str,
+    domain: str,
+) -> None:
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.registry_conn = _FakeConn()
+            self.evolution_conn = _FakeConn()
+            self.opened: list[str] = []
+
+        def open_registry_connection(self) -> _FakeConn:
+            self.opened.append("registry")
+            return self.registry_conn
+
+        def open_evolution_connection(self) -> _FakeConn:
+            self.opened.append("evolution")
+            return self.evolution_conn
+
+    def fail_provider_from_env(**_: Any) -> _FakeProvider:
+        raise AssertionError("provider should not be resolved when injected")
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", fail_provider_from_env)
+    provider = _FakeProvider()
+    helper = getattr(storage.provider, helper_name)
+
+    conn = helper(provider)
+
+    assert conn is getattr(provider, f"{domain}_conn")
+    assert provider.opened == [domain]
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "domain"),
+    [
+        ("open_registry_connection", "registry"),
+        ("open_evolution_connection", "evolution"),
+    ],
+)
+def test_domain_connection_helpers_preserve_no_arg_provider_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    helper_name: str,
+    domain: str,
+) -> None:
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.registry_conn = _FakeConn()
+            self.evolution_conn = _FakeConn()
+
+        def open_registry_connection(self) -> _FakeConn:
+            return self.registry_conn
+
+        def open_evolution_connection(self) -> _FakeConn:
+            return self.evolution_conn
+
+    provider = _FakeProvider()
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", lambda: provider)
+    helper = getattr(storage.provider, helper_name)
+
+    assert helper() is getattr(provider, f"{domain}_conn")
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "domain"),
+    [
+        ("open_registry_connection", "registry"),
+        ("open_evolution_connection", "evolution"),
+    ],
+)
+def test_domain_connection_helpers_forward_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    helper_name: str,
+    domain: str,
+) -> None:
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.registry_conn = _FakeConn()
+            self.evolution_conn = _FakeConn()
+
+        def open_registry_connection(self) -> _FakeConn:
+            return self.registry_conn
+
+        def open_evolution_connection(self) -> _FakeConn:
+            return self.evolution_conn
+
+    provider = _FakeProvider()
+    seen_paths: list[Any] = []
+
+    def provider_from_env(*, paths: Any | None = None) -> _FakeProvider:
+        seen_paths.append(paths)
+        return provider
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", provider_from_env)
+    helper = getattr(storage.provider, helper_name)
+    paths = SimpleNamespace(root="ignored")
+
+    assert helper(paths=paths) is getattr(provider, f"{domain}_conn")
+    assert seen_paths == [paths]
 
 
 def test_game_run_service_uses_postgres_provider_from_env(

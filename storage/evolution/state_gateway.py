@@ -72,13 +72,7 @@ class EvolutionStateGateway:
     def _open_connection(self) -> Any:
         import storage.provider as provider_mod
 
-        if self._provider is not None:
-            provider = self._provider
-        elif self._paths is None:
-            provider = provider_mod.storage_provider_from_env()
-        else:
-            provider = provider_mod.storage_provider_from_env(paths=self._paths)
-        return provider.open_evolution_connection()
+        return provider_mod.open_evolution_connection(self._provider, paths=self._paths)
 
     @staticmethod
     def _store(conn: Any) -> Any:

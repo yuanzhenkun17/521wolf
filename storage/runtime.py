@@ -493,11 +493,9 @@ class GamePersistence:
     def _open_evolution_connection(self) -> StorageConnection:
         if self._evolution_conn is not None:
             return self._evolution_conn
-        if self._provider is not None:
-            self._evolution_conn = self._provider.open_evolution_connection()
-            self._owns_evolution_conn = True
-            return self._evolution_conn
-        self._evolution_conn = storage_provider_from_env().open_evolution_connection()
+        import storage.provider as provider_mod
+
+        self._evolution_conn = provider_mod.open_evolution_connection(self._provider)
         self._owns_evolution_conn = True
         return self._evolution_conn
 

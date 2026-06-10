@@ -27,9 +27,8 @@ def version_registry_from_env(
     import storage.provider as provider_mod
     from app.lib.version import PostgresVersionRegistry
 
-    provider = provider_mod.storage_provider_from_env(paths=paths)
     return PostgresVersionRegistry(
-        provider.open_registry_connection(),
+        provider_mod.open_registry_connection(paths=paths),
         registry_dir=resolve_registry_dir(registry_dir, paths),
         owns_conn=True,
     )
