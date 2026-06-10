@@ -136,7 +136,7 @@ const rawLogsForFocus = computed(() => props.historyLogs.filter((log) => rowMatc
 const filteredRawLogs = computed(() =>
   rawLogsForFocus.value.filter((log) => rawLogFilter.value === 'all' || rawLogKind(log) === rawLogFilter.value)
 )
-const visibleRawLogs = computed(() => filteredRawLogs.value.slice(0, 180))
+const visibleRawLogs = computed(() => filteredRawLogs.value)
 const rawLogFilters = computed(() =>
   RAW_LOG_FILTERS.map((item) => ({
     ...item,
