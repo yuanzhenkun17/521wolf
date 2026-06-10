@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed } from 'vue'
 
 const props = defineProps({
@@ -12,7 +11,15 @@ const props = defineProps({
   compact: Boolean
 })
 
-const emit = defineEmits(['return-to-history', 'exit-replay', 'play', 'pause', 'step', 'seek', 'speed'])
+const emit = defineEmits<{
+  'return-to-history': []
+  'exit-replay': []
+  play: []
+  pause: []
+  step: [delta: number]
+  seek: [cursor: number]
+  speed: [speed: number]
+}>()
 
 const speeds = [0.5, 1, 2, 4]
 const progressStyle = computed(() => {
@@ -21,6 +28,10 @@ const progressStyle = computed(() => {
   const progress = total > 0 ? (cursor / total) * 100 : 0
   return { '--replay-progress': `${progress}%` }
 })
+
+function seekFromInput(event: Event) {
+  emit('seek', Number((event.target as HTMLInputElement | null)?.value ?? 0))
+}
 </script>
 
 <template>
@@ -60,7 +71,7 @@ const progressStyle = computed(() => {
         :max="Math.max(total, 0)"
         :value="cursor"
         :disabled="total <= 0"
-        @input="emit('seek', Number($event.target.value))"
+        @input="seekFromInput"
       />
 
       <div class="replay-speed" aria-label="倍速">

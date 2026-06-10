@@ -1,36 +1,71 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+type PlayerId = string | number
+
+interface PendingHumanAction {
+  player_id?: PlayerId
+}
+
+interface ActionPanelGame {
+  waiting_for?: string
+  pending_human_action?: PendingHumanAction | null
+  human_player_id?: PlayerId
+}
+
+interface ActionPanelPlayer {
+  id?: PlayerId
+  seat?: PlayerId
+  displaySeat?: PlayerId
+  alive?: boolean
+  role?: unknown
+  role_hint?: string
+}
+
+interface SkillState {
+  witch_antidote_used?: boolean
+  witch_poison_used?: boolean
+  white_wolf_burst_used?: boolean
+}
+
+interface PendingChoiceOption {
+  value: PlayerId
+  label: string
+  requiresTarget?: boolean
+}
+
+type PlayerFormatter = (player: ActionPanelPlayer) => string
+type RoleIconImage = (player: ActionPanelPlayer) => string
 
 const props = defineProps({
-  game: Object,
+  game: Object as PropType<ActionPanelGame | null>,
   loading: Boolean,
   isWatch: Boolean,
   isReplayMode: Boolean,
   roleAssignmentComplete: Boolean,
-  humanPlayer: Object,
+  humanPlayer: Object as PropType<ActionPanelPlayer | null>,
   roleName: { type: String, default: '' },
-  skillState: { type: Object, default: () => ({}) },
+  skillState: { type: Object as PropType<SkillState>, default: () => ({}) },
   isHumanWitch: Boolean,
   isHumanWhiteWolf: Boolean,
   canUseWitchAntidote: Boolean,
   canUseWitchPoison: Boolean,
   canWhiteWolfBurst: Boolean,
   pendingActionType: { type: String, default: '' },
-  pendingChoiceOptions: { type: Array, default: () => [] },
+  pendingChoiceOptions: { type: Array as PropType<PendingChoiceOption[]>, default: () => [] },
   actionInstruction: { type: String, default: '' },
   speechCountdownText: { type: String, default: '' },
-  canVotePlayers: { type: Array, default: () => [] },
-  actionCandidates: { type: Array, default: () => [] },
-  whiteWolfTargets: { type: Array, default: () => [] },
+  canVotePlayers: { type: Array as PropType<ActionPanelPlayer[]>, default: () => [] },
+  actionCandidates: { type: Array as PropType<ActionPanelPlayer[]>, default: () => [] },
+  whiteWolfTargets: { type: Array as PropType<ActionPanelPlayer[]>, default: () => [] },
   needsTarget: Boolean,
-  playerLabel: Function,
-  roleIconImage: Function,
+  playerLabel: Function as PropType<PlayerFormatter>,
+  roleIconImage: Function as PropType<RoleIconImage>,
   speech: { type: String, default: '' },
   witchChoice: { type: String, default: 'skip' },
   actionChoice: { type: String, default: '' },
   burstArmed: Boolean,
-  actionTarget: [String, Number, null]
+  actionTarget: [String, Number, null] as PropType<PlayerId | null>
 })
 
 const emit = defineEmits([
@@ -80,17 +115,17 @@ const canSubmitPanelAction = computed(() => {
   return true
 })
 
-function optionValue(value) {
+function optionValue(value: PlayerId | null | undefined) {
   if (value === '' || value == null) return null
   const numeric = Number(value)
   return Number.isNaN(numeric) ? value : numeric
 }
 
-function label(player) {
+function label(player: ActionPanelPlayer) {
   return props.playerLabel ? props.playerLabel(player) : `${player?.seat || player?.id || ''}号`
 }
 
-function targetLabel(player) {
+function targetLabel(player: ActionPanelPlayer) {
   const fallback = player?.displaySeat ?? player?.seat ?? player?.id
   const raw = props.playerLabel ? props.playerLabel(player) : (fallback == null || fallback === '' ? '玩家' : `${fallback}号`)
   const text = String(raw || '').trim()
@@ -99,26 +134,26 @@ function targetLabel(player) {
   return fallback == null || fallback === '' ? '玩家' : `${fallback}号`
 }
 
-function roleImage(player) {
+function roleImage(player: ActionPanelPlayer) {
   return props.roleIconImage ? props.roleIconImage(player) : ''
 }
 
-function setWitchChoice(choice) {
+function setWitchChoice(choice: string) {
   emit('update:witchChoice', choice)
   if (choice !== 'poison') emit('update:actionTarget', null)
 }
 
-function setActionChoice(choice) {
+function setActionChoice(choice: PlayerId) {
   emit('update:actionChoice', choice)
   const option = props.pendingChoiceOptions.find((item) => item.value === choice)
   if (!option?.requiresTarget) emit('update:actionTarget', null)
 }
 
-function setActionTarget(value) {
+function setActionTarget(value: PlayerId | null) {
   emit('update:actionTarget', optionValue(value))
 }
 
-function hoverTarget(value) {
+function hoverTarget(value: PlayerId | null) {
   emit('target-hover', value == null ? null : optionValue(value))
 }
 
@@ -138,6 +173,10 @@ function submitTargetAction() {
     targetId: props.actionTarget,
     choice: props.pendingActionType === 'witch_act' ? props.witchChoice : (props.actionChoice || null)
   })
+}
+
+function speechInputValue(event: Event) {
+  return (event.target as HTMLTextAreaElement | null)?.value ?? ''
 }
 </script>
 
@@ -248,7 +287,7 @@ function submitTargetAction() {
           :value="speech"
           :disabled="loading"
           placeholder="输入你的发言..."
-          @input="emit('update:speech', $event.target.value)"
+          @input="emit('update:speech', speechInputValue($event))"
         ></textarea>
         <button class="primary" :disabled="loading || waitingFor !== 'speech'">发送</button>
       </form>

@@ -1,50 +1,109 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { displayWinnerLabel } from './history/historyDisplay.ts'
 
+type GameId = string | number
+type DateValue = string | number | Date
+type SourceOptionKey = 'all' | 'normal' | 'benchmark' | 'evolution'
+type CountMap = Record<string, number | string | null | undefined>
+
+type HistoryGameConfig = {
+  seed?: unknown
+  max_days?: unknown
+  log_time?: DateValue
+  finished_at?: DateValue
+  started_at?: DateValue
+  log_source?: string
+  log_source_label?: string
+  source_phase_label?: string
+  [key: string]: unknown
+}
+
+type HistoryGame = {
+  game_id: GameId
+  config?: HistoryGameConfig | null
+  seed?: unknown
+  max_days?: unknown
+  log_time?: DateValue
+  finished_at?: DateValue
+  started_at?: DateValue
+  log_source?: string
+  log_source_label?: string
+  source_phase_label?: string
+  mode?: string
+  winner?: unknown
+  status?: string
+  [key: string]: unknown
+}
+
+type HistoryPagination = {
+  total?: number | string | null
+  limit?: number | string | null
+  offset?: number | string | null
+  returned?: number | string | null
+  [key: string]: unknown
+}
+
+type HistoryFacets = {
+  source?: CountMap
+  [key: string]: unknown
+}
+
+type HistoryNotice = {
+  message?: unknown
+  type?: unknown
+  [key: string]: unknown
+}
+
 const props = defineProps({
-  games: { type: Array, default: () => [] },
-  selectedGameId: [String, Number, null],
+  games: { type: Array as PropType<HistoryGame[]>, default: () => [] },
+  selectedGameId: { type: [String, Number, null] as unknown as PropType<GameId | null>, default: null },
   loading: Boolean,
   loadingMore: Boolean,
   hasMore: Boolean,
   sourceFilter: { type: String, default: 'all' },
-  pagination: { type: Object, default: () => ({}) },
-  counts: { type: Object, default: () => ({}) },
-  facets: { type: Object, default: () => ({}) },
-  notice: { type: Object, default: () => ({}) }
+  pagination: { type: Object as PropType<HistoryPagination>, default: () => ({}) },
+  counts: { type: Object as PropType<CountMap>, default: () => ({}) },
+  facets: { type: Object as PropType<HistoryFacets>, default: () => ({}) },
+  notice: { type: Object as PropType<HistoryNotice>, default: () => ({}) }
 })
 
-const emit = defineEmits(['select-game', 'replay-game', 'delete-game', 'change-source', 'change-page', 'load-more'])
-const SOURCE_OPTIONS = [
+const emit = defineEmits<{
+  'select-game': [gameId: GameId]
+  'replay-game': [game: HistoryGame]
+  'delete-game': [game: HistoryGame]
+  'change-source': [source: string]
+  'change-page': [page: number]
+  'load-more': []
+}>()
+const SOURCE_OPTIONS: Array<{ key: SourceOptionKey, label: string }> = [
   { key: 'all', label: '全部' },
   { key: 'normal', label: '观战/玩家' },
   { key: 'benchmark', label: '批量评测' },
   { key: 'evolution', label: '自进化' }
 ]
 
-function gameConfig(game) {
+function gameConfig(game: HistoryGame | null | undefined): HistoryGameConfig {
   return game?.config && typeof game.config === 'object' ? game.config : {}
 }
 
-function gameSeed(game) {
+function gameSeed(game: HistoryGame) {
   const config = gameConfig(game)
   const seed = game?.seed ?? config.seed
   return seed == null || seed === '' ? '随机' : seed
 }
 
-function gameMaxDays(game) {
+function gameMaxDays(game: HistoryGame) {
   const config = gameConfig(game)
   return game?.max_days ?? config.max_days ?? 20
 }
 
-function gameTimeValue(game) {
+function gameTimeValue(game: HistoryGame): DateValue | '' {
   const config = gameConfig(game)
   return game?.log_time || game?.finished_at || game?.started_at || config.log_time || config.finished_at || config.started_at || ''
 }
 
-function gameDate(game) {
+function gameDate(game: HistoryGame) {
   const value = gameTimeValue(game)
   if (!value) return '时间未知'
   const date = new Date(value)
@@ -52,7 +111,7 @@ function gameDate(game) {
   const now = new Date()
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  const dayDiff = Math.round((startOfToday - startOfDate) / 86400000)
+  const dayDiff = Math.round((startOfToday.getTime() - startOfDate.getTime()) / 86400000)
   const time = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
   if (dayDiff === 0) return `今天 ${time}`
   if (dayDiff === 1) return `昨天 ${time}`
@@ -62,46 +121,46 @@ function gameDate(game) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
 }
 
-function winnerLabel(winner) {
+function winnerLabel(winner: unknown) {
   return displayWinnerLabel(winner)
 }
 
-function gameTitle(index) {
+function gameTitle(index: number) {
   return `对局${pageStartIndex.value + index}`
 }
 
-function sourceKey(game) {
+function sourceKey(game: HistoryGame) {
   return game?.log_source || gameConfig(game).log_source || 'normal'
 }
 
-function sourceLabel(game) {
+function sourceLabel(game: HistoryGame) {
   if (sourceKey(game) === 'normal') return modeLabel(game)
   return game?.log_source_label || gameConfig(game).log_source_label || SOURCE_OPTIONS.find((item) => item.key === sourceKey(game))?.label || '对局'
 }
 
-function sourceDetail(game) {
+function sourceDetail(game: HistoryGame) {
   if (sourceKey(game) === 'normal') return '历史记录'
   return game?.source_phase_label || gameConfig(game).source_phase_label || sourceLabel(game)
 }
 
-function isEvidenceGame(game) {
+function isEvidenceGame(game: HistoryGame) {
   return sourceKey(game) !== 'normal'
 }
 
-function deleteTitle(game) {
+function deleteTitle(game: HistoryGame) {
   if (!isEvidenceGame(game)) return '删除对局'
   return `${sourceLabel(game)}会作为证据资产保留，普通删除不可用`
 }
 
-function modeLabel(game) {
+function modeLabel(game: HistoryGame) {
   return game?.mode === 'watch' ? '观战局' : '玩家局'
 }
 
-function modeClass(game) {
+function modeClass(game: HistoryGame) {
   return game?.mode === 'watch' ? 'watch' : 'play'
 }
 
-function outcomeLabel(game) {
+function outcomeLabel(game: HistoryGame) {
   if (game?.winner) return `${winnerLabel(game.winner)}获胜`
   if (game?.status === 'running') return '进行中'
   return '未结束'
@@ -163,14 +222,14 @@ const noticeType = computed(() => {
   return ['success', 'warning', 'error'].includes(type) ? type : 'info'
 })
 
-function changePage(page) {
+function changePage(page: number) {
   if (props.loading || props.loadingMore) return
   const target = Math.max(1, Math.min(Number(page) || 1, totalPages.value))
   if (target === currentPage.value) return
   emit('change-page', target)
 }
 
-function selectSource(source) {
+function selectSource(source: string) {
   if (source === props.sourceFilter || props.loading) return
   emit('change-source', source)
 }

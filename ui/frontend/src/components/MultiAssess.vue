@@ -1,19 +1,46 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed, ref } from 'vue'
+import { computed, ref, type PropType } from 'vue'
 import { displayRoleLabel } from './history/historyDisplay.ts'
 
+type PlayerId = string | number
+
+interface AssessmentPlayer {
+  id: PlayerId
+  seat?: PlayerId
+  role?: unknown
+  role_hint?: string
+}
+
+interface AssessmentScore {
+  player: AssessmentPlayer
+  score?: number
+  speech?: number
+  vote?: number
+  skill?: number
+  logic?: number
+  team?: number
+  role_score?: number
+  [key: string]: unknown
+}
+
+interface AssessmentDimension {
+  key: string
+  label: string
+}
+
+type RoleIconImage = (player: AssessmentPlayer) => string
+
 const props = defineProps({
-  scores: { type: Array, default: () => [] },
+  scores: { type: Array as PropType<AssessmentScore[]>, default: () => [] },
   dimension: { type: String, default: 'speech' },
-  roleIconImage: Function,
+  roleIconImage: Function as PropType<RoleIconImage>,
   compact: Boolean,
   selectedPlayerId: [String, Number, null]
 })
 
 const emit = defineEmits(['update:dimension', 'select-player'])
 
-const dimensions = [
+const dimensions: AssessmentDimension[] = [
   { key: 'speech', label: '发言' },
   { key: 'vote', label: '投票' },
   { key: 'skill', label: '技能' },
@@ -30,25 +57,25 @@ const viewMode = ref('bar')
 const radarPlayerIndex = ref(0)
 const activeViewMode = computed(() => viewMode.value)
 
-function roleImage(player) {
+function roleImage(player: AssessmentPlayer) {
   return props.roleIconImage ? props.roleIconImage(player) : ''
 }
 
-function roleText(player) {
+function roleText(player: AssessmentPlayer | undefined) {
   return displayRoleLabel(player?.role_hint || player?.role || '')
 }
 
-function clampScore(value) {
+function clampScore(value: unknown) {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
   return Math.max(0, Math.min(100, Math.round(number)))
 }
 
-function overallScore(item) {
+function overallScore(item: AssessmentScore) {
   return clampScore(item?.role_score ?? item?.score ?? 0)
 }
 
-function rankBarClass(item) {
+function rankBarClass(item: AssessmentScore) {
   const role = roleText(item?.player)
   if (role.includes('预言')) return 'seer'
   if (role.includes('女巫')) return 'witch'
@@ -59,7 +86,7 @@ function rankBarClass(item) {
   return 'villager'
 }
 
-function metricScore(item, key) {
+function metricScore(item: AssessmentScore | null, key: string) {
   return clampScore(item?.[key] ?? 0)
 }
 
@@ -82,23 +109,23 @@ const compactRankRows = computed(() => {
   return [...topRows.slice(0, 3), radarPlayer.value]
 })
 
-function compactRankNumber(item) {
+function compactRankNumber(item: AssessmentScore) {
   const index = compactRanking.value.findIndex((ranked) => ranked.player?.id === item?.player?.id)
   return index >= 0 ? index + 1 : null
 }
 
-function selectPlayer(item) {
+function selectPlayer(item: AssessmentScore) {
   if (item?.player) emit('select-player', item.player)
 }
 
-function isActiveTab(key) {
+function isActiveTab(key: string | number) {
   if (activeViewMode.value === 'radar') {
     return radarPlayerIndex.value === Number(key)
   }
   return props.dimension === key
 }
 
-function handleTabClick(key) {
+function handleTabClick(key: string | number) {
   if (activeViewMode.value === 'radar') {
     radarPlayerIndex.value = Number(key)
   } else {
@@ -127,13 +154,14 @@ const radarPlayer = computed(() => {
   return props.scores[idx] || null
 })
 
-function radarPoint(index, value, total, cx, cy, radius) {
+function radarPoint(index: number, value: unknown, total: number, cx: number, cy: number, radius: number) {
   const angle = (Math.PI * 2 * index) / total - Math.PI / 2
-  const r = (Math.max(0, Math.min(value, 100)) / 100) * radius
+  const score = clampScore(value)
+  const r = (Math.max(0, Math.min(score, 100)) / 100) * radius
   return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) }
 }
 
-function polygonPoints(values, total, cx, cy, radius) {
+function polygonPoints(values: unknown[], total: number, cx: number, cy: number, radius: number) {
   return values
     .map((v, i) => {
       const p = radarPoint(i, v, total, cx, cy, radius)
@@ -142,7 +170,7 @@ function polygonPoints(values, total, cx, cy, radius) {
     .join(' ')
 }
 
-function gridPolygonPoints(level, total, cx, cy, radius) {
+function gridPolygonPoints(level: number, total: number, cx: number, cy: number, radius: number) {
   return Array.from({ length: total })
     .map((_, i) => {
       const p = radarPoint(i, level * 100, total, cx, cy, radius)
@@ -151,7 +179,7 @@ function gridPolygonPoints(level, total, cx, cy, radius) {
     .join(' ')
 }
 
-function radarLabelAnchor(index, total) {
+function radarLabelAnchor(index: number, total: number) {
   if (total <= 1) return 'middle'
   const x = Math.cos((Math.PI * 2 * index) / total - Math.PI / 2)
   if (x > 0.15) return 'start'
@@ -159,14 +187,14 @@ function radarLabelAnchor(index, total) {
   return 'middle'
 }
 
-function radarLabelDy(index, total) {
+function radarLabelDy(index: number, total: number) {
   const y = Math.sin((Math.PI * 2 * index) / total - Math.PI / 2)
   if (y < -0.5) return '-0.5em'
   if (y > 0.5) return '1.2em'
   return '0.35em'
 }
 
-function radarScoreForDim(key) {
+function radarScoreForDim(key: string) {
   if (!radarPlayer.value) return 0
   return radarPlayer.value[key] ?? 0
 }
