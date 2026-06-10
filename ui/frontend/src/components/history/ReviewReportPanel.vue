@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { buildAssessmentScores } from '../../composables/assessmentScores.ts'
 import JudgeEvidencePanel from './JudgeEvidencePanel.vue'
@@ -11,6 +10,8 @@ import {
   displayWinnerLabel,
   normalizeHistoryDisplayText
 } from './historyDisplay.ts'
+
+type LooseRecord = Record<string, any>
 
 const VoteFlowSankey = defineAsyncComponent({
   loader: () => import('./VoteFlowSankey.vue'),
@@ -139,11 +140,14 @@ const reviewPlayerScores = computed(() => {
   }
   if (Array.isArray(raw)) return raw
   if (raw && typeof raw === 'object') {
-    return Object.entries(raw).map(([seat, score]) => ({
-      player_seat: score?.player_seat ?? score?.player_id ?? score?.seat ?? seat,
-      ...(score || {}),
-      ...(score?.scores || {})
-    }))
+    return Object.entries(raw).map(([seat, score]) => {
+      const record = score && typeof score === 'object' ? score as LooseRecord : {}
+      return {
+        player_seat: record.player_seat ?? record.player_id ?? record.seat ?? seat,
+        ...record,
+        ...(record.scores || {})
+      }
+    })
   }
   return []
 })
@@ -454,9 +458,11 @@ function buildJudgeEvidenceDetails(item) {
     rubricMisses: fieldRows(item, ['rubric_misses', 'rubric_miss']),
     diagnostics,
     degradedReasons,
-    warnings: decisionJudgeScopedRows('warnings', item)
+    warnings: decisionJudgeScopedRows('warnings', item),
+    total: 0,
+    hasAny: false
   }
-  details.total = Object.values(details).reduce((sum, rows) => (
+  details.total = Object.values(details).reduce<number>((sum, rows) => (
     Array.isArray(rows) ? sum + rows.length : sum
   ), 0)
   details.hasAny = details.total > 0
