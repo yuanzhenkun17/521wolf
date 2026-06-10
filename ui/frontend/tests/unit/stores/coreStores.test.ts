@@ -470,11 +470,15 @@ test('evolution store hydrates workbench shell state and forwards actions', asyn
   const refreshAll = vi.fn().mockResolvedValue('refreshed')
   const selectRole = vi.fn().mockReturnValue('role-selected')
   const selectRun = vi.fn().mockResolvedValue('run-selected')
+  const loadVersionDetail = vi.fn().mockResolvedValue('version-loaded')
+  const openTrustBundleDrawer = vi.fn().mockReturnValue('drawer-opened')
 
   store.hydrateFromWorkbench({
     loading: true,
+    actionLoading: 'start-single',
     error: 'evolution failed',
     notice: { type: 'warning', message: 'stale' },
+    activeTab: 'review',
     roles: ['werewolf'],
     roleRows: [{ key: 'werewolf', label: '狼人' }],
     versionsByRole: {
@@ -486,39 +490,122 @@ test('evolution store hydrates workbench shell state and forwards actions', asyn
         short: 'v1'
       }]
     },
+    leaderboardsByRole: { werewolf: [{ key: 'leader-1' }] },
     runs: [run],
+    batches: [batch],
     runRows: [run, batch],
+    filteredRunRows: [run],
+    visibleRunRows: [run],
+    runPagination: { total: 2, returned: 2 },
+    runLoadingMore: true,
+    runHasMore: true,
+    runFilter: 'wolf',
     selectedRole: 'werewolf',
+    selectedRoleLabel: '狼人',
+    selectedVersion: { version_id: 'v1', short: 'v1' },
+    selectedVersionId: 'v1',
+    selectedVersionDetail: { loading: false, data: { version_id: 'v1' } },
+    evolutionDeepLinkTarget: { panel: 'review', run_id: 'run-1' },
+    trustBundleDrawerOpen: true,
+    trustBundleAudit: { authorityMessage: 'trust ok' },
+    trustBundleAuditLoading: true,
+    trustBundleAuditError: 'trust warning',
+    selectedRoleLeaderboard: [{ key: 'leader-1' }],
     selectedRunId: 'run-1',
     selectedRun: detail,
     selectedRunSummary: { id: 'run-1', statusLabel: '运行中' },
+    selectedDiff: [{ path: 'skill.py' }],
+    selectedDiffData: { skill_changes: [] },
     selectedProposalReview: { source: 'api' },
+    selectedProposalRows: [{ id: 'proposal-1' }],
     selectedGames: { training: [{ id: 'game-1' }] },
+    sampleBuckets: [{ key: 'training', label: '训练' }],
+    selectedGameBucket: 'training',
+    selectedGameId: 'game-1',
+    selectedGameRows: [{ id: 'game-1', bucket: 'training' }],
+    selectedSampleGame: { id: 'game-1', bucket: 'training' },
+    selectedSampleHistoryGameId: 'history-game-1',
+    filteredSampleGameRows: [{ id: 'game-1', bucket: 'training' }],
+    visibleSampleGameRows: [{ id: 'game-1', bucket: 'training' }],
+    sampleGamePagination: { training: { total: 1 } },
+    selectedSamplePagination: { total: 1 },
+    sampleGameHasMore: true,
+    sampleGameLoadingMore: true,
+    sampleGameFilter: 'game',
+    selectedGameDetail: { loading: false, archive: { title: 'sample' } },
+    selectedSampleState: { loading: false, error: '' },
+    selectedSampleBucketError: 'bucket warning',
+    selectedSampleHistoryUnavailableReason: 'history missing',
+    selectedBatchRoles: ['werewolf'],
+    eventLog: [{ type: 'progress' }],
+    form: { training_games: 5, battle_games: 4, max_days: 5 },
     selectedCanPromote: true,
     selectedPromoteDisabledReason: '',
     selectedCanReject: true,
     selectedRejectDisabledReason: '',
     selectedCanTerminate: true,
     selectedTerminateDisabledReason: '',
-    selectedRollbackDisabledReason: '当前运行不可回滚'
+    selectedRollbackDisabledReason: '当前运行不可回滚',
+    baselinePromoteTrustDisabledReason: '缺少信任包'
   })
 
+  assert.equal(store.activeTab, 'review')
   assert.equal(store.loading, true)
+  assert.equal(store.actionLoading, 'start-single')
   assert.equal(store.error, 'evolution failed')
   assert.deepEqual(store.notice, { type: 'warning', message: 'stale' })
   assert.deepEqual(store.roleRows, [{ key: 'werewolf', label: '狼人' }])
+  assert.deepEqual(store.leaderboardsByRole, { werewolf: [{ key: 'leader-1' }] })
+  assert.equal(store.batches.length, 1)
+  assert.deepEqual(store.runPagination, { total: 2, returned: 2 })
+  assert.equal(store.runLoadingMore, true)
+  assert.equal(store.runHasMore, true)
+  assert.equal(store.runFilter, 'wolf')
   assert.equal(store.selectedRole, 'werewolf')
+  assert.equal(store.selectedRoleLabel, '狼人')
+  assert.deepEqual(store.selectedVersion, { version_id: 'v1', short: 'v1' })
+  assert.equal(store.selectedVersionId, 'v1')
+  assert.deepEqual(store.selectedVersionDetail, { loading: false, data: { version_id: 'v1' } })
+  assert.deepEqual(store.evolutionDeepLinkTarget, { panel: 'review', run_id: 'run-1' })
+  assert.equal(store.trustBundleDrawerOpen, true)
+  assert.deepEqual(store.trustBundleAudit, { authorityMessage: 'trust ok' })
+  assert.equal(store.trustBundleAuditLoading, true)
+  assert.equal(store.trustBundleAuditError, 'trust warning')
+  assert.deepEqual(store.selectedRoleLeaderboard, [{ key: 'leader-1' }])
   assert.equal(store.selectedRun?.proposalCount, 3)
   assert.equal(store.selectedRun?.progressLabel, 'loaded detail')
   assert.equal(store.selectedIsRun, true)
   assert.equal(store.selectedIsBatch, false)
   assert.deepEqual(store.selectedRunSummary, { id: 'run-1', statusLabel: '运行中' })
+  assert.deepEqual(store.selectedDiff, [{ path: 'skill.py' }])
+  assert.deepEqual(store.selectedDiffData, { skill_changes: [] })
   assert.deepEqual(store.selectedProposalReview, { source: 'api' })
+  assert.deepEqual(store.selectedProposalRows, [{ id: 'proposal-1' }])
   assert.deepEqual(store.selectedGames, { training: [{ id: 'game-1' }] })
+  assert.deepEqual(store.sampleBuckets, [{ key: 'training', label: '训练' }])
+  assert.equal(store.selectedGameBucket, 'training')
+  assert.equal(store.selectedGameId, 'game-1')
+  assert.deepEqual(store.selectedGameRows, [{ id: 'game-1', bucket: 'training' }])
+  assert.deepEqual(store.selectedSampleGame, { id: 'game-1', bucket: 'training' })
+  assert.equal(store.selectedSampleHistoryGameId, 'history-game-1')
+  assert.deepEqual(store.filteredSampleGameRows, [{ id: 'game-1', bucket: 'training' }])
+  assert.deepEqual(store.visibleSampleGameRows, [{ id: 'game-1', bucket: 'training' }])
+  assert.deepEqual(store.selectedSamplePagination, { total: 1 })
+  assert.equal(store.sampleGameHasMore, true)
+  assert.equal(store.sampleGameLoadingMore, true)
+  assert.equal(store.sampleGameFilter, 'game')
+  assert.deepEqual(store.selectedGameDetail, { loading: false, archive: { title: 'sample' } })
+  assert.deepEqual(store.selectedSampleState, { loading: false, error: '' })
+  assert.equal(store.selectedSampleBucketError, 'bucket warning')
+  assert.equal(store.selectedSampleHistoryUnavailableReason, 'history missing')
+  assert.deepEqual(store.selectedBatchRoles, ['werewolf'])
+  assert.deepEqual(store.eventLog, [{ type: 'progress' }])
+  assert.equal(store.form.training_games, 5)
   assert.equal(store.selectedCanPromote, true)
   assert.equal(store.selectedCanReject, true)
   assert.equal(store.selectedCanTerminate, true)
   assert.equal(store.selectedRollbackDisabledReason, '当前运行不可回滚')
+  assert.equal(store.baselinePromoteTrustDisabledReason, '缺少信任包')
   assert.deepEqual(store.selectedRoleVersions.map((version) => version.version_id), ['v1'])
 
   store.hydrateFromWorkbench({
@@ -533,7 +620,7 @@ test('evolution store hydrates workbench shell state and forwards actions', asyn
   assert.equal(store.selectedIsBatch, true)
   assert.equal(store.hasSelection, true)
 
-  store.bindRuntimeActions({ refreshAll, selectRole, selectRun })
+  store.bindRuntimeActions({ refreshAll, selectRole, selectRun, loadVersionDetail, openTrustBundleDrawer })
 
   assert.equal(store.hasRuntimeActions, true)
   assert.equal(store.hasRuntimeAction('selectRole'), true)
@@ -544,6 +631,9 @@ test('evolution store hydrates workbench shell state and forwards actions', asyn
   assert.equal(store.selectedRunId, 'run-1')
   assert.equal(store.selectedRun?.id, 'run-1')
   assert.equal(await store.refreshAll(), 'refreshed')
+  assert.equal(await store.loadVersionDetail('seer', 'v2'), 'version-loaded')
+  assert.deepEqual(loadVersionDetail.mock.calls[0], ['seer', 'v2'])
+  assert.equal(store.openTrustBundleDrawer('review'), 'drawer-opened')
 
   store.clearRuntimeActions()
 

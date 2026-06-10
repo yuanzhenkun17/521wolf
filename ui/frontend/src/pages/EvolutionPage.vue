@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
+import { storeToRefs } from 'pinia'
+import { computed, onBeforeUnmount, onMounted, watch, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.ts'
 import EvolutionConsolePanel from '../components/evolution/EvolutionConsolePanel.vue'
@@ -20,10 +21,15 @@ defineOptions({
 const emit = defineEmits(['back-to-match', 'open-sample-log', 'replay-sample-game'])
 
 const route = useRoute()
-const evo = useEvolutionWorkbench({ initialRoute: route })
+const evolutionRuntime = useEvolutionWorkbench({ initialRoute: route }) as Record<string, any>
 const evolutionStore = useEvolutionStore()
-
-const activeTab = ref('console')
+const evolutionRefs = storeToRefs(evolutionStore)
+const activeTab = computed({
+  get: () => evolutionStore.activeTab,
+  set: (tab) => {
+    evolutionStore.setActiveTab(tab)
+  }
+})
 
 const navTabs = [
   { key: 'console', label: '控制台' },
@@ -35,35 +41,143 @@ const navTabs = [
   { key: 'samples', label: '样本局' }
 ]
 
-evolutionStore.bindRuntimeActions({
-  refreshAll: evo.refreshAll,
-  selectRole: evo.selectRole,
-  selectRun: evo.selectRun
-})
+const evolutionRuntimeActionNames = [
+  'refreshAll',
+  'selectRole',
+  'selectRun',
+  'loadMoreRuns',
+  'startSingle',
+  'startBatch',
+  'runAction',
+  'loadProposalReview',
+  'consumeEvolutionDeepLink',
+  'applyEvolutionDeepLink',
+  'acceptProposal',
+  'rejectProposal',
+  'applyAcceptedProposals',
+  'rollback',
+  'selectSampleGame',
+  'loadMoreSampleGames',
+  'loadSampleGameDetail',
+  'loadVersionDetail',
+  'openTrustBundleDrawer',
+  'refreshTrustBundleAudit',
+  'closeTrustBundleDrawer',
+  'toggleBatchRole'
+] as const
+
+evolutionStore.bindRuntimeActions(Object.fromEntries(
+  evolutionRuntimeActionNames
+    .map((name) => [name, evolutionRuntime[name]])
+    .filter(([, action]) => typeof action === 'function')
+))
+
+const evo = {
+  ...evolutionRuntime,
+  ...evolutionRefs,
+  refreshAll: evolutionStore.refreshAll,
+  selectRole: evolutionStore.selectRole,
+  selectRun: evolutionStore.selectRun,
+  loadMoreRuns: evolutionStore.loadMoreRuns,
+  startSingle: evolutionStore.startSingle,
+  startBatch: evolutionStore.startBatch,
+  runAction: evolutionStore.runAction,
+  loadProposalReview: evolutionStore.loadProposalReview,
+  consumeEvolutionDeepLink: evolutionStore.consumeEvolutionDeepLink,
+  applyEvolutionDeepLink: evolutionStore.applyEvolutionDeepLink,
+  acceptProposal: evolutionStore.acceptProposal,
+  rejectProposal: evolutionStore.rejectProposal,
+  applyAcceptedProposals: evolutionStore.applyAcceptedProposals,
+  rollback: evolutionStore.rollback,
+  selectSampleGame: evolutionStore.selectSampleGame,
+  loadMoreSampleGames: evolutionStore.loadMoreSampleGames,
+  loadSampleGameDetail: evolutionStore.loadSampleGameDetail,
+  loadVersionDetail: evolutionStore.loadVersionDetail,
+  openTrustBundleDrawer: evolutionStore.openTrustBundleDrawer,
+  refreshTrustBundleAudit: evolutionStore.refreshTrustBundleAudit,
+  closeTrustBundleDrawer: evolutionStore.closeTrustBundleDrawer,
+  toggleBatchRole: evolutionStore.toggleBatchRole,
+  shortId: evolutionRuntime.shortId,
+  sourceText: evolutionRuntime.sourceText,
+  statusText: evolutionRuntime.statusText,
+  roleMeta: evolutionRuntime.roleMeta
+} as any
+
+function refValue<T>(source: unknown, fallback: T): T {
+  if (source && typeof source === 'object' && 'value' in source) {
+    const value = (source as { value: T | undefined }).value
+    return value === undefined ? fallback : value
+  }
+  return fallback
+}
 
 watchEffect(() => {
   evolutionStore.hydrateFromWorkbench({
-    loading: evo.loading.value,
-    error: evo.error.value,
-    notice: evo.notice.value,
-    roles: evo.roles.value,
-    roleRows: evo.roleRows.value,
-    versionsByRole: evo.versionsByRole.value,
-    runs: evo.runs.value,
-    runRows: evo.runRows.value,
-    selectedRole: evo.selectedRole.value,
-    selectedRunId: evo.selectedRunId.value,
-    selectedRun: evo.selectedRun.value,
-    selectedRunSummary: evo.selectedRunSummary.value,
-    selectedProposalReview: evo.selectedProposalReview.value,
-    selectedGames: evo.selectedGames.value,
-    selectedCanPromote: evo.selectedCanPromote.value,
-    selectedPromoteDisabledReason: evo.selectedPromoteDisabledReason.value,
-    selectedCanReject: evo.selectedCanReject.value,
-    selectedRejectDisabledReason: evo.selectedRejectDisabledReason.value,
-    selectedCanTerminate: evo.selectedCanTerminate.value,
-    selectedTerminateDisabledReason: evo.selectedTerminateDisabledReason.value,
-    selectedRollbackDisabledReason: evo.selectedRollbackDisabledReason.value
+    loading: refValue(evolutionRuntime.loading, false),
+    actionLoading: refValue(evolutionRuntime.actionLoading, ''),
+    error: refValue(evolutionRuntime.error, ''),
+    notice: refValue(evolutionRuntime.notice, null),
+    activeTab: activeTab.value,
+    roles: refValue(evolutionRuntime.roles, []),
+    roleRows: refValue(evolutionRuntime.roleRows, []),
+    versionsByRole: refValue(evolutionRuntime.versionsByRole, {}),
+    leaderboardsByRole: refValue(evolutionRuntime.leaderboardsByRole, {}),
+    runs: refValue(evolutionRuntime.runs, []),
+    batches: refValue(evolutionRuntime.batches, []),
+    runRows: refValue(evolutionRuntime.runRows, []),
+    filteredRunRows: refValue(evolutionRuntime.filteredRunRows, []),
+    visibleRunRows: refValue(evolutionRuntime.visibleRunRows, []),
+    runPagination: refValue(evolutionRuntime.runPagination, {}),
+    runLoadingMore: refValue(evolutionRuntime.runLoadingMore, false),
+    runHasMore: refValue(evolutionRuntime.runHasMore, false),
+    runFilter: refValue(evolutionRuntime.runFilter, ''),
+    selectedRole: refValue(evolutionRuntime.selectedRole, ''),
+    selectedRoleLabel: refValue(evolutionRuntime.selectedRoleLabel, ''),
+    selectedVersion: refValue(evolutionRuntime.selectedVersion, null),
+    selectedVersionId: refValue(evolutionRuntime.selectedVersionId, ''),
+    selectedVersionDetail: refValue(evolutionRuntime.selectedVersionDetail, {}),
+    evolutionDeepLinkTarget: refValue(evolutionRuntime.evolutionDeepLinkTarget, null),
+    trustBundleDrawerOpen: refValue(evolutionRuntime.trustBundleDrawerOpen, false),
+    trustBundleAudit: refValue(evolutionRuntime.trustBundleAudit, {}),
+    trustBundleAuditLoading: refValue(evolutionRuntime.trustBundleAuditLoading, false),
+    trustBundleAuditError: refValue(evolutionRuntime.trustBundleAuditError, ''),
+    selectedRoleLeaderboard: refValue(evolutionRuntime.selectedRoleLeaderboard, []),
+    selectedRunId: refValue(evolutionRuntime.selectedRunId, ''),
+    selectedRun: refValue(evolutionRuntime.selectedRun, null),
+    selectedRunSummary: refValue(evolutionRuntime.selectedRunSummary, null),
+    selectedDiff: refValue(evolutionRuntime.selectedDiff, []),
+    selectedDiffData: refValue(evolutionRuntime.selectedDiffData, null),
+    selectedProposalReview: refValue(evolutionRuntime.selectedProposalReview, null),
+    selectedProposalRows: refValue(evolutionRuntime.selectedProposalRows, []),
+    selectedGames: refValue(evolutionRuntime.selectedGames, {}),
+    sampleBuckets: refValue(evolutionRuntime.sampleBuckets, []),
+    selectedGameBucket: refValue(evolutionRuntime.selectedGameBucket, 'training'),
+    selectedGameId: refValue(evolutionRuntime.selectedGameId, ''),
+    selectedGameRows: refValue(evolutionRuntime.selectedGameRows, []),
+    selectedSampleGame: refValue(evolutionRuntime.selectedSampleGame, null),
+    selectedSampleHistoryGameId: refValue(evolutionRuntime.selectedSampleHistoryGameId, ''),
+    filteredSampleGameRows: refValue(evolutionRuntime.filteredSampleGameRows, []),
+    visibleSampleGameRows: refValue(evolutionRuntime.visibleSampleGameRows, []),
+    sampleGamePagination: refValue(evolutionRuntime.sampleGamePagination, {}),
+    selectedSamplePagination: refValue(evolutionRuntime.selectedSamplePagination, {}),
+    sampleGameHasMore: refValue(evolutionRuntime.sampleGameHasMore, false),
+    sampleGameLoadingMore: refValue(evolutionRuntime.sampleGameLoadingMore, false),
+    sampleGameFilter: refValue(evolutionRuntime.sampleGameFilter, ''),
+    selectedGameDetail: refValue(evolutionRuntime.selectedGameDetail, {}),
+    selectedSampleState: refValue(evolutionRuntime.selectedSampleState, {}),
+    selectedSampleBucketError: refValue(evolutionRuntime.selectedSampleBucketError, ''),
+    selectedSampleHistoryUnavailableReason: refValue(evolutionRuntime.selectedSampleHistoryUnavailableReason, ''),
+    selectedBatchRoles: refValue(evolutionRuntime.selectedBatchRoles, []),
+    eventLog: refValue(evolutionRuntime.eventLog, []),
+    form: refValue(evolutionRuntime.form, {}),
+    selectedCanPromote: refValue(evolutionRuntime.selectedCanPromote, false),
+    selectedPromoteDisabledReason: refValue(evolutionRuntime.selectedPromoteDisabledReason, ''),
+    selectedCanReject: refValue(evolutionRuntime.selectedCanReject, false),
+    selectedRejectDisabledReason: refValue(evolutionRuntime.selectedRejectDisabledReason, ''),
+    selectedCanTerminate: refValue(evolutionRuntime.selectedCanTerminate, false),
+    selectedTerminateDisabledReason: refValue(evolutionRuntime.selectedTerminateDisabledReason, ''),
+    selectedRollbackDisabledReason: refValue(evolutionRuntime.selectedRollbackDisabledReason, ''),
+    baselinePromoteTrustDisabledReason: refValue(evolutionRuntime.baselinePromoteTrustDisabledReason, '')
   })
 })
 

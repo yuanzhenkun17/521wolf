@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
+import { storeToRefs } from 'pinia'
+import { computed, onBeforeUnmount, onMounted, watch, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.ts'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
@@ -23,15 +24,21 @@ defineOptions({
 })
 
 const route = useRoute()
-const benchmark = useEvaluationWorkbench()
+const benchmarkRuntime = useEvaluationWorkbench() as LooseRecord
 const benchmarkStore = useBenchmarkStore()
+const benchmarkRefs = storeToRefs(benchmarkStore)
 const activeView = computed({
   get: () => benchmarkStore.activeView,
   set: (view) => {
     benchmarkStore.setActiveView(view)
   }
 })
-const launchConfirmationOpen = ref(false)
+const launchConfirmationOpen = computed({
+  get: () => benchmarkStore.launchConfirmationOpen,
+  set: (open) => {
+    benchmarkStore.setLaunchConfirmationOpen(open)
+  }
+})
 
 const navTabs = [
   { key: 'overview', label: '总览' },
@@ -41,23 +48,207 @@ const navTabs = [
   { key: 'reports', label: '报告' }
 ]
 
-benchmarkStore.bindRuntimeActions({
-  refreshAll: benchmark.refreshAll,
-  selectBenchmarkBatch: benchmark.selectBenchmarkBatch
-})
+const benchmarkRuntimeActionNames = [
+  'refreshAll',
+  'selectBenchmarkBatch',
+  'selectBenchmarkSuite',
+  'selectLegacyBenchmarkScope',
+  'selectRole',
+  'loadBenchmarkLeaderboardCompare',
+  'loadBenchmarkSeedSets',
+  'loadBenchmarkViews',
+  'loadCurrentBenchmarkView',
+  'selectBenchmarkView',
+  'saveCurrentBenchmarkView',
+  'resetCurrentBenchmarkView',
+  'setBenchmarkViewPreference',
+  'loadBenchmarkSnapshots',
+  'loadBenchmarkSnapshotDetail',
+  'loadBenchmarkSnapshotCompare',
+  'loadBenchmarkSnapshotExport',
+  'selectBenchmarkSnapshot',
+  'createBenchmarkSnapshot',
+  'loadBenchmarkView',
+  'saveBenchmarkView',
+  'deleteBenchmarkView',
+  'loadBenchmarkReportHistory',
+  'loadBenchmarkDiagnosticsAggregate',
+  'loadBenchmarkBatchDetail',
+  'loadBenchmarkBatchGamesPage',
+  'loadNextBenchmarkBatchGamesPage',
+  'loadBenchmarkBatchDiagnostics',
+  'loadBenchmarkBatchReport',
+  'loadBenchmarkBatchReportExport',
+  'setBenchmarkGameStatusFilter',
+  'setBenchmarkGameSeedFilter',
+  'setBenchmarkDiagnosticFilter',
+  'clearBenchmarkDiagnosticFilters',
+  'clearNotice',
+  'startEvaluation',
+  'stopBatch'
+] as const
+
+benchmarkStore.bindRuntimeActions(Object.fromEntries(
+  benchmarkRuntimeActionNames
+    .map((name) => [name, benchmarkRuntime[name]])
+    .filter(([, action]) => typeof action === 'function')
+))
+
+const benchmark = {
+  ...benchmarkRuntime,
+  ...benchmarkRefs,
+  refreshAll: benchmarkStore.refreshAll,
+  selectBenchmarkBatch: benchmarkStore.selectBenchmarkBatch,
+  selectBenchmarkSuite: benchmarkStore.selectBenchmarkSuite,
+  selectLegacyBenchmarkScope: benchmarkStore.selectLegacyBenchmarkScope,
+  selectRole: benchmarkStore.selectRole,
+  selectBenchmarkSnapshot: benchmarkStore.selectBenchmarkSnapshot,
+  selectBenchmarkView: benchmarkStore.selectBenchmarkView,
+  setBenchmarkGameStatusFilter: benchmarkStore.setBenchmarkGameStatusFilter,
+  setBenchmarkGameSeedFilter: benchmarkStore.setBenchmarkGameSeedFilter,
+  setBenchmarkDiagnosticFilter: benchmarkStore.setBenchmarkDiagnosticFilter,
+  clearBenchmarkDiagnosticFilters: benchmarkStore.clearBenchmarkDiagnosticFilters,
+  clearNotice: benchmarkStore.clearNotice,
+  loadBenchmarkLeaderboardCompare: benchmarkStore.loadBenchmarkLeaderboardCompare,
+  loadBenchmarkSeedSets: benchmarkStore.loadBenchmarkSeedSets,
+  loadBenchmarkViews: benchmarkStore.loadBenchmarkViews,
+  loadCurrentBenchmarkView: benchmarkStore.loadCurrentBenchmarkView,
+  saveCurrentBenchmarkView: benchmarkStore.saveCurrentBenchmarkView,
+  resetCurrentBenchmarkView: benchmarkStore.resetCurrentBenchmarkView,
+  setBenchmarkViewPreference: benchmarkStore.setBenchmarkViewPreference,
+  loadBenchmarkSnapshots: benchmarkStore.loadBenchmarkSnapshots,
+  loadBenchmarkSnapshotDetail: benchmarkStore.loadBenchmarkSnapshotDetail,
+  loadBenchmarkSnapshotCompare: benchmarkStore.loadBenchmarkSnapshotCompare,
+  loadBenchmarkSnapshotExport: benchmarkStore.loadBenchmarkSnapshotExport,
+  createBenchmarkSnapshot: benchmarkStore.createBenchmarkSnapshot,
+  loadBenchmarkView: benchmarkStore.loadBenchmarkView,
+  saveBenchmarkView: benchmarkStore.saveBenchmarkView,
+  deleteBenchmarkView: benchmarkStore.deleteBenchmarkView,
+  loadBenchmarkReportHistory: benchmarkStore.loadBenchmarkReportHistory,
+  loadBenchmarkDiagnosticsAggregate: benchmarkStore.loadBenchmarkDiagnosticsAggregate,
+  loadBenchmarkBatchDetail: benchmarkStore.loadBenchmarkBatchDetail,
+  loadBenchmarkBatchGamesPage: benchmarkStore.loadBenchmarkBatchGamesPage,
+  loadNextBenchmarkBatchGamesPage: benchmarkStore.loadNextBenchmarkBatchGamesPage,
+  loadBenchmarkBatchDiagnostics: benchmarkStore.loadBenchmarkBatchDiagnostics,
+  loadBenchmarkBatchReport: benchmarkStore.loadBenchmarkBatchReport,
+  loadBenchmarkBatchReportExport: benchmarkStore.loadBenchmarkBatchReportExport,
+  startEvaluation: benchmarkStore.startEvaluation,
+  stopBatch: benchmarkStore.stopBatch,
+  roleMeta: benchmarkRuntime.roleMeta
+} as any
+
+function refValue<T>(source: unknown, fallback: T): T {
+  if (source && typeof source === 'object' && 'value' in source) {
+    const value = (source as { value: T | undefined }).value
+    return value === undefined ? fallback : value
+  }
+  return fallback
+}
 
 watchEffect(() => {
   benchmarkStore.hydrateFromWorkbench({
-    suites: benchmark.benchmarkSuites.value,
-    runs: benchmark.batchRunRows.value,
-    runRows: benchmark.filteredBatchRunRows.value,
-    selectedBenchmarkId: benchmark.selectedBenchmarkId.value,
-    selectedBenchmarkBatchId: benchmark.selectedBenchmarkBatchId.value,
-    selectedBenchmarkBatchRun: benchmark.selectedBenchmarkBatchRun.value,
-    loading: benchmark.loading.value,
-    actionLoading: benchmark.actionLoading.value,
-    error: benchmark.error.value,
-    notice: benchmark.notice.value
+    suites: refValue(benchmarkRuntime.benchmarkSuites, []),
+    seedSets: refValue(benchmarkRuntime.benchmarkSeedSets, []),
+    suiteError: refValue(benchmarkRuntime.benchmarkSuiteError, ''),
+    plan: refValue(benchmarkRuntime.benchmarkPlan, null),
+    planError: refValue(benchmarkRuntime.benchmarkPlanError, ''),
+    planBudgetExceeded: refValue(benchmarkRuntime.benchmarkPlanBudgetExceeded, false),
+    roles: refValue(benchmarkRuntime.roles, []),
+    roleRows: refValue(benchmarkRuntime.roleRows, []),
+    launchableRoles: refValue(benchmarkRuntime.launchableRoles, []),
+    selectedBenchmarkId: refValue(benchmarkRuntime.selectedBenchmarkId, ''),
+    legacyBenchmarkTargetType: refValue(benchmarkRuntime.legacyBenchmarkTargetType, 'role_version'),
+    selectedBenchmarkSuite: refValue(benchmarkRuntime.selectedBenchmarkSuite, null),
+    selectedBenchmarkTargetType: refValue(benchmarkRuntime.selectedBenchmarkTargetType, 'role_version'),
+    selectedBenchmarkIsModelSuite: refValue(benchmarkRuntime.selectedBenchmarkIsModelSuite, false),
+    selectedBenchmarkCanLaunch: refValue(benchmarkRuntime.selectedBenchmarkCanLaunch, false),
+    selectedBenchmarkSuiteLaunchDisabledReason: refValue(benchmarkRuntime.selectedBenchmarkSuiteLaunchDisabledReason, ''),
+    selectedBenchmarkSuiteLabel: refValue(benchmarkRuntime.selectedBenchmarkSuiteLabel, ''),
+    selectedBenchmarkEvaluationSetId: refValue(benchmarkRuntime.selectedBenchmarkEvaluationSetId, ''),
+    launchBattleGames: refValue(benchmarkRuntime.launchBattleGames, 0),
+    launchMaxDays: refValue(benchmarkRuntime.launchMaxDays, 0),
+    selectedRole: refValue(benchmarkRuntime.selectedRole, ''),
+    selectedRoleLabel: refValue(benchmarkRuntime.selectedRoleLabel, ''),
+    modelLeaderboard: refValue(benchmarkRuntime.modelLeaderboard, {}),
+    modelLeaderboardRows: refValue(benchmarkRuntime.modelLeaderboardRows, []),
+    roleLeaderboard: refValue(benchmarkRuntime.roleLeaderboard, {}),
+    roleLeaderboardRows: refValue(benchmarkRuntime.roleLeaderboardRows, []),
+    roleTargetVersions: refValue(benchmarkRuntime.roleTargetVersions, {}),
+    roleTargetVersionRows: refValue(benchmarkRuntime.roleTargetVersionRows, []),
+    selectedRoleTargetVersion: refValue(benchmarkRuntime.selectedRoleTargetVersion, null),
+    selectedRoleTargetVersionBlockedReason: refValue(benchmarkRuntime.selectedRoleTargetVersionBlockedReason, ''),
+    currentBenchmarkLeaderboardRows: refValue(benchmarkRuntime.currentBenchmarkLeaderboardRows, []),
+    normalizedCurrentBenchmarkLeaderboardRows: refValue(benchmarkRuntime.normalizedCurrentBenchmarkLeaderboardRows, []),
+    snapshots: refValue(benchmarkRuntime.benchmarkSnapshots, []),
+    snapshotDetail: refValue(benchmarkRuntime.benchmarkSnapshotDetail, null),
+    snapshotDetails: refValue(benchmarkRuntime.benchmarkSnapshotDetails, {}),
+    snapshotExports: refValue(benchmarkRuntime.benchmarkSnapshotExports, {}),
+    snapshotLoading: refValue(benchmarkRuntime.benchmarkSnapshotLoading, false),
+    snapshotError: refValue(benchmarkRuntime.benchmarkSnapshotError, ''),
+    snapshotServerCompare: refValue(benchmarkRuntime.benchmarkSnapshotServerCompare, null),
+    snapshotCompareLoading: refValue(benchmarkRuntime.benchmarkSnapshotCompareLoading, false),
+    snapshotCompareError: refValue(benchmarkRuntime.benchmarkSnapshotCompareError, ''),
+    selectedBenchmarkSnapshotId: refValue(benchmarkRuntime.selectedBenchmarkSnapshotId, ''),
+    selectedBenchmarkSnapshot: refValue(benchmarkRuntime.selectedBenchmarkSnapshot, null),
+    activeBenchmarkSnapshotDetail: refValue(benchmarkRuntime.activeBenchmarkSnapshotDetail, null),
+    snapshotCompare: refValue(benchmarkRuntime.benchmarkSnapshotCompare, {}),
+    snapshotScope: refValue(benchmarkRuntime.benchmarkSnapshotScope, 'role_version'),
+    leaderboardCompare: refValue(benchmarkRuntime.benchmarkLeaderboardCompare, null),
+    leaderboardCompareLoading: refValue(benchmarkRuntime.benchmarkLeaderboardCompareLoading, false),
+    leaderboardCompareError: refValue(benchmarkRuntime.benchmarkLeaderboardCompareError, ''),
+    savedViews: refValue(benchmarkRuntime.benchmarkSavedViews, []),
+    savedViewsLoading: refValue(benchmarkRuntime.benchmarkSavedViewsLoading, false),
+    savedViewsError: refValue(benchmarkRuntime.benchmarkSavedViewsError, ''),
+    viewPreferences: refValue(benchmarkRuntime.benchmarkViewPreferences, {}),
+    viewDirty: refValue(benchmarkRuntime.benchmarkViewDirty, false),
+    selectedBenchmarkViewKey: refValue(benchmarkRuntime.selectedBenchmarkViewKey, ''),
+    currentBenchmarkViewKey: refValue(benchmarkRuntime.currentBenchmarkViewKey, ''),
+    activeBenchmarkViewConfig: refValue(benchmarkRuntime.activeBenchmarkViewConfig, {}),
+    batchRuns: refValue(benchmarkRuntime.batchRuns, []),
+    events: refValue(benchmarkRuntime.benchmarkEvents, []),
+    runs: refValue(benchmarkRuntime.batchRunRows, []),
+    runRows: refValue(benchmarkRuntime.filteredBatchRunRows, []),
+    unscopedRunRows: refValue(benchmarkRuntime.unscopedBenchmarkRunRows, []),
+    selectedSuiteRunRows: refValue(benchmarkRuntime.selectedSuiteBatchRunRows, []),
+    usingLegacyRuns: refValue(benchmarkRuntime.selectedBenchmarkUsingLegacyRuns, false),
+    selectedBenchmarkBatchId: refValue(benchmarkRuntime.selectedBenchmarkBatchId, ''),
+    selectedBenchmarkBatchRun: refValue(benchmarkRuntime.selectedBenchmarkBatchRun, null),
+    detailLoading: refValue(benchmarkRuntime.benchmarkDetailLoading, false),
+    detailError: refValue(benchmarkRuntime.benchmarkDetailError, ''),
+    batchDetail: refValue(benchmarkRuntime.benchmarkBatchDetail, null),
+    batchGames: refValue(benchmarkRuntime.benchmarkBatchGames, []),
+    batchGamesLoading: refValue(benchmarkRuntime.benchmarkBatchGamesLoading, false),
+    batchGamePagination: refValue(benchmarkRuntime.benchmarkBatchGamePagination, {}),
+    batchDiagnosticsLoading: refValue(benchmarkRuntime.benchmarkBatchDiagnosticsLoading, false),
+    batchDiagnostics: refValue(benchmarkRuntime.benchmarkBatchDiagnostics, []),
+    batchDiagnosticSummary: refValue(benchmarkRuntime.benchmarkBatchDiagnosticSummary, {}),
+    batchReport: refValue(benchmarkRuntime.benchmarkBatchReport, null),
+    batchReportLoading: refValue(benchmarkRuntime.benchmarkBatchReportLoading, false),
+    batchReportError: refValue(benchmarkRuntime.benchmarkBatchReportError, ''),
+    reportHistory: refValue(benchmarkRuntime.benchmarkReportHistory, []),
+    reportHistoryLoading: refValue(benchmarkRuntime.benchmarkReportHistoryLoading, false),
+    reportHistoryError: refValue(benchmarkRuntime.benchmarkReportHistoryError, ''),
+    reportHistorySummary: refValue(benchmarkRuntime.benchmarkReportHistorySummary, {}),
+    reportHistoryPagination: refValue(benchmarkRuntime.benchmarkReportHistoryPagination, {}),
+    diagnosticAggregateLoading: refValue(benchmarkRuntime.benchmarkDiagnosticAggregateLoading, false),
+    diagnosticAggregateError: refValue(benchmarkRuntime.benchmarkDiagnosticAggregateError, ''),
+    diagnosticAggregateDiagnostics: refValue(benchmarkRuntime.benchmarkDiagnosticAggregateDiagnostics, []),
+    diagnosticAggregateSummary: refValue(benchmarkRuntime.benchmarkDiagnosticAggregateSummary, {}),
+    diagnosticAggregateRuns: refValue(benchmarkRuntime.benchmarkDiagnosticAggregateRuns, []),
+    diagnosticAggregateGames: refValue(benchmarkRuntime.benchmarkDiagnosticAggregateGames, []),
+    diagnosticAggregatePagination: refValue(benchmarkRuntime.benchmarkDiagnosticAggregatePagination, {}),
+    gameStatusFilter: refValue(benchmarkRuntime.benchmarkGameStatusFilter, 'problem'),
+    gameSeedFilter: refValue(benchmarkRuntime.benchmarkGameSeedFilter, ''),
+    diagnosticKindFilter: refValue(benchmarkRuntime.benchmarkDiagnosticKindFilter, ''),
+    diagnosticLevelFilter: refValue(benchmarkRuntime.benchmarkDiagnosticLevelFilter, ''),
+    diagnosticStatusFilter: refValue(benchmarkRuntime.benchmarkDiagnosticStatusFilter, ''),
+    diagnosticStageFilter: refValue(benchmarkRuntime.benchmarkDiagnosticStageFilter, ''),
+    diagnosticSeedFilter: refValue(benchmarkRuntime.benchmarkDiagnosticSeedFilter, ''),
+    form: refValue(benchmarkRuntime.form, {}),
+    loading: refValue(benchmarkRuntime.loading, false),
+    actionLoading: refValue(benchmarkRuntime.actionLoading, ''),
+    error: refValue(benchmarkRuntime.error, ''),
+    notice: refValue(benchmarkRuntime.notice, null)
   })
 })
 

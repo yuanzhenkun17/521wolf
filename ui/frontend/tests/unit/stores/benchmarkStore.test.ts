@@ -137,3 +137,98 @@ test('benchmark store owns active tab and forwards runtime actions', () => {
   assert.equal(store.hasRuntimeAction('selectBenchmarkBatch'), false)
   assert.equal(store.selectBenchmarkBatch(''), undefined)
 })
+
+test('benchmark store hydrates deep workbench state and exposes a runtime facade', async () => {
+  setActivePinia(createPinia())
+  const store = useBenchmarkStore()
+  const loadBenchmarkSnapshots = vi.fn().mockResolvedValue('snapshots-loaded')
+  const setBenchmarkDiagnosticFilter = vi.fn().mockReturnValue('filter-set')
+  const clearBenchmarkDiagnosticFilters = vi.fn().mockReturnValue('filters-cleared')
+  const startEvaluation = vi.fn().mockResolvedValue('started')
+
+  store.hydrateFromWorkbench({
+    suites: [benchmarkSuiteFixture('suite-release', { cost_tier: 'release' })],
+    seedSets: [{ id: 'seed-1' }],
+    suiteError: 'suite warning',
+    plan: { total_games: 12, budget: { exceeded: { value: true } } },
+    planError: 'plan failed',
+    planBudgetExceeded: true,
+    roles: ['werewolf', 'seer'],
+    roleRows: [{ key: 'werewolf', label: '狼人' }],
+    launchableRoles: ['werewolf'],
+    selectedBenchmarkId: 'suite-release',
+    selectedBenchmarkSuite: benchmarkSuiteFixture('suite-release', { label: 'Release Suite' }),
+    selectedBenchmarkTargetType: 'role_version',
+    selectedBenchmarkCanLaunch: false,
+    selectedBenchmarkSuiteLabel: 'Release Suite',
+    selectedBenchmarkEvaluationSetId: 'eval-release',
+    selectedRole: 'werewolf',
+    selectedRoleLabel: '狼人',
+    modelLeaderboardRows: [{ key: 'model-a' }],
+    roleLeaderboardRows: [{ key: 'role-a' }],
+    roleTargetVersionRows: [{ version_id: 'v1' }],
+    snapshots: [{ snapshot_id: 'snap-1', title: 'Frozen' }],
+    selectedBenchmarkSnapshotId: 'snap-1',
+    selectedBenchmarkSnapshot: { snapshot_id: 'snap-1' },
+    activeBenchmarkSnapshotDetail: { snapshot_id: 'snap-1', rows: [] },
+    snapshotScope: 'role_version',
+    savedViews: [{ view_key: 'view-1' }],
+    viewPreferences: { name: 'Release view' },
+    viewDirty: true,
+    selectedBenchmarkViewKey: 'view-1',
+    batchRuns: [{ id: 'raw-run-1' }],
+    runs: [benchmarkRunFixture('run-3')],
+    runRows: [benchmarkRunFixture('run-3', { isActive: true, isTerminal: false })],
+    unscopedRunRows: [{ id: 'legacy-run' }],
+    selectedSuiteRunRows: [{ id: 'suite-run' }],
+    usingLegacyRuns: true,
+    selectedBenchmarkBatchId: 'run-3',
+    batchDetail: { id: 'run-3', status: 'completed' },
+    batchGames: [{ id: 'game-1' }],
+    batchDiagnostics: [{ id: 'diag-1', kind: 'timeout' }],
+    batchDiagnosticSummary: { total: 1 },
+    reportHistory: [{ report_id: 'report-1' }],
+    diagnosticAggregateDiagnostics: [{ id: 'agg-1' }],
+    diagnosticAggregateSummary: { total: 2 },
+    gameStatusFilter: 'failed',
+    gameSeedFilter: 'seed-42',
+    diagnosticKindFilter: 'timeout',
+    form: { battle_games: 30, max_days: 7 },
+    launchConfirmationOpen: true
+  })
+
+  assert.equal(store.benchmarkPlan?.total_games, 12)
+  assert.equal(store.benchmarkPlanBudgetExceeded, true)
+  assert.equal(store.selectedBenchmarkSuite?.label, 'Release Suite')
+  assert.equal(store.selectedBenchmarkCanLaunch, false)
+  assert.equal(store.selectedBenchmarkSuiteLabel, 'Release Suite')
+  assert.deepEqual(store.roleTargetVersionRows, [{ version_id: 'v1' }])
+  assert.equal(store.benchmarkSnapshots.length, 1)
+  assert.equal(store.selectedBenchmarkSnapshotId, 'snap-1')
+  assert.equal(store.activeBenchmarkSnapshotDetail?.snapshot_id, 'snap-1')
+  assert.equal(store.benchmarkViewDirty, true)
+  assert.equal(store.selectedBenchmarkViewKey, 'view-1')
+  assert.equal(store.selectedBenchmarkUsingLegacyRuns, true)
+  assert.equal(store.selectedBenchmarkBatchRun?.id, 'run-3')
+  assert.deepEqual(store.benchmarkBatchDiagnosticSummary, { total: 1 })
+  assert.equal(store.benchmarkDiagnosticAggregateDiagnostics.length, 1)
+  assert.equal(store.benchmarkGameStatusFilter, 'failed')
+  assert.equal(store.benchmarkGameSeedFilter, 'seed-42')
+  assert.equal(store.form.battle_games, 30)
+  assert.equal(store.launchConfirmationOpen, true)
+
+  store.bindRuntimeActions({
+    loadBenchmarkSnapshots,
+    setBenchmarkDiagnosticFilter,
+    clearBenchmarkDiagnosticFilters,
+    startEvaluation
+  })
+
+  assert.equal(await store.loadBenchmarkSnapshots({ force: true }), 'snapshots-loaded')
+  assert.deepEqual(loadBenchmarkSnapshots.mock.calls[0], [{ force: true }])
+  assert.equal(store.setBenchmarkDiagnosticFilter('level', 'error'), 'filter-set')
+  assert.equal(store.benchmarkDiagnosticLevelFilter, 'error')
+  assert.equal(store.clearBenchmarkDiagnosticFilters(), 'filters-cleared')
+  assert.equal(store.benchmarkDiagnosticLevelFilter, '')
+  assert.equal(await store.startEvaluation(), 'started')
+})
