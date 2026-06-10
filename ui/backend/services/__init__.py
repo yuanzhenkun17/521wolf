@@ -24,6 +24,7 @@ from ui.backend.services.benchmark_snapshot_service import (
 from ui.backend.services.evolution_service import EvolutionService
 from ui.backend.services.evolution_proposal_service import EvolutionProposalService
 from ui.backend.services.evolution_read_service import EvolutionReadService
+from ui.backend.services.evolution_run_service import EvolutionRunService
 from ui.backend.services.game_delete_service import GameDeleteCoordinator
 from ui.backend.services.game_persistence_service import GamePersistenceService
 from ui.backend.services.game_read_service import GameHistoryService, GameReadGateway
@@ -49,6 +50,7 @@ __all__ = [
     "EvolutionService",
     "EvolutionProposalService",
     "EvolutionReadService",
+    "EvolutionRunService",
     "GameDeleteCoordinator",
     "GameHistoryService",
     "GamePersistenceService",
