@@ -1,17 +1,39 @@
-// @ts-nocheck
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { Ref } from 'vue'
+import type { Game, GameLog } from '../types/game'
 
 const AUDIO_ENABLED_KEY = 'wolf-audio-enabled'
 const TTS_ENABLED_KEY = 'wolf-tts-enabled'
-const viteEnv = import.meta.env || {}
+const viteEnv = import.meta.env
 
-function envFlag(key, fallback = false) {
+type LooseRecord = Record<string, any>
+type MaybeRef<T> = T | Ref<T>
+type AudioEffect = keyof typeof AUDIO_LIBRARY.sfx
+type AudioVariant = 'victory' | 'failure' | string
+
+interface GameAudioRuntime {
+  currentView: MaybeRef<string>
+  game: MaybeRef<Game | null>
+  isReplayMode: MaybeRef<boolean>
+  externalStatus: MaybeRef<LooseRecord | null>
+  apiBase: MaybeRef<string>
+  roleAssignmentComplete: MaybeRef<boolean>
+}
+
+interface TtsItem {
+  key: string
+  text: string
+  speaker: string
+  seat: number | null
+}
+
+function envFlag(key: keyof ImportMetaEnv, fallback = false) {
   const value = viteEnv[key]
   if (value == null || value === '') return fallback
   return !['0', 'false', 'no', 'off'].includes(String(value).trim().toLowerCase())
 }
 
-function envNumber(key, fallback, min, max) {
+function envNumber(key: keyof ImportMetaEnv, fallback: number, min: number, max: number) {
   const value = Number(viteEnv[key])
   if (!Number.isFinite(value)) return fallback
   return Math.max(min, Math.min(max, value))
@@ -75,35 +97,35 @@ const DEATH_LOG_TYPES = new Set([
   'white_wolf_explosion'
 ])
 
-function valueOf(item) {
-  return item && typeof item === 'object' && 'value' in item ? item.value : item
+function valueOf<T>(item: MaybeRef<T>): T {
+  return (item && typeof item === 'object' && 'value' in item ? (item as Ref<T>).value : item) as T
 }
 
 function hasWindow() {
   return typeof window !== 'undefined'
 }
 
-function readBooleanPreference(key, fallback = true) {
+function readBooleanPreference(key: string, fallback = true) {
   if (!hasWindow()) return fallback
   const stored = window.localStorage.getItem(key)
   return stored == null ? fallback : stored === 'true'
 }
 
-function writeBooleanPreference(key, enabled) {
+function writeBooleanPreference(key: string, enabled: boolean) {
   if (hasWindow()) window.localStorage.setItem(key, String(Boolean(enabled)))
 }
 
-function aliveCount(game) {
+function aliveCount(game: Game | null | undefined) {
   const players = Array.isArray(game?.players) ? game.players : []
   if (!players.length) return null
   return players.filter((player) => player?.alive).length
 }
 
-function logType(log) {
+function logType(log: Partial<GameLog> | LooseRecord | null | undefined) {
   return log?.type || log?.event_type || log?.action || log?.action_type || log?.kind || log?.category || ''
 }
 
-function lastDeathLogKey(game) {
+function lastDeathLogKey(game: Game | null | undefined) {
   const logs = Array.isArray(game?.logs) ? game.logs : []
   for (let index = logs.length - 1; index >= 0; index -= 1) {
     const log = logs[index]
@@ -115,12 +137,12 @@ function lastDeathLogKey(game) {
   return ''
 }
 
-function isVoteActive(game) {
+function isVoteActive(game: Partial<Game> | null | undefined) {
   const phase = String(game?.phase || '')
   return game?.waiting_for === 'vote' || VOTE_PHASES.has(phase)
 }
 
-function settlementVariant(game) {
+function settlementVariant(game: Game | null | undefined): AudioVariant {
   const winner = String(game?.winner || '').toLowerCase()
   const human = game?.players?.find((player) => player?.id === game?.human_player_id)
   if (!human) return 'victory'
@@ -134,7 +156,7 @@ function settlementVariant(game) {
   return 'victory'
 }
 
-function isPublicPlayerSpeech(log) {
+function isPublicPlayerSpeech(log: Partial<GameLog> | LooseRecord | null | undefined) {
   const type = logType(log)
   const speaker = String(log?.speaker || '')
   const visibility = String(log?.visibility || 'public')
@@ -147,20 +169,20 @@ function isPublicPlayerSpeech(log) {
     && Boolean(cleanTtsText(log?.message))
 }
 
-function cleanTtsText(text) {
+function cleanTtsText(text: unknown) {
   return String(text || '')
     .replace(/[`*_#>{}[\]\\]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-function clipTtsText(text) {
+function clipTtsText(text: unknown) {
   const cleaned = cleanTtsText(text)
   if (cleaned.length <= TTS_CONFIG.maxChars) return cleaned
   return `${cleaned.slice(0, TTS_CONFIG.maxChars)}。`
 }
 
-function speechLogKey(log, index) {
+function speechLogKey(log: Partial<GameLog> | LooseRecord | null | undefined, index: number) {
   return [
     log?.sequence ?? index,
     logType(log),
@@ -172,37 +194,37 @@ function speechLogKey(log, index) {
   ].join('|')
 }
 
-function speechLogItems(game) {
+function speechLogItems(game: Game | null | undefined) {
   const logs = Array.isArray(game?.logs) ? game.logs : []
   return logs
     .map((log, index) => ({ log, index, key: speechLogKey(log, index) }))
     .filter(({ log }) => isPublicPlayerSpeech(log))
 }
 
-function buildTtsText(log) {
+function buildTtsText(log: Partial<GameLog> | LooseRecord) {
   const message = clipTtsText(log?.message)
   if (!TTS_CONFIG.includeSpeaker) return message
   const speaker = cleanTtsText(log?.speaker || (log?.actor_id ? `${log.actor_id}号` : ''))
   return speaker ? `${speaker}发言。${message}` : message
 }
 
-export function useGameAudio(runtime, options = {}) {
+export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecycle?: boolean } = {}) {
   const audioEnabled = ref(readBooleanPreference(AUDIO_ENABLED_KEY, true))
   const ttsEnabled = ref(readBooleanPreference(TTS_ENABLED_KEY, TTS_CONFIG.enabled))
   const audioUnlocked = ref(false)
   const ttsSpeaking = ref(false)
-  let audioContext = null
-  let bgmAudio = null
+  let audioContext: AudioContext | null = null
+  let bgmAudio: HTMLAudioElement | null = null
   let currentBgmKey = ''
-  let activeTtsStreamSources = new Set()
-  let activeTtsGain = null
-  let activeTtsController = null
+  let activeTtsStreamSources = new Set<AudioBufferSourceNode>()
+  let activeTtsGain: GainNode | null = null
+  let activeTtsController: AbortController | null = null
   let activeTtsKey = ''
   let ttsRunId = 0
-  let ttsQueue = []
-  let ttsQueuedKeys = new Set()
+  let ttsQueue: TtsItem[] = []
+  let ttsQueuedKeys = new Set<string>()
   let ttsSeenGameId = ''
-  let ttsSeenKeys = new Set()
+  let ttsSeenKeys = new Set<string>()
   let ttsDelayTimer = 0
 
   const currentView = computed(() => valueOf(runtime.currentView))
@@ -267,7 +289,7 @@ export function useGameAudio(runtime, options = {}) {
     }, delay)
   }
 
-  function stopTts({ clearQueue = true } = {}) {
+  function stopTts({ clearQueue = true }: { clearQueue?: boolean } = {}) {
     clearTtsDelayTimer()
     ttsRunId += 1
     activeTtsKey = ''
@@ -296,7 +318,7 @@ export function useGameAudio(runtime, options = {}) {
     void syncBgm()
   }
 
-  function finishTtsStream(gain, { continueQueue = true } = {}) {
+  function finishTtsStream(gain: GainNode, { continueQueue = true }: { continueQueue?: boolean } = {}) {
     if (activeTtsGain !== gain) return
     for (const source of activeTtsStreamSources) {
       source.disconnect?.()
@@ -311,7 +333,7 @@ export function useGameAudio(runtime, options = {}) {
     if (continueQueue) scheduleNextTts(100)
   }
 
-  function ttsRequestBody(item) {
+  function ttsRequestBody(item: TtsItem) {
     return JSON.stringify({
       text: item.text,
       speaker: item.speaker || '',
@@ -319,7 +341,7 @@ export function useGameAudio(runtime, options = {}) {
     })
   }
 
-  async function requestTtsStream(item, signal) {
+  async function requestTtsStream(item: TtsItem, signal: AbortSignal) {
     return fetch(`${apiBase.value}/tts/speech/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -328,7 +350,7 @@ export function useGameAudio(runtime, options = {}) {
     })
   }
 
-  function concatBytes(left, right) {
+  function concatBytes(left: Uint8Array, right: Uint8Array) {
     if (!left?.length) return right
     if (!right?.length) return left
     const combined = new Uint8Array(left.length + right.length)
@@ -337,7 +359,15 @@ export function useGameAudio(runtime, options = {}) {
     return combined
   }
 
-  function schedulePcmChunk(context, gain, bytes, sampleRate, nextStartRef, runId, streamDoneRef) {
+  function schedulePcmChunk(
+    context: AudioContext,
+    gain: GainNode,
+    bytes: Uint8Array,
+    sampleRate: number,
+    nextStartRef: { value: number },
+    runId: number,
+    streamDoneRef: { done: boolean }
+  ) {
     if (runId !== ttsRunId || !bytes?.length) return
     const frameCount = Math.floor(bytes.length / 2)
     if (!frameCount) return
@@ -366,7 +396,7 @@ export function useGameAudio(runtime, options = {}) {
     nextStartRef.value = startAt + buffer.duration
   }
 
-  async function playTtsStream(item, controller, runId) {
+  async function playTtsStream(item: TtsItem, controller: AbortController, runId: number) {
     const context = ensureAudioContext()
     if (!context) throw new Error('浏览器不支持流式音频播放')
     if (context.state === 'suspended') await context.resume()
@@ -450,7 +480,7 @@ export function useGameAudio(runtime, options = {}) {
     }
   }
 
-  function enqueueTts(logs) {
+  function enqueueTts(logs: Array<Partial<GameLog> | LooseRecord>) {
     const item = logs
       .map((log) => ({
         key: speechLogKey(log, 0),
@@ -469,7 +499,7 @@ export function useGameAudio(runtime, options = {}) {
     playNextTts()
   }
 
-  function enqueueLatestTts({ includeSeen = false } = {}) {
+  function enqueueLatestTts({ includeSeen = false }: { includeSeen?: boolean } = {}) {
     const items = speechLogItems(game.value)
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index]
@@ -484,7 +514,7 @@ export function useGameAudio(runtime, options = {}) {
   function ensureAudioContext() {
     if (!hasWindow()) return null
     if (!audioContext) {
-      const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+      const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!AudioContextCtor) return null
       audioContext = new AudioContextCtor()
     }
@@ -539,7 +569,7 @@ export function useGameAudio(runtime, options = {}) {
     if (bgmAudio.paused) bgmAudio.play().catch(() => null)
   }
 
-  function holdBgm(effect) {
+  function holdBgm(effect: AudioEffect) {
     const duration = SFX_HOLD_MS[effect] || 900
     if (bgmHoldTimer) window.clearTimeout(bgmHoldTimer)
     bgmHoldActive.value = true
@@ -551,13 +581,20 @@ export function useGameAudio(runtime, options = {}) {
     }, duration)
   }
 
-  function scheduleTone(context, {
+  function scheduleTone(context: AudioContext, {
     start = 0,
     duration = 0.2,
     frequency = 440,
     endFrequency = null,
     type = 'sine',
     gain = 0.05
+  }: {
+    start?: number
+    duration?: number
+    frequency?: number
+    endFrequency?: number | null
+    type?: OscillatorType
+    gain?: number
   }) {
     const now = context.currentTime + start
     const oscillator = context.createOscillator()
@@ -576,7 +613,7 @@ export function useGameAudio(runtime, options = {}) {
     oscillator.stop(now + duration + 0.04)
   }
 
-  function playSynthEffect(effect, variant = 'victory') {
+  function playSynthEffect(effect: AudioEffect, variant: AudioVariant = 'victory') {
     const context = ensureAudioContext()
     if (!context || context.state !== 'running') return
     if (effect === 'night') {
@@ -615,7 +652,7 @@ export function useGameAudio(runtime, options = {}) {
     }
   }
 
-  async function playAudioEffect(effect, variant) {
+  async function playAudioEffect(effect: AudioEffect, variant?: AudioVariant) {
     if (!audioRuntimeActive.value || !audioEnabled.value || isReplayMode.value) return
     const entry = AUDIO_LIBRARY.sfx[effect]
     if (!entry) return

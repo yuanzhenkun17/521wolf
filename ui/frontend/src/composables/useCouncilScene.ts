@@ -1,19 +1,25 @@
-// @ts-nocheck
 import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
 import { createCouncilHallScene } from '../CouncilHallScene.ts'
 
-function useCouncilScene(state, utils = {}, options = {}) {
+type LooseRecord = Record<string, any>
+type CouncilSceneApi = {
+  update?: (payload: LooseRecord) => void
+  preloadModels?: () => Promise<unknown> | unknown
+  dispose?: () => void
+}
+
+function useCouncilScene(state: LooseRecord, utils: LooseRecord = {}, options: LooseRecord = {}) {
   const containerRef = options.containerRef || state.gameSceneRef
-  let councilScene = null
+  let councilScene: CouncilSceneApi | null = null
   let syncRafId = 0
   let syncScheduled = false
   let actionApi = { chooseScenePlayer: options.chooseScenePlayer }
 
-  function setActionApi(api = {}) {
+  function setActionApi(api: LooseRecord = {}) {
     actionApi = { ...actionApi, ...(api || {}) }
   }
 
-  function playerLabel(player) {
+  function playerLabel(player: LooseRecord | null | undefined) {
     return typeof utils.playerLabel === 'function' ? utils.playerLabel(player) : `${player?.seat || player?.id || ''}号`
   }
 
@@ -21,7 +27,7 @@ function useCouncilScene(state, utils = {}, options = {}) {
     return typeof utils.normalizePlayerText === 'function' ? utils.normalizePlayerText(text) : String(text || '')
   }
 
-  function roleIconImage(player) {
+  function roleIconImage(player: LooseRecord | null | undefined) {
     if (typeof utils.roleIconImage === 'function') return utils.roleIconImage(player)
     const hint = player?.role_hint || ''
     if (hint.includes('预言')) return '/role-icons/optimized/预言家.webp'
@@ -79,7 +85,7 @@ function useCouncilScene(state, utils = {}, options = {}) {
   }
 
   function syncCouncilScene() {
-    const speechByPlayer = {}
+    const speechByPlayer: Record<string | number, { text: string; tone: string }> = {}
     const players = state.game.value?.players ?? []
     const recentPlayerLogs = (state.game.value?.logs ?? []).filter((log) =>
       state.canSeeLog(log) &&
@@ -104,7 +110,7 @@ function useCouncilScene(state, utils = {}, options = {}) {
     }
     const voteTally = state.sceneVoteTally.value
     councilScene?.update?.({
-      players: state.visualSeatPlayers.value.map((player) => {
+      players: state.visualSeatPlayers.value.map((player: LooseRecord) => {
         const masked = !state.isWatch.value && !player.is_human
         return {
           ...player,
@@ -118,10 +124,10 @@ function useCouncilScene(state, utils = {}, options = {}) {
       revealPlayers: state.roleAssignmentComplete.value || state.isReplayMode.value,
       humanId: state.isWatch.value ? null : state.game.value?.human_player_id ?? null,
       selectableIds: state.pendingActionType.value
-        ? state.actionCandidates.value.map((player) => player.id)
+        ? state.actionCandidates.value.map((player: LooseRecord) => player.id)
         : (state.game.value?.waiting_for === 'vote'
-            ? state.canVotePlayers.value.map((player) => player.id)
-            : (state.burstArmed.value ? state.whiteWolfTargets.value.map((player) => player.id) : [])),
+            ? state.canVotePlayers.value.map((player: LooseRecord) => player.id)
+            : (state.burstArmed.value ? state.whiteWolfTargets.value.map((player: LooseRecord) => player.id) : [])),
       onPlayerSelect: actionApi.chooseScenePlayer || (() => {}),
       pageVoteTally: voteTally,
       voteTally
@@ -158,16 +164,16 @@ function useCouncilScene(state, utils = {}, options = {}) {
     watch(() => state.game.value?.logs?.length, scrollJudgeStripToBottom)
     watch(() => state.game.value?.current_speaker_id, scrollChatToBottom)
     watch(() => [
-      state.game.value?.players?.map((p) => `${p.id}:${p.role_hint}:${p.alive}`).join('|'),
+      state.game.value?.players?.map((p: LooseRecord) => `${p.id}:${p.role_hint}:${p.alive}`).join('|'),
       state.game.value?.current_speaker_id,
       state.game.value?.logs?.length,
       state.judgeBoardStarted.value,
       state.roleAssignmentComplete.value,
       state.pendingActionType.value,
-      state.actionCandidates.value.map((p) => p.id).join('|'),
+      state.actionCandidates.value.map((p: LooseRecord) => p.id).join('|'),
       state.game.value?.waiting_for,
       state.burstArmed.value,
-      state.sceneVoteTally.value.map((row) => `${row.target_id}:${row.count}:${row.voters?.join(',')}`).join('|')
+      state.sceneVoteTally.value.map((row: LooseRecord) => `${row.target_id}:${row.count}:${row.voters?.join(',')}`).join('|')
     ], scheduleSyncCouncilScene)
     watch(state.inMatch, (match) => {
       if (match) mountCouncilScene()

@@ -1,4 +1,18 @@
-// @ts-nocheck
+import type { Game } from '../types/game'
+
+type LooseRecord = Record<string, any>
+type NumericId = number | null
+
+interface SceneEffect {
+  id: string
+  type: string
+  actorId: NumericId
+  targetId: number
+  day: number
+  sequence: number
+  source: 'decision' | 'log'
+}
+
 const GUARD_ACTIONS = new Set(['guard_protect', 'guard'])
 const WITCH_SAVE_ACTIONS = new Set(['witch_save', 'antidote'])
 const WITCH_POISON_ACTIONS = new Set(['witch_poison', 'poison'])
@@ -26,16 +40,20 @@ const PUBLIC_SKILL_KILL_ACTIONS = new Set([
   'white_wolf_explosion'
 ])
 
-function numericId(value) {
+function isRecord(value: unknown): value is LooseRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function numericId(value: unknown): NumericId {
   const id = Number(value)
   return Number.isFinite(id) && id > 0 ? id : null
 }
 
-function rowType(row = {}) {
+function rowType(row: LooseRecord = {}) {
   return String(row.type || row.event_type || row.action || row.action_type || row.kind || '').trim()
 }
 
-function targetId(row = {}) {
+function targetId(row: LooseRecord = {}): NumericId {
   return numericId(
     row.target_id
     ?? row.target
@@ -46,15 +64,15 @@ function targetId(row = {}) {
   )
 }
 
-function actorId(row = {}) {
+function actorId(row: LooseRecord = {}): NumericId {
   return numericId(row.actor_id ?? row.player_id ?? row.actor ?? row.playerId)
 }
 
-function payloadOf(row = {}) {
-  return row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload) ? row.payload : {}
+function payloadOf(row: LooseRecord = {}): LooseRecord {
+  return isRecord(row.payload) ? row.payload : {}
 }
 
-function rowChoice(row = {}) {
+function rowChoice(row: LooseRecord = {}) {
   const payload = payloadOf(row)
   return String(
     payload.choice
@@ -68,16 +86,16 @@ function rowChoice(row = {}) {
   ).trim().toLowerCase()
 }
 
-function isLegacyWhiteWolfExplodeKill(row = {}) {
+function isLegacyWhiteWolfExplodeKill(row: LooseRecord = {}) {
   if (rowType(row) !== 'white_wolf_explode') return false
   return ['explode', 'burst'].includes(rowChoice(row)) && Boolean(targetId(row))
 }
 
-function isPublicSkillKill(row = {}) {
+function isPublicSkillKill(row: LooseRecord = {}) {
   return PUBLIC_SKILL_KILL_ACTIONS.has(rowType(row)) || isLegacyWhiteWolfExplodeKill(row)
 }
 
-function firstNumeric(row = {}, keys = []) {
+function firstNumeric(row: LooseRecord = {}, keys: string[] = []): NumericId {
   const payload = payloadOf(row)
   for (const key of keys) {
     const id = numericId(payload[key] ?? row[key])
@@ -86,15 +104,15 @@ function firstNumeric(row = {}, keys = []) {
   return null
 }
 
-function numericList(value) {
+function numericList(value: unknown): number[] {
   const source = Array.isArray(value) ? value : (value == null ? [] : [value])
   return source.map(numericId).filter(Boolean)
 }
 
-function payloadIds(row = {}, keys = []) {
+function payloadIds(row: LooseRecord = {}, keys: string[] = []): number[] {
   const payload = payloadOf(row)
-  const ids = []
-  const seen = new Set()
+  const ids: number[] = []
+  const seen = new Set<number>()
   keys.forEach((key) => {
     numericList(payload[key] ?? row[key]).forEach((id) => {
       if (seen.has(id)) return
@@ -105,29 +123,29 @@ function payloadIds(row = {}, keys = []) {
   return ids
 }
 
-function truthyFlag(value) {
+function truthyFlag(value: unknown) {
   return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true'
 }
 
-function deathCause(row = {}) {
+function deathCause(row: LooseRecord = {}) {
   return String(payloadOf(row).cause || row.cause || '').trim().toLowerCase()
 }
 
-function dayOf(row = {}) {
+function dayOf(row: LooseRecord = {}) {
   const day = Number(row.day)
   return Number.isFinite(day) && day > 0 ? day : 0
 }
 
-function sequenceOf(row = {}, fallback = 0) {
+function sequenceOf(row: LooseRecord = {}, fallback = 0) {
   const sequence = Number(row.sequence ?? row.index ?? fallback)
   return Number.isFinite(sequence) ? sequence : fallback
 }
 
-function textOf(row = {}) {
+function textOf(row: LooseRecord = {}) {
   return String(row.message || row.public_summary || row.public_text || row.text || row.content || '')
 }
 
-function effectId(kind, row, target, suffix = '') {
+function effectId(kind: string, row: LooseRecord, target: NumericId | string, suffix: string | number = '') {
   return [
     kind,
     dayOf(row),
@@ -139,11 +157,11 @@ function effectId(kind, row, target, suffix = '') {
   ].join(':')
 }
 
-function nightOutcomeKey(kind, row, target) {
+function nightOutcomeKey(kind: string, row: LooseRecord, target: NumericId | string) {
   return `${kind}:${dayOf(row)}:${target}`
 }
 
-function addEffect(effects, seen, effect) {
+function addEffect(effects: SceneEffect[], seen: Set<string>, effect: SceneEffect) {
   if (!effect?.type || !effect?.id) return
   if (effect.targetId != null && !numericId(effect.targetId)) return
   if (seen.has(effect.id)) return
@@ -152,8 +170,8 @@ function addEffect(effects, seen, effect) {
 }
 
 function parseSeatIds(text = '') {
-  const ids = []
-  const seen = new Set()
+  const ids: number[] = []
+  const seen = new Set<number>()
   const value = String(text || '')
   const patterns = [/(\d{1,2})\s*号/g, /P\s*(\d{1,2})\b/gi]
   patterns.forEach((pattern) => {
@@ -168,7 +186,7 @@ function parseSeatIds(text = '') {
   return ids
 }
 
-function witchChoice(decision = {}) {
+function witchChoice(decision: LooseRecord = {}) {
   return String(
     decision.selected_skill
     ?? decision.selected_choice
@@ -178,18 +196,18 @@ function witchChoice(decision = {}) {
   ).trim()
 }
 
-function witchSaveTarget(decision = {}) {
+function witchSaveTarget(decision: LooseRecord = {}): NumericId {
   return targetId(decision)
     ?? numericId(decision.metadata?.attacked_player)
     ?? numericId(decision.options?.attacked_player)
 }
 
-function nightKey(row = {}) {
+function nightKey(row: LooseRecord = {}) {
   return `${dayOf(row)}:night`
 }
 
-function groupNightDecisions(decisions = []) {
-  const groups = new Map()
+function groupNightDecisions(decisions: LooseRecord[] = []) {
+  const groups = new Map<string, { saves: Array<{ row: LooseRecord; target: number }>; poisons: Array<{ row: LooseRecord; target: number }> }>()
   decisions.forEach((decision, index) => {
     const type = rowType(decision)
     const phase = String(decision.phase || '').trim()
@@ -212,7 +230,7 @@ function groupNightDecisions(decisions = []) {
   return groups
 }
 
-function buildPrivilegedNightEffects(decisions, effects, seen, preciseNightOutcomes) {
+function buildPrivilegedNightEffects(decisions: LooseRecord[], effects: SceneEffect[], seen: Set<string>, preciseNightOutcomes: Set<string>) {
   const groups = groupNightDecisions(decisions)
   groups.forEach((group) => {
     group.saves.forEach(({ row, target }) => {
@@ -242,8 +260,8 @@ function buildPrivilegedNightEffects(decisions, effects, seen, preciseNightOutco
   })
 }
 
-function buildPrivilegedNightLogEffects(logs, effects, seen, preciseNightOutcomes) {
-  const preciseLogOutcomes = new Set()
+function buildPrivilegedNightLogEffects(logs: LooseRecord[], effects: SceneEffect[], seen: Set<string>, preciseNightOutcomes: Set<string>) {
+  const preciseLogOutcomes = new Set<string>()
   logs.forEach((log, index) => {
     const type = rowType(log)
     if (!NIGHT_OUTCOME_TYPES.has(type)) return
@@ -334,7 +352,7 @@ function buildPrivilegedNightLogEffects(logs, effects, seen, preciseNightOutcome
   })
 }
 
-function buildPublicLogEffects(logs, effects, seen, preciseNightOutcomes) {
+function buildPublicLogEffects(logs: LooseRecord[], effects: SceneEffect[], seen: Set<string>, preciseNightOutcomes: Set<string>) {
   logs.forEach((log, index) => {
     const type = rowType(log)
     const row = { ...log, sequence: log.sequence ?? log.index ?? index + 1 }
@@ -371,7 +389,7 @@ function buildPublicLogEffects(logs, effects, seen, preciseNightOutcomes) {
   })
 }
 
-function buildPublicDecisionEffects(decisions, effects, seen, preciseNightOutcomes = new Set()) {
+function buildPublicDecisionEffects(decisions: LooseRecord[], effects: SceneEffect[], seen: Set<string>, preciseNightOutcomes = new Set<string>()) {
   decisions.forEach((decision, index) => {
     const type = rowType(decision)
     const target = targetId(decision)
@@ -404,17 +422,21 @@ function buildPublicDecisionEffects(decisions, effects, seen, preciseNightOutcom
   })
 }
 
-export function buildSceneEffects(game, { canSeeLog, isWatch = false, isReplayMode = false } = {}) {
+export function buildSceneEffects(game: Game | null | undefined, { canSeeLog, isWatch = false, isReplayMode = false }: {
+  canSeeLog?: (log: LooseRecord) => boolean
+  isWatch?: boolean
+  isReplayMode?: boolean
+} = {}): SceneEffect[] {
   if (!game) return []
   const privileged = Boolean(isWatch || isReplayMode || game.winner)
-  const allLogs = Array.isArray(game.logs) ? game.logs : (Array.isArray(game.events) ? game.events : [])
+  const allLogs = (Array.isArray(game.logs) ? game.logs : (Array.isArray(game.events) ? game.events : [])) as LooseRecord[]
   const visibleLogs = privileged || typeof canSeeLog !== 'function'
     ? allLogs
     : allLogs.filter((log) => canSeeLog(log))
-  const allDecisions = Array.isArray(game.decisions) ? game.decisions : []
-  const effects = []
-  const seen = new Set()
-  const preciseNightOutcomes = new Set()
+  const allDecisions = (Array.isArray(game.decisions) ? game.decisions : []) as LooseRecord[]
+  const effects: SceneEffect[] = []
+  const seen = new Set<string>()
+  const preciseNightOutcomes = new Set<string>()
 
   if (privileged) {
     buildPrivilegedNightLogEffects(allLogs, effects, seen, preciseNightOutcomes)
