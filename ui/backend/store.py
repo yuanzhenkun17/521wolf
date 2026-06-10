@@ -1624,7 +1624,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         target_type = spec.target_type if spec else request.target_type
         self._validate_benchmark_target_versions(roles, request, target_type=target_type)
         if spec is not None:
-            game_count = int(spec.game_count)
+            game_count = _benchmark_effective_game_count(int(spec.game_count), request)
             max_days = int(spec.max_days)
             judge = spec.judge.model_dump(mode="json")
             benchmark = benchmark_spec_summary(spec, seed_set)
@@ -2881,7 +2881,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         benchmark_meta = batch.get("benchmark") if isinstance(batch.get("benchmark"), dict) else {}
         target_type = str(batch.get("target_type") or request.target_type or "role_version")
         if spec_snapshot:
-            game_count = int(spec_snapshot.get("game_count", request.battle_games or 0) or 0)
+            game_count = _benchmark_effective_game_count(
+                int(spec_snapshot.get("game_count", request.battle_games or 0) or 0),
+                request,
+            )
             max_days = int(spec_snapshot.get("max_days", request.max_days or 5) or request.max_days or 5)
             seed_sequence = _benchmark_seed_sequence(spec_snapshot, game_count)
             seed_start = (
@@ -3084,6 +3087,13 @@ def _benchmark_result_game_count(result: dict[str, Any]) -> int:
             continue
     games = result.get("games")
     return len([item for item in games if isinstance(item, dict)]) if isinstance(games, list) else 0
+
+
+def _benchmark_effective_game_count(spec_game_count: int, request: BenchmarkRequest) -> int:
+    game_count = max(0, int(spec_game_count or 0))
+    if request.battle_games is None:
+        return game_count
+    return min(game_count, max(0, int(request.battle_games or 0)))
 
 
 def _benchmark_eval_batch_id(batch_id: str, role: str | None) -> str:
