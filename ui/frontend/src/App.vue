@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, defineAsyncComponent, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import TopNav from './components/TopNav.vue'
@@ -20,6 +19,8 @@ import {
   useUiStore
 } from './stores'
 
+type RuntimeRecord = Record<string, any>
+
 const LogsPage = defineAsyncComponent(() => import('./pages/LogsPage.vue'))
 const BenchmarkPage = defineAsyncComponent(() => import('./pages/BenchmarkPage.vue'))
 const EvolutionPage = defineAsyncComponent(() => import('./pages/EvolutionPage.vue'))
@@ -35,7 +36,7 @@ const history = useGameHistory(state, { apiFetch: actions.apiFetch, actionApi: a
 actions.setHistoryApi?.(history)
 history.setActionApi?.(actions)
 const audio = useGameAudio({ ...state, apiBase: actions.apiBase })
-const runtime = { ...state, ...utils, ...actions, ...history, ...audio }
+const runtime = { ...state, ...utils, ...actions, ...history, ...audio } as RuntimeRecord
 const sessionStore = useSessionStore()
 const gameStore = useGameStore()
 const historyStore = useHistoryStore()
@@ -49,7 +50,7 @@ const runtimeHydrator = createIncrementalRuntimeHydrator({
   ui: uiStore
 })
 
-function registerCouncilScene(sceneApi) {
+function registerCouncilScene(sceneApi: RuntimeRecord) {
   actions.setSceneApi?.(sceneApi)
   history.setSceneApi?.(sceneApi)
 }
@@ -66,11 +67,14 @@ const {
   lobbyProps,
   matchProps,
   activeSession,
-  audioEnabled,
-  ttsEnabled,
-  ttsAvailable,
+  audioEnabled: rawAudioEnabled,
+  ttsEnabled: rawTtsEnabled,
+  ttsAvailable: rawTtsAvailable,
   runtimeCurrentView
 } = useAppRuntimeProps(runtime)
+const audioEnabled = computed(() => Boolean(rawAudioEnabled.value))
+const ttsEnabled = computed(() => Boolean(rawTtsEnabled.value))
+const ttsAvailable = computed(() => Boolean(rawTtsAvailable.value))
 const routeAppView = computed(() => appViewFromRoute(route))
 const activeAppView = computed(() => {
   if (route.path === '/' && runtimeCurrentView.value !== 'lobby') return runtimeCurrentView.value
