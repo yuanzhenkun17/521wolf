@@ -2,36 +2,47 @@ from __future__ import annotations
 
 from typing import Any
 
+from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository
 from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
 from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
 from storage.postgres.unit_of_work import UnitOfWork
 
 
 class _Cursor:
-    def __init__(self, *, rowcount: int = 0) -> None:
+    def __init__(self, rows: list[Any] | None = None, *, rowcount: int = 0) -> None:
         self.rowcount = rowcount
+        self._rows = rows or []
 
     def fetchone(self) -> None:
         return None
 
     def fetchall(self) -> list[Any]:
-        return []
+        return list(self._rows)
 
 
 class _Connection:
-    def __init__(self, *, rowcount: int = 1, fail_execute: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        rowcount: int = 1,
+        fail_execute: bool = False,
+        rows: list[Any] | None = None,
+    ) -> None:
         self.calls: list[str] = []
+        self.executions: list[tuple[str, tuple[Any, ...]]] = []
         self.rowcount = rowcount
         self.fail_execute = fail_execute
+        self.rows = rows or []
 
     def begin_write(self) -> None:
         self.calls.append("begin_write")
 
     def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
         self.calls.append("execute")
+        self.executions.append((sql, tuple(parameters)))
         if self.fail_execute:
             raise RuntimeError("write failed")
-        return _Cursor(rowcount=self.rowcount)
+        return _Cursor(self.rows, rowcount=self.rowcount)
 
     def commit(self) -> None:
         self.calls.append("commit")
@@ -129,3 +140,52 @@ def test_benchmark_repository_unit_of_work_rolls_back_on_write_error() -> None:
         raise AssertionError("write failure did not propagate")
 
     assert conn.calls == ["begin_write", "execute", "rollback", "close"]
+
+
+def test_benchmark_evaluation_repository_lists_leaderboard_rows_with_filters() -> None:
+    row = {"subject_id": "seer_candidate_v2"}
+    conn = _Connection(rows=[row])
+
+    rows = BenchmarkEvaluationRepository(conn).list_leaderboard_rows(
+        scope="role_version",
+        evaluation_set_id="role-baseline-v1@v1",
+        target_role="seer",
+        limit=999,
+    )
+
+    assert rows == [row]
+    assert conn.calls == ["execute"]
+    sql, params = conn.executions[0]
+    assert "FROM benchmark_leaderboard" in sql
+    assert "AND scope = ?" in sql
+    assert "AND evaluation_set_id = ?" in sql
+    assert "AND target_role = ?" in sql
+    assert "ORDER BY rankable DESC, strength_score DESC, avg_role_score DESC, updated_at DESC" in sql
+    assert "LIMIT ?" in sql
+    assert params == ("role_version", "role-baseline-v1@v1", "seer", 500)
+
+
+def test_benchmark_evaluation_repository_lists_role_rows_newest_first() -> None:
+    row = {"target_role": "seer", "target_version_id": "seer_candidate_v2"}
+    conn = _Connection(rows=[row])
+
+    rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows_for_roles(
+        ["seer", "witch"],
+        evaluation_set_id="role-baseline-v1@v1",
+    )
+
+    assert rows == [row]
+    sql, params = conn.executions[0]
+    assert "WHERE scope = 'role_version' AND target_role IN (?, ?)" in sql
+    assert "AND evaluation_set_id = ?" in sql
+    assert "ORDER BY updated_at DESC" in sql
+    assert params == ("seer", "witch", "role-baseline-v1@v1")
+
+
+def test_benchmark_evaluation_repository_skips_empty_role_list() -> None:
+    conn = _Connection()
+
+    rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows_for_roles([])
+
+    assert rows == []
+    assert conn.calls == []

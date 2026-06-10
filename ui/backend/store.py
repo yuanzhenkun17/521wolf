@@ -39,6 +39,7 @@ from app.lib.version import VersionRegistryProtocol, registry_version_release_st
 from app.run import LANGFUSE_EVAL_CONFIG_KEYS, run_evaluation, run_evolution
 from app.services.llm import create_llm
 from app.util.time import beijing_now_iso
+from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository
 from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
 from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
 from storage.postgres.unit_of_work import from_connection_factory
@@ -631,22 +632,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         conn = None
         try:
             conn = open_eval_connection(self.paths)
-            where = "WHERE scope = 'role_version' AND target_role = ? "
-            params: list[Any] = [role]
-            if evaluation_set_id:
-                where += "AND evaluation_set_id = ? "
-                params.append(evaluation_set_id)
-            rows = conn.execute(
-                "SELECT scope, subject_id, model_id, model_config_hash, target_role, target_version_id, "
-                "comparison_group_id, evaluation_set_id, seed_set_id, games_played, valid_game_rate, "
-                "strength_score, avg_role_score, by_role_category_scores, avg_speech_score, avg_vote_score, "
-                "avg_skill_score, avg_logic_score, avg_team_score, risk_penalty, fallback_rate, llm_error_rate, "
-                "policy_adjusted_rate, target_side_win_rate, rankable, data_sufficient, summary, updated_at "
-                "FROM benchmark_leaderboard "
-                f"{where}"
-                "ORDER BY updated_at DESC",
-                tuple(params),
-            ).fetchall()
+            rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows(
+                role,
+                evaluation_set_id=evaluation_set_id,
+            )
             for row in rows:
                 vid = row["target_version_id"]
                 if vid and vid not in scores:  # newest row per version wins
@@ -676,31 +665,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         conn = None
         try:
             conn = open_eval_connection(self.paths)
-            where = "WHERE 1 = 1 "
-            params: list[Any] = []
-            if normalized_scope:
-                where += "AND scope = ? "
-                params.append(normalized_scope)
-            if evaluation_set_id:
-                where += "AND evaluation_set_id = ? "
-                params.append(evaluation_set_id)
-            if target_role:
-                where += "AND target_role = ? "
-                params.append(target_role)
-            capped_limit = max(1, min(int(limit or 100), 500))
-            params.append(capped_limit)
-            rows = conn.execute(
-                "SELECT scope, subject_id, model_id, model_config_hash, target_role, target_version_id, "
-                "comparison_group_id, evaluation_set_id, seed_set_id, games_played, valid_game_rate, "
-                "strength_score, avg_role_score, by_role_category_scores, avg_speech_score, avg_vote_score, "
-                "avg_skill_score, avg_logic_score, avg_team_score, risk_penalty, fallback_rate, llm_error_rate, "
-                "policy_adjusted_rate, target_side_win_rate, rankable, data_sufficient, summary, updated_at "
-                "FROM benchmark_leaderboard "
-                f"{where}"
-                "ORDER BY rankable DESC, strength_score DESC, avg_role_score DESC, updated_at DESC "
-                "LIMIT ?",
-                tuple(params),
-            ).fetchall()
+            rows = BenchmarkEvaluationRepository(conn).list_leaderboard_rows(
+                scope=normalized_scope or None,
+                evaluation_set_id=evaluation_set_id,
+                target_role=target_role,
+                limit=limit,
+            )
             rows_out = [self._leaderboard_row_payload(row) for row in rows]
         except HTTPException:
             raise
@@ -1474,23 +1444,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         conn = None
         try:
             conn = open_eval_connection(self.paths)
-            placeholders = ", ".join("?" for _ in role_keys)
-            where = f"WHERE scope = 'role_version' AND target_role IN ({placeholders}) "
-            params: list[Any] = list(role_keys)
-            if evaluation_set_id:
-                where += "AND evaluation_set_id = ? "
-                params.append(evaluation_set_id)
-            rows = conn.execute(
-                "SELECT scope, subject_id, model_id, model_config_hash, target_role, target_version_id, "
-                "comparison_group_id, evaluation_set_id, seed_set_id, games_played, valid_game_rate, "
-                "strength_score, avg_role_score, by_role_category_scores, avg_speech_score, avg_vote_score, "
-                "avg_skill_score, avg_logic_score, avg_team_score, risk_penalty, fallback_rate, llm_error_rate, "
-                "policy_adjusted_rate, target_side_win_rate, rankable, data_sufficient, summary, updated_at "
-                "FROM benchmark_leaderboard "
-                f"{where}"
-                "ORDER BY updated_at DESC",
-                tuple(params),
-            ).fetchall()
+            rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows_for_roles(
+                role_keys,
+                evaluation_set_id=evaluation_set_id,
+            )
             for row in rows:
                 role = row["target_role"]
                 vid = row["target_version_id"]

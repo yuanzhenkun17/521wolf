@@ -200,6 +200,73 @@ class BenchmarkEvaluationRepository:
             result.append(item)
         return result
 
+    def list_leaderboard_rows(
+        self,
+        *,
+        scope: str | None = None,
+        evaluation_set_id: str | None = None,
+        target_role: str | None = None,
+        limit: int = 100,
+    ) -> list[Any]:
+        """Load benchmark leaderboard rows with explicit scope isolation."""
+        where = "WHERE 1 = 1 "
+        params: list[Any] = []
+        if scope:
+            where += "AND scope = ? "
+            params.append(scope)
+        if evaluation_set_id:
+            where += "AND evaluation_set_id = ? "
+            params.append(evaluation_set_id)
+        if target_role:
+            where += "AND target_role = ? "
+            params.append(target_role)
+        capped_limit = max(1, min(int(limit or 100), 500))
+        params.append(capped_limit)
+        return self._conn.execute(
+            _LEADERBOARD_SELECT_COLUMNS
+            + "FROM benchmark_leaderboard "
+            + where
+            + "ORDER BY rankable DESC, strength_score DESC, avg_role_score DESC, updated_at DESC "
+            + "LIMIT ?",
+            tuple(params),
+        ).fetchall()
+
+    def list_role_leaderboard_rows(
+        self,
+        role: str,
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> list[Any]:
+        """Load newest-first leaderboard rows for one role."""
+        return self.list_role_leaderboard_rows_for_roles(
+            [role],
+            evaluation_set_id=evaluation_set_id,
+        )
+
+    def list_role_leaderboard_rows_for_roles(
+        self,
+        roles: list[str],
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> list[Any]:
+        """Load newest-first leaderboard rows for multiple roles."""
+        role_keys = [str(role) for role in roles if role]
+        if not role_keys:
+            return []
+        placeholders = ", ".join("?" for _ in role_keys)
+        where = f"WHERE scope = 'role_version' AND target_role IN ({placeholders}) "
+        params: list[Any] = list(role_keys)
+        if evaluation_set_id:
+            where += "AND evaluation_set_id = ? "
+            params.append(evaluation_set_id)
+        return self._conn.execute(
+            _LEADERBOARD_SELECT_COLUMNS
+            + "FROM benchmark_leaderboard "
+            + where
+            + "ORDER BY updated_at DESC",
+            tuple(params),
+        ).fetchall()
+
 
 def open_benchmark_connection(paths: Any = None) -> StorageConnection:
     """Open the wolf-domain storage connection used by benchmark persistence."""
@@ -211,6 +278,15 @@ def open_benchmark_connection(paths: Any = None) -> StorageConnection:
 def _nullable_timestamp(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+_LEADERBOARD_SELECT_COLUMNS = (
+    "SELECT scope, subject_id, model_id, model_config_hash, target_role, target_version_id, "
+    "comparison_group_id, evaluation_set_id, seed_set_id, games_played, valid_game_rate, "
+    "strength_score, avg_role_score, by_role_category_scores, avg_speech_score, avg_vote_score, "
+    "avg_skill_score, avg_logic_score, avg_team_score, risk_penalty, fallback_rate, llm_error_rate, "
+    "policy_adjusted_rate, target_side_win_rate, rankable, data_sufficient, summary, updated_at "
+)
 
 
 __all__ = ["BenchmarkEvaluationRepository", "open_benchmark_connection"]
