@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -318,8 +319,73 @@ class BenchmarkService:
     def queue_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
         return self._runs.queue_benchmark(request)
 
+    def queue_benchmark_task(self, batch: dict[str, Any], request: BenchmarkRequest) -> dict[str, Any]:
+        return self._runs.queue_benchmark_task(batch, request)
+
     async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
         await self._runs.run_queued_benchmark(batch_id, request)
+
+    def task_executors(self) -> dict[str, Any]:
+        return {"benchmark_batch": self.execute_benchmark_task}
+
+    def execute_benchmark_task(self, task: dict[str, Any], context: Any) -> dict[str, Any]:
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        batch_id = str(payload.get("batch_id") or task.get("task_id") or "")
+        request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
+        request = BenchmarkRequest.model_validate(request_payload)
+        context.heartbeat(progress={"stage": "benchmark_running", "batch_id": batch_id})
+        asyncio.run(self.run_queued_benchmark(batch_id, request))
+        batch = self._context.evolution_batches.get(batch_id, {})
+        artifacts = self.persist_benchmark_task_artifacts(batch_id)
+        return {
+            "batch_id": batch_id,
+            "status": batch.get("status"),
+            "artifact_ids": [artifact["artifact_id"] for artifact in artifacts],
+        }
+
+    def persist_benchmark_task_artifacts(self, batch_id: str) -> list[dict[str, Any]]:
+        batch = self._context.evolution_batches.get(batch_id)
+        if not isinstance(batch, dict) or batch.get("status") != "completed":
+            return []
+        artifacts: list[dict[str, Any]] = []
+        report = self.benchmark_batch_report(batch_id, format="json")
+        artifacts.append(
+            self._tasks.put_task_json_artifact(
+                task_id=batch_id,
+                name="benchmark-report.json",
+                payload=report,
+                artifact_type="benchmark_report",
+                metadata={"format": "json", "report_id": report.get("report_id")},
+            )
+        )
+        manifest = report.get("reproducibility_manifest")
+        if isinstance(manifest, dict):
+            artifacts.append(
+                self._tasks.put_task_json_artifact(
+                    task_id=batch_id,
+                    name="reproducibility-manifest.json",
+                    payload=manifest,
+                    artifact_type="benchmark_reproducibility_manifest",
+                    metadata={"format": "json", "report_id": report.get("report_id")},
+                )
+            )
+        for format_name, content_type, filename in (
+            ("markdown", "text/markdown", "benchmark-report.md"),
+            ("csv", "text/csv", "benchmark-report.csv"),
+        ):
+            exported = self.benchmark_batch_report(batch_id, format=format_name)
+            content = str(exported.get("content") or "")
+            artifacts.append(
+                self._tasks.put_task_bytes_artifact(
+                    task_id=batch_id,
+                    name=filename,
+                    data=content.encode("utf-8"),
+                    artifact_type=f"benchmark_report_{format_name}",
+                    content_type=content_type,
+                    metadata={"format": format_name, "report_id": report.get("report_id")},
+                )
+            )
+        return artifacts
 
     def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
         return self._runs.benchmark_model_runtime(request)

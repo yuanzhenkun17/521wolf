@@ -444,6 +444,36 @@ def test_task_service_facades_delegate_to_cached_service(
     ]
 
 
+def test_backend_store_creates_task_worker_loop_with_benchmark_executors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeTaskService:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+
+        def open_connection(self) -> str:
+            return "task-connection"
+
+        def publish_task_queue_event(self, task: dict[str, Any], event: str | None = None) -> dict[str, Any]:
+            return {"task": task, "event": event}
+
+    class FakeBenchmarkService:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+
+        def task_executors(self) -> dict[str, Any]:
+            return {"benchmark_batch": lambda _task, _context: {"ok": True}}
+
+    monkeypatch.setattr(ui_backend_store, "TaskService", FakeTaskService)
+    monkeypatch.setattr(ui_backend_store, "BenchmarkService", FakeBenchmarkService)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+
+    loop = store.create_task_worker_loop(worker_id="worker-test", poll_interval_seconds=0, lease_seconds=30)
+
+    assert loop.registry.kinds() == ("benchmark_batch",)
+
+
 def test_evolution_service_persists_actions_through_task_service() -> None:
     class FakeTaskService:
         def __init__(self) -> None:

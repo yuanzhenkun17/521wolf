@@ -32,7 +32,43 @@ class BackgroundTaskServiceProtocol(Protocol):
     def get_task_queue_row(self, task_id: str) -> dict[str, Any] | None:
         ...
 
+    def enqueue_task(
+        self,
+        *,
+        task_id: str,
+        kind: str,
+        payload: dict[str, Any],
+        priority: int = 100,
+        idempotency_key: str | None = None,
+        source: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        ...
+
     def list_task_artifacts(self, task_id: str) -> list[dict[str, Any]]:
+        ...
+
+    def put_task_json_artifact(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        payload: Any,
+        artifact_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        ...
+
+    def put_task_bytes_artifact(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        data: bytes,
+        artifact_type: str,
+        content_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         ...
 
     def cancel_task(self, task_id: str) -> dict[str, Any] | None:
@@ -120,12 +156,123 @@ class TaskService:
         finally:
             conn.close()
 
+    def enqueue_task(
+        self,
+        *,
+        task_id: str,
+        kind: str,
+        payload: dict[str, Any],
+        priority: int = 100,
+        idempotency_key: str | None = None,
+        source: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        now = beijing_now_iso()
+        with from_connection_factory(self.open_connection) as tx:
+            repo = TaskQueueRepository(tx.connection)
+            existing = repo.get(task_id)
+            if existing is not None:
+                tx.commit()
+                return existing
+            repo.enqueue(
+                task_id=task_id,
+                kind=kind,
+                payload=payload,
+                queued_at=now,
+                updated_at=now,
+                priority=priority,
+                idempotency_key=idempotency_key,
+                source=source,
+                metadata=metadata,
+            )
+            task = repo.get(task_id)
+            if task is None:  # pragma: no cover - repository contract guard
+                raise RuntimeError(f"task was not persisted: {task_id}")
+            tx.commit()
+        self.publish_task_queue_event(task, event="queued")
+        return task
+
     def list_task_artifacts(self, task_id: str) -> list[dict[str, Any]]:
         conn = self.open_connection()
         try:
             return TaskArtifactRepository(conn).list_for_task(task_id)
         finally:
             conn.close()
+
+    def put_task_json_artifact(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        payload: Any,
+        artifact_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._put_task_artifact(
+            task_id=task_id,
+            name=name,
+            payload=payload,
+            data=None,
+            artifact_type=artifact_type,
+            content_type="application/json",
+            metadata=metadata,
+        )
+
+    def put_task_bytes_artifact(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        data: bytes,
+        artifact_type: str,
+        content_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._put_task_artifact(
+            task_id=task_id,
+            name=name,
+            payload=None,
+            data=data,
+            artifact_type=artifact_type,
+            content_type=content_type,
+            metadata=metadata,
+        )
+
+    def _put_task_artifact(
+        self,
+        *,
+        task_id: str,
+        name: str,
+        payload: Any,
+        data: bytes | None,
+        artifact_type: str,
+        content_type: str | None,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        created_at = beijing_now_iso()
+        with from_connection_factory(self.open_connection) as tx:
+            store = LocalArtifactStore(root=self.task_artifact_root, repo=TaskArtifactRepository(tx.connection))
+            if data is None:
+                artifact = store.put_json(
+                    task_id=task_id,
+                    name=name,
+                    payload=payload,
+                    artifact_type=artifact_type,
+                    created_at=created_at,
+                    metadata=metadata,
+                )
+            else:
+                artifact = store.put_bytes(
+                    task_id=task_id,
+                    name=name,
+                    data=data,
+                    artifact_type=artifact_type,
+                    created_at=created_at,
+                    content_type=content_type,
+                    metadata=metadata,
+                )
+            tx.commit()
+            return artifact
 
     def cancel_task(self, task_id: str) -> dict[str, Any] | None:
         now = beijing_now_iso()

@@ -27,6 +27,7 @@ from ui.backend.services import (
     LiveGameLifecycleCoordinator,
     TaskService,
 )
+from ui.backend.services.task_worker import TaskWorkerLoop
 from ui.backend.live_game import LiveGameSession
 from ui.backend.task_events import TaskEventLog
 from ui.backend.startup_checks import default_startup_checks, log_startup_checks, run_startup_checks
@@ -306,3 +307,21 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
 
     async def _run_single_evolution(self, role: str, request: EvolutionStartRequest) -> dict[str, Any]:
         return await self._evolution_run_service().run_single_evolution(role, request)
+
+    def create_task_worker_loop(
+        self,
+        *,
+        worker_id: str = "ui-task-worker",
+        poll_interval_seconds: float = 1.0,
+        lease_seconds: int = 300,
+    ) -> TaskWorkerLoop:
+        executors: dict[str, Any] = {}
+        executors.update(self.benchmark_service.task_executors())
+        return TaskWorkerLoop(
+            connection_factory=self.task_service.open_connection,
+            executors=executors,
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            event_publisher=self.task_service.publish_task_queue_event,
+        )

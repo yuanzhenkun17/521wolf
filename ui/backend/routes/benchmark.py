@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request
@@ -112,13 +113,19 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
     @api.post("/api/benchmark")
     async def start_benchmark(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         batch = store.benchmark_service.queue_benchmark(request)
-        background_tasks.add_task(store.benchmark_service.run_queued_benchmark, batch["batch_id"], request)
+        if _use_pg_task_queue():
+            store.benchmark_service.queue_benchmark_task(batch, request)
+        else:
+            background_tasks.add_task(store.benchmark_service.run_queued_benchmark, batch["batch_id"], request)
         return batch
 
     @api.post("/api/benchmark/batch")
     async def start_benchmark_batch(request: BenchmarkRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         batch = store.benchmark_service.queue_benchmark(request)
-        background_tasks.add_task(store.benchmark_service.run_queued_benchmark, batch["batch_id"], request)
+        if _use_pg_task_queue():
+            store.benchmark_service.queue_benchmark_task(batch, request)
+        else:
+            background_tasks.add_task(store.benchmark_service.run_queued_benchmark, batch["batch_id"], request)
         return batch
 
     @api.get("/api/benchmark/batch/{batch_id}")
@@ -237,3 +244,7 @@ def register_benchmark_routes(api: FastAPI, store: Any) -> None:
         last_event_id = _last_event_id_from_request(request)
         stream = store.benchmark_service.stream_benchmark_events(batch_id, last_event_id)
         return StreamingResponse(stream, media_type="text/event-stream")
+
+
+def _use_pg_task_queue() -> bool:
+    return os.environ.get("WOLF_USE_PG_TASK_QUEUE", "").strip().lower() in {"1", "true", "yes", "on"}

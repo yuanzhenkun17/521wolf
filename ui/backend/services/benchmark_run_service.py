@@ -281,6 +281,32 @@ class BenchmarkRunService:
         self._tasks.persist_background_tasks()
         return batch
 
+    def queue_benchmark_task(self, batch: dict[str, Any], request: BenchmarkRequest) -> dict[str, Any]:
+        batch_id = str(batch.get("batch_id") or "")
+        if not batch_id:
+            raise HTTPException(status_code=500, detail="benchmark batch is missing batch_id")
+        task = self._tasks.enqueue_task(
+            task_id=batch_id,
+            kind="benchmark_batch",
+            payload={
+                "batch_id": batch_id,
+                "request": request.model_dump(mode="json", exclude_none=True),
+            },
+            priority=50,
+            idempotency_key=f"benchmark_batch:{batch_id}",
+            source="ui_benchmark",
+            metadata={
+                "batch_id": batch_id,
+                "target_type": batch.get("target_type"),
+                "roles": list(batch.get("roles") or []),
+                "benchmark_id": (batch.get("benchmark") or {}).get("id") if isinstance(batch.get("benchmark"), dict) else None,
+            },
+        )
+        batch["task_id"] = task["task_id"]
+        batch["task_queue_status"] = task["status"]
+        self._tasks.persist_background_tasks()
+        return task
+
     def validate_benchmark_target_versions(
         self,
         roles: list[str],

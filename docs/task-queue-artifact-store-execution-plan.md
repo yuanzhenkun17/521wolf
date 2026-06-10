@@ -55,7 +55,19 @@ PostgreSQL-backed task queue
 - 已在 `/api/health.external.task_control` 暴露 queue backlog、stale running、worker freshness 和 artifact root writable。
 - 已扩展 `TaskEventLog` 兼容 `task_id` entity，使 queue task 能复用现有 event replay。
 
-当前仍未迁移 benchmark/evolution 执行路径，没有改前端，也没有启动常驻 worker 进程；但 API 控制面、worker loop 和 health 基础已经就绪。后续接线必须等前后端重构边界稳定后再做。
+已完成 Phase D Benchmark Queue Bridge：
+
+- `WOLF_USE_PG_TASK_QUEUE=true` 时，`POST /api/benchmark` 与 `POST /api/benchmark/batch` 创建 `benchmark_batch` PG task，不再交给 FastAPI `BackgroundTasks` 执行。
+- 默认未启用 flag 时仍保持旧 BackgroundTasks 行为，前端响应结构兼容。
+- `BenchmarkService.task_executors()` 提供 `benchmark_batch` executor，可直接交给 `BackendStore.create_task_worker_loop()`。
+- benchmark task executor 复用现有 `run_queued_benchmark`，完成后写入 ArtifactStore：
+  - `benchmark-report.json`
+  - `reproducibility-manifest.json`
+  - `benchmark-report.md`
+  - `benchmark-report.csv`
+- `BackendStore.create_task_worker_loop()` 汇总当前支持的 task executors，并绑定 `TaskService.publish_task_queue_event`。
+
+当前仍未迁移 evolution 执行路径，没有改前端，也没有启动常驻 worker 进程；但 benchmark/evaluation 已具备可切换的 PG queue 桥接路径。下一阶段应迁移 evolution，或先补一个正式 worker CLI/进程入口。
 
 已验证：
 
@@ -64,6 +76,8 @@ uv run pytest tests/test_task_queue_artifacts.py -q
 uv run pytest tests/test_postgres_adapter.py -q
 uv run pytest tests/test_task_worker.py tests/test_task_routes.py -q
 uv run pytest tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.py tests/test_storage_provider.py -q -k "health or create_app or roles or task_service or task_event or background_tasks or startup"
+uv run pytest tests/test_ui_backend_app.py -q -k "benchmark and not snapshot"
+uv run pytest tests/test_api_contracts.py -q -k "benchmark and not snapshot"
 ```
 
 ## 当前状态

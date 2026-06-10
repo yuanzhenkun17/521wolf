@@ -1737,6 +1737,51 @@ def test_evolution_and_benchmark_create_and_list_contract(
     assert "games" not in listed_benchmark["result"]
 
 
+def test_benchmark_start_uses_pg_task_queue_when_enabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def fail_run_evaluation(**_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("benchmark should not run through FastAPI BackgroundTasks when PG queue is enabled")
+
+    monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
+    monkeypatch.setattr(ui_backend_store, "run_evaluation", fail_run_evaluation)
+
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def fake_queue_benchmark_task(batch: dict[str, Any], request: Any) -> dict[str, Any]:
+            calls.append((batch["batch_id"], request.model_dump(mode="json", exclude_none=True)))
+            batch["task_id"] = batch["batch_id"]
+            batch["task_queue_status"] = "queued"
+            return {"task_id": batch["batch_id"], "status": "queued"}
+
+        store.benchmark_service.queue_benchmark_task = fake_queue_benchmark_task  # type: ignore[method-assign]
+        response = client.post(
+            "/api/benchmark",
+            json={"roles": ["seer"], "battle_games": 0, "max_days": 1},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["batch_id"].startswith("bench_")
+    assert payload["task_id"] == payload["batch_id"]
+    assert payload["task_queue_status"] == "queued"
+    assert calls == [
+        (
+            payload["batch_id"],
+            {
+                "target_type": "role_version",
+                "roles": ["seer"],
+                "battle_games": 0,
+                "max_days": 1,
+                "target_versions": {},
+            },
+        )
+    ]
+
+
 def test_evolution_start_normalizes_legacy_manual_defaults(
     tmp_path: Path,
     monkeypatch,
