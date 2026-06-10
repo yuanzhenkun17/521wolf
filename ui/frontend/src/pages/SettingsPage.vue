@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { createSettingsService } from '../services/settingsApi'
 import type { RuntimeHealthProbeResult } from '../types/health'
-import type { ModelProfile, ModelProfilePayload, SettingsAdminState, SettingsModelProfilesResponse, SettingsVariable } from '../types/settings'
+import type { ModelProfile, ModelProfilePayload, SettingsAdminState, SettingsModelProfilesResponse, SettingsStorageState, SettingsVariable } from '../types/settings'
 
 type SettingsGroupKey = 'models' | 'variables' | 'benchmark' | 'evolution' | 'langfuse' | 'tts' | 'system'
 
@@ -72,7 +72,7 @@ const DEFAULT_FORM = {
 const settingsService = createSettingsService()
 const profiles = ref<ModelProfile[]>([])
 const health = ref<Record<string, any>>({})
-const admin = ref<SettingsAdminState>({ enabled: false, token_configured: false, write_available: false })
+const admin = ref<SettingsAdminState>({ enabled: false, token_configured: false, write_available: false, storage: {} })
 const scopes = ref<Array<{ key: string; label: string }>>([])
 const providers = ref<string[]>(['openai_compatible', 'custom'])
 const variables = ref<SettingsVariable[]>([])
@@ -95,8 +95,29 @@ const selectedProfileFormSignature = ref('')
 const selectedProfile = computed(() =>
   profiles.value.find((profile) => profile.profile_id === selectedProfileId.value) || null
 )
+const storageStates = computed<Record<string, SettingsStorageState>>(() => {
+  const raw = admin.value.storage
+  return raw && typeof raw === 'object' ? raw : {}
+})
+const storageRows = computed(() =>
+  Object.entries(storageStates.value).map(([key, state]) => {
+    const writable = storageWritable(state)
+    const action = storageActionText(state)
+    return {
+      key,
+      label: storageLabel(key),
+      backend: storageBackendLabel(state),
+      writable,
+      severity: writable ? 'ok' : 'error',
+      status: writable ? '可写' : '只读',
+      hint: storageHint(state, action),
+      action
+    }
+  })
+)
+const blockedStorageRows = computed(() => storageRows.value.filter((row) => !row.writable))
 const canWrite = computed(() =>
-  Boolean(admin.value.enabled && admin.value.token_configured && adminToken.value.trim())
+  Boolean(admin.value.enabled && admin.value.token_configured && admin.value.write_available && adminToken.value.trim())
 )
 const enabledProfiles = computed(() => profiles.value.filter((profile) => profile.enabled))
 const selectedProfileLastTestError = computed(() => profileTestError(selectedProfile.value))
@@ -109,6 +130,7 @@ const adminWriteStateLabel = computed(() => canWrite.value ? '可写' : '只读'
 const adminWriteStatus = computed(() => {
   if (!admin.value.enabled) return '写入未开启'
   if (!admin.value.token_configured) return '令牌未配置'
+  if (!admin.value.write_available) return '存储只读'
   if (!adminToken.value.trim()) return '等待令牌'
   return '已授权'
 })
@@ -192,12 +214,16 @@ const profileTestButtonTitle = computed(() => {
 const settingsMetaRows = computed(() => [
   { key: 'profiles', label: '模型', value: profiles.value.length || '0' },
   { key: 'enabled', label: '启用', value: enabledProfiles.value.length || '0' },
+  { key: 'storage', label: '存储', value: blockedStorageRows.value.length ? '只读' : '可写' },
   { key: 'ready', label: 'API', value: healthReady.value ? statusLabel(healthStatus.value) : '未就绪' },
   { key: 'selected', label: '选中', value: selectedProfile.value?.name || '新建' }
 ])
 const settingsGuidanceRows = computed(() => {
   const rows: string[] = []
   if (!canWrite.value) rows.push(adminWriteHint())
+  for (const storage of blockedStorageRows.value) {
+    rows.push(`${storage.label}存储只读：${storage.hint}`)
+  }
   const blockedGates = gateRows.value.filter((gate) => !gate.ready)
   if (blockedGates.length) {
     rows.push(`${blockedGates.map((gate) => gate.label).join('、')} 已阻断：${blockedGates.map((gate) => gate.summary).join('；')}。`)
@@ -267,7 +293,10 @@ async function probeRuntimeModel() {
 function applySettings(payload: SettingsModelProfilesResponse) {
   profiles.value = Array.isArray(payload.profiles) ? payload.profiles : []
   health.value = payload.health || {}
-  admin.value = payload.admin || { enabled: false, token_configured: false, write_available: false }
+  admin.value = {
+    ...(payload.admin || { enabled: false, token_configured: false, write_available: false }),
+    storage: payload.admin?.storage || payload.storage || {}
+  }
   scopes.value = Array.isArray(payload.scopes) ? payload.scopes : []
   providers.value = Array.isArray(payload.providers) && payload.providers.length ? payload.providers : providers.value
   variables.value = Array.isArray(payload.variables) ? payload.variables : []
@@ -552,6 +581,7 @@ function errorMessage(err: unknown, fallback: string): string {
   const source = err as { message?: string; code?: string; status?: number }
   const code = String(source?.code || '')
   if (code === 'settings_admin_required' || source?.status === 403) return `${fallback}：${adminWriteHint()}`
+  if (code === 'settings_storage_unavailable') return `${fallback}：${storageBlockHint() || String(source?.message || '设置存储不可写。')}`
   if (code === 'settings_runtime_variable_locked') return `${fallback}：该变量由环境变量锁定，需修改服务端环境变量后重启。`
   if (code === 'runtime_not_ready') return `${fallback}：模型或任务运行门禁未通过，请查看系统状态。`
   return String(source?.message || fallback)
@@ -561,7 +591,56 @@ function adminWriteHint(): string {
   if (canWrite.value) return '管理员令牌已填写，可修改本地设置。'
   if (!admin.value.enabled) return '设置写入未开启：需要 SETTINGS_ADMIN_ENABLED=true。'
   if (!admin.value.token_configured) return '管理员令牌未配置：需要 SETTINGS_ADMIN_TOKEN。'
+  const storageHint = storageBlockHint()
+  if (storageHint) return storageHint
+  if (!admin.value.write_available) return '设置存储未就绪，暂不能写入。'
   return '输入管理员令牌后才能修改本地模型配置。'
+}
+
+function storageBlockHint(): string {
+  const row = blockedStorageRows.value[0]
+  return row ? `${row.label}存储不可写：${row.hint}` : ''
+}
+
+function storageWritable(state: SettingsStorageState): boolean {
+  return Boolean(state?.ready) && !Boolean(state?.read_only)
+}
+
+function storageLabel(key: string): string {
+  return {
+    model_profiles: '模型 Profile',
+    runtime_variables: '运行变量'
+  }[key] || key
+}
+
+function storageBackendLabel(state: SettingsStorageState): string {
+  const backend = String(state?.backend || 'unknown')
+  if (backend === 'postgres') return 'PostgreSQL'
+  if (backend === 'local_file') return '本地文件'
+  return backend
+}
+
+function storageActionText(state: SettingsStorageState): string {
+  const actions = Array.isArray(state.actions) ? state.actions : []
+  const text = actions.map((item) => String(item || '').trim()).find(Boolean) || ''
+  if (!text) return ''
+  const key = text.toLowerCase()
+  if (key.includes('ui_model_profiles')) return '执行数据库迁移，创建 ui_model_profiles。'
+  if (key.includes('ui_runtime_settings')) return '执行数据库迁移，创建 ui_runtime_settings。'
+  if (key.includes('settings_secret_encryption_key')) return '配置 SETTINGS_SECRET_ENCRYPTION_KEY 后重启。'
+  if (key.includes('postgresql connectivity')) return '检查 PostgreSQL 连接配置。'
+  if (key.includes('schema permissions')) return '检查 PostgreSQL schema 权限。'
+  return text
+}
+
+function storageHint(state: SettingsStorageState, action: string): string {
+  const reason = String(state.reason || '')
+  if (action) return action
+  if (reason === 'missing_table') return '执行数据库迁移后刷新。'
+  if (reason === 'secret_encryption_missing') return '配置 SETTINGS_SECRET_ENCRYPTION_KEY 后重启。'
+  if (reason === 'connection_unavailable') return '检查 PostgreSQL 连接配置。'
+  const message = String(state.message || '').trim()
+  return message || '恢复设置存储后再写入。'
 }
 
 function runtimeProbeNotice(result: RuntimeHealthProbeResult): string {
@@ -1004,6 +1083,13 @@ function shortId(value: unknown): string {
           <section class="settings-context-section settings-admin-panel">
             <h3>管理员写入</h3>
             <p class="settings-context-empty">{{ adminWriteStatus }}：{{ adminWriteHint() }}</p>
+            <div v-if="storageRows.length" class="settings-storage-list" aria-label="设置存储状态">
+              <span v-for="row in storageRows" :key="row.key" :data-status="row.severity">
+                <b>{{ row.label }}</b>
+                <small>{{ row.backend }} · {{ row.status }}</small>
+                <em>{{ row.hint }}</em>
+              </span>
+            </div>
             <label class="settings-admin-token">
               <small>Admin Token</small>
               <input v-model="adminToken" type="password" autocomplete="off" placeholder="只保存在当前页面内存" />
@@ -2096,6 +2182,56 @@ function shortId(value: unknown): string {
 
 .settings-admin-token input {
   height: 34px;
+}
+
+.settings-storage-list {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-storage-list span {
+  display: grid;
+  grid-template-columns: minmax(0, 0.74fr) minmax(0, 0.8fr);
+  gap: 3px 8px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  background: rgba(255, 252, 245, 0.26);
+}
+
+.settings-storage-list span[data-status="error"] {
+  border-color: rgba(153, 48, 38, 0.2);
+  background: rgba(153, 48, 38, 0.06);
+}
+
+.settings-storage-list b,
+.settings-storage-list small,
+.settings-storage-list em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-storage-list b {
+  color: var(--settings-text);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.settings-storage-list small {
+  justify-self: end;
+  color: var(--settings-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.settings-storage-list em {
+  grid-column: 1 / -1;
+  color: var(--settings-accent-strong);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 760;
+  line-height: 1.35;
 }
 
 .settings-context-run-id {

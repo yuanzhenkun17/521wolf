@@ -34,6 +34,20 @@ export interface SettingsAdminState {
   enabled: boolean
   token_configured: boolean
   write_available: boolean
+  storage?: Record<string, SettingsStorageState>
+  write_blocked_reason?: string
+}
+
+export interface SettingsStorageState {
+  backend?: 'postgres' | 'local_file' | string
+  ready?: boolean
+  read_only?: boolean
+  reason?: string
+  message?: string
+  table?: string
+  path?: string
+  secret_encryption?: 'configured' | 'missing' | 'unknown' | string
+  actions?: string[]
 }
 
 export interface SettingsScopeOption {
@@ -67,6 +81,7 @@ export interface SettingsModelProfilesResponse {
   scopes: SettingsScopeOption[]
   providers: string[]
   variables: SettingsVariable[]
+  storage?: Record<string, SettingsStorageState>
   health: Record<string, unknown>
 }
 
@@ -95,6 +110,7 @@ export interface SettingsRuntimeVariablesResponse {
   schema_version: number
   variables: SettingsVariable[]
   admin: SettingsAdminState
+  storage?: Record<string, SettingsStorageState>
 }
 
 export interface SettingsRuntimeVariableResponse {

@@ -1431,20 +1431,93 @@ def test_settings_model_profiles_are_read_only_without_admin(tmp_path: Path, mon
     payload = list_response.json()
     assert payload["kind"] == "settings_model_profiles"
     assert payload["profiles"] == []
-    assert payload["admin"] == {
-        "enabled": False,
-        "token_configured": False,
-        "write_available": False,
-    }
+    assert payload["admin"]["enabled"] is False
+    assert payload["admin"]["token_configured"] is False
+    assert payload["admin"]["write_available"] is False
+    assert payload["admin"]["storage"]["model_profiles"]["reason"] == "missing_table"
     assert payload["health"]["schema_version"] == 2
 
     assert create_response.status_code == 403
     assert create_response.json()["error"]["code"] == "settings_admin_disabled"
 
 
+def test_settings_model_profiles_block_writes_when_postgres_storage_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        list_response = client.get("/api/settings/model-profiles")
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Qwen Prod",
+                "provider": "openai_compatible",
+                "base_url": "https://example.com/v1",
+                "model": "qwen-plus",
+                "api_key": "sk-secret-blocked",
+            },
+        )
+
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    assert payload["admin"]["enabled"] is True
+    assert payload["admin"]["token_configured"] is True
+    assert payload["admin"]["write_available"] is False
+    assert payload["storage"]["model_profiles"]["backend"] == "postgres"
+    assert payload["storage"]["model_profiles"]["reason"] == "missing_table"
+
+    assert create_response.status_code == 503
+    error_payload = create_response.json()
+    assert error_payload["error"]["code"] == "settings_storage_unavailable"
+    assert error_payload["error"]["diagnostics"][0]["reason"] == "missing_table"
+    assert not (tmp_path / "data" / "settings" / "model-profiles.json").exists()
+    assert not (tmp_path / "data" / "settings" / "model-profile-secrets.json").exists()
+
+
+def test_settings_model_profiles_require_secret_encryption_for_postgres_writes(
+    tmp_path: Path,
+    monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
+    monkeypatch.delenv("SETTINGS_SECRET_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        list_response = client.get("/api/settings/model-profiles")
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Encrypted Required",
+                "provider": "openai_compatible",
+                "base_url": "https://example.com/v1",
+                "model": "qwen-plus",
+                "api_key": "sk-secret-blocked",
+            },
+        )
+
+    assert list_response.status_code == 200
+    assert list_response.json()["storage"]["model_profiles"]["reason"] == "secret_encryption_missing"
+    assert create_response.status_code == 503
+    payload = create_response.json()
+    assert payload["error"]["code"] == "settings_storage_unavailable"
+    assert payload["error"]["diagnostics"][0]["reason"] == "secret_encryption_missing"
+    assert _fake_ui_pg_provider.db.model_profiles == {}
+    assert not (tmp_path / "data" / "settings" / "model-profiles.json").exists()
+
+
 def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     import ui.backend.settings_model_profiles as settings_model_profiles
 
@@ -1461,6 +1534,8 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
 
     monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
     monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "settings-secret-test-key")
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
     monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
     headers = {"X-Settings-Admin-Token": "token-123"}
 
@@ -1735,9 +1810,37 @@ def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
     assert locked_update_response.json()["error"]["code"] == "settings_runtime_variable_locked"
 
 
+def test_settings_runtime_variables_block_writes_when_postgres_storage_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("TASK_WORKER_REQUIRED", raising=False)
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        list_response = client.get("/api/settings/runtime-variables")
+        update_response = client.patch(
+            "/api/settings/runtime-variables/TASK_WORKER_REQUIRED",
+            headers=headers,
+            json={"value": True},
+        )
+
+    assert list_response.status_code == 200
+    assert list_response.json()["admin"]["write_available"] is False
+    assert list_response.json()["storage"]["runtime_variables"]["reason"] == "missing_table"
+    assert update_response.status_code == 503
+    payload = update_response.json()
+    assert payload["error"]["code"] == "settings_storage_unavailable"
+    assert payload["error"]["diagnostics"][0]["reason"] == "missing_table"
+    assert not (tmp_path / "data" / "settings" / "runtime-variables.json").exists()
+
+
 def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     import ui.backend.settings_model_profiles as settings_model_profiles
 
@@ -1755,6 +1858,8 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
         monkeypatch.setenv(key, "")
     monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
     monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "settings-secret-test-key")
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
     monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
     _write_model_benchmark_spec(tmp_path)
 
@@ -1855,6 +1960,7 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
 def test_benchmark_start_probes_selected_model_profile_before_queueing(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     import ui.backend.settings_model_profiles as settings_model_profiles
 
@@ -1882,6 +1988,8 @@ def test_benchmark_start_probes_selected_model_profile_before_queueing(
         monkeypatch.setenv(key, "")
     monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
     monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "settings-secret-test-key")
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
     monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
 
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=None)
@@ -1950,6 +2058,7 @@ def test_benchmark_start_probes_selected_model_profile_before_queueing(
 def test_game_start_probes_selected_model_profile_before_starting(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     import ui.backend.settings_model_profiles as settings_model_profiles
 
@@ -1976,6 +2085,8 @@ def test_game_start_probes_selected_model_profile_before_starting(
         monkeypatch.setenv(key, "")
     monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
     monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "settings-secret-test-key")
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
     monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
 
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=None)
@@ -2047,6 +2158,7 @@ def test_game_start_probes_selected_model_profile_before_starting(
 def test_evolution_start_probes_selected_model_profile_before_queueing(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     import ui.backend.settings_model_profiles as settings_model_profiles
 
@@ -2072,6 +2184,8 @@ def test_evolution_start_probes_selected_model_profile_before_queueing(
         monkeypatch.setenv(key, "")
     monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
     monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "settings-secret-test-key")
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
     monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
 
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=None)
@@ -3436,6 +3550,7 @@ def test_benchmark_uses_battle_games_for_game_count(tmp_path: Path, monkeypatch)
 def test_workflow_game_concurrency_setting_feeds_benchmark_and_evolution(
     tmp_path: Path,
     monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     benchmark_config: dict[str, Any] = {}
     evolution_config: dict[str, Any] = {}
@@ -3483,6 +3598,7 @@ def test_workflow_game_concurrency_setting_feeds_benchmark_and_evolution(
     monkeypatch.delenv("WEREWOLF_GAME_CONCURRENCY", raising=False)
     monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
     monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    _fake_ui_pg_provider.db.runtime_settings_enabled = True
     headers = {"X-Settings-Admin-Token": "token-123"}
 
     with _test_client(tmp_path) as client:

@@ -24,6 +24,12 @@ from ui.backend.settings_secret_crypto import (
     encrypt_settings_secret,
     ensure_settings_secret_encryption_configured,
 )
+from ui.backend.settings_storage import (
+    assert_storage_write_available,
+    local_file_storage_status,
+    postgres_storage_status,
+    storage_write_available,
+)
 
 MODEL_PROFILE_SCOPES = ("game_decision", "judge", "benchmark", "evolution", "prompt_test")
 MODEL_PROFILE_CAPABILITIES = ("chat", "json_mode", "tool_calling", "streaming", "vision")
@@ -47,6 +53,7 @@ class SettingsModelProfileStore:
         return cls(data_dir / "settings", connection_factory=connection_factory if callable(connection_factory) else None)
 
     def list_payload(self) -> dict[str, Any]:
+        storage_status = self.storage_status()
         profiles = self._read_profiles()
         try:
             secrets = self._read_secrets()
@@ -58,7 +65,8 @@ class SettingsModelProfileStore:
             "schema_version": 1,
             "profiles": public_profiles,
             "env_locks": env_locks_payload(),
-            "admin": settings_admin_payload(),
+            "admin": settings_admin_payload(storage={"model_profiles": storage_status}),
+            "storage": {"model_profiles": storage_status},
             "scopes": [
                 {"key": scope, "label": scope_label(scope)}
                 for scope in MODEL_PROFILE_SCOPES
@@ -69,6 +77,10 @@ class SettingsModelProfileStore:
                 connection_factory=self._connection_factory,
             ).list_variables(),
         }
+
+    def storage_status(self) -> dict[str, Any]:
+        _backend, status = self._profile_backend_with_status()
+        return status
 
     def model_runtime_payload(
         self,
@@ -372,6 +384,7 @@ class SettingsModelProfileStore:
         return [dict(item) for item in profiles] if isinstance(profiles, list) else []
 
     def _write_profiles(self, profiles: list[dict[str, Any]]) -> None:
+        assert_storage_write_available(self.storage_status())
         backend = self._profile_backend()
         if backend is not None:
             backend.write_profiles(profiles)
@@ -387,6 +400,7 @@ class SettingsModelProfileStore:
         return {str(key): str(value) for key, value in secrets.items()} if isinstance(secrets, dict) else {}
 
     def _write_secrets(self, secrets: dict[str, str]) -> None:
+        assert_storage_write_available(self.storage_status())
         backend = self._profile_backend()
         if backend is not None:
             backend.write_secrets(secrets)
@@ -396,29 +410,80 @@ class SettingsModelProfileStore:
     def _ensure_secret_can_be_saved(self, secret: str) -> None:
         if not secret:
             return
+        assert_storage_write_available(self.storage_status())
         backend = self._profile_backend()
         if backend is not None:
             backend.ensure_can_save_secret()
 
     def _profile_backend(self) -> "_PostgresModelProfileBackend | None":
+        backend, _status = self._profile_backend_with_status()
+        return backend
+
+    def _profile_backend_with_status(self) -> tuple["_PostgresModelProfileBackend | None", dict[str, Any]]:
         if self._connection_factory is None:
-            return None
+            return None, local_file_storage_status(path=str(self._profile_path))
         try:
             conn = self._connection_factory()
-        except Exception:
-            return None
+        except Exception as exc:
+            return None, postgres_storage_status(
+                table="ui_model_profiles",
+                ready=False,
+                reason="connection_unavailable",
+                message=f"PostgreSQL settings storage cannot be reached: {type(exc).__name__}",
+                actions=["verify PostgreSQL connectivity for UI settings storage"],
+                secret_encryption="unknown",
+            )
         try:
             table_exists = getattr(conn, "table_exists", None)
-            if not callable(table_exists) or not table_exists("ui_model_profiles"):
-                return None
-        except Exception:
-            return None
+            if not callable(table_exists):
+                return None, postgres_storage_status(
+                    table="ui_model_profiles",
+                    ready=False,
+                    reason="schema_check_unavailable",
+                    message="PostgreSQL settings storage cannot verify ui_model_profiles.",
+                    actions=["upgrade the UI storage adapter so table_exists is available"],
+                    secret_encryption="unknown",
+                )
+            if not table_exists("ui_model_profiles"):
+                return None, postgres_storage_status(
+                    table="ui_model_profiles",
+                    ready=False,
+                    reason="missing_table",
+                    message="PostgreSQL settings table ui_model_profiles is missing.",
+                    actions=["run database migrations for ui_model_profiles"],
+                    secret_encryption="unknown",
+                )
+        except Exception as exc:
+            return None, postgres_storage_status(
+                table="ui_model_profiles",
+                ready=False,
+                reason="schema_check_failed",
+                message=f"PostgreSQL settings storage cannot verify ui_model_profiles: {type(exc).__name__}",
+                actions=["verify PostgreSQL schema permissions for UI settings storage"],
+                secret_encryption="unknown",
+            )
         finally:
             try:
                 conn.close()
             except Exception:
                 pass
-        return _PostgresModelProfileBackend(self._connection_factory)
+        backend = _PostgresModelProfileBackend(self._connection_factory)
+        try:
+            ensure_settings_secret_encryption_configured()
+        except SettingsSecretEncryptionError as exc:
+            return backend, postgres_storage_status(
+                table="ui_model_profiles",
+                ready=False,
+                reason="secret_encryption_missing",
+                message=str(exc),
+                actions=["set SETTINGS_SECRET_ENCRYPTION_KEY before editing model profiles"],
+                secret_encryption="missing",
+            )
+        return backend, postgres_storage_status(
+            table="ui_model_profiles",
+            ready=True,
+            secret_encryption="configured",
+        )
 
 
 class _PostgresModelProfileBackend:
@@ -577,13 +642,17 @@ def _db_row_has_secret(row: dict[str, Any]) -> bool:
     return bool(row.get("api_key_ciphertext") or row.get("api_key_masked"))
 
 
-def settings_admin_payload() -> dict[str, Any]:
+def settings_admin_payload(*, storage: dict[str, Any] | None = None) -> dict[str, Any]:
     enabled = _env_true("SETTINGS_ADMIN_ENABLED")
     token_configured = bool(os.environ.get("SETTINGS_ADMIN_TOKEN"))
+    storage_ready = _settings_storage_write_available(storage)
+    write_blocked_reason = _settings_storage_blocked_reason(storage)
     return {
         "enabled": enabled,
         "token_configured": token_configured,
-        "write_available": enabled and token_configured,
+        "write_available": enabled and token_configured and storage_ready,
+        "storage": storage or {},
+        "write_blocked_reason": "" if storage_ready else write_blocked_reason,
     }
 
 
@@ -592,6 +661,26 @@ def settings_admin_authorized(token: str | None) -> bool:
     if not admin["write_available"]:
         return False
     return bool(token) and token == os.environ.get("SETTINGS_ADMIN_TOKEN")
+
+
+def _settings_storage_write_available(storage: dict[str, Any] | None) -> bool:
+    if not storage:
+        return True
+    if "ready" in storage or "read_only" in storage:
+        return storage_write_available(storage)
+    states = [value for value in storage.values() if isinstance(value, dict)]
+    return all(storage_write_available(state) for state in states)
+
+
+def _settings_storage_blocked_reason(storage: dict[str, Any] | None) -> str:
+    if not storage:
+        return ""
+    if "ready" in storage or "read_only" in storage:
+        return str(storage.get("reason") or "storage_unavailable")
+    for state in storage.values():
+        if isinstance(state, dict) and not storage_write_available(state):
+            return str(state.get("reason") or "storage_unavailable")
+    return ""
 
 
 def env_locks_payload() -> dict[str, Any]:

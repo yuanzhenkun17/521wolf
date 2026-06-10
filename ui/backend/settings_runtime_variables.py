@@ -11,6 +11,12 @@ from typing import Any
 
 from app.util.time import beijing_now_iso
 from storage.ui import RuntimeSettingRepository
+from ui.backend.settings_storage import (
+    assert_storage_write_available,
+    local_file_storage_status,
+    postgres_storage_status,
+    storage_write_available,
+)
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _FALSE_VALUES = {"0", "false", "no", "off"}
@@ -103,12 +109,18 @@ class SettingsRuntimeVariableStore:
         return cls(data_dir / "settings", connection_factory=connection_factory if callable(connection_factory) else None)
 
     def list_payload(self) -> dict[str, Any]:
+        storage_status = self.storage_status()
         return {
             "kind": "settings_runtime_variables",
             "schema_version": 1,
             "variables": self.list_variables(),
-            "admin": _settings_admin_payload(),
+            "admin": _settings_admin_payload(storage={"runtime_variables": storage_status}),
+            "storage": {"runtime_variables": storage_status},
         }
+
+    def storage_status(self) -> dict[str, Any]:
+        _backend, status = self._backend_with_status()
+        return status
 
     def list_variables(self) -> list[dict[str, Any]]:
         values = self._read_values()
@@ -183,6 +195,7 @@ class SettingsRuntimeVariableStore:
         return dict(settings) if isinstance(settings, dict) else {}
 
     def _write_value(self, key: str, value: Any) -> None:
+        assert_storage_write_available(self.storage_status())
         backend = self._backend()
         if backend is not None:
             backend.write_value(key, value)
@@ -199,24 +212,57 @@ class SettingsRuntimeVariableStore:
         _write_json(self._path, {"schema_version": 1, "settings": settings, "updated_at": updated_at})
 
     def _backend(self) -> "_PostgresRuntimeVariableBackend | None":
+        backend, _status = self._backend_with_status()
+        return backend
+
+    def _backend_with_status(self) -> tuple["_PostgresRuntimeVariableBackend | None", dict[str, Any]]:
         if self._connection_factory is None:
-            return None
+            return None, local_file_storage_status(path=str(self._path))
         try:
             conn = self._connection_factory()
-        except Exception:
-            return None
+        except Exception as exc:
+            return None, postgres_storage_status(
+                table="ui_runtime_settings",
+                ready=False,
+                reason="connection_unavailable",
+                message=f"PostgreSQL runtime settings storage cannot be reached: {type(exc).__name__}",
+                actions=["verify PostgreSQL connectivity for UI runtime settings"],
+            )
         try:
             table_exists = getattr(conn, "table_exists", None)
-            if not callable(table_exists) or not table_exists("ui_runtime_settings"):
-                return None
-        except Exception:
-            return None
+            if not callable(table_exists):
+                return None, postgres_storage_status(
+                    table="ui_runtime_settings",
+                    ready=False,
+                    reason="schema_check_unavailable",
+                    message="PostgreSQL runtime settings storage cannot verify ui_runtime_settings.",
+                    actions=["upgrade the UI storage adapter so table_exists is available"],
+                )
+            if not table_exists("ui_runtime_settings"):
+                return None, postgres_storage_status(
+                    table="ui_runtime_settings",
+                    ready=False,
+                    reason="missing_table",
+                    message="PostgreSQL settings table ui_runtime_settings is missing.",
+                    actions=["run database migrations for ui_runtime_settings"],
+                )
+        except Exception as exc:
+            return None, postgres_storage_status(
+                table="ui_runtime_settings",
+                ready=False,
+                reason="schema_check_failed",
+                message=f"PostgreSQL runtime settings storage cannot verify ui_runtime_settings: {type(exc).__name__}",
+                actions=["verify PostgreSQL schema permissions for UI runtime settings"],
+            )
         finally:
             try:
                 conn.close()
             except Exception:
                 pass
-        return _PostgresRuntimeVariableBackend(self._connection_factory)
+        return _PostgresRuntimeVariableBackend(self._connection_factory), postgres_storage_status(
+            table="ui_runtime_settings",
+            ready=True,
+        )
 
 
 class _PostgresRuntimeVariableBackend:
@@ -320,14 +366,38 @@ def _updated_at_for(key: str, values: dict[str, Any]) -> str | None:
     return None
 
 
-def _settings_admin_payload() -> dict[str, Any]:
+def _settings_admin_payload(*, storage: dict[str, Any] | None = None) -> dict[str, Any]:
     enabled = _env_bool("SETTINGS_ADMIN_ENABLED", default=False)
     token_configured = bool(os.environ.get("SETTINGS_ADMIN_TOKEN"))
+    storage_ready = _settings_storage_write_available(storage)
+    write_blocked_reason = _settings_storage_blocked_reason(storage)
     return {
         "enabled": enabled,
         "token_configured": token_configured,
-        "write_available": enabled and token_configured,
+        "write_available": enabled and token_configured and storage_ready,
+        "storage": storage or {},
+        "write_blocked_reason": "" if storage_ready else write_blocked_reason,
     }
+
+
+def _settings_storage_write_available(storage: dict[str, Any] | None) -> bool:
+    if not storage:
+        return True
+    if "ready" in storage or "read_only" in storage:
+        return storage_write_available(storage)
+    states = [value for value in storage.values() if isinstance(value, dict)]
+    return all(storage_write_available(state) for state in states)
+
+
+def _settings_storage_blocked_reason(storage: dict[str, Any] | None) -> str:
+    if not storage:
+        return ""
+    if "ready" in storage or "read_only" in storage:
+        return str(storage.get("reason") or "storage_unavailable")
+    for state in storage.values():
+        if isinstance(state, dict) and not storage_write_available(state):
+            return str(state.get("reason") or "storage_unavailable")
+    return ""
 
 
 def _admin_variables() -> list[dict[str, Any]]:

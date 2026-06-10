@@ -11,6 +11,8 @@ from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequ
 from ui.backend.settings_audit import SettingsAuditStore, settings_audit_details_for_profile
 from ui.backend.settings_runtime_variables import SettingsRuntimeVariableStore
 from ui.backend.settings_model_profiles import SettingsModelProfileStore, settings_admin_authorized, settings_admin_payload
+from ui.backend.settings_secret_crypto import SettingsSecretEncryptionError
+from ui.backend.settings_storage import SettingsStorageUnavailable
 
 
 def register_settings_routes(api: FastAPI, store: Any) -> None:
@@ -21,6 +23,10 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     @api.get("/api/settings/model-profiles")
     def list_model_profiles() -> dict[str, Any]:
         payload = profile_store.list_payload()
+        storage = dict(payload.get("storage") or {})
+        storage["runtime_variables"] = runtime_store.storage_status()
+        payload["storage"] = storage
+        payload["admin"] = settings_admin_payload(storage=storage)
         payload["variables"] = runtime_store.list_variables()
         return {**payload, "health": build_health_payload(store)}
 
@@ -63,6 +69,8 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
             raise _settings_error(404, "settings_runtime_variable_not_found", "runtime variable not found") from exc
         except PermissionError as exc:
             raise _settings_error(409, "settings_runtime_variable_locked", str(exc)) from exc
+        except SettingsStorageUnavailable as exc:
+            raise _settings_storage_error(exc) from exc
         except ValueError as exc:
             raise _settings_error(422, "settings_runtime_variable_invalid", str(exc)) from exc
 
@@ -89,6 +97,8 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
                 "schema_version": 1,
                 "profile": profile,
             }
+        except (SettingsStorageUnavailable, SettingsSecretEncryptionError) as exc:
+            raise _settings_storage_error(exc) from exc
         except ValueError as exc:
             raise _settings_error(422, "settings_model_profile_invalid", str(exc)) from exc
 
@@ -118,6 +128,8 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
             }
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
+        except (SettingsStorageUnavailable, SettingsSecretEncryptionError) as exc:
+            raise _settings_storage_error(exc) from exc
         except ValueError as exc:
             raise _settings_error(422, "settings_model_profile_invalid", str(exc)) from exc
 
@@ -146,6 +158,8 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
             return result
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
+        except (SettingsStorageUnavailable, SettingsSecretEncryptionError) as exc:
+            raise _settings_storage_error(exc) from exc
         except ValueError as exc:
             raise _settings_error(422, "settings_model_profile_invalid", str(exc)) from exc
 
@@ -171,6 +185,8 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
             }
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
+        except (SettingsStorageUnavailable, SettingsSecretEncryptionError) as exc:
+            raise _settings_storage_error(exc) from exc
 
     @api.delete("/api/settings/model-profiles/{profile_id}")
     def delete_model_profile(
@@ -190,6 +206,8 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
             return result
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
+        except (SettingsStorageUnavailable, SettingsSecretEncryptionError) as exc:
+            raise _settings_storage_error(exc) from exc
 
 
 def _require_settings_admin(token: str | None) -> None:
@@ -218,5 +236,20 @@ def _settings_error(status_code: int, code: str, message: str, *, detail: str | 
             "code": code,
             "message": message,
             "detail": detail or message,
+        },
+    )
+
+
+def _settings_storage_error(exc: SettingsStorageUnavailable | SettingsSecretEncryptionError) -> HTTPException:
+    status = getattr(exc, "status", {}) if isinstance(exc, SettingsStorageUnavailable) else {}
+    detail = str(status.get("message") or str(exc) or "settings storage is unavailable") if isinstance(status, dict) else str(exc)
+    diagnostics = [status] if isinstance(status, dict) and status else []
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "settings_storage_unavailable",
+            "message": "settings storage is unavailable",
+            "detail": detail,
+            "diagnostics": diagnostics,
         },
     )
