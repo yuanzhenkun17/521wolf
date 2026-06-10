@@ -1,33 +1,80 @@
-# 521wolf
+<div align="center">
+  <img src="logo.png" alt="NightCouncil logo" width="168" />
+  <h1>NightCouncil</h1>
+  <p>
+    <strong>Your AI Werewolf agent workbench.</strong><br />
+    Run games, inspect decisions, benchmark agents, and evolve role skills.
+  </p>
+  <p>
+    <a href="README.md">English</a> |
+    <a href="README.zh-CN.md">简体中文</a>
+  </p>
+  <p>
+    <a href="https://github.com/yuanzhenkun17/521wolf/actions/workflows/ci.yml">
+      <img alt="CI" src="https://github.com/yuanzhenkun17/521wolf/actions/workflows/ci.yml/badge.svg" />
+    </a>
+    <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3776AB" />
+    <img alt="FastAPI" src="https://img.shields.io/badge/backend-FastAPI-009688" />
+    <img alt="Vue and Vite" src="https://img.shields.io/badge/frontend-Vue%20%2B%20Vite-42B883" />
+    <img alt="PostgreSQL" src="https://img.shields.io/badge/database-PostgreSQL-4169E1" />
+    <img alt="LLM agents" src="https://img.shields.io/badge/agents-LLM%20%2B%20skills-FF7A1A" />
+  </p>
+</div>
 
-521wolf is a 12-player Werewolf MVP with a hardcoded rules engine, LLM-driven
-agents, PostgreSQL persistence, a FastAPI backend, and a Vue workbench for live
-play, replay, benchmark, review, and role-skill evolution.
+NightCouncil is a 12-player Werewolf system for building and evaluating LLM-driven
+agents. It combines a deterministic rules engine, role-specific skill prompts,
+PostgreSQL-backed persistence, a FastAPI backend, and a Vue workbench for live
+play, replay, benchmark, review, and self-evolution workflows.
 
-The current runtime is PostgreSQL-only. SQLite/local JSON files are not a
-supported source of truth; local `runs/` artifacts are only auxiliary outputs.
+PostgreSQL is the only supported runtime source of truth. Local `runs/` and
+`data/` artifacts are auxiliary outputs and should not be treated as durable
+state.
 
-## What Is Included
+## Start Here
 
-- Standard 12-player White Wolf King rule set.
-- Roles: villager, werewolf, white wolf king, seer, witch, hunter, guard.
-- Full game flow: night actions, sheriff election, day speeches, exile/PK votes,
-  death handling, win detection, and replayable event logs.
-- Player-view information isolation for backend snapshots, archives, and SSE
-  event streams.
-- LLM agent pipeline with role skills, policy enforcement, retry/timeout
-  handling, and decision records.
-- Benchmark, review, leaderboard, and evolution workflows backed by PostgreSQL.
-- Vue frontend with lobby, match, history, benchmark, and evolution pages.
+| You want to... | Go to |
+| --- | --- |
+| Install the project and open the workbench | [Quick Start](#quick-start) |
+| Run a local demo without real model calls | [Fake LLM demo mode](#fake-llm-demo-mode) |
+| Configure a real model, database, TTS, or tracing | [Configuration](#configuration) |
+| Understand what the system can do | [Feature Surface](#feature-surface) |
+| Find the major code areas | [Architecture Map](#architecture-map) |
+| Run tests and production build checks | [Verification](#verification) |
+| Understand what data may be committed | [Runtime Data Boundaries](#runtime-data-boundaries) |
+
+## Feature Surface
+
+| Area | What it provides |
+| --- | --- |
+| Rules engine | Standard 12-player White Wolf King flow, including night actions, sheriff election, speeches, PK/exile votes, death handling, and win detection. |
+| Roles | Villager, werewolf, white wolf king, seer, witch, hunter, and guard. |
+| Agent runtime | Role skills, LLM calls, policy constraints, retries, timeouts, decision records, and player-view information isolation. |
+| Workbench UI | Lobby, live match, history archive, benchmark lab, self-evolution, task queue, and settings pages. |
+| Benchmarking | Batch runs, leaderboards, snapshots, diagnostics, reports, and saved views backed by PostgreSQL. |
+| Self-evolution | Candidate skill generation, proposal review, dry-run/preflight checks, and promotion flows. |
+| Observability | Health gates, startup diagnostics, optional self-hosted Langfuse tracing, and runtime notices. |
+
+## Architecture Map
+
+| Path | Purpose |
+| --- | --- |
+| `engine/` | Deterministic Werewolf rules, phases, actions, and player-facing requests. |
+| `app/` | Agent orchestration, LLM services, role skill loading, observability helpers, and CLI tools. |
+| `storage/` | PostgreSQL repositories for games, decisions, benchmarks, evolution, registry, tasks, and artifacts. |
+| `ui/backend/` | FastAPI API layer that adapts the engine, storage, health checks, settings, and background tasks for the frontend. |
+| `ui/frontend/` | Vue/Vite workbench application. |
+| `skills/default_baseline/` | Default role skill baselines. |
+| `migrations/` | Alembic schema migrations. |
+| `docs/` | Design notes, audits, execution plans, and runtime policies. |
 
 ## Requirements
 
 - Python 3.11+
 - `uv`
-- Node.js and npm
-- PostgreSQL
+- Node.js 20+ and npm
+- PostgreSQL 16+ recommended
 
-## Setup
+## Quick Start
 
 Install Python dependencies:
 
@@ -47,7 +94,7 @@ Create a local environment file:
 Copy-Item .env.example .env
 ```
 
-Set at least these values in `.env`:
+Edit `.env` and set at least:
 
 ```dotenv
 POSTGRES_DATABASE_URL=postgresql://wolf_app:password@127.0.0.1:5432/wolf_app
@@ -58,72 +105,18 @@ WEREWOLF_LLM_BASE_URL=https://your-provider.example/v1
 WEREWOLF_LLM_MODEL=your-model
 ```
 
-For UI/demo flows that should avoid real model calls, set:
-
-```dotenv
-UI_BACKEND_USE_FAKE_LLM=true
-```
-
-Optional Langfuse tracing is intended for a self-hosted Langfuse server. Set
-`LANGFUSE_BASE_URL` to your own deployment URL; do not rely on a Langfuse Cloud
-default URL.
-
-```dotenv
-LANGFUSE_TRACING_ENABLED=false
-LANGFUSE_PUBLIC_KEY=your-public-key
-LANGFUSE_SECRET_KEY=your-secret-key
-LANGFUSE_BASE_URL=http://127.0.0.1:3000
-
-# Optional trace metadata and capture controls.
-LANGFUSE_ENVIRONMENT=local
-LANGFUSE_RELEASE=
-LANGFUSE_SAMPLE_RATE=1.0
-LANGFUSE_CAPTURE_INPUT_OUTPUT=false
-```
-
-If PostgreSQL is only reachable through a remote host, keep the tunnel open and
-point `POSTGRES_DATABASE_URL` at the local forwarded port.
-
-## Database
-
-Apply the schema:
+Apply the database schema:
 
 ```powershell
 uv run alembic upgrade head
 ```
 
-Validate the default role baselines without writing:
+Validate and publish default role baselines:
 
 ```powershell
 uv run python -m app.tools.seed_default_baseline --dry-run
-```
-
-Publish missing baselines:
-
-```powershell
 uv run python -m app.tools.seed_default_baseline
 ```
-
-If an existing baseline intentionally needs to be replaced by
-`skills/default_baseline`, rerun with `--force` after reviewing the diff:
-
-```powershell
-uv run python -m app.tools.seed_default_baseline --force
-```
-
-## Runtime Data Boundaries
-
-PostgreSQL is the authoritative runtime store for games, decisions, UI task
-events, benchmark/evolution state, leaderboards, and role registry baselines.
-The local `runs/` and `data/` directories are ignored workspace artifacts, not
-supported sources of truth.
-
-Use PostgreSQL dump/restore or explicit one-shot import scripts for data
-migration. Do not migrate by committing local JSON, SQLite, pid, log, screenshot,
-or generated report files. The detailed boundary and migration policy is in
-[`docs/runtime-data-boundaries.md`](docs/runtime-data-boundaries.md).
-
-## Run Locally
 
 Start the backend:
 
@@ -139,12 +132,35 @@ npm run dev --prefix ui/frontend
 
 Open the Vite URL printed by the frontend command, usually
 `http://127.0.0.1:5173`. The frontend proxies `/api` to
-`http://127.0.0.1:8000` by default. To use a different backend URL:
+`http://127.0.0.1:8000` by default.
+
+## Fake LLM Demo Mode
+
+For UI and workflow demos that should not call a real model, enable the fake LLM
+runtime before starting the backend:
 
 ```powershell
-$env:UI_FRONTEND_API_PROXY_TARGET = "http://127.0.0.1:8001"
-npm run dev --prefix ui/frontend
+$env:UI_BACKEND_USE_FAKE_LLM = "true"
+uv run uvicorn ui.backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+Use real model credentials for benchmark or evolution results that must be
+meaningful.
+
+## Configuration
+
+| Setting | Notes |
+| --- | --- |
+| `POSTGRES_DATABASE_URL` / `DATABASE_URL` | Required. PostgreSQL is the authoritative runtime store. |
+| `WEREWOLF_LLM_API_KEY` | Required for real LLM runs. Keep it server-side only. |
+| `WEREWOLF_LLM_BASE_URL` | OpenAI-compatible model endpoint. |
+| `WEREWOLF_LLM_MODEL` | Default model used by runtime agents unless overridden by settings. |
+| `UI_BACKEND_USE_FAKE_LLM` | Optional local/demo switch. Do not enable for real evaluation. |
+| `WEREWOLF_TTS_*` | Optional DashScope realtime TTS settings for spoken player lines. |
+| `LANGFUSE_*` | Optional self-hosted Langfuse tracing. `LANGFUSE_BASE_URL` should point to your own deployment. |
+
+If PostgreSQL is only reachable through a remote host, keep an SSH tunnel open
+and point `POSTGRES_DATABASE_URL` at the local forwarded port.
 
 ## Health Check
 
@@ -154,10 +170,10 @@ The backend exposes:
 GET /api/health
 ```
 
-Startup diagnostics cover PostgreSQL connectivity, Alembic head status, registry
-baselines, and LLM configuration. `status=degraded` can still be usable for fake
-LLM demos; `status=error` means a required dependency such as PostgreSQL or the
-schema migration is missing.
+Startup diagnostics cover PostgreSQL connectivity, Alembic head status, role
+registry baselines, model configuration, fake-model mode, and tracing readiness.
+`status=degraded` can still be usable for fake LLM demos; `status=error` means a
+required dependency such as PostgreSQL or the schema migration is missing.
 
 ## Verification
 
@@ -179,24 +195,35 @@ Frontend production build:
 npm run build --prefix ui/frontend
 ```
 
-Useful focused smoke checks:
+Useful focused checks:
 
 ```powershell
 uv run python -m app.tools.seed_default_baseline --dry-run
-```
-
-```powershell
 uv run pytest tests/test_api_contracts.py tests/test_ui_backend_app.py -q
 ```
 
+## Runtime Data Boundaries
+
+PostgreSQL owns games, decisions, UI task events, benchmark/evolution state,
+leaderboards, role registry baselines, and artifact metadata. Local generated
+files under folders such as `runs/`, `data/`, `screenshots/`, `test-results/`,
+and `playwright-report/` are workspace artifacts and should stay out of source
+control.
+
+Use PostgreSQL dump/restore or explicit one-shot import scripts for data
+migration. Do not migrate by committing local JSON, SQLite, pid, log, screenshot,
+or generated report files.
+
+See [`docs/runtime-data-boundaries.md`](docs/runtime-data-boundaries.md) for the
+full policy.
+
 ## Notes
 
-- Keep secrets in `.env`; do not put them in frontend `VITE_*` variables.
-- Keep runtime artifacts, screenshots, pid files, and local logs out of source
-  control. Use ignored folders such as `runs/`, `screenshots/`, `test-results/`,
-  and `playwright-report/` for local diagnostics.
+- Keep secrets in `.env`; do not put API keys in frontend `VITE_*` variables.
+- Keep `LANGFUSE_CAPTURE_INPUT_OUTPUT=false` unless prompt/response capture has
+  been reviewed and redacted.
 - `POSTGRES_DISABLE_DOTENV=1` is useful for tests that must prove connection
   information is not implicitly loaded from `.env`.
-- Evolution can auto-promote candidate skill versions. Use dry-run/review
+- Self-evolution can promote candidate skill versions. Use dry-run/review
   workflows and inspect diffs before relying on automatic promotion for real
   baselines.
