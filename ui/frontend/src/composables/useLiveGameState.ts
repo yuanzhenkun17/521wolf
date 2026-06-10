@@ -1,9 +1,10 @@
-// @ts-nocheck
 import { computed } from 'vue'
 import { displayActionLabel, displayPhaseLabel, displayWinnerLabel } from '../components/history/historyDisplay.ts'
 import { decisionActionText, phaseLabel, phaseText, roleIconSpecs, roleMatches, seatHash } from './gameStateShared.ts'
 import { choiceOptionsForAction, targetRequiredForAction } from './gameSnapshot.ts'
 import { buildSceneEffects } from './sceneEffects.ts'
+
+type LooseRecord = Record<string, any>
 
 const chatSpeechTypes = new Set([
   'speech',
@@ -83,7 +84,7 @@ const typedRecordLabels = new Set([
   'agent_error'
 ])
 
-function primaryLogTypes(log) {
+function primaryLogTypes(log: LooseRecord | null | undefined) {
   return [
     log?.type,
     log?.event_type,
@@ -95,26 +96,26 @@ function primaryLogTypes(log) {
   ].map((value) => String(value || '').trim()).filter(Boolean)
 }
 
-function phaseLogTypes(log) {
+function phaseLogTypes(log: LooseRecord | null | undefined) {
   return [log?.phase, log?.event_phase, log?.stage]
     .map((value) => String(value || '').trim())
     .filter(Boolean)
 }
 
-function normalizedLogType(log) {
+function normalizedLogType(log: LooseRecord | null | undefined) {
   return primaryLogTypes(log)[0] || ''
 }
 
-function hasAnyType(types, set) {
+function hasAnyType(types: string[], set: Set<string>) {
   return types.some((type) => set.has(type))
 }
 
-function numericId(value) {
+function numericId(value: unknown): number | null {
   const id = Number(value)
   return Number.isFinite(id) && id > 0 ? id : null
 }
 
-function rowTargetId(row = {}) {
+function rowTargetId(row: LooseRecord = {}) {
   return numericId(
     row?.target_id
     ?? row?.selected_target
@@ -124,21 +125,21 @@ function rowTargetId(row = {}) {
   )
 }
 
-function voteActionPhase(action = '') {
+function voteActionPhase(action: unknown = '') {
   const value = String(action || '').trim()
   return votePhaseByType[value] || ''
 }
 
-function voteAction(row = {}) {
+function voteAction(row: LooseRecord = {}) {
   return String(row?.action || row?.action_type || row?.type || row?.event_type || '').trim()
 }
 
-function canonicalVoteAction(action = '') {
+function canonicalVoteAction(action: unknown = '') {
   const value = String(action || '').trim()
   return value === 'vote' ? 'exile_vote' : value
 }
 
-function voteRowMatchesPhase(row = {}, activePhase = '') {
+function voteRowMatchesPhase(row: LooseRecord = {}, activePhase = '') {
   const actionPhase = voteActionPhase(voteAction(row))
   if (!actionPhase) return false
   const rowPhase = String(row?.phase || activePhase).trim()
@@ -149,7 +150,7 @@ function voteRowMatchesPhase(row = {}, activePhase = '') {
   return !sceneVotePhases.has(rowPhase) || rowPhase === activePhase || rowPhase === 'vote'
 }
 
-function latestVoteActionForScope(rows = [], activePhase = '', currentDay = null) {
+function latestVoteActionForScope(rows: LooseRecord[] = [], activePhase = '', currentDay: number | null = null) {
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index]
     const action = voteAction(row)
@@ -161,7 +162,7 @@ function latestVoteActionForScope(rows = [], activePhase = '', currentDay = null
   return ''
 }
 
-function logActorId(log) {
+function logActorId(log: LooseRecord | null | undefined) {
   return numericId(
     log?.actor_id
     ?? log?.actor
@@ -175,7 +176,7 @@ function logActorId(log) {
   )
 }
 
-function logText(log) {
+function logText(log: LooseRecord | null | undefined) {
   return String(
     log?._message
     ?? log?.message
@@ -189,7 +190,7 @@ function logText(log) {
   )
 }
 
-function chatKindForLog(log) {
+function chatKindForLog(log: LooseRecord | null | undefined) {
   const hasActor = logActorId(log) !== null
   const hasPlayerSpeaker = Boolean(log?.speaker) && !judgeSpeakers.has(log.speaker)
   if (!hasActor && !hasPlayerSpeaker) return null
@@ -205,14 +206,14 @@ function chatKindForLog(log) {
   return null
 }
 
-function isJudgeAnnouncementLog(log) {
+function isJudgeAnnouncementLog(log: LooseRecord | null | undefined) {
   const type = normalizedLogType(log)
   if (judgeAnnouncementTypes.has(type)) return true
   if (log?.visibility === 'system') return true
   return judgeSpeakers.has(log?.speaker) && !chatKindForLog(log)
 }
 
-function winnerPromptText(winner) {
+function winnerPromptText(winner: unknown) {
   if (!winner) return ''
   const label = displayWinnerLabel(winner)
   if (!label || label === '未记录') return '游戏结束'
@@ -220,7 +221,7 @@ function winnerPromptText(winner) {
   return `游戏结束，胜利方：${label}`
 }
 
-export function createLiveGameState(refs, helpers) {
+export function createLiveGameState(refs: LooseRecord, helpers: LooseRecord) {
   const {
     game,
     currentView,
@@ -245,14 +246,14 @@ export function createLiveGameState(refs, helpers) {
     logMessage
   } = helpers
 
-  const computedState = {}
+  const computedState: LooseRecord = {}
 
-  function isWolfRole(role = '') {
+  function isWolfRole(role: unknown = '') {
     const value = String(role || '')
     return value.includes('狼人') || value.includes('白狼王')
   }
 
-  function canSeePlayerRole(player) {
+  function canSeePlayerRole(player: LooseRecord | null | undefined) {
     if (!player) return false
     if (computedState.isWatch?.value || refs.isReplayMode.value || game.value?.winner) return true
     const human = computedState.humanPlayer?.value
@@ -261,16 +262,16 @@ export function createLiveGameState(refs, helpers) {
     return isWolfRole(human.role_hint) && isWolfRole(player.role_hint)
   }
 
-  function visibleRoleIcon(player) {
+  function visibleRoleIcon(player: LooseRecord | null | undefined) {
     return canSeePlayerRole(player) ? roleIconImage(player) : '/role-icons/optimized/未知.webp'
   }
 
-  function visibleCardImage(player) {
+  function visibleCardImage(player: LooseRecord | null | undefined) {
     if (!player) return '/cards/judge.png'
     return canSeePlayerRole(player) ? cardImage({ ...player, role_visible: true }) : '/cards/card-back.png'
   }
 
-  function visiblePlayer(player) {
+  function visiblePlayer(player: LooseRecord) {
     const roleVisible = canSeePlayerRole(player)
     return {
       ...player,
@@ -281,7 +282,7 @@ export function createLiveGameState(refs, helpers) {
     }
   }
 
-  function playerForLog(log) {
+  function playerForLog(log: LooseRecord | null | undefined) {
     const players = game.value?.players ?? []
     const actorId = logActorId(log)
     const speakerName = String(log?._speaker || log?.speaker || log?.actor_name || log?.player_name || '').trim()
@@ -318,7 +319,7 @@ export function createLiveGameState(refs, helpers) {
     return null
   }
 
-  function chatLogEntry(log) {
+  function chatLogEntry(log: LooseRecord) {
     const player = playerForLog(log)
     const kind = chatKindForLog(log)
     const seat = player ? playerNumberById(player.id) : (log?.actor_id ? playerNumberById(log.actor_id) : '')
@@ -334,7 +335,7 @@ export function createLiveGameState(refs, helpers) {
     }
   }
 
-  function recordKindForLog(log) {
+  function recordKindForLog(log: LooseRecord | null | undefined) {
     const kind = chatKindForLog(log)
     if (kind) return kind
     const type = normalizedLogType(log)
@@ -348,7 +349,7 @@ export function createLiveGameState(refs, helpers) {
     }
   }
 
-  function matchRecordEntry(log) {
+  function matchRecordEntry(log: LooseRecord) {
     const player = playerForLog(log)
     const kind = recordKindForLog(log)
     const actor = logActorId(log)
@@ -575,8 +576,8 @@ export function createLiveGameState(refs, helpers) {
       ? canonicalPendingAction
       : (['exile_vote', 'pk_vote', 'sheriff_vote'].includes(activePhase) ? activePhase : '')
 
-    const rows = new Map()
-    const ensureVoteRow = (targetId, patch = {}) => {
+    const rows = new Map<number, LooseRecord>()
+    const ensureVoteRow = (targetId: number | null, patch: LooseRecord = {}) => {
       if (!targetId) return
       const row = rows.get(targetId) || { target_id: targetId, targetName: `${targetId}号`, voter_ids: [], voter_labels: [] }
       if (patch.targetName) row.targetName = patch.targetName
@@ -587,7 +588,7 @@ export function createLiveGameState(refs, helpers) {
       rows.set(targetId, row)
       return row
     }
-    const upsertVote = (targetId, voterId, patch = {}) => {
+    const upsertVote = (targetId: number | null, voterId: number | null, patch: LooseRecord = {}) => {
       const row = ensureVoteRow(targetId, patch)
       if (!row) return
       if (voterId && !row.voter_ids.includes(voterId)) row.voter_ids.push(voterId)
@@ -629,7 +630,7 @@ export function createLiveGameState(refs, helpers) {
 
     return [...rows.values()]
       .map((row) => {
-        const next = { ...row, count: Math.max(row.voter_ids.length + row.voter_labels.length, Number(row.count) || 0) }
+        const next: LooseRecord = { ...row, count: Math.max(row.voter_ids.length + row.voter_labels.length, Number(row.count) || 0) }
         if (!next.voter_labels.length) delete next.voter_labels
         return next
       })
