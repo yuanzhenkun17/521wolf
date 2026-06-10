@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEvolutionWorkbench } from '../composables/useEvolutionWorkbench.ts'
@@ -55,7 +54,7 @@ watch(
 watch(
   () => route.fullPath,
   () => {
-    const target = evo.consumeEvolutionDeepLink(route)
+    const target = evo.consumeEvolutionDeepLink(route as any)
     if (target) void evo.applyEvolutionDeepLink(target)
   }
 )
