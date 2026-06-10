@@ -24,6 +24,13 @@ const HEALTH_GATE_WARNING_LABELS: Record<string, string> = {
   task_worker: '任务 Worker 心跳异常',
   artifact_root: '产物目录状态未知'
 }
+const HEALTH_GATE_ACTION_LABELS: Record<string, string> = {
+  'open settings and test the model connection': '在设置页测试模型连接。',
+  'configure a model profile in settings': '在设置页配置模型 Profile。',
+  'set settings_admin_enabled=true': '开启 SETTINGS_ADMIN_ENABLED=true。',
+  'start the task worker and wait for a fresh heartbeat': '启动 task worker 并等待心跳恢复。',
+  'verify the task artifact root exists and is writable': '确认任务产物目录存在且可写。'
+}
 
 const GROUPS: Array<{ key: SettingsGroupKey; label: string; caption: string }> = [
   { key: 'models', label: '模型', caption: 'Profiles' },
@@ -93,6 +100,13 @@ const canWrite = computed(() =>
 const enabledProfiles = computed(() => profiles.value.filter((profile) => profile.enabled))
 const healthStatus = computed(() => String(health.value.status || 'unknown'))
 const healthReady = computed(() => health.value.ready !== false)
+const adminWriteStateLabel = computed(() => canWrite.value ? '可写' : '只读')
+const adminWriteStatus = computed(() => {
+  if (!admin.value.enabled) return '写入未开启'
+  if (!admin.value.token_configured) return '令牌未配置'
+  if (!adminToken.value.trim()) return '等待令牌'
+  return '已授权'
+})
 const healthChecks = computed(() => {
   const checks = health.value.checks && typeof health.value.checks === 'object' ? health.value.checks : {}
   return Object.entries(checks).map(([key, value]) => {
@@ -113,23 +127,74 @@ const gateRows = computed(() => {
     const ready = Boolean(row.ready)
     const blockers = gateIssueLabels(row.blockers, HEALTH_GATE_BLOCKER_LABELS)
     const warnings = gateIssueLabels(row.warnings, HEALTH_GATE_WARNING_LABELS)
+    const actions = gateActionLabels(row.actions)
+    const status = String(row.status || 'unknown')
     return {
       key,
       label: gateLabel(key),
       ready,
-      status: String(row.status || 'unknown'),
+      status,
       blockers,
       warnings,
-      summary: ready ? '可启动' : blockers.join(' / ') || '不可启动'
+      actions,
+      severity: ready ? (warnings.length ? 'warning' : 'ok') : 'error',
+      summary: ready
+        ? warnings.length ? `可启动，有 ${warnings.length} 个警告` : '可启动'
+        : blockers.join(' / ') || '不可启动',
+      detail: gateDetailText(ready, blockers, warnings, actions)
     }
   })
 })
+const profileBlockingIssues = computed(() => {
+  const issues: string[] = []
+  if (!form.name.trim()) issues.push('填写 Profile 名称。')
+  if (!form.base_url.trim()) issues.push('填写模型 Base URL。')
+  if (!form.model.trim()) issues.push('填写模型 ID。')
+  return issues
+})
+const profileGuidanceRows = computed(() => {
+  const rows: string[] = []
+  if (!canWrite.value) rows.push(adminWriteHint())
+  rows.push(...profileBlockingIssues.value)
+  if (selectedProfile.value && !selectedProfile.value.enabled) {
+    rows.push('当前 Profile 已禁用，启动任务不会选用它。')
+  }
+  if (selectedProfile.value && ['error', 'stale', 'untested'].includes(String(selectedProfile.value.last_test_status || 'untested'))) {
+    rows.push('保存后先测试连接；失败会阻断开始游戏、Benchmark 或 Evolution。')
+  }
+  if (form.clear_api_key && !form.api_key.trim()) {
+    rows.push('清除 key 后需要重新填写 API key 才能用于启动。')
+  }
+  const lockedScopes = scopes.value
+    .filter((scope) => Boolean(envLocks.value[scope.key]) && Boolean((form.default_scopes as Record<string, boolean>)[scope.key]))
+    .map((scope) => scope.label)
+  if (lockedScopes.length) rows.push(`${lockedScopes.join(' / ')} 被环境变量锁定，保存不会改变实际默认模型。`)
+  return rows
+})
+const canSubmitProfile = computed(() => Boolean(canWrite.value && !saving.value && profileBlockingIssues.value.length === 0))
+const canTestSelectedProfile = computed(() => Boolean(selectedProfile.value && canWrite.value && !testing.value))
 const settingsMetaRows = computed(() => [
   { key: 'profiles', label: '模型', value: profiles.value.length || '0' },
   { key: 'enabled', label: '启用', value: enabledProfiles.value.length || '0' },
   { key: 'ready', label: 'API', value: healthReady.value ? statusLabel(healthStatus.value) : '未就绪' },
   { key: 'selected', label: '选中', value: selectedProfile.value?.name || '新建' }
 ])
+const settingsGuidanceRows = computed(() => {
+  const rows: string[] = []
+  if (!canWrite.value) rows.push(adminWriteHint())
+  const blockedGates = gateRows.value.filter((gate) => !gate.ready)
+  if (blockedGates.length) {
+    rows.push(`${blockedGates.map((gate) => gate.label).join('、')} 已阻断：${blockedGates.map((gate) => gate.summary).join('；')}。`)
+  }
+  const activeProfile = selectedProfile.value
+  if (activeProfile && ['error', 'stale', 'untested'].includes(String(activeProfile.last_test_status || 'untested'))) {
+    rows.push(`当前 Profile 状态为${statusLabel(activeProfile.last_test_status || 'untested')}，建议先测试连接。`)
+  }
+  if (['benchmark', 'evolution'].includes(activeGroup.value) && Boolean(envLocks.value[activeGroup.value])) {
+    rows.push(`${activeGroupInfo.value.label} 默认模型由环境变量锁定，设置页只展示本地配置。`)
+  }
+  return rows.slice(0, 4)
+})
 const activeGroupInfo = computed(() => GROUPS.find((item) => item.key === activeGroup.value) || GROUPS[0])
 const scopedProfiles = computed(() => {
   const scope = activeGroup.value
@@ -248,6 +313,10 @@ function buildPayload(): ModelProfilePayload {
 async function saveProfile() {
   if (!canWrite.value) {
     notice.value = adminWriteHint()
+    return
+  }
+  if (profileBlockingIssues.value.length) {
+    notice.value = profileBlockingIssues.value[0]
     return
   }
   saving.value = true
@@ -423,11 +492,16 @@ function formatDateTime(value: unknown): string {
 }
 
 function errorMessage(err: unknown, fallback: string): string {
-  const source = err as { message?: string }
+  const source = err as { message?: string; code?: string; status?: number }
+  const code = String(source?.code || '')
+  if (code === 'settings_admin_required' || source?.status === 403) return `${fallback}：${adminWriteHint()}`
+  if (code === 'settings_runtime_variable_locked') return `${fallback}：该变量由环境变量锁定，需修改服务端环境变量后重启。`
+  if (code === 'runtime_not_ready') return `${fallback}：模型或任务运行门禁未通过，请查看系统状态。`
   return String(source?.message || fallback)
 }
 
 function adminWriteHint(): string {
+  if (canWrite.value) return '管理员令牌已填写，可修改本地设置。'
   if (!admin.value.enabled) return '设置写入未开启：需要 SETTINGS_ADMIN_ENABLED=true。'
   if (!admin.value.token_configured) return '管理员令牌未配置：需要 SETTINGS_ADMIN_TOKEN。'
   return '输入管理员令牌后才能修改本地模型配置。'
@@ -436,9 +510,11 @@ function adminWriteHint(): string {
 function runtimeProbeNotice(result: RuntimeHealthProbeResult): string {
   if (String(result.status || '').toLowerCase() === 'ok') {
     const latency = Number(result.latency_ms)
-    return Number.isFinite(latency) ? `当前模型连接正常，耗时 ${latency}ms。` : '当前模型连接正常。'
+    return Number.isFinite(latency)
+      ? `当前模型连接正常，耗时 ${latency}ms；相关启动门禁会使用这次结果。`
+      : '当前模型连接正常；相关启动门禁会使用这次结果。'
   }
-  return String(result.error?.message || result.message || '当前模型连接失败。')
+  return `${String(result.error?.message || result.message || '当前模型连接失败。')} 失败会阻断使用该模型的启动入口。`
 }
 
 function statusLabel(status: unknown): string {
@@ -490,6 +566,22 @@ function gateIssueLabels(value: unknown, labels: Record<string, string>): string
         return key ? labels[key] || checkLabel(key) : ''
       }).filter(Boolean)
     : []
+}
+
+function gateActionLabels(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => {
+        const text = String(item || '').trim()
+        const key = text.replace(/\.$/, '').trim().toLowerCase()
+        return text ? HEALTH_GATE_ACTION_LABELS[key] || text : ''
+      }).filter(Boolean)
+    : []
+}
+
+function gateDetailText(ready: boolean, blockers: string[], warnings: string[], actions: string[]): string {
+  if (!ready) return actions[0] || blockers[0] || '需要先恢复运行环境。'
+  if (warnings.length) return actions[0] || warnings[0] || '可启动，但建议先处理警告。'
+  return '运行门禁通过。'
 }
 
 function runtimeProbeModelScope(): string {
@@ -567,6 +659,9 @@ function shortId(value: unknown): string {
           <div class="settings-scroll">
             <div v-if="error" class="settings-warning">{{ error }}</div>
             <div v-if="notice" class="settings-notice">{{ notice }}</div>
+            <div v-if="settingsGuidanceRows.length" class="settings-guidance" aria-label="设置恢复建议">
+              <span v-for="row in settingsGuidanceRows" :key="row">{{ row }}</span>
+            </div>
 
             <section v-if="activeGroup === 'models'" class="settings-card settings-profile-list" aria-label="模型 Profile 列表">
               <header>
@@ -610,8 +705,11 @@ function shortId(value: unknown): string {
                   <small>{{ selectedProfile ? '编辑 Profile' : '新建 Profile' }}</small>
                   <h2>{{ selectedProfile ? selectedProfile.name : '本地模型配置' }}</h2>
                 </div>
-                <b>{{ canWrite ? '可写' : '只读' }}</b>
+                <b>{{ adminWriteStateLabel }}</b>
               </header>
+              <div v-if="profileGuidanceRows.length" class="settings-guardrail" aria-label="模型操作提示">
+                <span v-for="row in profileGuidanceRows" :key="row">{{ row }}</span>
+              </div>
 
               <div class="settings-form-grid">
                 <label>
@@ -687,14 +785,14 @@ function shortId(value: unknown): string {
               </div>
 
               <footer class="settings-form-actions">
-                <button type="button" class="settings-card-action primary" :disabled="saving || !canWrite" @click="saveProfile">
+                <button type="button" class="settings-card-action primary" :disabled="!canSubmitProfile" :title="profileGuidanceRows[0] || ''" @click="saveProfile">
                   {{ saving ? '保存中' : selectedProfile ? '保存' : '创建' }}
                 </button>
-                <button type="button" class="settings-card-action" :disabled="testing || !selectedProfile || !canWrite" @click="testSelectedProfile">
+                <button type="button" class="settings-card-action" :disabled="!canTestSelectedProfile" :title="selectedProfile ? adminWriteHint() : '先选择模型 Profile。'" @click="testSelectedProfile">
                   {{ testing ? '测试中' : '测试连接' }}
                 </button>
-                <button type="button" class="settings-card-action" :disabled="!selectedProfile || !canWrite" @click="disableSelectedProfile">禁用</button>
-                <button type="button" class="settings-card-action danger" :disabled="!selectedProfile || !canWrite" @click="deleteSelectedProfile">删除</button>
+                <button type="button" class="settings-card-action" :disabled="!selectedProfile || !canWrite" :title="selectedProfile ? adminWriteHint() : '先选择模型 Profile。'" @click="disableSelectedProfile">禁用</button>
+                <button type="button" class="settings-card-action danger" :disabled="!selectedProfile || !canWrite" :title="selectedProfile ? adminWriteHint() : '先选择模型 Profile。'" @click="deleteSelectedProfile">删除</button>
               </footer>
             </section>
 
@@ -710,7 +808,7 @@ function shortId(value: unknown): string {
                 <div v-for="variable in variables" :key="variable.key" class="settings-variable-row">
                   <span>
                     <b>{{ variable.label }}</b>
-                    <small>{{ variable.description || variable.key }}</small>
+                    <small>{{ variable.locked ? '环境变量锁定：需改服务端环境变量后重启。' : variable.description || variable.key }}</small>
                   </span>
                   <label v-if="variable.value_type === 'boolean'" class="settings-variable-toggle">
                     <input
@@ -815,6 +913,15 @@ function shortId(value: unknown): string {
                   <em :data-status="item.status">{{ statusLabel(item.status) }}</em>
                 </div>
               </div>
+              <div class="settings-gate-grid" aria-label="启动门禁状态">
+                <div v-for="gate in gateRows" :key="gate.key" class="settings-gate-row" :data-status="gate.severity">
+                  <span>
+                    <b>{{ gate.label }}</b>
+                    <small>{{ gate.detail }}</small>
+                  </span>
+                  <em>{{ gate.summary }}</em>
+                </div>
+              </div>
             </section>
           </div>
         </section>
@@ -832,7 +939,7 @@ function shortId(value: unknown): string {
 
           <section class="settings-context-section settings-admin-panel">
             <h3>管理员写入</h3>
-            <p class="settings-context-empty">{{ adminWriteHint() }}</p>
+            <p class="settings-context-empty">{{ adminWriteStatus }}：{{ adminWriteHint() }}</p>
             <label class="settings-admin-token">
               <small>Admin Token</small>
               <input v-model="adminToken" type="password" autocomplete="off" placeholder="只保存在当前页面内存" />
@@ -864,6 +971,9 @@ function shortId(value: unknown): string {
                   <b>{{ shortId(selectedProfile.model_config_hash) }}</b>
                 </span>
               </div>
+              <p class="settings-context-empty">
+                {{ ['error', 'stale', 'untested'].includes(String(selectedProfile.last_test_status || 'untested')) ? '连接未确认会阻断使用该 Profile 的启动入口。' : '连接状态可用于启动门禁判断。' }}
+              </p>
             </template>
             <p v-else class="settings-context-empty">正在编辑新 Profile。</p>
           </section>
@@ -871,9 +981,9 @@ function shortId(value: unknown): string {
           <section class="settings-context-section settings-gate-panel">
             <h3>运行门禁</h3>
             <div class="settings-gate-list">
-              <span v-for="gate in gateRows" :key="gate.key">
+              <span v-for="gate in gateRows" :key="gate.key" :data-status="gate.severity">
                 <b>{{ gate.label }}</b>
-                <small>{{ gate.summary }}</small>
+                <small>{{ gate.summary }}；{{ gate.detail }}</small>
               </span>
               <p v-if="!gateRows.length" class="settings-context-empty">暂无门禁项。</p>
             </div>
@@ -1643,8 +1753,56 @@ function shortId(value: unknown): string {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.settings-gate-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.settings-gate-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(132px, 0.32fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 54px;
+  padding: 9px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-left: 3px solid rgba(104, 119, 43, 0.68);
+  background: rgba(255, 252, 245, 0.38);
+}
+
+.settings-gate-row[data-status="warning"] {
+  border-left-color: #b9852f;
+}
+
+.settings-gate-row[data-status="error"] {
+  border-left-color: var(--settings-danger);
+}
+
+.settings-gate-row span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-gate-row b {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-gate-row small {
+  color: var(--settings-muted);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
 .settings-variable-row em,
-.settings-health-row em {
+.settings-health-row em,
+.settings-gate-row em {
   justify-self: end;
   padding: 5px 8px;
   border-radius: 999px;
@@ -1746,6 +1904,40 @@ function shortId(value: unknown): string {
   border-radius: 0;
   background: rgba(104, 119, 43, 0.08);
   color: #4e5f22;
+}
+
+.settings-guidance,
+.settings-guardrail {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(185, 133, 47, 0.22);
+  background: rgba(255, 239, 194, 0.34);
+}
+
+.settings-guidance span,
+.settings-guardrail span {
+  position: relative;
+  min-width: 0;
+  padding-left: 14px;
+  color: var(--settings-accent-strong);
+  font-size: 12px;
+  font-weight: 780;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
+.settings-guidance span::before,
+.settings-guardrail span::before {
+  content: "";
+  position: absolute;
+  top: 0.58em;
+  left: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #b9852f;
 }
 
 .settings-context-rail {
@@ -1867,6 +2059,18 @@ function shortId(value: unknown): string {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.settings-gate-list span[data-status="error"] b {
+  color: var(--settings-danger);
+}
+
+.settings-gate-list span[data-status="warning"] b {
+  color: #7a6047;
+}
+
+.settings-gate-list small {
+  white-space: normal;
 }
 
 @media (max-width: 1120px) {
