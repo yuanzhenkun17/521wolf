@@ -1,9 +1,979 @@
 /*
  * Lobby, mode selection, role cards, and side-panel setup.
- * Legacy imports stay ordered to preserve the current visual cascade.
+ * Former split-file rules are inlined here in cascade order.
  */
 
-@import "./part-02.css";
-@import "./part-03.css";
-@import "./part-04.css";
-@import "./part-05.css";
+.phase-orb span,
+.eyebrow,
+.mode-card span,
+.village-title span,
+.side-nav button,
+.role-card span,
+.control-card button,
+.tabs button,
+.chronicle span,
+.status-block span,
+.player-node small {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.phase-orb span {
+  color: var(--match-accent);
+}
+
+.phase-orb {
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  color: var(--blue);
+}
+
+.phase-orb-hidden {
+  visibility: hidden;
+}
+
+.role-count-strip {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: min(620px, 48vw);
+  height: 42px;
+  padding: 5px 10px;
+  border: 1px solid rgba(191, 205, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(5, 7, 14, 0.58);
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.42), 0 10px 28px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+
+.role-count-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 3px 7px 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: #dfe7ff;
+  background: rgba(255, 255, 255, 0.045);
+  white-space: nowrap;
+}
+
+.role-count-item img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: rgba(9, 11, 20, 0.82);
+  filter: drop-shadow(0 0 8px rgba(191, 205, 255, 0.18));
+}
+
+.role-count-item b {
+  color: #eef3ff;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.phase-orb i {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--match-accent);
+  font-size: 32px;
+  font-style: normal;
+  filter: drop-shadow(0 0 18px rgba(242, 202, 80, 0.45));
+}
+
+.night .phase-orb i {
+  color: var(--blue);
+  filter: drop-shadow(0 0 20px rgba(191, 205, 255, 0.45));
+}
+
+.topbar nav {
+  position: absolute;
+  right: 24px;
+  display: flex;
+  gap: 8px;
+}
+
+.topbar button,
+.control-card button,
+.count-picker button {
+  border: 1px solid rgba(242, 202, 80, 0.16);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.topbar button {
+  height: 36px;
+  padding: 0 14px;
+  border-width: 2px;
+  border-color: rgba(90, 64, 60, 0.78);
+  border-radius: 4px;
+  background: rgba(32, 32, 31, 0.72);
+  font-weight: 800;
+}
+
+.topbar button:hover,
+.control-card button:hover,
+.count-picker button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(242, 202, 80, 0.45);
+  background: rgba(242, 202, 80, 0.08);
+}
+
+.lobby {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-rows: minmax(330px, 1fr) auto;
+  align-content: center;
+  gap: 30px;
+  width: min(1480px, calc(100vw - 40px));
+  height: calc(100vh - 112px);
+  margin: 84px auto 20px;
+  padding: 24px clamp(34px, 5vw, 86px) 34px;
+  border: 1px solid rgba(242, 202, 80, 0.18);
+  color: var(--text);
+  background:
+    radial-gradient(ellipse at 50% 18%, rgba(242, 202, 80, 0.18), transparent 34%),
+    radial-gradient(ellipse at 50% 78%, rgba(118, 83, 28, 0.22), transparent 42%),
+    linear-gradient(180deg, #2b210f 0%, #171208 56%, #070604 100%);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 224, 136, 0.05);
+  overflow: visible;
+}
+
+.lobby::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.22), transparent 10%, transparent 90%, rgba(0, 0, 0, 0.22)),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.35), transparent 34%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 54px);
+}
+
+.card-fan {
+  position: relative;
+  z-index: 1;
+  width: min(1180px, 100%);
+  height: clamp(270px, 31vw, 390px);
+  justify-self: center;
+}
+
+.role-card-art {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: clamp(160px, 16.2vw, 238px);
+  aspect-ratio: 1;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 12px rgba(0, 0, 0, 0.22));
+  transform-origin: 50% 110%;
+  transition: transform 0.25s ease, filter 0.25s ease;
+}
+
+.role-card-art:hover {
+  z-index: 5;
+  filter: drop-shadow(0 24px 16px rgba(0, 0, 0, 0.28));
+}
+
+.role-card-art.werewolf {
+  transform: translate(-218%, -38%) rotate(-31deg);
+}
+
+.role-card-art.werewolf:hover {
+  transform: translate(-218%, -45%) rotate(-31deg) scale(1.04);
+}
+
+.role-card-art.hunter {
+  transform: translate(-132%, -63%) rotate(-12deg);
+}
+
+.role-card-art.hunter:hover {
+  transform: translate(-132%, -70%) rotate(-12deg) scale(1.04);
+}
+
+.role-card-art.seer {
+  z-index: 2;
+  transform: translate(-50%, -72%) rotate(0deg);
+}
+
+.role-card-art.seer:hover {
+  transform: translate(-50%, -80%) rotate(0deg) scale(1.04);
+}
+
+.role-card-art.villager {
+  transform: translate(32%, -63%) rotate(12deg);
+}
+
+.role-card-art.villager:hover {
+  transform: translate(32%, -70%) rotate(12deg) scale(1.04);
+}
+
+.role-card-art.witch {
+  transform: translate(118%, -38%) rotate(29deg);
+}
+
+.role-card-art.witch:hover {
+  transform: translate(118%, -45%) rotate(29deg) scale(1.04);
+}
+
+.lobby-actions {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(330px, 1.32fr) minmax(250px, 1fr) minmax(240px, 0.94fr);
+  gap: 26px;
+  align-items: stretch;
+  width: min(980px, 100%);
+  justify-self: center;
+}
+
+.eyebrow,
+.mode-card span,
+.village-title span,
+.role-card span,
+.status-block span {
+  color: rgba(242, 202, 80, 0.7);
+}
+
+.count-picker {
+  min-height: 114px;
+  padding: 18px 22px;
+  border: 1px solid rgba(214, 173, 65, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(244, 202, 78, 0.08), transparent 35%),
+    #151109;
+  box-shadow: inset 0 0 0 1px rgba(255, 224, 136, 0.04), 0 16px 36px rgba(0, 0, 0, 0.34);
+}
+
+.count-picker label {
+  display: block;
+  margin-bottom: 10px;
+  color: #f2ca50;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.count-picker div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.count-picker button {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.count-picker button.selected,
+.control-card .primary {
+  color: #241a00;
+  border-color: rgba(255, 224, 136, 0.75);
+  background: linear-gradient(180deg, #ffe088, #e9c349);
+  box-shadow: 0 0 18px rgba(242, 202, 80, 0.22);
+}
+
+.mode-card {
+  position: relative;
+  min-height: 100px;
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  padding: 16px 22px;
+  border: 1px solid rgba(214, 173, 65, 0.18);
+  border-radius: 8px;
+  color: var(--text);
+  text-align: left;
+  background:
+    radial-gradient(circle at 50% 3%, rgba(242, 202, 80, 0.18), transparent 28%),
+    linear-gradient(135deg, #1f1a0f, #070604 72%);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  overflow: hidden;
+  width:230px;
+}
+
+.mode-card.play {
+  background:
+    radial-gradient(circle at 42% 8%, rgba(191, 205, 255, 0.16), transparent 30%),
+    linear-gradient(135deg, #19140f, #15101b 76%);
+}
+
+.mode-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 38px rgba(0, 0, 0, 0.3);
+}
+
+.mode-card strong {
+  color: var(--primary);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.mode-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.lobby {
+  grid-template-rows: auto minmax(290px, 1fr) auto;
+  gap: clamp(8px, 1.5vh, 18px);
+  width: min(1280px, calc(100vw - 48px));
+  height: calc(100vh - 104px);
+  margin: 84px auto 20px;
+  padding: clamp(12px, 2vh, 26px) clamp(18px, 5vw, 64px) 36px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.lobbying .atmosphere {
+  background:
+    radial-gradient(circle at 50% 38%, rgba(88, 62, 0, 0.22), transparent 58%),
+    radial-gradient(circle at 50% 100%, rgba(255, 222, 165, 0.07), transparent 34%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.018) 0 2px, transparent 2px 12px),
+    linear-gradient(180deg, #131313 0%, #0e0e0e 100%);
+}
+
+.lobbying .atmosphere::before { content: none; }
+.lobbying .atmosphere::after { content: none; }
+.lobby::before { content: none; }
+.lobby::after { content: none; }
+
+.lobby-hero {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+  transform: translateY(-18px);
+}
+
+.hero-mark {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  color: var(--lobby-accent);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 42px;
+  opacity: 0.86;
+  filter: drop-shadow(0 0 12px rgba(255, 180, 168, 0.22));
+}
+
+.lobby-hero h1 {
+  margin: 0;
+  color: var(--lobby-accent);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: clamp(38px, 5.6vw, 68px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.08), -1px -1px 0 rgba(0, 0, 0, 0.82);
+}
+
+.lobby-hero p {
+  margin: 0;
+  color: rgba(255, 180, 168, 0.78);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.card-fan {
+  width: min(980px, 100%);
+  height: clamp(390px, 43vw, 530px);
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  perspective: 1200px;
+  transform: translateY(-58px);
+}
+
+.role-card-art {
+  top: auto;
+  bottom: clamp(180px, 21vh, 250px);
+  width: clamp(145px, 15.4vw, 210px);
+  border: 3px solid #402d10;
+  border-radius: 8px 12px 6px 10px;
+  background: #e1c299;
+  box-shadow: -5px 10px 22px rgba(0, 0, 0, 0.62), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  filter: sepia(0.12) contrast(1.04) drop-shadow(0 18px 22px rgba(0, 0, 0, 0.42));
+  transform-origin: 50% 100%;
+  transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.3s ease, box-shadow 0.3s ease;
+}
+
+.role-card-art:hover {
+  z-index: 50;
+  filter: brightness(1.08) sepia(0.05) drop-shadow(0 26px 28px rgba(0, 0, 0, 0.58));
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.78), 0 0 30px rgba(255, 180, 168, 0.18);
+}
+
+.role-card-art.werewolf {
+  z-index: 10;
+  transform: translate(-166%, 12%) rotate(-24deg);
+}
+
+.role-card-art.werewolf:hover {
+  transform: translate(-166%, -8%) rotate(0deg) scale(1.1);
+}
+
+.role-card-art.hunter {
+  z-index: 20;
+  transform: translate(-96%, 4%) rotate(-12deg);
+}
+
+.role-card-art.hunter:hover {
+  transform: translate(-96%, -16%) rotate(0deg) scale(1.1);
+}
+
+.role-card-art.seer {
+  z-index: 30;
+  width: clamp(165px, 17vw, 238px);
+  outline: 2px solid rgba(255, 180, 168, 0.7);
+  outline-offset: 5px;
+  transform: translate(-50%, -14%) rotate(0deg);
+}
+
+.role-card-art.seer:hover {
+  transform: translate(-50%, -20%) rotate(0deg) scale(1.04);
+}
+
+.role-card-art.villager {
+  z-index: 20;
+  transform: translate(-4%, 4%) rotate(12deg);
+}
+
+.role-card-art.villager:hover {
+  transform: translate(-4%, -16%) rotate(0deg) scale(1.1);
+}
+
+.role-card-art.witch {
+  z-index: 10;
+  transform: translate(66%, 12%) rotate(24deg);
+}
+
+.role-card-art.witch:hover {
+  transform: translate(66%, -8%) rotate(0deg) scale(1.1);
+}
+
+.card-fan .role-card-art {
+  position: absolute;
+  left: 50%;
+  top: auto;
+  bottom: clamp(148px, 18vh, 220px);
+  display: block;
+  width: clamp(170px, 16.5vw, 238px);
+  aspect-ratio: 1;
+  margin: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  transform-origin: 50% 110%;
+  transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), filter 0.28s ease;
+}
+
+.card-fan .role-card-art::before {
+  content: "";
+  position: absolute;
+  inset: 8.2% 8.2%;
+  z-index: 1;
+  border-radius: 4px;
+  background: #c49a58;
+  box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.28);
+}
+
+.lobby-card-image,
+.lobby-card-frame {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  pointer-events: none;
+}
+
+.lobby-card-image img,
+.lobby-card-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  pointer-events: none;
+}
+
+.lobby-card-image {
+  z-index: 2;
+  inset: 5.4%;
+  width: 89.2%;
+  height: 89.2%;
+  padding: 0;
+  border-radius: 4px;
+  object-fit: cover;
+  filter: saturate(0.96) contrast(1.04);
+}
+
+.lobby-card-image img {
+  object-fit: cover;
+}
+
+.lobby-card-frame {
+  z-index: 3;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 20px rgba(0, 0, 0, 0.64));
+}
+
+.lobby-card-frame img {
+  object-fit: contain;
+}
+
+.card-fan .role-card-art:hover {
+  z-index: 60;
+  filter: brightness(1.08) drop-shadow(0 26px 28px rgba(0, 0, 0, 0.62));
+}
+
+.card-fan .role-card-art.werewolf {
+  z-index: 10;
+  transform: translate(-188%, 12%) rotate(-23deg);
+}
+
+.card-fan .role-card-art.werewolf:hover {
+  transform: translate(-188%, -8%) rotate(-8deg) scale(1.08);
+}
+
+.card-fan .role-card-art.villager {
+  z-index: 18;
+  transform: translate(-112%, 3%) rotate(-10deg);
+}
+
+.card-fan .role-card-art.villager:hover {
+  transform: translate(-112%, -15%) rotate(-4deg) scale(1.08);
+}
+
+.card-fan .role-card-art.judge {
+  z-index: 35;
+  width: clamp(188px, 18vw, 270px);
+  transform: translate(-50%, -15%) rotate(0deg);
+}
+
+.card-fan .role-card-art.judge:hover {
+  transform: translate(-50%, -21%) rotate(0deg) scale(1.04);
+}
+
+.card-fan .role-card-art.hunter {
+  z-index: 18;
+  transform: translate(12%, 3%) rotate(10deg);
+}
+
+.card-fan .role-card-art.hunter:hover {
+  transform: translate(12%, -15%) rotate(4deg) scale(1.08);
+}
+
+.card-fan .role-card-art.witch {
+  z-index: 10;
+  transform: translate(88%, 12%) rotate(23deg);
+}
+
+.card-fan .role-card-art.witch:hover {
+  transform: translate(88%, -8%) rotate(8deg) scale(1.08);
+}
+
+.lobby-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px;
+  width: min(760px, 100%);
+  justify-self: center;
+  justify-items: stretch;
+}
+
+
+.count-picker,
+.mode-card {
+  min-height: 64px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border: 2px solid #402d10;
+  border-radius: 4px 8px 3px 6px;
+  color: #e5e2e1;
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.035), transparent 48%),
+    #20201f;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+
+.count-picker::before,
+.mode-card::before {
+  display: none;
+}
+
+.count-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.panel-icon,
+.mode-card i {
+  display: grid;
+  place-items: center;
+  color: var(--lobby-accent-dim);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 22px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.count-picker label {
+  margin: 0;
+  color: var(--lobby-accent);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.count-options {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  padding: 6px;
+  border: 1px solid rgba(90, 64, 60, 0.86);
+  border-radius: 3px;
+  background: #0e0e0e;
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.72);
+}
+
+.count-options button {
+  height: 32px;
+  border: 2px solid rgba(90, 64, 60, 0.86);
+  border-radius: 4px;
+  color: #e5e2e1;
+  background: #20201f;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.count-options button:hover {
+  color: var(--lobby-accent);
+  background: #353535;
+  transform: none;
+}
+
+.count-options button.selected {
+  color: #410000;
+  border-color: rgba(255, 180, 168, 0.92);
+  background: linear-gradient(180deg, #ffdad4, #ffb4a8);
+  box-shadow: 0 0 18px rgba(255, 180, 168, 0.2);
+}
+
+.count-picker small {
+  color: rgba(227, 190, 184, 0.74);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.mode-card.play {
+  border-color: #aa8984;
+  background:
+    radial-gradient(circle at top, rgba(255, 222, 165, 0.1), transparent 60%),
+    #8b0000;
+  box-shadow: inset 0 0 42px rgba(105, 0, 0, 0.78), 0 18px 34px rgba(0, 0, 0, 0.42);
+}
+
+.mode-card span {
+  color: var(--lobby-accent);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.mode-card strong {
+  color: #e5e2e1;
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  font-weight: 800;
+  width: 100%;
+  text-align: left;
+}
+
+.mode-card p {
+  display: none;
+}
+
+.mode-card:hover {
+  transform: translateY(-5px);
+  border-color: var(--lobby-accent);
+  box-shadow: inset 0 0 42px rgba(0, 0, 0, 0.74), 0 24px 42px rgba(0, 0, 0, 0.5);
+}
+
+.lycan-app.lobbying {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.lobby-actions {
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, 1fr);
+  gap: 18px;
+  width: min(760px, 100%);
+  justify-self: center;
+  justify-items: stretch;
+}
+
+.lobby-version-note {
+  margin-top: 8px;
+  color: rgba(227, 190, 184, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lobby-version-note.error {
+  color: #ffb4a8;
+}
+
+@media (max-width: 1040px) {
+  .lobby {
+    overflow-y: auto;
+  }
+
+  .card-fan {
+    height: 320px;
+  }
+
+  .lobby-actions {
+    grid-template-columns: 1fr;
+    width: min(520px, 100%);
+  }
+}
+
+.left-panel,
+.right-panel {
+  position: fixed;
+  top: 72px;
+  bottom: 0;
+  z-index: 10;
+  width: var(--panel-width);
+  padding: 26px 24px;
+}
+
+.left-panel {
+  left: 0;
+  border-left: 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.right-panel {
+  right: 0;
+  border-right: 0;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.village-title {
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.village-title strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--text);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.side-nav {
+  display: grid;
+  gap: 6px;
+  margin: 22px -24px;
+}
+
+.side-nav button {
+  height: 46px;
+  border: 0;
+  border-right: 4px solid transparent;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 24px;
+  background: transparent;
+}
+
+.side-nav button.active {
+  color: var(--primary);
+  border-right-color: var(--primary);
+  background: rgba(242, 202, 80, 0.09);
+}
+
+.role-card,
+.control-card {
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid var(--outline);
+  border-radius: 14px;
+  background: rgba(17, 14, 7, 0.42);
+}
+
+.meter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.meter-grid div {
+  padding: 14px;
+  border: 1px solid rgba(242, 202, 80, 0.1);
+  border-radius: 12px;
+  background: rgba(17, 14, 7, 0.36);
+}
+
+.meter-grid span {
+  display: block;
+  color: rgba(208, 197, 175, 0.78);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.meter-grid strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--primary);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.role-card strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--primary);
+  font-family: Anton, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 28px;
+}
+
+.role-card p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.control-card {
+  display: grid;
+  gap: 8px;
+}
+
+.control-card button,
+.control-card select {
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+.control-card select,
+.speech-box input {
+  color: var(--text);
+  border: 1px solid rgba(242, 202, 80, 0.16);
+  background: rgba(17, 14, 7, 0.7);
+}
+
+.game-canvas {
+  position: relative;
+  z-index: 5;
+  height: 100vh;
+  margin: 0 var(--panel-width);
+  padding: 92px 36px 148px;
+  display: grid;
+  place-items: center;
+}
+
+.instruction {
+  position: absolute;
+  top: 98px;
+  left: 50%;
+  width: min(740px, 80%);
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.instruction span {
+  color: rgba(242, 202, 80, 0.64);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.32em;
+}
+
+.instruction h2 {
+  margin: 8px 0;
+  color: var(--primary);
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1.12;
+  text-shadow: 0 0 24px rgba(242, 202, 80, 0.2);
+}
+
+.night .instruction h2 {
+  color: var(--blue);
+  text-shadow: 0 0 24px rgba(191, 205, 255, 0.24);
+}
+
+.instruction p {
+  margin: 0;
+  color: var(--muted);
+}
