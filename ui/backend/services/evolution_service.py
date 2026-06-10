@@ -13,8 +13,6 @@ from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.evolution_actions import (
     _promote_evolution_run,
     _reject_evolution_run,
-    accept_evolution_proposal,
-    apply_accepted_evolution_proposals,
 )
 from ui.backend.evolution_serializers import (
     _evolution_batch_summary,
@@ -25,7 +23,7 @@ from ui.backend.evolution_serializers import (
     _normalize_event,
     _sample_game_archive_payload,
 )
-from ui.backend.schemas import normalize_rejection_tags
+from ui.backend.services.evolution_proposal_service import EvolutionProposalService
 from ui.backend.services.task_service import BackgroundTaskServiceProtocol
 from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import (
@@ -59,6 +57,7 @@ class EvolutionService:
     def __init__(self, store: EvolutionServiceStoreProtocol) -> None:
         self._store = store
         self._tasks = store.task_service
+        self._proposals = EvolutionProposalService(store)
 
     def list_runs(
         self,
@@ -332,7 +331,7 @@ class EvolutionService:
 
     def accept_proposal(self, run_id: str, proposal_id: str) -> dict[str, Any]:
         run = self.proposal_run(run_id)
-        action = accept_evolution_proposal(self._store, run, proposal_id)
+        action = self._proposals.accept_proposal(run, proposal_id)
         self.persist_proposal_mutation(run)
         return self.proposal_payload(run, action=action)
 
@@ -345,74 +344,20 @@ class EvolutionService:
         tags: list[str] | None,
     ) -> dict[str, Any]:
         if isinstance(run_or_id, dict):
-            return self._reject_proposal_in_run(
+            return self._proposals.reject_proposal(
                 run_or_id,
                 proposal_id,
                 reason=reason,
                 tags=tags,
             )
         run = self.proposal_run(run_or_id)
-        action = self._reject_proposal_in_run(run, proposal_id, reason=reason, tags=tags)
+        action = self._proposals.reject_proposal(run, proposal_id, reason=reason, tags=tags)
         self.persist_proposal_mutation(run)
         return self.proposal_payload(run, action=action)
 
-    def _reject_proposal_in_run(
-        self,
-        run: dict[str, Any],
-        proposal_id: str,
-        *,
-        reason: str | None = "",
-        tags: list[str] | None = None,
-    ) -> dict[str, Any]:
-        from ui.backend import evolution_actions as actions
-
-        role = str(run.get("role") or "").strip()
-        if not role:
-            raise HTTPException(status_code=400, detail="evolution run has no role")
-        proposal = actions._find_proposal(run, proposal_id)
-        now = beijing_now_iso()
-        clean_reason = str(reason or "").strip()
-        clean_tags = normalize_rejection_tags(tags)
-        actions._mark_proposal_rejected(
-            proposal,
-            reason=clean_reason,
-            tags=clean_tags,
-            timestamp=now,
-            run=run,
-        )
-        rejected_row = actions._rejected_buffer_row(
-            run,
-            proposal,
-            reason=clean_reason,
-            tags=clean_tags,
-            timestamp=now,
-        )
-        reject_buffer = dict(rejected_row.get("reject_buffer") or {})
-        try:
-            self._store.registry.save_rejected(
-                role,
-                [rejected_row],
-                run.get("battle_result")
-                if isinstance(run.get("battle_result"), dict)
-                else None,
-            )
-            reject_buffer["saved"] = True
-        except Exception as exc:  # noqa: BLE001 - expose reject-buffer failures
-            reject_buffer["saved"] = False
-            reject_buffer["error"] = str(exc)
-            proposal["reject_buffer"] = reject_buffer
-            run["proposal_review"] = actions._proposal_review_summary(run)
-            raise HTTPException(
-                status_code=409,
-                detail=f"failed to save rejected proposal: {exc}",
-            ) from exc
-        proposal["reject_buffer"] = reject_buffer
-        run["proposal_review"] = actions._proposal_review_summary(run)
-        return actions._proposal_action_payload(run, proposal)
-
     def apply_accepted_proposals(self, run_id: str) -> dict[str, Any]:
         run = self.proposal_run(run_id)
-        action = apply_accepted_evolution_proposals(self._store, run)
+        action = self._proposals.apply_accepted_proposals(run)
         self.persist_proposal_mutation(run)
         return self.proposal_payload(run, action=action)
 
