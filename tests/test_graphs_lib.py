@@ -1693,6 +1693,48 @@ class TestLibStore:
         assert conn.committed is True
         assert conn.closed is False
 
+    def test_game_run_service_delegates_persistence_creation_to_storage_runtime(self, monkeypatch, tmp_path):
+        from app.lib.store import GameRunConfig, GameRunService
+
+        class FakePersistence:
+            pass
+
+        captured = {}
+        persistence = FakePersistence()
+
+        def create_game_persistence(**kwargs):
+            captured.update(kwargs)
+            return persistence
+
+        monkeypatch.setattr("storage.runtime.create_game_persistence", create_game_persistence)
+
+        svc = GameRunService(paths=tmp_path)
+        config = GameRunConfig(
+            run_id="run_factory",
+            run_type="evaluation_batch",
+            game_dir=tmp_path / "game",
+            source_game_id="source_game",
+            source_run_id="source_run",
+            model_id="model-a",
+            paired_seed=True,
+            role_version_config={"seer": "seer-v1"},
+        )
+
+        handle = svc.create_run(config)
+
+        assert handle.persistence is persistence
+        assert handle.policy.run_type.value == "evaluation_batch"
+        assert captured["game_id"] == "run_factory"
+        assert captured["game_dir"] == tmp_path / "game"
+        assert captured["conn"] is None
+        assert captured["paths"] == tmp_path
+        assert captured["source_game_id"] == "source_game"
+        assert captured["run_type"].value == "evaluation_batch"
+        assert captured["run_metadata"]["source_run_id"] == "source_run"
+        assert captured["run_metadata"]["model_id"] == "model-a"
+        assert captured["run_metadata"]["paired_seed"] is True
+        assert captured["run_metadata"]["role_version_config"] == {"seer": "seer-v1"}
+
     def test_agent_trace_recorder_flush_builds_in_memory_archive(self, tmp_path):
         from app.lib.store import AgentTraceRecorder
         from engine.models import ActionRequest, ActionResponse, ActionType, Observation, Phase, Role

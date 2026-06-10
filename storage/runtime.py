@@ -47,6 +47,7 @@ def create_game_persistence(
     *,
     game_id: str,
     game_dir: Path | str | None = None,
+    conn: StorageConnection | None = None,
     storage_provider: StorageProvider | None = None,
     paths: Any | None = None,
     source_game_id: str | None = None,
@@ -58,15 +59,17 @@ def create_game_persistence(
     import storage.provider as provider_mod
 
     resolved_run_type = run_type if isinstance(run_type, RunType) else RunType(str(run_type))
+    provider = None
     if storage_provider:
         provider = storage_provider
-    elif paths is None:
+    elif conn is None and paths is None:
         provider = provider_mod.storage_provider_from_env()
-    else:
+    elif conn is None:
         provider = provider_mod.storage_provider_from_env(paths=paths)
     return GamePersistence(
         game_id=game_id,
         game_dir=game_dir,
+        conn=conn,
         provider=provider,
         source_game_id=source_game_id or game_id,
         run_policy=policy_for_run_type(resolved_run_type),

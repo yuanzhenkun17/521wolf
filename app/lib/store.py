@@ -148,36 +148,27 @@ class GameRunService:
         conn: Any | None,
     ) -> GameRunHandle:
         from storage.run_policy import RunType, policy_for_run_type
-        from storage.runtime import GamePersistence
+        from storage.runtime import create_game_persistence
 
         run_id = config.run_id or _generate_id()
         run_type = config.run_type if isinstance(config.run_type, RunType) else RunType(str(config.run_type))
         policy = policy_for_run_type(run_type)
         metadata = _run_metadata(config, run_id)
 
-        persistence_kwargs: dict[str, Any] = {
-            "game_id": run_id,
-            "game_dir": config.game_dir,
-            "source_game_id": config.source_game_id,
-            "run_policy": policy,
-            "run_metadata": metadata,
-        }
-        if conn is not None:
-            persistence_kwargs["conn"] = conn
-        else:
-            persistence_kwargs["provider"] = self._storage_provider()
-
         return GameRunHandle(
             run_id=run_id,
             config=config,
             policy=policy,
-            persistence=GamePersistence(**persistence_kwargs),
+            persistence=create_game_persistence(
+                game_id=run_id,
+                game_dir=config.game_dir,
+                conn=conn,
+                paths=self._paths,
+                source_game_id=config.source_game_id,
+                run_type=run_type,
+                run_metadata=metadata,
+            ),
         )
-
-    def _storage_provider(self) -> Any | None:
-        from storage.provider import storage_provider_from_env
-
-        return storage_provider_from_env(paths=self._paths)
 
 
 # ---------------------------------------------------------------------------

@@ -767,6 +767,32 @@ def test_create_game_persistence_resolves_provider_with_paths(monkeypatch, tmp_p
         persistence.close()
 
 
+def test_create_game_persistence_with_connection_does_not_resolve_provider(
+    monkeypatch,
+) -> None:
+    import storage.provider as provider_mod
+
+    def fail_provider_from_env(**_: Any) -> _Provider:
+        raise AssertionError("provider should not be resolved for injected connections")
+
+    monkeypatch.setattr(provider_mod, "storage_provider_from_env", fail_provider_from_env)
+    conn = _MemoryStorageConn()
+
+    persistence = create_game_persistence(
+        game_id="injected_conn_game",
+        conn=conn,
+        paths=object(),
+        run_type="ordinary_game",
+    )
+    try:
+        assert persistence.has_db is True
+        assert persistence.conn is conn
+    finally:
+        persistence.close()
+
+    assert conn.closed is False
+
+
 def test_injected_evolution_connection_is_not_closed() -> None:
     from storage.run_policy import RunType, policy_for_run_type
 
