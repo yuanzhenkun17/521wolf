@@ -3,6 +3,7 @@ import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
 import { createResumableEventSource } from './resumableEventSource.ts'
+import { runtimeHealthGateSummary } from '../domain/runtimeHealth/gates'
 import {
   isBenchmarkBatch,
   normalizeLeaderboardEntry,
@@ -1188,6 +1189,7 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkLeaderboardCompare = ref(null)
   const benchmarkLeaderboardCompareLoading = ref(false)
   const benchmarkLeaderboardCompareError = ref('')
+  const runtimeHealth = ref(null)
   const benchmarkSavedViews = ref([])
   const benchmarkSavedViewsLoading = ref(false)
   const benchmarkSavedViewsError = ref('')
@@ -1217,6 +1219,7 @@ function useEvaluationWorkbench(options = {}) {
   const leaderboardCompareRequests = createLatestOnlyTracker()
   const benchmarkViewRequests = createLatestOnlyTracker()
   const benchmarkViewActionRequests = createLatestOnlyTracker()
+  const runtimeHealthRequests = createLatestOnlyTracker()
   let lastRunsError = null
 
   const form = ref({
@@ -1303,8 +1306,12 @@ function useEvaluationWorkbench(options = {}) {
     (selectedBenchmarkIsModelSuite.value || Boolean(selectedRole.value)) &&
     !selectedBenchmarkSuiteLaunchDisabledReason.value &&
     !benchmarkPlanBudgetExceeded.value &&
-    !selectedRoleTargetVersionBlockedReason.value
+    !selectedRoleTargetVersionBlockedReason.value &&
+    !runtimeHealthGateBlocked.value
   )
+  const runtimeHealthGate = computed(() => runtimeHealthGateSummary(runtimeHealth.value, 'benchmark_start'))
+  const runtimeHealthGateBlocked = computed(() => runtimeHealthGate.value.disabled)
+  const runtimeHealthGateReason = computed(() => runtimeHealthGate.value.reason || runtimeHealthGate.value.warning)
   const currentBenchmarkLeaderboardRows = computed(() =>
     selectedBenchmarkIsModelSuite.value ? modelLeaderboardRows.value : roleLeaderboardRows.value
   )
@@ -1704,6 +1711,19 @@ function useEvaluationWorkbench(options = {}) {
 
   function clearNotice() {
     notice.value = { type: '', message: '' }
+  }
+
+  async function loadRuntimeHealth() {
+    const token = runtimeHealthRequests.next()
+    try {
+      const data = await apiFetch('/health')
+      if (!token.isLatest()) return false
+      runtimeHealth.value = data || null
+      return true
+    } catch {
+      if (token.isLatest()) runtimeHealth.value = null
+      return false
+    }
   }
 
   function syncFormFromSelectedSuite() {
@@ -2936,6 +2956,12 @@ function useEvaluationWorkbench(options = {}) {
       setNotice('warning', message)
       return
     }
+    if (runtimeHealthGateBlocked.value) {
+      const message = runtimeHealthGateReason.value || '运行环境未就绪，不能启动评测。'
+      error.value = message
+      setNotice('warning', message)
+      return
+    }
     const token = actionRequests.next()
     actionLoading.value = 'start'
     error.value = ''
@@ -3034,6 +3060,11 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkPlan,
     benchmarkPlanError,
     benchmarkPlanBudgetExceeded,
+    runtimeHealth,
+    runtimeHealthGate,
+    runtimeHealthGateBlocked,
+    runtimeHealthGateReason,
+    loadRuntimeHealth,
     roles,
     roleMeta,
     roleRows,

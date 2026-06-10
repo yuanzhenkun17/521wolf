@@ -163,6 +163,9 @@ interface EvolutionConsoleModel {
   selectedSampleState: Ref<SampleState>
   selectedDiffData: Ref<EvolutionDiffData | null>
   selectedDiff: Ref<LegacyDiffItem[]>
+  runtimeHealthGateBlocked?: Ref<boolean>
+  runtimeHealthGateReason?: Ref<string>
+  runtimeHealthGate?: Ref<{ actions?: unknown[] }>
   statusText?: (value: unknown) => string
   startSingle: () => void | Promise<void>
   runAction: (id: string, action: 'promote' | 'reject' | 'terminate') => void | Promise<void>
@@ -417,11 +420,23 @@ function childRunKey(run: ChildRunRow, index: number): string | number {
         <label>训练局数<input v-model.number="evo.form.value.training_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>对战局数<input v-model.number="evo.form.value.battle_games" type="number" min="1" max="200" inputmode="numeric" /></label>
         <label>最大天数<input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" /></label>
+        <div
+          v-if="evo.runtimeHealthGateReason?.value"
+          class="evo-runtime-gate"
+          :data-blocked="String(Boolean(evo.runtimeHealthGateBlocked?.value))"
+          role="status"
+        >
+          <strong>{{ evo.runtimeHealthGateBlocked?.value ? '启动已阻断' : '启动预检' }}</strong>
+          <span>{{ evo.runtimeHealthGateReason.value }}</span>
+          <small v-if="evo.runtimeHealthGate?.value?.actions?.length">
+            {{ evo.runtimeHealthGate.value.actions[0] }}
+          </small>
+        </div>
         <div class="evo-start-panel">
           <button
             type="button"
             class="evo-action evo-start-action"
-            :disabled="Boolean(evo.actionLoading.value) || !evo.selectedRole.value"
+            :disabled="Boolean(evo.actionLoading.value) || !evo.selectedRole.value || Boolean(evo.runtimeHealthGateBlocked?.value)"
             @click="evo.startSingle()"
           >
             启动

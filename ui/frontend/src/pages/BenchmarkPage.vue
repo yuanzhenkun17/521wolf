@@ -294,6 +294,7 @@ const launchStatusLabel = computed(() =>
 const launchDisabledReason = computed(() =>
   benchmark.selectedBenchmarkSuiteLaunchDisabledReason.value ||
   benchmark.selectedRoleTargetVersionBlockedReason.value ||
+  (benchmark.runtimeHealthGateBlocked.value ? benchmark.runtimeHealthGateReason.value : '') ||
   (benchmark.benchmarkPlanBudgetExceeded.value ? '评测预算超过上限，请提高预算或选择更小的套件。' : '')
 )
 const estimatedUnitsLabel = computed(() => {
@@ -868,6 +869,7 @@ function shortValue(value, fallback = '未上报') {
 }
 
 function refresh() {
+  void benchmark.loadRuntimeHealth?.()
   benchmark.refreshAll({ notify: true })
 }
 
@@ -939,6 +941,7 @@ watch(
 
 onMounted(() => {
   removeBenchmarkHashChangeListener = addLegacyHashChangeListener(handleBenchmarkHashChange)
+  void benchmarkRuntime.loadRuntimeHealth?.()
   void benchmark.refreshAll().finally(() => {
     applyBenchmarkDeepLink(route)
   })

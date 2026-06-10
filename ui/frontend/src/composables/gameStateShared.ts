@@ -191,6 +191,7 @@ export function createRefs() {
     activeSession: ref({ gameId: null, mode: '', running: false, sseConnected: false }),
     backendMode: ref('mock'),
     externalStatus: ref(null),
+    runtimeHealth: ref(null),
     archiveByGameId: ref({}),
     reviewByGameId: ref({}),
     archiveLoading: ref(false),

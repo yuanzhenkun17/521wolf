@@ -615,10 +615,12 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       if (!token.isLatest()) return
       state.backendMode.value = health.mode || 'mock'
       state.externalStatus.value = health.external || null
+      state.runtimeHealth.value = health || null
     } catch {
       if (token.isLatest()) {
         state.backendMode.value = 'offline'
         state.externalStatus.value = { supports_human: false, supports_sse: false }
+        state.runtimeHealth.value = { status: 'error', ready: false, external: state.externalStatus.value }
       }
     }
   }

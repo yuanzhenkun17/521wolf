@@ -2,7 +2,9 @@
 import { computed, getCurrentInstance, onMounted, ref, watch, type PropType } from 'vue'
 import { type GameStartRoleVersionMode, gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
 import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
+import { runtimeHealthGateSummary } from '../domain/runtimeHealth/gates'
 import { useGameStore, useSessionStore } from '../stores'
+import type { RuntimeHealthPayload } from '../types/health'
 
 type RoleVersionModeOption = {
   key: GameStartRoleVersionMode
@@ -22,6 +24,7 @@ type StartModeOptions = {
 const props = defineProps({
   backendMode: { type: String, default: 'mock' },
   externalStatus: { type: Object as PropType<ExternalStatus | null>, default: null },
+  runtimeHealth: { type: Object as PropType<RuntimeHealthPayload | null>, default: null },
   loading: Boolean,
   playerCount: { type: Number, default: 12 },
   apiFetch: { type: Function, default: null }
@@ -50,6 +53,10 @@ const backendAvailable = computed(() => (
 ))
 const loading = computed(() => hasExplicitLobbyProp('loading') ? props.loading : gameStore.loading)
 const supportsHuman = computed(() => props.externalStatus?.supports_human !== false)
+const gameStartGate = computed(() => runtimeHealthGateSummary(props.runtimeHealth, 'game_start'))
+const gameStartBlocked = computed(() => backendAvailable.value && gameStartGate.value.disabled)
+const gameStartGateMessage = computed(() => gameStartGate.value.reason || gameStartGate.value.warning)
+const gameStartGateTone = computed(() => gameStartGate.value.disabled ? 'error' : 'warning')
 const roles = ref([])
 const versionsByRole = ref({})
 const leaderboardsByRole = ref({})
@@ -202,6 +209,7 @@ function clearRoleVersionOverrides() {
 }
 
 function start(mode) {
+  if (gameStartBlocked.value) return
   startingMode.value = mode
   const body: StartModeOptions = {
     player_count: Number(props.playerCount) || 12,
@@ -372,19 +380,31 @@ watch(loading, (isLoading) => {
     </section>
 
     <section class="lobby-actions">
-      <button class="mode-card watch" :disabled="loading || !backendAvailable" @click="start('watch')">
+      <section
+        v-if="backendAvailable && gameStartGateMessage"
+        :class="['lobby-runtime-gate', gameStartGateTone]"
+        aria-label="开局门禁"
+        role="status"
+      >
+        <div>
+          <span>{{ gameStartGate.disabled ? '开局已阻断' : '开局预检' }}</span>
+          <strong>{{ gameStartGateMessage }}</strong>
+        </div>
+        <small v-if="gameStartGate.actions.length">{{ gameStartGate.actions[0] }}</small>
+      </section>
+      <button class="mode-card watch" :disabled="loading || !backendAvailable || gameStartBlocked" @click="start('watch')">
         <span>观战模式</span>
         <strong>
-          {{ backendAvailable ? '观看智能体对局' : '后端未连接' }}
+          {{ !backendAvailable ? '后端未连接' : gameStartBlocked ? '开局门禁未通过' : '观看智能体对局' }}
           <i v-if="startingMode === 'watch' && loading" class="mode-loading-dots" aria-label="加载中">
             <b></b><b></b><b></b>
           </i>
         </strong>
       </button>
-      <button class="mode-card play" :disabled="loading || !backendAvailable || !supportsHuman" @click="start('play')">
+      <button class="mode-card play" :disabled="loading || !backendAvailable || !supportsHuman || gameStartBlocked" @click="start('play')">
         <span>玩家模式</span>
         <strong>
-          {{ supportsHuman ? '加入智能体对局' : '后端暂不支持加入' }}
+          {{ gameStartBlocked ? '开局门禁未通过' : supportsHuman ? '加入智能体对局' : '后端暂不支持加入' }}
           <i v-if="startingMode === 'play' && loading" class="mode-loading-dots" aria-label="加载中">
             <b></b><b></b><b></b>
           </i>
@@ -568,6 +588,45 @@ watch(loading, (isLoading) => {
 .lobby-hero .lobby-version-actions button:hover:not(:disabled) {
   color: #f4d58e;
   background: transparent;
+}
+
+.lobby-runtime-gate {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  min-height: 58px;
+  padding: 12px 14px;
+  border: 1px solid rgba(244, 213, 142, 0.3);
+  border-radius: 8px;
+  background: rgba(22, 12, 14, 0.72);
+  color: #f5dfaa;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.24);
+}
+
+.lobby-runtime-gate.error {
+  border-color: rgba(219, 91, 73, 0.5);
+  color: #ffd9c8;
+}
+
+.lobby-runtime-gate div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lobby-runtime-gate span,
+.lobby-runtime-gate small {
+  color: rgba(244, 213, 142, 0.78);
+  font-size: 11px;
+}
+
+.lobby-runtime-gate strong {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :global(.lobby .card-fan) {

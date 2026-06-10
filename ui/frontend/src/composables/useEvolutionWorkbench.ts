@@ -4,6 +4,7 @@ import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
 import { createResumableEventSource } from './resumableEventSource.ts'
 import { addLegacyHashChangeListener, currentLegacyHash } from '../router/legacyViewNavigation'
+import { runtimeHealthGateSummary } from '../domain/runtimeHealth/gates'
 import {
   evolutionDeepLinkFromHash as routeEvolutionDeepLinkFromHash,
   evolutionDeepLinkFromRoute as routeEvolutionDeepLinkFromRoute,
@@ -1917,6 +1918,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   const actionLoading = ref('')
   const error = ref('')
   const notice = ref({ type: '', message: '' })
+  const runtimeHealth = ref(null)
   const noticeAutoDismiss = createNoticeAutoDismiss(notice, {
     enabled: options.installLifecycle !== false,
     onDismiss(dismissed) {
@@ -1993,6 +1995,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   const versionDetailRequests = createLatestOnlyTracker()
   const trustBundleRequests = createLatestOnlyTracker()
   const actionRequests = createLatestOnlyTracker()
+  const runtimeHealthRequests = createLatestOnlyTracker()
 
   const form = ref({
     training_games: 5,
@@ -2202,6 +2205,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (!selectedVersion.value) return '请选择一个版本。'
     return selectedVersion.value.rollbackDisabledReason || ''
   })
+  const runtimeHealthGate = computed(() => runtimeHealthGateSummary(runtimeHealth.value, 'evolution_start'))
+  const runtimeHealthGateBlocked = computed(() => runtimeHealthGate.value.disabled)
+  const runtimeHealthGateReason = computed(() => runtimeHealthGate.value.reason || runtimeHealthGate.value.warning)
 
   function setError(message) {
     error.value = message || ''
@@ -2219,6 +2225,19 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     const next = evolutionNoticeFromError(err, fallback, context)
     setNotice(next.type, next.message)
     return next
+  }
+
+  async function loadRuntimeHealth() {
+    const token = runtimeHealthRequests.next()
+    try {
+      const data = await apiFetch('/health')
+      if (!token.isLatest()) return false
+      runtimeHealth.value = data || null
+      return true
+    } catch {
+      if (token.isLatest()) runtimeHealth.value = null
+      return false
+    }
   }
 
   function clearVersionDetail() {
@@ -3100,6 +3119,12 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       setNotice('warning', message)
       return
     }
+    if (runtimeHealthGateBlocked.value) {
+      const message = runtimeHealthGateReason.value || '运行环境未就绪，不能启动进化任务。'
+      setError(message)
+      setNotice('warning', message)
+      return
+    }
     const token = actionRequests.next()
     actionLoading.value = 'start-single'
     setError('')
@@ -3142,6 +3167,12 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   async function startBatch() {
     if (!selectedBatchRoles.value.length) {
       const message = '请选择至少一个角色'
+      setError(message)
+      setNotice('warning', message)
+      return
+    }
+    if (runtimeHealthGateBlocked.value) {
+      const message = runtimeHealthGateReason.value || '运行环境未就绪，不能启动进化任务。'
       setError(message)
       setNotice('warning', message)
       return
@@ -3378,6 +3409,11 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     selectedCanTerminate,
     selectedTerminateDisabledReason,
     selectedRollbackDisabledReason,
+    runtimeHealth,
+    runtimeHealthGate,
+    runtimeHealthGateBlocked,
+    runtimeHealthGateReason,
+    loadRuntimeHealth,
     baselinePromoteTrustDisabledReason: selectedBaselinePromoteTrustDisabledReason,
     selectedGames,
     sampleBuckets,

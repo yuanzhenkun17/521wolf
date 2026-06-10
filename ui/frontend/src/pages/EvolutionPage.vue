@@ -187,6 +187,11 @@ const selectedCanPromote = computed(() => evolutionStore.selectedCanPromote)
 const selectedPromoteDisabledReason = computed(() => evolutionStore.selectedPromoteDisabledReason)
 const selectedCanTerminate = computed(() => evolutionStore.selectedCanTerminate)
 
+function refreshEvolution() {
+  void evolutionRuntime.loadRuntimeHealth?.()
+  evolutionStore.refreshAll()
+}
+
 watch(
   () => evo.evolutionDeepLinkTarget.value?.panel || '',
   (panel) => {
@@ -203,7 +208,7 @@ watch(
   }
 )
 
-onMounted(() => evolutionStore.refreshAll())
+onMounted(() => refreshEvolution())
 
 onBeforeUnmount(() => {
   evolutionStore.clearRuntimeActions()
@@ -242,7 +247,7 @@ onBeforeUnmount(() => {
         :selected-rollback-disabled-reason="evolutionStore.selectedRollbackDisabledReason"
         :error="evolutionStore.error"
         :notice="evolutionStore.notice"
-        @refresh="evolutionStore.refreshAll()"
+        @refresh="refreshEvolution"
         @select-role="evolutionStore.selectRole"
       >
         <EvolutionConsolePanel
@@ -1278,6 +1283,45 @@ onBeforeUnmount(() => {
   outline: none;
   border-color: var(--evo-accent);
   box-shadow: 0 0 0 3px rgba(139, 94, 52, 0.1);
+}
+
+.evo-runtime-gate {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--evo-warning-border);
+  border-radius: 6px;
+  background: var(--evo-warning-bg);
+  color: var(--evo-warning);
+}
+
+.evo-runtime-gate[data-blocked="true"] {
+  border-color: rgba(153, 48, 38, 0.26);
+  background: rgba(153, 48, 38, 0.08);
+  color: var(--evo-danger);
+}
+
+.evo-runtime-gate strong,
+.evo-runtime-gate span,
+.evo-runtime-gate small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-runtime-gate strong {
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.evo-runtime-gate span,
+.evo-runtime-gate small {
+  color: currentColor;
+  font-size: 11px;
+  opacity: 0.82;
 }
 
 .evo-start-panel {

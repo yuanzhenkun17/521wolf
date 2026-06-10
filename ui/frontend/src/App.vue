@@ -186,6 +186,7 @@ const {
       <LobbyPage
         v-if="inLobby"
         :external-status="state.externalStatus.value"
+        :runtime-health="state.runtimeHealth.value"
         :player-count="state.playerCount.value"
         :api-fetch="actions.apiFetch"
         @start-mode="startMode"
