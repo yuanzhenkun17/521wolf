@@ -310,7 +310,7 @@ async def run(args: argparse.Namespace) -> int:
         game_timeout_seconds=_positive_float(args.game_timeout_seconds),
     )
     agent_runtime = _agent_runtime_config_from_args(args)
-    ctx.manifest["command"] = " ".join([Path(sys.executable).name, "-m", "app.tools.run_full_local_samples", *sys.argv[1:]])
+    ctx.manifest["command"] = " ".join([Path(sys.executable).name, "-m", "tools.research.run_full_local_samples", *sys.argv[1:]])
     ctx.manifest["settings"] = settings.to_dict()
     ctx.manifest["agent_runtime"] = agent_runtime
     ctx.manifest["parameters"] = {
