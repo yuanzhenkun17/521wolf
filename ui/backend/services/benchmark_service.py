@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from fastapi import HTTPException
 
 from app.util.time import beijing_now_iso
+from ui.backend.preflight import require_runtime_ready
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
 from ui.backend.services.benchmark_leaderboard_service import BenchmarkLeaderboardService
 from ui.backend.services.benchmark_report_service import BenchmarkReportService
@@ -346,6 +347,14 @@ class BenchmarkService:
         batch_id = str(payload.get("batch_id") or task.get("task_id") or "")
         request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
         request = BenchmarkRequest.model_validate(request_payload)
+        asyncio.run(
+            require_runtime_ready(
+                self._context,
+                scope="benchmark_start",
+                model_scope="benchmark",
+                model_profile_id=request.model_profile_id,
+            )
+        )
         def progress_sink(progress: dict[str, Any]) -> None:
             payload = dict(progress)
             payload.setdefault("stage", "benchmark_running")

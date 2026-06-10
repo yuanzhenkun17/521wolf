@@ -14,6 +14,7 @@ from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.errors import domain_error_detail
 from ui.backend.evolution_serializers import _evolution_gate_report
+from ui.backend.preflight import require_runtime_ready
 from ui.backend.schemas import EvolutionStartRequest, automatic_evolution_request
 from ui.backend.settings_runtime_variables import WORKFLOW_GAME_CONCURRENCY_KEY, runtime_setting_int_for_store
 from ui.backend.services.evolution_read_service import EvolutionReadService
@@ -215,6 +216,14 @@ class EvolutionRunService:
         payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
         request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
         request = automatic_evolution_request(EvolutionStartRequest.model_validate(request_payload))
+        asyncio.run(
+            require_runtime_ready(
+                self._context,
+                scope="evolution_start",
+                model_scope="evolution",
+                model_profile_id=request.model_profile_id,
+            )
+        )
         batch_id = str(payload.get("batch_id") or "")
         run_id = str(payload.get("run_id") or "")
         task_id = batch_id or run_id or str(task.get("task_id") or "")

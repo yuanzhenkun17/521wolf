@@ -7,10 +7,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 
 from app.config import PathConfig
 import ui.backend.store as ui_backend_store
-from ui.backend.schemas import EvolutionStartRequest
+from ui.backend.schemas import BenchmarkRequest, EvolutionStartRequest
 from ui.backend.services.benchmark_service import BenchmarkService
 from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
 from ui.backend.services.evolution_read_service import EvolutionReadService
@@ -546,7 +547,68 @@ class _FakeEvolutionRunContext:
         return "test-model"
 
 
-def test_evolution_task_executor_restores_snapshot_before_running(tmp_path: Path) -> None:
+class _FakeBenchmarkTaskService:
+    def put_task_json_artifact(self, **kwargs: Any) -> dict[str, Any]:
+        return {"artifact_id": f"{kwargs['task_id']}:{kwargs['name']}", **kwargs}
+
+    def put_task_bytes_artifact(self, **kwargs: Any) -> dict[str, Any]:
+        return {"artifact_id": f"{kwargs['task_id']}:{kwargs['name']}", **kwargs}
+
+
+def test_benchmark_task_executor_preflights_before_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def failing_preflight(store: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append({"store": store, **kwargs})
+        raise HTTPException(status_code=503, detail={"code": "runtime_not_ready"})
+
+    monkeypatch.setattr("ui.backend.services.benchmark_service.require_runtime_ready", failing_preflight)
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path), evolution_batches={}, task_service=_FakeBenchmarkTaskService())
+    service = BenchmarkService(context)
+    ran = False
+
+    async def run_queued_benchmark(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal ran
+        ran = True
+
+    service.run_queued_benchmark = run_queued_benchmark  # type: ignore[method-assign]
+    task_context = SimpleNamespace(heartbeat=lambda progress=None: True, cancel_requested=lambda: False)
+
+    with pytest.raises(HTTPException):
+        service.execute_benchmark_task(
+            {
+                "task_id": "bench_worker_preflight",
+                "payload": {
+                    "batch_id": "bench_worker_preflight",
+                    "request": BenchmarkRequest(model_profile_id="bad-profile").model_dump(mode="json", exclude_none=True),
+                },
+            },
+            task_context,
+        )
+
+    assert ran is False
+    assert calls == [
+        {
+            "store": context,
+            "scope": "benchmark_start",
+            "model_scope": "benchmark",
+            "model_profile_id": "bad-profile",
+        }
+    ]
+
+
+def test_evolution_task_executor_restores_snapshot_before_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def ready_preflight(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"ready": True}
+
+    monkeypatch.setattr("ui.backend.services.evolution_run_service.require_runtime_ready", ready_preflight)
+
     async def runner(**kwargs: Any) -> dict[str, Any]:
         return {
             "run_id": kwargs["run_id"],
@@ -594,7 +656,64 @@ def test_evolution_task_executor_restores_snapshot_before_running(tmp_path: Path
     ]
 
 
-def test_evolution_task_executor_passes_queue_cancel_check(tmp_path: Path) -> None:
+def test_evolution_task_executor_preflights_before_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    runner_called = False
+
+    async def failing_preflight(store: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append({"store": store, **kwargs})
+        raise HTTPException(status_code=503, detail={"code": "runtime_not_ready"})
+
+    async def runner(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal runner_called
+        runner_called = True
+        return {}
+
+    monkeypatch.setattr("ui.backend.services.evolution_run_service.require_runtime_ready", failing_preflight)
+    request = EvolutionStartRequest(roles=["seer"], training_games=0, battle_games=0, max_days=1, model_profile_id="bad-profile")
+    api_context = _FakeEvolutionRunContext(tmp_path, runner)
+    api_service = EvolutionRunService(api_context)
+    queued = api_service.queue_evolution(request)
+    run_id = queued["run_id"]
+    api_service.queue_evolution_task(queued, request)
+
+    worker_context = _FakeEvolutionRunContext(tmp_path, runner)
+    worker_service = EvolutionRunService(worker_context)
+
+    with pytest.raises(HTTPException):
+        worker_service.execute_evolution_task(
+            {
+                "task_id": run_id,
+                "kind": "evolution_run",
+                "payload": api_context.task_service.enqueued_payload,
+            },
+            SimpleNamespace(heartbeat=lambda progress=None: True, cancel_requested=lambda: False),
+        )
+
+    assert runner_called is False
+    assert worker_context.evolution_runs == {}
+    assert calls == [
+        {
+            "store": worker_context,
+            "scope": "evolution_start",
+            "model_scope": "evolution",
+            "model_profile_id": "bad-profile",
+        }
+    ]
+
+
+def test_evolution_task_executor_passes_queue_cancel_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def ready_preflight(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"ready": True}
+
+    monkeypatch.setattr("ui.backend.services.evolution_run_service.require_runtime_ready", ready_preflight)
+
     runner_called = False
 
     async def runner(**kwargs: Any) -> dict[str, Any]:
