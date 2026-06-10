@@ -1,9 +1,42 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+interface RefLike<T> {
+  value: T
+}
+
+interface EvolutionLeaderboardRow {
+  hash?: string
+  target_version_id?: string
+  version_id?: string
+  subject_id?: string
+  short?: string
+  is_baseline?: boolean
+  recommendationLabel?: string
+  source_run_id?: string
+  sourceRunId?: string
+  run_id?: string
+  runId?: string
+  provenance?: {
+    source_run_id?: string
+  }
+  target_role_label?: string
+  roleLabel?: string
+  releaseStageLabel?: string
+  release_stage_label?: string
+  sourceLabel?: string
+  scorePct?: number
+  winRatePct?: number
+  deltaScore?: number
+}
+
+interface EvolutionLeaderboardModel {
+  selectedRoleLeaderboard: RefLike<EvolutionLeaderboardRow[]>
+  selectedRoleLabel: RefLike<string>
+}
 
 const props = defineProps({
-  evo: { type: Object, required: true }
+  evo: { type: Object as PropType<EvolutionLeaderboardModel>, required: true }
 })
 
 const rows = computed(() => props.evo.selectedRoleLeaderboard.value || [])
@@ -16,44 +49,44 @@ const summaryRows = computed(() => [
   { key: 'recommendation', label: '推荐结论', value: leadingCandidate.value?.recommendationLabel || '未标记' }
 ])
 
-function leaderboardKey(item, index) {
+function leaderboardKey(item: EvolutionLeaderboardRow, index: number) {
   return item.hash || item.target_version_id || item.version_id || item.subject_id || index
 }
 
-function versionLabel(item) {
+function versionLabel(item: EvolutionLeaderboardRow | null | undefined) {
   if (!item) return '—'
   return item.short || item.target_version_id || item.version_id || item.subject_id || item.hash || '—'
 }
 
-function sourceRunId(item) {
+function sourceRunId(item: EvolutionLeaderboardRow) {
   return item?.source_run_id || item?.sourceRunId || item?.run_id || item?.runId || item?.provenance?.source_run_id || ''
 }
 
-function sourceRunHref(item) {
+function sourceRunHref(item: EvolutionLeaderboardRow) {
   const runId = sourceRunId(item)
   return runId ? `#evolution?run_id=${encodeURIComponent(runId)}` : ''
 }
 
-function rowRoleLabel(item) {
+function rowRoleLabel(item: EvolutionLeaderboardRow) {
   return item?.target_role_label || item?.roleLabel || props.evo.selectedRoleLabel.value || '—'
 }
 
-function rowTypeLabel(item) {
+function rowTypeLabel(item: EvolutionLeaderboardRow) {
   if (item?.is_baseline) return '基线'
   return item?.releaseStageLabel || item?.release_stage_label || item?.sourceLabel || '候选'
 }
 
-function scoreLabel(item) {
+function scoreLabel(item: EvolutionLeaderboardRow) {
   const value = Number(item?.scorePct)
   return Number.isFinite(value) ? `${Math.round(value)}%` : '—'
 }
 
-function winRateLabel(item) {
+function winRateLabel(item: EvolutionLeaderboardRow) {
   const value = Number(item?.winRatePct)
   return Number.isFinite(value) ? `${Math.round(value)}%` : '—'
 }
 
-function deltaLabel(item) {
+function deltaLabel(item: EvolutionLeaderboardRow) {
   const value = Number(item?.deltaScore)
   if (!Number.isFinite(value) || value === 0) return '—'
   const percent = Math.abs(value) <= 1 ? value * 100 : value

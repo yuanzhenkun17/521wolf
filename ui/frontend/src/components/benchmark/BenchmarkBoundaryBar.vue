@@ -1,10 +1,59 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+type ReadableRef<T> = {
+  readonly value: T
+}
+
+interface BenchmarkGates {
+  min_completed_games?: number | string | null
+  min_rankable_games?: number | string | null
+  min_valid_game_rate?: number | string | null
+  max_fallback_rate?: number | string | null
+}
+
+interface BenchmarkSuite {
+  id?: string
+  seed_set_id?: string
+  gates?: BenchmarkGates | null
+  rankable_gates?: BenchmarkGates | null
+  config_hash?: string
+  benchmark_config_hash?: string
+  benchmark?: {
+    config_hash?: string
+  } | null
+}
+
+interface BenchmarkPlan {
+  budget?: {
+    estimated_units?: number | string | null
+  } | null
+  estimates?: {
+    estimated_llm_call_units?: number | string | null
+  } | null
+}
+
+interface BenchmarkBoundaryForm {
+  model_config_hash: string
+  model_id: string
+  target_version_id: string
+}
+
+interface BenchmarkBoundaryBenchmark {
+  selectedBenchmarkSuite: ReadableRef<BenchmarkSuite | null>
+  benchmarkPlan: ReadableRef<BenchmarkPlan | null>
+  selectedBenchmarkIsModelSuite: ReadableRef<boolean>
+  selectedRoleLabel: ReadableRef<string>
+  form: ReadableRef<BenchmarkBoundaryForm>
+  benchmarkPlanBudgetExceeded: ReadableRef<boolean>
+  selectedBenchmarkSuiteLabel: ReadableRef<string>
+  selectedBenchmarkEvaluationSetId: ReadableRef<string>
+  selectedBenchmarkCanLaunch: ReadableRef<boolean>
+}
 
 const props = defineProps({
   benchmark: {
-    type: Object,
+    type: Object as PropType<BenchmarkBoundaryBenchmark>,
     required: true
   }
 })
@@ -28,7 +77,7 @@ const gateLabel = computed(() => {
   const minGames = gates.value?.min_completed_games ?? gates.value?.min_rankable_games
   const validRate = gates.value?.min_valid_game_rate
   const fallback = gates.value?.max_fallback_rate
-  const parts = []
+  const parts: string[] = []
   if (minGames != null) parts.push(`至少 ${minGames} 局`)
   if (validRate != null) parts.push(`有效率 >= ${Math.round(Number(validRate) * 100)}%`)
   if (fallback != null) parts.push(`回退率 <= ${Math.round(Number(fallback) * 100)}%`)

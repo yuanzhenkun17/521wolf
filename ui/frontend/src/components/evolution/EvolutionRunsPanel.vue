@@ -1,15 +1,63 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue'
+
+interface RefLike<T> {
+  value: T
+}
+
+interface BattleSideResult {
+  target_win_rate?: number
+  avg_role_weighted_score?: number
+}
+
+interface BattleResult {
+  skipped?: boolean
+  candidate?: BattleSideResult
+  baseline?: BattleSideResult
+  candidate_win_rate?: number
+  baseline_win_rate?: number
+}
+
+interface EvolutionRunRow {
+  id: string
+  entityType?: string
+  completedRoleCount?: number
+  roleCount?: number
+  combined_battle_result?: BattleResult
+  battle_result?: BattleResult
+  overallProgressPercent?: number
+  progressPercent?: number
+  status?: string
+  statusLabel?: string
+  displayRole?: string
+  entityLabel?: string
+  currentStageLabel?: string
+  overallProgressLabel?: string
+}
+
+interface EvolutionRunsModel {
+  runPagination: RefLike<{ total?: number }>
+  runRows: RefLike<EvolutionRunRow[]>
+  runFilter: RefLike<string>
+  visibleRunRows: RefLike<EvolutionRunRow[]>
+  filteredRunRows: RefLike<EvolutionRunRow[]>
+  selectedRunId: RefLike<string>
+  runHasMore: RefLike<boolean>
+  runLoadingMore: RefLike<boolean>
+  selectRun: (id: string) => void
+  loadMoreRuns: () => void
+}
+
 defineProps({
-  evo: { type: Object, required: true }
+  evo: { type: Object as PropType<EvolutionRunsModel>, required: true }
 })
 
-function scoreLabel(value) {
+function scoreLabel(value: unknown) {
   const n = Number(value || 0)
   return `${Math.round(n * 100)}%`
 }
 
-function primaryMetric(run) {
+function primaryMetric(run: EvolutionRunRow | null | undefined) {
   if (!run) return '—'
   if (run.entityType === 'batch') {
     return `${run.completedRoleCount || 0} / ${run.roleCount || 0} 角色`
@@ -26,7 +74,7 @@ function primaryMetric(run) {
   return `${scoreLabel(c)} / ${scoreLabel(b)}`
 }
 
-function progressPercent(run) {
+function progressPercent(run: EvolutionRunRow) {
   const number = Number(run?.overallProgressPercent ?? run?.progressPercent ?? 0)
   if (!Number.isFinite(number)) return 0
   return Math.max(0, Math.min(100, Math.round(number)))

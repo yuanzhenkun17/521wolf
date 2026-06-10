@@ -1,13 +1,60 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 
 const props = defineProps({
-  diffData: Object,
-  legacyDiff: { type: Array, default: () => [] }
+  diffData: Object as PropType<EvolutionDiffData | null>,
+  legacyDiff: { type: Array as PropType<LegacyDiffItem[]>, default: () => [] }
 })
 
-const normalizedDiff = computed(() => {
+interface LegacyDiffItem {
+  filename?: string
+  file?: string
+  action?: string
+  action_type?: string
+  title?: string
+  label?: string
+  display_name?: string
+}
+
+interface SkillChange {
+  file?: string
+  action?: string
+  action_type?: string
+  title?: string
+  label?: string
+  display_name?: string
+  before?: string
+  after?: string
+  before_lines?: string
+  after_lines?: string
+}
+
+interface PatternChange {
+  pattern_id?: string
+  id?: string
+  recommendation?: string
+  summary?: string
+  situation?: string
+  old_confidence?: number
+  new_confidence?: number
+  old_win_rate?: number
+  new_win_rate?: number
+}
+
+interface EvolutionDiffData {
+  skill_changes?: SkillChange[]
+  patterns_added?: PatternChange[]
+  patterns_removed?: PatternChange[]
+  patterns_updated?: PatternChange[]
+  metrics_delta?: Record<string, number | string | null>
+}
+
+interface LineDiff {
+  type: 'removed' | 'context' | 'added'
+  text: string
+}
+
+const normalizedDiff = computed<EvolutionDiffData | null>(() => {
   const raw = props.diffData
   if (raw) return raw
   const legacy = props.legacyDiff
@@ -24,23 +71,23 @@ const normalizedDiff = computed(() => {
   }
 })
 
-function deltaLabel(value) {
+function deltaLabel(value: unknown) {
   const n = Number(value || 0)
   if (!n) return '0'
   return `${n > 0 ? '+' : ''}${Math.round(n * 100)}%`
 }
 
-function diffLabel(diff) {
+function diffLabel(diff: LegacyDiffItem) {
   const file = skillFileLabel(diff)
   const action = diff?.action || diff?.action_type || 'change'
   return `${file} · ${diffActionLabel(action)}`
 }
 
-function diffActionLabel(action) {
+function diffActionLabel(action: string | undefined) {
   return { created: '新建', modified: '修改', deleted: '删除', renamed: '重命名' }[action] || '变更'
 }
 
-function diffActionColor(action) {
+function diffActionColor(action: string | undefined) {
   return {
     created: 'var(--evo-success)',
     modified: 'var(--evo-warning)',
@@ -49,17 +96,17 @@ function diffActionColor(action) {
   }[action] || 'var(--evo-text-secondary)'
 }
 
-function computeLineDiff(before, after) {
+function computeLineDiff(before: string | undefined, after: string | undefined) {
   const bLines = (before || '').split('\n')
   const aLines = (after || '').split('\n')
-  const result = []
-  const bSet = new Map()
+  const result: LineDiff[] = []
+  const bSet = new Map<string, number[]>()
   bLines.forEach((line, i) => {
     if (!bSet.has(line)) bSet.set(line, [])
     bSet.get(line).push(i)
   })
-  const matched = new Set()
-  const aMatched = new Set()
+  const matched = new Set<number>()
+  const aMatched = new Set<number>()
   for (let i = 0; i < aLines.length; i++) {
     const indices = bSet.get(aLines[i])
     if (indices) {
@@ -81,15 +128,15 @@ function computeLineDiff(before, after) {
   return result
 }
 
-function skillFileLabel(change) {
+function skillFileLabel(change: LegacyDiffItem | SkillChange) {
   const label = change?.title || change?.label || change?.display_name || ''
   if (label && !/^[a-z0-9_.:/\\-]+$/i.test(String(label))) return label
   return '技能文件'
 }
 
-function metricsDeltaEntries(delta) {
+function metricsDeltaEntries(delta: Record<string, number | string | null> | null | undefined) {
   if (!delta) return []
-  const labelMap = { win_rate: '胜率', score: '得分', speech_score: '发言', vote_score: '投票', skill_score: '技能' }
+  const labelMap: Record<string, string> = { win_rate: '胜率', score: '得分', speech_score: '发言', vote_score: '投票', skill_score: '技能' }
   return Object.entries(delta)
     .filter(([, value]) => value != null)
     .map(([key, value]) => ({

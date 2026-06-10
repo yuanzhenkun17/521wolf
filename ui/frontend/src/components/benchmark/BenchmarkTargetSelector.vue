@@ -1,10 +1,48 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+type ReadableRef<T> = {
+  readonly value: T
+}
+
+interface BenchmarkTargetForm {
+  model_id: string
+  model_config_hash: string
+  target_version_id: string
+}
+
+interface BenchmarkRoleRow {
+  key: string
+  label: string
+  image: string
+}
+
+interface BenchmarkRoleTargetVersion {
+  version_id: string
+  short?: string
+  is_baseline?: boolean
+  release_stage?: string
+  releaseStage?: string
+  releaseStageLabel?: string
+  games?: number | string | null
+  targetDisabled?: boolean
+  targetDisabledReason?: string
+}
+
+interface BenchmarkTargetBenchmark {
+  roleRows: ReadableRef<BenchmarkRoleRow[]>
+  roleTargetVersionRows: ReadableRef<BenchmarkRoleTargetVersion[]>
+  selectedBenchmarkIsModelSuite: ReadableRef<boolean>
+  selectedRoleTargetVersion: ReadableRef<BenchmarkRoleTargetVersion | null>
+  selectedRoleTargetVersionBlockedReason: ReadableRef<string>
+  selectedRole: ReadableRef<string>
+  form: ReadableRef<BenchmarkTargetForm>
+  selectRole: (role: string) => void
+}
 
 const props = defineProps({
   benchmark: {
-    type: Object,
+    type: Object as PropType<BenchmarkTargetBenchmark>,
     required: true
   }
 })
@@ -15,7 +53,7 @@ const isModel = computed(() => props.benchmark.selectedBenchmarkIsModelSuite.val
 const selectedTargetVersion = computed(() => props.benchmark.selectedRoleTargetVersion.value || null)
 const selectedTargetBlockedReason = computed(() => props.benchmark.selectedRoleTargetVersionBlockedReason.value || '')
 
-const versionStageLabels = {
+const versionStageLabels: Record<string, string> = {
   baseline: '基线',
   canary: '金丝雀',
   shadow: '影子',
@@ -25,17 +63,17 @@ const versionStageLabels = {
   deprecated: '废弃'
 }
 
-function versionStageClass(version) {
+function versionStageClass(version: BenchmarkRoleTargetVersion | null | undefined) {
   return String(version?.release_stage || version?.releaseStage || 'unknown').trim().toLowerCase() || 'unknown'
 }
 
-function versionStageLabel(version) {
+function versionStageLabel(version: BenchmarkRoleTargetVersion | null | undefined) {
   const stage = String(version?.release_stage || version?.releaseStage || '').trim().toLowerCase()
   const explicit = String(version?.releaseStageLabel || '').trim()
   return versionStageLabels[stage] || versionStageLabels[explicit.toLowerCase()] || explicit || version?.release_stage || version?.releaseStage || '未标记'
 }
 
-function versionOptionText(version) {
+function versionOptionText(version: BenchmarkRoleTargetVersion) {
   const parts = [
     version.short || version.version_id,
     version.is_baseline ? '当前基线' : versionStageLabel(version)

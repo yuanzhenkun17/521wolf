@@ -1,7 +1,16 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed } from 'vue'
 import { normalizeHistoryDisplayText } from './historyDisplay.ts'
+
+type ReviewRecord = Record<string, unknown>
+interface JudgeEvidence {
+  evidenceRefs?: unknown
+  counterfactuals?: unknown
+  rubricMisses?: unknown
+  degradedReasons?: unknown
+  warnings?: unknown
+  diagnostics?: unknown
+}
 
 const props = defineProps({
   evidence: { type: Object, default: null },
@@ -10,12 +19,12 @@ const props = defineProps({
 })
 
 const evidenceGroups = computed(() => ({
-  evidenceRefs: arrayRows(props.evidence?.evidenceRefs),
-  counterfactuals: arrayRows(props.evidence?.counterfactuals),
-  rubricMisses: arrayRows(props.evidence?.rubricMisses),
-  degradedReasons: arrayRows(props.evidence?.degradedReasons),
-  warnings: arrayRows(props.evidence?.warnings),
-  diagnostics: arrayRows(props.evidence?.diagnostics)
+  evidenceRefs: arrayRows((props.evidence as JudgeEvidence | null)?.evidenceRefs),
+  counterfactuals: arrayRows((props.evidence as JudgeEvidence | null)?.counterfactuals),
+  rubricMisses: arrayRows((props.evidence as JudgeEvidence | null)?.rubricMisses),
+  degradedReasons: arrayRows((props.evidence as JudgeEvidence | null)?.degradedReasons),
+  warnings: arrayRows((props.evidence as JudgeEvidence | null)?.warnings),
+  diagnostics: arrayRows((props.evidence as JudgeEvidence | null)?.diagnostics)
 }))
 
 const evidenceTotal = computed(() =>
@@ -23,11 +32,11 @@ const evidenceTotal = computed(() =>
 )
 const hasEvidence = computed(() => evidenceTotal.value > 0)
 
-function arrayRows(value) {
+function arrayRows(value: unknown): unknown[] {
   return Array.isArray(value) ? value.filter((row) => row != null && row !== '') : []
 }
 
-function rowIdentity(value) {
+function rowIdentity(value: unknown): string {
   if (value && typeof value === 'object') {
     try {
       return JSON.stringify(value)
@@ -38,32 +47,34 @@ function rowIdentity(value) {
   return String(value)
 }
 
-function formatReviewText(value) {
+function formatReviewText(value: unknown): string {
   if (value == null || value === '') return '—'
   if (typeof value === 'object') {
-    return formatReviewText(value.description || value.summary || value.event || value.message || jsonText(value))
+    const record = value as ReviewRecord
+    return formatReviewText(record.description || record.summary || record.event || record.message || jsonText(value))
   }
   return normalizeHistoryDisplayText(value) || '—'
 }
 
-function judgeEvidenceText(value) {
+function judgeEvidenceText(value: unknown): string {
   if (value && typeof value === 'object') {
+    const record = value as ReviewRecord
     const parts = [
-      value.kind,
-      value.stage,
-      value.reason,
-      value.message || value.exception_message || value.detail || value.summary
+      record.kind,
+      record.stage,
+      record.reason,
+      record.message || record.exception_message || record.detail || record.summary
     ].filter((part) => part != null && String(part).trim())
     return parts.length ? parts.map(formatReviewText).join(' · ') : jsonText(value)
   }
   return formatReviewText(value)
 }
 
-function evidenceKey(prefix, value, index) {
+function evidenceKey(prefix: string, value: unknown, index: number): string {
   return `${prefix}-${props.rowKey}-${index}-${rowIdentity(value)}`
 }
 
-function jsonText(value) {
+function jsonText(value: unknown): string {
   if (props.formatJson) return props.formatJson(value)
   return JSON.stringify(value, null, 2)
 }

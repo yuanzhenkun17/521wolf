@@ -1,12 +1,50 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 
 const props = defineProps({
-  cards: { type: Array, default: () => [] }
+  cards: { type: Array as PropType<ScoreCard[]>, default: () => [] }
 })
 
-const DIMENSION_COLORS = {
+interface ScoreDimension {
+  key?: unknown
+  label?: unknown
+  value?: unknown
+}
+
+interface ScoreCard {
+  key?: unknown
+  seat?: unknown
+  role?: unknown
+  overall?: unknown
+  dimensions?: ScoreDimension[]
+}
+
+interface NormalizedDimension {
+  key: string
+  label: string
+  value: number
+  color: string
+}
+
+interface EnrichedDimension extends NormalizedDimension {
+  contribution: number
+  fillWidth: number
+}
+
+interface ScoreRow {
+  key: unknown
+  seat: unknown
+  role: string
+  avatar: string
+  overall: number
+  dimensions: EnrichedDimension[]
+}
+
+interface RankedScoreRow extends ScoreRow {
+  rank: number
+}
+
+const DIMENSION_COLORS: Record<string, string> = {
   speech: '#b8731c',
   vote: '#2f7780',
   skill: '#2f8a5f',
@@ -16,7 +54,7 @@ const DIMENSION_COLORS = {
 const FALLBACK_COLORS = ['#5f8f9b', '#8d6fa8', '#777f46', '#9a6044', '#6f7da2']
 const UNKNOWN_ROLE_ICON = '/role-icons/optimized/未知.webp'
 
-const rows = computed(() => props.cards
+const rows = computed<RankedScoreRow[]>(() => props.cards
   .map(normalizeRow)
   .sort((a, b) => {
     const scoreDelta = b.overall - a.overall
@@ -27,7 +65,7 @@ const rows = computed(() => props.cards
 )
 
 const dimensionDescriptors = computed(() => {
-  const known = new Map()
+  const known = new Map<string, Pick<NormalizedDimension, 'key' | 'label' | 'color'>>()
   rows.value.forEach((row) => {
     row.dimensions.forEach((dimension) => {
       if (known.has(dimension.key)) return
@@ -41,7 +79,8 @@ const dimensionDescriptors = computed(() => {
   return [...known.values()]
 })
 
-function normalizeRow(card = {}, index = 0) {
+function normalizeRow(card: ScoreCard = {}, index = 0): ScoreRow {
+  const role = String(card.role || '未知')
   const dimensions = Array.isArray(card.dimensions) ? card.dimensions.map((dimension, dimIndex) => {
     const key = String(dimension?.key || `dimension-${dimIndex}`)
     return {
@@ -65,14 +104,14 @@ function normalizeRow(card = {}, index = 0) {
   return {
     key: card.key ?? `${card.seat ?? 'player'}-${index}`,
     seat: card.seat ?? '—',
-    role: card.role || '未知',
-    avatar: roleIconPath(card.role || ''),
+    role,
+    avatar: roleIconPath(role),
     overall,
     dimensions: enrichedDimensions
   }
 }
 
-function roleIconPath(role) {
+function roleIconPath(role: unknown): string {
   const text = String(role || '')
   if (text.includes('预言')) return '/role-icons/optimized/预言家.webp'
   if (text.includes('女巫')) return '/role-icons/optimized/女巫.webp'
@@ -84,33 +123,33 @@ function roleIconPath(role) {
   return UNKNOWN_ROLE_ICON
 }
 
-function dimensionColor(key, index) {
+function dimensionColor(key: string, index: number): string {
   return DIMENSION_COLORS[key] || FALLBACK_COLORS[index % FALLBACK_COLORS.length]
 }
 
-function clampScore(value) {
+function clampScore(value: unknown): number {
   const num = Number(value)
   if (!Number.isFinite(num)) return 0
   return Math.max(0, Math.min(num, 100))
 }
 
-function seatNumber(seat) {
+function seatNumber(seat: unknown): number {
   const num = Number(String(seat).replace(/[^\d.-]/g, ''))
   return Number.isFinite(num) ? num : 999
 }
 
-function seatLabel(seat) {
+function seatLabel(seat: unknown): string {
   const text = String(seat ?? '—')
   if (text === '—' || text.endsWith('号')) return text
   return `${text}号`
 }
 
-function scoreLabel(value) {
+function scoreLabel(value: unknown): string {
   const rounded = Math.round(clampScore(value) * 10) / 10
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
 }
 
-function segmentTitle(row, dimension) {
+function segmentTitle(row: ScoreRow, dimension: EnrichedDimension): string {
   return `${seatLabel(row.seat)} ${row.role} · ${dimension.label}: ${scoreLabel(dimension.value)}，贡献 ${scoreLabel(dimension.contribution)}`
 }
 </script>

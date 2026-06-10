@@ -1,32 +1,77 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { sourceText, statusText } from '../../composables/workbenchShared.ts'
 
+interface RefLike<T> {
+  value: T
+}
+
+interface EvolutionEventPayload {
+  completed_games?: number
+  completed_roles?: number
+  completed?: number
+  overall_completed?: number
+  target_games?: number
+  total_roles?: number
+  total?: number
+  overall_total?: number
+  overall_percent?: number
+  percent?: number
+  progress?: {
+    overall_percent?: number
+    percent?: number
+  }
+  stage?: string
+  status?: string
+  phase?: string
+  type?: string
+  run_id?: string
+  batch_id?: string
+  id?: string
+  time?: string
+  timestamp?: string
+  created_at?: string
+  message?: string
+  reason?: string
+  error?: string
+  detail?: string
+}
+
+interface EvolutionEvent {
+  id?: string
+  type?: string
+  payload?: EvolutionEventPayload
+  timestamp?: string
+}
+
+interface EvolutionEventsModel {
+  eventLog: RefLike<EvolutionEvent[]>
+}
+
 const props = defineProps({
-  evo: { type: Object, required: true }
+  evo: { type: Object as PropType<EvolutionEventsModel>, required: true }
 })
 
 const eventRows = computed(() => (props.evo.eventLog.value || []).map(normalizeEventRow))
 
-function eventTypeLabel(event) {
+function eventTypeLabel(event: EvolutionEvent) {
   return statusText(event?.type) || '事件'
 }
 
-function eventProgressParts(payload = {}) {
+function eventProgressParts(payload: EvolutionEventPayload = {}) {
   const completed = payload.completed_games ?? payload.completed_roles ?? payload.completed ?? payload.overall_completed
   const target = payload.target_games ?? payload.total_roles ?? payload.total ?? payload.overall_total
   const percent = payload.overall_percent ?? payload.percent ?? payload.progress?.overall_percent ?? payload.progress?.percent
   return { completed, target, percent }
 }
 
-function eventStageLabel(event) {
+function eventStageLabel(event: EvolutionEvent) {
   const payload = event?.payload || {}
   const value = payload.stage || payload.status || payload.phase || payload.type || ''
   return value ? (statusText(value) || sourceText(value)) : '—'
 }
 
-function eventTargetLabel(event) {
+function eventTargetLabel(event: EvolutionEvent) {
   const payload = event?.payload || {}
   return payload.run_id || payload.batch_id || payload.id || '当前运行'
 }
@@ -49,17 +94,17 @@ function eventProgressPercent(payload = {}) {
   return 0
 }
 
-function eventProgressLabel(payload = {}) {
+function eventProgressLabel(payload: EvolutionEventPayload = {}) {
   const percent = eventProgressPercent(payload)
   return percent ? `${percent}%` : '—'
 }
 
-function eventTimeLabel(event) {
+function eventTimeLabel(event: EvolutionEvent) {
   const raw = event?.payload?.time || event?.payload?.timestamp || event?.payload?.created_at || event?.timestamp || ''
   return raw ? String(raw).replace('T', ' ').slice(0, 19) : '—'
 }
 
-function eventSummary(event) {
+function eventSummary(event: EvolutionEvent) {
   const payload = event?.payload || {}
   return payload.message || payload.reason || payload.error || payload.detail || payload.stage || payload.status || event?.type || '进度'
 }

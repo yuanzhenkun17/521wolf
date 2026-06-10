@@ -1,29 +1,39 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { buildEvidenceLink } from './evidenceLinks.ts'
 import { displayRoleLabel, normalizeHistoryDisplayText } from './historyDisplay.ts'
 
+type EvidenceRecord = Record<string, unknown>
+
+interface EvidenceContext {
+  existing: EvidenceRecord
+  config: EvidenceRecord
+}
+
 const props = defineProps({
-  game: { type: Object, default: null }
+  game: { type: Object as PropType<EvidenceRecord | null>, default: null }
 })
 
-const SOURCE_LABELS = {
+const SOURCE_LABELS: Record<string, string> = {
   normal: '普通对局',
   benchmark: '批量评测',
   evolution: '自进化样本'
 }
 
-function firstText(...values) {
+function isEvidenceRecord(value: unknown): value is EvidenceRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function firstText(...values: unknown[]): string {
   for (const value of values) {
     if (value !== null && value !== undefined && String(value).trim() !== '') return String(value)
   }
   return ''
 }
 
-function sourceContext(game = {}) {
-  const existing = game.evidence_source && typeof game.evidence_source === 'object' ? game.evidence_source : {}
-  const config = game.config && typeof game.config === 'object' ? game.config : {}
+function sourceContext(game: EvidenceRecord = {}): EvidenceContext {
+  const existing = isEvidenceRecord(game.evidence_source) ? game.evidence_source : {}
+  const config = isEvidenceRecord(game.config) ? game.config : {}
   return { existing, config }
 }
 
