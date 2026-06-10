@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, ref } from 'vue'
 import {
   displayActionLabel,
@@ -145,6 +144,8 @@ const evidenceTimelineRows = computed(() => {
     title: `关键记录 ${index + 1}`,
     meta: archiveKindLabel.value,
     text,
+    actor: '',
+    target: '',
     tone: 'highlight'
   }))
   const eventRows = archiveEvents.value
@@ -393,7 +394,7 @@ const derivedAlivePlayerIds = computed(() =>
 )
 
 const derivedPlayerRows = computed(() => {
-  const ids = new Set()
+  const ids = new Set<number>()
   archiveDecisions.value.forEach((decision) => {
     const id = Number(decision.actor_id ?? decision.player_id ?? decision.seat)
     if (Number.isFinite(id) && id > 0) ids.add(id)
