@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from time import monotonic
-from typing import Any
+from typing import Any, Protocol
 
 from app.lib.version import is_experimental_release_stage
 from ui.backend.constants import ROLE_ORDER
@@ -17,10 +17,39 @@ _ROLE_Z_95 = 1.96
 _ROLE_MIN_CONFIDENT_SAMPLE_SIZE = 30
 
 
+class _RoleVersionSummaryLike(Protocol):
+    def to_dict(self) -> dict[str, Any]:
+        ...
+
+
+class _RoleServiceRegistryProtocol(Protocol):
+    def list_roles(self) -> Sequence[str]:
+        ...
+
+    def list_versions(self, role: str) -> Sequence[_RoleVersionSummaryLike]:
+        ...
+
+
+class RoleServiceStoreProtocol(Protocol):
+    """Store capabilities required by ``RoleService``."""
+
+    @property
+    def registry(self) -> _RoleServiceRegistryProtocol:
+        ...
+
+    def leaderboard_scores_for_roles(
+        self,
+        roles: list[str],
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        ...
+
+
 class RoleService:
     """Build role/version API payloads and own role overview caching."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: RoleServiceStoreProtocol) -> None:
         self._store = store
 
     @staticmethod
