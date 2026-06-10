@@ -33,8 +33,8 @@ vi.mock('../../src/components/MatchControlStrip.vue', () => ({
 vi.mock('../../src/components/ReplayControls.vue', () => ({
   default: {
     name: 'ReplayControls',
-    props: ['isReplayMode', 'cursor', 'playing', 'speed'],
-    template: '<section class="replay-controls-stub" :data-replay="String(isReplayMode)" :data-cursor="String(cursor)" :data-playing="String(playing)" :data-speed="String(speed)" />',
+    props: ['isReplayMode', 'cursor', 'total', 'playing', 'speed', 'eventLabel'],
+    template: '<section class="replay-controls-stub" :data-replay="String(isReplayMode)" :data-cursor="String(cursor)" :data-total="String(total)" :data-playing="String(playing)" :data-speed="String(speed)" :data-event-label="eventLabel" />',
   },
 }))
 
@@ -95,6 +95,8 @@ describe('MatchPage Pinia fallback', () => {
         replayCursor: 4,
         replayPlaying: true,
         replaySpeed: 1.5,
+        replayTotal: 9,
+        replayEventLabel: 'store replay label',
       })
       useUiStore().hydrateFromRuntime({
         matchNotice: { type: 'success', message: 'store notice' },
@@ -110,8 +112,10 @@ describe('MatchPage Pinia fallback', () => {
     expect(controls.attributes('data-watch')).toBe('true')
     expect(controls.attributes('data-judge-started')).toBe('true')
     expect(wrapper.find('.replay-controls-stub').attributes('data-cursor')).toBe('4')
+    expect(wrapper.find('.replay-controls-stub').attributes('data-total')).toBe('9')
     expect(wrapper.find('.replay-controls-stub').attributes('data-playing')).toBe('true')
     expect(wrapper.find('.replay-controls-stub').attributes('data-speed')).toBe('1.5')
+    expect(wrapper.find('.replay-controls-stub').attributes('data-event-label')).toBe('store replay label')
     expect(wrapper.find('.match-action-notice').text()).toContain('store notice')
   })
 

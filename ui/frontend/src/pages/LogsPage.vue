@@ -55,8 +55,6 @@ const props = defineProps({
   replayCursor: { type: Number, default: 0 },
   replayPlaying: Boolean,
   replaySpeed: { type: Number, default: 1 },
-  replayTotal: { type: Number, default: 0 },
-  replayEventLabel: { type: String, default: '' },
   assessDimension: { type: String, default: 'speech' },
   playerAssessmentScores: { type: Array as PropType<LooseRecord[]>, default: () => [] },
   activeAssessScores: { type: Array as PropType<LooseRecord[]>, default: () => [] },

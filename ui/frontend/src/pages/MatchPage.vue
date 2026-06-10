@@ -181,6 +181,8 @@ const MATCH_STORE_PROP_ALIASES = {
   replayCursor: ['replayCursor', 'replay-cursor'],
   replayPlaying: ['replayPlaying', 'replay-playing'],
   replaySpeed: ['replaySpeed', 'replay-speed'],
+  replayTotal: ['replayTotal', 'replay-total'],
+  replayEventLabel: ['replayEventLabel', 'replay-event-label'],
   watchRunning: ['watchRunning', 'watch-running'],
   roleAssignmentComplete: ['roleAssignmentComplete', 'role-assignment-complete'],
   judgeBoardStarted: ['judgeBoardStarted', 'judge-board-started'],
@@ -215,6 +217,12 @@ const replayPlaying = computed(() => (
 ))
 const replaySpeed = computed(() => (
   hasExplicitMatchProp('replaySpeed') ? props.replaySpeed : replayStore.replaySpeed
+))
+const replayTotal = computed(() => (
+  hasExplicitMatchProp('replayTotal') ? props.replayTotal : replayStore.replayTotal
+))
+const replayEventLabel = computed(() => (
+  hasExplicitMatchProp('replayEventLabel') ? props.replayEventLabel : replayStore.replayEventLabel
 ))
 const watchRunning = computed(() => (
   hasExplicitMatchProp('watchRunning') ? props.watchRunning : gameStore.watchRunning
@@ -281,7 +289,7 @@ const introReady = computed(() =>
 const showIntro = computed(() => !isReplayMode.value && introMounted.value)
 const replayPhaseText = computed(() => `第${game.value?.day ?? '-'}天 · ${phaseName(game.value?.phase)}`)
 const replayJudgeStripMessage = computed(() => [
-  { message: props.replayEventLabel || '准备回放' }
+  { message: replayEventLabel.value || '准备回放' }
 ])
 function matchPanelErrorForNotice(notice: LooseRecord) {
   const error = noticeErrorForPanel(notice) as LooseRecord | Error | string | null

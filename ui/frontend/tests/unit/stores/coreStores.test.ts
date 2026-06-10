@@ -236,7 +236,9 @@ test('replay store hydrates replay state and toggles replay actions', () => {
     isReplayMode: true,
     replayCursor: 4,
     replayPlaying: true,
-    replaySpeed: 2
+    replaySpeed: 2,
+    replayTotal: 12,
+    replayEventLabel: '事件 4 / 12'
   })
 
   assert.equal(store.replayGame?.game_id, 'replay-1')
@@ -244,6 +246,8 @@ test('replay store hydrates replay state and toggles replay actions', () => {
   assert.equal(store.replayCursor, 4)
   assert.equal(store.replayPlaying, true)
   assert.equal(store.replaySpeed, 2)
+  assert.equal(store.replayTotal, 12)
+  assert.equal(store.replayEventLabel, '事件 4 / 12')
   assert.equal(store.hasReplay, true)
 
   store.exitReplay()
@@ -251,6 +255,8 @@ test('replay store hydrates replay state and toggles replay actions', () => {
   assert.equal(store.replayGame, null)
   assert.equal(store.isReplayMode, false)
   assert.equal(store.replayPlaying, false)
+  assert.equal(store.replayTotal, 0)
+  assert.equal(store.replayEventLabel, '')
   assert.equal(store.hasReplay, false)
 
   store.enterReplay(replaySnapshotFixture('replay-2', { cursor: 7 }))
@@ -364,6 +370,8 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     replayCursor: ref(3),
     replayPlaying: ref(false),
     replaySpeed: ref(1.5),
+    replayTotal: ref(9),
+    replayEventLabel: ref('第 3 / 9 条'),
     audioEnabled: ref(true),
     ttsEnabled: ref(false),
     ttsAvailable: ref(true),
@@ -416,6 +424,8 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
   assert.deepEqual(historyStore.pages, [{ key: 'runtime-page' }])
   assert.equal(replayStore.replayGame?.game_id, 'runtime-replay')
   assert.equal(replayStore.replaySpeed, 1.5)
+  assert.equal(replayStore.replayTotal, 9)
+  assert.equal(replayStore.replayEventLabel, '第 3 / 9 条')
   assert.deepEqual(runtimeHydrationKeys.ui, [
     'error',
     'matchNotice',

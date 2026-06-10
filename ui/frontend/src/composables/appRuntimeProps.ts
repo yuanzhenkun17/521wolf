@@ -21,8 +21,6 @@ const logsPropKeys = [
   'replayCursor',
   'replayPlaying',
   'replaySpeed',
-  'replayTotal',
-  'replayEventLabel',
   'assessDimension',
   'playerAssessmentScores',
   'activeAssessScores',
@@ -53,8 +51,6 @@ const logsPropKeys = [
 ]
 
 const matchPropKeys = [
-  'replayTotal',
-  'replayEventLabel',
   'skipIntroGameId',
   'promptText',
   'judgeStripMessage',

@@ -61,7 +61,7 @@ export const runtimeHydrationKeys = {
     'historyTotalPages',
     'historyPages'
   ],
-  replay: ['replayGame', 'isReplayMode', 'replayCursor', 'replayPlaying', 'replaySpeed'],
+  replay: ['replayGame', 'isReplayMode', 'replayCursor', 'replayPlaying', 'replaySpeed', 'replayTotal', 'replayEventLabel'],
   ui: ['error', 'matchNotice', 'historyNotice', 'audioEnabled', 'ttsEnabled', 'ttsAvailable']
 } as const satisfies {
   session: readonly (keyof SessionRuntimeHydration)[]
