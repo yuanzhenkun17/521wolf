@@ -9,7 +9,6 @@ from storage.decision_store import DecisionStore
 from storage.version_store import VersionStoreDB
 from storage.evolution.run_repo import EvolutionStore
 from storage.evolution.experience_repo import ExperienceCandidateStore
-from storage.leaderboard_store import LeaderboardStore
 from storage.evaluation_store import EvaluationStore
 from storage.review_store import CounterfactualStore, DecisionReviewStore
 from storage.replay import read_decisions_for_artifact, read_events_for_artifact
@@ -52,7 +51,6 @@ __all__ = [
     "DecisionStore",
     "VersionStoreDB",
     "EvolutionStore",
-    "LeaderboardStore",
     "ExperienceCandidateStore",
     "LeaderboardScope",
     "RunPolicy",
