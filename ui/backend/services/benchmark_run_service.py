@@ -239,6 +239,7 @@ class BenchmarkRunService:
             "estimated_cost": estimated_cost,
             "currency": _BENCHMARK_CURRENCY,
             "expected_duration_seconds": expected_duration_seconds,
+            "workflow_game_concurrency": workflow_game_concurrency,
             "concurrency_policy": concurrency_policy,
             "assumptions": assumptions,
             "judge": {
@@ -273,9 +274,9 @@ class BenchmarkRunService:
         roles = self.benchmark_roles(request, spec)
         model_runtime = self._benchmark_model_runtime_from_plan(run_plan) or self.benchmark_model_runtime(request)
         request_config = self.benchmark_request_config(request, spec)
-        workflow_game_concurrency = self.workflow_game_concurrency()
+        workflow_game_concurrency = run_plan.get("workflow_game_concurrency")
         if workflow_game_concurrency is not None:
-            request_config["game_concurrency"] = workflow_game_concurrency
+            request_config["game_concurrency"] = int(workflow_game_concurrency)
         if spec is not None or request.target_type == "model" or request.model_id or request.model_config_hash:
             request_config["model_id"] = model_runtime["model_id"]
             request_config["model_config_hash"] = model_runtime["model_config_hash"]
