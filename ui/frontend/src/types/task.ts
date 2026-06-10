@@ -57,6 +57,7 @@ export interface TaskArtifact extends UnknownRecord {
 export interface TaskEventRow extends UnknownRecord {
   event_id?: number | string
   id?: number | string
+  event?: string
   event_type?: string
   type?: string
   created_at?: string

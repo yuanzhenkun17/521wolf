@@ -1,0 +1,19 @@
+[Unit]
+Description=521wolf PostgreSQL task worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/521wolf/app
+EnvironmentFile=/opt/521wolf/.env
+Environment=WOLF_USE_PG_TASK_QUEUE=true
+ExecStart=/usr/bin/env uv run python -m app.tools.run_ui_task_worker
+Restart=always
+RestartSec=5
+
+# Keep logs in journald. Inspect with:
+#   journalctl -u 521wolf-worker -f
+
+[Install]
+WantedBy=multi-user.target

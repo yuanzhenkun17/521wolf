@@ -173,11 +173,37 @@ class EvolutionRunService:
             run_id=run_id,
         )
         context.heartbeat(progress={"stage": "evolution_running", "task_id": task_id})
+        def progress_sink(progress: dict[str, Any]) -> None:
+            payload = dict(progress)
+            payload.setdefault("stage", "evolution_running")
+            payload["task_id"] = task_id
+            context.heartbeat(progress=payload)
+
+        def task_cancel_requested() -> bool:
+            entity = self.evolution_batches.get(batch_id) if batch_id else self.evolution_runs.get(run_id)
+            if isinstance(entity, dict):
+                progress_sink(self.evolution_queue_progress(entity, task_id=task_id))
+            return bool(context.cancel_requested())
+
         if batch_id:
-            asyncio.run(self.run_queued_evolution_batch(batch_id, request, cancel_check=context.cancel_requested))
+            asyncio.run(
+                self.run_queued_evolution_batch(
+                    batch_id,
+                    request,
+                    cancel_check=task_cancel_requested,
+                    progress_sink=progress_sink,
+                )
+            )
             entity = self.evolution_batches.get(batch_id, {})
         else:
-            asyncio.run(self.run_queued_evolution(run_id, request, cancel_check=context.cancel_requested))
+            asyncio.run(
+                self.run_queued_evolution(
+                    run_id,
+                    request,
+                    cancel_check=task_cancel_requested,
+                    progress_sink=progress_sink,
+                )
+            )
             entity = self.evolution_runs.get(run_id, {})
         artifacts = self.persist_evolution_task_artifacts(task_id, entity)
         return {
@@ -573,6 +599,20 @@ class EvolutionRunService:
         self.refresh_evolution_batch(run.get("batch_id"))
         self._persist_background_tasks()
 
+    def evolution_queue_progress(self, entity: dict[str, Any], *, task_id: str) -> dict[str, Any]:
+        progress = entity.get("progress") if isinstance(entity.get("progress"), dict) else {}
+        overall = entity.get("overall_progress") if isinstance(entity.get("overall_progress"), dict) else {}
+        payload = dict(overall)
+        payload.update(progress)
+        payload.setdefault("stage", entity.get("current_stage") or entity.get("status") or "running")
+        payload.setdefault("percent", self._task_progress_percent(entity))
+        payload["task_id"] = task_id
+        if entity.get("run_id"):
+            payload["run_id"] = entity.get("run_id")
+        if entity.get("batch_id"):
+            payload["batch_id"] = entity.get("batch_id")
+        return payload
+
     def evolution_cancel_check(self, run_id: str, external_cancel_check: Callable[[], bool] | None = None) -> bool:
         if external_cancel_check is not None and external_cancel_check():
             return True
@@ -673,6 +713,7 @@ class EvolutionRunService:
         request: EvolutionStartRequest,
         *,
         cancel_check: Callable[[], bool] | None = None,
+        progress_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         run = self.evolution_runs.get(run_id)
         if run is None:
@@ -689,7 +730,15 @@ class EvolutionRunService:
         self._touch_background_task(run)
         run["overall_progress"] = self.evolution_overall_progress(run)
         self._persist_background_tasks()
+        if progress_sink is not None:
+            progress_sink(self.evolution_queue_progress(run, task_id=run.get("task_id") or run_id))
         try:
+            def sync_progress(snapshot: dict[str, Any]) -> None:
+                self.sync_evolution_progress(run_id, snapshot)
+                if progress_sink is not None:
+                    current = self.evolution_runs.get(run_id, snapshot)
+                    progress_sink(self.evolution_queue_progress(current, task_id=run.get("task_id") or run_id))
+
             result = await self.evolution_runner()(
                 role=role,
                 training_games=request.training_games,
@@ -699,7 +748,7 @@ class EvolutionRunService:
                 run_id=run_id,
                 model=self.model_for_run(),
                 paths=self.paths,
-                progress_sink=lambda snapshot: self.sync_evolution_progress(run_id, snapshot),
+                progress_sink=sync_progress,
                 cancel_check=lambda: self.evolution_cancel_check(run_id, cancel_check),
             )
         except Exception as exc:  # pragma: no cover - defensive background failure path
@@ -743,6 +792,8 @@ class EvolutionRunService:
         run["overall_progress"] = self.evolution_overall_progress(run)
         self.refresh_evolution_batch(run.get("batch_id"))
         self._persist_background_tasks()
+        if progress_sink is not None:
+            progress_sink(self.evolution_queue_progress(run, task_id=run.get("task_id") or run_id))
 
     async def run_queued_evolution_batch(
         self,
@@ -750,6 +801,7 @@ class EvolutionRunService:
         request: EvolutionStartRequest,
         *,
         cancel_check: Callable[[], bool] | None = None,
+        progress_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         request = automatic_evolution_request(request)
         batch = self.evolution_batches.get(batch_id)
@@ -769,6 +821,8 @@ class EvolutionRunService:
         self.refresh_evolution_batch(batch_id)
         self._touch_background_task(batch)
         self._persist_background_tasks()
+        if progress_sink is not None:
+            progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
         try:
             for run_id in list(batch.get("runs", [])):
                 if cancel_check is not None and cancel_check():
@@ -779,10 +833,19 @@ class EvolutionRunService:
                 self._touch_background_task(batch)
                 self.refresh_evolution_batch(batch_id)
                 self._persist_background_tasks()
-                await self.run_queued_evolution(str(run_id), request, cancel_check=cancel_check)
+                if progress_sink is not None:
+                    progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
+                await self.run_queued_evolution(
+                    str(run_id),
+                    request,
+                    cancel_check=cancel_check,
+                    progress_sink=lambda progress: progress_sink(progress) if progress_sink is not None else None,
+                )
                 self._touch_background_task(batch)
                 self.refresh_evolution_batch(batch_id)
                 self._persist_background_tasks()
+                if progress_sink is not None:
+                    progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
             if batch.get("stop_requested") or batch.get("cancelled"):
                 batch["status"] = "failed"
                 batch["error"] = batch.get("error") or MANUAL_STOP_REASON
@@ -810,6 +873,8 @@ class EvolutionRunService:
             self._touch_background_task(batch)
             self.refresh_evolution_batch(batch_id)
             self._persist_background_tasks()
+            if progress_sink is not None:
+                progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
 
     async def run_single_evolution(self, role: str, request: EvolutionStartRequest) -> dict[str, Any]:
         request = automatic_evolution_request(request)

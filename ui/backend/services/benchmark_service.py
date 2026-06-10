@@ -180,8 +180,21 @@ class BenchmarkService:
             role_count=len(batch.get("roles", []) or []),
             diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
         )
+        self._request_queue_cancel(batch, fallback_task_id=batch_id)
         self._tasks.persist_background_tasks()
         return batch
+
+    def _request_queue_cancel(self, batch: dict[str, Any], *, fallback_task_id: str) -> None:
+        cancel_task = getattr(self._tasks, "cancel_task", None)
+        if not callable(cancel_task):
+            return
+        task_id = str(batch.get("task_id") or batch.get("queue_task_id") or fallback_task_id or "").strip()
+        if not task_id:
+            return
+        try:
+            cancel_task(task_id)
+        except Exception:  # noqa: BLE001 - legacy stop must remain best-effort when queue storage is unavailable
+            return
 
     def stream_benchmark_events(self, batch_id: str, last_event_id: int) -> AsyncIterator[str]:
         batch = self._batch(batch_id)
@@ -322,8 +335,8 @@ class BenchmarkService:
     def queue_benchmark_task(self, batch: dict[str, Any], request: BenchmarkRequest) -> dict[str, Any]:
         return self._runs.queue_benchmark_task(batch, request)
 
-    async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
-        await self._runs.run_queued_benchmark(batch_id, request)
+    async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest, **kwargs: Any) -> None:
+        await self._runs.run_queued_benchmark(batch_id, request, **kwargs)
 
     def task_executors(self) -> dict[str, Any]:
         return {"benchmark_batch": self.execute_benchmark_task}
@@ -333,8 +346,21 @@ class BenchmarkService:
         batch_id = str(payload.get("batch_id") or task.get("task_id") or "")
         request_payload = payload.get("request") if isinstance(payload.get("request"), dict) else {}
         request = BenchmarkRequest.model_validate(request_payload)
+        def progress_sink(progress: dict[str, Any]) -> None:
+            payload = dict(progress)
+            payload.setdefault("stage", "benchmark_running")
+            payload["batch_id"] = batch_id
+            context.heartbeat(progress=payload)
+
         context.heartbeat(progress={"stage": "benchmark_running", "batch_id": batch_id})
-        asyncio.run(self.run_queued_benchmark(batch_id, request))
+        asyncio.run(
+            self.run_queued_benchmark(
+                batch_id,
+                request,
+                cancel_check=context.cancel_requested,
+                progress_sink=progress_sink,
+            )
+        )
         batch = self._context.evolution_batches.get(batch_id, {})
         artifacts = self.persist_benchmark_task_artifacts(batch_id)
         return {

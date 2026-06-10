@@ -71,15 +71,17 @@ class TaskEventLog:
                 "created_at": beijing_now_iso(),
                 "payload": payload,
             })
-            self._events.append(item)
-            if len(self._events) > self.max_backlog:
-                del self._events[: len(self._events) - self.max_backlog]
             try:
-                self._append_event_locked(item)
+                stored_event_id = self._append_event_locked(item)
             except Exception:  # noqa: BLE001 - task event replay is best-effort UI metadata
                 _log.warning("failed to append task event to PostgreSQL", exc_info=True)
             else:
+                item["id"] = stored_event_id
+                self._next_event_id = max(self._next_event_id, stored_event_id + 1)
                 self._events_since_compact += 1
+            self._events.append(item)
+            if len(self._events) > self.max_backlog:
+                del self._events[: len(self._events) - self.max_backlog]
             if self._should_compact_locked():
                 try:
                     self._compact_locked()
@@ -155,10 +157,11 @@ class TaskEventLog:
             if not self._subscribers[entity_id]:
                 self._subscribers.pop(entity_id, None)
 
-    def _append_event_locked(self, item: dict[str, Any]) -> None:
+    def _append_event_locked(self, item: dict[str, Any]) -> int:
         with from_connection_factory(self._connection_factory) as tx:
-            TaskEventRepository(tx.connection).upsert(item)
+            event_id = TaskEventRepository(tx.connection).append(item)
             tx.commit()
+            return event_id
 
     def _should_compact_locked(self) -> bool:
         if self._compact_pending:

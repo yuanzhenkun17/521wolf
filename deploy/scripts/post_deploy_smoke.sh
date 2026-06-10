@@ -3,13 +3,19 @@ set -euo pipefail
 
 APP_BASE_URL="${APP_BASE_URL:-http://127.0.0.1}"
 API_HEALTH_URL="${API_HEALTH_URL:-http://127.0.0.1/api/health}"
+APP_DIR="${APP_DIR:-/opt/521wolf/app}"
 SERVICE_NAME="${SERVICE_NAME:-521wolf}"
+WORKER_SERVICE_NAME="${WORKER_SERVICE_NAME:-521wolf-worker}"
 CHECK_NGINX="${CHECK_NGINX:-true}"
 CHECK_SYSTEMD="${CHECK_SYSTEMD:-true}"
+CHECK_TASK_QUEUE="${CHECK_TASK_QUEUE:-true}"
+CHECK_TASK_WORKER="${CHECK_TASK_WORKER:-true}"
+CHECK_TASK_ARTIFACTS="${CHECK_TASK_ARTIFACTS:-true}"
 CHECK_PORTS="${CHECK_PORTS:-true}"
 REQUIRE_HTTPS="${REQUIRE_HTTPS:-false}"
 CURL_TIMEOUT_SECONDS="${CURL_TIMEOUT_SECONDS:-10}"
 MAX_ASSET_CHECKS="${MAX_ASSET_CHECKS:-20}"
+TASK_ARTIFACT_VERIFY_LIMIT="${TASK_ARTIFACT_VERIFY_LIMIT:-100}"
 
 tmp_dir="$(mktemp -d)"
 cleanup() {
@@ -63,15 +69,45 @@ else
   python_bin=""
 fi
 if [ -n "$python_bin" ]; then
-  "$python_bin" - "$health_body" <<'PY' || fail "API health JSON reports status=error or is invalid"
+  CHECK_TASK_QUEUE="$CHECK_TASK_QUEUE" \
+  CHECK_TASK_WORKER="$CHECK_TASK_WORKER" \
+  "$python_bin" - "$health_body" <<'PY' || fail "API health JSON reports status=error or task_control is unhealthy"
 import json
+import os
 import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     payload = json.load(handle)
 if payload.get("status") == "error":
     raise SystemExit(1)
+if os.environ.get("CHECK_TASK_QUEUE", "true").lower() != "false":
+    task_control = payload.get("external", {}).get("task_control", {})
+    if not isinstance(task_control, dict):
+        raise SystemExit(1)
+    artifact_root = task_control.get("artifact_root", {})
+    if not isinstance(artifact_root, dict) or artifact_root.get("writable") is not True:
+        raise SystemExit(1)
+    if os.environ.get("CHECK_TASK_WORKER", "true").lower() != "false" and task_control.get("worker_fresh") is not True:
+        raise SystemExit(1)
 PY
+fi
+
+if [ "$CHECK_TASK_QUEUE" != "false" ]; then
+  tasks_url="${TASKS_URL:-${base_without_trailing_slash}/api/tasks?limit=1}"
+  info "checking task queue API at $tasks_url"
+  tasks_body="$tmp_dir/tasks.json"
+  fetch_to_file "$tasks_url" "$tasks_body"
+  if [ -n "$python_bin" ]; then
+    "$python_bin" - "$tasks_body" <<'PY' || fail "task queue API did not return a task list"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+if not isinstance(payload.get("tasks"), list):
+    raise SystemExit(1)
+PY
+  fi
 fi
 
 info "checking app shell at $base_without_trailing_slash/"
@@ -117,6 +153,19 @@ if [ "$CHECK_SYSTEMD" != "false" ] && command -v systemctl >/dev/null 2>&1; then
   info "checking systemd service $SERVICE_NAME"
   sudo_if_available systemctl is-active --quiet "$SERVICE_NAME" \
     || fail "systemd service $SERVICE_NAME is not active"
+  if [ "$CHECK_TASK_WORKER" != "false" ]; then
+    info "checking systemd service $WORKER_SERVICE_NAME"
+    sudo_if_available systemctl is-active --quiet "$WORKER_SERVICE_NAME" \
+      || fail "systemd service $WORKER_SERVICE_NAME is not active"
+  fi
+fi
+
+if [ "$CHECK_TASK_ARTIFACTS" != "false" ]; then
+  info "verifying task artifact metadata"
+  (
+    cd "$APP_DIR"
+    uv run python -m app.tools.manage_ui_tasks verify-artifacts --limit "$TASK_ARTIFACT_VERIFY_LIMIT"
+  ) >/dev/null || fail "task artifact verification failed"
 fi
 
 if [ "$CHECK_PORTS" != "false" ]; then

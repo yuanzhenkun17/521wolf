@@ -140,7 +140,15 @@ export function normalizeTaskEventsResponse(raw: unknown): TaskEventsResponse {
   return {
     task_id: stringValue(source.task_id),
     after_event_id: integerValue(source.after_event_id, 0),
-    events: arrayOrEmpty<TaskEventRow>(source.events ?? source.items),
+    events: arrayOrEmpty(source.events ?? source.items).map((item) => {
+      const event = objectOrEmpty(item)
+      const eventType = firstString(event.event_type, event.event, event.type)
+      return {
+        ...event,
+        event_type: eventType,
+        type: eventType
+      }
+    }),
     raw
   }
 }

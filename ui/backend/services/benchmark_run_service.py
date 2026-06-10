@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from fastapi import HTTPException
@@ -40,6 +42,8 @@ from ui.backend.services.benchmark_run_payloads import (
     _stable_runtime_hash,
 )
 from ui.backend.task_state import _set_task_contract
+
+_BENCHMARK_QUEUE_HEARTBEAT_SECONDS = 30.0
 
 
 class BenchmarkRunServiceContextProtocol(Protocol):
@@ -363,11 +367,36 @@ class BenchmarkRunService:
                     ),
                 )
 
-    async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
+    async def run_queued_benchmark(
+        self,
+        batch_id: str,
+        request: BenchmarkRequest,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+        progress_sink: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         batch = self._context.evolution_batches.get(batch_id)
         if batch is None:
             return
-        if batch.get("stop_requested") or batch.get("cancelled") or batch.get("status") in {"failed", "cancelled"}:
+
+        def queue_progress(stage: str | None = None) -> None:
+            if progress_sink is None:
+                return
+            progress = batch.get("progress") if isinstance(batch.get("progress"), dict) else {}
+            payload = dict(progress)
+            if stage:
+                payload["stage"] = stage
+            payload["batch_id"] = batch_id
+            progress_sink(payload)
+
+        def stop_requested() -> bool:
+            if cancel_check is not None and cancel_check():
+                batch["stop_requested"] = True
+                batch["cancelled"] = True
+                batch["error"] = batch.get("error") or MANUAL_STOP_REASON
+            return bool(batch.get("stop_requested") or batch.get("cancelled") or batch.get("status") in {"failed", "cancelled"})
+
+        if stop_requested():
             batch["finished_at"] = batch.get("finished_at") or beijing_now_iso()
             batch["error"] = batch.get("error") or MANUAL_STOP_REASON
             _set_task_contract(batch, stop_requested=True, cancelled=True, interrupted=False, failed=False)
@@ -379,6 +408,7 @@ class BenchmarkRunService:
                 diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
             )
             self._tasks.persist_background_tasks()
+            queue_progress("stopped")
             return
 
         if str(batch.get("target_type") or request.target_type or "role_version") == "model":
@@ -396,9 +426,10 @@ class BenchmarkRunService:
             completed_roles=0,
         )
         self._tasks.persist_background_tasks()
+        queue_progress("preparing")
         try:
             for index, role in enumerate(roles):
-                if batch.get("stop_requested") or batch.get("cancelled"):
+                if stop_requested():
                     break
                 role_label = role or "all"
                 self._tasks.mark_benchmark_stage(
@@ -412,11 +443,18 @@ class BenchmarkRunService:
                     completed_roles=index,
                 )
                 self._tasks.persist_background_tasks()
+                queue_progress("evaluating")
                 results.append(
-                    await self._context.evaluate_benchmark_batch(
-                        batch_config=self.benchmark_batch_config(batch_id, role, request, index),
-                        model=self._context.model_for_run(),
-                        paths=self._context.paths,
+                    await self._await_benchmark_step(
+                        self._context.evaluate_benchmark_batch(
+                            batch_config=self.benchmark_batch_config(batch_id, role, request, index),
+                            model=self._context.model_for_run(),
+                            paths=self._context.paths,
+                        ),
+                        batch=batch,
+                        batch_id=batch_id,
+                        cancel_check=cancel_check,
+                        progress_sink=progress_sink,
                     )
                 )
                 self._tasks.mark_benchmark_stage(
@@ -430,7 +468,24 @@ class BenchmarkRunService:
                     completed_roles=index + 1,
                 )
                 self._tasks.persist_background_tasks()
+                queue_progress("evaluating")
         except Exception as exc:  # pragma: no cover - defensive background failure path
+            if stop_requested() or str(exc) == MANUAL_STOP_REASON:
+                batch["finished_at"] = batch.get("finished_at") or beijing_now_iso()
+                batch["error"] = batch.get("error") or MANUAL_STOP_REASON
+                _set_task_contract(batch, stop_requested=True, cancelled=True, interrupted=False, failed=False)
+                self._tasks.mark_benchmark_stage(
+                    batch,
+                    "stopped",
+                    status="failed",
+                    percent=self._tasks.task_progress_percent(batch),
+                    completed_roles=len(results),
+                    role_count=role_count,
+                    diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
+                )
+                self._tasks.persist_background_tasks()
+                queue_progress("stopped")
+                return
             batch["finished_at"] = beijing_now_iso()
             batch["error"] = str(exc)
             _set_task_contract(batch, failed=True, cancelled=False, interrupted=False)
@@ -446,9 +501,10 @@ class BenchmarkRunService:
                 },
             )
             self._tasks.persist_background_tasks()
+            queue_progress("failed")
             return
 
-        if batch.get("stop_requested") or batch.get("cancelled") or batch.get("status") in {"failed", "cancelled"}:
+        if stop_requested():
             batch["finished_at"] = batch.get("finished_at") or beijing_now_iso()
             batch["error"] = batch.get("error") or MANUAL_STOP_REASON
             _set_task_contract(batch, stop_requested=True, cancelled=True, interrupted=False, failed=False)
@@ -462,6 +518,7 @@ class BenchmarkRunService:
                 diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
             )
             self._tasks.persist_background_tasks()
+            queue_progress("stopped")
             return
 
         batch["status"] = "completed"
@@ -484,6 +541,38 @@ class BenchmarkRunService:
         )
         self._context.invalidate_role_overview_cache()
         self._tasks.persist_background_tasks()
+        queue_progress("completed")
+
+    async def _await_benchmark_step(
+        self,
+        awaitable: Awaitable[dict[str, Any]],
+        *,
+        batch: dict[str, Any],
+        batch_id: str,
+        cancel_check: Callable[[], bool] | None,
+        progress_sink: Callable[[dict[str, Any]], None] | None,
+    ) -> dict[str, Any]:
+        task = asyncio.create_task(awaitable)
+        while True:
+            try:
+                return await asyncio.wait_for(asyncio.shield(task), timeout=_BENCHMARK_QUEUE_HEARTBEAT_SECONDS)
+            except TimeoutError:
+                if progress_sink is not None:
+                    progress = batch.get("progress") if isinstance(batch.get("progress"), dict) else {}
+                    payload = dict(progress)
+                    payload.setdefault("stage", batch.get("current_stage") or "evaluating")
+                    payload["batch_id"] = batch_id
+                    progress_sink(payload)
+                if cancel_check is not None and cancel_check():
+                    batch["stop_requested"] = True
+                    batch["cancelled"] = True
+                    batch["error"] = batch.get("error") or MANUAL_STOP_REASON
+                    task.cancel()
+                    try:
+                        await task
+                    except BaseException:  # noqa: BLE001 - cancellation cleanup must not mask manual stop
+                        pass
+                    raise RuntimeError(MANUAL_STOP_REASON) from None
 
     def benchmark_batch_config(
         self,

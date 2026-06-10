@@ -266,7 +266,7 @@ function eventKey(event: TaskEventRow, index: number): string {
 }
 
 function eventType(event: TaskEventRow): string {
-  return String(event.event_type || event.type || 'event')
+  return String(event.event_type || event.event || event.type || 'event')
 }
 
 function eventTime(event: TaskEventRow): string {

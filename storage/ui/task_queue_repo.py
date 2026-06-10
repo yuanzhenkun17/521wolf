@@ -143,6 +143,28 @@ class TaskQueueRepository:
         kinds: Iterable[str] | None = None,
     ) -> dict[str, Any] | None:
         kind_values = [str(kind) for kind in kinds or [] if str(kind)]
+        if callable(getattr(self._conn, "execute_for_update", None)):
+            return self._claim_next_postgres(
+                worker_id=worker_id,
+                now=now,
+                lease_expires_at=lease_expires_at,
+                kind_values=kind_values,
+            )
+        return self._claim_next_portable(
+            worker_id=worker_id,
+            now=now,
+            lease_expires_at=lease_expires_at,
+            kind_values=kind_values,
+        )
+
+    def _claim_next_portable(
+        self,
+        *,
+        worker_id: str,
+        now: str,
+        lease_expires_at: str,
+        kind_values: list[str],
+    ) -> dict[str, Any] | None:
         kind_filter = ""
         set_parameters: list[Any] = [
             worker_id,
@@ -169,8 +191,53 @@ class TaskQueueRepository:
             f"{kind_filter}"
             "ORDER BY priority ASC, queued_at ASC, task_id ASC LIMIT 1"
             ") "
+            "AND status = 'queued' AND cancel_requested = ? "
             f"RETURNING {_task_columns_sql()}",
-            (*set_parameters, *where_parameters),
+            (*set_parameters, *where_parameters, False),
+        ).fetchone()
+        return _task_from_row(row) if row is not None else None
+
+    def _claim_next_postgres(
+        self,
+        *,
+        worker_id: str,
+        now: str,
+        lease_expires_at: str,
+        kind_values: list[str],
+    ) -> dict[str, Any] | None:
+        kind_filter = ""
+        candidate_parameters: list[Any] = [False]
+        if kind_values:
+            placeholders = ", ".join("?" for _ in kind_values)
+            kind_filter = f"AND kind IN ({placeholders}) "
+            candidate_parameters.extend(kind_values)
+        row = self._conn.execute(
+            "WITH candidate AS ("
+            "SELECT task_id FROM ui_task_queue "
+            "WHERE status = 'queued' AND cancel_requested = ? "
+            f"{kind_filter}"
+            "ORDER BY priority ASC, queued_at ASC, task_id ASC "
+            "FOR UPDATE SKIP LOCKED LIMIT 1"
+            ") "
+            "UPDATE ui_task_queue AS q SET "
+            "status = 'running', "
+            "lease_owner = ?, "
+            "lease_expires_at = ?, "
+            "started_at = COALESCE(started_at, ?), "
+            "updated_at = ?, "
+            "attempt = attempt + 1 "
+            "FROM candidate "
+            "WHERE q.task_id = candidate.task_id "
+            "AND q.status = 'queued' AND q.cancel_requested = ? "
+            f"RETURNING {_task_columns_sql('q')}",
+            (
+                *candidate_parameters,
+                worker_id,
+                lease_expires_at,
+                now,
+                now,
+                False,
+            ),
         ).fetchone()
         return _task_from_row(row) if row is not None else None
 
@@ -206,21 +273,27 @@ class TaskQueueRepository:
         result: dict[str, Any] | None = None,
         error: dict[str, Any] | None = None,
         progress: dict[str, Any] | None = None,
+        worker_id: str | None = None,
     ) -> bool:
+        owner_filter = ""
+        parameters: list[Any] = [
+            status,
+            finished_at,
+            finished_at,
+            _json_dumps(result) if result is not None else None,
+            _json_dumps(error) if error is not None else None,
+            _json_dumps(progress) if progress is not None else None,
+            task_id,
+        ]
+        if worker_id is not None:
+            owner_filter = " AND lease_owner = ?"
+            parameters.append(worker_id)
         cursor = self._conn.execute(
             "UPDATE ui_task_queue SET "
             "status = ?, finished_at = ?, updated_at = ?, result = ?, error = ?, progress = COALESCE(?, progress), "
             "lease_owner = NULL, lease_expires_at = NULL "
-            "WHERE task_id = ?",
-            (
-                status,
-                finished_at,
-                finished_at,
-                _json_dumps(result) if result is not None else None,
-                _json_dumps(error) if error is not None else None,
-                _json_dumps(progress) if progress is not None else None,
-                task_id,
-            ),
+            f"WHERE task_id = ? AND status = 'running'{owner_filter}",
+            tuple(parameters),
         )
         return cursor.rowcount > 0
 
@@ -263,8 +336,10 @@ class TaskQueueRepository:
         return int(cursor.rowcount)
 
 
-def _task_columns_sql() -> str:
-    return ", ".join(_TASK_COLUMNS)
+def _task_columns_sql(table_alias: str | None = None) -> str:
+    if not table_alias:
+        return ", ".join(_TASK_COLUMNS)
+    return ", ".join(f"{table_alias}.{column}" for column in _TASK_COLUMNS)
 
 
 def _json_dumps(value: Any) -> str:

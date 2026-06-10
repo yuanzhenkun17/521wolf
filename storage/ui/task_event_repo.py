@@ -25,18 +25,31 @@ class TaskEventRepository:
             (int(limit),),
         ).fetchall()
 
-    def upsert(self, item: dict[str, Any]) -> None:
+    def append(self, item: dict[str, Any]) -> int:
+        insert_returning_id = getattr(self._conn, "insert_returning_id", None)
+        if callable(insert_returning_id):
+            try:
+                return int(insert_returning_id(
+                    "INSERT INTO ui_task_events "
+                    "(entity_id, entity_kind, event, status, payload, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        item.get("entity_id"),
+                        item.get("entity_kind"),
+                        item.get("event"),
+                        item.get("status"),
+                        json.dumps(item.get("payload", {}), ensure_ascii=False),
+                        item.get("created_at"),
+                    ),
+                    id_column="id",
+                ))
+            except RuntimeError as exc:
+                if "requires a PostgreSQL storage adapter" not in str(exc):
+                    raise
         self._conn.execute(
             "INSERT INTO ui_task_events "
             "(id, entity_id, entity_kind, event, status, payload, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET "
-            "entity_id = excluded.entity_id, "
-            "entity_kind = excluded.entity_kind, "
-            "event = excluded.event, "
-            "status = excluded.status, "
-            "payload = excluded.payload, "
-            "created_at = excluded.created_at",
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 int(item["id"]),
                 item.get("entity_id"),
@@ -47,6 +60,10 @@ class TaskEventRepository:
                 item.get("created_at"),
             ),
         )
+        return int(item["id"])
+
+    def upsert(self, item: dict[str, Any]) -> None:
+        self.append(item)
 
     def delete_before_id(self, cutoff: int) -> None:
         self._conn.execute("DELETE FROM ui_task_events WHERE id < ?", (int(cutoff),))

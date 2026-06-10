@@ -59,14 +59,14 @@ class LocalArtifactStore:
     ) -> dict[str, Any]:
         task_segment = _safe_task_id(task_id)
         artifact_name = _safe_artifact_name(name)
-        relative_path = str(PurePosixPath(task_segment) / artifact_name)
+        digest = hashlib.sha256(data).hexdigest()
+        relative_path = str(PurePosixPath(task_segment) / digest[:16] / artifact_name)
         target = self._resolve_artifact_path(relative_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         temp_path = target.with_name(f".{target.name}.tmp")
         temp_path.write_bytes(data)
         temp_path.replace(target)
 
-        digest = hashlib.sha256(data).hexdigest()
         artifact_id = _artifact_id(task_segment, relative_path, digest)
         self._repo.upsert(
             artifact_id=artifact_id,

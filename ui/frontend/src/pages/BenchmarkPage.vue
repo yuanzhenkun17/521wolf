@@ -475,9 +475,6 @@ const contextTaskId = computed(() =>
   String(
     contextRun.value?.task_id ||
     contextRun.value?.queue_task_id ||
-    contextRun.value?.run_id ||
-    contextRun.value?.batch_id ||
-    contextRun.value?.id ||
     ''
   )
 )

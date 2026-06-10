@@ -246,7 +246,7 @@ def test_task_worker_loop_records_heartbeat_and_runs_available_tasks(tmp_path: P
     assert worker["status"] == "succeeded"
     assert worker["lease_seconds"] == 300
     assert worker["metadata"]["registered_kinds"] == ["demo"]
-    assert published == [("task_a", "succeeded")]
+    assert published == [("task_a", "progress"), ("task_a", "succeeded")]
 
 
 def test_task_worker_loop_marks_expired_running_tasks_interrupted(tmp_path: Path) -> None:

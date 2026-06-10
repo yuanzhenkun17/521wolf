@@ -174,6 +174,11 @@ class TaskService:
             if existing is not None:
                 tx.commit()
                 return existing
+            if idempotency_key:
+                existing = repo.get_by_idempotency_key(idempotency_key)
+                if existing is not None:
+                    tx.commit()
+                    return existing
             repo.enqueue(
                 task_id=task_id,
                 kind=kind,

@@ -69,12 +69,6 @@ const selectedTaskId = computed(() =>
     runSummary.value.queue_task_id ||
     selectedRun.value.task_id ||
     selectedRun.value.queue_task_id ||
-    runSummary.value.run_id ||
-    runSummary.value.batch_id ||
-    runSummary.value.id ||
-    selectedRun.value.run_id ||
-    selectedRun.value.batch_id ||
-    selectedRun.value.id ||
     ''
   )
 )

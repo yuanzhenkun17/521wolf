@@ -579,7 +579,8 @@ describe('task domain normalizers', () => {
       after_event_id: '41',
       items: [
         { event_id: 42, event_type: 'progress', payload: { percent: 50 } },
-        { id: '43', type: 'artifact_created', payload: { artifact_id: 'artifact-1' } }
+        { id: '43', type: 'artifact_created', payload: { artifact_id: 'artifact-1' } },
+        { id: '44', event: 'cancel_requested', payload: { task_id: 'task-1' } }
       ]
     })
     const action = normalizeTaskActionResponse({
@@ -617,7 +618,8 @@ describe('task domain normalizers', () => {
       after_event_id: 41,
       events: [
         { event_id: 42, event_type: 'progress' },
-        { id: '43', type: 'artifact_created' }
+        { id: '43', type: 'artifact_created' },
+        { id: '44', event_type: 'cancel_requested', type: 'cancel_requested' }
       ]
     })
     expect(action).toMatchObject({

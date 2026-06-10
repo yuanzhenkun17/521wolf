@@ -5,6 +5,8 @@ APP_DIR="${APP_DIR:-/opt/521wolf/app}"
 BRANCH="${BRANCH:-main}"
 ENV_FILE="${ENV_FILE:-/opt/521wolf/.env}"
 SERVICE_NAME="${SERVICE_NAME:-521wolf}"
+WORKER_SERVICE_NAME="${WORKER_SERVICE_NAME:-521wolf-worker}"
+RESTART_WORKER_SERVICE="${RESTART_WORKER_SERVICE:-true}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/api/health}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-60}"
 POST_DEPLOY_SMOKE="${POST_DEPLOY_SMOKE:-true}"
@@ -63,6 +65,10 @@ uv run python -m app.tools.seed_default_baseline
 
 if command -v systemctl >/dev/null 2>&1; then
   sudo systemctl restart "$SERVICE_NAME"
+  if [ "$RESTART_WORKER_SERVICE" != "false" ] \
+    && systemctl list-unit-files "$WORKER_SERVICE_NAME.service" --no-legend 2>/dev/null | grep -q "^$WORKER_SERVICE_NAME.service"; then
+    sudo systemctl restart "$WORKER_SERVICE_NAME"
+  fi
 fi
 
 run_post_deploy_smoke() {
@@ -75,7 +81,9 @@ run_post_deploy_smoke() {
   fi
   APP_BASE_URL="$APP_BASE_URL" \
   API_HEALTH_URL="$API_HEALTH_URL" \
+  APP_DIR="$APP_DIR" \
   SERVICE_NAME="$SERVICE_NAME" \
+  WORKER_SERVICE_NAME="$WORKER_SERVICE_NAME" \
   bash "$POST_DEPLOY_SMOKE_SCRIPT"
 }
 

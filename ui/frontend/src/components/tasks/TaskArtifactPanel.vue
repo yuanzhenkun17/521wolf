@@ -34,7 +34,7 @@ let requestSeq = 0
 const normalizedTaskId = computed(() => String(props.taskId || '').trim())
 const hasTaskId = computed(() => Boolean(normalizedTaskId.value))
 const canCancel = computed(() => Boolean(task.value?.isActive) && !task.value?.cancel_requested)
-const canRetry = computed(() => ['failed', 'interrupted'].includes(String(task.value?.status || '')))
+const canRetry = computed(() => String(task.value?.status || '').toLowerCase() === 'interrupted')
 const statusTone = computed(() => {
   const status = String(task.value?.status || '').toLowerCase()
   if (status === 'succeeded') return 'success'
@@ -119,7 +119,9 @@ async function runAction(action: 'cancel' | 'retry') {
       ? await taskService.cancel(taskId)
       : await taskService.retry(taskId)
     task.value = result.task
+    const retryNoop = action === 'retry' && !result.changed
     await refresh()
+    if (retryNoop) error.value = '当前任务状态不可重试'
     emit('action-complete', result)
   } catch (err) {
     error.value = errorMessage(err, action === 'cancel' ? '取消任务失败' : '重试任务失败')

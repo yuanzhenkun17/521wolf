@@ -222,12 +222,77 @@ def test_local_artifact_store_writes_indexes_and_reads_json(tmp_path) -> None:
 
     assert artifact["task_id"] == "task_a"
     assert artifact["name"] == "reports/result.json"
-    assert artifact["relative_path"] == "task_a/reports/result.json"
+    assert artifact["relative_path"].startswith("task_a/")
+    assert artifact["relative_path"].endswith("/reports/result.json")
     assert artifact["content_type"] == "application/json"
     assert artifact["size_bytes"] > 0
     assert artifact["metadata"] == {"format": "json"}
     assert store.list("task_a") == [artifact]
     assert b'"status": "ok"' in store.read_bytes(artifact["artifact_id"])
+
+
+def test_task_queue_repository_complete_requires_running_owner() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    repo.enqueue(
+        task_id="task_a",
+        kind="evolution_run",
+        payload={},
+        queued_at="2026-06-10T10:00:00+08:00",
+    )
+    assert repo.claim_next(
+        worker_id="worker-1",
+        now="2026-06-10T10:00:01+08:00",
+        lease_expires_at="2026-06-10T10:01:00+08:00",
+    )
+
+    assert repo.complete(
+        task_id="task_a",
+        status="succeeded",
+        finished_at="2026-06-10T10:00:02+08:00",
+        result={"ok": True},
+        worker_id="worker-2",
+    ) is False
+    assert repo.get("task_a")["status"] == "running"  # type: ignore[index]
+
+    assert repo.mark_expired_running_interrupted(now="2026-06-10T10:02:00+08:00") == 1
+    assert repo.complete(
+        task_id="task_a",
+        status="succeeded",
+        finished_at="2026-06-10T10:03:00+08:00",
+        result={"late": True},
+        worker_id="worker-1",
+    ) is False
+    task = repo.get("task_a")
+    assert task is not None
+    assert task["status"] == "interrupted"
+    assert task["result"] is None
+
+
+def test_local_artifact_store_rewrite_keeps_old_metadata_readable(tmp_path) -> None:
+    conn = _connect()
+    repo = TaskArtifactRepository(conn)
+    store = LocalArtifactStore(root=tmp_path / "runs" / "tasks", repo=repo)
+
+    first = store.put_json(
+        task_id="task_a",
+        name="result.json",
+        payload={"version": 1},
+        artifact_type="result",
+        created_at="2026-06-10T10:00:00+08:00",
+    )
+    second = store.put_json(
+        task_id="task_a",
+        name="result.json",
+        payload={"version": 2},
+        artifact_type="result",
+        created_at="2026-06-10T10:01:00+08:00",
+    )
+
+    assert first["artifact_id"] != second["artifact_id"]
+    assert first["relative_path"] != second["relative_path"]
+    assert b'"version": 1' in store.read_bytes(first["artifact_id"])
+    assert b'"version": 2' in store.read_bytes(second["artifact_id"])
 
 
 @pytest.mark.parametrize(

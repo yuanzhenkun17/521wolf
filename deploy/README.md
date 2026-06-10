@@ -106,6 +106,7 @@ Minimum production environment variables:
 ```dotenv
 POSTGRES_DATABASE_URL=postgresql://wolf_app:password@127.0.0.1:5432/wolf_app
 DATABASE_URL=${POSTGRES_DATABASE_URL}
+WOLF_USE_PG_TASK_QUEUE=true
 
 WEREWOLF_LLM_API_KEY=...
 WEREWOLF_LLM_BASE_URL=...
@@ -125,6 +126,7 @@ UI_BACKEND_USE_FAKE_LLM=false
 Templates added:
 
 - `deploy/systemd/521wolf.service.example`
+- `deploy/systemd/521wolf-worker.service.example`
 - `deploy/nginx/521wolf.conf.example`
 - `deploy/scripts/deploy.sh`
 
@@ -150,22 +152,39 @@ The script:
 - Applies Alembic migrations.
 - Seeds missing default baselines.
 - Restarts the `521wolf` systemd service when systemd is available.
+- Restarts `521wolf-worker` when that systemd unit is installed. Set
+  `RESTART_WORKER_SERVICE=false` to skip this on hosts that intentionally do
+  not run the PostgreSQL task worker.
 - Checks `http://127.0.0.1:8000/api/health`.
 - Runs `deploy/scripts/post_deploy_smoke.sh` unless `POST_DEPLOY_SMOKE=false`.
 
-The post-deploy smoke is intentionally black-box. It does not require new
-backend response fields. It checks the API health URL, the nginx-served app
-shell, referenced JS/CSS assets, nginx config, the systemd service, and the
-HTTP listener. Useful overrides:
+The post-deploy smoke is intentionally black-box. It checks the API health URL,
+task control health, `/api/tasks`, artifact hash verification, the nginx-served
+app shell, referenced JS/CSS assets, nginx config, the API/worker systemd
+services, and the HTTP listener. Useful overrides:
 
 ```text
 APP_BASE_URL=http://127.0.0.1
 API_HEALTH_URL=http://127.0.0.1/api/health
+APP_DIR=/opt/521wolf/app
 POST_DEPLOY_SMOKE=true
 CHECK_NGINX=true
 CHECK_SYSTEMD=true
+CHECK_TASK_QUEUE=true
+CHECK_TASK_WORKER=true
+CHECK_TASK_ARTIFACTS=true
+TASK_ARTIFACT_VERIFY_LIMIT=100
 CHECK_PORTS=true
 REQUIRE_HTTPS=false
+```
+
+Install the worker service on single-node deployments that enable the
+PostgreSQL task queue:
+
+```bash
+sudo cp /opt/521wolf/app/deploy/systemd/521wolf-worker.service.example /etc/systemd/system/521wolf-worker.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now 521wolf-worker
 ```
 
 Langfuse can be checked without touching backend code:

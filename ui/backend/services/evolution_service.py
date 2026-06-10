@@ -157,7 +157,26 @@ class EvolutionService:
             entity["status"] = "failed"
             entity["error"] = entity.get("error") or MANUAL_STOP_REASON
             _set_task_contract(entity, stop_requested=True, cancelled=True, interrupted=False, failed=False)
+        self._request_queue_cancel(entity)
         return self._persist_run_action_mutation(entity)
+
+    def _request_queue_cancel(self, entity: dict[str, Any]) -> None:
+        cancel_task = getattr(self._tasks, "cancel_task", None)
+        if not callable(cancel_task):
+            return
+        task_id = str(
+            entity.get("task_id")
+            or entity.get("queue_task_id")
+            or entity.get("batch_id")
+            or entity.get("run_id")
+            or ""
+        ).strip()
+        if not task_id:
+            return
+        try:
+            cancel_task(task_id)
+        except Exception:  # noqa: BLE001 - legacy action must remain best-effort when queue storage is unavailable
+            return
 
     def _resume_run_entity(self, entity: dict[str, Any]) -> dict[str, Any]:
         entity["status"] = "reviewing"

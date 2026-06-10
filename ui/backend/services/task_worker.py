@@ -75,6 +75,7 @@ class TaskExecutionContext:
         lease_seconds: int,
         clock: Callable[[], datetime],
         after_repository_update: Callable[[], None] | None = None,
+        event_publisher: Callable[[dict[str, Any], str | None], Any] | None = None,
     ) -> None:
         self._repository = repository
         self._task = dict(task)
@@ -82,6 +83,7 @@ class TaskExecutionContext:
         self._lease_seconds = int(lease_seconds)
         self._clock = clock
         self._after_repository_update = after_repository_update
+        self._event_publisher = event_publisher
 
     @property
     def task(self) -> dict[str, Any]:
@@ -109,8 +111,17 @@ class TaskExecutionContext:
             updated_at=now.isoformat(),
             progress=progress,
         )
-        if ok and self._after_repository_update is not None:
-            self._after_repository_update()
+        if ok:
+            latest = self._repository.get(self.task_id)
+            if latest is not None:
+                self._task = dict(latest)
+            if self._after_repository_update is not None:
+                self._after_repository_update()
+            if self._event_publisher is not None:
+                try:
+                    self._event_publisher(dict(self._task), "progress")
+                except Exception:  # noqa: BLE001 - progress events must not fail task execution
+                    pass
         return ok
 
     def cancel_requested(self) -> bool:
@@ -136,6 +147,7 @@ class TaskWorker:
         lease_seconds: int = 300,
         clock: Callable[[], datetime] = beijing_now,
         after_repository_update: Callable[[], None] | None = None,
+        event_publisher: Callable[[dict[str, Any], str | None], Any] | None = None,
     ) -> None:
         self._repository = repository
         self.registry = executors if isinstance(executors, TaskExecutorRegistry) else TaskExecutorRegistry(executors)
@@ -143,6 +155,7 @@ class TaskWorker:
         self._lease_seconds = int(lease_seconds)
         self._clock = clock
         self._after_repository_update = after_repository_update
+        self._event_publisher = event_publisher
 
     def run_once(self) -> TaskWorkerRunResult:
         kinds = self.registry.kinds()
@@ -167,6 +180,7 @@ class TaskWorker:
             lease_seconds=self._lease_seconds,
             clock=self._clock,
             after_repository_update=self._after_repository_update,
+            event_publisher=self._event_publisher,
         )
         task_id = str(task["task_id"])
         kind = str(task["kind"])
@@ -201,13 +215,16 @@ class TaskWorker:
             )
 
         finished_at = self._clock().isoformat()
-        self._repository.complete(
+        completed = self._repository.complete(
             task_id=task_id,
             status="succeeded",
             finished_at=finished_at,
             result=result,
+            worker_id=self._worker_id,
         )
         self._commit_if_requested()
+        if not completed:
+            return self._lost_lease_result(task_id=task_id, kind=kind, executed=True)
         return TaskWorkerRunResult(task_id=task_id, kind=kind, status="succeeded", executed=True)
 
     def run_available(self, *, max_tasks: int | None = None) -> list[TaskWorkerRunResult]:
@@ -228,13 +245,16 @@ class TaskWorker:
         message: str = "task cancellation requested",
     ) -> TaskWorkerRunResult:
         error = {"kind": "cancelled", "message": message or "task cancellation requested"}
-        self._repository.complete(
+        completed = self._repository.complete(
             task_id=task_id,
             status="cancelled",
             finished_at=self._clock().isoformat(),
             error=error,
+            worker_id=self._worker_id,
         )
         self._commit_if_requested()
+        if not completed:
+            return self._lost_lease_result(task_id=task_id, kind=kind, executed=executed, error=error)
         return TaskWorkerRunResult(task_id=task_id, kind=kind, status="cancelled", executed=executed, error=error)
 
     def _finish_failed(
@@ -245,14 +265,29 @@ class TaskWorker:
         executed: bool,
         error: dict[str, Any],
     ) -> TaskWorkerRunResult:
-        self._repository.complete(
+        completed = self._repository.complete(
             task_id=task_id,
             status="failed",
             finished_at=self._clock().isoformat(),
             error=error,
+            worker_id=self._worker_id,
         )
         self._commit_if_requested()
+        if not completed:
+            return self._lost_lease_result(task_id=task_id, kind=kind, executed=executed, error=error)
         return TaskWorkerRunResult(task_id=task_id, kind=kind, status="failed", executed=executed, error=error)
+
+    def _lost_lease_result(
+        self,
+        *,
+        task_id: str,
+        kind: str,
+        executed: bool,
+        error: dict[str, Any] | None = None,
+    ) -> TaskWorkerRunResult:
+        latest = self._repository.get(task_id) or {}
+        status = str(latest.get("status") or "lost_lease")
+        return TaskWorkerRunResult(task_id=task_id, kind=kind, status=status, executed=executed, error=error)
 
     def _commit_if_requested(self) -> None:
         if self._after_repository_update is not None:
@@ -295,6 +330,7 @@ class TaskWorkerLoop:
                 lease_seconds=self._lease_seconds,
                 clock=self._clock,
                 after_repository_update=conn.commit,
+                event_publisher=self._event_publisher,
             )
             result = worker.run_once()
             if result.task_id is not None:
