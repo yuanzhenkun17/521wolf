@@ -215,9 +215,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     def get_benchmark_spec_summary(self, benchmark_id: str) -> dict[str, Any]:
         return self.benchmark_service.get_benchmark_spec_summary(benchmark_id)
 
-    def benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
-        return self.benchmark_service.benchmark_batch_detail(batch_id)
-
     def benchmark_batch_games(
         self,
         batch_id: str,
@@ -234,88 +231,6 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             result_batch_id=result_batch_id,
             target_role=target_role,
             status=status,
-            seed=seed,
-            limit=limit,
-            offset=offset,
-        )
-
-    def benchmark_batch_diagnostics(
-        self,
-        batch_id: str,
-        *,
-        target_role: str | None = None,
-        kind: str | None = None,
-        level: str | None = None,
-        status: str | None = None,
-        stage: str | None = None,
-        seed: str | None = None,
-    ) -> dict[str, Any]:
-        return self.benchmark_service.benchmark_batch_diagnostics(
-            batch_id,
-            target_role=target_role,
-            kind=kind,
-            level=level,
-            status=status,
-            stage=stage,
-            seed=seed,
-        )
-
-    def benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
-        return self.benchmark_service.benchmark_batch_report(batch_id, format=format)
-
-    def benchmark_reports(
-        self,
-        *,
-        scope: str | None = None,
-        evaluation_set_id: str | None = None,
-        benchmark_id: str | None = None,
-        target_role: str | None = None,
-        model_id: str | None = None,
-        model_config_hash: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> dict[str, Any]:
-        return self.benchmark_service.benchmark_reports(
-            scope=scope,
-            evaluation_set_id=evaluation_set_id,
-            benchmark_id=benchmark_id,
-            target_role=target_role,
-            model_id=model_id,
-            model_config_hash=model_config_hash,
-            status=status,
-            limit=limit,
-            offset=offset,
-        )
-
-    def benchmark_diagnostics(
-        self,
-        *,
-        scope: str | None = None,
-        evaluation_set_id: str | None = None,
-        benchmark_id: str | None = None,
-        target_role: str | None = None,
-        model_id: str | None = None,
-        model_config_hash: str | None = None,
-        kind: str | None = None,
-        level: str | None = None,
-        status: str | None = None,
-        stage: str | None = None,
-        seed: str | None = None,
-        limit: int = 200,
-        offset: int = 0,
-    ) -> dict[str, Any]:
-        return self.benchmark_service.benchmark_diagnostics(
-            scope=scope,
-            evaluation_set_id=evaluation_set_id,
-            benchmark_id=benchmark_id,
-            target_role=target_role,
-            model_id=model_id,
-            model_config_hash=model_config_hash,
-            kind=kind,
-            level=level,
-            status=status,
-            stage=stage,
             seed=seed,
             limit=limit,
             offset=offset,

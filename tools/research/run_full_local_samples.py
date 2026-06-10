@@ -643,11 +643,12 @@ async def run_benchmark_once(ctx: RunContext, store: BackendStore, args: argpars
         interval_seconds=60.0,
     )
     batch = store.evolution_batches.get(batch_id, batch)
-    detail = store.benchmark_batch_detail(batch_id)
-    report = store.benchmark_batch_report(batch_id)
-    markdown = store.benchmark_batch_report(batch_id, format="markdown")
-    diagnostics = store.benchmark_batch_diagnostics(batch_id)
-    aggregate_diagnostics = store.benchmark_diagnostics(benchmark_id=args.benchmark_id)
+    benchmark_service = store.benchmark_service
+    detail = benchmark_service.benchmark_batch_detail(batch_id)
+    report = benchmark_service.benchmark_batch_report(batch_id)
+    markdown = benchmark_service.benchmark_batch_report(batch_id, format="markdown")
+    diagnostics = benchmark_service.benchmark_batch_diagnostics(batch_id)
+    aggregate_diagnostics = benchmark_service.benchmark_diagnostics(benchmark_id=args.benchmark_id)
     benchmark_dir = ctx.output_dir / "benchmark" / batch_id
     write_json(benchmark_dir / "batch.json", batch)
     write_json(benchmark_dir / "detail.json", detail)
