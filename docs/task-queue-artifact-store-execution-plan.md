@@ -115,6 +115,12 @@ PostgreSQL-backed task queue
   - `POST /api/langfuse/link-manifest-tasks`
 - `BackendStore.create_task_worker_loop()` 已注册 Langfuse executors，现有 `app.tools.run_ui_task_worker` 可直接执行这些 task kinds。
 
+已完成 Phase H Task Artifact Retention 起步：
+
+- `app.tools.cleanup_runs` 新增 `--include-task-artifacts`。
+- 默认 cleanup 范围不变，不会误扫 `runs/tasks`。
+- 显式开启后，`runs/tasks/<task_id>` 会进入 age/size retention plan，并沿用 dry-run 默认、安全 path 校验和 execute 清理流程。
+
 已验证：
 
 ```text
@@ -140,6 +146,7 @@ uv run pytest tests/test_task_worker_cli.py tests/test_task_worker.py tests/test
 uv run pytest tests/test_ui_backend_app.py::test_langfuse_task_routes_enqueue_pg_tasks tests/test_ui_backend_store_facades.py -q -k "langfuse_task or task_worker_loop"
 uv run pytest tests/test_langfuse_experiment_verification.py tests/test_langfuse_annotation_export.py tests/test_langfuse_link_manifest.py -q
 uv run pytest tests/test_api_contracts.py -q -k "openapi or langfuse or task"
+uv run pytest tests/test_tools_cleanup_runs.py -q
 ```
 
 ## 当前状态
@@ -575,7 +582,7 @@ Steps：
 
 Steps：
 
-1. 扩展 `app/tools/cleanup_runs.py` 或新增 `cleanup_task_artifacts.py`。
+1. 扩展 `app/tools/cleanup_runs.py` 或新增 `cleanup_task_artifacts.py`。（已完成 `--include-task-artifacts`）
 2. 策略：
    - succeeded/failed 超过 N 天清理 artifacts。
    - retained release artifacts 可打标不删。

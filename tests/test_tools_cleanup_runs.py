@@ -59,3 +59,19 @@ def test_cleanup_runs_size_retention_selects_oldest_until_under_limit(tmp_path: 
 
     assert plan["total_candidates"] == 2
     assert {item["path"] for item in plan["selected"]} == {"games/old", "games/new"}
+
+
+def test_cleanup_runs_task_artifacts_are_opt_in(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    task_dir = _write_run(runs_dir, "tasks/task-old", age_seconds=10 * 86400)
+
+    default_plan = build_cleanup_plan(runs_dir, max_age_days=1)
+    task_plan = build_cleanup_plan(runs_dir, max_age_days=1, include_task_artifacts=True)
+    report = cleanup_runs(runs_dir, max_age_days=1, include_task_artifacts=True, execute=True)
+
+    assert default_plan["include_task_artifacts"] is False
+    assert default_plan["selected"] == []
+    assert task_plan["include_task_artifacts"] is True
+    assert [item["path"] for item in task_plan["selected"]] == ["tasks/task-old"]
+    assert report["dry_run"] is False
+    assert not (task_dir / "events.jsonl").exists()

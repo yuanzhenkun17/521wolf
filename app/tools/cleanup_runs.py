@@ -16,6 +16,7 @@ from typing import Any
 
 PRESERVED_NAMES = {"manifest.json", "summary.json"}
 RUN_ROOT_NAMES = ("games", "selfplay", "evaluation_batches", "evolution")
+TASK_ARTIFACT_ROOT_NAMES = ("tasks",)
 
 
 @dataclass(frozen=True)
@@ -38,8 +39,9 @@ class RunCandidate:
         }
 
 
-def iter_run_dirs(runs_dir: Path) -> list[Path]:
-    roots = [runs_dir / name for name in RUN_ROOT_NAMES]
+def iter_run_dirs(runs_dir: Path, *, include_task_artifacts: bool = False) -> list[Path]:
+    root_names = (*RUN_ROOT_NAMES, *TASK_ARTIFACT_ROOT_NAMES) if include_task_artifacts else RUN_ROOT_NAMES
+    roots = [runs_dir / name for name in root_names]
     dirs: list[Path] = []
     for root in roots:
         if not root.exists():
@@ -75,6 +77,7 @@ def build_cleanup_plan(
     *,
     max_age_days: int | None = None,
     max_total_mb: int | None = None,
+    include_task_artifacts: bool = False,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     runs_dir = Path(runs_dir)
@@ -85,7 +88,7 @@ def build_cleanup_plan(
             "size_bytes": dir_size(path),
             "mtime": dir_mtime(path),
         }
-        for path in iter_run_dirs(runs_dir)
+        for path in iter_run_dirs(runs_dir, include_task_artifacts=include_task_artifacts)
     ]
     selected: dict[Path, RunCandidate] = {}
 
@@ -119,6 +122,7 @@ def build_cleanup_plan(
     selected_items = sorted(selected.values(), key=lambda item: (item.mtime, str(item.path)))
     return {
         "runs_dir": str(runs_dir),
+        "include_task_artifacts": bool(include_task_artifacts),
         "total_candidates": len(candidates),
         "total_size_bytes": sum(int(candidate["size_bytes"]) for candidate in candidates),
         "selected": [item.to_dict(runs_dir) for item in selected_items],
@@ -160,9 +164,15 @@ def cleanup_runs(
     *,
     max_age_days: int | None = None,
     max_total_mb: int | None = None,
+    include_task_artifacts: bool = False,
     execute: bool = False,
 ) -> dict[str, Any]:
-    plan = build_cleanup_plan(runs_dir, max_age_days=max_age_days, max_total_mb=max_total_mb)
+    plan = build_cleanup_plan(
+        runs_dir,
+        max_age_days=max_age_days,
+        max_total_mb=max_total_mb,
+        include_task_artifacts=include_task_artifacts,
+    )
     report = {**plan, "dry_run": not execute, "pruned": []}
     if not execute:
         return report
@@ -185,6 +195,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
     parser.add_argument("--max-age-days", type=int, default=None)
     parser.add_argument("--max-total-mb", type=int, default=None)
+    parser.add_argument(
+        "--include-task-artifacts",
+        action="store_true",
+        help="Also consider runs/tasks/<task_id> artifact directories. Omit to keep legacy cleanup scope.",
+    )
     parser.add_argument("--execute", action="store_true", help="Apply cleanup. Omit for dry-run.")
     return parser.parse_args(argv)
 
@@ -195,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         args.runs_dir,
         max_age_days=args.max_age_days,
         max_total_mb=args.max_total_mb,
+        include_task_artifacts=args.include_task_artifacts,
         execute=args.execute,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
