@@ -14,7 +14,7 @@ from storage.evaluation_store import EvaluationStore
 from storage.review_store import CounterfactualStore, DecisionReviewStore
 from storage.replay import read_decisions_for_artifact, read_events_for_artifact
 from storage.run_policy import LeaderboardScope, RunPolicy, RunType, policy_for_run_type
-from storage.runtime import GamePersistence, open_storage_connection
+from storage.runtime import GamePersistence
 from storage.provider import (
     PostgresStorageProvider,
     StorageProvider,
@@ -61,7 +61,6 @@ __all__ = [
     "read_decisions_for_artifact",
     "read_events_for_artifact",
     "GamePersistence",
-    "open_storage_connection",
     "PostgresStorageProvider",
     "StorageProvider",
     "storage_provider_from_env",

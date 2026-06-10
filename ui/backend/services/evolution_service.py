@@ -8,8 +8,10 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.util.time import beijing_now_iso
-from ui.backend.schemas import normalize_rejection_tags
+from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.evolution_actions import (
+    _promote_evolution_run,
+    _reject_evolution_run,
     accept_evolution_proposal,
     apply_accepted_evolution_proposals,
 )
@@ -21,15 +23,19 @@ from ui.backend.evolution_serializers import (
     _normalize_event,
     _sample_game_archive_payload,
 )
+from ui.backend.schemas import normalize_rejection_tags
 from ui.backend.task_state import (
     _background_source,
     _filter_values,
     _history_time_key,
     _match_filter,
     _pagination,
+    _set_task_contract,
 )
 
 _log = logging.getLogger(__name__)
+_TERMINAL_TASK_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
+_FINISHED_ACTION_STATUSES = {"failed", "promoted", "rejected", "reviewing"}
 
 
 class EvolutionService:
@@ -89,6 +95,80 @@ class EvolutionService:
         if batch is not None:
             return _evolution_batch_summary(batch)
         raise HTTPException(status_code=404, detail="run not found")
+
+    def run_action(self, run_id: str, action: str) -> dict[str, Any]:
+        entity = self._action_entity(run_id)
+        action = action.lower()
+        if action == "promote":
+            return self._promote_run_entity(entity)
+        if action == "reject":
+            return self._reject_run_entity(entity)
+        if action in {"stop", "terminate"}:
+            return self._stop_run_entity(entity)
+        if action == "resume":
+            return self._resume_run_entity(entity)
+        return self._persist_run_action_mutation(entity)
+
+    def promote_run(self, run_id: str) -> dict[str, Any]:
+        return self._promote_run_entity(self._action_entity(run_id))
+
+    def reject_run(self, run_id: str) -> dict[str, Any]:
+        return self._reject_run_entity(self._action_entity(run_id))
+
+    def stop_run(self, run_id: str) -> dict[str, Any]:
+        return self._stop_run_entity(self._action_entity(run_id))
+
+    def resume_run(self, run_id: str) -> dict[str, Any]:
+        return self._resume_run_entity(self._action_entity(run_id))
+
+    def _promote_run_entity(self, entity: dict[str, Any]) -> dict[str, Any]:
+        if "role" not in entity:
+            raise HTTPException(status_code=400, detail="batch does not support promote; select a child run")
+        _promote_evolution_run(self._store, entity)
+        entity["status"] = "promoted"
+        return self._persist_run_action_mutation(entity)
+
+    def _reject_run_entity(self, entity: dict[str, Any]) -> dict[str, Any]:
+        if "role" not in entity:
+            raise HTTPException(status_code=400, detail="batch does not support reject; select a child run")
+        _reject_evolution_run(self._store, entity)
+        entity["status"] = "rejected"
+        return self._persist_run_action_mutation(entity)
+
+    def _stop_run_entity(self, entity: dict[str, Any]) -> dict[str, Any]:
+        if hasattr(self._store, "_mark_evolution_stopped"):
+            self._store._mark_evolution_stopped(entity)
+            if entity.get("kind") == "role_evolution_batch":
+                for child_id in list(entity.get("runs", []) or []):
+                    child = self._store.evolution_runs.get(str(child_id))
+                    if child is None:
+                        continue
+                    if str(child.get("status") or "").lower() not in _TERMINAL_TASK_STATUSES:
+                        self._store._mark_evolution_stopped(child)
+                self._store._refresh_evolution_batch(entity.get("batch_id"))
+        else:
+            entity["status"] = "failed"
+            entity["error"] = entity.get("error") or MANUAL_STOP_REASON
+            _set_task_contract(entity, stop_requested=True, cancelled=True, interrupted=False, failed=False)
+        return self._persist_run_action_mutation(entity)
+
+    def _resume_run_entity(self, entity: dict[str, Any]) -> dict[str, Any]:
+        entity["status"] = "reviewing"
+        _set_task_contract(entity, stop_requested=False, cancelled=False, interrupted=False, failed=False)
+        return self._persist_run_action_mutation(entity)
+
+    def _action_entity(self, run_id: str) -> dict[str, Any]:
+        entity = self._store.evolution_runs.get(run_id) or self._store.evolution_batches.get(run_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return entity
+
+    def _persist_run_action_mutation(self, entity: dict[str, Any]) -> dict[str, Any]:
+        self._store._touch_background_task(entity)
+        if entity.get("status") in _FINISHED_ACTION_STATUSES:
+            entity["finished_at"] = entity.get("finished_at") or beijing_now_iso()
+        self._store._persist_background_tasks()
+        return entity
 
     def proposal_run(self, run_id: str) -> dict[str, Any]:
         run = self._store.evolution_runs.get(run_id)
