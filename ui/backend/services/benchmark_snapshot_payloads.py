@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ui.backend.services.benchmark_payload_utils import sanitize_model_runtime_containers
 from ui.backend.services.benchmark_snapshot_cache_payloads import (
     _benchmark_view_payload as _benchmark_view_payload,
     _filter_benchmark_snapshot_cache as _filter_benchmark_snapshot_cache,
@@ -148,7 +149,7 @@ def _benchmark_snapshot_member_row(
     scope: str,
     target_role: str | None,
 ) -> dict[str, Any]:
-    payload = dict(row)
+    payload = sanitize_model_runtime_containers(row)
     payload["key"] = key or _benchmark_snapshot_row_key(row)
     payload["boundary_warnings"] = _benchmark_snapshot_boundary_warnings(
         row,

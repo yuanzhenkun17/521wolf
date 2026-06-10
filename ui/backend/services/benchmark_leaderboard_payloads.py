@@ -10,6 +10,8 @@ from ui.backend.services.benchmark_payload_utils import (
     first_text as _first_text,
     json_clone as _json_clone,
     row_to_dict as _row_to_dict,
+    sanitize_model_runtime,
+    sanitize_model_runtime_containers,
 )
 from ui.backend.services.benchmark_leaderboard_common import (
     _leaderboard_metric,
@@ -142,6 +144,8 @@ def _leaderboard_row_payload(row: Any) -> dict[str, Any]:
     payload = _row_to_dict(row)
     by_role = _decode_json_field(payload.get("by_role_category_scores"), fallback={})
     summary = _decode_json_field(payload.get("summary"), fallback={})
+    summary = sanitize_model_runtime_containers(summary if isinstance(summary, dict) else {})
+    model_runtime = payload.get("model_runtime") if isinstance(payload.get("model_runtime"), dict) else summary.get("model_runtime")
     game_count = int(payload.get("games_played") or 0)
     scope = str(payload.get("scope") or "")
     subject_id = str(payload.get("subject_id") or "")
@@ -206,7 +210,7 @@ def _leaderboard_row_payload(row: Any) -> dict[str, Any]:
         "rankable": bool(payload.get("rankable")),
         "data_sufficient": bool(payload.get("data_sufficient")),
         "summary": summary,
-        "model_runtime": _json_clone(summary.get("model_runtime") or {}),
+        "model_runtime": sanitize_model_runtime(model_runtime if isinstance(model_runtime, dict) else {}),
         "is_baseline": bool(summary.get("is_baseline", False)) if isinstance(summary, dict) else False,
         "delta_vs_baseline": {},
         "source_run_id": source_run_id,

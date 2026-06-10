@@ -21,7 +21,10 @@ from storage.benchmark.snapshot_repo import (
     persist_benchmark_snapshot,
 )
 from ui.backend.schemas import BenchmarkSnapshotRequest, BenchmarkViewRequest
-from ui.backend.services.benchmark_payload_utils import json_clone as _json_clone
+from ui.backend.services.benchmark_payload_utils import (
+    json_clone as _json_clone,
+    sanitize_model_runtime_containers,
+)
 from ui.backend.services.benchmark_snapshot_payloads import (
     _benchmark_snapshot_compare_payload,
     _benchmark_snapshot_csv,
@@ -199,7 +202,7 @@ class BenchmarkSnapshotService:
             raise HTTPException(status_code=422, detail="cannot snapshot empty leaderboard")
 
         now = beijing_now_iso()
-        frozen_rows = [_json_clone(row) for row in rows]
+        frozen_rows = [sanitize_model_runtime_containers(row) for row in rows]
         release_gate = _benchmark_snapshot_release_gate(
             frozen_rows,
             request=request,

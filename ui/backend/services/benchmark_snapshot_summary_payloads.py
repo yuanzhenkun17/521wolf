@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ui.backend.services.benchmark_payload_utils import json_clone as _json_clone
+from ui.backend.services.benchmark_payload_utils import (
+    json_clone as _json_clone,
+    sanitize_model_runtime_containers,
+)
 from ui.backend.services.benchmark_snapshot_common import _benchmark_snapshot_int
 
 
@@ -50,7 +53,7 @@ def _benchmark_snapshot_source_summary(rows: list[dict[str, Any]]) -> dict[str, 
 def _benchmark_snapshot_summary_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     rows = snapshot.get("rows") if isinstance(snapshot.get("rows"), list) else []
     derived = _benchmark_snapshot_source_summary(rows) if rows else {}
-    summary = dict(snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {})
+    summary = sanitize_model_runtime_containers(snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {})
     for key in (
         "row_count",
         "rankable_count",
@@ -234,7 +237,7 @@ def _benchmark_snapshot_release_manifest(snapshot: dict[str, Any], *, summary: d
 def _benchmark_snapshot_detail_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     payload = _benchmark_snapshot_summary_payload(snapshot)
     rows = snapshot.get("rows") if isinstance(snapshot.get("rows"), list) else []
-    payload["rows"] = _json_clone(rows)
+    payload["rows"] = [sanitize_model_runtime_containers(row) for row in rows if isinstance(row, dict)]
     return payload
 
 
