@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, reactive, ref } from 'vue'
 import EvidenceLink from '../history/EvidenceLink.vue'
 import JudgeEvidencePanel from '../history/JudgeEvidencePanel.vue'
 import RejectDialog from './RejectDialog.vue'
 import TrustBundleDrawer from './TrustBundleDrawer.vue'
+
+type LooseRecord = Record<string, any>
 
 const props = defineProps({
   evo: { type: Object, required: true }
@@ -214,16 +215,18 @@ function scoreLabel(value) {
 }
 
 function rejectBufferStatusLabel(buffer = {}) {
-  if (buffer.savedLabel) return buffer.savedLabel
-  if (buffer.status) return displayText(buffer.status)
-  if (buffer.duplicateLabel) return buffer.duplicateLabel
+  const record = buffer as LooseRecord
+  if (record.savedLabel) return record.savedLabel
+  if (record.status) return displayText(record.status)
+  if (record.duplicateLabel) return record.duplicateLabel
   return '已记录'
 }
 
 function rejectBufferMatchedLabel(matched = {}) {
+  const record = matched as LooseRecord
   const parts = [
-    matched.proposalId ? `提案 ${matched.proposalId}` : '',
-    matched.sourceRunId ? `运行 ${matched.sourceRunId}` : ''
+    record.proposalId ? `提案 ${record.proposalId}` : '',
+    record.sourceRunId ? `运行 ${record.sourceRunId}` : ''
   ].filter(Boolean)
   return parts.join(' · ')
 }
@@ -419,6 +422,7 @@ function proposalGameEvidenceTargets(proposal, ids = [], counter = false) {
       key: `${counter ? 'counter' : 'support'}-${proposalKey(proposal, 0)}-${gameId}`,
       label: counter ? '反证局' : '样本局',
       className: counter ? 'counter' : '',
+      kind: 'game',
       target: {
         history_game_id: gameId,
         game_id: gameId,
