@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
@@ -21,6 +20,8 @@ import {
   sourceText,
   statusText
 } from './workbenchShared.ts'
+
+type LooseRecord = Record<string, any>
 
 const DEFAULT_RUN_PAGE_SIZE = 80
 const DEFAULT_SAMPLE_GAME_PAGE_SIZE = 80
@@ -413,9 +414,9 @@ function normalizeRun(run) {
   )
   const currentStage = run?.current_stage || run?.progress?.stage || run?.stage || run?.status
   const publishedReleaseStage = run?.published_release_stage || run?.release_stage || ''
-  const progress = entityType === 'batch'
+  const progress = (entityType === 'batch'
     ? buildBatchProgress(run, childRuns)
-    : buildRunProgress(run, trainingSamples, battleSamples, currentStage)
+    : buildRunProgress(run, trainingSamples, battleSamples, currentStage)) as LooseRecord
   return {
     ...run,
     id,
@@ -526,9 +527,13 @@ function firstArray(...values) {
   return []
 }
 
-function firstObject(...values) {
+function isLooseRecord(value: unknown): value is LooseRecord {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function firstObject(...values: any[]): LooseRecord {
   for (const value of values) {
-    if (value && typeof value === 'object' && !Array.isArray(value)) return value
+    if (isLooseRecord(value)) return value
   }
   return {}
 }
@@ -707,7 +712,7 @@ function normalizePairedSeed(row, index = 0) {
   }
 }
 
-function normalizeProposalAttributionReport(source = {}, gate = {}, run = {}) {
+function normalizeProposalAttributionReport(source: LooseRecord = {}, gate: LooseRecord = {}, run: LooseRecord = {}) {
   const report = firstObject(
     source.proposal_attribution_report,
     source.proposalAttributionReport,
@@ -740,7 +745,7 @@ function normalizeProposalAttributionReport(source = {}, gate = {}, run = {}) {
   }
 }
 
-function normalizeGateReport(source = {}, run = {}) {
+function normalizeGateReport(source: LooseRecord = {}, run: LooseRecord = {}) {
   const gate = firstObject(
     source.gate_report,
     source.promotion_gate,
@@ -853,6 +858,7 @@ function proposalRiskTags(proposal) {
 }
 
 function normalizeRejectBuffer(proposal, risk = {}) {
+  const riskRecord = firstObject(risk)
   const buffer = firstObject(
     proposal?.reject_buffer,
     proposal?.rejectBuffer,
@@ -871,7 +877,7 @@ function normalizeRejectBuffer(proposal, risk = {}) {
     buffer.similarity,
     buffer.reject_buffer_similarity,
     buffer.rejectBufferSimilarity,
-    risk.similarity
+    riskRecord.similarity
   )
   const matchedRejection = firstObject(
     similarity.matched_rejection,
@@ -924,9 +930,9 @@ function normalizeRejectBuffer(proposal, risk = {}) {
   const overfitScore = firstFinite(
     proposal?.overfit_risk_score,
     proposal?.overfitRiskScore,
-    risk.overfit_risk_score,
-    risk.overfitRiskScore,
-    risk.score,
+    riskRecord.overfit_risk_score,
+    riskRecord.overfitRiskScore,
+    riskRecord.score,
     buffer.overfit_risk_score,
     buffer.overfitRiskScore
   )
@@ -942,8 +948,8 @@ function normalizeRejectBuffer(proposal, risk = {}) {
   const overfitEvidence = textItems(
     proposal?.overfit_evidence,
     proposal?.overfitEvidence,
-    risk.overfit_evidence,
-    risk.overfitEvidence,
+    riskRecord.overfit_evidence,
+    riskRecord.overfitEvidence,
     buffer.overfit_evidence,
     buffer.overfitEvidence
   )
@@ -1122,7 +1128,7 @@ function pairedSeedSource(data, run) {
   )
 }
 
-function normalizeProposalReview(data = null, run = null, options = {}) {
+function normalizeProposalReview(data: any = null, run: LooseRecord | null = null, options: LooseRecord = {}) {
   const source = Array.isArray(data) ? { proposals: data } : firstObject(data)
   const reviewSummary = firstObject(source.proposal_review, source.proposalReview, run?.proposal_review, run?.proposalReview)
   const proposals = proposalSource(source, run).map(normalizeProposal)
@@ -1186,7 +1192,7 @@ function normalizeProposalReview(data = null, run = null, options = {}) {
   }
 }
 
-function promotionTrustBundle(run = {}, review = {}) {
+function promotionTrustBundle(run: LooseRecord = {}, review: LooseRecord = {}) {
   return firstObject(
     review.trustBundle,
     review.trust_bundle,
@@ -1199,7 +1205,7 @@ function promotionTrustBundle(run = {}, review = {}) {
   )
 }
 
-function promotionGateReport(run = {}, review = {}) {
+function promotionGateReport(run: LooseRecord = {}, review: LooseRecord = {}) {
   return firstObject(
     review.gate,
     run?.gate_report,
@@ -1219,7 +1225,7 @@ function promotionGateReport(run = {}, review = {}) {
   )
 }
 
-function promotionReleaseDecision(run = {}, review = {}) {
+function promotionReleaseDecision(run: LooseRecord = {}, review: LooseRecord = {}) {
   const gate = promotionGateReport(run, review)
   const releaseGate = firstObject(gate.releaseGate, gate.release_gate, run?.release_gate, run?.releaseGate)
   const trustBundle = promotionTrustBundle(run, review)
@@ -1242,7 +1248,7 @@ function promotionReleaseDecision(run = {}, review = {}) {
   ).toLowerCase()
 }
 
-function promoteRequiresCompleteTrust(run = {}, review = {}) {
+function promoteRequiresCompleteTrust(run: LooseRecord = {}, review: LooseRecord = {}) {
   const releaseStage = normalizeReleaseStage(
     run?.published_release_stage ||
       run?.publishedReleaseStage ||
@@ -1255,7 +1261,12 @@ function promoteRequiresCompleteTrust(run = {}, review = {}) {
   return ['baseline', 'official'].includes(releaseStage) || ['baseline_promote', 'official_publish'].includes(decision)
 }
 
-function promotionTrustCompleteness(run = {}, review = {}, trustBundle = {}, gate = {}) {
+function promotionTrustCompleteness(
+  run: LooseRecord = {},
+  review: LooseRecord = {},
+  trustBundle: LooseRecord = {},
+  gate: LooseRecord = {}
+) {
   return firstObject(
     trustBundle.completeness,
     trustBundle.trust_bundle_completeness,
@@ -1272,7 +1283,7 @@ function promotionTrustCompleteness(run = {}, review = {}, trustBundle = {}, gat
   )
 }
 
-function hasPromotionGateReference(run = {}, trustBundle = {}, gate = {}) {
+function hasPromotionGateReference(run: LooseRecord = {}, trustBundle: LooseRecord = {}, gate: LooseRecord = {}) {
   const releaseGate = firstObject(gate.releaseGate, gate.release_gate, run?.release_gate, run?.releaseGate)
   return Boolean(
     trustBundle.gate_report_id ||
@@ -1287,7 +1298,7 @@ function hasPromotionGateReference(run = {}, trustBundle = {}, gate = {}) {
   )
 }
 
-function hasPromotionTrainingEvidenceReference(trustBundle = {}) {
+function hasPromotionTrainingEvidenceReference(trustBundle: LooseRecord = {}) {
   return firstArray(
     trustBundle.training_game_ids,
     trustBundle.trainingGameIds,
@@ -1298,7 +1309,7 @@ function hasPromotionTrainingEvidenceReference(trustBundle = {}) {
   ).length > 0
 }
 
-function hasPromotionProposalReference(trustBundle = {}) {
+function hasPromotionProposalReference(trustBundle: LooseRecord = {}) {
   return firstArray(
     trustBundle.proposal_ids,
     trustBundle.proposalIds,
@@ -1366,7 +1377,7 @@ function trustMissingItemLabel(item) {
   return TRUST_MISSING_ITEM_LABELS[key] || key
 }
 
-function baselinePromoteTrustDisabledReason(run = {}, review = {}) {
+function baselinePromoteTrustDisabledReason(run: LooseRecord = {}, review: LooseRecord = {}) {
   if (!promoteRequiresCompleteTrust(run, review)) return ''
   const trustBundle = promotionTrustBundle(run, review)
   if (!Object.keys(trustBundle).length) return '缺少完整信任包，不能晋升为基线。'
@@ -1387,7 +1398,7 @@ function baselinePromoteTrustDisabledReason(run = {}, review = {}) {
   return ''
 }
 
-function sourceRunIdFrom(run = {}, version = {}, input = {}) {
+function sourceRunIdFrom(run: LooseRecord = {}, version: LooseRecord = {}, input: LooseRecord = {}) {
   return firstTextValue(
     input.run_id,
     input.runId,
@@ -1439,7 +1450,7 @@ function trustAuditSourceText(value) {
   }[String(value || '').toLowerCase()] || shortText(value, '信任包')
 }
 
-function hashHref(view, params = {}) {
+function hashHref(view, params: LooseRecord = {}) {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     const text = String(value ?? '').trim()
@@ -1454,11 +1465,11 @@ function evidenceHref(id) {
   return value ? hashHref('logs', { game_id: value, workspace: 'archive' }) : ''
 }
 
-function evolutionHref(params = {}) {
+function evolutionHref(params: LooseRecord = {}) {
   return hashHref('evolution', params)
 }
 
-function evolutionDeepLinkPanel(target = {}) {
+function evolutionDeepLinkPanel(target: LooseRecord = {}) {
   return routeEvolutionDeepLinkPanel(target)
 }
 
@@ -1490,7 +1501,7 @@ function auditText(value) {
   return String(value ?? '').trim()
 }
 
-function auditFieldValue(audit = {}, field) {
+function auditFieldValue(audit: LooseRecord = {}, field) {
   return auditText(audit?.[field])
 }
 
@@ -1533,7 +1544,7 @@ function trustConsistencyMessage(field, status, values = [], hasAuthority = fals
   return '等待权威包校验。'
 }
 
-function trustAuditConsistencyChecks(cached = {}, authority = null) {
+function trustAuditConsistencyChecks(cached: LooseRecord = {}, authority: LooseRecord | null = null) {
   const hasAuthority = Boolean(authority)
   return TRUST_CONSISTENCY_FIELDS.flatMap(({ field, label, required }) => {
     const cachedValue = auditFieldValue(cached, field)
@@ -1564,13 +1575,17 @@ function trustAuditConsistencyChecks(cached = {}, authority = null) {
   })
 }
 
-function trustAuditMismatches(cached = {}, authority = {}) {
+function trustAuditMismatches(cached: LooseRecord = {}, authority: LooseRecord = {}) {
   return trustAuditConsistencyChecks(cached, authority)
     .filter((item) => item.status === 'mismatch')
     .map((item) => item.field)
 }
 
-function normalizeTrustCompleteness(completeness = {}, hasTrustBundle = false, explicitMissing = []) {
+function normalizeTrustCompleteness(
+  completeness: LooseRecord = {},
+  hasTrustBundle = false,
+  explicitMissing: any[] = []
+) {
   const explicitComplete = completeness.complete ?? completeness.is_complete ?? completeness.isComplete
   const statusTextValue = firstTextValue(completeness.status, completeness.state, completeness.verdict).toLowerCase()
   const complete = hasTrustBundle
@@ -1604,7 +1619,7 @@ function normalizeTrustCompleteness(completeness = {}, hasTrustBundle = false, e
   }
 }
 
-function normalizeTrustBundleAudit(input = {}) {
+function normalizeTrustBundleAudit(input: LooseRecord = {}) {
   const run = firstObject(input.run)
   const review = firstObject(input.review)
   const version = firstObject(input.version)
@@ -1893,7 +1908,7 @@ function proposalActionSuccessMessage(action) {
   return '提案操作已完成。'
 }
 
-function useEvolutionWorkbench(options = {}) {
+function useEvolutionWorkbench(options: LooseRecord = {}) {
   const { apiFetch, apiBase } = options.apiFetch
     ? { apiFetch: options.apiFetch, apiBase: options.apiBase || '/api' }
     : createGameApi(options.apiBase)
@@ -1915,21 +1930,21 @@ function useEvolutionWorkbench(options = {}) {
   const batches = ref([])
   const selectedRole = ref('')
   const selectedRunId = ref('')
-  const selectedRun = ref(null)
+  const selectedRun = ref<LooseRecord | null>(null)
   const selectedDiff = ref([])
   const selectedDiffData = ref(null)
-  const selectedProposalReview = ref(normalizeProposalReview(null, null, { source: 'none' }))
+  const selectedProposalReview = ref<LooseRecord>(normalizeProposalReview(null, null, { source: 'none' }))
   const selectedGames = ref(emptySampleGames())
   const selectedGameBucket = ref('training')
   const selectedGameId = ref('')
   const selectedVersionId = ref('')
-  const selectedVersionDetail = ref({
+  const selectedVersionDetail = ref<LooseRecord>({
     loading: false,
     error: '',
     data: null
   })
   const trustBundleDrawerOpen = ref(false)
-  const trustBundleAudit = ref(normalizeTrustBundleAudit({ source: 'review' }))
+  const trustBundleAudit = ref<LooseRecord>(normalizeTrustBundleAudit({ source: 'review' }))
   const trustBundleAuditLoading = ref(false)
   const trustBundleAuditError = ref('')
   const initialDeepLinkHash = Object.prototype.hasOwnProperty.call(options, 'initialHash')
@@ -1938,7 +1953,7 @@ function useEvolutionWorkbench(options = {}) {
   const initialDeepLinkTarget = Object.prototype.hasOwnProperty.call(options, 'initialRoute')
     ? evolutionDeepLinkFromRoute(options.initialRoute)
     : evolutionDeepLinkFromHash(initialDeepLinkHash || '')
-  const evolutionDeepLinkTarget = ref(initialDeepLinkTarget)
+  const evolutionDeepLinkTarget = ref<LooseRecord | null>(initialDeepLinkTarget as LooseRecord | null)
   const versionDetailCache = ref({})
   const selectedGameDetail = ref({
     loading: false,
@@ -2211,8 +2226,8 @@ function useEvolutionWorkbench(options = {}) {
     selectedVersionDetail.value = { loading: false, error: '', data: null }
   }
 
-  function currentTrustBundleAudit(source = 'review', payload = {}) {
-    const input = typeof source === 'object' && source !== null ? source : { ...payload, source }
+  function currentTrustBundleAudit(source: string | LooseRecord = 'review', payload: LooseRecord = {}) {
+    const input: LooseRecord = typeof source === 'object' && source !== null ? source : { ...payload, source }
     const normalizedSource = shortText(input.source || source || 'review', 'review')
     return normalizeTrustBundleAudit({
       ...input,
@@ -2223,7 +2238,7 @@ function useEvolutionWorkbench(options = {}) {
     })
   }
 
-  function trustBundleAuthorityRunId(audit = {}, payload = {}) {
+  function trustBundleAuthorityRunId(audit: LooseRecord = {}, payload: LooseRecord = {}) {
     return firstTextValue(
       payload.run_id,
       payload.runId,
@@ -2236,7 +2251,7 @@ function useEvolutionWorkbench(options = {}) {
     )
   }
 
-  async function refreshTrustBundleAudit(source = trustBundleAudit.value.source || 'review', payload = {}) {
+  async function refreshTrustBundleAudit(source: string | LooseRecord = trustBundleAudit.value.source || 'review', payload: LooseRecord = {}) {
     const baseAudit = payload.baseAudit || currentTrustBundleAudit(source, payload)
     const runId = trustBundleAuthorityRunId(baseAudit, payload)
     if (!runId) {
@@ -2294,7 +2309,7 @@ function useEvolutionWorkbench(options = {}) {
     }
   }
 
-  function openTrustBundleDrawer(source = 'review', payload = {}) {
+  function openTrustBundleDrawer(source: string | LooseRecord = 'review', payload: LooseRecord = {}) {
     const baseAudit = currentTrustBundleAudit(source, payload)
     trustBundleAudit.value = baseAudit
     trustBundleDrawerOpen.value = true
@@ -2307,7 +2322,7 @@ function useEvolutionWorkbench(options = {}) {
     trustBundleDrawerOpen.value = false
   }
 
-  function setEvolutionDeepLinkTarget(target, patch = {}) {
+  function setEvolutionDeepLinkTarget(target: LooseRecord | null, patch: LooseRecord = {}) {
     if (!target) {
       evolutionDeepLinkTarget.value = null
       return null
@@ -2441,7 +2456,7 @@ function useEvolutionWorkbench(options = {}) {
     return true
   }
 
-  function handleEvolutionHashChange(event = {}) {
+  function handleEvolutionHashChange(event: LooseRecord = {}) {
     const target = consumeEvolutionDeepLink(event.newURL || currentLegacyHash())
     if (target) void applyEvolutionDeepLink(target)
   }
@@ -3237,10 +3252,17 @@ function useEvolutionWorkbench(options = {}) {
 
   async function rejectProposal(proposal, id = selectedRunId.value, reason = '', options = {}) {
     const proposalId = proposal?.apiId || proposal?.proposal_id || proposal?.id
-    const tags = textItems(options?.tags, options?.metadata?.tags)
+    if (isLooseRecord(options)) {
+      const tags = textItems(options?.tags, options?.metadata?.tags)
+      await updateProposal(id, proposalId, 'reject', {
+        reason: reason || 'manual_reject',
+        tags
+      })
+      return
+    }
     await updateProposal(id, proposalId, 'reject', {
       reason: reason || 'manual_reject',
-      tags
+      tags: []
     })
   }
 
