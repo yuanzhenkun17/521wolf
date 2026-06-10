@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from typing import Any
 
 from app.util.time import beijing_now_iso
@@ -29,7 +28,7 @@ class BenchmarkLeaderboardRepository:
             or ""
         )
         group_id = entry.get("comparison_group_id")
-        row_id = entry.get("id") or f"{scope}:{subject_id}:{group_id or entry.get('batch_id', '')}" or uuid.uuid4().hex
+        row_id = entry.get("id") or f"{scope}:{subject_id}:{group_id or entry.get('batch_id', '')}"
         by_role = entry.get("by_role_category_scores")
         summary = dict(entry.get("summary") or {})
         for key in ("benchmark_id", "benchmark_version", "benchmark_config_hash", "config_hash", "model_runtime"):

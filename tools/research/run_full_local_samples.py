@@ -309,7 +309,7 @@ async def run(args: argparse.Namespace) -> int:
         game_timeout_seconds=_positive_float(args.game_timeout_seconds),
     )
     agent_runtime = _agent_runtime_config_from_args(args)
-    ctx.manifest["command"] = " ".join([Path(sys.executable).name, "-m", "app.tools.run_full_local_samples", *sys.argv[1:]])
+    ctx.manifest["command"] = " ".join([Path(sys.executable).name, "-m", "tools.research.run_full_local_samples", *sys.argv[1:]])
     ctx.manifest["settings"] = settings.to_dict()
     ctx.manifest["agent_runtime"] = agent_runtime
     ctx.manifest["parameters"] = {
@@ -604,7 +604,8 @@ async def run_benchmark_once(ctx: RunContext, store: BackendStore, args: argpars
     if args.resume and benchmark_state.get("status") == "completed":
         return
     request = _benchmark_request_from_args(args)
-    batch = store.queue_benchmark(request)
+    benchmark_service = store.benchmark_service
+    batch = benchmark_service.queue_benchmark(request)
     batch_id = str(batch["batch_id"])
     config = batch.setdefault("config", {})
     config["game_concurrency"] = settings.game_concurrency
@@ -636,17 +637,17 @@ async def run_benchmark_once(ctx: RunContext, store: BackendStore, args: argpars
     ctx.log(f"benchmark batch started batch_id={batch_id} attempt={attempt}")
     await _await_with_partial_game_heartbeat(
         ctx,
-        store.run_queued_benchmark(batch_id, request),
+        benchmark_service.run_queued_benchmark(batch_id, request),
         stage="benchmark",
         game_prefix=batch_id,
         interval_seconds=60.0,
     )
     batch = store.evolution_batches.get(batch_id, batch)
-    detail = store.benchmark_batch_detail(batch_id)
-    report = store.benchmark_batch_report(batch_id)
-    markdown = store.benchmark_batch_report(batch_id, format="markdown")
-    diagnostics = store.benchmark_batch_diagnostics(batch_id)
-    aggregate_diagnostics = store.benchmark_diagnostics(benchmark_id=args.benchmark_id)
+    detail = benchmark_service.benchmark_batch_detail(batch_id)
+    report = benchmark_service.benchmark_batch_report(batch_id)
+    markdown = benchmark_service.benchmark_batch_report(batch_id, format="markdown")
+    diagnostics = benchmark_service.benchmark_batch_diagnostics(batch_id)
+    aggregate_diagnostics = benchmark_service.benchmark_diagnostics(benchmark_id=args.benchmark_id)
     benchmark_dir = ctx.output_dir / "benchmark" / batch_id
     write_json(benchmark_dir / "batch.json", batch)
     write_json(benchmark_dir / "detail.json", detail)

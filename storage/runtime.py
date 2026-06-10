@@ -38,12 +38,6 @@ class EventEntry(Protocol):
     public: bool
 
 
-def open_storage_connection(provider: StorageProvider | None = None) -> StorageConnection:
-    import storage.provider as provider_mod
-
-    return provider_mod.open_wolf_connection(provider)
-
-
 def create_game_persistence(
     *,
     game_id: str,

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from ui.backend.services.task_service import TaskService
+from ui.backend.services.task_service import BackgroundTaskServiceProtocol, TaskService
 from ui.backend.task_events import TaskEventLog
 
 
 class BackgroundTaskStoreMixin:
     @property
-    def task_service(self) -> TaskService:
+    def task_service(self) -> BackgroundTaskServiceProtocol:
         return self._task_service()
 
     @property
@@ -59,35 +59,8 @@ class BackgroundTaskStoreMixin:
             diagnostic=diagnostic,
         )
 
-    def _background_tasks_payload(self) -> dict[str, Any]:
-        return self.task_service.background_tasks_payload()
-
-    @staticmethod
-    def _background_tasks_fingerprint(payload: dict[str, Any]) -> str:
-        return TaskService.background_tasks_fingerprint(payload)
-
     def _persist_background_tasks(self) -> None:
         self.task_service.persist_background_tasks()
-
-    def _persist_background_entities(self, payload: dict[str, Any]) -> None:
-        self.task_service.persist_background_entities(payload)
-
-    def _changed_background_entities(self) -> list[dict[str, Any]]:
-        return self.task_service.changed_background_entities()
-
-    @staticmethod
-    def _task_entity_key(entity: dict[str, Any]) -> str:
-        return TaskService.task_entity_key(entity)
-
-    @staticmethod
-    def _task_entity_fingerprint(entity: dict[str, Any]) -> str:
-        return TaskService.task_entity_fingerprint(entity)
-
-    def load_background_tasks(self) -> None:
-        self.task_service.load_background_tasks()
-
-    def recover_background_tasks(self) -> int:
-        return self.task_service.recover_background_tasks()
 
     def restore_background_tasks(self) -> int:
         return self.task_service.restore_background_tasks()

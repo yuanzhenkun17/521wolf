@@ -64,7 +64,7 @@ class _TransactionalConn:
 
 
 def test_evaluation_save_batch_uses_single_storage_transaction() -> None:
-    from storage.battle.evaluation_repo import EvaluationStore
+    from storage.evaluation_store import EvaluationStore
 
     conn = _TransactionalConn()
     store = EvaluationStore(
@@ -350,7 +350,7 @@ def test_delete_game_from_env_resolves_provider_without_paths(monkeypatch: pytes
 
 
 def test_evaluation_save_batch_rolls_back_whole_batch_on_failure() -> None:
-    from storage.battle.evaluation_repo import EvaluationStore
+    from storage.evaluation_store import EvaluationStore
 
     conn = _TransactionalConn(fail_on_execute=2)
     store = EvaluationStore(
@@ -373,7 +373,7 @@ def test_evaluation_save_batch_rolls_back_whole_batch_on_failure() -> None:
 
 
 def test_review_and_counterfactual_batches_use_transactions() -> None:
-    from storage.battle.review_repo import CounterfactualStore, DecisionReviewStore
+    from storage.review_store import CounterfactualStore, DecisionReviewStore
 
     conn = _TransactionalConn()
     reviews = DecisionReviewStore(

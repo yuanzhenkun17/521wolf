@@ -10,11 +10,11 @@ from typing import Any, Iterable
 from dotenv import load_dotenv
 
 from app.config import DEFAULT_PATHS, LLM_ENV_PATH
-from app.tools.run_full_local_samples import DEFAULT_OUTPUT_DIR, _partial_game_progress
 from app.util.json import to_jsonable, write_json
 from app.util.redaction import redact
 from app.util.time import beijing_now_iso
 from storage.provider import storage_provider_from_env
+from tools.research.run_full_local_samples import DEFAULT_OUTPUT_DIR, _partial_game_progress
 from ui.backend.constants import ROLE_ORDER
 
 

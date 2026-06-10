@@ -9,6 +9,10 @@ import pytest
 
 from app.config import PathConfig
 import ui.backend.store as ui_backend_store
+from ui.backend.services.benchmark_service import BenchmarkService
+from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
+from ui.backend.services.evolution_read_service import EvolutionReadService
+from ui.backend.services.evolution_service import EvolutionService
 
 
 def test_game_read_gateway_facades_delegate_to_cached_gateway(
@@ -137,6 +141,156 @@ def test_game_read_gateway_facades_delegate_to_cached_gateway(
         ("list_history_rows",),
         ("close",),
     ]
+
+
+def test_game_history_facades_delegate_to_cached_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class FakeGameHistoryService:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+            self.calls: list[tuple[Any, ...]] = []
+            instances.append(self)
+
+        def history_fingerprint(self) -> dict[str, Any]:
+            self.calls.append(("history_fingerprint",))
+            return {"method": "history_fingerprint"}
+
+        def memory_fingerprint(self) -> list[dict[str, Any]]:
+            self.calls.append(("memory_fingerprint",))
+            return [{"method": "memory_fingerprint"}]
+
+        def memory_item(self, game_id: str, game: dict[str, Any]) -> dict[str, Any]:
+            self.calls.append(("memory_item", game_id, game))
+            return {"method": "memory_item", "game_id": game_id}
+
+        def postgres_fingerprint(self) -> dict[str, Any]:
+            self.calls.append(("postgres_fingerprint",))
+            return {"method": "postgres_fingerprint"}
+
+        def snapshot_log_time(self, snapshot: dict[str, Any], fallback: str | None = None) -> str:
+            self.calls.append(("snapshot_log_time", snapshot, fallback))
+            return "snapshot-time"
+
+        def game_list_row(self, game: dict[str, Any]) -> dict[str, Any]:
+            self.calls.append(("game_list_row", game))
+            return {"method": "game_list_row", "game_id": game["game_id"]}
+
+        def get_game_history_shell(self, game_id: str) -> dict[str, Any]:
+            self.calls.append(("get_game_history_shell", game_id))
+            return {"method": "get_game_history_shell", "game_id": game_id}
+
+        def get_game_phase_detail(self, game_id: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("get_game_phase_detail", game_id, kwargs))
+            return {"method": "get_game_phase_detail", "game_id": game_id, "kwargs": kwargs}
+
+        def get_game_replay(self, game_id: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("get_game_replay", game_id, kwargs))
+            return {"method": "get_game_replay", "game_id": game_id, "kwargs": kwargs}
+
+        def history_shell_from_snapshot(self, game_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+            self.calls.append(("history_shell_from_snapshot", game_id, snapshot))
+            return {"method": "history_shell_from_snapshot", "game_id": game_id}
+
+        def history_phase_summaries_from_snapshot(
+            self,
+            snapshot: dict[str, Any],
+            logs: list[dict[str, Any]],
+            decisions: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            self.calls.append(("history_phase_summaries_from_snapshot", snapshot, logs, decisions))
+            return [{"method": "history_phase_summaries_from_snapshot"}]
+
+        def attach_history_state_to_phase_summaries(self, *args: Any) -> None:
+            self.calls.append(("attach_history_state_to_phase_summaries", *args))
+
+        def phase_detail_from_snapshot(self, game_id: str, snapshot: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("phase_detail_from_snapshot", game_id, snapshot, kwargs))
+            return {"method": "phase_detail_from_snapshot", "game_id": game_id, "kwargs": kwargs}
+
+        def replay_from_snapshot(self, game_id: str, snapshot: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("replay_from_snapshot", game_id, snapshot, kwargs))
+            return {"method": "replay_from_snapshot", "game_id": game_id, "kwargs": kwargs}
+
+        def build_game_history_rows(self) -> list[dict[str, Any]]:
+            self.calls.append(("build_game_history_rows",))
+            return [{"game_id": "from-history-service"}]
+
+    monkeypatch.setattr(ui_backend_store, "GameHistoryService", FakeGameHistoryService)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+
+    service = store._game_history_service()
+
+    assert store._game_history_service() is service
+    assert instances == [service]
+    assert service.store is store
+    assert store._game_history_fingerprint() == {"method": "history_fingerprint"}
+    assert store._game_history_memory_fingerprint() == [{"method": "memory_fingerprint"}]
+    assert store._game_history_memory_item("game-1", {"game_id": "game-1"}) == {
+        "method": "memory_item",
+        "game_id": "game-1",
+    }
+    assert store._postgres_history_fingerprint() == {"method": "postgres_fingerprint"}
+    assert store._snapshot_log_time({"game_id": "game-2"}, fallback="fallback") == "snapshot-time"
+    assert store._game_list_row({"game_id": "game-3"}) == {
+        "method": "game_list_row",
+        "game_id": "game-3",
+    }
+    assert store.get_game_history_shell("game-4") == {"method": "get_game_history_shell", "game_id": "game-4"}
+    assert store.get_game_phase_detail(
+        "game-5",
+        day=2,
+        phase="night",
+        log_offset=3,
+        log_limit=4,
+        decision_offset=5,
+        decision_limit=6,
+    ) == {
+        "method": "get_game_phase_detail",
+        "game_id": "game-5",
+        "kwargs": {
+            "day": 2,
+            "phase": "night",
+            "log_offset": 3,
+            "log_limit": 4,
+            "decision_offset": 5,
+            "decision_limit": 6,
+        },
+    }
+    assert store.get_game_replay("game-6", cursor=7, limit=8) == {
+        "method": "get_game_replay",
+        "game_id": "game-6",
+        "kwargs": {"cursor": 7, "limit": 8},
+    }
+    assert store._history_shell_from_snapshot("game-7", {"game_id": "game-7"}) == {
+        "method": "history_shell_from_snapshot",
+        "game_id": "game-7",
+    }
+    assert store._history_phase_summaries_from_snapshot({"game_id": "game-8"}, [], []) == [
+        {"method": "history_phase_summaries_from_snapshot"}
+    ]
+    store._attach_history_state_to_phase_summaries([], {"game_id": "game-9"}, [], False, object())
+    assert store._phase_detail_from_snapshot("game-10", {"game_id": "game-10"}, day=1, phase="setup") == {
+        "method": "phase_detail_from_snapshot",
+        "game_id": "game-10",
+        "kwargs": {
+            "day": 1,
+            "phase": "setup",
+            "log_offset": 0,
+            "log_limit": 300,
+            "decision_offset": 0,
+            "decision_limit": 200,
+        },
+    }
+    assert store._replay_from_snapshot("game-11", {"game_id": "game-11"}, cursor=12, limit=13) == {
+        "method": "replay_from_snapshot",
+        "game_id": "game-11",
+        "kwargs": {"cursor": 12, "limit": 13},
+    }
+    assert store._build_game_history_rows() == [{"game_id": "from-history-service"}]
 
 
 def test_live_game_lifecycle_facades_delegate_to_cached_coordinator(
@@ -290,6 +444,175 @@ def test_task_service_facades_delegate_to_cached_service(
     ]
 
 
+def test_evolution_service_persists_actions_through_task_service() -> None:
+    class FakeTaskService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, ...]] = []
+
+        def touch_background_task(self, entity: dict[str, Any], *, timestamp: str | None = None) -> str:
+            self.calls.append(("touch_background_task", entity, timestamp))
+            return "heartbeat"
+
+        def persist_background_tasks(self) -> None:
+            self.calls.append(("persist_background_tasks",))
+
+    task_service = FakeTaskService()
+    run = {"kind": "role_evolution_run", "run_id": "run-1", "status": "failed"}
+    store = SimpleNamespace(
+        evolution_runs={"run-1": run},
+        evolution_batches={},
+        task_service=task_service,
+    )
+
+    result = EvolutionService(store).resume_run("run-1")
+
+    assert result is run
+    assert run["status"] == "reviewing"
+    assert run["stop_requested"] is False
+    assert task_service.calls == [
+        ("touch_background_task", run, None),
+        ("persist_background_tasks",),
+    ]
+
+
+def test_evolution_read_service_handles_run_detail_drilldown_without_task_service() -> None:
+    run = {
+        "kind": "role_evolution_run",
+        "run_id": "run-1",
+        "role": "seer",
+        "status": "reviewing",
+        "last_heartbeat_at": "2026-01-01T00:00:02+08:00",
+        "diff": [{"target_file": "seer.md", "action": "append_rule"}],
+        "training_games": [
+            {
+                "game_id": "game-1",
+                "status": "completed",
+                "seed": 7,
+                "events": [{"index": 1, "event_type": "game_init", "message": "started"}],
+                "decisions": [{"decision_id": "d1", "action_type": "seer_check", "selected_target": 3}],
+            },
+            {"game_id": "game-2", "status": "failed"},
+        ],
+        "battle_games": [],
+    }
+    batch = {
+        "kind": "role_evolution_batch",
+        "batch_id": "batch-1",
+        "status": "completed",
+        "last_heartbeat_at": "2026-01-01T00:00:01+08:00",
+    }
+    service = EvolutionReadService(SimpleNamespace(evolution_runs={"run-1": run}, evolution_batches={"batch-1": batch}))
+
+    listed = service.list_runs(history_requested=True, limit=1, source="evolution", status="reviewing")
+    games = service.games("run-1", status="completed", limit=1, offset=0, paginate=True)
+    decisions = service.game_detail("run-1", "game-1", "decisions")
+    events = service.game_detail("run-1", "game-1", "events")
+
+    assert listed["pagination"] == {"total": 1, "offset": 0, "limit": 1, "returned": 1, "has_more": False}
+    assert listed["runs"][0]["run_id"] == "run-1"
+    assert service.get_run("run-1") is run
+    assert service.get_run("batch-1")["batch_id"] == "batch-1"
+    assert service.diff("run-1")["diffs"] == [{"target_file": "seer.md", "action": "append_rule"}]
+    assert games["pagination"] == {"total": 1, "offset": 0, "limit": 1, "returned": 1, "has_more": False}
+    assert games["games"][0]["game_id"] == "game-1"
+    assert "events" not in games["games"][0]
+    assert decisions["decisions"][0]["id"] == "d1"
+    assert decisions["decisions"][0]["target_id"] == 3
+    assert events["events"][0]["type"] == "game_init"
+
+
+def test_evolution_read_service_trust_bundle_falls_back_to_run_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    import storage.evolution.state_gateway as state_gateway
+
+    class FakeEvolutionStateGateway:
+        def __init__(self, *, paths: Any | None = None) -> None:
+            self.paths = paths
+
+        def get_trust_bundle(self, run_id: str) -> None:
+            raise RuntimeError(f"offline: {run_id}")
+
+    monkeypatch.setattr(state_gateway, "EvolutionStateGateway", FakeEvolutionStateGateway)
+    run = {
+        "run_id": "run-1",
+        "role": "seer",
+        "started_at": "2026-01-01T00:00:00+08:00",
+        "finished_at": "2026-01-01T00:01:00+08:00",
+        "result": {
+            "trust_bundle": {
+                "schema_version": "trust_bundle_v1",
+                "trust_bundle_id": "trust-bundle-1",
+                "run_id": "run-1",
+                "role": "seer",
+                "bundle_hash": "abc123",
+            },
+        },
+    }
+    service = EvolutionReadService(SimpleNamespace(evolution_runs={"run-1": run}, evolution_batches={}, paths="pg"))
+
+    payload = service.trust_bundle_payload("run-1")
+
+    assert payload["kind"] == "evolution_trust_bundle"
+    assert payload["trust_bundle_id"] == "trust-bundle-1"
+    assert payload["bundle_hash"] == "abc123"
+    assert payload["trust_bundle"]["schema_version"] == "trust_bundle_v1"
+
+
+def test_benchmark_service_stops_batches_through_task_service(tmp_path: Path) -> None:
+    class FakeTaskService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, ...]] = []
+
+        def task_progress_percent(self, entity: dict[str, Any], default: float = 0.0) -> float:
+            self.calls.append(("task_progress_percent", entity, default))
+            return 0.35
+
+        def mark_benchmark_stage(
+            self,
+            batch: dict[str, Any],
+            stage: str,
+            **kwargs: Any,
+        ) -> None:
+            self.calls.append(("mark_benchmark_stage", batch, stage, kwargs))
+
+        def persist_background_tasks(self) -> None:
+            self.calls.append(("persist_background_tasks",))
+
+    task_service = FakeTaskService()
+    batch = {
+        "kind": "benchmark_batch",
+        "batch_id": "batch-1",
+        "status": "running",
+        "roles": ["seer", "villager"],
+        "progress": {"completed_roles": 1},
+    }
+    context = SimpleNamespace(
+        paths=PathConfig(root=tmp_path),
+        evolution_batches={"batch-1": batch},
+        task_service=task_service,
+    )
+
+    result = BenchmarkService(context).stop_benchmark("batch-1")
+
+    assert result is batch
+    assert batch["status"] == "failed"
+    assert batch["stop_requested"] is True
+    assert batch["cancelled"] is True
+    assert [call[0] for call in task_service.calls] == [
+        "task_progress_percent",
+        "mark_benchmark_stage",
+        "persist_background_tasks",
+    ]
+    mark_call = task_service.calls[1]
+    assert mark_call[1:3] == (batch, "stopped")
+    assert mark_call[3] == {
+        "status": "failed",
+        "percent": 0.35,
+        "completed_roles": 1,
+        "role_count": 2,
+        "diagnostic": {"kind": "benchmark_stopped", "message": batch["error"]},
+    }
+
+
 def test_benchmark_facades_delegate_to_cached_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -297,9 +620,8 @@ def test_benchmark_facades_delegate_to_cached_service(
     instances: list[Any] = []
 
     class FakeBenchmarkService:
-        def __init__(self, store: Any, *, callables: dict[str, Any]) -> None:
+        def __init__(self, store: Any) -> None:
             self.store = store
-            self.callables = callables
             self.calls: list[tuple[Any, ...]] = []
             instances.append(self)
 
@@ -321,25 +643,14 @@ def test_benchmark_facades_delegate_to_cached_service(
                 }
             ]
 
-        def benchmark_batch_games(self, batch_id: str, **kwargs: Any) -> dict[str, Any]:
-            self.calls.append(("benchmark_batch_games", batch_id, kwargs))
-            return {"batch_id": batch_id, "kwargs": kwargs}
-
-    monkeypatch.setattr(ui_backend_store, "BENCHMARK_PUBLIC_METHODS", ("facade_probe",))
     monkeypatch.setattr(ui_backend_store, "BenchmarkService", FakeBenchmarkService)
     store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
-
-    def facade_probe() -> str:
-        return "probe"
-
-    store._facade_probe = facade_probe  # type: ignore[attr-defined]
 
     service = store.benchmark_service
 
     assert store.benchmark_service is service
     assert instances == [service]
     assert service.store is store
-    assert service.callables == {"facade_probe": facade_probe}
     assert store.leaderboard_entries(
         scope="role_version",
         evaluation_set_id="eval-1",
@@ -353,37 +664,189 @@ def test_benchmark_facades_delegate_to_cached_service(
             "limit": 3,
         }
     ]
-    assert store.benchmark_batch_games(
-        "batch-1",
-        result_batch_id="result-1",
-        target_role="seer",
-        status="completed",
-        seed="42",
-        limit=10,
-        offset=5,
-    ) == {
-        "batch_id": "batch-1",
-        "kwargs": {
-            "result_batch_id": "result-1",
-            "target_role": "seer",
-            "status": "completed",
-            "seed": "42",
-            "limit": 10,
-            "offset": 5,
-        },
-    }
     assert service.calls == [
         ("leaderboard_entries", "role_version", "eval-1", "seer", 3),
-        (
-            "benchmark_batch_games",
-            "batch-1",
+    ]
+
+
+def test_benchmark_snapshot_facades_delegate_to_snapshot_service(tmp_path: Path) -> None:
+    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    def recorder(name: str) -> Any:
+        def call(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            calls.append((name, args, kwargs))
+            return {"method": name, "args": list(args), "kwargs": kwargs}
+
+        return call
+
+    class FakeSnapshotService:
+        create_benchmark_snapshot = staticmethod(recorder("create_benchmark_snapshot"))
+        list_benchmark_snapshots = staticmethod(recorder("list_benchmark_snapshots"))
+        get_benchmark_snapshot = staticmethod(recorder("get_benchmark_snapshot"))
+        benchmark_snapshot_export = staticmethod(recorder("benchmark_snapshot_export"))
+        benchmark_snapshot_compare = staticmethod(recorder("benchmark_snapshot_compare"))
+        save_benchmark_view = staticmethod(recorder("save_benchmark_view"))
+        list_benchmark_views = staticmethod(recorder("list_benchmark_views"))
+        get_benchmark_view = staticmethod(recorder("get_benchmark_view"))
+        delete_benchmark_view = staticmethod(recorder("delete_benchmark_view"))
+
+    batch = {
+        "kind": "benchmark_batch",
+        "batch_id": "batch-1",
+        "status": "completed",
+        "target_type": "model",
+        "benchmark": {
+            "id": "bench-1",
+            "version": "v1",
+            "evaluation_set_id": "eval-1",
+            "seed_set_id": "seed-1",
+        },
+        "results": [
             {
-                "result_batch_id": "result-1",
+                "batch_id": "result-1",
+                "config": {
+                    "batch_id": "result-1",
+                    "comparison_type": "model",
+                    "benchmark_id": "bench-1",
+                    "evaluation_set_id": "eval-1",
+                    "seed_set_id": "seed-1",
+                    "model_id": "model-a",
+                    "model_config_hash": "hash-a",
+                },
+                "model_id": "model-a",
+                "model_config_hash": "hash-a",
+                "game_count": 1,
+                "completed": 1,
+                "rankable": True,
+                "games": [{"game_id": "game-1", "status": "completed", "seed": 1}],
+            }
+        ],
+    }
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path), evolution_batches={"batch-1": batch})
+    service = BenchmarkService(context)
+    service._snapshots = FakeSnapshotService()  # type: ignore[attr-defined]
+    snapshot_request = object()
+    view_request = object()
+
+    assert service.benchmark_batch_report("batch-1")["kind"] == "benchmark_run_report"
+    assert service.benchmark_reports(scope="model", status="completed", offset=3)["kind"] == "benchmark_run_reports"
+    assert service.create_benchmark_snapshot(snapshot_request)["method"] == "create_benchmark_snapshot"
+    assert service.list_benchmark_snapshots(benchmark_id="bench-1", target_role="seer")["method"] == "list_benchmark_snapshots"
+    assert service.get_benchmark_snapshot("snap-1")["method"] == "get_benchmark_snapshot"
+    assert service.benchmark_snapshot_export("snap-1", format="csv")["method"] == "benchmark_snapshot_export"
+    assert service.benchmark_snapshot_compare("snap-1", against_snapshot_id="snap-0", limit=7)["method"] == (
+        "benchmark_snapshot_compare"
+    )
+    assert service.save_benchmark_view(view_request)["method"] == "save_benchmark_view"
+    assert service.list_benchmark_views(view_key="default", limit=2)["method"] == "list_benchmark_views"
+    assert service.get_benchmark_view("default")["method"] == "get_benchmark_view"
+    assert service.delete_benchmark_view("default")["method"] == "delete_benchmark_view"
+
+    assert calls == [
+        ("create_benchmark_snapshot", (snapshot_request,), {}),
+        (
+            "list_benchmark_snapshots",
+            (),
+            {
+                "scope": None,
+                "evaluation_set_id": None,
+                "benchmark_id": "bench-1",
                 "target_role": "seer",
-                "status": "completed",
-                "seed": "42",
-                "limit": 10,
-                "offset": 5,
+                "limit": 50,
             },
         ),
+        ("get_benchmark_snapshot", ("snap-1",), {}),
+        ("benchmark_snapshot_export", ("snap-1",), {"format": "csv"}),
+        ("benchmark_snapshot_compare", ("snap-1",), {"against_snapshot_id": "snap-0", "limit": 7}),
+        ("save_benchmark_view", (view_request,), {}),
+        (
+            "list_benchmark_views",
+            (),
+            {
+                "scope": None,
+                "evaluation_set_id": None,
+                "benchmark_id": None,
+                "target_role": None,
+                "view_key": "default",
+                "limit": 2,
+            },
+        ),
+        ("get_benchmark_view", ("default",), {}),
+        ("delete_benchmark_view", ("default",), {}),
     ]
+
+
+def test_benchmark_snapshot_service_uses_minimal_context_protocol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened_paths: list[Any] = []
+    repository_calls: list[dict[str, Any]] = []
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    connections: list[FakeConnection] = []
+
+    def fake_open_eval_connection(paths: Any) -> FakeConnection:
+        opened_paths.append(paths)
+        connection = FakeConnection()
+        connections.append(connection)
+        return connection
+
+    class FakeSnapshotRepository:
+        def __init__(self, conn: FakeConnection) -> None:
+            assert conn is connections[-1]
+
+        def list(
+            self,
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            benchmark_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 50,
+        ) -> list[dict[str, Any]]:
+            repository_calls.append(
+                {
+                    "scope": scope,
+                    "evaluation_set_id": evaluation_set_id,
+                    "benchmark_id": benchmark_id,
+                    "target_role": target_role,
+                    "limit": limit,
+                }
+            )
+            return [{"snapshot_id": "snap-1"}]
+
+    monkeypatch.setattr("app.lib.score.open_eval_connection", fake_open_eval_connection)
+    monkeypatch.setattr(
+        "ui.backend.services.benchmark_snapshot_service.BenchmarkSnapshotRepository",
+        FakeSnapshotRepository,
+    )
+
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path))
+    service = BenchmarkSnapshotService(context)
+    rows = service.load_benchmark_snapshot_summaries(
+        scope="role_version",
+        evaluation_set_id="suite@v1",
+        benchmark_id="bench-1",
+        target_role="seer",
+        limit=3,
+    )
+
+    assert rows == [{"snapshot_id": "snap-1"}]
+    assert opened_paths == [context.paths]
+    assert repository_calls == [
+        {
+            "scope": "role_version",
+            "evaluation_set_id": "suite@v1",
+            "benchmark_id": "bench-1",
+            "target_role": "seer",
+            "limit": 3,
+        }
+    ]
+    assert connections and connections[0].closed is True

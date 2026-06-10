@@ -4,17 +4,15 @@ Facade: re-exports the active storage modules and shared data interfaces.
 """
 
 from storage.game_store import GameStore
-from storage.game_event_store import GameEventStore
 from storage.decision_store import DecisionStore
 from storage.version_store import VersionStoreDB
 from storage.evolution.run_repo import EvolutionStore
 from storage.evolution.experience_repo import ExperienceCandidateStore
-from storage.leaderboard_store import LeaderboardStore
 from storage.evaluation_store import EvaluationStore
 from storage.review_store import CounterfactualStore, DecisionReviewStore
 from storage.replay import read_decisions_for_artifact, read_events_for_artifact
 from storage.run_policy import LeaderboardScope, RunPolicy, RunType, policy_for_run_type
-from storage.runtime import GamePersistence, open_storage_connection
+from storage.runtime import GamePersistence
 from storage.provider import (
     PostgresStorageProvider,
     StorageProvider,
@@ -48,11 +46,9 @@ from storage.evolution.rejected_repo import RejectedProposalStore
 __all__ = [
     # Core
     "GameStore",
-    "GameEventStore",
     "DecisionStore",
     "VersionStoreDB",
     "EvolutionStore",
-    "LeaderboardStore",
     "ExperienceCandidateStore",
     "LeaderboardScope",
     "RunPolicy",
@@ -61,7 +57,6 @@ __all__ = [
     "read_decisions_for_artifact",
     "read_events_for_artifact",
     "GamePersistence",
-    "open_storage_connection",
     "PostgresStorageProvider",
     "StorageProvider",
     "storage_provider_from_env",

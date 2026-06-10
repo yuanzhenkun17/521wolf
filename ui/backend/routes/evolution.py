@@ -2,38 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Query, Request
 from fastapi.responses import StreamingResponse
 
-from app.util.time import beijing_now_iso
-from ui.backend.constants import MANUAL_STOP_REASON
-from ui.backend.evolution_actions import (
-    _promote_evolution_run,
-    _reject_evolution_run,
-)
 from ui.backend.schemas import (
     EvolutionActionRequest,
     EvolutionProposalRejectRequest,
     EvolutionStartRequest,
     automatic_evolution_request,
 )
-from ui.backend.serializers import (
-    _evolution_batch_summary,
-    _evolution_run_summary,
-    _evolution_sse_event,
-)
 from ui.backend.services import EvolutionService
-from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import (
     _history_query_requested,
     _last_event_id_from_request,
-    _set_task_contract,
 )
-
-_TERMINAL_SSE_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
-_TERMINAL_TASK_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
 
 
 def register_evolution_routes(api: FastAPI, store: Any) -> None:
@@ -71,43 +55,7 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
 
     @api.post("/api/evolution-runs/{run_id}/actions")
     def evolution_action(run_id: str, request: EvolutionActionRequest) -> dict[str, Any]:
-        entity = store.evolution_runs.get(run_id) or store.evolution_batches.get(run_id)
-        if entity is None:
-            raise HTTPException(status_code=404, detail="run not found")
-        action = request.action.lower()
-        if action == "promote":
-            if "role" not in entity:
-                raise HTTPException(status_code=400, detail="batch does not support promote; select a child run")
-            _promote_evolution_run(store, entity)
-            entity["status"] = "promoted"
-        elif action == "reject":
-            if "role" not in entity:
-                raise HTTPException(status_code=400, detail="batch does not support reject; select a child run")
-            _reject_evolution_run(store, entity)
-            entity["status"] = "rejected"
-        elif action in {"stop", "terminate"}:
-            if hasattr(store, "_mark_evolution_stopped"):
-                store._mark_evolution_stopped(entity)
-                if entity.get("kind") == "role_evolution_batch":
-                    for child_id in list(entity.get("runs", []) or []):
-                        child = store.evolution_runs.get(str(child_id))
-                        if child is None:
-                            continue
-                        if str(child.get("status") or "").lower() not in _TERMINAL_TASK_STATUSES:
-                            store._mark_evolution_stopped(child)
-                    store._refresh_evolution_batch(entity.get("batch_id"))
-            else:
-                entity["status"] = "failed"
-                entity["error"] = entity.get("error") or MANUAL_STOP_REASON
-                _set_task_contract(entity, stop_requested=True, cancelled=True, interrupted=False, failed=False)
-        elif action == "resume":
-            entity["status"] = "reviewing"
-            _set_task_contract(entity, stop_requested=False, cancelled=False, interrupted=False, failed=False)
-        store._touch_background_task(entity)
-        if entity.get("status") in {"failed", "promoted", "rejected", "reviewing"}:
-            entity["finished_at"] = entity.get("finished_at") or beijing_now_iso()
-        store._persist_background_tasks()
-        return entity
+        return service.run_action(run_id, request.action)
 
     @api.get("/api/evolution-runs/{run_id}/proposals")
     def evolution_proposals(run_id: str) -> dict[str, Any]:
@@ -169,34 +117,6 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
 
     @api.get("/api/evolution-runs/{run_id}/events")
     def evolution_events(run_id: str, request: Request) -> StreamingResponse:
-        entity = store.evolution_runs.get(run_id) or store.evolution_batches.get(run_id)
-        if entity is None:
-            raise HTTPException(status_code=404, detail="run not found")
         last_event_id = _last_event_id_from_request(request)
-
-        async def stream() -> AsyncIterator[str]:
-            if task_event_log_matches_entity(
-                store.task_event_log,
-                run_id,
-                entity,
-                terminal_statuses=_TERMINAL_SSE_STATUSES,
-            ):
-                async for frame in stream_task_event_log_sse(
-                    store.task_event_log,
-                    run_id,
-                    after_event_id=last_event_id,
-                    ping_payload=lambda: {"run_id": run_id, "status": entity.get("status")},
-                    event_name=lambda item: str(item.get("event") or _evolution_sse_event(item.get("status"))),
-                    terminal_statuses=_TERMINAL_SSE_STATUSES,
-                ):
-                    yield frame
-                return
-            payload = (
-                _evolution_run_summary(entity)
-                if entity.get("run_id")
-                else _evolution_batch_summary(entity)
-            )
-            if last_event_id < 1:
-                yield _sse(_evolution_sse_event(entity.get("status")), payload, event_id=1)
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        stream = service.stream_events(run_id, last_event_id)
+        return StreamingResponse(stream, media_type="text/event-stream")

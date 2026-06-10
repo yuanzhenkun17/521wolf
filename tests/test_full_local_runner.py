@@ -3,8 +3,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from app.tools import run_full_local_samples as runner
-from app.tools.run_full_local_samples import (
+from tools.research import run_full_local_samples as runner
+from tools.research.run_full_local_samples import (
     RuntimeSettings,
     _agent_runtime_config_from_args,
     _benchmark_completed,

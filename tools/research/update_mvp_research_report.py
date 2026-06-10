@@ -11,11 +11,11 @@ from dotenv import load_dotenv
 
 from app.config import DEFAULT_PATHS, LLM_ENV_PATH
 from app.lib.benchmark_spec import load_benchmark_spec, materialize_benchmark_spec
-from app.tools.full_local_evidence_snapshot import collect_snapshot
-from app.tools.run_full_local_samples import DEFAULT_BENCHMARK_ID, DEFAULT_OUTPUT_DIR
 from app.util.json import to_jsonable, write_json
 from app.util.redaction import redact
 from app.util.time import beijing_now_iso
+from tools.research.full_local_evidence_snapshot import collect_snapshot
+from tools.research.run_full_local_samples import DEFAULT_BENCHMARK_ID, DEFAULT_OUTPUT_DIR
 from ui.backend.constants import ROLE_ORDER
 
 
@@ -265,7 +265,7 @@ def render_report(
         "",
         "本轮代码验证：",
         "",
-        "- `uv run python -m py_compile app/tools/run_full_local_samples.py ui/backend/store.py app/tools/update_mvp_research_report.py`",
+        "- `uv run python -m py_compile tools/research/run_full_local_samples.py ui/backend/store.py tools/research/update_mvp_research_report.py`",
         "- `uv run pytest tests/test_full_local_runner.py -q`",
         "",
         "运行证据验证：",
