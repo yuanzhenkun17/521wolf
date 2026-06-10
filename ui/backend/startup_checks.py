@@ -21,6 +21,7 @@ _log = logging.getLogger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MIGRATIONS_DIR = _PROJECT_ROOT / "migrations" / "versions"
 _DEFAULT_STATUS = "unknown"
+_STARTUP_CHECK_CONNECT_KWARGS = {"connect_timeout": 3}
 
 
 def default_startup_checks() -> dict[str, Any]:
@@ -91,8 +92,12 @@ def log_startup_checks(result: dict[str, Any]) -> None:
 def _check_postgresql(store: Any) -> dict[str, Any]:
     conn = None
     try:
-        provider = _storage_provider(store)
-        conn = provider.open_wolf_connection()
+        from storage.provider import open_wolf_connection
+
+        conn = open_wolf_connection(
+            paths=getattr(store, "paths", None),
+            connect_kwargs=_STARTUP_CHECK_CONNECT_KWARGS,
+        )
         conn.execute("SELECT 1 AS ok").fetchone()
         conn.commit()
         return {
@@ -131,8 +136,12 @@ def _check_alembic(store: Any) -> dict[str, Any]:
 
     conn = None
     try:
-        provider = _storage_provider(store)
-        conn = provider.open_wolf_connection()
+        from storage.provider import open_wolf_connection
+
+        conn = open_wolf_connection(
+            paths=getattr(store, "paths", None),
+            connect_kwargs=_STARTUP_CHECK_CONNECT_KWARGS,
+        )
         rows = conn.execute(
             "SELECT version_num FROM public.alembic_version ORDER BY version_num"
         ).fetchall()
@@ -260,28 +269,20 @@ def _check_llm(store: Any) -> dict[str, Any]:
     }
 
 
-def _storage_provider(store: Any) -> Any:
-    from storage.provider import PostgresStorageProvider, storage_provider_from_env
-
-    provider = storage_provider_from_env(paths=getattr(store, "paths", None))
-    if isinstance(provider, PostgresStorageProvider) and not provider.connect_kwargs:
-        return PostgresStorageProvider(
-            provider.conninfo,
-            connect_kwargs={"connect_timeout": 3},
-        )
-    return provider
-
-
 def _registry_for_check(store: Any) -> tuple[Any, bool]:
     existing = getattr(store, "_registry", None)
     if existing is not None:
         return existing, False
 
     from app.lib.version import PostgresVersionRegistry
+    from storage.provider import open_registry_connection
 
     registry_dir = getattr(getattr(store, "paths", None), "registry_dir", None)
     registry = PostgresVersionRegistry(
-        _storage_provider(store).open_registry_connection(),
+        open_registry_connection(
+            paths=getattr(store, "paths", None),
+            connect_kwargs=_STARTUP_CHECK_CONNECT_KWARGS,
+        ),
         registry_dir=Path(registry_dir) if registry_dir is not None else _PROJECT_ROOT / "data" / "registry",
         owns_conn=True,
     )

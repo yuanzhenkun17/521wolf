@@ -59,39 +59,64 @@ def open_wolf_connection(
     provider: StorageProvider | None = None,
     *,
     paths: Any | None = None,
+    connect_kwargs: dict[str, Any] | None = None,
 ) -> StorageConnection:
     """Open a wolf-domain storage connection through the active provider."""
     if provider is not None:
         return provider.open_wolf_connection()
-    if paths is None:
-        return storage_provider_from_env().open_wolf_connection()
-    return storage_provider_from_env(paths=paths).open_wolf_connection()
+    return _provider_from_env(paths=paths, connect_kwargs=connect_kwargs).open_wolf_connection()
 
 
 def open_registry_connection(
     provider: StorageProvider | None = None,
     *,
     paths: Any | None = None,
+    connect_kwargs: dict[str, Any] | None = None,
 ) -> StorageConnection:
     """Open a registry-domain storage connection through the active provider."""
     if provider is not None:
         return provider.open_registry_connection()
-    if paths is None:
-        return storage_provider_from_env().open_registry_connection()
-    return storage_provider_from_env(paths=paths).open_registry_connection()
+    return _provider_from_env(paths=paths, connect_kwargs=connect_kwargs).open_registry_connection()
 
 
 def open_evolution_connection(
     provider: StorageProvider | None = None,
     *,
     paths: Any | None = None,
+    connect_kwargs: dict[str, Any] | None = None,
 ) -> StorageConnection:
     """Open an evolution-domain storage connection through the active provider."""
     if provider is not None:
         return provider.open_evolution_connection()
+    return _provider_from_env(paths=paths, connect_kwargs=connect_kwargs).open_evolution_connection()
+
+
+def _provider_from_env(
+    *,
+    paths: Any | None = None,
+    connect_kwargs: dict[str, Any] | None = None,
+) -> StorageProvider:
     if paths is None:
-        return storage_provider_from_env().open_evolution_connection()
-    return storage_provider_from_env(paths=paths).open_evolution_connection()
+        provider = storage_provider_from_env()
+    else:
+        provider = storage_provider_from_env(paths=paths)
+    return _with_connect_kwargs(provider, connect_kwargs)
+
+
+def _with_connect_kwargs(
+    provider: StorageProvider,
+    connect_kwargs: dict[str, Any] | None,
+) -> StorageProvider:
+    if not connect_kwargs:
+        return provider
+    if not isinstance(provider, PostgresStorageProvider):
+        return provider
+    if provider.connect_kwargs:
+        return provider
+    return PostgresStorageProvider(
+        provider.conninfo,
+        connect_kwargs=dict(connect_kwargs),
+    )
 
 
 __all__ = [

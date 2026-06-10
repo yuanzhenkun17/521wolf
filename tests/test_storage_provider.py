@@ -236,6 +236,258 @@ def test_domain_connection_helpers_forward_paths(
     assert seen_paths == [paths]
 
 
+@pytest.mark.parametrize(
+    ("helper_name", "factory_name"),
+    [
+        ("open_wolf_connection", "get_wolf_postgres_connection"),
+        ("open_registry_connection", "get_registry_postgres_connection"),
+        ("open_evolution_connection", "get_evolution_postgres_connection"),
+    ],
+)
+def test_domain_connection_helpers_apply_connect_kwargs_to_env_postgres_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    helper_name: str,
+    factory_name: str,
+) -> None:
+    import storage.postgres
+    import storage.provider
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def factory(conninfo: str | None = None, **kwargs: Any) -> _FakeConn:
+        calls.append((conninfo or "", kwargs))
+        return _FakeConn()
+
+    monkeypatch.setattr(storage.postgres, factory_name, factory)
+    monkeypatch.setattr(
+        storage.provider,
+        "storage_provider_from_env",
+        lambda: PostgresStorageProvider("postgresql://app@example/db"),
+    )
+    helper = getattr(storage.provider, helper_name)
+
+    conn = helper(connect_kwargs={"connect_timeout": 3})
+
+    assert isinstance(conn, _FakeConn)
+    assert calls == [
+        ("postgresql://app@example/db", {"connect_timeout": 3}),
+    ]
+
+
+def test_domain_connection_helpers_do_not_override_existing_connect_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import storage.postgres
+    import storage.provider
+
+    calls: list[dict[str, Any]] = []
+
+    def factory(conninfo: str | None = None, **kwargs: Any) -> _FakeConn:
+        calls.append(kwargs)
+        return _FakeConn()
+
+    monkeypatch.setattr(storage.postgres, "get_wolf_postgres_connection", factory)
+    monkeypatch.setattr(
+        storage.provider,
+        "storage_provider_from_env",
+        lambda: PostgresStorageProvider(
+            "postgresql://app@example/db",
+            connect_kwargs={"application_name": "existing"},
+        ),
+    )
+
+    conn = storage.provider.open_wolf_connection(connect_kwargs={"connect_timeout": 3})
+
+    assert isinstance(conn, _FakeConn)
+    assert calls == [{"application_name": "existing"}]
+
+
+@pytest.mark.parametrize(
+    ("helper_name", "domain"),
+    [
+        ("open_wolf_connection", "wolf"),
+        ("open_registry_connection", "registry"),
+        ("open_evolution_connection", "evolution"),
+    ],
+)
+def test_domain_connection_helpers_keep_fake_provider_with_connect_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+    helper_name: str,
+    domain: str,
+) -> None:
+    class _FakeProvider:
+        def __init__(self) -> None:
+            self.wolf_conn = _FakeConn()
+            self.registry_conn = _FakeConn()
+            self.evolution_conn = _FakeConn()
+
+        def open_wolf_connection(self) -> _FakeConn:
+            return self.wolf_conn
+
+        def open_registry_connection(self) -> _FakeConn:
+            return self.registry_conn
+
+        def open_evolution_connection(self) -> _FakeConn:
+            return self.evolution_conn
+
+    provider = _FakeProvider()
+    seen_paths: list[Any] = []
+
+    def provider_from_env(*, paths: Any | None = None) -> _FakeProvider:
+        seen_paths.append(paths)
+        return provider
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", provider_from_env)
+    helper = getattr(storage.provider, helper_name)
+    paths = SimpleNamespace(root="ignored")
+
+    conn = helper(paths=paths, connect_kwargs={"connect_timeout": 3})
+
+    assert conn is getattr(provider, f"{domain}_conn")
+    assert seen_paths == [paths]
+
+
+def test_startup_postgresql_check_uses_short_connect_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ui.backend.startup_checks import _check_postgresql
+
+    class _Cursor:
+        def fetchone(self) -> dict[str, int]:
+            return {"ok": 1}
+
+    class _Conn(_FakeConn):
+        def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
+            return _Cursor()
+
+    import storage.postgres
+    import storage.provider
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+    seen_paths: list[Any] = []
+    conn = _Conn()
+
+    def factory(conninfo: str | None = None, **kwargs: Any) -> _Conn:
+        calls.append((conninfo or "", kwargs))
+        return conn
+
+    def provider_from_env(*, paths: Any | None = None) -> PostgresStorageProvider:
+        seen_paths.append(paths)
+        return PostgresStorageProvider("postgresql://app@example/db")
+
+    monkeypatch.setattr(storage.postgres, "get_wolf_postgres_connection", factory)
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", provider_from_env)
+    paths = SimpleNamespace(root="ignored")
+
+    result = _check_postgresql(SimpleNamespace(paths=paths))
+
+    assert result["status"] == "ok"
+    assert calls == [
+        ("postgresql://app@example/db", {"connect_timeout": 3}),
+    ]
+    assert seen_paths == [paths]
+    assert conn.commits == 1
+    assert conn.closed is True
+
+
+def test_startup_alembic_check_uses_short_connect_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ui.backend.startup_checks as startup_checks
+
+    class _Cursor:
+        def fetchall(self) -> list[dict[str, str]]:
+            return [{"version_num": "head_1"}]
+
+    class _Conn(_FakeConn):
+        def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
+            return _Cursor()
+
+    import storage.postgres
+    import storage.provider
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+    seen_paths: list[Any] = []
+    conn = _Conn()
+
+    def factory(conninfo: str | None = None, **kwargs: Any) -> _Conn:
+        calls.append((conninfo or "", kwargs))
+        return conn
+
+    def provider_from_env(*, paths: Any | None = None) -> PostgresStorageProvider:
+        seen_paths.append(paths)
+        return PostgresStorageProvider("postgresql://app@example/db")
+
+    monkeypatch.setattr(startup_checks, "_migration_heads", lambda: ["head_1"])
+    monkeypatch.setattr(storage.postgres, "get_wolf_postgres_connection", factory)
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", provider_from_env)
+    paths = SimpleNamespace(root="ignored")
+
+    result = startup_checks._check_alembic(SimpleNamespace(paths=paths))
+
+    assert result["status"] == "ok"
+    assert calls == [
+        ("postgresql://app@example/db", {"connect_timeout": 3}),
+    ]
+    assert seen_paths == [paths]
+    assert conn.commits == 1
+    assert conn.closed is True
+
+
+def test_startup_registry_check_uses_short_connect_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from ui.backend.startup_checks import _registry_for_check
+
+    class _Registry:
+        def __init__(
+            self,
+            conn: _FakeConn,
+            *,
+            registry_dir: Any,
+            owns_conn: bool,
+        ) -> None:
+            self.conn = conn
+            self.registry_dir = registry_dir
+            self.owns_conn = owns_conn
+
+    import app.lib.version
+    import storage.postgres
+    import storage.provider
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+    seen_paths: list[Any] = []
+    conn = _FakeConn()
+
+    def factory(conninfo: str | None = None, **kwargs: Any) -> _FakeConn:
+        calls.append((conninfo or "", kwargs))
+        return conn
+
+    def provider_from_env(*, paths: Any | None = None) -> PostgresStorageProvider:
+        seen_paths.append(paths)
+        return PostgresStorageProvider("postgresql://app@example/db")
+
+    monkeypatch.setattr(app.lib.version, "PostgresVersionRegistry", _Registry)
+    monkeypatch.setattr(storage.postgres, "get_registry_postgres_connection", factory)
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", provider_from_env)
+    paths = SimpleNamespace(registry_dir=tmp_path / "registry")
+
+    registry, owns_registry = _registry_for_check(SimpleNamespace(paths=paths))
+
+    assert isinstance(registry, _Registry)
+    assert owns_registry is True
+    assert registry.conn is conn
+    assert registry.registry_dir == tmp_path / "registry"
+    assert registry.owns_conn is True
+    assert calls == [
+        ("postgresql://app@example/db", {"connect_timeout": 3}),
+    ]
+    assert seen_paths == [paths]
+
+
 def test_game_run_service_uses_postgres_provider_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
