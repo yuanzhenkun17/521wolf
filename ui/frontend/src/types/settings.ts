@@ -30,6 +30,29 @@ export interface ModelProfile {
   model_config_hash?: string
 }
 
+export interface SettingsOpsAlert {
+  code?: string
+  severity?: 'ok' | 'degraded' | 'error' | string
+  message?: string
+}
+
+export interface SettingsOpsMetrics {
+  kind?: string
+  schema_version?: number
+  generated_at?: string
+  status?: string
+  ready?: boolean
+  summary?: string
+  metrics?: Record<string, unknown>
+  checks?: Record<string, unknown>
+  tasks?: Record<string, unknown>
+  runtime?: Record<string, unknown>
+  llm?: Record<string, unknown>
+  integrations?: Record<string, unknown>
+  alerts?: SettingsOpsAlert[]
+  [key: string]: unknown
+}
+
 export interface SettingsAdminState {
   enabled: boolean
   token_configured: boolean
@@ -83,6 +106,7 @@ export interface SettingsModelProfilesResponse {
   variables: SettingsVariable[]
   storage?: Record<string, SettingsStorageState>
   health: Record<string, unknown>
+  ops_metrics?: SettingsOpsMetrics
 }
 
 export interface ModelProfilePayload {

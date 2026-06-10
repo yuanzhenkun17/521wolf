@@ -1523,6 +1523,8 @@ def test_settings_model_profiles_are_read_only_without_admin(tmp_path: Path, mon
     assert payload["admin"]["write_available"] is False
     assert payload["admin"]["storage"]["model_profiles"]["reason"] == "missing_table"
     assert payload["health"]["schema_version"] == 2
+    assert payload["ops_metrics"]["kind"] == "ops_metrics"
+    assert "alerts" in payload["ops_metrics"]
 
     assert create_response.status_code == 403
     assert create_response.json()["error"]["code"] == "settings_admin_disabled"
@@ -1875,6 +1877,11 @@ def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
     payload_worker_var = next(item for item in payload_vars if item["key"] == "TASK_WORKER_REQUIRED")
     assert payload_worker_var["value"] == "true"
     assert payload_worker_var["source"] == "settings"
+    ops_metrics = settings_response.json()["ops_metrics"]
+    assert ops_metrics["kind"] == "ops_metrics"
+    assert ops_metrics["metrics"]["health_gate_blocked_count"] >= 1
+    assert any(alert["code"] == "health_not_ready" for alert in ops_metrics["alerts"])
+    assert any(alert["code"] == "task_worker.not_fresh" for alert in ops_metrics["alerts"])
 
     monkeypatch.setenv("TASK_WORKER_REQUIRED", "false")
     with _test_client(tmp_path) as client:

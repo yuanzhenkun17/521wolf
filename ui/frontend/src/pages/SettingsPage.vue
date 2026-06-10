@@ -2,10 +2,24 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { createSettingsService } from '../services/settingsApi'
 import type { RuntimeHealthProbeResult } from '../types/health'
-import type { ModelProfile, ModelProfilePayload, SettingsAdminState, SettingsModelProfilesResponse, SettingsStorageState, SettingsVariable } from '../types/settings'
+import type { ModelProfile, ModelProfilePayload, SettingsAdminState, SettingsModelProfilesResponse, SettingsOpsAlert, SettingsOpsMetrics, SettingsStorageState, SettingsVariable } from '../types/settings'
 
 type SettingsGroupKey = 'models' | 'variables' | 'benchmark' | 'evolution' | 'langfuse' | 'tts' | 'system'
 type IntegrationDetailRow = {
+  key: string
+  label: string
+  value: string
+  detail: string
+  severity: 'ok' | 'warning' | 'error' | 'unknown'
+}
+type OpsAlertRow = {
+  key: string
+  code: string
+  label: string
+  detail: string
+  severity: 'ok' | 'warning' | 'error' | 'unknown'
+}
+type OpsMetricRow = {
   key: string
   label: string
   value: string
@@ -79,6 +93,7 @@ const DEFAULT_FORM = {
 const settingsService = createSettingsService()
 const profiles = ref<ModelProfile[]>([])
 const health = ref<Record<string, any>>({})
+const opsMetrics = ref<SettingsOpsMetrics>({})
 const admin = ref<SettingsAdminState>({ enabled: false, token_configured: false, write_available: false, storage: {} })
 const scopes = ref<Array<{ key: string; label: string }>>([])
 const providers = ref<string[]>(['openai_compatible', 'custom'])
@@ -190,6 +205,11 @@ const gateRows = computed(() => {
     }
   })
 })
+const opsAlertRows = computed<OpsAlertRow[]>(() =>
+  textAlertRows(Array.isArray(opsMetrics.value.alerts) ? opsMetrics.value.alerts : [])
+)
+const opsBlockingAlertRows = computed(() => opsAlertRows.value.filter((alert) => alert.severity === 'error'))
+const opsMetricRows = computed<OpsMetricRow[]>(() => buildOpsMetricRows(opsMetrics.value))
 const profileBlockingIssues = computed(() => {
   const issues: string[] = []
   if (!form.name.trim()) issues.push('填写 Profile 名称。')
@@ -233,6 +253,7 @@ const settingsMetaRows = computed(() => [
   { key: 'profiles', label: '模型', value: profiles.value.length || '0' },
   { key: 'enabled', label: '启用', value: enabledProfiles.value.length || '0' },
   { key: 'storage', label: '存储', value: blockedStorageRows.value.length ? '只读' : '可写' },
+  { key: 'alerts', label: '告警', value: opsAlertRows.value.length || '0' },
   { key: 'ready', label: 'API', value: healthReady.value ? statusLabel(healthStatus.value) : '未就绪' },
   { key: 'selected', label: '选中', value: selectedProfile.value?.name || '新建' }
 ])
@@ -245,6 +266,13 @@ const settingsGuidanceRows = computed(() => {
   const blockedGates = gateRows.value.filter((gate) => !gate.ready)
   if (blockedGates.length) {
     rows.push(`${blockedGates.map((gate) => gate.label).join('、')} 已阻断：${blockedGates.map((gate) => gate.summary).join('；')}。`)
+  }
+  if (opsBlockingAlertRows.value.length) {
+    rows.push(`运行告警阻断：${opsBlockingAlertRows.value.map((alert) => alert.label).join('、')}。`)
+  }
+  const degradedAlerts = opsAlertRows.value.filter((alert) => alert.severity === 'warning')
+  if (degradedAlerts.length) {
+    rows.push(`运行降级：${degradedAlerts.map((alert) => alert.label).slice(0, 2).join('、')}。`)
   }
   const activeProfile = selectedProfile.value
   if (activeProfile && ['error', 'stale', 'untested'].includes(String(activeProfile.last_test_status || 'untested'))) {
@@ -318,6 +346,7 @@ function applySettings(payload: SettingsModelProfilesResponse) {
   scopes.value = Array.isArray(payload.scopes) ? payload.scopes : []
   providers.value = Array.isArray(payload.providers) && payload.providers.length ? payload.providers : providers.value
   variables.value = Array.isArray(payload.variables) ? payload.variables : []
+  opsMetrics.value = payload.ops_metrics || {}
   syncVariableDrafts(variables.value)
   envLocks.value = payload.env_locks || {}
   if (selectedProfileId.value && profiles.value.some((profile) => profile.profile_id === selectedProfileId.value)) {
@@ -785,6 +814,133 @@ function ttsDetailRows(raw: Record<string, any>): IntegrationDetailRow[] {
   ]
 }
 
+function textAlertRows(alerts: SettingsOpsAlert[]): OpsAlertRow[] {
+  return alerts.map((alert, index) => {
+    const code = String(alert.code || `alert_${index}`)
+    const severity = opsAlertSeverity(alert.severity)
+    return {
+      key: `${code}-${index}`,
+      code,
+      label: opsAlertLabel(code),
+      detail: opsAlertDetail(alert),
+      severity
+    }
+  })
+}
+
+function buildOpsMetricRows(payload: SettingsOpsMetrics): OpsMetricRow[] {
+  if (!payload.kind && !payload.metrics && !payload.tasks) return []
+  const metrics = recordObject(payload.metrics)
+  const tasks = recordObject(payload.tasks)
+  const runtime = recordObject(payload.runtime)
+  const integrations = recordObject(payload.integrations)
+  const langfuse = recordObject(integrations.langfuse)
+  const queueCounts = recordObject(tasks.queue_status_counts)
+  const healthReady = payload.ready !== false
+  const blockedGateCount = safeNumber(metrics.health_gate_blocked_count)
+  const staleTaskCount = safeNumber(tasks.stale_running_count)
+  const workerFresh = tasks.worker_fresh === true
+  const artifactWritable = tasks.artifact_root_writable === true
+  const activeGames = safeNumber(runtime.live_game_active_count)
+  const activeBackground = safeNumber(runtime.background_active_count)
+  const queued = safeNumber(queueCounts.queued)
+  const running = safeNumber(queueCounts.running)
+  const failed = safeNumber(queueCounts.failed)
+  const interrupted = safeNumber(queueCounts.interrupted)
+
+  return [
+    {
+      key: 'health_ready',
+      label: 'API 就绪',
+      value: healthReady ? '就绪' : '未就绪',
+      detail: String(payload.summary || statusLabel(payload.status)),
+      severity: healthReady ? statusSeverity(payload.status) : 'error'
+    },
+    {
+      key: 'gates',
+      label: '启动门禁',
+      value: blockedGateCount ? `${blockedGateCount} 个阻断` : '全部通过',
+      detail: blockedGateCount ? '至少一个启动入口被运行门禁阻断。' : '开始游戏、评测、进化门禁没有阻断项。',
+      severity: blockedGateCount ? 'error' : 'ok'
+    },
+    {
+      key: 'task_queue',
+      label: '任务队列',
+      value: `排队 ${queued} / 运行 ${running}`,
+      detail: `失败 ${failed}，中断 ${interrupted}，陈旧运行 ${staleTaskCount}。`,
+      severity: staleTaskCount > 0 ? 'error' : (failed + interrupted > 0 ? 'warning' : 'ok')
+    },
+    {
+      key: 'task_worker',
+      label: 'Task worker',
+      value: workerFresh ? '心跳正常' : '心跳异常',
+      detail: `已注册 worker ${safeNumber(tasks.worker_count)} 个。`,
+      severity: workerFresh ? 'ok' : 'error'
+    },
+    {
+      key: 'artifact_root',
+      label: '产物写入',
+      value: artifactWritable ? '可写' : '不可写',
+      detail: artifactWritable ? '任务报告和产物可以落盘。' : 'Benchmark/Evolution 产物可能无法保存。',
+      severity: artifactWritable ? 'ok' : 'error'
+    },
+    {
+      key: 'runtime',
+      label: '运行中任务',
+      value: `游戏 ${activeGames} / 后台 ${activeBackground}`,
+      detail: '用于判断当前系统是否有进行中的游戏、Benchmark 或 Evolution。',
+      severity: activeBackground > 0 || activeGames > 0 ? 'warning' : 'ok'
+    },
+    {
+      key: 'langfuse',
+      label: 'Langfuse',
+      value: langfuse.enabled ? '已启用' : '未启用',
+      detail: langfuse.enabled && langfuse.capture_input_output === false
+        ? 'Input/Output 捕获关闭，Langfuse 会显示空输入输出。'
+        : `状态：${statusLabel(langfuse.status)}`,
+      severity: langfuse.enabled && langfuse.capture_input_output === false ? 'warning' : statusSeverity(langfuse.status)
+    }
+  ]
+}
+
+function opsAlertSeverity(severity: unknown): OpsAlertRow['severity'] {
+  const text = String(severity || '').toLowerCase()
+  if (text === 'error') return 'error'
+  if (text === 'degraded' || text === 'warning') return 'warning'
+  if (text === 'ok') return 'ok'
+  return 'unknown'
+}
+
+function opsAlertLabel(code: string): string {
+  if (code === 'health_not_ready') return 'API 未就绪'
+  if (code.startsWith('gate_blocked.')) return `${gateLabel(code.replace('gate_blocked.', ''))} 被阻断`
+  if (code === 'task_queue.stale_running') return '任务队列有陈旧运行项'
+  if (code === 'task_worker.not_fresh') return 'Task worker 心跳异常'
+  if (code === 'artifact_root.not_writable') return '产物目录不可写'
+  if (code === 'langfuse.config_error') return 'Langfuse 配置错误'
+  if (code === 'langfuse.capture_input_output_disabled') return 'Langfuse 输入/输出捕获关闭'
+  return code
+}
+
+function opsAlertDetail(alert: SettingsOpsAlert): string {
+  const code = String(alert.code || '')
+  const message = String(alert.message || '').trim()
+  if (code === 'health_not_ready') return '部署或入口检查不能只看进程存活，需要先恢复 health ready。'
+  if (code === 'task_worker.not_fresh') return '启动 worker 服务并等待心跳刷新，Benchmark/Evolution 会因此被阻断。'
+  if (code === 'artifact_root.not_writable') return '检查任务产物目录权限，避免报告和回放产物写入失败。'
+  if (code === 'langfuse.capture_input_output_disabled') return '设置 LANGFUSE_CAPTURE_INPUT_OUTPUT=true 并重启后，Langfuse 才会显示 Input/Output。'
+  return message || '查看 health checks 和运行门禁获取恢复路径。'
+}
+
+function recordObject(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {}
+}
+
+function safeNumber(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 function statusSeverity(status: unknown): IntegrationDetailRow['severity'] {
   const text = String(status || '').toLowerCase()
   if (text === 'ok') return 'ok'
@@ -1241,6 +1397,25 @@ function shortId(value: unknown): string {
                 </div>
                 <b>{{ healthReady ? 'ready' : 'not ready' }}</b>
               </header>
+              <div class="settings-ops-grid" aria-label="运行快照">
+                <div v-for="item in opsMetricRows" :key="item.key" class="settings-ops-row" :data-status="item.severity">
+                  <span>
+                    <b>{{ item.label }}</b>
+                    <small>{{ item.detail }}</small>
+                  </span>
+                  <em>{{ item.value }}</em>
+                </div>
+              </div>
+              <div v-if="opsAlertRows.length" class="settings-alert-grid" aria-label="运行告警">
+                <div v-for="alert in opsAlertRows" :key="alert.key" class="settings-alert-row" :data-status="alert.severity">
+                  <span>
+                    <b>{{ alert.label }}</b>
+                    <small>{{ alert.detail }}</small>
+                  </span>
+                  <em>{{ alert.severity === 'error' ? '阻断' : '降级' }}</em>
+                </div>
+              </div>
+              <div v-else class="settings-context-empty">暂无运行告警。</div>
               <div class="settings-health-grid settings-health-grid--system">
                 <div v-for="item in healthChecks" :key="item.key" class="settings-health-row">
                   <span>
@@ -1330,6 +1505,12 @@ function shortId(value: unknown): string {
 
           <section class="settings-context-section settings-gate-panel">
             <h3>运行门禁</h3>
+            <div v-if="opsAlertRows.length" class="settings-alert-list" aria-label="运行告警摘要">
+              <span v-for="alert in opsAlertRows.slice(0, 3)" :key="alert.key" :data-status="alert.severity">
+                <b>{{ alert.label }}</b>
+                <small>{{ alert.detail }}</small>
+              </span>
+            </div>
             <div class="settings-gate-list">
               <span v-for="gate in gateRows" :key="gate.key" :data-status="gate.severity">
                 <b>{{ gate.label }}</b>
@@ -2113,6 +2294,18 @@ function shortId(value: unknown): string {
   gap: 8px;
 }
 
+.settings-ops-grid,
+.settings-alert-grid,
+.settings-alert-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-ops-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .settings-integration-grid > div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2123,6 +2316,42 @@ function shortId(value: unknown): string {
   padding: 9px 10px;
   border: 1px solid rgba(93, 48, 17, 0.14);
   background: rgba(255, 252, 245, 0.34);
+}
+
+.settings-ops-row,
+.settings-alert-row,
+.settings-alert-list span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-left: 3px solid rgba(104, 119, 43, 0.68);
+  background: rgba(255, 252, 245, 0.34);
+}
+
+.settings-alert-row,
+.settings-alert-list span {
+  min-height: 0;
+  border-left-color: #b9852f;
+  background: rgba(255, 239, 194, 0.32);
+}
+
+.settings-ops-row[data-status="warning"],
+.settings-alert-row[data-status="warning"],
+.settings-alert-list span[data-status="warning"] {
+  border-left-color: #b9852f;
+  background: rgba(255, 239, 194, 0.38);
+}
+
+.settings-ops-row[data-status="error"],
+.settings-alert-row[data-status="error"],
+.settings-alert-list span[data-status="error"] {
+  border-left-color: var(--settings-danger);
+  background: rgba(153, 48, 38, 0.07);
 }
 
 .settings-integration-grid > div[data-status="warning"] {
@@ -2141,27 +2370,51 @@ function shortId(value: unknown): string {
   min-width: 0;
 }
 
+.settings-ops-row span,
+.settings-alert-row span,
+.settings-alert-list span span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
 .settings-integration-grid b,
 .settings-integration-grid small,
-.settings-integration-grid em {
+.settings-integration-grid em,
+.settings-ops-row b,
+.settings-ops-row small,
+.settings-ops-row em,
+.settings-alert-row b,
+.settings-alert-row small,
+.settings-alert-row em,
+.settings-alert-list b,
+.settings-alert-list small {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.settings-integration-grid b {
+.settings-integration-grid b,
+.settings-ops-row b,
+.settings-alert-row b,
+.settings-alert-list b {
   color: var(--settings-text);
   font-size: 12px;
   font-weight: 920;
 }
 
-.settings-integration-grid small {
+.settings-integration-grid small,
+.settings-ops-row small,
+.settings-alert-row small,
+.settings-alert-list small {
   color: var(--settings-muted);
   font-size: 11px;
   font-weight: 760;
   line-height: 1.35;
 }
 
-.settings-integration-grid em {
+.settings-integration-grid em,
+.settings-ops-row em,
+.settings-alert-row em {
   justify-self: end;
   max-width: 132px;
   padding: 4px 7px;
@@ -2600,6 +2853,10 @@ function shortId(value: unknown): string {
   }
 
   .settings-integration-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-ops-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

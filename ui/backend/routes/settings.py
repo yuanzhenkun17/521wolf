@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 
 from ui.backend.health import build_health_payload
+from ui.backend.ops_metrics import build_ops_metrics_payload
 from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequest, SettingsRuntimeVariableUpdateRequest
 from ui.backend.settings_audit import SettingsAuditStore, settings_audit_details_for_profile
 from ui.backend.settings_runtime_variables import SettingsRuntimeVariableStore
@@ -28,7 +29,11 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
         payload["storage"] = storage
         payload["admin"] = settings_admin_payload(storage=storage)
         payload["variables"] = runtime_store.list_variables()
-        return {**payload, "health": build_health_payload(store)}
+        return {
+            **payload,
+            "health": build_health_payload(store),
+            "ops_metrics": build_ops_metrics_payload(store),
+        }
 
     @api.get("/api/settings/runtime-variables")
     def list_runtime_variables() -> dict[str, Any]:
