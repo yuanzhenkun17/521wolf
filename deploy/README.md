@@ -168,6 +168,19 @@ CHECK_PORTS=true
 REQUIRE_HTTPS=false
 ```
 
+Langfuse can be checked without touching backend code:
+
+```bash
+ENV_FILE=/opt/521wolf/.env \
+EXPECT_LANGFUSE_ENABLED=true \
+bash /opt/521wolf/app/deploy/scripts/check_langfuse_env.sh
+```
+
+This check prints only boolean/configuration status, never secret values. It
+fails when tracing is expected but disabled or missing required keys. It warns
+when `LANGFUSE_CAPTURE_INPUT_OUTPUT=false`, because traces can still be created
+while Langfuse shows `Input null` and `Output undefined`.
+
 ## GitHub Secrets And Variables
 
 Required GitHub Secrets:
@@ -218,6 +231,8 @@ UV_RELOCK_FOR_INDEX=true
 WEREWOLF_LLM_TIMEOUT=60
 WEREWOLF_GAME_TIMEOUT=900
 LANGFUSE_TRACING_ENABLED=false
+EXPECT_LANGFUSE_ENABLED=false
+REQUIRE_LANGFUSE_CAPTURE_INPUT_OUTPUT=false
 ```
 
 On China-based servers, keep `UV_RELOCK_FOR_INDEX=true`. `uv.lock` records
