@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed } from 'vue'
 
 const props = defineProps({
@@ -532,6 +531,7 @@ function diagnosticReplayHash(item) {
                 <small>{{ loadedGameCount }} / {{ totalGameCount }} 条</small>
               </div>
               <div class="bench-filter-row">
+                <!-- @vue-ignore -->
                 <select
                   :value="benchmark.benchmarkGameStatusFilter.value"
                   aria-label="游戏状态筛选"
