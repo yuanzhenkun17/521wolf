@@ -9,8 +9,8 @@ from typing import Any, Protocol, cast
 from fastapi import HTTPException
 
 from app.util.time import beijing_now_iso
-from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
+from ui.backend.services.benchmark_leaderboard_service import BenchmarkLeaderboardService
 from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
 from ui.backend.schemas import (
     BenchmarkLifecycleRequest,
@@ -28,12 +28,6 @@ BenchmarkCallable = Callable[..., Any]
 _TERMINAL_BENCHMARK_SSE_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 
 BENCHMARK_PUBLIC_METHODS: tuple[str, ...] = (
-    "leaderboard_scores_for_role",
-    "leaderboard_entries",
-    "model_leaderboard_entries",
-    "leaderboard_unrankable_evidence",
-    "leaderboard_compare",
-    "leaderboard_scores_for_roles",
     "plan_benchmark",
     "queue_benchmark",
     "run_queued_benchmark",
@@ -81,6 +75,7 @@ class BenchmarkService:
         self._callables = dict(callables or {})
         self._allow_context_fallback = allow_context_fallback
         self._catalog = BenchmarkCatalogService(context)
+        self._leaderboards = BenchmarkLeaderboardService(context)
         self._snapshots = BenchmarkSnapshotService(context, self._callables, resolver=self._resolve)
 
     @property
@@ -91,27 +86,13 @@ class BenchmarkService:
     def _tasks(self) -> BackgroundTaskServiceProtocol:
         return self._context.task_service
 
-    def _open_connection(self) -> Any:
-        from app.lib.score import open_eval_connection
-
-        return open_eval_connection(getattr(self._context, "paths", None))
-
     def load_role_leaderboard_rows(
         self,
         role: str,
         *,
         evaluation_set_id: str | None = None,
     ) -> list[Any]:
-        conn = None
-        try:
-            conn = self._open_connection()
-            return BenchmarkLeaderboardRepository(conn).list_role_rows(
-                role,
-                evaluation_set_id=evaluation_set_id,
-            )
-        finally:
-            if conn is not None:
-                conn.close()
+        return self._leaderboards.load_role_leaderboard_rows(role, evaluation_set_id=evaluation_set_id)
 
     def load_leaderboard_rows(
         self,
@@ -121,18 +102,12 @@ class BenchmarkService:
         target_role: str | None = None,
         limit: int = 100,
     ) -> list[Any]:
-        conn = None
-        try:
-            conn = self._open_connection()
-            return BenchmarkLeaderboardRepository(conn).list(
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                target_role=target_role,
-                limit=limit,
-            )
-        finally:
-            if conn is not None:
-                conn.close()
+        return self._leaderboards.load_leaderboard_rows(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            limit=limit,
+        )
 
     def load_role_leaderboard_rows_for_roles(
         self,
@@ -140,16 +115,10 @@ class BenchmarkService:
         *,
         evaluation_set_id: str | None = None,
     ) -> list[Any]:
-        conn = None
-        try:
-            conn = self._open_connection()
-            return BenchmarkLeaderboardRepository(conn).list_role_rows_for_roles(
-                roles,
-                evaluation_set_id=evaluation_set_id,
-            )
-        finally:
-            if conn is not None:
-                conn.close()
+        return self._leaderboards.load_role_leaderboard_rows_for_roles(
+            roles,
+            evaluation_set_id=evaluation_set_id,
+        )
 
     def persist_benchmark_snapshot(self, snapshot: dict[str, Any]) -> None:
         self._snapshots.persist_benchmark_snapshot(snapshot)
@@ -295,10 +264,7 @@ class BenchmarkService:
         *,
         evaluation_set_id: str | None = None,
     ) -> dict[str, dict[str, Any]]:
-        return cast(
-            dict[str, dict[str, Any]],
-            self._call("leaderboard_scores_for_role", role, evaluation_set_id=evaluation_set_id),
-        )
+        return self._leaderboards.leaderboard_scores_for_role(role, evaluation_set_id=evaluation_set_id)
 
     def leaderboard_entries(
         self,
@@ -308,15 +274,11 @@ class BenchmarkService:
         target_role: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        return cast(
-            list[dict[str, Any]],
-            self._call(
-                "leaderboard_entries",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                target_role=target_role,
-                limit=limit,
-            ),
+        return self._leaderboards.leaderboard_entries(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            limit=limit,
         )
 
     def model_leaderboard_entries(
@@ -325,10 +287,7 @@ class BenchmarkService:
         evaluation_set_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        return cast(
-            list[dict[str, Any]],
-            self._call("model_leaderboard_entries", evaluation_set_id=evaluation_set_id, limit=limit),
-        )
+        return self._leaderboards.model_leaderboard_entries(evaluation_set_id=evaluation_set_id, limit=limit)
 
     def leaderboard_unrankable_evidence(
         self,
@@ -339,16 +298,12 @@ class BenchmarkService:
         limit: int = 100,
         rows: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        return cast(
-            list[dict[str, Any]],
-            self._call(
-                "leaderboard_unrankable_evidence",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                target_role=target_role,
-                limit=limit,
-                rows=rows,
-            ),
+        return self._leaderboards.leaderboard_unrankable_evidence(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            limit=limit,
+            rows=rows,
         )
 
     def leaderboard_compare(
@@ -360,16 +315,12 @@ class BenchmarkService:
         baseline_subject_id: str | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "leaderboard_compare",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                target_role=target_role,
-                baseline_subject_id=baseline_subject_id,
-                limit=limit,
-            ),
+        return self._leaderboards.leaderboard_compare(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            baseline_subject_id=baseline_subject_id,
+            limit=limit,
         )
 
     def leaderboard_scores_for_roles(
@@ -378,10 +329,7 @@ class BenchmarkService:
         *,
         evaluation_set_id: str | None = None,
     ) -> dict[str, dict[str, dict[str, Any]]]:
-        return cast(
-            dict[str, dict[str, dict[str, Any]]],
-            self._call("leaderboard_scores_for_roles", roles, evaluation_set_id=evaluation_set_id),
-        )
+        return self._leaderboards.leaderboard_scores_for_roles(roles, evaluation_set_id=evaluation_set_id)
 
     def list_benchmark_specs(self) -> list[dict[str, Any]]:
         return self._catalog.list_benchmark_specs()

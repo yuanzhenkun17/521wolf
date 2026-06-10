@@ -6,6 +6,10 @@ from ui.backend.services.benchmark_service import (
     BenchmarkServiceContextProtocol,
 )
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
+from ui.backend.services.benchmark_leaderboard_service import (
+    BenchmarkLeaderboardService,
+    BenchmarkLeaderboardServiceContextProtocol,
+)
 from ui.backend.services.benchmark_snapshot_service import (
     BenchmarkSnapshotService,
     BenchmarkSnapshotServiceContextProtocol,
@@ -25,6 +29,8 @@ __all__ = [
     "BENCHMARK_PUBLIC_METHODS",
     "BackgroundTaskServiceProtocol",
     "BenchmarkCatalogService",
+    "BenchmarkLeaderboardService",
+    "BenchmarkLeaderboardServiceContextProtocol",
     "BenchmarkService",
     "BenchmarkServiceContextProtocol",
     "BenchmarkSnapshotService",
