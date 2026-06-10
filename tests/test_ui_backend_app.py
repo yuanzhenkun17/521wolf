@@ -1103,7 +1103,8 @@ def _wait_for_game_terminal(
     raise AssertionError(f"game {game_id} did not finish before timeout; diagnostics={diagnostics}")
 
 
-def test_health_and_roles_contract(tmp_path: Path) -> None:
+def test_health_and_roles_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEREWOLF_TTS_API_KEY", "")
     with _test_client(tmp_path) as client:
         health_response = client.get("/api/health")
         roles_response = client.get("/api/roles")
@@ -1125,6 +1126,11 @@ def test_health_and_roles_contract(tmp_path: Path) -> None:
     assert checks["llm_config"]["source"] == "injected_model"
     assert checks["llm_connectivity"]["status"] == "unknown"
     assert checks["llm_connectivity"]["source"] == "injected_model"
+    assert checks["langfuse_config"]["status"] == "ok"
+    assert checks["langfuse_config"]["enabled"] is False
+    assert checks["langfuse_config"]["source"] == "disabled"
+    assert checks["tts_config"]["status"] == "degraded"
+    assert checks["tts_config"]["source"] == "missing_config"
     assert checks["task_queue"]["status"] == "degraded"
     assert checks["task_queue"]["queue_status_counts"] == {}
     assert checks["task_queue"]["stale_running_count"] == 0
@@ -1160,6 +1166,41 @@ def test_health_and_roles_contract(tmp_path: Path) -> None:
     assert "villager" in roles
     assert "werewolf" in roles
     assert "seer" in roles
+
+
+def test_health_reports_optional_langfuse_and_tts_without_blocking_launch_gates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "")
+    monkeypatch.setenv("WEREWOLF_TTS_API_KEY", "")
+
+    with _test_client(tmp_path) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "error"
+    assert payload["ready"] is False
+    checks = payload["checks"]
+    assert checks["langfuse_config"]["status"] == "error"
+    assert checks["langfuse_config"]["missing"] == [
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_BASE_URL",
+    ]
+    assert checks["tts_config"]["status"] == "degraded"
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "LANGFUSE_SECRET_KEY" in serialized
+    assert "secret-" not in serialized
+
+    for scope in ("game_start", "benchmark_start", "evolution_start"):
+        gate = payload["gates"][scope]
+        assert "langfuse_config" not in gate["blockers"]
+        assert "tts_config" not in gate["blockers"]
 
 
 def test_health_probe_llm_updates_connectivity_cache(tmp_path: Path) -> None:

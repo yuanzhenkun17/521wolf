@@ -415,6 +415,8 @@ function checkLabel(key: string): string {
     llm: 'LLM 启动',
     llm_config: '模型配置',
     llm_connectivity: '模型连接',
+    langfuse_config: 'Langfuse 配置',
+    tts_config: 'TTS 配置',
     task_queue: '任务队列',
     task_worker: 'Task worker',
     artifact_root: '产物目录'

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import time
 from typing import Any
+from urllib.parse import urlparse
 
-from app.config import load_llm_config
+from dotenv import load_dotenv
+
+from app.config import LLM_ENV_PATH, load_llm_config, load_tts_config
 from app.services.llm import create_llm
 from app.util.redaction import redact_text
 from app.util.time import beijing_now_iso
@@ -18,6 +22,7 @@ _ERROR = "error"
 _UNKNOWN = "unknown"
 _STALE = "stale"
 _PROBE_PROMPT = "Return exactly: ok"
+_DOTENV_LOADED = False
 
 
 def build_health_payload(store: Any) -> dict[str, Any]:
@@ -31,7 +36,17 @@ def build_health_payload(store: Any) -> dict[str, Any]:
     task_control = _task_control_health(store)
     llm_config = llm_config_check(store)
     llm_connectivity = llm_connectivity_status(store)
-    checks = _checks_from(startup_checks, task_control, llm_config, llm_connectivity, store=store)
+    langfuse_config = langfuse_config_check()
+    tts_config = tts_config_check()
+    checks = _checks_from(
+        startup_checks,
+        task_control,
+        llm_config,
+        llm_connectivity,
+        langfuse_config,
+        tts_config,
+        store=store,
+    )
     gates = build_runtime_gates(checks, store=store)
     status = _overall_status(checks, gates, store=store)
     ready = status != _ERROR
@@ -39,6 +54,7 @@ def build_health_payload(store: Any) -> dict[str, Any]:
         [
             *_list(startup_checks.get("degraded_features")),
             *_task_degraded_features(task_control),
+            *_checks_degraded_features(checks),
             *_gate_degraded_features(gates),
         ]
     )
@@ -73,6 +89,128 @@ def build_health_payload(store: Any) -> dict[str, Any]:
             "task_control": task_control,
         },
     }
+
+
+def langfuse_config_check() -> dict[str, Any]:
+    """Return a local-only Langfuse configuration check."""
+    _load_project_env_once()
+    tracing_enabled = _env_true("LANGFUSE_TRACING_ENABLED")
+    if not tracing_enabled:
+        return {
+            "status": _OK,
+            "message": "Langfuse tracing is disabled.",
+            "enabled": False,
+            "source": "disabled",
+        }
+
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
+    base_url = os.environ.get("LANGFUSE_BASE_URL", "").strip().rstrip("/")
+    missing = [
+        name
+        for name, value in (
+            ("LANGFUSE_PUBLIC_KEY", public_key),
+            ("LANGFUSE_SECRET_KEY", secret_key),
+            ("LANGFUSE_BASE_URL", base_url),
+        )
+        if not value
+    ]
+    if missing:
+        return {
+            "status": _ERROR,
+            "message": "Langfuse tracing is enabled but required configuration is missing.",
+            "enabled": True,
+            "source": "environment",
+            "missing": missing,
+            "degraded_features": ["langfuse"],
+            "actions": [
+                "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_BASE_URL.",
+                "Disable LANGFUSE_TRACING_ENABLED if observability is not required.",
+            ],
+        }
+
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return {
+            "status": _ERROR,
+            "message": "Langfuse base URL is invalid.",
+            "enabled": True,
+            "source": "environment",
+            "base_url": _public_url(base_url),
+            "degraded_features": ["langfuse"],
+            "actions": ["Set LANGFUSE_BASE_URL to a valid http(s) URL."],
+        }
+
+    capture_input_output = _env_bool("LANGFUSE_CAPTURE_INPUT_OUTPUT", default=False)
+    sample_rate = _langfuse_sample_rate()
+    warnings: list[str] = []
+    actions: list[str] = []
+    if not capture_input_output:
+        warnings.append("capture_input_output_disabled")
+        actions.append("Set LANGFUSE_CAPTURE_INPUT_OUTPUT=true if trace input/output should be visible.")
+    if sample_rate.get("status") != _OK:
+        warnings.append(str(sample_rate["reason"]))
+        actions.extend(sample_rate.get("actions") or [])
+    if not os.environ.get("LANGFUSE_ENVIRONMENT", "").strip():
+        warnings.append("environment_missing")
+    if not os.environ.get("LANGFUSE_RELEASE", "").strip():
+        warnings.append("release_missing")
+
+    status = _DEGRADED if warnings else _OK
+    return {
+        "status": status,
+        "message": (
+            "Langfuse tracing is configured with warnings."
+            if warnings
+            else "Langfuse tracing is configured."
+        ),
+        "enabled": True,
+        "source": "environment",
+        "base_url": _public_url(base_url),
+        "capture_input_output": capture_input_output,
+        "sample_rate": sample_rate.get("value"),
+        "environment_configured": bool(os.environ.get("LANGFUSE_ENVIRONMENT", "").strip()),
+        "release_configured": bool(os.environ.get("LANGFUSE_RELEASE", "").strip()),
+        "warnings": warnings,
+        "degraded_features": ["langfuse"] if warnings else [],
+        "actions": _dedupe(actions),
+    }
+
+
+def tts_config_check() -> dict[str, Any]:
+    """Return a local-only TTS configuration check."""
+    try:
+        config = load_tts_config()
+    except Exception as exc:  # noqa: BLE001 - optional audio should report diagnostics without breaking health.
+        return {
+            "status": _DEGRADED,
+            "message": "TTS is not configured.",
+            "source": "missing_config",
+            "error": _safe_error(exc),
+            "degraded_features": ["tts"],
+            "actions": ["Set WEREWOLF_TTS_API_KEY to enable speech playback."],
+        }
+
+    dependency = _dashscope_tts_dependency_check()
+    payload = {
+        "status": dependency["status"],
+        "message": dependency["message"],
+        "source": "environment",
+        "provider": "dashscope",
+        "model": str(config.get("model") or ""),
+        "voice": str(config.get("voice") or ""),
+        "voice_pool_size": len(config.get("voice_pool") if isinstance(config.get("voice_pool"), list) else []),
+        "ws_url": _public_url(str(config.get("ws_url") or "")),
+        "mode": str(config.get("mode") or ""),
+        "sample_rate": config.get("sample_rate"),
+        "max_chars": config.get("max_chars"),
+    }
+    if dependency["status"] != _OK:
+        payload["degraded_features"] = ["tts"]
+        payload["actions"] = list(dependency.get("actions") or [])
+        if dependency.get("error"):
+            payload["error"] = dependency["error"]
+    return payload
 
 
 def llm_config_check(store: Any) -> dict[str, Any]:
@@ -230,6 +368,8 @@ def _checks_from(
     task_control: dict[str, Any],
     llm_config: dict[str, Any],
     llm_connectivity: dict[str, Any],
+    langfuse_config: dict[str, Any],
+    tts_config: dict[str, Any],
     *,
     store: Any | None = None,
 ) -> dict[str, Any]:
@@ -240,6 +380,8 @@ def _checks_from(
         **startup,
         "llm_config": llm_config,
         "llm_connectivity": llm_connectivity,
+        "langfuse_config": langfuse_config,
+        "tts_config": tts_config,
         "task_queue": {
             "status": task_status,
             "message": task_control.get("message") or "Task control status is unknown.",
@@ -470,6 +612,14 @@ def _task_degraded_features(task_control: dict[str, Any]) -> list[str]:
     return features
 
 
+def _checks_degraded_features(checks: dict[str, Any]) -> list[str]:
+    features: list[str] = []
+    for check in checks.values():
+        if isinstance(check, dict) and str(check.get("status") or "") != _OK:
+            features.extend(_list(check.get("degraded_features")))
+    return features
+
+
 def _gate_degraded_features(gates: dict[str, Any]) -> list[str]:
     return [
         scope
@@ -493,6 +643,13 @@ def _env_true(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_bool(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on", "enabled"}
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None or raw == "":
@@ -501,6 +658,66 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _load_project_env_once() -> None:
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED:
+        return
+    load_dotenv(LLM_ENV_PATH, override=False)
+    _DOTENV_LOADED = True
+
+
+def _langfuse_sample_rate() -> dict[str, Any]:
+    raw = os.environ.get("LANGFUSE_SAMPLE_RATE")
+    if raw is None or raw == "":
+        return {
+            "status": _DEGRADED,
+            "value": None,
+            "reason": "sample_rate_missing",
+            "actions": ["Set LANGFUSE_SAMPLE_RATE to a value above 0 if sampling should be explicit."],
+        }
+    try:
+        value = float(raw)
+    except ValueError:
+        return {
+            "status": _DEGRADED,
+            "value": None,
+            "reason": "sample_rate_invalid",
+            "actions": ["Set LANGFUSE_SAMPLE_RATE to a numeric value between 0 and 1."],
+        }
+    if value <= 0:
+        return {
+            "status": _DEGRADED,
+            "value": value,
+            "reason": "sample_rate_zero",
+            "actions": ["Set LANGFUSE_SAMPLE_RATE above 0 so traces are not sampled out."],
+        }
+    return {"status": _OK, "value": value, "reason": ""}
+
+
+def _dashscope_tts_dependency_check() -> dict[str, Any]:
+    if importlib.util.find_spec("dashscope") is None:
+        return {
+            "status": _DEGRADED,
+            "message": "DashScope realtime TTS dependency is not installed.",
+            "actions": ["Install the dashscope package to enable TTS streaming."],
+        }
+    try:
+        from ui.backend.tts_dashscope import ensure_dashscope_realtime_dependency
+
+        ensure_dashscope_realtime_dependency()
+    except Exception as exc:  # noqa: BLE001 - dependency checks are diagnostics only.
+        return {
+            "status": _DEGRADED,
+            "message": "DashScope realtime TTS dependency is unavailable.",
+            "error": _safe_error(exc),
+            "actions": ["Install a dashscope version that includes qwen_tts_realtime."],
+        }
+    return {
+        "status": _OK,
+        "message": "DashScope realtime TTS is configured.",
+    }
 
 
 def _summary_for(status: str) -> str:
