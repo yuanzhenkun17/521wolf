@@ -10,6 +10,10 @@ from ui.backend.services.benchmark_leaderboard_service import (
     BenchmarkLeaderboardService,
     BenchmarkLeaderboardServiceContextProtocol,
 )
+from ui.backend.services.benchmark_run_service import (
+    BenchmarkRunService,
+    BenchmarkRunServiceContextProtocol,
+)
 from ui.backend.services.benchmark_snapshot_service import (
     BenchmarkSnapshotService,
     BenchmarkSnapshotServiceContextProtocol,
@@ -32,6 +36,8 @@ __all__ = [
     "BenchmarkCatalogService",
     "BenchmarkLeaderboardService",
     "BenchmarkLeaderboardServiceContextProtocol",
+    "BenchmarkRunService",
+    "BenchmarkRunServiceContextProtocol",
     "BenchmarkService",
     "BenchmarkServiceContextProtocol",
     "BenchmarkSnapshotService",
