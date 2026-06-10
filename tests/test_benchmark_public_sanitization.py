@@ -6,6 +6,8 @@ import json
 from typing import Any
 
 from ui.backend.services.benchmark_leaderboard_payloads import _leaderboard_row_payload
+from ui.backend.services.benchmark_report_games import _benchmark_games_for_batch
+from ui.backend.services.benchmark_report_payloads import _benchmark_diagnostic_entries, _benchmark_run_report_payload
 from ui.backend.services.benchmark_snapshot_payloads import _benchmark_snapshot_compare_payload
 from ui.backend.services.benchmark_snapshot_summary_payloads import _benchmark_snapshot_detail_payload
 
@@ -67,9 +69,19 @@ def _assert_no_runtime_secrets(value: Any) -> None:
     serialized = json.dumps(value, ensure_ascii=False, sort_keys=True)
     for forbidden in (
         "sk-public-secret",
+        "sk-game-secret123",
         "secret-ref-value",
         "hidden-token",
         "fragment-secret",
+        "diag-hidden",
+        "diag-url-hidden",
+        "warn-hidden",
+        "err-hidden",
+        "result-bearer-secret",
+        "result-url-hidden",
+        "game-hidden",
+        "trace-hidden",
+        "run-hidden",
         "inner-hidden",
         "hash-hidden",
         "nested-hidden-token",
@@ -118,3 +130,70 @@ def test_snapshot_detail_and_compare_sanitize_frozen_model_runtime_rows() -> Non
     assert compare["current"]["rows"][0]["model_runtime"]["base_url"] == "https://leak.example/v1"
     assert compare["frozen"]["rows"][0]["summary"]["config"]["model_runtime"]["endpoint_url"] == "https://inner.example/v1"
     _assert_no_runtime_secrets({"detail": detail, "compare": compare})
+
+
+def test_benchmark_games_and_diagnostics_sanitize_raw_text_and_urls() -> None:
+    batch = {
+        "batch_id": "bench_public_sanitize",
+        "status": "completed",
+        "target_type": "model",
+        "config": {"benchmark_id": "model-baseline-v1", "evaluation_set_id": "model-baseline-v1@v1"},
+        "diagnostics": [
+            {
+                "kind": "batch_warning",
+                "message": "batch api_key=diag-hidden",
+                "details_url": "https://diag.example/log?token=diag-url-hidden#fragment-secret",
+            }
+        ],
+        "results": [
+            {
+                "batch_id": "bench_public_sanitize_model",
+                "config": {"batch_id": "bench_public_sanitize_model", "comparison_group_id": "bench_public_sanitize"},
+                "game_count": 1,
+                "completed": 1,
+                "errored": 0,
+                "rankable": True,
+                "warnings": ["warning token=warn-hidden"],
+                "errors": ["error api_key=err-hidden"],
+                "diagnostics": [
+                    {
+                        "kind": "result_warning",
+                        "message": "Bearer result-bearer-secret",
+                        "evidence_url": "https://evidence.example/path?api_key=result-url-hidden",
+                    }
+                ],
+                "games": [
+                    {
+                        "game_id": "game-public-sanitize",
+                        "status": "failed",
+                        "seed": 270600,
+                        "error": "sk-game-secret123 token=game-hidden",
+                        "langfuse": {
+                            "trace_id": "trace-1",
+                            "trace_url": "https://langfuse.example/trace?token=trace-hidden#fragment-secret",
+                            "dataset_run_url": "https://langfuse.example/run?api_key=run-hidden",
+                        },
+                        "diagnostics": [
+                            {
+                                "kind": "game_warning",
+                                "message": "game token=game-hidden",
+                                "trace_url": "https://diag.example/game?token=trace-hidden",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    games = _benchmark_games_for_batch(batch)
+    diagnostics = _benchmark_diagnostic_entries(batch)
+    report = _benchmark_run_report_payload(batch)
+
+    assert "[REDACTED]" in games[0]["error"]
+    assert games[0]["langfuse"]["trace_url"] == "https://langfuse.example/trace"
+    assert games[0]["langfuse"]["dataset_run_url"] == "https://langfuse.example/run"
+    assert any(item.get("details_url") == "https://diag.example/log" for item in diagnostics)
+    assert any(item.get("evidence_url") == "https://evidence.example/path" for item in diagnostics)
+    assert any(item.get("trace_url") == "https://diag.example/game" for item in diagnostics)
+    _assert_no_runtime_secrets({"games": games, "diagnostics": diagnostics, "report": report})

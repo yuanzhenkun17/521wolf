@@ -15,6 +15,8 @@ from ui.backend.services.benchmark_payload_utils import (
     sanitize_config_model_runtime,
     sanitize_model_runtime,
     sanitize_model_runtime_containers,
+    sanitize_public_payload,
+    sanitize_public_text,
     text_items as _text_items,
 )
 from ui.backend.services.benchmark_report_games import (
@@ -238,7 +240,9 @@ def _benchmark_diagnostic_entry(
     status: str | None = None,
     history_game_id: str | None = None,
 ) -> dict[str, Any]:
-    item = dict(diagnostic)
+    item = sanitize_public_payload(diagnostic)
+    if not isinstance(item, dict):
+        item = {}
     item.setdefault("kind", "diagnostic")
     item.setdefault("stage", origin)
     item.setdefault("level", "warning")
@@ -258,6 +262,7 @@ def _benchmark_diagnostic_entry(
         item.setdefault("history_game_id", history_game_id)
     if "message" not in item:
         item["message"] = str(item.get("kind") or "diagnostic")
+    item["message"] = sanitize_public_text(item.get("message"))
     return item
 
 

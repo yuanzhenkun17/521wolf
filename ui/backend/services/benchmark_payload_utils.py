@@ -6,7 +6,7 @@ import json
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from app.util.redaction import redact
+from app.util.redaction import redact, redact_text
 
 
 def dict_items(value: Any) -> list[dict[str, Any]]:
@@ -69,6 +69,15 @@ def sanitize_config_model_runtime(value: Any) -> Any:
 def sanitize_model_runtime_containers(value: Any) -> Any:
     """Sanitize nested ``model_runtime`` dictionaries inside public payloads."""
     return _sanitize_model_runtime_containers(json_clone(value))
+
+
+def sanitize_public_payload(value: Any) -> Any:
+    """Return a public diagnostic/report payload with secrets and URL queries removed."""
+    return _strip_url_queries(redact(json_clone(value), context="diagnostic"))
+
+
+def sanitize_public_text(value: Any) -> str:
+    return redact_text(str(value if value is not None else ""), context="diagnostic")
 
 
 def decode_json_field(value: Any, *, fallback: Any) -> Any:

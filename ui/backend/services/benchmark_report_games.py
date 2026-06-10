@@ -9,6 +9,7 @@ from ui.backend.services.benchmark_payload_utils import (
     dict_items as _dict_items,
     json_clone as _json_clone,
     optional_text as _optional_text,
+    sanitize_public_payload,
     text_items as _text_items,
     unique_texts as _unique_texts,
 )
@@ -147,7 +148,7 @@ def _benchmark_game_item(
     if langfuse:
         item["langfuse"] = langfuse
         item["observability"] = {"langfuse": _json_clone(langfuse)}
-    return item
+    return sanitize_public_payload(item)
 
 
 def _benchmark_game_langfuse_block(
