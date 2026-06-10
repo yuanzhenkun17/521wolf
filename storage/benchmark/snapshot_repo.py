@@ -24,7 +24,7 @@ class BenchmarkSnapshotRepository:
     and writes runtime data.
     """
 
-    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = False) -> None:
         self._conn = conn
         self._autocommit = autocommit
 

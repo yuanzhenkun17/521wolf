@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from storage.benchmark.batch_repo import BenchmarkBatchRepository
 from storage.benchmark.evaluation_repo import (
     BenchmarkEvaluationRepository,
@@ -39,13 +41,16 @@ class _Connection:
         *,
         rowcount: int = 1,
         fail_execute: bool = False,
+        fail_execute_on: int | None = None,
         fail_commit: bool = False,
         rows: list[Any] | None = None,
     ) -> None:
         self.calls: list[str] = []
         self.executions: list[tuple[str, tuple[Any, ...]]] = []
+        self.execute_count = 0
         self.rowcount = rowcount
         self.fail_execute = fail_execute
+        self.fail_execute_on = fail_execute_on
         self.fail_commit = fail_commit
         self.rows = rows or []
 
@@ -54,8 +59,9 @@ class _Connection:
 
     def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
         self.calls.append("execute")
+        self.execute_count += 1
         self.executions.append((sql, tuple(parameters)))
-        if self.fail_execute:
+        if self.fail_execute or self.fail_execute_on == self.execute_count:
             raise RuntimeError("write failed")
         return _Cursor(self.rows, rowcount=self.rowcount)
 
@@ -107,40 +113,124 @@ def _view() -> dict[str, Any]:
     }
 
 
-def test_benchmark_snapshot_repository_default_autocommits() -> None:
+def test_benchmark_snapshot_repository_default_defers_commit() -> None:
     conn = _Connection()
 
     BenchmarkSnapshotRepository(conn).save(_snapshot())  # type: ignore[arg-type]
 
-    assert conn.calls == ["execute", "commit"]
+    assert conn.calls == ["execute"]
 
 
-def test_benchmark_saved_view_repository_default_autocommits() -> None:
+def test_benchmark_saved_view_repository_default_defers_commit() -> None:
     conn = _Connection()
 
     deleted = BenchmarkSavedViewRepository(conn).delete("view-1")  # type: ignore[arg-type]
     BenchmarkSavedViewRepository(conn).save(_view())  # type: ignore[arg-type]
 
     assert deleted is True
-    assert conn.calls == ["execute", "commit", "execute", "commit"]
+    assert conn.calls == ["execute", "execute"]
 
 
-def test_benchmark_batch_repository_autocommit_can_be_deferred() -> None:
+def test_benchmark_batch_repository_default_defers_commit() -> None:
     conn = _Connection()
 
-    BenchmarkBatchRepository(conn, autocommit=False).save({"batch_id": "batch-1"})  # type: ignore[arg-type]
+    BenchmarkBatchRepository(conn).save({"batch_id": "batch-1"})  # type: ignore[arg-type]
 
     assert conn.calls == ["execute"]
 
 
-def test_benchmark_leaderboard_repository_autocommit_can_be_deferred() -> None:
+def test_benchmark_leaderboard_repository_default_defers_commit() -> None:
     conn = _Connection()
 
-    BenchmarkLeaderboardRepository(conn, autocommit=False).save(  # type: ignore[arg-type]
+    BenchmarkLeaderboardRepository(conn).save(  # type: ignore[arg-type]
         {"batch_id": "batch-1", "model_id": "model-a"}
     )
 
     assert conn.calls == ["execute"]
+
+
+def test_benchmark_repositories_autocommit_can_be_enabled_for_legacy_callers() -> None:
+    conn = _Connection()
+
+    BenchmarkSnapshotRepository(conn, autocommit=True).save(  # type: ignore[arg-type]
+        _snapshot()
+    )
+    BenchmarkSavedViewRepository(conn, autocommit=True).delete(  # type: ignore[arg-type]
+        "view-1"
+    )
+    BenchmarkSavedViewRepository(conn, autocommit=True).save(  # type: ignore[arg-type]
+        _view()
+    )
+    BenchmarkBatchRepository(conn, autocommit=True).save(  # type: ignore[arg-type]
+        {"batch_id": "batch-1"}
+    )
+    BenchmarkLeaderboardRepository(conn, autocommit=True).save(  # type: ignore[arg-type]
+        {"batch_id": "batch-1", "model_id": "model-a"}
+    )
+
+    assert conn.calls == [
+        "execute",
+        "commit",
+        "execute",
+        "commit",
+        "execute",
+        "commit",
+        "execute",
+        "commit",
+        "execute",
+        "commit",
+    ]
+
+
+def test_benchmark_evaluation_repository_default_autocommits_as_compatible_facade() -> None:
+    conn = _Connection()
+    repo = BenchmarkEvaluationRepository(conn)  # type: ignore[arg-type]
+
+    repo.save_batch({"batch_id": "batch-1"})
+    repo.save_leaderboard_entry({"batch_id": "batch-1", "model_id": "model-a"})
+
+    assert conn.calls == ["execute", "commit", "execute", "commit"]
+
+
+def test_benchmark_leaf_repositories_defer_to_unit_of_work_by_default() -> None:
+    from storage.postgres.unit_of_work import from_connection_factory
+
+    conn = _Connection()
+
+    with from_connection_factory(lambda: conn) as tx:
+        BenchmarkBatchRepository(tx.connection).save({"batch_id": "batch-1"})
+        BenchmarkLeaderboardRepository(tx.connection).save(
+            {"batch_id": "batch-1", "model_id": "model-a"}
+        )
+        BenchmarkSnapshotRepository(tx.connection).save(_snapshot())
+        BenchmarkSavedViewRepository(tx.connection).save(_view())
+        tx.commit()
+
+    assert conn.calls == [
+        "begin_write",
+        "execute",
+        "execute",
+        "execute",
+        "execute",
+        "commit",
+        "close",
+    ]
+
+
+def test_benchmark_unit_of_work_rolls_back_partial_leaf_writes_by_default() -> None:
+    from storage.postgres.unit_of_work import from_connection_factory
+
+    conn = _Connection(fail_execute_on=2)
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        with from_connection_factory(lambda: conn) as tx:
+            BenchmarkBatchRepository(tx.connection).save({"batch_id": "batch-1"})
+            BenchmarkLeaderboardRepository(tx.connection).save(
+                {"batch_id": "batch-1", "model_id": "model-a"}
+            )
+            tx.commit()
+
+    assert conn.calls == ["begin_write", "execute", "execute", "rollback", "close"]
 
 
 def test_benchmark_storage_helpers_commit_with_unit_of_work() -> None:

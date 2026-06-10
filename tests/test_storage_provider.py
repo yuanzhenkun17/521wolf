@@ -8,8 +8,6 @@ import pytest
 
 from storage.provider import (
     PostgresStorageProvider,
-    open_evolution_connection,
-    open_registry_connection,
     open_wolf_connection,
     storage_provider_from_env,
 )

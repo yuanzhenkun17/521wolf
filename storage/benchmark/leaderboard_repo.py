@@ -13,7 +13,7 @@ from storage.shared.database import StorageConnection
 class BenchmarkLeaderboardRepository:
     """Persist and query benchmark leaderboard runtime data."""
 
-    def __init__(self, conn: StorageConnection, *, autocommit: bool = True) -> None:
+    def __init__(self, conn: StorageConnection, *, autocommit: bool = False) -> None:
         self._conn = conn
         self._autocommit = autocommit
 
