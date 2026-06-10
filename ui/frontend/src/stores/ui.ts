@@ -6,10 +6,17 @@ export interface UiRuntimeHydration {
   error?: string | null
   matchNotice?: NoticeState | null
   historyNotice?: NoticeState | null
+  audioEnabled?: boolean | null
+  ttsEnabled?: boolean | null
+  ttsAvailable?: boolean | null
 }
 
 export const useUiStore = defineStore('ui', () => {
   const notice = ref<NoticeState>({ type: '', message: '' })
+  const errorMessage = ref('')
+  const audioEnabled = ref(false)
+  const ttsEnabled = ref(false)
+  const ttsAvailable = ref(false)
   const toasts = ref<ToastState[]>([])
 
   function setNotice(nextNotice: NoticeState): void {
@@ -27,6 +34,10 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   function hydrateFromRuntime(runtime: UiRuntimeHydration): void {
+    errorMessage.value = runtime.error ?? ''
+    audioEnabled.value = Boolean(runtime.audioEnabled)
+    ttsEnabled.value = Boolean(runtime.ttsEnabled)
+    ttsAvailable.value = Boolean(runtime.ttsAvailable)
     const sourceNotice: NoticeState = runtime.matchNotice?.message
       ? runtime.matchNotice
       : runtime.historyNotice?.message
@@ -39,6 +50,10 @@ export const useUiStore = defineStore('ui', () => {
 
   return {
     notice,
+    errorMessage,
+    audioEnabled,
+    ttsEnabled,
+    ttsAvailable,
     toasts,
     setNotice,
     pushToast,

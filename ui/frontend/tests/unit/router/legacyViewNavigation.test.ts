@@ -8,6 +8,7 @@ import {
   isLegacyHashForView,
   registerLegacyViewRouter,
   routeHashFromLegacyHash,
+  routeLocationForLegacyView,
   routePathForView,
   routeQueryFromLegacyHash,
   syncCurrentLegacyHashForView,
@@ -99,6 +100,19 @@ test('syncs a legacy view navigation into vue-router', () => {
   }])
 })
 
+test('builds route locations for legacy view navigation', () => {
+  assert.deepEqual(routeLocationForLegacyView('lobby'), {
+    path: '/',
+    query: {},
+    hash: ''
+  })
+  assert.deepEqual(routeLocationForLegacyView('logs', '#logs?game_id=game-7&workspace=archive'), {
+    path: '/logs',
+    query: { game_id: 'game-7', workspace: 'archive' },
+    hash: '#logs?game_id=game-7&workspace=archive'
+  })
+})
+
 test('writeViewHash keeps legacy hash behavior and mirrors the router path', () => {
   const calls: unknown[] = []
   globalThis.window = { location: locationLike() } as Window & typeof globalThis
@@ -111,11 +125,50 @@ test('writeViewHash keeps legacy hash behavior and mirrors the router path', () 
 
   writeViewHash('match')
 
-  assert.equal(window.location.hash, '#match')
   assert.deepEqual(calls, [{ path: '/match', query: {}, hash: '#match' }])
 })
 
-test('writes explicit legacy hashes and exposes the current hash', () => {
+test('writeViewHash mirrors lobby navigation into the root router path', () => {
+  const calls: unknown[] = []
+  globalThis.window = { location: locationLike('#logs') } as Window & typeof globalThis
+  registerLegacyViewRouter({
+    replace(to: unknown) {
+      calls.push(to)
+      return Promise.resolve()
+    }
+  })
+
+  writeViewHash('lobby')
+
+  assert.deepEqual(calls, [{ path: '/', query: {}, hash: '' }])
+})
+
+test('writeViewHash falls back to legacy hashes when no router is registered', () => {
+  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+
+  writeViewHash('match')
+  assert.equal(window.location.hash, '#match')
+
+  writeViewHash('lobby')
+  assert.equal(window.location.hash, '')
+})
+
+test('writeViewHash falls back to legacy hashes when router navigation fails', async () => {
+  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+  registerLegacyViewRouter({
+    replace() {
+      return Promise.reject(new Error('router offline'))
+    }
+  })
+
+  writeViewHash('logs')
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(window.location.hash, '#logs')
+})
+
+test('writes explicit legacy hashes through the registered router', () => {
   const calls: unknown[] = []
   globalThis.window = { location: locationLike() } as Window & typeof globalThis
   registerLegacyViewRouter({
@@ -127,12 +180,19 @@ test('writes explicit legacy hashes and exposes the current hash', () => {
 
   writeLegacyHashForView('logs', '#logs?game_id=game-7&workspace=archive')
 
-  assert.equal(currentLegacyHash(), '#logs?game_id=game-7&workspace=archive')
   assert.deepEqual(calls, [{
     path: '/logs',
     query: { game_id: 'game-7', workspace: 'archive' },
     hash: '#logs?game_id=game-7&workspace=archive'
   }])
+})
+
+test('writes explicit legacy hashes to the window without a router', () => {
+  globalThis.window = { location: locationLike() } as Window & typeof globalThis
+
+  writeLegacyHashForView('logs', '#logs?game_id=game-7&workspace=archive')
+
+  assert.equal(currentLegacyHash(), '#logs?game_id=game-7&workspace=archive')
 })
 
 test('reads the current legacy view with a server-side fallback', () => {

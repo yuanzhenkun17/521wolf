@@ -262,13 +262,25 @@ test('ui store hydrates notices and manages deterministic toast actions', () => 
   store.hydrateFromRuntime({ error: 'backend failed' })
 
   assert.deepEqual(store.notice, { type: 'error', message: 'backend failed' })
+  assert.equal(store.errorMessage, 'backend failed')
+  assert.equal(store.audioEnabled, false)
+  assert.equal(store.ttsEnabled, false)
+  assert.equal(store.ttsAvailable, false)
 
   store.hydrateFromRuntime({
+    error: 'still failed',
     matchNotice: { type: 'success', message: 'match ready' },
-    historyNotice: { type: 'warning', message: 'history stale' }
+    historyNotice: { type: 'warning', message: 'history stale' },
+    audioEnabled: true,
+    ttsEnabled: true,
+    ttsAvailable: false
   })
 
   assert.deepEqual(store.notice, { type: 'success', message: 'match ready' })
+  assert.equal(store.errorMessage, 'still failed')
+  assert.equal(store.audioEnabled, true)
+  assert.equal(store.ttsEnabled, true)
+  assert.equal(store.ttsAvailable, false)
 
   store.setNotice({ type: 'info', message: 'manual notice' })
   const createdToastId = store.pushToast({ type: 'success', message: 'saved', timeoutMs: 5000 })
@@ -325,6 +337,9 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     replayCursor: ref(3),
     replayPlaying: ref(false),
     replaySpeed: ref(1.5),
+    audioEnabled: ref(true),
+    ttsEnabled: ref(false),
+    ttsAvailable: ref(true),
     matchNotice: ref({ type: 'success', message: 'match hydrated' })
   }
 
@@ -365,7 +380,18 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
   assert.equal(historyStore.historyWorkspaceTab, 'archive')
   assert.equal(replayStore.replayGame?.game_id, 'runtime-replay')
   assert.equal(replayStore.replaySpeed, 1.5)
+  assert.deepEqual(runtimeHydrationKeys.ui, [
+    'error',
+    'matchNotice',
+    'historyNotice',
+    'audioEnabled',
+    'ttsEnabled',
+    'ttsAvailable'
+  ])
   assert.deepEqual(uiStore.notice, { type: 'success', message: 'match hydrated' })
+  assert.equal(uiStore.audioEnabled, true)
+  assert.equal(uiStore.ttsEnabled, false)
+  assert.equal(uiStore.ttsAvailable, true)
 })
 
 test('runtime hydration helper creates typed payloads without mutating stores', () => {
@@ -419,6 +445,9 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
     replayCursor: ref(0),
     replayPlaying: ref(false),
     replaySpeed: ref(1),
+    audioEnabled: ref(false),
+    ttsEnabled: ref(false),
+    ttsAvailable: ref(true),
     matchNotice: ref(null)
   }
   const hydrator = createIncrementalRuntimeHydrator(stores)
@@ -432,6 +461,15 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
   assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
   assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
 
+  runtime.audioEnabled.value = true
+  hydrator.hydrate(runtime)
+
+  assert.equal(stores.session.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 2)
+
   runtime.roleAssignmentComplete.value = true
   hydrator.hydrate(runtime)
 
@@ -439,7 +477,7 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
   assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 2)
   assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 1)
   assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
-  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 2)
 
   runtime.historyLoading.value = true
   const payloads = hydrator.hydrate(runtime)
@@ -449,7 +487,7 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
   assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 2)
   assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 2)
   assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
-  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 2)
 
   hydrator.reset()
   hydrator.hydrate(runtime)
@@ -458,5 +496,5 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
   assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 3)
   assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 3)
   assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 2)
-  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 2)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 3)
 })

@@ -4,6 +4,12 @@ import { appViewFromLegacyHash, appViewHash, appViewPath } from './appViews'
 
 let activeRouter: Pick<Router, 'replace'> | null = null
 
+export interface LegacyViewRouteLocation {
+  path: string
+  query: LocationQueryRaw
+  hash: string
+}
+
 export function registerLegacyViewRouter(router: Pick<Router, 'replace'> | null): void {
   activeRouter = router
 }
@@ -64,21 +70,33 @@ export function isLegacyHashForView(view: AppView, hash = currentLegacyHash()): 
   return viewHash ? routeHash === `#${viewHash}` : !routeHash
 }
 
-export function syncRouterToLegacyView(view: AppView, hash = ''): void {
-  if (!activeRouter) return
+export function routeLocationForLegacyView(view: AppView, hash = ''): LegacyViewRouteLocation {
   const legacyHash = String(hash || '')
-  void activeRouter.replace({
+  return {
     path: routePathForView(view),
     query: routeQueryFromLegacyHash(legacyHash),
     hash: legacyHash
-  }).catch(() => {})
+  }
+}
+
+export function syncRouterToLegacyView(view: AppView, hash = ''): void {
+  if (!activeRouter) return
+  void activeRouter.replace(routeLocationForLegacyView(view, hash)).catch(() => {})
+}
+
+function writeWindowLegacyHash(hash = ''): void {
+  if (typeof window === 'undefined') return
+  window.location.hash = String(hash || '')
 }
 
 export function writeLegacyHashForView(view: AppView, hash = ''): void {
-  if (typeof window === 'undefined') return
   const legacyHash = String(hash || '')
-  window.location.hash = legacyHash
-  syncRouterToLegacyView(view, legacyHash)
+  if (!activeRouter) {
+    writeWindowLegacyHash(legacyHash)
+    return
+  }
+  void activeRouter.replace(routeLocationForLegacyView(view, legacyHash))
+    .catch(() => writeWindowLegacyHash(legacyHash))
 }
 
 export function syncCurrentLegacyHashForView(view: AppView): boolean {

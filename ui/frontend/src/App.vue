@@ -64,14 +64,11 @@ const {
   benchmarkProps,
   evolutionProps,
   lobbyProps,
-  matchProps,
-  audioEnabled: rawAudioEnabled,
-  ttsEnabled: rawTtsEnabled,
-  ttsAvailable: rawTtsAvailable
+  matchProps
 } = useAppRuntimeProps(runtime)
-const audioEnabled = computed(() => Boolean(rawAudioEnabled.value))
-const ttsEnabled = computed(() => Boolean(rawTtsEnabled.value))
-const ttsAvailable = computed(() => Boolean(rawTtsAvailable.value))
+const audioEnabled = computed(() => uiStore.audioEnabled)
+const ttsEnabled = computed(() => uiStore.ttsEnabled)
+const ttsAvailable = computed(() => uiStore.ttsAvailable)
 const routeAppView = computed(() => appViewFromRouteSource(route))
 const activeAppView = computed(() => routeAppView.value || 'lobby')
 const inLobby = computed(() => activeAppView.value === 'lobby')
@@ -80,7 +77,9 @@ const inLogs = computed(() => activeAppView.value === 'logs')
 const inBenchmark = computed(() => activeAppView.value === 'benchmark')
 const inEvolution = computed(() => activeAppView.value === 'evolution')
 const activeSession = computed(() => sessionStore.activeSession)
+const isNight = computed(() => gameStore.isNight)
 const topNavActiveView = computed(() => replayStore.isReplayMode ? 'logs' : activeAppView.value)
+const toastError = computed(() => uiStore.errorMessage)
 const showActiveGamePill = computed(() => {
   if (replayStore.isReplayMode) return false
   if (activeAppView.value === 'match') return false
@@ -115,11 +114,9 @@ const {
   burstArmed,
   chatLogExpanded,
   detailTab,
-  error,
   exitGame,
   exitReplayMode,
   goLobby,
-  isNight,
   openBenchmarkPage,
   openEvolutionPage,
   openLogPage,
@@ -248,7 +245,7 @@ const {
         </div>
         <div class="match-boot-progress" aria-hidden="true"><span></span></div>
       </section>
-      <div v-if="error" class="toast">{{ error }}</div>
+      <div v-if="toastError" class="toast">{{ toastError }}</div>
     </main>
 </template>
 
