@@ -21,6 +21,7 @@ from storage.benchmark.snapshot_repo import (
     persist_benchmark_snapshot,
 )
 from ui.backend.schemas import BenchmarkSnapshotRequest, BenchmarkViewRequest
+from ui.backend.services.benchmark_payload_utils import json_clone as _json_clone
 from ui.backend.services.benchmark_snapshot_payloads import (
     _benchmark_snapshot_compare_payload,
     _benchmark_snapshot_csv,
@@ -37,7 +38,6 @@ from ui.backend.services.benchmark_snapshot_payloads import (
     _filter_benchmark_snapshot_cache,
     _filter_benchmark_snapshot_rows,
     _filter_benchmark_view_cache,
-    _json_clone,
     _stable_payload_hash,
     _text_content_hash,
 )
