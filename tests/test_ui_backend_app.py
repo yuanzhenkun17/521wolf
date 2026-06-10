@@ -25,6 +25,7 @@ from storage.public_events import public_events_only
 import ui.backend.app as ui_backend_app
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
 from ui.backend.schemas import BenchmarkLifecycleRequest, BenchmarkRequest, EvolutionStartRequest, GameStartRequest
+import ui.backend.services.benchmark_leaderboard_service as benchmark_leaderboard_service_module
 import ui.backend.services.benchmark_service as benchmark_service_module
 from ui.backend.services.role_service import RoleService
 from ui.backend.sse import stream_queue_sse
@@ -2566,7 +2567,7 @@ def test_benchmark_service_uses_minimal_context_protocol(
 
     monkeypatch.setattr("app.lib.score.open_eval_connection", fake_open_eval_connection)
     monkeypatch.setattr(
-        benchmark_service_module,
+        benchmark_leaderboard_service_module,
         "BenchmarkLeaderboardRepository",
         FakeLeaderboardRepository,
     )
