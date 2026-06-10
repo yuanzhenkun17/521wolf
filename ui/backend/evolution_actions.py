@@ -399,32 +399,14 @@ def reject_evolution_proposal(
     reason: str = "",
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    role = str(run.get("role") or "").strip()
-    if not role:
-        raise HTTPException(status_code=400, detail="evolution run has no role")
-    proposal = _find_proposal(run, proposal_id)
-    now = beijing_now_iso()
-    clean_reason = str(reason or "").strip()
-    clean_tags = normalize_rejection_tags(tags)
-    _mark_proposal_rejected(proposal, reason=clean_reason, tags=clean_tags, timestamp=now, run=run)
-    rejected_row = _rejected_buffer_row(run, proposal, reason=clean_reason, tags=clean_tags, timestamp=now)
-    reject_buffer = dict(rejected_row.get("reject_buffer") or {})
-    try:
-        store.registry.save_rejected(
-            role,
-            [rejected_row],
-            run.get("battle_result") if isinstance(run.get("battle_result"), dict) else None,
-        )
-        reject_buffer["saved"] = True
-    except Exception as exc:  # noqa: BLE001 - expose reject-buffer write failure to callers
-        reject_buffer["saved"] = False
-        reject_buffer["error"] = str(exc)
-        proposal["reject_buffer"] = reject_buffer
-        run["proposal_review"] = _proposal_review_summary(run)
-        raise HTTPException(status_code=409, detail=f"failed to save rejected proposal: {exc}") from exc
-    proposal["reject_buffer"] = reject_buffer
-    run["proposal_review"] = _proposal_review_summary(run)
-    return _proposal_action_payload(run, proposal)
+    from ui.backend.services.evolution_service import EvolutionService
+
+    return EvolutionService(store).reject_proposal(
+        run,
+        proposal_id,
+        reason=reason,
+        tags=tags,
+    )
 
 
 def apply_accepted_evolution_proposals(store: Any, run: dict[str, Any]) -> dict[str, Any]:
