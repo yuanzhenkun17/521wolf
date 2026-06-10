@@ -2340,7 +2340,7 @@ async def _run_games(
 
     # Persist training/battle games under the run's directory for replay.
     paths = state.get("paths")
-    from app.config import DEFAULT_PATHS
+    from app.config import DEFAULT_GAME_CONCURRENCY, DEFAULT_PATHS
 
     run_base = Path(getattr(paths, "evolution_dir", DEFAULT_PATHS.evolution_dir)) / str(run_id) / label
 
@@ -2375,7 +2375,7 @@ async def _run_games(
         game_subgraph,
         count,
         _build,
-        concurrency=concurrency or 3,
+        concurrency=concurrency or DEFAULT_GAME_CONCURRENCY,
         label=label,
     )
 

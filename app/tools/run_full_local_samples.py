@@ -21,7 +21,7 @@ from typing import Any, Sequence
 
 from dotenv import load_dotenv
 
-from app.config import DEFAULT_PATHS, LLM_ENV_PATH, load_llm_config
+from app.config import DEFAULT_GAME_CONCURRENCY, DEFAULT_PATHS, LLM_ENV_PATH, load_llm_config
 from app.lib.benchmark_spec import load_benchmark_spec, materialize_benchmark_spec
 from app.run import run_evolution
 from app.services.chain import LLMCallError
@@ -41,7 +41,6 @@ DEFAULT_BENCHMARK_ID = "role-baseline-standard-v1"
 DEFAULT_TRAINING_GAMES = 20
 DEFAULT_BATTLE_GAMES = 10
 DEFAULT_MAX_DAYS = 5
-DEFAULT_GAME_CONCURRENCY = 3
 DEFAULT_LLM_CONCURRENCY = 0
 DEFAULT_JUDGE_CONCURRENCY = 4
 DEFAULT_JUDGE_MAX_DECISIONS = 20

@@ -16,11 +16,12 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from app.config import DEFAULT_GAME_CONCURRENCY
 from app.util.winner import has_valid_winner, normalize_winner
 
 _log = logging.getLogger(__name__)
 
-DEFAULT_CONCURRENCY = 3
+DEFAULT_CONCURRENCY = DEFAULT_GAME_CONCURRENCY
 # Abort a batch if this many games error in a row — signals a systemic problem
 # (bad model, bad skill path) rather than the occasional unlucky game.
 CONSECUTIVE_FAILURE_LIMIT = 5

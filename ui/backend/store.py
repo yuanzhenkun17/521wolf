@@ -15,7 +15,7 @@ from typing import Any, TypeVar
 
 from fastapi import HTTPException
 
-from app.config import PathConfig, load_llm_config, load_tts_config
+from app.config import DEFAULT_GAME_CONCURRENCY, PathConfig, load_llm_config, load_tts_config
 from app.lib.benchmark_release_gate import evaluate_benchmark_release_gate
 from app.lib.benchmark_reproducibility import build_benchmark_reproducibility_manifest
 from app.lib.benchmark_spec import (
@@ -73,7 +73,7 @@ from ui.backend.startup_checks import default_startup_checks, log_startup_checks
 _log = logging.getLogger(__name__)
 
 _BENCHMARK_PLAYER_COUNT = 12
-_BENCHMARK_DEFAULT_GAME_CONCURRENCY = 3
+_BENCHMARK_DEFAULT_GAME_CONCURRENCY = DEFAULT_GAME_CONCURRENCY
 _BENCHMARK_DEFAULT_JUDGE_CONCURRENCY = 1
 _BENCHMARK_GAME_UNIT_TOKENS = 1120
 _BENCHMARK_JUDGE_DECISION_TOKENS = 810

@@ -204,6 +204,7 @@ async def run_evolution(
         "skill_dir",
         "auto_promote",
         "max_proposals",
+        "game_concurrency",
         "parent_hash",
         "promote_win_rate_margin",
         "battle_error_rate_ceiling",

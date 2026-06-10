@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from enum import Enum
 
+from app.config import DEFAULT_GAME_CONCURRENCY
 from app.util.json import compact_json, to_jsonable
 
 _log = logging.getLogger(__name__)
@@ -1931,7 +1932,7 @@ class EvolutionConfig:
     training_games: int = 5
     battle_games: int = 4
     role_concurrency: int = 2
-    game_concurrency: int = 1
+    game_concurrency: int = DEFAULT_GAME_CONCURRENCY
     llm_concurrency: int = 20
     llm_rpm: int = 60
     auto_promote: bool = True
