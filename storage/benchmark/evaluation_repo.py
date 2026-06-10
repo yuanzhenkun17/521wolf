@@ -1,204 +1,37 @@
-"""Repositories for benchmark evaluation batches and leaderboard entries."""
+"""Compatibility facade for benchmark evaluation persistence repositories."""
 
 from __future__ import annotations
 
-import json
-import uuid
 from typing import Any
 
-from app.util.time import beijing_now_iso
+from storage.benchmark.batch_repo import BenchmarkBatchRepository
+from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 from storage.shared.database import StorageConnection
 
 
 class BenchmarkEvaluationRepository:
-    """Persist and query benchmark evaluation runtime data.
-
-    Schema creation is owned by Alembic migrations; this repository only reads
-    and writes runtime rows.
-    """
+    """Backward-compatible facade for benchmark batch and leaderboard repos."""
 
     def __init__(self, conn: StorageConnection) -> None:
-        self._conn = conn
+        self._batch_repo = BenchmarkBatchRepository(conn)
+        self._leaderboard_repo = BenchmarkLeaderboardRepository(conn)
 
     def save_batch(self, batch: dict[str, Any]) -> None:
-        """Persist an evaluation batch row to evaluation_batches."""
-        summary = batch.get("score_summary")
-        created_at = str(batch.get("created_at") or beijing_now_iso())
-        started_at = _nullable_timestamp(batch.get("started_at"))
-        finished_at = _nullable_timestamp(batch.get("finished_at"))
-        self._conn.execute(
-            """INSERT INTO evaluation_batches
-            (id, comparison_group_id, comparison_type, mode, model_id, model_config_hash,
-             target_role, target_version_id, role_version_config, game_count,
-             evaluation_set_id, seed_set_id, max_days, rankable, rankable_reason,
-             summary, started_at, finished_at, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-                comparison_group_id = excluded.comparison_group_id,
-                comparison_type = excluded.comparison_type,
-                mode = excluded.mode,
-                model_id = excluded.model_id,
-                model_config_hash = excluded.model_config_hash,
-                target_role = excluded.target_role,
-                target_version_id = excluded.target_version_id,
-                role_version_config = excluded.role_version_config,
-                game_count = excluded.game_count,
-                evaluation_set_id = excluded.evaluation_set_id,
-                seed_set_id = excluded.seed_set_id,
-                max_days = excluded.max_days,
-                rankable = excluded.rankable,
-                rankable_reason = excluded.rankable_reason,
-                summary = excluded.summary,
-                started_at = excluded.started_at,
-                finished_at = excluded.finished_at,
-                created_at = excluded.created_at""",
-            (
-                str(batch.get("batch_id", "")),
-                batch.get("comparison_group_id"),
-                batch.get("comparison_type"),
-                str(batch.get("mode", "dev")),
-                batch.get("model_id"),
-                batch.get("model_config_hash"),
-                batch.get("target_role"),
-                batch.get("target_version_id"),
-                json.dumps(batch.get("role_version_config"), ensure_ascii=False)
-                if batch.get("role_version_config") is not None
-                else None,
-                int(batch.get("game_count", 0) or 0),
-                batch.get("evaluation_set_id"),
-                batch.get("seed_set_id"),
-                int(batch.get("max_days", 20) or 20),
-                1 if batch.get("rankable") else 0,
-                batch.get("rankable_reason", ""),
-                json.dumps(summary, ensure_ascii=False) if summary is not None else None,
-                started_at,
-                finished_at,
-                created_at,
-            ),
-        )
-        self._conn.commit()
+        self._batch_repo.save(batch)
 
     def save_leaderboard_entry(self, entry: dict[str, Any]) -> None:
-        """Persist a leaderboard entry to benchmark_leaderboard."""
-        scope = entry.get("scope") or ("role_version" if entry.get("target_role") else "model")
-        subject_id = str(
-            entry.get("subject_id")
-            or entry.get("target_version_id")
-            or entry.get("model_config_hash")
-            or entry.get("model_id")
-            or entry.get("hash")
-            or ""
-        )
-        group_id = entry.get("comparison_group_id")
-        row_id = entry.get("id") or f"{scope}:{subject_id}:{group_id or entry.get('batch_id', '')}" or uuid.uuid4().hex
-        by_role = entry.get("by_role_category_scores")
-        summary = dict(entry.get("summary") or {})
-        for key in ("benchmark_id", "benchmark_version", "benchmark_config_hash", "config_hash", "model_runtime"):
-            if entry.get(key) not in (None, ""):
-                summary.setdefault(key, entry.get(key))
-        source_run_id = (
-            entry.get("source_run_id")
-            or entry.get("run_id")
-            or entry.get("benchmark_batch_id")
-            or entry.get("comparison_group_id")
-            or entry.get("batch_id")
-        )
-        result_batch_id = entry.get("result_batch_id") or entry.get("batch_id")
-        if source_run_id:
-            summary.setdefault("source_run_id", str(source_run_id))
-            summary.setdefault("batch_id", str(source_run_id))
-            summary.setdefault("report_id", f"benchmark_report:{source_run_id}")
-        if result_batch_id:
-            summary.setdefault("result_batch_id", str(result_batch_id))
-        updated_at = str(entry.get("updated_at") or beijing_now_iso())
-        self._conn.execute(
-            """INSERT INTO benchmark_leaderboard
-            (id, scope, subject_id, model_id, model_config_hash, target_role, target_version_id,
-             comparison_group_id, evaluation_set_id, seed_set_id,
-             games_played, valid_game_rate, strength_score, avg_role_score, by_role_category_scores,
-             avg_speech_score, avg_vote_score, avg_skill_score, avg_logic_score, avg_team_score,
-             risk_penalty, fallback_rate, llm_error_rate, policy_adjusted_rate,
-             target_side_win_rate, rankable, data_sufficient, summary, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-                scope = excluded.scope,
-                subject_id = excluded.subject_id,
-                model_id = excluded.model_id,
-                model_config_hash = excluded.model_config_hash,
-                target_role = excluded.target_role,
-                target_version_id = excluded.target_version_id,
-                comparison_group_id = excluded.comparison_group_id,
-                evaluation_set_id = excluded.evaluation_set_id,
-                seed_set_id = excluded.seed_set_id,
-                games_played = excluded.games_played,
-                valid_game_rate = excluded.valid_game_rate,
-                strength_score = excluded.strength_score,
-                avg_role_score = excluded.avg_role_score,
-                by_role_category_scores = excluded.by_role_category_scores,
-                avg_speech_score = excluded.avg_speech_score,
-                avg_vote_score = excluded.avg_vote_score,
-                avg_skill_score = excluded.avg_skill_score,
-                avg_logic_score = excluded.avg_logic_score,
-                avg_team_score = excluded.avg_team_score,
-                risk_penalty = excluded.risk_penalty,
-                fallback_rate = excluded.fallback_rate,
-                llm_error_rate = excluded.llm_error_rate,
-                policy_adjusted_rate = excluded.policy_adjusted_rate,
-                target_side_win_rate = excluded.target_side_win_rate,
-                rankable = excluded.rankable,
-                data_sufficient = excluded.data_sufficient,
-                summary = excluded.summary,
-                updated_at = excluded.updated_at""",
-            (
-                row_id,
-                scope,
-                subject_id,
-                entry.get("model_id"),
-                entry.get("model_config_hash"),
-                entry.get("target_role"),
-                entry.get("target_version_id"),
-                group_id,
-                entry.get("evaluation_set_id"),
-                entry.get("seed_set_id"),
-                entry.get("game_count", 0),
-                entry.get("valid_game_rate", 0.0),
-                entry.get("strength_score", 0.0),
-                entry.get("avg_role_score", entry.get("target_role_role_weighted_score", 0.0)),
-                json.dumps(by_role, ensure_ascii=False) if by_role is not None else None,
-                entry.get("avg_speech_score", 0.0),
-                entry.get("avg_vote_score", 0.0),
-                entry.get("avg_skill_score", 0.0),
-                entry.get("avg_logic_score", 0.0),
-                entry.get("avg_team_score", 0.0),
-                entry.get("risk_penalty", 0.0),
-                entry.get("fallback_rate", 0.0),
-                entry.get("llm_error_rate", 0.0),
-                entry.get("policy_adjusted_rate", 0.0),
-                entry.get("target_side_win_rate", 0.0),
-                1 if entry.get("rankable") else 0,
-                1 if entry.get("rankable") else 0,
-                json.dumps(summary, ensure_ascii=False),
-                updated_at,
-            ),
-        )
-        self._conn.commit()
+        self._leaderboard_repo.save(entry)
 
-    def load_comparison_group(self, comparison_group_id: str, *, exclude_batch_id: str = "") -> list[dict[str, Any]]:
-        """Load sibling batches in a comparison group, excluding the current batch."""
-        if not comparison_group_id:
-            return []
-        rows = self._conn.execute(
-            "SELECT id, comparison_group_id, comparison_type, mode, model_id, "
-            "model_config_hash, target_role, target_version_id, seed_set_id, game_count "
-            "FROM evaluation_batches WHERE comparison_group_id = ? AND id != ?",
-            (comparison_group_id, exclude_batch_id),
-        ).fetchall()
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            item = dict(row)
-            item["batch_id"] = item.get("id")
-            result.append(item)
-        return result
+    def load_comparison_group(
+        self,
+        comparison_group_id: str,
+        *,
+        exclude_batch_id: str = "",
+    ) -> list[dict[str, Any]]:
+        return self._batch_repo.load_comparison_group(
+            comparison_group_id,
+            exclude_batch_id=exclude_batch_id,
+        )
 
     def list_leaderboard_rows(
         self,
@@ -208,28 +41,12 @@ class BenchmarkEvaluationRepository:
         target_role: str | None = None,
         limit: int = 100,
     ) -> list[Any]:
-        """Load benchmark leaderboard rows with explicit scope isolation."""
-        where = "WHERE 1 = 1 "
-        params: list[Any] = []
-        if scope:
-            where += "AND scope = ? "
-            params.append(scope)
-        if evaluation_set_id:
-            where += "AND evaluation_set_id = ? "
-            params.append(evaluation_set_id)
-        if target_role:
-            where += "AND target_role = ? "
-            params.append(target_role)
-        capped_limit = max(1, min(int(limit or 100), 500))
-        params.append(capped_limit)
-        return self._conn.execute(
-            _LEADERBOARD_SELECT_COLUMNS
-            + "FROM benchmark_leaderboard "
-            + where
-            + "ORDER BY rankable DESC, strength_score DESC, avg_role_score DESC, updated_at DESC "
-            + "LIMIT ?",
-            tuple(params),
-        ).fetchall()
+        return self._leaderboard_repo.list(
+            scope=scope,
+            evaluation_set_id=evaluation_set_id,
+            target_role=target_role,
+            limit=limit,
+        )
 
     def list_role_leaderboard_rows(
         self,
@@ -237,9 +54,8 @@ class BenchmarkEvaluationRepository:
         *,
         evaluation_set_id: str | None = None,
     ) -> list[Any]:
-        """Load newest-first leaderboard rows for one role."""
-        return self.list_role_leaderboard_rows_for_roles(
-            [role],
+        return self._leaderboard_repo.list_role_rows(
+            role,
             evaluation_set_id=evaluation_set_id,
         )
 
@@ -249,23 +65,10 @@ class BenchmarkEvaluationRepository:
         *,
         evaluation_set_id: str | None = None,
     ) -> list[Any]:
-        """Load newest-first leaderboard rows for multiple roles."""
-        role_keys = [str(role) for role in roles if role]
-        if not role_keys:
-            return []
-        placeholders = ", ".join("?" for _ in role_keys)
-        where = f"WHERE scope = 'role_version' AND target_role IN ({placeholders}) "
-        params: list[Any] = list(role_keys)
-        if evaluation_set_id:
-            where += "AND evaluation_set_id = ? "
-            params.append(evaluation_set_id)
-        return self._conn.execute(
-            _LEADERBOARD_SELECT_COLUMNS
-            + "FROM benchmark_leaderboard "
-            + where
-            + "ORDER BY updated_at DESC",
-            tuple(params),
-        ).fetchall()
+        return self._leaderboard_repo.list_role_rows_for_roles(
+            roles,
+            evaluation_set_id=evaluation_set_id,
+        )
 
 
 def open_benchmark_connection(paths: Any = None) -> StorageConnection:
@@ -273,20 +76,6 @@ def open_benchmark_connection(paths: Any = None) -> StorageConnection:
     from storage.provider import storage_provider_from_env
 
     return storage_provider_from_env(paths=paths).open_wolf_connection()
-
-
-def _nullable_timestamp(value: Any) -> str | None:
-    text = str(value or "").strip()
-    return text or None
-
-
-_LEADERBOARD_SELECT_COLUMNS = (
-    "SELECT scope, subject_id, model_id, model_config_hash, target_role, target_version_id, "
-    "comparison_group_id, evaluation_set_id, seed_set_id, games_played, valid_game_rate, "
-    "strength_score, avg_role_score, by_role_category_scores, avg_speech_score, avg_vote_score, "
-    "avg_skill_score, avg_logic_score, avg_team_score, risk_penalty, fallback_rate, llm_error_rate, "
-    "policy_adjusted_rate, target_side_win_rate, rankable, data_sufficient, summary, updated_at "
-)
 
 
 __all__ = ["BenchmarkEvaluationRepository", "open_benchmark_connection"]

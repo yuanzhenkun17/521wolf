@@ -7,7 +7,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository, open_benchmark_connection
+from storage.benchmark.batch_repo import BenchmarkBatchRepository
+from storage.benchmark.evaluation_repo import open_benchmark_connection
+from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 
 _log = logging.getLogger(__name__)
 
@@ -386,7 +388,7 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
     warning string when the best-effort write fails.
     """
     try:
-        BenchmarkEvaluationRepository(conn).save_leaderboard_entry(entry)
+        BenchmarkLeaderboardRepository(conn).save(entry)
         return None
     except Exception as exc:  # noqa: BLE001 — leaderboard write is best-effort
         _log.warning("persist_leaderboard_entry failed", exc_info=True)
@@ -408,7 +410,7 @@ def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
     Returns a warning string when the best-effort write fails.
     """
     try:
-        BenchmarkEvaluationRepository(conn).save_batch(batch)
+        BenchmarkBatchRepository(conn).save(batch)
         return None
     except Exception as exc:  # noqa: BLE001 — persistence is best-effort
         try:
@@ -426,7 +428,7 @@ def load_comparison_group(conn: Any, comparison_group_id: str, *, exclude_batch_
     a genuinely empty comparison group.
     """
     try:
-        return BenchmarkEvaluationRepository(conn).load_comparison_group(
+        return BenchmarkBatchRepository(conn).load_comparison_group(
             comparison_group_id,
             exclude_batch_id=exclude_batch_id,
         )

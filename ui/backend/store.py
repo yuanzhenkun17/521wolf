@@ -39,7 +39,7 @@ from app.lib.version import VersionRegistryProtocol, registry_version_release_st
 from app.run import LANGFUSE_EVAL_CONFIG_KEYS, run_evaluation, run_evolution
 from app.services.llm import create_llm
 from app.util.time import beijing_now_iso
-from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository
+from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
 from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
 from storage.postgres.unit_of_work import from_connection_factory
@@ -632,7 +632,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         conn = None
         try:
             conn = open_eval_connection(self.paths)
-            rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows(
+            rows = BenchmarkLeaderboardRepository(conn).list_role_rows(
                 role,
                 evaluation_set_id=evaluation_set_id,
             )
@@ -665,7 +665,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         conn = None
         try:
             conn = open_eval_connection(self.paths)
-            rows = BenchmarkEvaluationRepository(conn).list_leaderboard_rows(
+            rows = BenchmarkLeaderboardRepository(conn).list(
                 scope=normalized_scope or None,
                 evaluation_set_id=evaluation_set_id,
                 target_role=target_role,
@@ -1444,7 +1444,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         conn = None
         try:
             conn = open_eval_connection(self.paths)
-            rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows_for_roles(
+            rows = BenchmarkLeaderboardRepository(conn).list_role_rows_for_roles(
                 role_keys,
                 evaluation_set_id=evaluation_set_id,
             )

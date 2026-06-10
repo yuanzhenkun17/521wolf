@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from storage.benchmark.batch_repo import BenchmarkBatchRepository
 from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository
+from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
 from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
 from storage.postgres.unit_of_work import UnitOfWork
@@ -142,11 +144,11 @@ def test_benchmark_repository_unit_of_work_rolls_back_on_write_error() -> None:
     assert conn.calls == ["begin_write", "execute", "rollback", "close"]
 
 
-def test_benchmark_evaluation_repository_lists_leaderboard_rows_with_filters() -> None:
+def test_benchmark_leaderboard_repository_lists_rows_with_filters() -> None:
     row = {"subject_id": "seer_candidate_v2"}
     conn = _Connection(rows=[row])
 
-    rows = BenchmarkEvaluationRepository(conn).list_leaderboard_rows(
+    rows = BenchmarkLeaderboardRepository(conn).list(
         scope="role_version",
         evaluation_set_id="role-baseline-v1@v1",
         target_role="seer",
@@ -165,11 +167,11 @@ def test_benchmark_evaluation_repository_lists_leaderboard_rows_with_filters() -
     assert params == ("role_version", "role-baseline-v1@v1", "seer", 500)
 
 
-def test_benchmark_evaluation_repository_lists_role_rows_newest_first() -> None:
+def test_benchmark_leaderboard_repository_lists_role_rows_newest_first() -> None:
     row = {"target_role": "seer", "target_version_id": "seer_candidate_v2"}
     conn = _Connection(rows=[row])
 
-    rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows_for_roles(
+    rows = BenchmarkLeaderboardRepository(conn).list_role_rows_for_roles(
         ["seer", "witch"],
         evaluation_set_id="role-baseline-v1@v1",
     )
@@ -182,10 +184,49 @@ def test_benchmark_evaluation_repository_lists_role_rows_newest_first() -> None:
     assert params == ("seer", "witch", "role-baseline-v1@v1")
 
 
-def test_benchmark_evaluation_repository_skips_empty_role_list() -> None:
+def test_benchmark_leaderboard_repository_skips_empty_role_list() -> None:
     conn = _Connection()
 
-    rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows_for_roles([])
+    rows = BenchmarkLeaderboardRepository(conn).list_role_rows_for_roles([])
 
     assert rows == []
     assert conn.calls == []
+
+
+def test_benchmark_batch_repository_loads_comparison_group_rows() -> None:
+    conn = _Connection(
+        rows=[
+            {
+                "id": "batch-2",
+                "comparison_group_id": "group-1",
+                "comparison_type": "model",
+            }
+        ]
+    )
+
+    rows = BenchmarkBatchRepository(conn).load_comparison_group(
+        "group-1",
+        exclude_batch_id="batch-1",
+    )
+
+    assert rows == [
+        {
+            "id": "batch-2",
+            "comparison_group_id": "group-1",
+            "comparison_type": "model",
+            "batch_id": "batch-2",
+        }
+    ]
+    sql, params = conn.executions[0]
+    assert "FROM evaluation_batches WHERE comparison_group_id = ? AND id != ?" in sql
+    assert params == ("group-1", "batch-1")
+
+
+def test_benchmark_evaluation_repository_remains_compatible_facade() -> None:
+    row = {"target_role": "seer", "target_version_id": "seer_candidate_v2"}
+    conn = _Connection(rows=[row])
+
+    rows = BenchmarkEvaluationRepository(conn).list_role_leaderboard_rows_for_roles(["seer"])
+
+    assert rows == [row]
+    assert conn.calls == ["execute"]
