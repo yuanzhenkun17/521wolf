@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections import Counter
 from typing import Any
 
@@ -11,6 +10,23 @@ from ui.backend.services.benchmark_payload_utils import (
     first_text as _first_text,
     json_clone as _json_clone,
     row_to_dict as _row_to_dict,
+)
+from ui.backend.services.benchmark_leaderboard_statistics import (
+    _binomial_standard_error as _binomial_standard_error,
+    _dedupe_warning_codes as _dedupe_warning_codes,
+    _empty_leaderboard_statistics as _empty_leaderboard_statistics,
+    _first_float as _first_float,
+    _first_int as _first_int,
+    _leaderboard_compare_statistics,
+    _leaderboard_paired_evidence as _leaderboard_paired_evidence,
+    _leaderboard_row_statistics,
+    _leaderboard_seed_metric_key as _leaderboard_seed_metric_key,
+    _leaderboard_seed_metrics as _leaderboard_seed_metrics,
+    _optional_probability_delta as _optional_probability_delta,
+    _probability_from_value as _probability_from_value,
+    _seed_metric_value as _seed_metric_value,
+    _stat_warning_list as _stat_warning_list,
+    _wilson_confidence_interval as _wilson_confidence_interval,
 )
 
 
@@ -202,27 +218,6 @@ def _leaderboard_subject_key(row: dict[str, Any] | None) -> str:
     return ""
 
 
-def _first_int(*values: Any, default: int = 0) -> int:
-    for value in values:
-        try:
-            number = int(float(value))
-        except (TypeError, ValueError):
-            continue
-        return number
-    return default
-
-
-def _first_float(*values: Any, default: float = 0.0) -> float:
-    for value in values:
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            continue
-        if number == number:
-            return number
-    return default
-
-
 def _filter_unrankable_evidence_for_compare(
     rows: list[dict[str, Any]],
     *,
@@ -369,332 +364,10 @@ def _leaderboard_metric(row: dict[str, Any] | None, *keys: str) -> float:
     return 0.0
 
 
-_LEADERBOARD_CONFIDENCE_LEVEL = 0.95
-_LEADERBOARD_Z_95 = 1.96
-_LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE = 30
-_LEADERBOARD_MIN_PAIRED_OVERLAP = _LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE
-
-
 def _leaderboard_score(row: dict[str, Any] | None, *, scope: str | None) -> float:
     if scope == "model":
         return _leaderboard_metric(row, "strength_score", "avg_role_score", "target_role_role_weighted_score")
     return _leaderboard_metric(row, "avg_role_score", "target_role_role_weighted_score", "strength_score")
-
-
-def _leaderboard_row_statistics(row: dict[str, Any] | None) -> dict[str, Any]:
-    """Return row-level binomial confidence evidence for leaderboard payloads."""
-    if not row:
-        return _empty_leaderboard_statistics()
-    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
-    sample_size = _first_int(
-        row.get("sample_size"),
-        summary.get("sample_size"),
-        row.get("completed_games"),
-        row.get("completed"),
-        summary.get("completed_games"),
-        summary.get("win_rate_denominator"),
-        row.get("games_played"),
-        row.get("game_count"),
-        summary.get("games_played"),
-        summary.get("game_count"),
-        default=0,
-    )
-    win_rate = _probability_from_value(
-        _first_float(
-            row.get("target_side_win_rate"),
-            row.get("win_rate"),
-            summary.get("target_side_win_rate"),
-            summary.get("win_rate"),
-            default=0.0,
-        )
-    )
-    standard_error = _binomial_standard_error(win_rate, sample_size)
-    ci_low, ci_high = _wilson_confidence_interval(win_rate, sample_size)
-    paired_sample_size = _first_int(
-        row.get("paired_sample_size"),
-        summary.get("paired_sample_size"),
-        summary.get("paired_valid_count"),
-        default=0,
-    )
-    paired_delta = _optional_probability_delta(
-        row.get("paired_delta"),
-        summary.get("paired_delta"),
-        summary.get("paired_seed_delta"),
-    )
-    warnings = _stat_warning_list(row.get("warnings"), summary.get("warnings"))
-    if sample_size < _LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE:
-        warnings.append("low_sample")
-    warnings = _dedupe_warning_codes(warnings)
-    return {
-        "sample_size": sample_size,
-        "paired_sample_size": paired_sample_size,
-        "win_rate_ci": {
-            "low": ci_low,
-            "high": ci_high,
-            "level": _LEADERBOARD_CONFIDENCE_LEVEL,
-        },
-        "ci_low": ci_low,
-        "ci_high": ci_high,
-        "standard_error": standard_error,
-        "paired_delta": paired_delta,
-        "significant": bool(row.get("significant", False)),
-        "significance_label": str(row.get("significance_label") or "待比较"),
-        "warnings": warnings,
-    }
-
-
-def _empty_leaderboard_statistics() -> dict[str, Any]:
-    return {
-        "sample_size": 0,
-        "paired_sample_size": 0,
-        "win_rate_ci": {"low": 0.0, "high": 0.0, "level": _LEADERBOARD_CONFIDENCE_LEVEL},
-        "ci_low": 0.0,
-        "ci_high": 0.0,
-        "standard_error": 0.0,
-        "paired_delta": None,
-        "significant": False,
-        "significance_label": "待比较",
-        "warnings": ["low_sample"],
-    }
-
-
-def _probability_from_value(value: Any) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if not math.isfinite(number):
-        return 0.0
-    if abs(number) > 1 and abs(number) <= 100:
-        number = number / 100.0
-    return max(0.0, min(1.0, number))
-
-
-def _optional_probability_delta(*values: Any) -> float | None:
-    for value in values:
-        if value is None or value == "":
-            continue
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(number):
-            continue
-        if abs(number) > 1 and abs(number) <= 100:
-            number = number / 100.0
-        return number
-    return None
-
-
-def _binomial_standard_error(win_rate: float, sample_size: int) -> float:
-    if sample_size <= 0:
-        return 0.0
-    probability = max(0.0, min(1.0, float(win_rate)))
-    return math.sqrt((probability * (1.0 - probability)) / sample_size)
-
-
-def _wilson_confidence_interval(win_rate: float, sample_size: int) -> tuple[float, float]:
-    if sample_size <= 0:
-        return 0.0, 0.0
-    probability = max(0.0, min(1.0, float(win_rate)))
-    z_squared = _LEADERBOARD_Z_95 ** 2
-    denominator = 1.0 + (z_squared / sample_size)
-    center = (probability + (z_squared / (2 * sample_size))) / denominator
-    half_width = (
-        _LEADERBOARD_Z_95
-        * math.sqrt((probability * (1.0 - probability) / sample_size) + (z_squared / (4 * sample_size ** 2)))
-        / denominator
-    )
-    return (
-        max(0.0, min(1.0, center - half_width)),
-        max(0.0, min(1.0, center + half_width)),
-    )
-
-
-def _stat_warning_list(*values: Any) -> list[str]:
-    warnings: list[str] = []
-    for value in values:
-        if isinstance(value, str):
-            warnings.append(value)
-        elif isinstance(value, list):
-            warnings.extend(str(item) for item in value)
-        elif isinstance(value, dict):
-            warnings.extend(str(key) for key, enabled in value.items() if enabled)
-    return warnings
-
-
-def _dedupe_warning_codes(values: list[str]) -> list[str]:
-    allowed = {"low_sample", "unpaired_seeds", "insufficient_overlap"}
-    warnings: list[str] = []
-    for value in values:
-        code = str(value or "").strip()
-        if code in allowed and code not in warnings:
-            warnings.append(code)
-    return warnings
-
-
-def _leaderboard_seed_metrics(row: dict[str, Any] | None) -> dict[str, float]:
-    if not row:
-        return {}
-    summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
-    candidates = (
-        row.get("seed_metrics"),
-        row.get("paired_seed_metrics"),
-        row.get("per_seed_metrics"),
-        summary.get("seed_metrics"),
-        summary.get("paired_seed_metrics"),
-        summary.get("per_seed_metrics"),
-        summary.get("seed_results"),
-        summary.get("per_seed"),
-    )
-    metrics: dict[str, float] = {}
-    for candidate in candidates:
-        if isinstance(candidate, dict):
-            iterable = [{"seed": seed, "value": value} for seed, value in candidate.items()]
-        elif isinstance(candidate, list):
-            iterable = candidate
-        else:
-            continue
-        for index, item in enumerate(iterable):
-            if not isinstance(item, dict):
-                continue
-            key = _leaderboard_seed_metric_key(item, index)
-            if not key:
-                continue
-            value = _seed_metric_value(item)
-            if value is not None:
-                metrics[key] = value
-    return metrics
-
-
-def _leaderboard_seed_metric_key(item: dict[str, Any], index: int) -> str:
-    pair_key = _first_text(item.get("pair_key"), item.get("paired_key"), item.get("pair_id"))
-    if pair_key:
-        return f"pair:{pair_key}"
-    seed = _first_text(item.get("seed"), item.get("seed_id"), item.get("id"))
-    game_index = _first_text(item.get("game_index"), item.get("game_slot"), item.get("slot_index"), item.get("ordinal"))
-    if seed and game_index:
-        return f"seed:{seed}:game:{game_index}"
-    game_id = _first_text(item.get("source_game_id"), item.get("game_id"))
-    if seed and game_id:
-        return f"seed:{seed}:source:{game_id}"
-    if seed:
-        return f"seed:{seed}"
-    if game_id:
-        return f"game:{game_id}"
-    return f"index:{index}"
-
-
-def _seed_metric_value(item: dict[str, Any]) -> float | None:
-    for key in (
-        "target_side_win",
-        "target_side_won",
-        "win",
-        "won",
-        "value",
-        "target_side_win_rate",
-        "score",
-    ):
-        value = item.get(key)
-        if value is None or value == "":
-            continue
-        if isinstance(value, bool):
-            return 1.0 if value else 0.0
-        text = str(value).strip().lower()
-        if text in {"win", "won", "true", "yes"}:
-            return 1.0
-        if text in {"loss", "lost", "false", "no"}:
-            return 0.0
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(number):
-            return _probability_from_value(number)
-    return None
-
-
-def _leaderboard_paired_evidence(
-    row: dict[str, Any],
-    baseline: dict[str, Any] | None,
-) -> tuple[float | None, int, list[str]]:
-    if not baseline:
-        return None, 0, []
-    row_metrics = _leaderboard_seed_metrics(row)
-    baseline_metrics = _leaderboard_seed_metrics(baseline)
-    if not row_metrics or not baseline_metrics:
-        return None, 0, ["unpaired_seeds"]
-    overlap = sorted(set(row_metrics).intersection(baseline_metrics))
-    if not overlap:
-        return None, 0, ["insufficient_overlap"]
-    deltas = [row_metrics[seed] - baseline_metrics[seed] for seed in overlap]
-    paired_delta = sum(deltas) / len(deltas)
-    warnings: list[str] = []
-    if len(overlap) < min(len(row_metrics), len(baseline_metrics)):
-        warnings.append("unpaired_seeds")
-    if len(overlap) < _LEADERBOARD_MIN_PAIRED_OVERLAP:
-        warnings.append("insufficient_overlap")
-    return paired_delta, len(overlap), warnings
-
-
-def _leaderboard_compare_statistics(
-    row: dict[str, Any],
-    baseline: dict[str, Any] | None,
-    *,
-    boundary_warnings: list[str],
-    is_reference: bool,
-    win_rate_delta: float,
-) -> dict[str, Any]:
-    row_stats = _leaderboard_row_statistics(row)
-    baseline_stats = _leaderboard_row_statistics(baseline)
-    warnings = list(row_stats["warnings"])
-    if baseline and baseline_stats["sample_size"] < _LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE:
-        warnings.append("low_sample")
-    paired_delta, paired_sample_size, paired_warnings = _leaderboard_paired_evidence(row, baseline)
-    warnings.extend(paired_warnings)
-    paired_delta_error = None
-    if paired_sample_size > 0:
-        paired_delta_error = math.sqrt(
-            (float(row_stats["standard_error"] or 0.0) ** 2)
-            + (float(baseline_stats["standard_error"] or 0.0) ** 2)
-        )
-    combined_standard_error = math.sqrt(
-        float(row_stats["standard_error"] or 0.0) ** 2
-        + float(baseline_stats["standard_error"] or 0.0) ** 2
-    )
-    warning_codes = _dedupe_warning_codes(warnings)
-    statistically_significant = bool(
-        baseline
-        and not is_reference
-        and not boundary_warnings
-        and paired_delta is not None
-        and "low_sample" not in warning_codes
-        and "unpaired_seeds" not in warning_codes
-        and "insufficient_overlap" not in warning_codes
-        and paired_delta_error
-        and paired_delta_error > 0
-        and abs(float(paired_delta or 0.0)) > (_LEADERBOARD_Z_95 * paired_delta_error)
-    )
-    if is_reference:
-        label = "基线参考"
-    elif boundary_warnings:
-        label = "不可比较"
-    elif statistically_significant:
-        label = "显著提升" if win_rate_delta > 0 else "显著回退"
-    elif baseline:
-        label = "差异不显著"
-    else:
-        label = "等待基线"
-    return {
-        **row_stats,
-        "paired_sample_size": paired_sample_size,
-        "paired_delta": paired_delta,
-        "standard_error": row_stats["standard_error"],
-        "combined_standard_error": combined_standard_error,
-        "significant": statistically_significant,
-        "significance_label": label,
-        "warnings": warning_codes,
-    }
 
 
 def _leaderboard_boundary_warnings(
