@@ -6,6 +6,7 @@ from pathlib import Path
 
 BASELINE = Path("migrations/versions/20260608_0001_postgresql_baseline.py")
 BENCHMARK_SAVED_VIEWS = Path("migrations/versions/20260610_0002_benchmark_saved_views.py")
+UI_MODEL_PROFILES = Path("migrations/versions/20260611_0005_ui_model_profiles.py")
 
 
 def _baseline_text() -> str:
@@ -14,6 +15,10 @@ def _baseline_text() -> str:
 
 def _benchmark_saved_views_text() -> str:
     return BENCHMARK_SAVED_VIEWS.read_text(encoding="utf-8")
+
+
+def _ui_model_profiles_text() -> str:
+    return UI_MODEL_PROFILES.read_text(encoding="utf-8")
 
 
 def test_postgresql_baseline_uses_namespaces_for_storage_domains() -> None:
@@ -157,3 +162,20 @@ def test_benchmark_saved_views_migration_owns_saved_view_schema() -> None:
     assert "ON wolf.benchmark_saved_views(scope, evaluation_set_id)" in migration_text
     assert "CREATE INDEX IF NOT EXISTS idx_bench_view_benchmark " in migration_text
     assert "ON wolf.benchmark_saved_views(benchmark_id)" in migration_text
+
+
+def test_ui_model_profiles_migration_owns_encrypted_settings_schema() -> None:
+    migration_text = _ui_model_profiles_text()
+    compact_migration = re.sub(r"\s+", " ", migration_text)
+
+    assert 'down_revision = "20260610_0004"' in migration_text
+    assert "CREATE TABLE IF NOT EXISTS wolf.ui_model_profiles" in compact_migration
+    assert "profile_id text PRIMARY KEY" in migration_text
+    assert "api_key_ciphertext text" in migration_text
+    assert "api_key_kid text" in migration_text
+    assert "api_key_masked text" in migration_text
+    assert "default_scopes jsonb NOT NULL" in migration_text
+    assert "capabilities jsonb NOT NULL" in migration_text
+    assert "enabled boolean NOT NULL DEFAULT true" in migration_text
+    assert "model-profile-secrets.json" not in migration_text
+    assert "api_key text" not in migration_text

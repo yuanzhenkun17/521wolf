@@ -7,6 +7,7 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -14,7 +15,14 @@ from urllib.parse import urlparse
 from app.services.llm import create_llm
 from app.util.redaction import redact_text
 from app.util.time import beijing_now_iso
+from storage.ui import ModelProfileRepository
 from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequest
+from ui.backend.settings_secret_crypto import (
+    SettingsSecretEncryptionError,
+    decrypt_settings_secret,
+    encrypt_settings_secret,
+    ensure_settings_secret_encryption_configured,
+)
 
 MODEL_PROFILE_SCOPES = ("game_decision", "judge", "benchmark", "evolution", "prompt_test")
 MODEL_PROFILE_CAPABILITIES = ("chat", "json_mode", "tool_calling", "streaming", "vision")
@@ -24,23 +32,30 @@ LLM_ENV_LOCK_KEYS = ("WEREWOLF_LLM_API_KEY", "WEREWOLF_LLM_BASE_URL", "WEREWOLF_
 
 
 class SettingsModelProfileStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, connection_factory: Callable[[], Any] | None = None) -> None:
         self._root = Path(root)
         self._profile_path = self._root / "model-profiles.json"
         self._secret_path = self._root / "model-profile-secrets.json"
+        self._connection_factory = connection_factory
 
     @classmethod
     def from_backend_store(cls, store: Any) -> "SettingsModelProfileStore":
         paths = getattr(store, "paths", None)
         data_dir = Path(getattr(paths, "data_dir", Path("data")))
-        return cls(data_dir / "settings")
+        connection_factory = getattr(store, "_open_ui_task_connection", None)
+        return cls(data_dir / "settings", connection_factory=connection_factory if callable(connection_factory) else None)
 
     def list_payload(self) -> dict[str, Any]:
-        profiles = [self._public_profile(profile) for profile in self._read_profiles()]
+        profiles = self._read_profiles()
+        try:
+            secrets = self._read_secrets()
+        except SettingsSecretEncryptionError:
+            secrets = {}
+        public_profiles = [self._public_profile(profile, secrets=secrets) for profile in profiles]
         return {
             "kind": "settings_model_profiles",
             "schema_version": 1,
-            "profiles": profiles,
+            "profiles": public_profiles,
             "env_locks": env_locks_payload(),
             "admin": settings_admin_payload(),
             "scopes": [
@@ -121,6 +136,7 @@ class SettingsModelProfileStore:
         now = beijing_now_iso()
         profile_id = _new_profile_id(request.name)
         api_key = str(request.api_key or "").strip()
+        self._ensure_secret_can_be_saved(api_key)
         secret_ref = f"model_profile:{profile_id}:api_key" if api_key else ""
         profile = {
             "profile_id": profile_id,
@@ -186,11 +202,13 @@ class SettingsModelProfileStore:
             if secret_ref:
                 secrets.pop(secret_ref, None)
             profile["api_key_secret_ref"] = ""
+            profile["api_key_masked"] = ""
             changed_runtime = True
         elif "api_key" in fields:
             api_key = str(request.api_key or "").strip()
             if not api_key:
                 raise ValueError("api_key cannot be empty; use clear_api_key=true to remove it")
+            self._ensure_secret_can_be_saved(api_key)
             secret_ref = str(profile.get("api_key_secret_ref") or "") or f"model_profile:{profile_id}:api_key"
             profile["api_key_secret_ref"] = secret_ref
             secrets[secret_ref] = api_key
@@ -208,7 +226,7 @@ class SettingsModelProfileStore:
         profiles = self._read_profiles()
         profile = self._find_profile(profiles, profile_id)
         secrets = self._read_secrets()
-        secret = secrets.get(str(profile.get("api_key_secret_ref") or ""))
+        secret = secrets.get(_profile_secret_ref(profile))
         if not secret:
             raise ValueError("model profile has no saved API key")
 
@@ -305,7 +323,7 @@ class SettingsModelProfileStore:
             profile = self._find_profile(profiles, normalized_profile_id)
             if not bool(profile.get("enabled", True)):
                 raise ValueError("model profile is disabled")
-            secret = secrets.get(str(profile.get("api_key_secret_ref") or ""), "")
+            secret = secrets.get(_profile_secret_ref(profile), "")
             return profile, secret, bool((profile.get("default_scopes") or {}).get(normalized_scope))
 
         for profile in profiles:
@@ -313,42 +331,244 @@ class SettingsModelProfileStore:
                 continue
             if not bool((profile.get("default_scopes") or {}).get(normalized_scope)):
                 continue
-            secret = secrets.get(str(profile.get("api_key_secret_ref") or ""), "")
+            secret = secrets.get(_profile_secret_ref(profile), "")
             if secret:
                 return profile, secret, True
 
         for profile in profiles:
             if not bool(profile.get("enabled", True)):
                 continue
-            secret = secrets.get(str(profile.get("api_key_secret_ref") or ""), "")
+            secret = secrets.get(_profile_secret_ref(profile), "")
             if secret:
                 return profile, secret, False
         return None
 
     def _public_profile(self, profile: dict[str, Any], *, secrets: dict[str, str] | None = None) -> dict[str, Any]:
         secret_map = secrets if secrets is not None else self._read_secrets()
-        secret = secret_map.get(str(profile.get("api_key_secret_ref") or ""))
-        public = {key: value for key, value in profile.items() if key != "api_key_secret_ref"}
-        public["api_key_masked"] = mask_secret(secret)
-        public["has_api_key"] = bool(secret)
+        secret = secret_map.get(_profile_secret_ref(profile))
+        stored_mask = str(profile.get("api_key_masked") or "") if _profile_secret_ref(profile) else ""
+        public = {
+            key: value
+            for key, value in profile.items()
+            if key not in {"api_key_secret_ref", "api_key_ciphertext", "api_key_kid"}
+        }
+        public["api_key_masked"] = mask_secret(secret) if secret else stored_mask
+        public["has_api_key"] = bool(secret or stored_mask)
         public["model_config_hash"] = model_config_hash(profile)
         return public
 
     def _read_profiles(self) -> list[dict[str, Any]]:
+        backend = self._profile_backend()
+        if backend is not None:
+            return backend.read_profiles()
         payload = _read_json(self._profile_path, {"schema_version": 1, "profiles": []})
         profiles = payload.get("profiles") if isinstance(payload, dict) else []
         return [dict(item) for item in profiles] if isinstance(profiles, list) else []
 
     def _write_profiles(self, profiles: list[dict[str, Any]]) -> None:
+        backend = self._profile_backend()
+        if backend is not None:
+            backend.write_profiles(profiles)
+            return
         _write_json(self._profile_path, {"schema_version": 1, "profiles": profiles})
 
     def _read_secrets(self) -> dict[str, str]:
+        backend = self._profile_backend()
+        if backend is not None:
+            return backend.read_secrets()
         payload = _read_json(self._secret_path, {"schema_version": 1, "secrets": {}})
         secrets = payload.get("secrets") if isinstance(payload, dict) else {}
         return {str(key): str(value) for key, value in secrets.items()} if isinstance(secrets, dict) else {}
 
     def _write_secrets(self, secrets: dict[str, str]) -> None:
+        backend = self._profile_backend()
+        if backend is not None:
+            backend.write_secrets(secrets)
+            return
         _write_json(self._secret_path, {"schema_version": 1, "secrets": secrets}, mode=0o600)
+
+    def _ensure_secret_can_be_saved(self, secret: str) -> None:
+        if not secret:
+            return
+        backend = self._profile_backend()
+        if backend is not None:
+            backend.ensure_can_save_secret()
+
+    def _profile_backend(self) -> "_PostgresModelProfileBackend | None":
+        if self._connection_factory is None:
+            return None
+        try:
+            conn = self._connection_factory()
+        except Exception:
+            return None
+        try:
+            table_exists = getattr(conn, "table_exists", None)
+            if not callable(table_exists) or not table_exists("ui_model_profiles"):
+                return None
+        except Exception:
+            return None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return _PostgresModelProfileBackend(self._connection_factory)
+
+
+class _PostgresModelProfileBackend:
+    def __init__(self, connection_factory: Callable[[], Any]) -> None:
+        self._connection_factory = connection_factory
+
+    def ensure_can_save_secret(self) -> None:
+        ensure_settings_secret_encryption_configured()
+
+    def read_profiles(self) -> list[dict[str, Any]]:
+        conn = self._connection_factory()
+        try:
+            return [_profile_from_db_row(row) for row in ModelProfileRepository(conn).list_profiles()]
+        finally:
+            conn.close()
+
+    def write_profiles(self, profiles: list[dict[str, Any]]) -> None:
+        conn = self._connection_factory()
+        try:
+            repo = ModelProfileRepository(conn)
+            existing = {str(row.get("profile_id") or ""): row for row in repo.list_profiles()}
+            incoming_ids: set[str] = set()
+            for profile in profiles:
+                profile_id = str(profile.get("profile_id") or "")
+                if not profile_id:
+                    continue
+                incoming_ids.add(profile_id)
+                previous = existing.get(profile_id, {})
+                row = _profile_to_db_row(profile, previous=previous)
+                repo.upsert(row)
+            for profile_id in sorted(set(existing) - incoming_ids):
+                repo.delete(profile_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def read_secrets(self) -> dict[str, str]:
+        conn = self._connection_factory()
+        try:
+            profiles = ModelProfileRepository(conn).list_profiles()
+        finally:
+            conn.close()
+        secrets: dict[str, str] = {}
+        for row in profiles:
+            profile_id = str(row.get("profile_id") or "")
+            ciphertext = str(row.get("api_key_ciphertext") or "")
+            if not profile_id or not ciphertext:
+                continue
+            secrets[_secret_ref_for_profile_id(profile_id)] = decrypt_settings_secret(ciphertext)
+        return secrets
+
+    def write_secrets(self, secrets: dict[str, str]) -> None:
+        conn = self._connection_factory()
+        try:
+            repo = ModelProfileRepository(conn)
+            profiles = repo.list_profiles()
+            now = beijing_now_iso()
+            for profile in profiles:
+                profile_id = str(profile.get("profile_id") or "")
+                if not profile_id:
+                    continue
+                secret_ref = _secret_ref_for_profile_id(profile_id)
+                secret = str(secrets.get(secret_ref) or "")
+                if secret:
+                    encrypted = encrypt_settings_secret(secret)
+                    repo.set_api_key(
+                        profile_id=profile_id,
+                        ciphertext=encrypted["ciphertext"],
+                        key_id=encrypted["key_id"],
+                        masked=mask_secret(secret),
+                        updated_at=now,
+                    )
+                elif not _db_row_has_secret(profile):
+                    repo.clear_api_key(profile_id=profile_id, updated_at=now)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def _profile_from_db_row(row: dict[str, Any]) -> dict[str, Any]:
+    profile_id = str(row.get("profile_id") or "")
+    has_secret = _db_row_has_secret(row)
+    return {
+        "profile_id": profile_id,
+        "name": str(row.get("name") or ""),
+        "provider": normalize_provider(str(row.get("provider") or "")),
+        "base_url": str(row.get("base_url") or ""),
+        "model": str(row.get("model") or ""),
+        "api_key_secret_ref": _secret_ref_for_profile_id(profile_id) if has_secret else "",
+        "api_key_masked": str(row.get("api_key_masked") or "") if has_secret else "",
+        "temperature": row.get("temperature"),
+        "timeout_seconds": row.get("timeout_seconds"),
+        "max_retries": row.get("max_retries"),
+        "enabled": bool(row.get("enabled", True)),
+        "default_scopes": normalize_bool_map(row.get("default_scopes"), MODEL_PROFILE_SCOPES),
+        "capabilities": normalize_bool_map(row.get("capabilities"), MODEL_PROFILE_CAPABILITIES, default_true={"chat"}),
+        "metadata": dict(row.get("metadata") or {}),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "last_tested_at": row.get("last_tested_at"),
+        "last_test_status": str(row.get("last_test_status") or "untested"),
+        "last_test_error": str(row.get("last_test_error") or ""),
+    }
+
+
+def _profile_to_db_row(profile: dict[str, Any], *, previous: dict[str, Any]) -> dict[str, Any]:
+    profile_id = str(profile.get("profile_id") or "")
+    keep_secret = bool(_profile_secret_ref(profile))
+    return {
+        "profile_id": profile_id,
+        "name": str(profile.get("name") or ""),
+        "provider": normalize_provider(str(profile.get("provider") or "")),
+        "base_url": str(profile.get("base_url") or "").rstrip("/"),
+        "model": str(profile.get("model") or ""),
+        "api_key_ciphertext": previous.get("api_key_ciphertext") if keep_secret else None,
+        "api_key_kid": previous.get("api_key_kid") if keep_secret else None,
+        "api_key_masked": previous.get("api_key_masked") if keep_secret else "",
+        "temperature": profile.get("temperature"),
+        "timeout_seconds": profile.get("timeout_seconds"),
+        "max_retries": profile.get("max_retries"),
+        "enabled": bool(profile.get("enabled", True)),
+        "default_scopes": normalize_bool_map(profile.get("default_scopes"), MODEL_PROFILE_SCOPES),
+        "capabilities": normalize_bool_map(profile.get("capabilities"), MODEL_PROFILE_CAPABILITIES, default_true={"chat"}),
+        "metadata": dict(profile.get("metadata") or {}),
+        "created_at": profile.get("created_at") or beijing_now_iso(),
+        "updated_at": profile.get("updated_at") or beijing_now_iso(),
+        "last_tested_at": profile.get("last_tested_at"),
+        "last_test_status": str(profile.get("last_test_status") or "untested"),
+        "last_test_error": str(profile.get("last_test_error") or ""),
+    }
+
+
+def _profile_secret_ref(profile: dict[str, Any]) -> str:
+    explicit = str(profile.get("api_key_secret_ref") or "").strip()
+    if explicit:
+        return explicit
+    profile_id = str(profile.get("profile_id") or "").strip()
+    if not profile_id:
+        return ""
+    if str(profile.get("api_key_masked") or ""):
+        return _secret_ref_for_profile_id(profile_id)
+    return ""
+
+
+def _secret_ref_for_profile_id(profile_id: str) -> str:
+    return f"model_profile:{profile_id}:api_key"
+
+
+def _db_row_has_secret(row: dict[str, Any]) -> bool:
+    return bool(row.get("api_key_ciphertext") or row.get("api_key_masked"))
 
 
 def settings_admin_payload() -> dict[str, Any]:

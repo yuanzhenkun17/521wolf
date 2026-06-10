@@ -387,6 +387,8 @@ class _UiMemoryDatabase:
         self.task_events: dict[int, dict[str, Any]] = {}
         self.task_queue: dict[str, dict[str, Any]] = {}
         self.task_workers: dict[str, dict[str, Any]] = {}
+        self.model_profiles: dict[str, dict[str, Any]] = {}
+        self.model_profiles_enabled = False
         self.background_upserts = 0
         self.event_upserts = 0
         self.deletes = 0
@@ -422,7 +424,7 @@ class _UiMemoryConnection:
             return _UiCursor([{"ok": 1}])
 
         if text.startswith("SELECT version_num FROM public.alembic_version"):
-            return _UiCursor([{"version_num": "20260610_0004"}])
+            return _UiCursor([{"version_num": "20260611_0005"}])
 
         if text == "SELECT status, COUNT(*) AS count FROM ui_task_queue GROUP BY status":
             counts: dict[str, int] = {}
@@ -477,6 +479,91 @@ class _UiMemoryConnection:
                     key=lambda row: (str(row.get("updated_at") or ""), str(row.get("entity_id") or "")),
                 )
             return _UiCursor(rows)
+
+        if text.startswith("SELECT profile_id, name, provider, base_url, model, api_key_ciphertext"):
+            with self._db.lock:
+                rows = sorted(
+                    (dict(row) for row in self._db.model_profiles.values()),
+                    key=lambda row: (str(row.get("created_at") or ""), str(row.get("profile_id") or "")),
+                )
+            if " WHERE profile_id = ?" in text:
+                profile_id = str(params[0])
+                rows = [row for row in rows if str(row.get("profile_id") or "") == profile_id]
+            return _UiCursor(rows)
+
+        if text.startswith("INSERT INTO ui_model_profiles"):
+            (
+                profile_id,
+                name,
+                provider,
+                base_url,
+                model,
+                api_key_ciphertext,
+                api_key_kid,
+                api_key_masked,
+                temperature,
+                timeout_seconds,
+                max_retries,
+                enabled,
+                default_scopes,
+                capabilities,
+                metadata,
+                created_at,
+                updated_at,
+                last_tested_at,
+                last_test_status,
+                last_test_error,
+            ) = params
+            with self._db.lock:
+                self._db.model_profiles[str(profile_id)] = {
+                    "profile_id": str(profile_id),
+                    "name": name,
+                    "provider": provider,
+                    "base_url": base_url,
+                    "model": model,
+                    "api_key_ciphertext": api_key_ciphertext,
+                    "api_key_kid": api_key_kid,
+                    "api_key_masked": api_key_masked,
+                    "temperature": temperature,
+                    "timeout_seconds": timeout_seconds,
+                    "max_retries": max_retries,
+                    "enabled": bool(enabled),
+                    "default_scopes": json.loads(default_scopes) if isinstance(default_scopes, str) else default_scopes,
+                    "capabilities": json.loads(capabilities) if isinstance(capabilities, str) else capabilities,
+                    "metadata": json.loads(metadata) if isinstance(metadata, str) else metadata,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "last_tested_at": last_tested_at,
+                    "last_test_status": last_test_status,
+                    "last_test_error": last_test_error,
+                }
+            return _UiCursor()
+
+        if text.startswith("UPDATE ui_model_profiles SET api_key_ciphertext = ?, api_key_kid = ?"):
+            ciphertext, key_id, masked, updated_at, profile_id = params
+            with self._db.lock:
+                row = self._db.model_profiles[str(profile_id)]
+                row["api_key_ciphertext"] = ciphertext
+                row["api_key_kid"] = key_id
+                row["api_key_masked"] = masked
+                row["updated_at"] = updated_at
+            return _UiCursor()
+
+        if text.startswith("UPDATE ui_model_profiles SET api_key_ciphertext = NULL"):
+            updated_at, profile_id = params
+            with self._db.lock:
+                row = self._db.model_profiles[str(profile_id)]
+                row["api_key_ciphertext"] = None
+                row["api_key_kid"] = None
+                row["api_key_masked"] = ""
+                row["updated_at"] = updated_at
+            return _UiCursor()
+
+        if text.startswith("DELETE FROM ui_model_profiles WHERE profile_id = ?"):
+            with self._db.lock:
+                self._db.model_profiles.pop(str(params[0]), None)
+                self._db.deletes += 1
+            return _UiCursor()
 
         if text.startswith("INSERT INTO ui_task_events"):
             event_id, entity_id, entity_kind, event, status, payload, created_at = params
@@ -557,6 +644,17 @@ class _UiMemoryConnection:
         self.closed = True
         with self._db.lock:
             self._db.closes += 1
+
+    def table_exists(self, table_name: str) -> bool:
+        if table_name == "ui_model_profiles":
+            return self._db.model_profiles_enabled
+        return table_name in {
+            "ui_background_tasks",
+            "ui_task_events",
+            "ui_task_queue",
+            "ui_task_artifacts",
+            "ui_task_workers",
+        }
 
     def __enter__(self) -> "_UiMemoryConnection":
         return self
@@ -1216,6 +1314,87 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
     assert delete_response.status_code == 200
     assert delete_response.json()["deleted"] is True
     assert final_response.json()["profiles"] == []
+
+
+def test_settings_model_profiles_store_api_keys_encrypted_in_postgres(
+    tmp_path: Path,
+    monkeypatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
+    import ui.backend.settings_model_profiles as settings_model_profiles
+
+    class ProbeModel:
+        async def ainvoke(self, messages: Any) -> Any:
+            assert messages == settings_model_profiles.MODEL_PROFILE_TEST_PROMPT
+            return type("Result", (), {"content": "ok"})()
+
+    create_calls: list[dict[str, Any]] = []
+
+    def fake_create_llm(**kwargs: Any) -> ProbeModel:
+        create_calls.append(dict(kwargs))
+        return ProbeModel()
+
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "settings-secret-test-key")
+    monkeypatch.setattr(settings_model_profiles, "create_llm", fake_create_llm)
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Encrypted Qwen",
+                "provider": "openai_compatible",
+                "base_url": "https://api.example.test/v1",
+                "model": "qwen-encrypted",
+                "api_key": "sk-postgres-secret-123456",
+                "default_scopes": {"benchmark": True},
+                "capabilities": {"chat": True, "json_mode": True},
+            },
+        )
+        profile_id = create_response.json()["profile"]["profile_id"]
+        list_response = client.get("/api/settings/model-profiles")
+        test_response = client.post(f"/api/settings/model-profiles/{profile_id}/test", headers=headers)
+
+    assert create_response.status_code == 200
+    created_payload = create_response.json()
+    assert created_payload["profile"]["api_key_masked"] == "sk-****3456"
+    assert created_payload["profile"]["has_api_key"] is True
+    assert "sk-postgres-secret" not in json.dumps(created_payload, ensure_ascii=False)
+
+    db_row = _fake_ui_pg_provider.db.model_profiles[profile_id]
+    assert db_row["api_key_ciphertext"]
+    assert db_row["api_key_kid"] == "settings:v1"
+    assert db_row["api_key_masked"] == "sk-****3456"
+    assert "sk-postgres-secret" not in str(db_row["api_key_ciphertext"])
+    assert not (tmp_path / "data" / "settings" / "model-profile-secrets.json").exists()
+
+    assert list_response.status_code == 200
+    listed_payload = list_response.json()
+    assert listed_payload["profiles"][0]["has_api_key"] is True
+    assert listed_payload["profiles"][0]["api_key_masked"] == "sk-****3456"
+    assert "sk-postgres-secret" not in json.dumps(listed_payload, ensure_ascii=False)
+
+    assert test_response.status_code == 200
+    assert test_response.json()["ok"] is True
+    assert create_calls[-1]["api_key"] == "sk-postgres-secret-123456"
+    assert create_calls[-1]["model"] == "qwen-encrypted"
+
+    with _test_client(tmp_path) as client:
+        clear_response = client.patch(
+            f"/api/settings/model-profiles/{profile_id}",
+            headers=headers,
+            json={"clear_api_key": True},
+        )
+
+    assert clear_response.status_code == 200
+    assert clear_response.json()["profile"]["has_api_key"] is False
+    cleared_row = _fake_ui_pg_provider.db.model_profiles[profile_id]
+    assert cleared_row["api_key_ciphertext"] is None
+    assert cleared_row["api_key_masked"] == ""
 
 
 def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(

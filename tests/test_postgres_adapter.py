@@ -256,6 +256,38 @@ def test_execute_casts_task_worker_metadata_jsonb_insert_parameter() -> None:
     assert params[-1] == '{"registered_kinds":["demo"]}'
 
 
+def test_execute_casts_model_profile_jsonb_and_boolean_insert_parameters() -> None:
+    raw = _FakeRawConnection()
+    adapter = _adapter(raw)
+    raw.calls.clear()
+
+    adapter.execute(
+        """
+        INSERT INTO ui_model_profiles
+        (profile_id, name, provider, base_url, model, enabled, default_scopes, capabilities, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "model-1",
+            "Qwen",
+            "openai_compatible",
+            "https://api.example.test/v1",
+            "qwen-plus",
+            1,
+            '{"benchmark":true}',
+            '{"chat":true}',
+            '{"owner":"local"}',
+            "2026-06-11T00:00:00+08:00",
+            "2026-06-11T00:00:00+08:00",
+        ),
+    )
+
+    sql, params = raw.calls[0]
+    assert "VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s)" in " ".join(sql.split())
+    assert params[5] is True
+    assert params[6] == '{"benchmark":true}'
+
+
 def test_execute_casts_jsonb_update_parameters_and_adapts_boolean_where() -> None:
     raw = _FakeRawConnection()
     adapter = _adapter(raw)

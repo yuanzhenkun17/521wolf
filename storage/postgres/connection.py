@@ -56,6 +56,7 @@ _JSONB_COLUMNS_BY_TABLE = {
     "ui_task_queue": {"payload", "result", "error", "progress", "metadata"},
     "ui_task_artifacts": {"metadata"},
     "ui_task_workers": {"metadata"},
+    "ui_model_profiles": {"default_scopes", "capabilities", "metadata"},
     "patterns": {"source_games"},
     "evolution_rounds": {"config"},
     "candidate_packages": {"proposal_ids"},
@@ -71,6 +72,7 @@ _BOOLEAN_COLUMNS_BY_TABLE = {
     "benchmark_leaderboard": {"rankable", "data_sufficient"},
     "experience_candidates": {"learning_eligible"},
     "evolution_rounds": {"learning_eligible"},
+    "ui_model_profiles": {"enabled"},
 }
 _JSONB_COLUMN_NAMES = {
     column for columns in _JSONB_COLUMNS_BY_TABLE.values() for column in columns
