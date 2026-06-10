@@ -353,7 +353,7 @@ class TaskService:
                 "worker_fresh": False,
                 "workers": [],
                 "artifact_root": artifact_root,
-                "error": {"type": type(exc).__name__, "message": str(exc)},
+                "error": _safe_task_error(exc),
             }
 
         worker_fresh = any(_worker_is_fresh(worker, now=now) for worker in workers)
@@ -399,7 +399,7 @@ class TaskService:
                 "status": "error",
                 "path": str(root),
                 "writable": False,
-                "error": {"type": type(exc).__name__, "message": str(exc)},
+                "error": _safe_task_error(exc),
             }
 
     @property
@@ -508,6 +508,13 @@ def _worker_is_fresh(worker: dict[str, Any], *, now: str) -> bool:
         return False
     lease_seconds = _positive_int(worker.get("lease_seconds"), default=300)
     return elapsed <= max(lease_seconds * 2, 60)
+
+
+def _safe_task_error(exc: Exception) -> dict[str, str]:
+    return {
+        "type": type(exc).__name__,
+        "message": "Task control error details were redacted.",
+    }
 
 
 def _seconds_between(later: str, earlier: str) -> float | None:

@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import DEFAULT_PATHS, PathConfig
+from app.util.redaction import redact
 from ui.backend.constants import ROLE_ORDER  # noqa: F401 - compatibility re-export
 from ui.backend.routes.benchmark import register_benchmark_routes
 from ui.backend.routes.core import register_core_routes
@@ -111,7 +112,9 @@ def _register_error_handlers(api: FastAPI) -> None:
 
     @api.exception_handler(RequestValidationError)
     async def validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
-        diagnostics = exc.errors()
+        diagnostics = redact(exc.errors(), context="public")
+        if not isinstance(diagnostics, list):
+            diagnostics = []
         return JSONResponse(
             status_code=422,
             content=_error_response(

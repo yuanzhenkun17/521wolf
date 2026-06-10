@@ -723,7 +723,7 @@ def _gate_degraded_features(gates: dict[str, Any]) -> list[str]:
 def _safe_error(exc: Exception) -> dict[str, str]:
     return {
         "type": type(exc).__name__,
-        "message": redact_text(str(exc) or type(exc).__name__, context="diagnostic"),
+        "message": "Health check error details were redacted.",
     }
 
 
