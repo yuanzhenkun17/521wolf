@@ -1,10 +1,9 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import { buildEvidenceLink } from './evidenceLinks.ts'
 
 const props = defineProps({
-  target: { type: Object, default: () => ({}) },
+  target: { type: Object as PropType<Record<string, unknown>>, default: () => ({}) },
   kind: { type: String, default: 'game' },
   label: { type: String, default: '' },
   compact: Boolean,

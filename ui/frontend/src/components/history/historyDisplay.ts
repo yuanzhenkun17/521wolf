@@ -1,5 +1,6 @@
-// @ts-nocheck
-const ROLE_LABELS = {
+type LabelMap = Record<string, string>
+
+const ROLE_LABELS: LabelMap = {
   villager: '村民',
   civilian: '村民',
   werewolf: '狼人',
@@ -15,7 +16,7 @@ const ROLE_LABELS = {
   wolf_king: '狼王'
 }
 
-const WINNER_LABELS = {
+const WINNER_LABELS: LabelMap = {
   werewolves: '狼人阵营',
   werewolf: '狼人阵营',
   wolves: '狼人阵营',
@@ -37,7 +38,7 @@ const WINNER_LABELS = {
   unknown: '未记录'
 }
 
-const PHASE_LABELS = {
+const PHASE_LABELS: LabelMap = {
   setup: '开局配置',
   game_init: '开局配置',
   night: '黑夜行动',
@@ -65,7 +66,7 @@ const PHASE_LABELS = {
   unknown: '未知阶段'
 }
 
-const ACTION_LABELS = {
+const ACTION_LABELS: LabelMap = {
   action_request: '行动请求',
   action_response: '行动响应',
   invalid_response: '非法响应',
@@ -137,7 +138,7 @@ const ACTION_LABELS = {
   fallback: '规则回退'
 }
 
-const CHOICE_LABELS = {
+const CHOICE_LABELS: LabelMap = {
   pass: '跳过',
   skip: '跳过',
   none: '不使用',
@@ -157,7 +158,7 @@ const CHOICE_LABELS = {
   reverse: '逆序发言'
 }
 
-const SOURCE_LABELS = {
+const SOURCE_LABELS: LabelMap = {
   policy_skipped: '快测跳过',
   policy_adjusted: '策略修正',
   llm_error: '模型错误',
@@ -169,38 +170,39 @@ const SOURCE_LABELS = {
   unknown: '未知来源'
 }
 
-export function displayRoleLabel(role) {
-  const key = String(role || '').trim().toLowerCase()
-  return ROLE_LABELS[key] || role || '未知'
+export function displayRoleLabel(role: unknown): string {
+  const raw = role || ''
+  const key = String(raw).trim().toLowerCase()
+  return ROLE_LABELS[key] || (raw ? String(raw) : '未知')
 }
 
-export function displayWinnerLabel(winner) {
+export function displayWinnerLabel(winner: unknown): string {
   if (winner == null || winner === '') return '未记录'
   const key = String(winner).trim().toLowerCase()
   return WINNER_LABELS[key] || normalizeHistoryDisplayText(winner)
 }
 
-export function displayPhaseLabel(phase) {
+export function displayPhaseLabel(phase: unknown): string {
   const key = String(phase || '').trim().toLowerCase()
   return PHASE_LABELS[key] || normalizeHistoryDisplayText(phase) || '阶段'
 }
 
-export function displayDayLabel(day) {
+export function displayDayLabel(day: unknown): string {
   if (day == null || day === '') return '未记录'
   return `第${day}天`
 }
 
-export function displayActionLabel(action) {
+export function displayActionLabel(action: unknown): string {
   const key = String(action || '').trim().toLowerCase()
   return ACTION_LABELS[key] || '决策'
 }
 
-export function displayChoiceLabel(choice) {
+export function displayChoiceLabel(choice: unknown): string {
   const key = String(choice || '').trim().toLowerCase()
   return CHOICE_LABELS[key] || normalizeHistoryDisplayText(choice) || '未选择'
 }
 
-export function displaySourceLabel(source) {
+export function displaySourceLabel(source: unknown): string {
   const key = String(source || '').trim().toLowerCase()
   if (SOURCE_LABELS[key]) return SOURCE_LABELS[key]
   if (key.includes('skip')) return '快测跳过'
@@ -213,9 +215,9 @@ export function displaySourceLabel(source) {
   return '其他来源'
 }
 
-export function displaySkillDirLabel(skillDir) {
+export function displaySkillDirLabel(skillDir: unknown): string {
   const key = String(skillDir || '').trim().toLowerCase()
-  const map = {
+  const map: LabelMap = {
     baseline: '默认技能',
     default: '默认技能',
     none: '未配置'
@@ -223,9 +225,9 @@ export function displaySkillDirLabel(skillDir) {
   return map[key] || normalizeHistoryDisplayText(skillDir) || '默认技能'
 }
 
-export function displayDeathReason(reason) {
+export function displayDeathReason(reason: unknown): string {
   const key = String(reason || '').trim().toLowerCase()
-  const map = {
+  const map: LabelMap = {
     werewolf: '狼人袭击',
     werewolves: '狼人袭击',
     wolf: '狼人袭击',
@@ -241,7 +243,7 @@ export function displayDeathReason(reason) {
   return map[key] || normalizeHistoryDisplayText(reason)
 }
 
-export function normalizeHistoryDisplayText(value) {
+export function normalizeHistoryDisplayText(value: unknown): string {
   if (value == null || value === '') return ''
   let text = String(value)
 
@@ -279,7 +281,7 @@ export function normalizeHistoryDisplayText(value) {
     `原因：${displayDeathReason(reason)}`
   )
 
-  const replacements = [
+  const replacements: Array<[RegExp, string]> = [
     [/\bpolicy_adjusted\b/gi, '策略修正'],
     [/\bllm_error\b/gi, '模型错误'],
     [/\bfallback\b/gi, '规则回退'],

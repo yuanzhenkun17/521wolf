@@ -1,5 +1,32 @@
-// @ts-nocheck
-const KIND_LABELS = {
+type EvidenceSource = Record<string, unknown>
+type EvidenceParams = Record<string, unknown>
+type EvidenceLabels = Record<string, string | undefined>
+
+interface EvidenceContext {
+  existing: EvidenceSource
+  config: EvidenceSource
+}
+
+interface EvidenceLinkOptions {
+  kind?: unknown
+  label?: string
+  id?: unknown
+  params?: EvidenceParams
+  kinds?: unknown[]
+  labels?: EvidenceLabels
+}
+
+interface EvidenceLink {
+  kind: string
+  label: string
+  id: string
+  href: string
+  params?: EvidenceParams
+  disabled: boolean
+  unavailableReason: string
+}
+
+const KIND_LABELS: Record<string, string> = {
   game: 'Archive',
   run: 'Run',
   proposal: 'Proposal',
@@ -7,13 +34,17 @@ const KIND_LABELS = {
   version: 'Version'
 }
 
-function textValue(value) {
+function isEvidenceObject(value: unknown): value is EvidenceSource {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function textValue(value: unknown): string {
   if (value === null || value === undefined) return ''
   const text = String(value).trim()
   return text || ''
 }
 
-function firstText(...values) {
+function firstText(...values: unknown[]): string {
   for (const value of values) {
     const text = textValue(value)
     if (text) return text
@@ -21,15 +52,15 @@ function firstText(...values) {
   return ''
 }
 
-function sourceContext(source = {}) {
-  const existing = source.evidence_source && typeof source.evidence_source === 'object'
+function sourceContext(source: EvidenceSource = {}): EvidenceContext {
+  const existing = isEvidenceObject(source.evidence_source)
     ? source.evidence_source
     : {}
-  const config = source.config && typeof source.config === 'object' ? source.config : {}
+  const config = isEvidenceObject(source.config) ? source.config : {}
   return { existing, config }
 }
 
-function normalizeEvidenceSourceKey(value) {
+function normalizeEvidenceSourceKey(value: unknown): string {
   const key = textValue(value).toLowerCase()
   if (key === 'bench' || key === 'eval' || key === 'evaluation') return 'benchmark'
   if (key === 'evo' || key === 'role_evolution' || key === 'self_evolution' || key === 'self-evolution') {
@@ -38,7 +69,7 @@ function normalizeEvidenceSourceKey(value) {
   return key
 }
 
-function sourceEvidenceKey(source = {}) {
+function sourceEvidenceKey(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
   const explicit = normalizeEvidenceSourceKey(firstText(
     existing.log_source,
@@ -77,7 +108,7 @@ function sourceEvidenceKey(source = {}) {
   return 'normal'
 }
 
-function buildHashLink(route, params = {}) {
+function buildHashLink(route: string, params: EvidenceParams = {}): string {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
     const text = textValue(value)
@@ -87,7 +118,7 @@ function buildHashLink(route, params = {}) {
   return queryString ? `#${route}?${queryString}` : `#${route}`
 }
 
-function disabledEvidenceLink(kind, reason, { label = '', id = '' } = {}) {
+function disabledEvidenceLink(kind: string, reason: string, { label = '', id = '' }: EvidenceLinkOptions = {}): EvidenceLink {
   return {
     kind,
     label: label || KIND_LABELS[kind] || 'Evidence',
@@ -98,7 +129,7 @@ function disabledEvidenceLink(kind, reason, { label = '', id = '' } = {}) {
   }
 }
 
-function enabledEvidenceLink(kind, href, { label = '', id = '', params = {} } = {}) {
+function enabledEvidenceLink(kind: string, href: string, { label = '', id = '', params = {} }: EvidenceLinkOptions = {}): EvidenceLink {
   return {
     kind,
     label: label || KIND_LABELS[kind] || 'Evidence',
@@ -110,7 +141,7 @@ function enabledEvidenceLink(kind, href, { label = '', id = '', params = {} } = 
   }
 }
 
-function availabilityReason(source = {}, kind = '') {
+function availabilityReason(source: EvidenceSource = {}, kind = ''): string {
   const { existing } = sourceContext(source)
   const sourceKey = sourceEvidenceKey(source)
   const genericReason = firstText(
@@ -135,7 +166,7 @@ function availabilityReason(source = {}, kind = '') {
   return ''
 }
 
-function gameEvidenceId(source = {}) {
+function gameEvidenceId(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
   return firstText(
     source.history_game_id,
@@ -150,7 +181,7 @@ function gameEvidenceId(source = {}) {
   )
 }
 
-function runEvidenceId(source = {}) {
+function runEvidenceId(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
   return firstText(
     source.source_run_id,
@@ -164,7 +195,7 @@ function runEvidenceId(source = {}) {
   )
 }
 
-function benchmarkRunEvidenceId(source = {}) {
+function benchmarkRunEvidenceId(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
   return firstText(
     source.source_run_id,
@@ -182,9 +213,9 @@ function benchmarkRunEvidenceId(source = {}) {
   )
 }
 
-function proposalEvidenceId(source = {}) {
+function proposalEvidenceId(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
-  const proposal = source.proposal && typeof source.proposal === 'object' ? source.proposal : {}
+  const proposal = isEvidenceObject(source.proposal) ? source.proposal : {}
   return firstText(
     source.proposal_id,
     existing.proposal_id,
@@ -194,7 +225,7 @@ function proposalEvidenceId(source = {}) {
   )
 }
 
-function gateEvidenceId(source = {}) {
+function gateEvidenceId(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
   return firstText(
     source.gate_report_id,
@@ -205,7 +236,7 @@ function gateEvidenceId(source = {}) {
   )
 }
 
-function versionEvidenceId(source = {}) {
+function versionEvidenceId(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
   return firstText(
     source.version_id,
@@ -216,12 +247,12 @@ function versionEvidenceId(source = {}) {
   )
 }
 
-function roleEvidenceId(source = {}) {
+function roleEvidenceId(source: EvidenceSource = {}): string {
   const { existing, config } = sourceContext(source)
   return firstText(source.role, existing.role, config.role)
 }
 
-function buildGameEvidenceLink(source = {}, options = {}) {
+function buildGameEvidenceLink(source: EvidenceSource = {}, options: EvidenceLinkOptions = {}): EvidenceLink {
   const reason = availabilityReason(source, 'game')
   const gameId = gameEvidenceId(source)
   if (reason) return disabledEvidenceLink('game', reason, { ...options, id: gameId })
@@ -235,7 +266,7 @@ function buildGameEvidenceLink(source = {}, options = {}) {
   })
 }
 
-function buildRunEvidenceLink(source = {}, options = {}) {
+function buildRunEvidenceLink(source: EvidenceSource = {}, options: EvidenceLinkOptions = {}): EvidenceLink {
   const reason = availabilityReason(source, 'run')
   const sourceKey = sourceEvidenceKey(source)
   const runId = sourceKey === 'benchmark' ? benchmarkRunEvidenceId(source) : runEvidenceId(source)
@@ -266,7 +297,7 @@ function buildRunEvidenceLink(source = {}, options = {}) {
   })
 }
 
-function buildProposalEvidenceLink(source = {}, options = {}) {
+function buildProposalEvidenceLink(source: EvidenceSource = {}, options: EvidenceLinkOptions = {}): EvidenceLink {
   const reason = availabilityReason(source, 'proposal')
   const runId = runEvidenceId(source)
   const proposalId = proposalEvidenceId(source)
@@ -285,7 +316,7 @@ function buildProposalEvidenceLink(source = {}, options = {}) {
   })
 }
 
-function buildGateEvidenceLink(source = {}, options = {}) {
+function buildGateEvidenceLink(source: EvidenceSource = {}, options: EvidenceLinkOptions = {}): EvidenceLink {
   const reason = availabilityReason(source, 'gate')
   const runId = runEvidenceId(source)
   const gateId = gateEvidenceId(source)
@@ -299,7 +330,7 @@ function buildGateEvidenceLink(source = {}, options = {}) {
   })
 }
 
-function buildVersionEvidenceLink(source = {}, options = {}) {
+function buildVersionEvidenceLink(source: EvidenceSource = {}, options: EvidenceLinkOptions = {}): EvidenceLink {
   const role = roleEvidenceId(source)
   const versionId = versionEvidenceId(source)
   if (!versionId) return disabledEvidenceLink('version', '缺少 version_id，无法跳转到角色版本。', options)
@@ -311,7 +342,7 @@ function buildVersionEvidenceLink(source = {}, options = {}) {
   })
 }
 
-function buildEvidenceLink(source = {}, options = {}) {
+function buildEvidenceLink(source: EvidenceSource = {}, options: EvidenceLinkOptions = {}): EvidenceLink {
   const kind = textValue(options.kind || source.kind || source.evidence_kind || source.type || 'game').toLowerCase()
   if (kind === 'run' || kind === 'source_run') return buildRunEvidenceLink(source, options)
   if (kind === 'proposal') return buildProposalEvidenceLink(source, options)
@@ -320,11 +351,14 @@ function buildEvidenceLink(source = {}, options = {}) {
   return buildGameEvidenceLink(source, options)
 }
 
-function buildEvidenceLinks(source = {}, options = {}) {
+function buildEvidenceLinks(source: EvidenceSource = {}, options: EvidenceLinkOptions = {}): EvidenceLink[] {
   const kinds = Array.isArray(options.kinds) && options.kinds.length
     ? options.kinds
     : ['game', 'run', 'proposal']
-  return kinds.map((kind) => buildEvidenceLink(source, { kind, label: options.labels?.[kind] }))
+  return kinds.map((kind) => {
+    const kindText = textValue(kind)
+    return buildEvidenceLink(source, { kind: kindText, label: options.labels?.[kindText] })
+  })
 }
 
 export {

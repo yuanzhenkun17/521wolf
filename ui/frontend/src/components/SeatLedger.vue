@@ -1,28 +1,45 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue'
+
+type PlayerId = string | number
+
+interface SeatLedgerPlayer {
+  id: PlayerId
+  is_sheriff?: boolean
+  seat?: string | number
+  role_hint?: string
+}
+
+interface SelectedPage {
+  phase?: string
+}
+
+type AliveMap = Record<string, boolean>
+type RoleIconImage = (player: SeatLedgerPlayer) => string
+
 const props = defineProps({
-  players: { type: Array, default: () => [] },
-  aliveMap: { type: Object, default: () => ({}) },
+  players: { type: Array as PropType<SeatLedgerPlayer[]>, default: () => [] },
+  aliveMap: { type: Object as PropType<AliveMap>, default: () => ({}) },
   sheriffId: [String, Number, null],
-  selectedPage: Object,
-  roleIconImage: Function,
+  selectedPage: Object as PropType<SelectedPage | null>,
+  roleIconImage: Function as PropType<RoleIconImage>,
   selectable: Boolean,
   selectedPlayerId: [String, Number, null]
 })
 
 const emit = defineEmits(['select-player'])
 
-function roleImage(player) {
+function roleImage(player: SeatLedgerPlayer) {
   return props.roleIconImage ? props.roleIconImage(player) : ''
 }
 
-function showSheriff(player) {
+function showSheriff(player: SeatLedgerPlayer) {
   return player.id === props.sheriffId
     && props.selectedPage
     && ['sheriff_result', 'speech', 'vote', 'night', 'ended'].includes(props.selectedPage.phase)
 }
 
-function selectPlayer(player) {
+function selectPlayer(player: SeatLedgerPlayer) {
   if (props.selectable) emit('select-player', player)
 }
 </script>

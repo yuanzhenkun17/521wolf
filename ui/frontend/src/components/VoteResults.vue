@@ -1,15 +1,30 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+interface VoteRecord {
+  actorName?: string
+  actor_name?: string
+  actor_id?: string | number
+}
+
+interface VoteTallyItem {
+  count?: number | string
+  votes?: VoteRecord[]
+  voter_ids?: Array<string | number>
+  voters?: string[]
+  target?: string
+  targetName?: string
+  target_id?: string | number
+}
 
 const props = defineProps({
-  tally: { type: Array, default: () => [] }
+  tally: { type: Array as PropType<VoteTallyItem[]>, default: () => [] }
 })
 
 const colors = ['#8b5425', '#c0392b', '#2980b9', '#27ae60', '#8e44ad', '#d35400', '#16a085']
 const maxCount = computed(() => Math.max(...props.tally.map((item) => voteCount(item)), 1))
 
-function voteCount(item) {
+function voteCount(item: VoteTallyItem) {
   const count = Number(item?.count)
   if (Number.isFinite(count) && count > 0) return count
   if (Array.isArray(item?.votes)) return item.votes.length
@@ -18,18 +33,18 @@ function voteCount(item) {
   return 0
 }
 
-function barStyle(item, index) {
+function barStyle(item: VoteTallyItem, index: number) {
   return {
     width: `${(voteCount(item) / maxCount.value) * 100}%`,
     background: colors[index % colors.length]
   }
 }
 
-function targetLabel(item) {
+function targetLabel(item: VoteTallyItem) {
   return item.target || item.targetName || (item.target_id ? `${item.target_id}号` : '未知')
 }
 
-function voterLabels(item) {
+function voterLabels(item: VoteTallyItem) {
   if (Array.isArray(item.voters) && item.voters.length) return item.voters
   if (Array.isArray(item.votes) && item.votes.length) {
     return item.votes
@@ -42,7 +57,7 @@ function voterLabels(item) {
   return []
 }
 
-function voterText(item) {
+function voterText(item: VoteTallyItem) {
   const voters = voterLabels(item)
   return voters.length ? voters.join('、') : '暂无投票人记录'
 }

@@ -1,17 +1,28 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
 import {
   displayRoleLabel,
   normalizeHistoryDisplayText
 } from './history/historyDisplay.ts'
 
+interface NightAction {
+  actorName?: string
+  roleName?: unknown
+  targetName?: unknown
+  public_summary?: unknown
+  reason?: unknown
+  confidence?: number | string | null
+}
+
+type NightActionDetail = (action: NightAction) => unknown
+type RoleIconImage = (player: { role?: unknown; role_hint?: string }) => string
+
 const props = defineProps({
-  action: { type: Object, required: true },
+  action: { type: Object as PropType<NightAction>, required: true },
   selected: Boolean,
   mode: { type: String, default: 'night' },
-  nightActionDetail: Function,
-  roleIconImage: Function
+  nightActionDetail: Function as PropType<NightActionDetail>,
+  roleIconImage: Function as PropType<RoleIconImage>
 })
 
 const emit = defineEmits(['select'])
