@@ -358,13 +358,14 @@ def _save_llm_judgment_rows(state: dict, rows: list[dict[str, Any]], *, game_id:
     if provider is None:
         return []
 
-    from storage.runtime import GamePersistence
+    from storage.runtime import save_llm_judgments_with_provider
 
-    runtime = GamePersistence(game_id=game_id or "unknown", provider=provider, source_game_id=game_id or None)
-    try:
-        return runtime.save_llm_judgments(rows)
-    finally:
-        runtime.close()
+    return save_llm_judgments_with_provider(
+        rows,
+        game_id=game_id or "unknown",
+        storage_provider=provider,
+        source_game_id=game_id or None,
+    )
 
 
 async def evidence_node(state: dict) -> dict:

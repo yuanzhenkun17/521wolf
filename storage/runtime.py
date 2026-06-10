@@ -78,6 +78,27 @@ def create_game_persistence(
     )
 
 
+def save_llm_judgments_with_provider(
+    judgments: list[dict[str, Any]],
+    *,
+    game_id: str,
+    storage_provider: StorageProvider | None = None,
+    source_game_id: str | None = None,
+) -> list[str]:
+    """Persist LLM judge rows through a temporary provider-backed runtime."""
+    if storage_provider is None or not judgments:
+        return []
+    persistence = GamePersistence(
+        game_id=game_id or "unknown",
+        provider=storage_provider,
+        source_game_id=source_game_id,
+    )
+    try:
+        return persistence.save_llm_judgments(judgments)
+    finally:
+        persistence.close()
+
+
 class DatabaseEventSink:
     def __init__(
         self,

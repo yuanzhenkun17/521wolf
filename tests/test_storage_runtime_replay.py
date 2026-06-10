@@ -14,7 +14,7 @@ from storage.replay import (
     read_decisions_for_artifact,
     read_events_for_artifact,
 )
-from storage.runtime import GamePersistence, create_game_persistence
+from storage.runtime import GamePersistence, create_game_persistence, save_llm_judgments_with_provider
 
 
 class _Cursor:
@@ -386,6 +386,63 @@ def test_game_persistence_saves_llm_judgments_to_wolf_schema() -> None:
     assert json.loads(rows[0]["input_refs"])["storage_decision_id"] == "judge_game::d_check"
     assert json.loads(rows[0]["normalized_fields"])["score"] == 8.5
     assert json.loads(rows[1]["raw_json"])["summary"]["average_score"] == 8.5
+
+
+def test_save_llm_judgments_with_provider_noops_without_provider() -> None:
+    saved = save_llm_judgments_with_provider(
+        [{"decision_id": "d_skip"}],
+        game_id="judge_no_provider",
+        storage_provider=None,
+    )
+
+    assert saved == []
+
+
+def test_save_llm_judgments_with_provider_owns_temporary_runtime(monkeypatch) -> None:
+    import storage.runtime as runtime_mod
+
+    calls: dict[str, Any] = {}
+
+    class _FakePersistence:
+        def __init__(
+            self,
+            *,
+            game_id: str,
+            provider: Any,
+            source_game_id: str | None = None,
+        ) -> None:
+            calls["game_id"] = game_id
+            calls["provider"] = provider
+            calls["source_game_id"] = source_game_id
+            self.closed = False
+
+        def save_llm_judgments(self, rows: list[dict[str, Any]]) -> list[str]:
+            calls["rows"] = rows
+            return ["saved_judgment"]
+
+        def close(self) -> None:
+            calls["closed"] = True
+            self.closed = True
+
+    monkeypatch.setattr(runtime_mod, "GamePersistence", _FakePersistence)
+    provider = object()
+    rows = [{"decision_id": "d_check"}]
+
+    saved = save_llm_judgments_with_provider(
+        rows,
+        game_id="judge_provider",
+        storage_provider=provider,
+        source_game_id="source_game",
+    )
+
+    assert saved == ["saved_judgment"]
+    assert calls == {
+        "game_id": "judge_provider",
+        "provider": provider,
+        "source_game_id": "source_game",
+        "rows": rows,
+        "closed": True,
+    }
 
 
 def test_game_persistence_round_trips_postgres_replay_by_artifact_path(tmp_path: Path) -> None:

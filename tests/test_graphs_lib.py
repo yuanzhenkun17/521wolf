@@ -308,6 +308,54 @@ class TestSharedNodes:
         assert captured
         assert "schema_version" in captured[0][1]["content"]
 
+    def test_review_judgment_provider_fallback_delegates_to_storage_runtime(self, monkeypatch):
+        from app.graphs.shared.nodes.review import _save_llm_judgment_rows
+        import storage.runtime as runtime_mod
+
+        provider = object()
+        rows = [{"decision_id": "d_check"}]
+        captured = {}
+
+        def save_llm_judgments_with_provider(
+            judgments,
+            *,
+            game_id,
+            storage_provider=None,
+            source_game_id=None,
+        ):
+            captured["judgments"] = judgments
+            captured["game_id"] = game_id
+            captured["storage_provider"] = storage_provider
+            captured["source_game_id"] = source_game_id
+            return ["stored_judgment"]
+
+        monkeypatch.setattr(
+            runtime_mod,
+            "save_llm_judgments_with_provider",
+            save_llm_judgments_with_provider,
+        )
+
+        saved = _save_llm_judgment_rows(
+            {"storage_provider": provider},
+            rows,
+            game_id="g_judge_fallback",
+        )
+
+        assert saved == ["stored_judgment"]
+        assert captured == {
+            "judgments": rows,
+            "game_id": "g_judge_fallback",
+            "storage_provider": provider,
+            "source_game_id": "g_judge_fallback",
+        }
+
+    def test_review_judgment_provider_fallback_noops_without_provider(self):
+        from app.graphs.shared.nodes.review import _save_llm_judgment_rows
+
+        saved = _save_llm_judgment_rows({}, [{"decision_id": "d_skip"}], game_id="g_no_provider")
+
+        assert saved == []
+
     def test_review_node_keeps_report_when_decision_judge_persistence_fails(self):
         from app.graphs.shared.nodes.review import review_node
         import asyncio
