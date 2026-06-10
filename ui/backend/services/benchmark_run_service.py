@@ -7,6 +7,7 @@ import os
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
@@ -820,7 +821,6 @@ class BenchmarkRunService:
             public_cfg = {
                 key: cfg.get(key)
                 for key in (
-                    "base_url",
                     "model",
                     "timeout",
                     "temperature",
@@ -836,6 +836,7 @@ class BenchmarkRunService:
             }
             model_id = request_model_id or str(cfg.get("model") or "configured-llm")
             public_cfg["model"] = model_id
+            public_cfg["base_url_host"] = _runtime_base_url_host(cfg.get("base_url"))
             public_cfg["source"] = "configured_llm"
             return _benchmark_model_runtime_payload(
                 source="configured_llm",
@@ -854,6 +855,19 @@ class BenchmarkRunService:
                 hash_input=hash_input,
                 hash_provided=bool(request_config_hash),
             )
+
+
+def _runtime_base_url_host(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if parsed.hostname:
+        host = parsed.hostname
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        return host
+    return text.split("?", 1)[0].split("#", 1)[0].split("/")[0]
 
 
 __all__ = ["BenchmarkRunService", "BenchmarkRunServiceContextProtocol"]

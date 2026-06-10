@@ -1354,7 +1354,7 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
             json={
                 "name": "DeepSeek Dev",
                 "provider": "openai_compatible",
-                "base_url": "https://api.deepseek.com/v1",
+                "base_url": "https://api.deepseek.com/v1?api_key=hidden-query&token=hidden-token",
                 "model": "deepseek-chat",
                 "api_key": "sk-secret-123456",
                 "temperature": 0.3,
@@ -1362,6 +1362,11 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
                 "max_retries": 1,
                 "default_scopes": {"benchmark": True, "prompt_test": True},
                 "capabilities": {"chat": True, "json_mode": True},
+                "metadata": {
+                    "public_label": "dev",
+                    "api_key": "metadata-api-key",
+                    "secret_ref": "metadata-secret-ref",
+                },
             },
         )
         profile = create_response.json()["profile"]
@@ -1383,11 +1388,20 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
 
     assert create_response.status_code == 200
     assert profile["name"] == "DeepSeek Dev"
+    assert profile["base_url"] == "https://api.deepseek.com/v1"
     assert profile["api_key_masked"] == "sk-****3456"
     assert profile["has_api_key"] is True
+    assert profile["metadata"]["public_label"] == "dev"
+    assert profile["metadata"]["api_key"] == "[REDACTED]"
+    assert profile["metadata"]["secret_ref"] == "[REDACTED]"
     assert profile["default_scopes"]["benchmark"] is True
     assert profile["default_scopes"]["evolution"] is False
-    assert "sk-secret" not in json.dumps(create_response.json(), ensure_ascii=False)
+    serialized_create = json.dumps(create_response.json(), ensure_ascii=False)
+    assert "sk-secret" not in serialized_create
+    assert "hidden-query" not in serialized_create
+    assert "hidden-token" not in serialized_create
+    assert "metadata-api-key" not in serialized_create
+    assert "metadata-secret-ref" not in serialized_create
 
     assert patch_response.status_code == 200
     patched = patch_response.json()["profile"]
@@ -1407,7 +1421,12 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
     assert [item["profile_id"] for item in listed] == [profile_id]
     assert listed[0]["last_test_status"] == "ok"
     assert listed[0]["api_key_masked"] == "sk-****3456"
-    assert "sk-secret" not in json.dumps(list_response.json(), ensure_ascii=False)
+    serialized_list = json.dumps(list_response.json(), ensure_ascii=False)
+    assert "sk-secret" not in serialized_list
+    assert "hidden-query" not in serialized_list
+    assert "hidden-token" not in serialized_list
+    assert "metadata-api-key" not in serialized_list
+    assert "metadata-secret-ref" not in serialized_list
 
     assert delete_response.status_code == 200
     assert delete_response.json()["deleted"] is True
@@ -1632,7 +1651,10 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
         health_response = client.get("/api/health")
 
     assert create_response.status_code == 200
-    profile_id = create_response.json()["profile"]["profile_id"]
+    created_profile = create_response.json()["profile"]
+    profile_id = created_profile["profile_id"]
+    assert created_profile["base_url"] == "https://token.example.test/v1"
+    assert "api_key=hidden" not in json.dumps(create_response.json(), ensure_ascii=False)
     health = health_response.json()
     assert health["checks"]["llm_config"]["source"] == "settings_profile"
     assert health["checks"]["llm_config"]["model"] == "qwen-runtime"
@@ -1663,7 +1685,7 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
     model = store.model_for_run(scope="benchmark")
     assert isinstance(model, ProfileModel)
     assert create_calls[-1]["api_key"] == "sk-runtime-secret"
-    assert create_calls[-1]["base_url"] == "https://token.example.test/v1?api_key=hidden"
+    assert create_calls[-1]["base_url"] == "https://token.example.test/v1"
     assert create_calls[-1]["model"] == "qwen-runtime"
 
     evolution = store.queue_evolution(EvolutionStartRequest(roles=["seer"], training_games=0, battle_games=0))
@@ -4342,7 +4364,7 @@ def test_model_benchmark_queue_freezes_auto_runtime_provenance(tmp_path: Path, m
 def test_model_runtime_hash_uses_public_config_and_ignores_secrets(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("UI_BACKEND_USE_FAKE_LLM", raising=False)
     monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "secret-a")
-    monkeypatch.setenv("WEREWOLF_LLM_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("WEREWOLF_LLM_BASE_URL", "https://example.test/v1?token=hidden-runtime-token")
     monkeypatch.setenv("WEREWOLF_LLM_MODEL", "qwen-runtime-a")
     monkeypatch.setenv("WEREWOLF_LLM_TEMPERATURE", "0.2")
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=None)
@@ -4357,14 +4379,19 @@ def test_model_runtime_hash_uses_public_config_and_ignores_secrets(tmp_path: Pat
 
     assert first["source"] == "configured_llm"
     assert first["hash_input"]["model"] == "qwen-runtime-a"
-    assert first["hash_input"]["base_url"] == "https://example.test/v1"
+    assert first["hash_input"]["base_url_host"] == "example.test"
+    assert "base_url" not in first["hash_input"]
     assert first["hash_input"]["temperature"] == 0.2
     assert first["model_config_hash"] == same_public_config["model_config_hash"]
     assert first["model_config_hash"] != changed_public_config["model_config_hash"]
+    plan = store.benchmark_service.plan_benchmark(BenchmarkRequest(target_type="model", battle_games=0, max_days=1))
+    assert plan["model_runtime"]["hash_input"]["base_url_host"] == "example.test"
     runtime_text = json.dumps(first, ensure_ascii=False)
     assert "secret-a" not in runtime_text
     assert "secret-b" not in runtime_text
     assert "api_key" not in runtime_text
+    assert "hidden-runtime-token" not in runtime_text
+    assert "hidden-runtime-token" not in json.dumps(plan, ensure_ascii=False)
 
 
 def test_benchmark_product_ci_smoke_covers_release_chain(tmp_path: Path, monkeypatch) -> None:

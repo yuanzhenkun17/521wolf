@@ -6,7 +6,7 @@ import importlib.util
 import os
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
@@ -728,7 +728,15 @@ def _safe_error(exc: Exception) -> dict[str, str]:
 
 
 def _public_url(value: str) -> str:
-    return redact_text(value.rstrip("/"), context="public") if value else ""
+    text = str(value or "").strip().rstrip("/")
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+        text = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
+    except ValueError:
+        text = text.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    return redact_text(text, context="public") if text else ""
 
 
 def _env_true(name: str) -> bool:

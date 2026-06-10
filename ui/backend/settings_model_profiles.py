@@ -10,10 +10,10 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from app.services.llm import create_llm
-from app.util.redaction import redact_text
+from app.util.redaction import redact, redact_text
 from app.util.time import beijing_now_iso
 from storage.ui import ModelProfileRepository
 from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequest
@@ -126,7 +126,7 @@ class SettingsModelProfileStore:
         return create_llm(
             env_path=None,
             api_key=secret,
-            base_url=str(profile.get("base_url") or ""),
+            base_url=normalize_base_url(profile.get("base_url")),
             model=str(profile.get("model") or ""),
             temperature=float(profile.get("temperature") if profile.get("temperature") is not None else 0.4),
             timeout=float(profile.get("timeout_seconds") or 60),
@@ -146,7 +146,7 @@ class SettingsModelProfileStore:
             "profile_id": profile_id,
             "name": request.name,
             "provider": normalize_provider(request.provider),
-            "base_url": request.base_url.rstrip("/"),
+            "base_url": normalize_base_url(request.base_url),
             "model": request.model,
             "api_key_secret_ref": secret_ref,
             "temperature": request.temperature,
@@ -155,7 +155,7 @@ class SettingsModelProfileStore:
             "enabled": bool(request.enabled),
             "default_scopes": normalize_bool_map(request.default_scopes, MODEL_PROFILE_SCOPES),
             "capabilities": normalize_bool_map(request.capabilities, MODEL_PROFILE_CAPABILITIES, default_true={"chat"}),
-            "metadata": dict(request.metadata or {}),
+            "metadata": safe_profile_metadata(request.metadata),
             "created_at": now,
             "updated_at": now,
             "last_tested_at": None,
@@ -185,7 +185,7 @@ class SettingsModelProfileStore:
             if key == "provider":
                 value = normalize_provider(str(value))
             if key == "base_url":
-                value = str(value).rstrip("/")
+                value = normalize_base_url(value)
             if key in {"base_url", "model", "temperature", "timeout_seconds", "max_retries"} and profile.get(key) != value:
                 changed_runtime = True
             profile[key] = value
@@ -199,7 +199,7 @@ class SettingsModelProfileStore:
                 default_true={"chat"},
             )
         if "metadata" in fields and request.metadata is not None:
-            profile["metadata"] = dict(request.metadata or {})
+            profile["metadata"] = safe_profile_metadata(request.metadata)
 
         if request.clear_api_key:
             secret_ref = str(profile.get("api_key_secret_ref") or "")
@@ -240,7 +240,7 @@ class SettingsModelProfileStore:
             llm = create_llm(
                 env_path=None,
                 api_key=secret,
-                base_url=str(profile.get("base_url") or ""),
+                base_url=normalize_base_url(profile.get("base_url")),
                 model=str(profile.get("model") or ""),
                 temperature=float(profile.get("temperature") if profile.get("temperature") is not None else 0.4),
                 timeout=float(profile.get("timeout_seconds") or 60),
@@ -356,6 +356,8 @@ class SettingsModelProfileStore:
             for key, value in profile.items()
             if key not in {"api_key_secret_ref", "api_key_ciphertext", "api_key_kid"}
         }
+        public["base_url"] = normalize_base_url(public.get("base_url"))
+        public["metadata"] = safe_profile_metadata(public.get("metadata"))
         public["api_key_masked"] = mask_secret(secret) if secret else stored_mask
         public["has_api_key"] = bool(secret or stored_mask)
         public["model_config_hash"] = model_config_hash(profile)
@@ -509,7 +511,7 @@ def _profile_from_db_row(row: dict[str, Any]) -> dict[str, Any]:
         "profile_id": profile_id,
         "name": str(row.get("name") or ""),
         "provider": normalize_provider(str(row.get("provider") or "")),
-        "base_url": str(row.get("base_url") or ""),
+        "base_url": normalize_base_url(row.get("base_url")),
         "model": str(row.get("model") or ""),
         "api_key_secret_ref": _secret_ref_for_profile_id(profile_id) if has_secret else "",
         "api_key_masked": str(row.get("api_key_masked") or "") if has_secret else "",
@@ -519,7 +521,7 @@ def _profile_from_db_row(row: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(row.get("enabled", True)),
         "default_scopes": normalize_bool_map(row.get("default_scopes"), MODEL_PROFILE_SCOPES),
         "capabilities": normalize_bool_map(row.get("capabilities"), MODEL_PROFILE_CAPABILITIES, default_true={"chat"}),
-        "metadata": dict(row.get("metadata") or {}),
+        "metadata": safe_profile_metadata(row.get("metadata")),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "last_tested_at": row.get("last_tested_at"),
@@ -535,7 +537,7 @@ def _profile_to_db_row(profile: dict[str, Any], *, previous: dict[str, Any]) -> 
         "profile_id": profile_id,
         "name": str(profile.get("name") or ""),
         "provider": normalize_provider(str(profile.get("provider") or "")),
-        "base_url": str(profile.get("base_url") or "").rstrip("/"),
+        "base_url": normalize_base_url(profile.get("base_url")),
         "model": str(profile.get("model") or ""),
         "api_key_ciphertext": previous.get("api_key_ciphertext") if keep_secret else None,
         "api_key_kid": previous.get("api_key_kid") if keep_secret else None,
@@ -546,7 +548,7 @@ def _profile_to_db_row(profile: dict[str, Any], *, previous: dict[str, Any]) -> 
         "enabled": bool(profile.get("enabled", True)),
         "default_scopes": normalize_bool_map(profile.get("default_scopes"), MODEL_PROFILE_SCOPES),
         "capabilities": normalize_bool_map(profile.get("capabilities"), MODEL_PROFILE_CAPABILITIES, default_true={"chat"}),
-        "metadata": dict(profile.get("metadata") or {}),
+        "metadata": safe_profile_metadata(profile.get("metadata")),
         "created_at": profile.get("created_at") or beijing_now_iso(),
         "updated_at": profile.get("updated_at") or beijing_now_iso(),
         "last_tested_at": profile.get("last_tested_at"),
@@ -634,6 +636,24 @@ def runtime_variables_payload() -> list[dict[str, Any]]:
 def normalize_provider(value: str) -> str:
     provider = str(value or "openai_compatible").strip().lower()
     return provider if provider in MODEL_PROFILE_PROVIDERS else "custom"
+
+
+def normalize_base_url(value: Any) -> str:
+    text = str(value or "").strip().rstrip("/")
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+        sanitized = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
+    except ValueError:
+        sanitized = text.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    return sanitized or text.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+
+
+def safe_profile_metadata(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    redacted = redact(source, context="diagnostic")
+    return redacted if isinstance(redacted, dict) else {}
 
 
 def normalize_scope(value: str) -> str:
