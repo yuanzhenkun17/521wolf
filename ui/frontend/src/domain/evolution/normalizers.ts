@@ -1,6 +1,9 @@
 import type {
-  EvolutionChildRun,
+  EvolutionLeaderboardEntry,
+  EvolutionLeaderboardResponse,
   EvolutionListResponse,
+  EvolutionRoleOverview,
+  EvolutionChildRun,
   EvolutionProposal,
   EvolutionRun,
   EvolutionSampleGame,
@@ -9,7 +12,7 @@ import type {
   RoleVersion,
   TrustBundle
 } from '../../types/evolution'
-import { arrayOrEmpty, firstNumber, firstString, integerValue, mergeByStableId, normalizePagination, nullableNumber, objectOrEmpty, shortId, stringValue, uniqueStrings } from '../common'
+import { arrayOrEmpty, firstNumber, firstString, integerValue, mergeByStableId, normalizePagination, nullableNumber, numberValue, objectOrEmpty, shortId, stringValue, uniqueStrings } from '../common'
 
 export const EVOLUTION_ACTIVE_STATUSES = new Set(['queued', 'running', 'training', 'battling', 'combined_battling', 'applying'])
 export const EVOLUTION_TERMINAL_STATUSES = new Set(['reviewing', 'promoted', 'rejected', 'failed', 'completed', 'cancelled', 'interrupted'])
@@ -36,8 +39,30 @@ function progressFromCount(completed: unknown, target: unknown, fallbackLabel = 
   return { percent: 0, label: fallbackLabel }
 }
 
+function firstArrayValue<T = unknown>(...values: unknown[]): T[] {
+  for (const value of values) {
+    if (Array.isArray(value)) return value as T[]
+    const source = objectOrEmpty(value)
+    const nested = [source.items, source.rows, source.pairs, source.seeds].find(Array.isArray)
+    if (nested) return nested as T[]
+  }
+  return []
+}
+
+function normalizeRoleKey(raw: unknown): string {
+  if (raw == null || typeof raw !== 'object') return stringValue(raw)
+  const source = objectOrEmpty(raw)
+  return firstString(source.key, source.role, source.name, source.id)
+}
+
 export function normalizeReleaseStage(value: unknown): string {
   return stringValue(value).toLowerCase()
+}
+
+export function normalizeRoleKeysResponse(raw: unknown): string[] {
+  const source = objectOrEmpty(raw)
+  const roles = Array.isArray(raw) ? raw : firstArrayValue(source.roles, source.items)
+  return uniqueStrings(roles.map(normalizeRoleKey))
 }
 
 export function normalizeChildRun(raw: unknown): EvolutionChildRun {
@@ -152,6 +177,73 @@ export function normalizeVersion(raw: unknown): RoleVersion {
   }
 }
 
+export function normalizeRoleVersionsResponse(raw: unknown): RoleVersion[] {
+  const source = objectOrEmpty(raw)
+  const versions = Array.isArray(raw) ? raw : firstArrayValue(source.versions, source.role_versions, source.items)
+  return versions.map(normalizeVersion)
+}
+
+export function normalizeEvolutionLeaderboardEntry(raw: unknown, index = 0, roleFallback = ''): EvolutionLeaderboardEntry {
+  const source = objectOrEmpty(raw)
+  const role = firstString(source.role, source.target_role, roleFallback)
+  const targetRole = firstString(source.target_role, role)
+  const versionId = firstString(source.target_version_id, source.version_id, source.hash)
+  const key = firstString(source.key, versionId, role ? `${role}-${index + 1}` : `entry-${index + 1}`)
+  const releaseStage = normalizeReleaseStage(source.release_stage ?? source.releaseStage)
+  return {
+    ...source,
+    key,
+    rank: integerValue(source.rank, index + 1),
+    role,
+    targetRole,
+    versionId,
+    score: numberValue(source.target_role_role_weighted_score ?? source.score ?? source.avg_role_score ?? source.strength_score, 0),
+    winRate: numberValue(source.target_side_win_rate ?? source.win_rate ?? source.winRate, 0),
+    gameCount: integerValue(source.game_count ?? source.games ?? source.games_played, 0),
+    rankable: source.rankable !== false,
+    isBaseline: Boolean(source.is_baseline),
+    releaseStage,
+    short: shortId(versionId, 12)
+  }
+}
+
+export function normalizeEvolutionLeaderboardResponse(raw: unknown, roleFallback = ''): EvolutionLeaderboardResponse {
+  const source = objectOrEmpty(raw)
+  const role = firstString(source.role, source.target_role, roleFallback)
+  const entries = (Array.isArray(raw) ? raw : firstArrayValue(source.entries, source.rows, source.items, source.leaderboard)).map((entry, index) =>
+    normalizeEvolutionLeaderboardEntry(entry, index, role)
+  )
+  return {
+    ...source,
+    role,
+    evaluation_set_id: (source.evaluation_set_id ?? null) as string | null,
+    entries,
+    raw
+  }
+}
+
+export function normalizeEvolutionRoleOverview(raw: unknown): EvolutionRoleOverview {
+  const source = objectOrEmpty(raw)
+  const versionsSource = objectOrEmpty(source.versions)
+  const leaderboardsSource = objectOrEmpty(source.leaderboards)
+  const roles = normalizeRoleKeysResponse(source.roles ?? source.items)
+  const roleKeys = roles.length ? roles : uniqueStrings([Object.keys(versionsSource), Object.keys(leaderboardsSource)])
+  const versions = Object.fromEntries(
+    Object.entries(versionsSource).map(([role, value]) => [role, normalizeRoleVersionsResponse(value)])
+  )
+  const leaderboards = Object.fromEntries(
+    Object.entries(leaderboardsSource).map(([role, value]) => [role, normalizeEvolutionLeaderboardResponse(value, role)])
+  )
+  return {
+    ...source,
+    roles: roleKeys,
+    versions,
+    leaderboards,
+    evaluation_set_id: (source.evaluation_set_id ?? null) as string | null,
+    raw
+  }
+}
+
 export function normalizeSampleGame(raw: unknown, bucket = 'training'): EvolutionSampleGame {
   const source = objectOrEmpty(raw)
   const id = firstString(source.game_id, source.id)
@@ -221,13 +313,52 @@ export function normalizeProposalReview(data: unknown = null, run: unknown = nul
   const source = Array.isArray(data) ? { proposals: data } : objectOrEmpty(data)
   const runSource = objectOrEmpty(run)
   const reviewSummary = objectOrEmpty(source.proposal_review ?? source.proposalReview ?? runSource.proposal_review ?? runSource.proposalReview)
-  const proposals = (arrayOrEmpty(source.proposals).length ? arrayOrEmpty(source.proposals) : arrayOrEmpty(runSource.proposals)).map(normalizeProposal)
-  const pairedSeeds = arrayOrEmpty(source.paired_seed_summary ?? source.paired_seeds ?? source.battle_pairs ?? runSource.paired_seed_summary).map(normalizePairedSeed)
+  const gateReport = objectOrEmpty(source.gate_report ?? source.release_gate ?? runSource.gate_report ?? runSource.release_gate)
+  const runBattle = objectOrEmpty(runSource.battle_result)
+  const runCombinedBattle = objectOrEmpty(runSource.combined_battle_result)
+  const proposals = firstArrayValue(
+    source.proposals,
+    source.items,
+    source.rows,
+    source.proposal_rows,
+    runSource.proposals,
+    runSource.items,
+    runSource.rows,
+    runSource.proposal_rows
+  ).map(normalizeProposal)
+  const pairedSeeds = firstArrayValue(
+    source.paired_seed_summary,
+    source.paired_seeds,
+    source.paired_seed_pairs,
+    source.paired_seed_battle_table,
+    source.battle_pairs,
+    gateReport.paired_seed_summary,
+    gateReport.paired_seeds,
+    gateReport.paired_seed_pairs,
+    runSource.paired_seed_summary,
+    runSource.paired_seeds,
+    runSource.paired_seed_pairs,
+    runSource.paired_seed_battle_table,
+    runSource.battle_pairs,
+    runBattle.paired_seed_summary,
+    runBattle.paired_seeds,
+    runBattle.paired_seed_pairs,
+    runBattle.paired_seed_battle_table,
+    runBattle.battle_pairs,
+    runCombinedBattle.paired_seed_summary,
+    runCombinedBattle.paired_seeds,
+    runCombinedBattle.paired_seed_pairs
+  ).map(normalizePairedSeed)
   const acceptedCount = proposals.filter((proposal) => ['accepted', 'accept', 'applied'].includes(proposal.status.toLowerCase())).length
   const rejectedCount = proposals.filter((proposal) => ['rejected', 'reject'].includes(proposal.status.toLowerCase())).length
-  const total = integerValue(reviewSummary.total ?? reviewSummary.generated_count, proposals.length)
-  const accepted = integerValue(reviewSummary.accepted_count, acceptedCount)
-  const rejected = integerValue(reviewSummary.rejected_count, rejectedCount)
+  const generatedIds = uniqueStrings([source.generated_proposal_ids, reviewSummary.generated_proposal_ids])
+  const acceptedIds = uniqueStrings([source.accepted_proposal_ids, reviewSummary.accepted_proposal_ids])
+  const rejectedIds = uniqueStrings([source.rejected_proposal_ids, reviewSummary.rejected_proposal_ids])
+  const preflightIds = uniqueStrings([source.preflight_passed_proposal_ids, reviewSummary.preflight_passed_proposal_ids])
+  const appliedIds = uniqueStrings([source.applied_proposal_ids, reviewSummary.applied_proposal_ids])
+  const total = integerValue(reviewSummary.total ?? reviewSummary.generated_count, Math.max(proposals.length, generatedIds.length))
+  const accepted = integerValue(reviewSummary.accepted_count, acceptedCount || acceptedIds.length)
+  const rejected = integerValue(reviewSummary.rejected_count, rejectedCount || rejectedIds.length)
   return {
     loading: false,
     error: options.error || '',
@@ -235,7 +366,7 @@ export function normalizeProposalReview(data: unknown = null, run: unknown = nul
     source: options.source || (data ? 'api' : 'run-detail'),
     proposals,
     pairedSeeds,
-    gate: objectOrEmpty(source.gate_report ?? source.release_gate ?? runSource.gate_report),
+    gate: gateReport,
     trustBundle: objectOrEmpty(source.trust_bundle ?? runSource.trust_bundle),
     summary: {
       total,
@@ -243,31 +374,49 @@ export function normalizeProposalReview(data: unknown = null, run: unknown = nul
       accepted,
       rejected,
       pending: Math.max(0, total - accepted - rejected),
-      preflight: integerValue(reviewSummary.preflight_passed_count, 0),
-      applied: integerValue(reviewSummary.applied_count, arrayOrEmpty(reviewSummary.applied_proposal_ids).length)
+      preflight: integerValue(reviewSummary.preflight_passed_count, preflightIds.length),
+      applied: integerValue(reviewSummary.applied_count, appliedIds.length)
     }
   }
 }
 
 export function normalizeTrustBundle(raw: unknown): TrustBundle | null {
-  const source = objectOrEmpty(raw)
-  const bundle = objectOrEmpty(source.trust_bundle)
-  const id = firstString(source.trust_bundle_id, bundle.trust_bundle_id)
+  const wrapper = objectOrEmpty(raw)
+  const source = objectOrEmpty(wrapper.data ?? raw)
+  const bundle = objectOrEmpty(source.trust_bundle ?? source.trustBundle ?? source.bundle)
+  const trustBundle = Object.keys(bundle).length ? bundle : source
+  const id = firstString(source.trust_bundle_id, source.trustBundleId, trustBundle.trust_bundle_id, trustBundle.trustBundleId)
   if (!id && !Object.keys(bundle).length) return null
   return {
     ...source,
     trust_bundle_id: id,
-    run_id: firstString(source.run_id, bundle.run_id),
-    role: firstString(source.role, bundle.role),
-    baseline_version: firstString(source.baseline_version, bundle.baseline_version),
-    candidate_version: firstString(source.candidate_version, bundle.candidate_version),
-    bundle_hash: firstString(source.bundle_hash, bundle.bundle_hash),
-    trust_bundle: bundle
+    run_id: firstString(source.run_id, trustBundle.run_id),
+    role: firstString(source.role, trustBundle.role),
+    baseline_version: firstString(source.baseline_version, trustBundle.baseline_version),
+    candidate_version: firstString(source.candidate_version, trustBundle.candidate_version),
+    bundle_hash: firstString(source.bundle_hash, trustBundle.bundle_hash),
+    gate_report_id: firstString(source.gate_report_id, trustBundle.gate_report_id),
+    attribution_report_id: firstString(source.attribution_report_id, trustBundle.attribution_report_id),
+    trust_bundle: trustBundle
   }
+}
+
+export function normalizeEvolutionRunResponse(raw: unknown): EvolutionRun {
+  const source = objectOrEmpty(raw)
+  return normalizeRun(source.run ?? source.batch ?? source.data ?? raw)
 }
 
 export function normalizeEvolutionListResponse(raw: unknown): EvolutionListResponse {
   const source = objectOrEmpty(raw)
+  if (Array.isArray(raw) || arrayOrEmpty(source.items).length) {
+    const items = (Array.isArray(raw) ? raw : arrayOrEmpty(source.items)).map(normalizeRun)
+    return {
+      runs: items.filter((item) => !item.isBatch),
+      batches: items.filter((item) => item.isBatch),
+      pagination: source.pagination ? normalizePagination(source.pagination, items) : undefined,
+      raw
+    }
+  }
   const runs = arrayOrEmpty(source.runs).map(normalizeRun)
   const batches = arrayOrEmpty(source.batches).map(normalizeRun)
   return {

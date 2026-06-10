@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEvaluationWorkbench } from '../composables/useEvaluationWorkbench.ts'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
@@ -14,6 +14,7 @@ import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSele
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 import { addLegacyHashChangeListener, currentLegacyHash } from '../router/legacyViewNavigation.ts'
 import { benchmarkBatchIdFromHash, benchmarkBatchIdFromRoute } from '../router/workbenchDeepLinks.ts'
+import { useBenchmarkStore } from '../stores/benchmark'
 
 type LooseRecord = Record<string, any>
 
@@ -23,7 +24,13 @@ defineOptions({
 
 const route = useRoute()
 const benchmark = useEvaluationWorkbench()
-const activeView = ref('overview')
+const benchmarkStore = useBenchmarkStore()
+const activeView = computed({
+  get: () => benchmarkStore.activeView,
+  set: (view) => {
+    benchmarkStore.setActiveView(view)
+  }
+})
 const launchConfirmationOpen = ref(false)
 
 const navTabs = [
@@ -34,9 +41,29 @@ const navTabs = [
   { key: 'reports', label: '报告' }
 ]
 
+benchmarkStore.bindRuntimeActions({
+  refreshAll: benchmark.refreshAll,
+  selectBenchmarkBatch: benchmark.selectBenchmarkBatch
+})
+
+watchEffect(() => {
+  benchmarkStore.hydrateFromWorkbench({
+    suites: benchmark.benchmarkSuites.value,
+    runs: benchmark.batchRunRows.value,
+    runRows: benchmark.filteredBatchRunRows.value,
+    selectedBenchmarkId: benchmark.selectedBenchmarkId.value,
+    selectedBenchmarkBatchId: benchmark.selectedBenchmarkBatchId.value,
+    selectedBenchmarkBatchRun: benchmark.selectedBenchmarkBatchRun.value,
+    loading: benchmark.loading.value,
+    actionLoading: benchmark.actionLoading.value,
+    error: benchmark.error.value,
+    notice: benchmark.notice.value
+  })
+})
+
 const benchNotice = computed(() => {
-  if (benchmark.notice.value?.message) return benchmark.notice.value
-  if (benchmark.error.value) return { type: 'error', message: benchmark.error.value }
+  if (benchmarkStore.notice?.message) return benchmarkStore.notice
+  if (benchmarkStore.error) return { type: 'error', message: benchmarkStore.error }
   return null
 })
 const benchInlineNotice = computed(() => inlineNoticeForDisplay(benchNotice.value))
@@ -59,8 +86,8 @@ const planBudgetExceeded = computed(() => {
   }
   return { value: Boolean(exceeded), reasons: [], evidence: [] }
 })
-const activeRuns = computed(() => benchmark.filteredBatchRunRows.value.filter((run) => run.isActive).slice(0, 4))
-const recentRuns = computed(() => benchmark.visibleBatchRunRows.value.slice(0, 5))
+const activeRuns = computed<LooseRecord[]>(() => benchmarkStore.activeRunRows.slice(0, 4))
+const recentRuns = computed<LooseRecord[]>(() => benchmarkStore.recentRunRows)
 const selectedSuite = computed(() => benchmark.selectedBenchmarkSuite.value || null)
 const selectedModeLabel = computed(() =>
   benchmark.selectedBenchmarkIsModelSuite.value ? '模型评测' : '角色版本评测'
@@ -248,7 +275,7 @@ const benchmarkCommandMetaRows = computed(() => [
     tone: benchmark.selectedBenchmarkCanLaunch.value ? 'neutral' : 'danger'
   }
 ])
-const selectedContextRun = computed(() => benchmark.selectedBenchmarkBatchRun.value || null)
+const selectedContextRun = computed<LooseRecord | null>(() => benchmarkStore.selectedBenchmarkBatchRun || null)
 const contextRun = computed(() =>
   selectedContextRun.value || activeRuns.value[0] || recentRuns.value[0] || null
 )
@@ -467,7 +494,7 @@ const contextArtifactRows = computed(() => {
     }
   ]
 })
-const contextRecentRows = computed(() => {
+const contextRecentRows = computed<LooseRecord[]>(() => {
   const selectedId = selectedContextRun.value?.id || ''
   const rows = activeRuns.value.length ? activeRuns.value : recentRuns.value
   return rows.slice(0, 5).map((run) => ({
@@ -647,6 +674,7 @@ function refresh() {
 
 function selectRun(run) {
   if (!run?.id) return
+  benchmarkStore.setSelectedBatchId(run.id)
   benchmark.selectBenchmarkBatch(run.id)
   activeView.value = 'runs'
 }
@@ -688,6 +716,9 @@ function applyBenchmarkDeepLink(source = route) {
   const batchId = benchmarkDeepLinkBatchId(source)
   if (!batchId) return false
   activeView.value = 'runs'
+  if (benchmarkStore.selectedBenchmarkBatchId !== batchId) {
+    benchmarkStore.setSelectedBatchId(batchId)
+  }
   if (benchmark.selectedBenchmarkBatchId.value !== batchId) {
     benchmark.selectBenchmarkBatch(batchId)
   }
@@ -717,6 +748,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   removeBenchmarkHashChangeListener()
   removeBenchmarkHashChangeListener = () => {}
+  benchmarkStore.clearRuntimeActions()
 })
 </script>
 

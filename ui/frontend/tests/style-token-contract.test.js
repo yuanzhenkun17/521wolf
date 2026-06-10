@@ -140,7 +140,7 @@ test('Workbench semantic aliases consume foundation status tokens', () => {
 })
 
 test('Base shell consumes foundation tokens for stable non-layout primitives', () => {
-  const source = readSource('../src/styles/part-01.css')
+  const source = readSource('../src/styles/base.css')
   const lycanApp = cssBlock(source, '.lycan-app {')
   const atmosphere = cssBlock(source, '.atmosphere {')
   const noise = cssBlock(source, '.noise {')

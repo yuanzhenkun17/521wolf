@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'vitest'
 import { createRenderer, nextTick, ref } from 'vue'
 import { useGameState } from '../src/composables/useGameState.ts'
@@ -21,6 +22,10 @@ import {
   writeStoredGameSession
 } from '../src/composables/gameSession.ts'
 import { viewFromHash } from '../src/router/legacyViewNavigation'
+
+function readSource(relativePath) {
+  return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
+}
 
 function createMemoryStorage() {
   const values = new Map()
@@ -201,6 +206,18 @@ function historyPhasePath(gameId, { day = 1, phase = 'setup', logOffset = 0, log
   params.set('decision_limit', String(decisionLimit))
   return `/games/${encodeURIComponent(gameId)}/phase?${params.toString()}`
 }
+
+test('game actions use route-first view navigation instead of direct hash writes', () => {
+  const source = readSource('../src/composables/useGameActions.ts')
+
+  assert.match(
+    source,
+    /import \{ currentLegacyView, writeViewRoute \} from '..\/router\/legacyViewNavigation'/
+  )
+  assert.doesNotMatch(source, /\bwriteViewHash\b/)
+  assert.match(source, /writeViewRoute\('match'\)/)
+  assert.match(source, /writeViewRoute\('lobby'\)/)
+})
 
 test('game session helpers only return active sessions for non-terminal games', () => {
   const running = game('running')
@@ -914,6 +931,7 @@ test('startMode in play mode starts the match without skipping the model intro',
   await Promise.resolve()
 
   assert.deepEqual(paths, ['/games', '/games/play-game?advance=1', '/health'])
+  assert.equal(window.location.hash, '#match')
   assert.equal(state.liveGame.value.game_id, 'play-game')
   assert.equal(state.isWatch.value, false)
   assert.equal(state.judgeBoardStarted.value, true)

@@ -20,7 +20,7 @@ import {
   readStoredGameSession,
   writeStoredGameSession
 } from './gameSession.ts'
-import { currentLegacyView, writeViewHash } from '../router/legacyViewNavigation'
+import { currentLegacyView, writeViewRoute } from '../router/legacyViewNavigation'
 import type { AppView, NoticeType } from '../types/ui'
 import type { GameStartRequest } from '../types/game'
 import { applyLogToPlayers, applyLogsToPlayers } from './gameTimeline.ts'
@@ -307,7 +307,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     if (clearGame) state.liveGame.value = null
     if (route) {
       state.currentView.value = route
-      writeViewHash(route)
+      writeViewRoute(route)
     }
     if (refreshHistory) historyApi.refreshHistoryList?.({ silent: true })
   }
@@ -583,7 +583,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     if (!session?.gameId || isReturnableGame(state.liveGame.value)) {
       if (navigate && hashView === 'match' && !isReturnableGame(state.liveGame.value)) {
         state.currentView.value = 'lobby'
-        writeViewHash('lobby')
+        writeViewRoute('lobby')
       }
       return state.liveGame.value
     }
@@ -592,7 +592,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       clearStoredGameSession()
       if (navigate && hashView === 'match') {
         state.currentView.value = 'lobby'
-        writeViewHash('lobby')
+        writeViewRoute('lobby')
       }
       return null
     }
@@ -635,7 +635,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       const isNavigationRequest = path === '/games'
       if (isNavigationRequest) {
         state.currentView.value = 'match'
-        writeViewHash('match')
+        writeViewRoute('match')
       }
       historyApi.refreshHistoryList?.({ silent: true })
       return game
@@ -670,7 +670,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     }
     resetLiveState()
     state.currentView.value = 'match'
-    writeViewHash('match')
+    writeViewRoute('match')
     preloadCouncilAssets()
     const game = await request('/games', {
       method: 'POST',

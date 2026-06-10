@@ -4,12 +4,24 @@ import { canonicalActionType, canonicalChoice, normalizeGameSnapshot, normalizeP
 import { canSubmitPendingAction, currentSpeaker, pendingCandidatePlayers } from '../../../src/domain/game/selectors'
 import { historyPageKey, normalizeHistoryPageSummary, parseHistoryPageKey } from '../../../src/domain/history/normalizers'
 import { historyGameEvidenceLabel, logsForPhase } from '../../../src/domain/history/selectors'
-import { normalizeRun, normalizeVersion } from '../../../src/domain/evolution/normalizers'
+import {
+  normalizeEvolutionListResponse,
+  normalizeEvolutionRoleOverview,
+  normalizeEvolutionRunResponse,
+  normalizeProposalReview,
+  normalizeRoleKeysResponse,
+  normalizeRoleVersionsResponse,
+  normalizeRun,
+  normalizeTrustBundle,
+  normalizeVersion
+} from '../../../src/domain/evolution/normalizers'
 import { activeEvolutionRuns, rollbackEligibleVersions } from '../../../src/domain/evolution/selectors'
 import { ApiError, normalizeApiError, readErrorPayload } from '../../../src/services/api'
 import { createBenchmarkService } from '../../../src/services/benchmarkApi'
+import { createEvolutionService } from '../../../src/services/evolutionApi'
 import { createHistoryService } from '../../../src/services/historyApi'
 import type { ApiClient, ApiRequestOptions } from '../../../src/types/api'
+import type { EvolutionRun, ProposalReview } from '../../../src/types/evolution'
 
 interface RecordedRequest {
   path: string
@@ -302,6 +314,155 @@ describe('history and evolution boundaries', () => {
     expect(stable.rollbackDisabled).toBe(false)
     expect(rollbackEligibleVersions([baseline, shadow, stable])).toEqual([stable])
   })
+
+  it('normalizes evolution API wrappers, missing fields, and legacy review fields', () => {
+    const list = normalizeEvolutionListResponse({
+      items: [
+        {
+          run_id: 'run-1',
+          role: 'seer',
+          status: 'running',
+          progress: { overall_percent: 0.5 }
+        },
+        {
+          batch_id: 'batch-1',
+          roles: ['seer', 'wolf'],
+          status: 'queued',
+          run_summaries: ['child-1']
+        }
+      ],
+      pagination: { total: '2', offset: '0', limit: '20' }
+    })
+    const detail = normalizeEvolutionRunResponse({
+      data: {
+        run_id: 'run-2',
+        role: 'guard',
+        status: 'completed'
+      }
+    })
+    const roles = normalizeRoleKeysResponse({
+      roles: ['seer', { key: 'wolf' }, { role: 'seer' }, null]
+    })
+    const versions = normalizeRoleVersionsResponse({
+      items: [
+        {
+          target_version_id: 'canary-version',
+          provenance: { releaseStage: 'CANARY' }
+        }
+      ]
+    })
+    const overview = normalizeEvolutionRoleOverview({
+      versions: {
+        seer: [{ version_id: 'v1' }]
+      },
+      leaderboards: {
+        seer: {
+          entries: [
+            {
+              target_role: 'seer',
+              target_version_id: 'v1',
+              target_role_role_weighted_score: '0.75',
+              game_count: '4'
+            }
+          ]
+        }
+      }
+    })
+    const review = normalizeProposalReview({
+      rows: [
+        {
+          proposal_id: 'p1',
+          claim: 'tighten vote timing',
+          status: 'accepted',
+          evidence_summary: { game_ids: ['g1', 'g1'] },
+          risk: { tags: ['timing', 'timing'] }
+        }
+      ],
+      paired_seed_pairs: [
+        {
+          battle_seed: 'seed-1',
+          baseline_result: { score: '1', game_id: 'base-game' },
+          candidate_result: { score: '2', game_id: 'cand-game' }
+        }
+      ],
+      generated_proposal_ids: ['p1', 'p2'],
+      accepted_proposal_ids: ['p1'],
+      preflight_passed_proposal_ids: ['p1'],
+      applied_proposal_ids: ['p1']
+    })
+    const fallbackReview = normalizeProposalReview(null, { proposal_rows: [{ id: 'fallback-p' }] }, {
+      source: 'run-detail',
+      error: 'proposal endpoint failed',
+      unsupported: true
+    })
+    const trustBundle = normalizeTrustBundle({
+      data: {
+        trustBundleId: 'tb-1',
+        trustBundle: {
+          run_id: 'run-1',
+          role: 'seer',
+          bundle_hash: 'hash-1'
+        }
+      }
+    })
+
+    expect(list.runs).toHaveLength(1)
+    expect(list.batches[0]).toMatchObject({
+      id: 'batch-1',
+      isBatch: true,
+      childRunCount: 1
+    })
+    expect(list.pagination).toMatchObject({ total: 2, returned: 2 })
+    expect(detail).toMatchObject({ id: 'run-2', displayRole: 'guard', isTerminal: true })
+    expect(roles).toEqual(['seer', 'wolf'])
+    expect(versions[0]).toMatchObject({
+      version_id: 'canary-version',
+      releaseStage: 'canary',
+      rollbackDisabled: true
+    })
+    expect(overview.roles).toEqual(['seer'])
+    expect(overview.versions.seer[0]).toMatchObject({ version_id: 'v1' })
+    expect(overview.leaderboards.seer.entries[0]).toMatchObject({
+      role: 'seer',
+      versionId: 'v1',
+      score: 0.75,
+      gameCount: 4
+    })
+    expect(review.proposals[0]).toMatchObject({
+      id: 'p1',
+      title: 'tighten vote timing',
+      evidenceGameIds: ['g1'],
+      riskTags: ['timing']
+    })
+    expect(review.pairedSeeds[0]).toMatchObject({
+      seed: 'seed-1',
+      baselineScore: 1,
+      candidateScore: 2,
+      scoreDelta: 1,
+      baselineGameId: 'base-game',
+      candidateGameId: 'cand-game'
+    })
+    expect(review.summary).toMatchObject({
+      total: 2,
+      accepted: 1,
+      rejected: 0,
+      pending: 1,
+      preflight: 1,
+      applied: 1
+    })
+    expect(fallbackReview).toMatchObject({
+      source: 'run-detail',
+      error: 'proposal endpoint failed',
+      unsupported: true
+    })
+    expect(fallbackReview.proposals[0]).toMatchObject({ id: 'fallback-p' })
+    expect(trustBundle).toMatchObject({
+      trust_bundle_id: 'tb-1',
+      run_id: 'run-1',
+      role: 'seer',
+      bundle_hash: 'hash-1'
+    })
+  })
 })
 
 describe('service error conversion', () => {
@@ -474,6 +635,91 @@ describe('service endpoint contracts', () => {
         options: {
           query: { scope: 'role_version', benchmark_id: 'role-baseline' }
         }
+      }
+    ])
+  })
+
+  it('maps evolution service calls to typed API DTOs and normalized domain responses', async () => {
+    const { client, requests } = recordingSequenceClient([
+      { roles: ['seer', { key: 'wolf' }, ''] },
+      {
+        versions: { seer: [{ version_id: 'v1' }] },
+        leaderboards: {
+          seer: {
+            entries: [{ target_role: 'seer', target_version_id: 'v1', score: '0.6' }]
+          }
+        }
+      },
+      { versions: [{ target_version_id: 'v2', provenance: { release_stage: 'stable' } }] },
+      { entries: [{ target_role: 'seer', target_version_id: 'v2', game_count: '3' }] },
+      {
+        items: [{ run_id: 'run-1', role: 'seer', status: 'running' }],
+        pagination: { total: 1, offset: 0, limit: 20 }
+      },
+      { run: { run_id: 'run-2', role: 'wolf', status: 'queued' } },
+      { data: { run_id: 'run-3', role: 'guard', status: 'completed' } },
+      { diff: ['patch'] },
+      {
+        rows: [{ proposal_id: 'p1', summary: 'change claim' }],
+        paired_seed_pairs: [{ seed: 'seed-1' }]
+      },
+      {
+        data: {
+          trust_bundle_id: 'tb-1',
+          trust_bundle: { bundle_hash: 'hash-1' }
+        }
+      },
+      { batch_id: 'batch-1', roles: ['seer'], status: 'cancelled' }
+    ])
+    const evolution = createEvolutionService({ client })
+
+    const roles = await evolution.roles()
+    const overview = await evolution.roleOverview()
+    const versions = await evolution.versions('seer role')
+    const leaderboard = await evolution.leaderboard('seer role')
+    const runs = await evolution.runs({ status: 'running', limit: 20 })
+    const started = await evolution.start({ roles: ['wolf'], training_games: 3 })
+    const detail = await evolution.run('run id/3')
+    const diff = await evolution.diff('run id/3')
+    const proposals = await evolution.proposals('run id/3', detail)
+    const trustBundle = await evolution.trustBundle('run id/3')
+    const actionResult = await evolution.action('batch id/1', { action: 'terminate' })
+
+    expectTypeOf(started).toMatchTypeOf<EvolutionRun>()
+    expectTypeOf(proposals).toMatchTypeOf<ProposalReview>()
+    expect(roles).toEqual(['seer', 'wolf'])
+    expect(overview.roles).toEqual(['seer'])
+    expect(overview.leaderboards.seer.entries[0]).toMatchObject({ versionId: 'v1', score: 0.6 })
+    expect(versions[0]).toMatchObject({ version_id: 'v2', releaseStage: 'stable' })
+    expect(leaderboard.entries[0]).toMatchObject({ role: 'seer', versionId: 'v2', gameCount: 3 })
+    expect(runs.runs[0]).toMatchObject({ id: 'run-1', isActive: true })
+    expect(started).toMatchObject({ id: 'run-2', displayRole: 'wolf', isActive: true })
+    expect(detail).toMatchObject({ id: 'run-3', isTerminal: true })
+    expect(diff.diff).toEqual(['patch'])
+    expect(proposals.proposals[0]).toMatchObject({ id: 'p1', title: 'change claim' })
+    expect(proposals.pairedSeeds[0]).toMatchObject({ seed: 'seed-1' })
+    expect(trustBundle).toMatchObject({ trust_bundle_id: 'tb-1', bundle_hash: 'hash-1' })
+    expect(actionResult).toMatchObject({ id: 'batch-1', isBatch: true, isTerminal: true })
+    expect(requests).toEqual([
+      { path: '/roles', options: {} },
+      { path: '/roles/overview', options: {} },
+      { path: '/roles/seer%20role/versions', options: {} },
+      { path: '/roles/seer%20role/leaderboard', options: {} },
+      {
+        path: '/evolution-runs',
+        options: { query: { status: 'running', limit: 20 } }
+      },
+      {
+        path: '/evolution-runs',
+        options: { method: 'POST', body: { roles: ['wolf'], training_games: 3 } }
+      },
+      { path: '/evolution-runs/run%20id%2F3', options: {} },
+      { path: '/evolution-runs/run%20id%2F3/diff', options: {} },
+      { path: '/evolution-runs/run%20id%2F3/proposals', options: {} },
+      { path: '/evolution-runs/run%20id%2F3/trust-bundle', options: {} },
+      {
+        path: '/evolution-runs/batch%20id%2F1/actions',
+        options: { method: 'POST', body: { action: 'terminate' } }
       }
     ])
   })
