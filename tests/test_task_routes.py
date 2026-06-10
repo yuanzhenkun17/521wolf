@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -87,8 +88,9 @@ class _FakeStore:
 
 
 class _FakeTaskService:
-    def __init__(self) -> None:
+    def __init__(self, *, artifact_path: Path | None = None) -> None:
         self.calls: list[tuple[Any, ...]] = []
+        self.artifact_path = artifact_path
         self.tasks = {
             "task_1": {
                 "task_id": "task_1",
@@ -100,6 +102,15 @@ class _FakeTaskService:
                 "updated_at": "2026-06-10T12:01:00+08:00",
             }
         }
+        self.events = [
+            {
+                "id": 7,
+                "event": "progress",
+                "entity_id": "task_1",
+                "status": "running",
+                "payload": {"task_id": "task_1", "status": "running"},
+            }
+        ]
 
     def list_task_queue_rows(
         self,
@@ -135,10 +146,49 @@ class _FakeTaskService:
             }
         ]
 
+    def cancel_task(self, task_id: str) -> dict[str, Any] | None:
+        self.calls.append(("cancel_task", task_id))
+        task = self.tasks.get(task_id)
+        if task is None:
+            return None
+        task = dict(task)
+        task["cancel_requested"] = True
+        task["status"] = "cancelled"
+        self.tasks[task_id] = task
+        return {"changed": True, "task": task}
+
+    def retry_task(self, task_id: str) -> dict[str, Any] | None:
+        self.calls.append(("retry_task", task_id))
+        task = self.tasks.get(task_id)
+        if task is None:
+            return None
+        task = dict(task)
+        changed = task.get("status") == "interrupted"
+        if changed:
+            task["status"] = "queued"
+            self.tasks[task_id] = task
+        return {"changed": changed, "task": task}
+
+    def list_task_events(self, task_id: str, *, after_event_id: int = 0) -> list[dict[str, Any]]:
+        self.calls.append(("list_task_events", task_id, after_event_id))
+        return [
+            event
+            for event in self.events
+            if event["entity_id"] == task_id and int(event["id"]) > after_event_id
+        ]
+
+    def task_artifact_file(self, task_id: str, artifact_id: str) -> tuple[dict[str, Any], Path] | None:
+        self.calls.append(("task_artifact_file", task_id, artifact_id))
+        artifacts = self.list_task_artifacts(task_id)
+        artifact = next((item for item in artifacts if item["artifact_id"] == artifact_id), None)
+        if artifact is None or self.artifact_path is None:
+            return None
+        return artifact, self.artifact_path
+
 
 class _TaskServiceOnlyStore:
-    def __init__(self) -> None:
-        self.task_service = _FakeTaskService()
+    def __init__(self, *, artifact_path: Path | None = None) -> None:
+        self.task_service = _FakeTaskService(artifact_path=artifact_path)
 
 
 def _client() -> tuple[TestClient, _FakeStore]:
@@ -271,3 +321,46 @@ def test_task_routes_can_read_through_task_service_facade() -> None:
         ("get_task_queue_row", "task_1"),
         ("list_task_artifacts", "task_1"),
     ]
+
+
+def test_task_routes_cancel_retry_and_events_through_task_service() -> None:
+    store = _TaskServiceOnlyStore()
+    api = FastAPI()
+    register_task_routes(api, store)
+    client = TestClient(api)
+
+    cancel_response = client.post("/api/tasks/task_1/cancel")
+    events_response = client.get("/api/tasks/task_1/events?after_event_id=6")
+    retry_response = client.post("/api/tasks/task_1/retry")
+
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["action"] == "cancel"
+    assert cancel_response.json()["changed"] is True
+    assert cancel_response.json()["task"]["status"] == "cancelled"
+    assert events_response.status_code == 200
+    assert events_response.json()["events"][0]["id"] == 7
+    assert retry_response.status_code == 200
+    assert retry_response.json()["action"] == "retry"
+    assert retry_response.json()["changed"] is False
+    assert store.task_service.calls == [
+        ("cancel_task", "task_1"),
+        ("get_task_queue_row", "task_1"),
+        ("list_task_events", "task_1", 6),
+        ("retry_task", "task_1"),
+    ]
+
+
+def test_task_artifact_download_returns_file_response(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "result.json"
+    artifact_path.write_text('{"ok": true}', encoding="utf-8")
+    store = _TaskServiceOnlyStore(artifact_path=artifact_path)
+    api = FastAPI()
+    register_task_routes(api, store)
+    client = TestClient(api)
+
+    response = client.get("/api/tasks/task_1/artifacts/artifact_service_1")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    assert response.headers["content-disposition"].endswith('filename="result.json"')
+    assert response.content == b'{"ok": true}'

@@ -30,6 +30,15 @@ class _ArtifactPathProvider(Protocol):
         ...
 
 
+class _ResolvedArtifactPathProvider:
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def get_path(self, artifact_id: str) -> Path:
+        del artifact_id
+        return self._path
+
+
 class _TaskServiceTaskReader:
     def __init__(self, task_service: Any) -> None:
         self._task_service = task_service
@@ -75,6 +84,34 @@ def register_task_routes(api: FastAPI, store: Any) -> None:
             "task": _task_payload(task),
         }
 
+    @api.post("/api/tasks/{task_id}/cancel")
+    def cancel_task(task_id: str) -> dict[str, Any]:
+        result = _task_action_or_503(store, "cancel_task", task_id)
+        return _task_action_payload(task_id=task_id, action="cancel", result=result)
+
+    @api.post("/api/tasks/{task_id}/retry")
+    def retry_task(task_id: str) -> dict[str, Any]:
+        result = _task_action_or_503(store, "retry_task", task_id)
+        return _task_action_payload(task_id=task_id, action="retry", result=result)
+
+    @api.get("/api/tasks/{task_id}/events")
+    def list_task_events(
+        task_id: str,
+        after_event_id: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
+        _task_or_404(_task_queue_reader(store), task_id)
+        task_service = _task_service_or_503(store)
+        if not callable(getattr(task_service, "list_task_events", None)):
+            raise HTTPException(status_code=503, detail="task event replay is not configured")
+        events = task_service.list_task_events(task_id, after_event_id=after_event_id)
+        return {
+            "kind": "task_events",
+            "schema_version": 1,
+            "task_id": task_id,
+            "after_event_id": after_event_id,
+            "events": jsonable_encoder(events),
+        }
+
     @api.get("/api/tasks/{task_id}/artifacts")
     def list_task_artifacts(task_id: str) -> dict[str, Any]:
         _task_or_404(_task_queue_reader(store), task_id)
@@ -89,6 +126,23 @@ def register_task_routes(api: FastAPI, store: Any) -> None:
             "task_id": task_id,
             "artifacts": [_artifact_payload(artifact) for artifact in artifacts],
         }
+
+    @api.get("/api/tasks/{task_id}/artifacts/{artifact_id}")
+    def download_task_artifact(task_id: str, artifact_id: str) -> FileResponse:
+        _task_or_404(_task_queue_reader(store), task_id)
+        task_service = _task_service_or_503(store)
+        if not callable(getattr(task_service, "task_artifact_file", None)):
+            raise HTTPException(status_code=503, detail="task artifact downloads are not configured")
+        try:
+            resolved = task_service.task_artifact_file(task_id, artifact_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="artifact file not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        artifact, path = resolved
+        return task_artifact_file_response(_ResolvedArtifactPathProvider(path), artifact)
 
 
 def task_artifact_file_response(
@@ -132,6 +186,24 @@ def _task_queue_reader(store: Any) -> _TaskQueueReader:
     ):
         return _TaskServiceTaskReader(task_service)
     raise HTTPException(status_code=503, detail="task queue repository is not configured")
+
+
+def _task_service_or_503(store: Any) -> Any:
+    task_service = getattr(store, "task_service", None)
+    if task_service is None:
+        raise HTTPException(status_code=503, detail="task service is not configured")
+    return task_service
+
+
+def _task_action_or_503(store: Any, method_name: str, task_id: str) -> dict[str, Any]:
+    task_service = _task_service_or_503(store)
+    method = getattr(task_service, method_name, None)
+    if not callable(method):
+        raise HTTPException(status_code=503, detail="task control actions are not configured")
+    result = method(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return result
 
 
 def _task_artifact_lister(store: Any) -> Callable[[str], list[dict[str, Any]]]:
@@ -184,3 +256,17 @@ def _artifact_payload(artifact: dict[str, Any]) -> dict[str, Any]:
     payload = dict(artifact)
     payload.setdefault("metadata", {})
     return jsonable_encoder(payload)
+
+
+def _task_action_payload(*, task_id: str, action: str, result: dict[str, Any]) -> dict[str, Any]:
+    task = result.get("task")
+    if not isinstance(task, dict):
+        raise HTTPException(status_code=500, detail="task action returned an invalid task payload")
+    return {
+        "kind": "task_action",
+        "schema_version": 1,
+        "action": action,
+        "task_id": task_id,
+        "changed": bool(result.get("changed")),
+        "task": _task_payload(task),
+    }

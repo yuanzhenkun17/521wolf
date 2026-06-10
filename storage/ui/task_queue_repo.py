@@ -119,6 +119,21 @@ class TaskQueueRepository:
             ).fetchall()
         return [_task_from_row(row) for row in rows]
 
+    def status_counts(self) -> dict[str, int]:
+        rows = self._conn.execute(
+            "SELECT status, COUNT(*) AS count FROM ui_task_queue GROUP BY status",
+            (),
+        ).fetchall()
+        return {str(row["status"]): int(row["count"]) for row in rows}
+
+    def stale_running_count(self, *, now: str) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS count FROM ui_task_queue "
+            "WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?",
+            (now,),
+        ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
     def claim_next(
         self,
         *,

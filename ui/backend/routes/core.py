@@ -38,6 +38,7 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
                 "tts": store.tts_status(),
                 "tts_streaming": store.tts_streaming_available(),
                 "startup_checks": store.startup_checks,
+                "task_control": store.task_service.task_control_health(),
             },
         }
 

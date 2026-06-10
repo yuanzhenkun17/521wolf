@@ -230,6 +230,32 @@ def test_execute_casts_benchmark_saved_view_jsonb_insert_parameter() -> None:
     )
 
 
+def test_execute_casts_task_worker_metadata_jsonb_insert_parameter() -> None:
+    raw = _FakeRawConnection()
+    adapter = _adapter(raw)
+    raw.calls.clear()
+
+    adapter.execute(
+        """
+        INSERT INTO ui_task_workers
+        (worker_id, status, last_heartbeat_at, lease_seconds, current_task_id, metadata)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "worker-1",
+            "idle",
+            "2026-06-10T00:00:00+08:00",
+            300,
+            None,
+            '{"registered_kinds":["demo"]}',
+        ),
+    )
+
+    sql, params = raw.calls[0]
+    assert "VALUES (%s, %s, %s, %s, %s, %s::jsonb)" in " ".join(sql.split())
+    assert params[-1] == '{"registered_kinds":["demo"]}'
+
+
 def test_execute_casts_jsonb_update_parameters_and_adapts_boolean_where() -> None:
     raw = _FakeRawConnection()
     adapter = _adapter(raw)

@@ -378,6 +378,8 @@ class _UiMemoryDatabase:
     def __init__(self) -> None:
         self.background_tasks: dict[str, dict[str, Any]] = {}
         self.task_events: dict[int, dict[str, Any]] = {}
+        self.task_queue: dict[str, dict[str, Any]] = {}
+        self.task_workers: dict[str, dict[str, Any]] = {}
         self.background_upserts = 0
         self.event_upserts = 0
         self.deletes = 0
@@ -413,7 +415,40 @@ class _UiMemoryConnection:
             return _UiCursor([{"ok": 1}])
 
         if text.startswith("SELECT version_num FROM public.alembic_version"):
-            return _UiCursor([{"version_num": "20260610_0003"}])
+            return _UiCursor([{"version_num": "20260610_0004"}])
+
+        if text == "SELECT status, COUNT(*) AS count FROM ui_task_queue GROUP BY status":
+            counts: dict[str, int] = {}
+            with self._db.lock:
+                for task in self._db.task_queue.values():
+                    status = str(task.get("status") or "")
+                    counts[status] = counts.get(status, 0) + 1
+            return _UiCursor([
+                {"status": status, "count": count}
+                for status, count in sorted(counts.items())
+            ])
+
+        if text.startswith("SELECT COUNT(*) AS count FROM ui_task_queue WHERE status = 'running'"):
+            now = str(params[0])
+            with self._db.lock:
+                count = sum(
+                    1
+                    for task in self._db.task_queue.values()
+                    if task.get("status") == "running"
+                    and task.get("lease_expires_at") is not None
+                    and str(task.get("lease_expires_at")) <= now
+                )
+            return _UiCursor([{"count": count}])
+
+        if text.startswith("SELECT worker_id, status, last_heartbeat_at, lease_seconds, current_task_id, metadata FROM ui_task_workers"):
+            limit = int(params[0])
+            with self._db.lock:
+                rows = sorted(
+                    (dict(row) for row in self._db.task_workers.values()),
+                    key=lambda row: (str(row.get("last_heartbeat_at") or ""), str(row.get("worker_id") or "")),
+                    reverse=True,
+                )[:limit]
+            return _UiCursor(rows)
 
         if text.startswith("INSERT INTO ui_background_tasks"):
             entity_id, entity_kind, status, payload, updated_at = params
@@ -945,6 +980,14 @@ def test_health_and_roles_contract(tmp_path: Path) -> None:
     assert startup_checks["checks"]["registry_baseline"]["status"] == "degraded"
     assert "seer" in startup_checks["checks"]["registry_baseline"]["missing_roles"]
     assert startup_checks["checks"]["llm"]["status"] == "ok"
+    task_control = health["external"]["task_control"]
+    assert task_control["status"] == "degraded"
+    assert task_control["queue_status_counts"] == {}
+    assert task_control["stale_running_count"] == 0
+    assert task_control["worker_fresh"] is False
+    assert task_control["workers"] == []
+    assert task_control["artifact_root"]["status"] == "ok"
+    assert task_control["artifact_root"]["writable"] is True
 
     assert roles_response.status_code == 200
     roles = roles_response.json()["roles"]

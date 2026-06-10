@@ -1591,11 +1591,31 @@ def test_openapi_frontend_snapshot_contract(tmp_path: Path) -> None:
         "/api/tasks/{task_id}": {
             "get": ("get_task_api_tasks__task_id__get", None, [("task_id", "path", True)]),
         },
+        "/api/tasks/{task_id}/cancel": {
+            "post": ("cancel_task_api_tasks__task_id__cancel_post", None, [("task_id", "path", True)]),
+        },
+        "/api/tasks/{task_id}/retry": {
+            "post": ("retry_task_api_tasks__task_id__retry_post", None, [("task_id", "path", True)]),
+        },
+        "/api/tasks/{task_id}/events": {
+            "get": (
+                "list_task_events_api_tasks__task_id__events_get",
+                None,
+                [("task_id", "path", True), ("after_event_id", "query", False)],
+            ),
+        },
         "/api/tasks/{task_id}/artifacts": {
             "get": (
                 "list_task_artifacts_api_tasks__task_id__artifacts_get",
                 None,
                 [("task_id", "path", True)],
+            ),
+        },
+        "/api/tasks/{task_id}/artifacts/{artifact_id}": {
+            "get": (
+                "download_task_artifact_api_tasks__task_id__artifacts__artifact_id__get",
+                None,
+                [("task_id", "path", True), ("artifact_id", "path", True)],
             ),
         },
         "/api/health": {

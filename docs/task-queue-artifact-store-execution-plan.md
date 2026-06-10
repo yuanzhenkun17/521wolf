@@ -41,7 +41,21 @@ PostgreSQL-backed task queue
   - `GET /api/tasks/{task_id}/artifacts`
 - 已新增 route/worker 聚焦测试，并更新 OpenAPI contract。
 
-当前仍未迁移 benchmark/evolution 执行路径，没有改前端，也没有启动常驻 worker 进程。后续接线必须等前后端重构边界稳定后再做。
+已完成 Phase C Task Control Plane：
+
+- 已新增 `20260610_0004_task_worker_status` migration，创建 `wolf.ui_task_workers` worker heartbeat 表。
+- 已新增 `TaskWorkerRepository`，记录 worker freshness、当前状态、lease 秒数和 metadata。
+- 已扩展 `TaskQueueRepository`，提供 status counts 与 stale running count，供 health 使用。
+- 已补齐任务控制 API：
+  - `POST /api/tasks/{task_id}/cancel`
+  - `POST /api/tasks/{task_id}/retry`
+  - `GET /api/tasks/{task_id}/events`
+  - `GET /api/tasks/{task_id}/artifacts/{artifact_id}`
+- 已新增 `TaskWorkerLoop`，负责单机 poll、连接生命周期、commit/rollback、lease 过期扫描、worker heartbeat，并提供可选 task event publisher。
+- 已在 `/api/health.external.task_control` 暴露 queue backlog、stale running、worker freshness 和 artifact root writable。
+- 已扩展 `TaskEventLog` 兼容 `task_id` entity，使 queue task 能复用现有 event replay。
+
+当前仍未迁移 benchmark/evolution 执行路径，没有改前端，也没有启动常驻 worker 进程；但 API 控制面、worker loop 和 health 基础已经就绪。后续接线必须等前后端重构边界稳定后再做。
 
 已验证：
 
@@ -49,6 +63,7 @@ PostgreSQL-backed task queue
 uv run pytest tests/test_task_queue_artifacts.py -q
 uv run pytest tests/test_postgres_adapter.py -q
 uv run pytest tests/test_task_worker.py tests/test_task_routes.py -q
+uv run pytest tests/test_ui_backend_app.py tests/test_ui_backend_store_facades.py tests/test_storage_provider.py -q -k "health or create_app or roles or task_service or task_event or background_tasks or startup"
 ```
 
 ## 当前状态

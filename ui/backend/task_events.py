@@ -189,12 +189,21 @@ class TaskEventLog:
 
 
 def _task_entity_id(entity: dict[str, Any]) -> str:
-    return str(entity.get("run_id") or entity.get("batch_id") or "")
+    return str(entity.get("run_id") or entity.get("batch_id") or entity.get("task_id") or "")
 
 
 def _task_event_name(status: Any) -> str:
     status_text = str(status or "").lower()
-    if status_text in {"reviewing", "promoted", "rejected", "failed", "completed", "interrupted"}:
+    if status_text in {
+        "reviewing",
+        "promoted",
+        "rejected",
+        "failed",
+        "completed",
+        "succeeded",
+        "cancelled",
+        "interrupted",
+    }:
         return status_text
     return "progress"
 
@@ -207,14 +216,22 @@ def _task_event_payload(entity: dict[str, Any]) -> dict[str, Any]:
             "schema_version",
             "run_id",
             "batch_id",
+            "task_id",
             "role",
             "roles",
             "status",
+            "priority",
+            "attempt",
+            "max_attempts",
+            "lease_owner",
+            "lease_expires_at",
             "stop_requested",
             "cancelled",
             "interrupted",
             "failed",
             "started_at",
+            "queued_at",
+            "updated_at",
             "finished_at",
             "last_heartbeat_at",
             "cancelled_at",

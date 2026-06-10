@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import time
 from typing import Any
 
 from app.util.time import beijing_now
 from storage.ui.task_queue_repo import TaskQueueRepository
+from storage.ui.task_worker_repo import TaskWorkerRepository
 
 
 class TaskCancelled(RuntimeError):
@@ -257,6 +259,114 @@ class TaskWorker:
             self._after_repository_update()
 
 
+class TaskWorkerLoop:
+    """Open a storage connection per worker poll and persist worker freshness."""
+
+    def __init__(
+        self,
+        *,
+        connection_factory: Callable[[], Any],
+        executors: TaskExecutorRegistry | Mapping[str, TaskExecutor] | None = None,
+        worker_id: str,
+        lease_seconds: int = 300,
+        poll_interval_seconds: float = 1.0,
+        clock: Callable[[], datetime] = beijing_now,
+        event_publisher: Callable[[dict[str, Any], str | None], Any] | None = None,
+    ) -> None:
+        self._connection_factory = connection_factory
+        self.registry = executors if isinstance(executors, TaskExecutorRegistry) else TaskExecutorRegistry(executors)
+        self._worker_id = str(worker_id)
+        self._lease_seconds = int(lease_seconds)
+        self._poll_interval_seconds = float(poll_interval_seconds)
+        self._clock = clock
+        self._event_publisher = event_publisher
+
+    def run_once(self) -> TaskWorkerRunResult:
+        conn = self._connection_factory()
+        updated_task: dict[str, Any] | None = None
+        try:
+            self._record_worker_heartbeat(conn, status="polling")
+            conn.commit()
+            task_repo = TaskQueueRepository(conn)
+            worker = TaskWorker(
+                repository=task_repo,
+                executors=self.registry,
+                worker_id=self._worker_id,
+                lease_seconds=self._lease_seconds,
+                clock=self._clock,
+                after_repository_update=conn.commit,
+            )
+            result = worker.run_once()
+            if result.task_id is not None:
+                updated_task = task_repo.get(result.task_id)
+            self._record_worker_heartbeat(
+                conn,
+                status=result.status,
+                current_task_id=result.task_id if result.status == "running" else None,
+            )
+            conn.commit()
+            if updated_task is not None and self._event_publisher is not None:
+                self._event_publisher(updated_task, result.status)
+            return result
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def run_available(self, *, max_tasks: int | None = None) -> list[TaskWorkerRunResult]:
+        results: list[TaskWorkerRunResult] = []
+        while max_tasks is None or len(results) < max_tasks:
+            result = self.run_once()
+            if result.status == "idle":
+                break
+            results.append(result)
+        return results
+
+    def mark_expired_running_interrupted(self) -> int:
+        conn = self._connection_factory()
+        try:
+            now = self._clock().isoformat()
+            count = TaskQueueRepository(conn).mark_expired_running_interrupted(now=now)
+            self._record_worker_heartbeat(
+                conn,
+                status="maintenance",
+                metadata={"interrupted_count": count},
+            )
+            conn.commit()
+            return count
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def run_forever(self, *, stop_requested: Callable[[], bool] | None = None) -> None:
+        should_stop = stop_requested or (lambda: False)
+        while not should_stop():
+            self.mark_expired_running_interrupted()
+            result = self.run_once()
+            if result.status == "idle":
+                time.sleep(self._poll_interval_seconds)
+
+    def _record_worker_heartbeat(
+        self,
+        conn: Any,
+        *,
+        status: str,
+        current_task_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        TaskWorkerRepository(conn).upsert_heartbeat(
+            worker_id=self._worker_id,
+            status=status,
+            last_heartbeat_at=self._clock().isoformat(),
+            lease_seconds=self._lease_seconds,
+            current_task_id=current_task_id,
+            metadata=metadata or {"registered_kinds": self.registry.kinds()},
+        )
+
+
 def _error_from_exception(exc: BaseException) -> dict[str, Any]:
     return {
         "kind": "executor_error",
@@ -277,5 +387,6 @@ __all__ = [
     "TaskExecutor",
     "TaskExecutorRegistry",
     "TaskWorker",
+    "TaskWorkerLoop",
     "TaskWorkerRunResult",
 ]

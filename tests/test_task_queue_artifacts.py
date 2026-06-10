@@ -125,6 +125,32 @@ def test_task_queue_repository_marks_expired_running_tasks_interrupted() -> None
     assert repo.get("task_a")["status"] == "queued"  # type: ignore[index]
 
 
+def test_task_queue_repository_reports_status_counts_and_stale_running() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    repo.enqueue(
+        task_id="task_a",
+        kind="benchmark_batch",
+        payload={},
+        queued_at="2026-06-10T10:00:00+08:00",
+    )
+    repo.enqueue(
+        task_id="task_b",
+        kind="benchmark_batch",
+        payload={},
+        queued_at="2026-06-10T10:00:01+08:00",
+    )
+    assert repo.claim_next(
+        worker_id="worker-1",
+        now="2026-06-10T10:00:02+08:00",
+        lease_expires_at="2026-06-10T10:01:00+08:00",
+    )
+
+    assert repo.status_counts() == {"queued": 1, "running": 1}
+    assert repo.stale_running_count(now="2026-06-10T10:00:30+08:00") == 0
+    assert repo.stale_running_count(now="2026-06-10T10:02:00+08:00") == 1
+
+
 def test_task_queue_repository_cancels_queued_tasks_without_worker_claim() -> None:
     conn = _connect()
     repo = TaskQueueRepository(conn)
