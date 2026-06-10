@@ -126,6 +126,7 @@ class BenchmarkRunService:
         roles = self.benchmark_roles(request, spec)
         target_type = spec.target_type if spec else request.target_type
         self.validate_benchmark_target_versions(roles, request, target_type=target_type)
+        model_runtime = self.benchmark_model_runtime(request)
         if spec is not None:
             game_count = _benchmark_effective_game_count(int(spec.game_count))
             max_days = int(spec.max_days)
@@ -219,6 +220,9 @@ class BenchmarkRunService:
             "benchmark": benchmark,
             "target_type": target_type,
             "roles": list(roles),
+            "model_id": model_runtime["model_id"],
+            "model_config_hash": model_runtime["model_config_hash"],
+            "model_runtime": _json_clone(model_runtime["model_runtime"]),
             "role_count": len(roles),
             "eval_batch_count": eval_batch_count,
             "game_count_per_eval_batch": game_count,
@@ -263,7 +267,7 @@ class BenchmarkRunService:
         spec, seed_set = self._catalog.resolve_benchmark_spec(request)
         benchmark_meta = self._catalog.benchmark_metadata(spec, seed_set) if spec else None
         roles = self.benchmark_roles(request, spec)
-        model_runtime = self.benchmark_model_runtime(request)
+        model_runtime = self._benchmark_model_runtime_from_plan(run_plan) or self.benchmark_model_runtime(request)
         request_config = self.benchmark_request_config(request, spec)
         if spec is not None or request.target_type == "model" or request.model_id or request.model_config_hash:
             request_config["model_id"] = model_runtime["model_id"]
@@ -727,6 +731,23 @@ class BenchmarkRunService:
         if payload.get("target_type") == "role_version" and not payload.get("benchmark_id"):
             payload.pop("target_type", None)
         return payload
+
+    @staticmethod
+    def _benchmark_model_runtime_from_plan(run_plan: dict[str, Any]) -> dict[str, Any] | None:
+        runtime = run_plan.get("model_runtime") if isinstance(run_plan.get("model_runtime"), dict) else {}
+        model_id = str(run_plan.get("model_id") or runtime.get("model_id") or "").strip()
+        model_config_hash = str(
+            run_plan.get("model_config_hash")
+            or runtime.get("model_config_hash")
+            or ""
+        ).strip()
+        if not model_id or not model_config_hash or not runtime:
+            return None
+        return {
+            "model_id": model_id,
+            "model_config_hash": model_config_hash,
+            "model_runtime": _json_clone(runtime),
+        }
 
     def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
         """Return model identity used to attribute model-scope benchmark runs."""

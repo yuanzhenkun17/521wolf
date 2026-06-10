@@ -1639,6 +1639,17 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
     assert health["checks"]["llm_config"]["model_profile_id"] == profile_id
     assert health["gates"]["game_start"]["ready"] is True
 
+    profile_plan = store.benchmark_service.plan_benchmark(
+        BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model", model_profile_id=profile_id)
+    )
+    plan_runtime = profile_plan["model_runtime"]
+    assert profile_plan["model_id"] == "qwen-runtime"
+    assert profile_plan["model_config_hash"] == plan_runtime["model_config_hash"]
+    assert plan_runtime["source"] == "settings_profile"
+    assert plan_runtime["model_profile_id"] == profile_id
+    assert plan_runtime["scope"] == "benchmark"
+    assert plan_runtime["base_url_host"] == "token.example.test"
+
     benchmark_request = BenchmarkRequest(benchmark_id="model-baseline-v1", target_type="model")
     batch = store.benchmark_service.queue_benchmark(benchmark_request)
     benchmark_runtime = batch["model_runtime"]
@@ -1665,6 +1676,8 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
     assert "sk-runtime-secret" not in public_payload
     assert "api_key=hidden" not in public_payload
     assert "api_key" not in public_payload
+    assert "sk-runtime-secret" not in json.dumps(profile_plan, ensure_ascii=False)
+    assert "api_key=hidden" not in json.dumps(profile_plan, ensure_ascii=False)
 
     monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "env-secret")
     with pytest.raises(HTTPException) as exc_info:
@@ -4388,6 +4401,11 @@ def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: P
     role_plan = role_plan_response.json()
     assert role_plan["target_type"] == "role_version"
     assert role_plan["roles"] == ["seer"]
+    assert role_plan["model_id"] == "FakeModel"
+    assert role_plan["model_config_hash"]
+    assert role_plan["model_runtime"]["source"] == "injected_model"
+    assert role_plan["model_runtime"]["model_id"] == role_plan["model_id"]
+    assert role_plan["model_runtime"]["model_config_hash"] == role_plan["model_config_hash"]
     assert role_plan["eval_batch_count"] == 1
     assert role_plan["total_games"] == 3
     assert role_plan["judge"]["estimated_decisions"] == 30
@@ -4425,6 +4443,11 @@ def test_benchmark_plan_estimates_cost_and_blocks_over_budget_launch(tmp_path: P
     model_plan = model_plan_response.json()
     assert model_plan["target_type"] == "model"
     assert model_plan["roles"] == ["seer", "witch"]
+    assert model_plan["model_id"] == "FakeModel"
+    assert model_plan["model_config_hash"]
+    assert model_plan["model_runtime"]["source"] == "injected_model"
+    assert model_plan["model_runtime"]["model_id"] == model_plan["model_id"]
+    assert model_plan["model_runtime"]["model_config_hash"] == model_plan["model_config_hash"]
     assert model_plan["eval_batch_count"] == 1
     assert model_plan["total_games"] == 3
     assert model_plan["judge"]["estimated_decisions"] == 30
