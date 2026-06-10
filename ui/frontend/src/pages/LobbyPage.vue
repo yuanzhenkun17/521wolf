@@ -1,8 +1,18 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, onMounted, ref, watch } from 'vue'
-import { gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
+import { type GameStartRoleVersionMode, gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
 import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
+
+type RoleVersionModeOption = {
+  key: GameStartRoleVersionMode
+  label: string
+}
+
+type StartModeOptions = {
+  player_count: number
+  human_player_id: number | null
+  role_versions?: Record<string, unknown>
+}
 
 const props = defineProps({
   backendMode: { type: String, default: 'mock' },
@@ -23,10 +33,10 @@ const registryLoading = ref(false)
 const registryError = ref('')
 const startingMode = ref('')
 const roleVersionDrawerOpen = ref(false)
-const roleVersionMode = ref('baseline')
+const roleVersionMode = ref<GameStartRoleVersionMode>('baseline')
 let roleVersionLoadPromise = null
 
-const ROLE_VERSION_MODES = [
+const ROLE_VERSION_MODES: RoleVersionModeOption[] = [
   { key: 'baseline', label: '当前基线' },
   { key: 'latest', label: '最新晋升' },
   { key: 'custom', label: '自定义覆盖' }
@@ -168,7 +178,7 @@ function clearRoleVersionOverrides() {
 
 function start(mode) {
   startingMode.value = mode
-  const body = {
+  const body: StartModeOptions = {
     player_count: Number(props.playerCount) || 12,
     human_player_id: mode === 'play' ? 1 : null
   }
