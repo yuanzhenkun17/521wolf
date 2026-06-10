@@ -314,6 +314,120 @@ def test_postgres_provider_supports_game_persistence_runtime_smoke(
         evolution_conn.close()
 
 
+def test_postgres_registry_rejected_and_benchmark_helpers_use_real_tables(
+    migrated_postgres_urls: tuple[str, str],
+) -> None:
+    import json
+
+    from storage.benchmark.saved_view_repo import (
+        BenchmarkSavedViewRepository,
+        delete_benchmark_saved_view,
+        persist_benchmark_saved_view,
+    )
+    from storage.benchmark.snapshot_repo import (
+        BenchmarkSnapshotRepository,
+        persist_benchmark_snapshot,
+    )
+    from storage.postgres import get_registry_postgres_connection
+    from storage.provider import PostgresStorageProvider
+    from storage.registry.version_repo import RegistryVersionRepository
+
+    psycopg = pytest.importorskip("psycopg")
+    app_url, _ = migrated_postgres_urls
+    created_at = "2026-06-10T00:00:00+08:00"
+    proposal = {"proposal_id": "p1", "reason": "duplicate tell"}
+
+    registry_conn = get_registry_postgres_connection(app_url)
+    try:
+        registry_repo = RegistryVersionRepository(registry_conn)
+        registry_repo.save_rejected_payload(
+            role="seer",
+            build_payload=lambda existing: json.dumps(
+                [*json.loads(existing or "[]"), proposal],
+                ensure_ascii=False,
+            ),
+        )
+
+        with pytest.raises(psycopg.errors.InvalidTextRepresentation):
+            registry_repo.save_rejected_payload(
+                role="seer",
+                build_payload=lambda _existing: "not valid json",
+            )
+
+        assert json.loads(registry_repo.load_rejected_payload("seer") or "[]") == [
+            proposal
+        ]
+    finally:
+        registry_conn.close()
+
+    provider = PostgresStorageProvider(app_url)
+
+    def open_wolf_conn() -> Any:
+        return provider.open_wolf_connection()
+
+    snapshot_id = f"pg-snapshot-{uuid.uuid4().hex[:12]}"
+    view_key = f"pg-view-{uuid.uuid4().hex[:12]}"
+    snapshot = {
+        "snapshot_id": snapshot_id,
+        "title": "PG release snapshot",
+        "release_notes": "real PostgreSQL helper coverage",
+        "scope": "role_version",
+        "benchmark_id": "role-baseline-v1",
+        "benchmark_version": "1",
+        "evaluation_set_id": "role-baseline-v1@pg",
+        "seed_set_id": "role-baseline-quick-202606",
+        "benchmark_config_hash": "sha256:pg-helper",
+        "target_role": "seer",
+        "source_filter": {"rankable": True},
+        "view_config": {"columns": ["strength_score", "avg_role_score"]},
+        "rows": [{"subject_id": "seer_candidate_pg", "strength_score": 8.5}],
+        "summary": {"row_count": 1, "release_gate": {"ok": True}},
+        "row_count": 1,
+        "content_hash": "sha256:pg-helper-content",
+        "created_at": created_at,
+    }
+    view = {
+        "view_key": view_key,
+        "name": "PG helper view",
+        "scope": "role_version",
+        "benchmark_id": "role-baseline-v1",
+        "evaluation_set_id": "role-baseline-v1@pg",
+        "target_role": "seer",
+        "view_config": {"columns": ["strength_score"], "sort": "desc"},
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+
+    persist_benchmark_snapshot(open_wolf_conn, snapshot)
+    persist_benchmark_saved_view(open_wolf_conn, view)
+
+    wolf_conn = provider.open_wolf_connection()
+    try:
+        stored_snapshot = BenchmarkSnapshotRepository(wolf_conn).get(snapshot_id)
+        assert stored_snapshot is not None
+        assert stored_snapshot["rows"] == snapshot["rows"]
+        assert stored_snapshot["source_filter"] == {"rankable": True}
+        assert stored_snapshot["release_gate"] == {"ok": True}
+
+        stored_view = BenchmarkSavedViewRepository(wolf_conn).get(view_key)
+        assert stored_view is not None
+        assert stored_view["view_config"] == {
+            "columns": ["strength_score"],
+            "sort": "desc",
+        }
+    finally:
+        wolf_conn.close()
+
+    assert delete_benchmark_saved_view(open_wolf_conn, view_key) is True
+
+    wolf_conn = provider.open_wolf_connection()
+    try:
+        assert BenchmarkSavedViewRepository(wolf_conn).get(view_key) is None
+        assert BenchmarkSnapshotRepository(wolf_conn).get(snapshot_id) is not None
+    finally:
+        wolf_conn.close()
+
+
 def test_postgres_delete_game_removes_wolf_runtime_child_rows(
     migrated_postgres_urls: tuple[str, str],
 ) -> None:
