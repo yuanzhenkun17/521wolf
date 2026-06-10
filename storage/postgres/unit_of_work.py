@@ -249,17 +249,19 @@ def evolution(*, provider: Any | None = None, paths: Any | None = None) -> UnitO
 
 
 def _provider_connection_factory(
-    method_name: str,
+    helper_name: str,
     provider: Any | None,
     paths: Any | None,
 ) -> ConnectionFactory:
     def open_connection() -> StorageConnection:
-        resolved_provider = provider
-        if resolved_provider is None:
-            from storage.provider import storage_provider_from_env
+        import storage.provider as provider_module
 
-            resolved_provider = storage_provider_from_env(paths=paths)
-        return getattr(resolved_provider, method_name)()
+        open_helper = getattr(provider_module, helper_name)
+        if provider is not None:
+            return open_helper(provider)
+        if paths is None:
+            return open_helper()
+        return open_helper(paths=paths)
 
     return open_connection
 

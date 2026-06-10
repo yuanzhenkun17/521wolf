@@ -224,3 +224,90 @@ def test_domain_helpers_open_provider_connections() -> None:
     assert provider.wolf_conn.calls == ["begin_write", "commit", "close"]
     assert provider.registry_conn.calls == ["begin_write", "commit", "close"]
     assert provider.evolution_conn.calls == ["begin_write", "commit", "close"]
+
+
+@pytest.mark.parametrize(
+    ("factory", "connection_name"),
+    [
+        (wolf, "wolf_conn"),
+        (registry, "registry_conn"),
+        (evolution, "evolution_conn"),
+    ],
+)
+def test_domain_helpers_preserve_no_arg_provider_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    factory: Any,
+    connection_name: str,
+) -> None:
+    provider = _Provider()
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, "storage_provider_from_env", lambda: provider)
+    tx = factory(paths=None)
+
+    with tx as unit:
+        assert unit.conn is not getattr(provider, connection_name)
+        unit.commit()
+
+    assert getattr(provider, connection_name).calls == ["begin_write", "commit", "close"]
+
+
+@pytest.mark.parametrize(
+    ("factory", "helper_name"),
+    [
+        (wolf, "open_wolf_connection"),
+        (registry, "open_registry_connection"),
+        (evolution, "open_evolution_connection"),
+    ],
+)
+def test_domain_helpers_forward_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    factory: Any,
+    helper_name: str,
+) -> None:
+    conn = _FakeConnection()
+    paths = object()
+    seen_paths: list[Any] = []
+
+    def open_connection(*, paths: Any | None = None) -> _FakeConnection:
+        seen_paths.append(paths)
+        return conn
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, helper_name, open_connection)
+
+    with factory(paths=paths) as unit:
+        assert unit.conn is not conn
+        unit.commit()
+
+    assert seen_paths == [paths]
+    assert conn.calls == ["begin_write", "commit", "close"]
+
+
+@pytest.mark.parametrize(
+    ("factory", "helper_name"),
+    [
+        (wolf, "open_wolf_connection"),
+        (registry, "open_registry_connection"),
+        (evolution, "open_evolution_connection"),
+    ],
+)
+def test_domain_helpers_resolve_provider_helpers_when_opened(
+    monkeypatch: pytest.MonkeyPatch,
+    factory: Any,
+    helper_name: str,
+) -> None:
+    conn = _FakeConnection()
+    tx = factory()
+
+    import storage.provider
+
+    monkeypatch.setattr(storage.provider, helper_name, lambda: conn)
+
+    with tx as unit:
+        assert unit.conn is not conn
+        unit.commit()
+
+    assert conn.calls == ["begin_write", "commit", "close"]
