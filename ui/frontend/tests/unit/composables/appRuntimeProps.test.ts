@@ -52,7 +52,7 @@ test('unwraps runtime refs when building page prop payloads', () => {
   assert.equal('archiveByGameId' in props.logsProps.value, false)
   assert.equal('archiveLoading' in props.logsProps.value, false)
   assert.equal(props.logsProps.value.roleIconImage, roleIconImage)
-  assert.equal(props.logsProps.value.loadArchive, loadArchive)
+  assert.equal('loadArchive' in props.logsProps.value, false)
   assert.equal(props.lobbyProps.value.backendMode, 'api')
   assert.equal(props.lobbyProps.value.apiFetch, apiFetch)
   assert.equal('game' in props.matchProps.value, false)

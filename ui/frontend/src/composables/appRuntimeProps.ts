@@ -9,14 +9,6 @@ const logsPropKeys = [
   'historyLogSpeaker',
   'historyNormalizeText',
   'nightActionDetail',
-  'loadMoreHistory',
-  'loadMoreHistoryPhaseDetail',
-  'goHistoryPage',
-  'setHistorySourceFilter',
-  'deleteHistoryGame',
-  'loadArchive',
-  'loadReview',
-  'loadFlowData',
   'formatJson'
 ]
 

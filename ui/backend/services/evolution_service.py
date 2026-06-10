@@ -47,6 +47,7 @@ class EvolutionService:
         source: str | None = None,
         status: str | None = None,
     ) -> dict[str, Any]:
+        self._store.load_background_tasks()
         runs = [_evolution_run_summary(run) for run in self._store.evolution_runs.values()]
         batches = [_evolution_batch_summary(batch) for batch in self._store.evolution_batches.values()]
         runs.sort(key=_history_time_key, reverse=True)
@@ -82,6 +83,13 @@ class EvolutionService:
         return payload
 
     def get_run(self, run_id: str) -> dict[str, Any]:
+        run = self._store.evolution_runs.get(run_id)
+        if run is not None:
+            return run
+        batch = self._store.evolution_batches.get(run_id)
+        if batch is not None:
+            return _evolution_batch_summary(batch)
+        self._store.load_background_tasks()
         run = self._store.evolution_runs.get(run_id)
         if run is not None:
             return run

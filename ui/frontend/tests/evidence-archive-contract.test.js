@@ -67,18 +67,20 @@ test('LogsPage owns archive and review workspaces for evidence details', () => {
     ['LogsPage binds history workspace tab through v-model', /v-model:history-workspace-tab="historyWorkspaceTab"/],
   ])
   assertSourceContract(appRuntimeProps, [
-    ['logs runtime props still carry formatter/action props', /const logsPropKeys = \[[\s\S]*'historyPhaseName'[\s\S]*'loadArchive'[\s\S]*'loadReview'[\s\S]*\]/],
+    ['logs runtime props still carry formatter props', /const logsPropKeys = \[[\s\S]*'historyPhaseName'[\s\S]*'historyNormalizeText'[\s\S]*'formatJson'[\s\S]*\]/],
   ])
   assert.doesNotMatch(appRuntimeProps, /'historyWorkspaceTab'/)
   assert.doesNotMatch(appRuntimeProps, /'selectedHistoryPage'/)
   assert.doesNotMatch(appRuntimeProps, /'historyLogs'/)
+  assert.doesNotMatch(appRuntimeProps, /'loadArchive'/)
+  assert.doesNotMatch(appRuntimeProps, /'loadReview'/)
   assertSourceContract(refs, [
     ['runtime stores the selected logs workspace', /historyWorkspaceTab:\s*ref\('phase'\)/],
   ])
   assertSourceContract(logs, [
     ['LogsPage accepts external workspace selection', /historyWorkspaceTab:\s*\{\s*type:\s*String,\s*default:\s*'phase'\s*\}/],
     ['LogsPage emits workspace changes back to runtime', /'update:historyWorkspaceTab'/],
-    ['external workspace tab loads matching assets lazily', /function setWorkspaceTab\(tab[\s\S]*next === 'review'[\s\S]*props\.loadReview\?\.[\s\S]*next === 'archive'[\s\S]*props\.loadArchive\?\./],
+    ['external workspace tab loads matching assets lazily through history actions', /function setWorkspaceTab\(tab[\s\S]*next === 'review'[\s\S]*runHistoryAction\('loadReview'[\s\S]*next === 'archive'[\s\S]*runHistoryAction\('loadArchive'/],
     ['manual game selection resets back to phase details', /function selectHistoryGameFromList\(gameId\)[\s\S]*setWorkspaceTab\('phase'\)[\s\S]*emit\('select-history-game', gameId\)/],
     ['LogsPage still renders review and archive surfaces', /<ReviewReportPanel[\s\S]*<GameArchivePanel/],
   ])

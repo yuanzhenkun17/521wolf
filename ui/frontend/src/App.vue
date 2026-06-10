@@ -41,6 +41,7 @@ const gameStore = useGameStore()
 const historyStore = useHistoryStore()
 const replayStore = useReplayStore()
 const uiStore = useUiStore()
+historyStore.bindRuntimeActions(history)
 const runtimeHydrator = createIncrementalRuntimeHydrator({
   session: sessionStore,
   game: gameStore,

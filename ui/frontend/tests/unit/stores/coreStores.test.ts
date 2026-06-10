@@ -339,6 +339,38 @@ test('history store hydrates selection and derives selection state', () => {
   assert.equal(store.games[0].game_id, 'history-2')
 })
 
+test('history store forwards runtime actions through a thin facade', async () => {
+  setActivePinia(createPinia())
+  const store = useHistoryStore()
+  const loadReview = vi.fn().mockResolvedValue('review-loaded')
+  const loadArchive = vi.fn().mockResolvedValue('archive-loaded')
+  const loadMoreHistory = vi.fn().mockResolvedValue('history-loaded')
+
+  assert.equal(store.hasRuntimeActions, false)
+  assert.equal(store.hasRuntimeAction('loadReview'), false)
+  assert.equal(store.loadReview('history-1'), undefined)
+
+  store.bindRuntimeActions({
+    loadReview,
+    loadArchive,
+    loadMoreHistory
+  })
+
+  assert.equal(store.hasRuntimeActions, true)
+  assert.equal(store.hasRuntimeAction('loadReview'), true)
+  assert.equal(await store.loadReview('history-1'), 'review-loaded')
+  assert.equal(await store.loadArchive('history-1'), 'archive-loaded')
+  assert.equal(await store.loadMoreHistory(), 'history-loaded')
+  assert.deepEqual(loadReview.mock.calls[0], ['history-1'])
+  assert.deepEqual(loadArchive.mock.calls[0], ['history-1'])
+
+  store.clearRuntimeActions()
+
+  assert.equal(store.hasRuntimeActions, false)
+  assert.equal(store.hasRuntimeAction('loadReview'), false)
+  assert.equal(store.loadReview('history-1'), undefined)
+})
+
 test('replay store hydrates replay state and toggles replay actions', () => {
   setActivePinia(createPinia())
   const store = useReplayStore()
