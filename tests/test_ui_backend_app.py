@@ -1245,6 +1245,93 @@ def test_health_public_task_control_omits_artifact_paths_and_worker_details(
     assert str(tmp_path) not in serialized
 
 
+def test_ops_metrics_reports_public_counts_without_sensitive_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
+    monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
+    worker_secret = "worker-secret-id"
+    task_secret = "task-secret-id"
+    metadata_secret = "sk-worker-health-secret"
+    _fake_ui_pg_provider.db.task_workers[worker_secret] = {
+        "worker_id": worker_secret,
+        "status": "running",
+        "last_heartbeat_at": beijing_now_iso(),
+        "lease_seconds": 300,
+        "current_task_id": task_secret,
+        "metadata": {"api_key": metadata_secret},
+    }
+    _fake_ui_pg_provider.db.task_queue["queued-secret-task"] = {
+        "task_id": "queued-secret-task",
+        "kind": "benchmark",
+        "status": "queued",
+        "payload": {"api_key": "sk-task-payload-secret"},
+        "updated_at": beijing_now_iso(),
+    }
+
+    with _test_client(tmp_path) as client:
+        store = client.app.state.backend_store
+        store.live_sessions["live-secret-game"] = object()
+        store.games["game-running"] = {"game_id": "game-running", "status": "running"}
+        store.games["game-completed"] = {"game_id": "game-completed", "status": "completed"}
+        store.evolution_runs["run-active"] = {"run_id": "run-active", "status": "running"}
+        store.evolution_batches["batch-done"] = {"batch_id": "batch-done", "status": "completed"}
+        response = client.get("/api/ops/metrics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "ops_metrics"
+    assert payload["schema_version"] == 1
+    assert payload["ready"] is True
+    assert payload["status"] in {"ok", "degraded"}
+    metrics = payload["metrics"]
+    assert metrics["health_ready"] == 1
+    assert metrics["live_game_active_count"] == 1
+    assert metrics["game_status_counts"]["running"] == 1
+    assert metrics["game_status_counts"]["completed"] == 1
+    assert metrics["background_active_count"] == 1
+    assert metrics["background_status_counts"]["running"] == 1
+    assert metrics["background_status_counts"]["completed"] == 1
+    assert metrics["task_queue_status_counts"]["queued"] == 1
+    assert metrics["task_worker_fresh"] == 1
+    assert metrics["task_worker_count"] == 1
+    assert payload["tasks"]["worker_fresh"] is True
+    assert payload["tasks"]["worker_count"] == 1
+    assert payload["checks"]["task_worker"]["status"] == "ok"
+
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    assert worker_secret not in serialized
+    assert task_secret not in serialized
+    assert metadata_secret not in serialized
+    assert "sk-task-payload-secret" not in serialized
+    assert str(tmp_path) not in serialized
+
+
+def test_ops_metrics_alerts_when_langfuse_input_output_capture_is_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "public-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "secret-test")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://langfuse.example")
+    monkeypatch.setenv("LANGFUSE_CAPTURE_INPUT_OUTPUT", "false")
+    monkeypatch.setenv("LANGFUSE_SAMPLE_RATE", "1")
+
+    with _test_client(tmp_path) as client:
+        response = client.get("/api/ops/metrics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["integrations"]["langfuse"]["enabled"] is True
+    assert payload["integrations"]["langfuse"]["capture_input_output"] is False
+    alert_codes = {alert["code"] for alert in payload["alerts"]}
+    assert "langfuse.capture_input_output_disabled" in alert_codes
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "secret-test" not in serialized
+
+
 def test_health_reports_optional_langfuse_and_tts_without_blocking_launch_gates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

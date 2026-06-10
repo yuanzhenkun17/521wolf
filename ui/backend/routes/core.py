@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.config import load_tts_config
 from ui.backend.health import build_health_payload, probe_llm_connectivity
+from ui.backend.ops_metrics import build_ops_metrics_payload
 from ui.backend.preflight import check_runtime_ready
 from ui.backend.schemas import TtsSpeechRequest
 from ui.backend.settings_model_profiles import settings_admin_authorized, settings_admin_payload
@@ -22,6 +23,10 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
     @api.get("/api/health")
     def health() -> dict[str, Any]:
         return build_health_payload(store)
+
+    @api.get("/api/ops/metrics")
+    def ops_metrics() -> dict[str, Any]:
+        return build_ops_metrics_payload(store)
 
     @api.post("/api/health/probes/llm")
     async def probe_llm(
