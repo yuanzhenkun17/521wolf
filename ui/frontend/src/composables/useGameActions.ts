@@ -20,7 +20,7 @@ import {
   readStoredGameSession,
   writeStoredGameSession
 } from './gameSession.ts'
-import { currentLegacyView, writeViewRoute } from '../router/legacyViewNavigation'
+import { currentLegacyView, syncCurrentViewToLegacyHash, writeCurrentViewRoute } from '../router/legacyViewNavigation'
 import type { AppView, NoticeType } from '../types/ui'
 import type { GameStartRequest } from '../types/game'
 import { applyLogToPlayers, applyLogsToPlayers } from './gameTimeline.ts'
@@ -305,10 +305,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     }
     state.returnToMatchAvailable.value = false
     if (clearGame) state.liveGame.value = null
-    if (route) {
-      state.currentView.value = route
-      writeViewRoute(route)
-    }
+    if (route) writeCurrentViewRoute(state.currentView, route)
     if (refreshHistory) historyApi.refreshHistoryList?.({ silent: true })
   }
 
@@ -582,8 +579,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     const hashView = currentLegacyView(state.currentView.value)
     if (!session?.gameId || isReturnableGame(state.liveGame.value)) {
       if (navigate && hashView === 'match' && !isReturnableGame(state.liveGame.value)) {
-        state.currentView.value = 'lobby'
-        writeViewRoute('lobby')
+        writeCurrentViewRoute(state.currentView, 'lobby')
       }
       return state.liveGame.value
     }
@@ -591,8 +587,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     if (!isReturnableGame(restored)) {
       clearStoredGameSession()
       if (navigate && hashView === 'match') {
-        state.currentView.value = 'lobby'
-        writeViewRoute('lobby')
+        writeCurrentViewRoute(state.currentView, 'lobby')
       }
       return null
     }
@@ -600,7 +595,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     state.roleAssignmentComplete.value = true
     state.skipIntroGameId.value = restored.game_id
     preloadCouncilAssets()
-    if (navigate && hashView === 'match') state.currentView.value = 'match'
+    if (navigate && hashView === 'match') syncCurrentViewToLegacyHash(state.currentView, 'match')
     if (start) {
       if (state.isWatch.value) startWatch()
       else startPlayerPolling({ immediate: true })
@@ -633,10 +628,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       if (!token.isLatest()) return null
       const game = setGameSnapshot(raw, { ...normalizeOptions, pending })
       const isNavigationRequest = path === '/games'
-      if (isNavigationRequest) {
-        state.currentView.value = 'match'
-        writeViewRoute('match')
-      }
+      if (isNavigationRequest) writeCurrentViewRoute(state.currentView, 'match')
       historyApi.refreshHistoryList?.({ silent: true })
       return game
     } catch (err) {
@@ -669,8 +661,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       return null
     }
     resetLiveState()
-    state.currentView.value = 'match'
-    writeViewRoute('match')
+    writeCurrentViewRoute(state.currentView, 'match')
     preloadCouncilAssets()
     const game = await request('/games', {
       method: 'POST',

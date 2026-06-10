@@ -1,12 +1,25 @@
+import type { Component } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { installLegacyHashBridge, syncInitialRouteToLegacyHash } from './legacyHashRedirect'
 import { registerLegacyViewRouter } from './legacyViewNavigation'
 
-const LobbyPage = () => import('../pages/LobbyPage.vue')
-const MatchPage = () => import('../pages/MatchPage.vue')
-const LogsPage = () => import('../pages/LogsPage.vue')
-const BenchmarkPage = () => import('../pages/BenchmarkPage.vue')
-const EvolutionPage = () => import('../pages/EvolutionPage.vue')
+type PageModule = { default: Component }
+
+const pageModules = import.meta.glob<PageModule>('../pages/*.vue')
+
+function lazyPage(path: keyof typeof pageModules): () => Promise<Component> {
+  return () => {
+    const loadPage = pageModules[path]
+    if (!loadPage) throw new Error(`Route page module not found: ${String(path)}`)
+    return loadPage().then((module) => module.default)
+  }
+}
+
+const LobbyPage = lazyPage('../pages/LobbyPage.vue')
+const MatchPage = lazyPage('../pages/MatchPage.vue')
+const LogsPage = lazyPage('../pages/LogsPage.vue')
+const BenchmarkPage = lazyPage('../pages/BenchmarkPage.vue')
+const EvolutionPage = lazyPage('../pages/EvolutionPage.vue')
 
 export const routes: RouteRecordRaw[] = [
   { path: '/', name: 'lobby', component: LobbyPage },

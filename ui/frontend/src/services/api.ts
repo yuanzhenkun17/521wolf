@@ -4,6 +4,12 @@ import type { ApiClient, ApiDiagnostic, ApiErrorInit, ApiErrorNormalizeInput, Ap
 export const API_BASE = import.meta.env.VITE_API_BASE || '/api'
 export const USE_FRONTEND_MOCK = import.meta.env.VITE_USE_FRONTEND_MOCK === 'true'
 
+type MockApiFetch = (path: string, options?: ApiRequestOptions) => Promise<unknown>
+type MockApiModule = { mockApiFetch: MockApiFetch }
+
+const mockApiModules = import.meta.glob<MockApiModule>('../mockAgentGame.ts')
+const loadMockApiModule = mockApiModules['../mockAgentGame.ts']
+
 const REQUEST_ID_HEADERS = ['x-request-id', 'x-correlation-id', 'x-trace-id']
 const STATUS_ERROR_CODES: Record<number, string> = {
   400: 'bad_request',
@@ -17,7 +23,7 @@ const STATUS_ERROR_CODES: Record<number, string> = {
   503: 'service_unavailable'
 }
 
-let mockApiFetchPromise: Promise<(path: string, options?: ApiRequestOptions) => Promise<unknown>> | null = null
+let mockApiFetchPromise: Promise<MockApiFetch> | null = null
 
 export class ApiError extends Error implements ApiErrorShape {
   name = 'ApiError' as const
@@ -127,7 +133,8 @@ function normalizeUrl(apiBase: string, path: string, query?: QueryParams): strin
 
 async function apiFetchMock(path: string, options: ApiRequestOptions = {}): Promise<unknown> {
   if (!mockApiFetchPromise) {
-    mockApiFetchPromise = import('../mockAgentGame.ts').then((module) => module.mockApiFetch)
+    if (!loadMockApiModule) throw new Error('Frontend mock API module is unavailable')
+    mockApiFetchPromise = loadMockApiModule().then((module) => module.mockApiFetch)
   }
   const mockApiFetch = await mockApiFetchPromise
   return mockApiFetch(path, options)

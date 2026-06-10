@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strictNullChecks": true
+  },
+  "include": [
+    "src/stores/**/*.ts",
+    "src/services/**/*.ts",
+    "src/domain/**/*.ts",
+    "src/router/**/*.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

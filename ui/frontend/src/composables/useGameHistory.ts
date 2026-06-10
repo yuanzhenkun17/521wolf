@@ -12,7 +12,8 @@ import { normalizeHistoryWorkspaceTab } from '../domain/history/normalizers'
 import {
   addLegacyHashChangeListener,
   currentLegacyHash,
-  syncCurrentLegacyHashForView,
+  syncCurrentViewToLegacyHash,
+  writeCurrentViewRoute,
   writeViewRoute
 } from '../router/legacyViewNavigation'
 import { historyDeepLinkFromHash, historyDeepLinkFromRoute, logsRouteQuery } from '../router/workbenchDeepLinks'
@@ -130,7 +131,11 @@ function historyLoadNotice(type, message, fallback) {
   }
 }
 
-function writeLogsRoute(options = {}) {
+function writeLogsRoute(options = {}, currentView = null) {
+  if (currentView) {
+    writeCurrentViewRoute(currentView, 'logs', logsRouteQuery(options))
+    return
+  }
   writeViewRoute('logs', logsRouteQuery(options))
 }
 
@@ -650,6 +655,15 @@ function useGameHistory(state, options: LooseRecord = {}) {
     const total = Math.max(0, Number(historyPagination.value.total || 0))
     return Math.max(1, Math.ceil(total / limit))
   })
+
+  function writeHistoryViewRoute(view, query = {}, options = {}) {
+    writeCurrentViewRoute(state.currentView, view, query, options)
+  }
+
+  function syncHistoryViewToLegacyHash(view) {
+    if (syncCurrentViewToLegacyHash(state.currentView, view)) return
+    writeHistoryViewRoute(view)
+  }
 
   function setActionApi(api = {}) {
     actionApi = api || {}
@@ -1342,9 +1356,8 @@ function useGameHistory(state, options: LooseRecord = {}) {
     const targetWorkspace = normalizeHistoryWorkspaceTab(workspace)
     clearHistoryNotice()
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
-    state.currentView.value = 'logs'
     state.historyWorkspaceTab.value = targetWorkspace
-    writeLogsRoute({ gameId: targetGameId, workspace: targetWorkspace })
+    writeLogsRoute({ gameId: targetGameId, workspace: targetWorkspace }, state.currentView)
     const listReady = await ensureHistoryList()
     if (!token.isLatest() || !listReady) return
     const selectedGameId = targetGameId || String(state.selectedHistoryGameId.value || '')
@@ -1356,16 +1369,12 @@ function useGameHistory(state, options: LooseRecord = {}) {
 
   function openEvolutionPage({ rememberOrigin = true } = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
-    state.currentView.value = 'evolution'
-    if (syncCurrentLegacyHashForView('evolution')) return
-    writeViewRoute('evolution')
+    syncHistoryViewToLegacyHash('evolution')
   }
 
   function openBenchmarkPage({ rememberOrigin = true } = {}) {
     state.returnToMatchAvailable.value = rememberOrigin && isReturnableGame(state.liveGame.value)
-    state.currentView.value = 'benchmark'
-    if (syncCurrentLegacyHashForView('benchmark')) return
-    writeViewRoute('benchmark')
+    syncHistoryViewToLegacyHash('benchmark')
   }
 
   function hashRouteInfo() {
@@ -1395,12 +1404,12 @@ function useGameHistory(state, options: LooseRecord = {}) {
       return
     }
     if (route.routeHash === '#match' && isReturnableGame(state.liveGame.value)) {
-      state.currentView.value = 'match'
+      syncHistoryViewToLegacyHash('match')
       state.skipIntroGameId.value = state.liveGame.value.game_id
       return
     }
     if (route.routeHash === '#match' && state.isReplayMode.value && state.replayGame.value) {
-      state.currentView.value = 'match'
+      syncHistoryViewToLegacyHash('match')
       return
     }
     if (route.routeHash === '#match') {
@@ -1410,23 +1419,20 @@ function useGameHistory(state, options: LooseRecord = {}) {
 
   function goLobby() {
     state.returnToMatchAvailable.value = isReturnableGame(state.liveGame.value)
-    state.currentView.value = 'lobby'
-    writeViewRoute('lobby')
+    writeHistoryViewRoute('lobby')
   }
 
   function backToMatch() {
     state.returnToMatchAvailable.value = false
     if (isReturnableGame(state.liveGame.value)) {
-      state.currentView.value = 'match'
       state.skipIntroGameId.value = state.liveGame.value.game_id
-      writeViewRoute('match')
+      writeHistoryViewRoute('match')
       if (!state.watchRunning.value) {
         state.watchRunning.value = false
         actionApi.startWatch?.()
       }
     } else {
-      state.currentView.value = 'lobby'
-      writeViewRoute('lobby')
+      writeHistoryViewRoute('lobby')
     }
   }
 
@@ -1729,8 +1735,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     state.judgeBoardStarted.value = true
     state.roleAssignmentComplete.value = true
     applyReplayCursor(cursor, source)
-    state.currentView.value = 'match'
-    writeViewRoute('match')
+    writeHistoryViewRoute('match')
   }
 
   async function enterReplayPage(page = state.selectedHistoryPage.value) {
@@ -1770,8 +1775,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
 
   function returnToHistoryFromReplay() {
     pauseReplay()
-    state.currentView.value = 'logs'
-    writeViewRoute('logs')
+    writeHistoryViewRoute('logs')
     state.returnToMatchAvailable.value = false
   }
 
@@ -1789,9 +1793,9 @@ function useGameHistory(state, options: LooseRecord = {}) {
     state.replayGame.value = null
     if (isReturnableGame(state.lastLiveGame.value) && !state.liveGame.value) state.liveGame.value = state.lastLiveGame.value
     const hasLiveGame = isReturnableGame(state.liveGame.value)
-    state.currentView.value = hasLiveGame ? 'match' : 'lobby'
+    const nextView = hasLiveGame ? 'match' : 'lobby'
     if (hasLiveGame) state.skipIntroGameId.value = state.liveGame.value.game_id
-    writeViewRoute(hasLiveGame ? 'match' : 'lobby')
+    writeHistoryViewRoute(nextView)
     state.returnToMatchAvailable.value = false
     if (hasLiveGame) {
       state.watchRunning.value = false

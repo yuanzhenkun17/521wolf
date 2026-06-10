@@ -168,7 +168,7 @@
 
 .card-fan {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-base);
   width: min(1180px, 100%);
   height: clamp(270px, 31vw, 390px);
   justify-self: center;
@@ -187,7 +187,7 @@
 }
 
 .role-card-art:hover {
-  z-index: 5;
+  z-index: var(--z-scene);
   filter: drop-shadow(0 24px 16px rgba(0, 0, 0, 0.28));
 }
 
@@ -208,7 +208,7 @@
 }
 
 .role-card-art.seer {
-  z-index: 2;
+  z-index: var(--z-raised);
   transform: translate(-50%, -72%) rotate(0deg);
 }
 
@@ -234,7 +234,7 @@
 
 .lobby-actions {
   position: relative;
-  z-index: 2;
+  z-index: var(--z-raised);
   display: grid;
   grid-template-columns: minmax(330px, 1.32fr) minmax(250px, 1fr) minmax(240px, 0.94fr);
   gap: 26px;
@@ -365,7 +365,7 @@
 
 .lobby-hero {
   position: relative;
-  z-index: 2;
+  z-index: var(--z-raised);
   display: grid;
   justify-items: center;
   gap: 8px;
@@ -430,13 +430,13 @@
 }
 
 .role-card-art:hover {
-  z-index: 50;
+  z-index: var(--z-topbar);
   filter: brightness(1.08) sepia(0.05) drop-shadow(0 26px 28px rgba(0, 0, 0, 0.58));
   box-shadow: 0 20px 44px rgba(0, 0, 0, 0.78), 0 0 30px rgba(255, 180, 168, 0.18);
 }
 
 .role-card-art.werewolf {
-  z-index: 10;
+  z-index: var(--z-panel);
   transform: translate(-166%, 12%) rotate(-24deg);
 }
 
@@ -445,7 +445,7 @@
 }
 
 .role-card-art.hunter {
-  z-index: 20;
+  z-index: var(--z-panel-raised);
   transform: translate(-96%, 4%) rotate(-12deg);
 }
 
@@ -454,7 +454,7 @@
 }
 
 .role-card-art.seer {
-  z-index: 30;
+  z-index: var(--z-hud);
   width: clamp(165px, 17vw, 238px);
   outline: 2px solid rgba(255, 180, 168, 0.7);
   outline-offset: 5px;
@@ -466,7 +466,7 @@
 }
 
 .role-card-art.villager {
-  z-index: 20;
+  z-index: var(--z-panel-raised);
   transform: translate(-4%, 4%) rotate(12deg);
 }
 
@@ -475,7 +475,7 @@
 }
 
 .role-card-art.witch {
-  z-index: 10;
+  z-index: var(--z-panel);
   transform: translate(66%, 12%) rotate(24deg);
 }
 
@@ -505,7 +505,7 @@
   content: "";
   position: absolute;
   inset: 8.2% 8.2%;
-  z-index: 1;
+  z-index: var(--z-base);
   border-radius: 4px;
   background: #c49a58;
   box-shadow: inset 0 0 22px rgba(0, 0, 0, 0.28);
@@ -533,7 +533,7 @@
 }
 
 .lobby-card-image {
-  z-index: 2;
+  z-index: var(--z-raised);
   inset: 5.4%;
   width: 89.2%;
   height: 89.2%;
@@ -558,12 +558,12 @@
 }
 
 .card-fan .role-card-art:hover {
-  z-index: 60;
+  z-index: var(--z-dropdown);
   filter: brightness(1.08) drop-shadow(0 26px 28px rgba(0, 0, 0, 0.62));
 }
 
 .card-fan .role-card-art.werewolf {
-  z-index: 10;
+  z-index: var(--z-panel);
   transform: translate(-188%, 12%) rotate(-23deg);
 }
 
@@ -600,7 +600,7 @@
 }
 
 .card-fan .role-card-art.witch {
-  z-index: 10;
+  z-index: var(--z-panel);
   transform: translate(88%, 12%) rotate(23deg);
 }
 
@@ -804,7 +804,7 @@
   position: fixed;
   top: 72px;
   bottom: 0;
-  z-index: 10;
+  z-index: var(--z-panel);
   width: var(--panel-width);
   padding: 26px 24px;
 }
@@ -934,7 +934,7 @@
 
 .game-canvas {
   position: relative;
-  z-index: 5;
+  z-index: var(--z-scene);
   height: 100vh;
   margin: 0 var(--panel-width);
   padding: 92px 36px 148px;

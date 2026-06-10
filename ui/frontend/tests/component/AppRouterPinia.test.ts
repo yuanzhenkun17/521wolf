@@ -14,6 +14,8 @@ const mockRuntimeState = vi.hoisted(() => {
   return {
     currentView: runtimeRef('match'),
     backendMode: runtimeRef('mock'),
+    externalStatus: runtimeRef(null),
+    playerCount: runtimeRef(12),
     activeSession: runtimeRef(null),
     returnToMatchAvailable: runtimeRef(false),
     liveGame: runtimeRef(null),
@@ -65,6 +67,10 @@ const mockRuntimeState = vi.hoisted(() => {
   }
 })
 
+const mockRuntimeActions = vi.hoisted(() => ({
+  apiFetch: vi.fn(),
+}))
+
 vi.mock('../../src/components/TopNav.vue', () => ({
   __esModule: true,
   default: {
@@ -102,7 +108,17 @@ vi.mock('../../src/pages/LobbyPage.vue', () => ({
   __esModule: true,
   default: {
     name: 'LobbyPage',
-    template: '<section data-test="lobby-page" />',
+    props: ['backendMode', 'loading', 'externalStatus', 'playerCount', 'apiFetch'],
+    template: `
+      <section
+        data-test="lobby-page"
+        :data-has-backend-mode="String(backendMode !== undefined)"
+        :data-has-loading="String(loading !== undefined)"
+        :data-external-status="String(externalStatus?.supports_human)"
+        :data-player-count="String(playerCount)"
+        :data-api-fetch="typeof apiFetch"
+      />
+    `,
   },
 }))
 
@@ -124,6 +140,7 @@ vi.mock('../../src/composables/useMatchUtils.ts', () => ({
 
 vi.mock('../../src/composables/useGameActions.ts', () => ({
   useGameActions: () => ({
+    apiFetch: mockRuntimeActions.apiFetch,
     setHistoryApi: vi.fn(),
     setSceneApi: vi.fn(),
   }),
@@ -203,5 +220,24 @@ describe('App router and Pinia takeover', () => {
     expect(wrapper.find('[data-test="evolution-page"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="logs-page"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="top-nav"]').attributes('data-variant')).toBe('section')
+  })
+
+  it('does not pass store-backed lobby runtime props through App', async () => {
+    mockRuntimeState.currentView.value = 'lobby'
+    mockRuntimeState.backendMode.value = 'offline'
+    mockRuntimeState.externalStatus.value = { supports_human: false }
+    mockRuntimeState.playerCount.value = 10
+    mockRuntimeState.loading.value = true
+
+    const { wrapper, sessionStore } = await mountAppAt('/')
+    const lobby = wrapper.find('[data-test="lobby-page"]')
+
+    expect(sessionStore.backendMode).toBe('offline')
+    expect(lobby.exists()).toBe(true)
+    expect(lobby.attributes('data-has-backend-mode')).toBe('false')
+    expect(lobby.attributes('data-has-loading')).toBe('false')
+    expect(lobby.attributes('data-external-status')).toBe('false')
+    expect(lobby.attributes('data-player-count')).toBe('10')
+    expect(lobby.attributes('data-api-fetch')).toBe('function')
   })
 })

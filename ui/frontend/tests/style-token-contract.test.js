@@ -70,6 +70,16 @@ test('Foundation tokens keep semantic aliases for legacy root variables', () => 
   assert.equal(customPropertyValue(tokens, '--color-status-warning-muted'), '#8b5e34')
   assert.equal(customPropertyValue(tokens, '--color-status-success'), '#8dffac')
   assert.equal(customPropertyValue(tokens, '--color-status-info'), 'var(--blue, #bfcdff)')
+  assert.equal(customPropertyValue(tokens, '--color-text-inverse'), '#fff')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-text'), '#2d1809')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-text-deep'), '#321807')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-text-soft'), '#4b250d')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-accent'), '#5a3319')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-accent-soft'), '#6b3518')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-muted'), '#766958')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-ink-alpha-10'), 'rgba(91, 47, 18, 0.1)')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-ink-alpha-18'), 'rgba(91, 47, 18, 0.18)')
+  assert.equal(customPropertyValue(tokens, '--color-parchment-ink-alpha-25'), 'rgba(91, 47, 18, 0.25)')
   assert.match(tokens, /--shadow-panel:\s*0 8px 32px rgba\(0, 0, 0, 0\.55\)/)
   assert.match(tokens, /--layout-side-panel-width:\s*var\(--panel-width,\s*320px\)/)
 
@@ -137,6 +147,26 @@ test('Workbench semantic aliases consume foundation status tokens', () => {
   assert.equal(customPropertyValue(source, '--logbook-warning'), 'var(--workbench-logbook-warning)')
   assert.equal(customPropertyValue(source, '--logbook-warning-benchmark'), 'var(--workbench-logbook-warning-benchmark)')
   assert.doesNotMatch(statusBridge, /#[0-9a-fA-F]{3,8}/)
+})
+
+test('Parchment workbench surfaces consume foundation color, z-index, and motion tokens', () => {
+  const workbenches = readSource('../src/styles/workbenches.css')
+  const history = readSource('../src/styles/history.css')
+  const match = readSource('../src/styles/match.css')
+  const cascade = readSource('../src/styles/cascade-overrides.css')
+  const migratedSources = [workbenches, history, match, cascade].join('\n')
+  const maTab = cssBlock(workbenches, '.ma-tab {')
+  const historyPage = cssBlock(history, '.battle-log-page {')
+  const toast = cssBlock(match, '.toast {')
+
+  assert.match(maTab, /border:\s*1px solid var\(--color-parchment-ink-alpha-15\)/)
+  assert.match(maTab, /color:\s*var\(--color-parchment-accent\)/)
+  assert.match(maTab, /transition:\s*all var\(--duration-fast\) ease/)
+  assert.match(historyPage, /color:\s*var\(--color-parchment-text\)/)
+  assert.match(toast, /z-index:\s*var\(--z-toast\)/)
+  assert.match(cascade, /z-index:\s*var\(--z-dropdown\)/)
+  assert.doesNotMatch(migratedSources, /#(?:2d1809|321807|4b250d|5a3319|6b3518|766958)\b/i)
+  assert.doesNotMatch(migratedSources, /rgba\(91, 47, 18, 0\.(?:06|08|1|12|14|15|18|25)\)/)
 })
 
 test('Base shell consumes foundation tokens for stable non-layout primitives', () => {

@@ -9,11 +9,13 @@ type EvolutionNotice = {
   [key: string]: unknown
 }
 
+type RuntimeAction = (...args: unknown[]) => unknown
+
 type EvolutionRuntimeActions = {
-  refreshAll?: () => unknown
-  selectRole?: (role: string) => unknown
-  selectRun?: (id: string) => unknown
-  [key: string]: ((...args: any[]) => unknown) | undefined
+  refreshAll?: RuntimeAction
+  selectRole?: RuntimeAction
+  selectRun?: RuntimeAction
+  [key: string]: RuntimeAction | undefined
 }
 
 type EvolutionRunLike = Partial<EvolutionRun> & UnknownRecord
@@ -98,7 +100,7 @@ function recordOrEmpty<T extends Record<string, unknown>>(value: T | undefined |
   return value && typeof value === 'object' ? value : ({} as T)
 }
 
-function runtimeMethod(actions: EvolutionRuntimeActions, name: string): ((...args: any[]) => unknown) | undefined {
+function runtimeMethod(actions: EvolutionRuntimeActions, name: string): RuntimeAction | undefined {
   return typeof actions[name] === 'function' ? actions[name] : undefined
 }
 
@@ -277,7 +279,7 @@ export const useEvolutionStore = defineStore('evolution', () => {
     return typeof runtimeActions.value[action] === 'function'
   }
 
-  function runRuntimeAction(action: string, ...args: any[]): unknown {
+  function runRuntimeAction(action: string, ...args: unknown[]): unknown {
     return runtimeMethod(runtimeActions.value, action)?.(...args)
   }
 
@@ -394,24 +396,24 @@ export const useEvolutionStore = defineStore('evolution', () => {
     refreshAll,
     selectRole,
     selectRun,
-    loadMoreRuns: (...args: any[]) => runRuntimeAction('loadMoreRuns', ...args),
-    startSingle: (...args: any[]) => runRuntimeAction('startSingle', ...args),
-    startBatch: (...args: any[]) => runRuntimeAction('startBatch', ...args),
-    runAction: (...args: any[]) => runRuntimeAction('runAction', ...args),
-    loadProposalReview: (...args: any[]) => runRuntimeAction('loadProposalReview', ...args),
-    consumeEvolutionDeepLink: (...args: any[]) => runRuntimeAction('consumeEvolutionDeepLink', ...args),
-    applyEvolutionDeepLink: (...args: any[]) => runRuntimeAction('applyEvolutionDeepLink', ...args),
-    acceptProposal: (...args: any[]) => runRuntimeAction('acceptProposal', ...args),
-    rejectProposal: (...args: any[]) => runRuntimeAction('rejectProposal', ...args),
-    applyAcceptedProposals: (...args: any[]) => runRuntimeAction('applyAcceptedProposals', ...args),
-    rollback: (...args: any[]) => runRuntimeAction('rollback', ...args),
-    selectSampleGame: (...args: any[]) => runRuntimeAction('selectSampleGame', ...args),
-    loadMoreSampleGames: (...args: any[]) => runRuntimeAction('loadMoreSampleGames', ...args),
-    loadSampleGameDetail: (...args: any[]) => runRuntimeAction('loadSampleGameDetail', ...args),
-    loadVersionDetail: (...args: any[]) => runRuntimeAction('loadVersionDetail', ...args),
-    openTrustBundleDrawer: (...args: any[]) => runRuntimeAction('openTrustBundleDrawer', ...args),
-    refreshTrustBundleAudit: (...args: any[]) => runRuntimeAction('refreshTrustBundleAudit', ...args),
-    closeTrustBundleDrawer: (...args: any[]) => runRuntimeAction('closeTrustBundleDrawer', ...args),
-    toggleBatchRole: (...args: any[]) => runRuntimeAction('toggleBatchRole', ...args)
+    loadMoreRuns: (...args: unknown[]) => runRuntimeAction('loadMoreRuns', ...args),
+    startSingle: (...args: unknown[]) => runRuntimeAction('startSingle', ...args),
+    startBatch: (...args: unknown[]) => runRuntimeAction('startBatch', ...args),
+    runAction: (...args: unknown[]) => runRuntimeAction('runAction', ...args),
+    loadProposalReview: (...args: unknown[]) => runRuntimeAction('loadProposalReview', ...args),
+    consumeEvolutionDeepLink: (...args: unknown[]) => runRuntimeAction('consumeEvolutionDeepLink', ...args),
+    applyEvolutionDeepLink: (...args: unknown[]) => runRuntimeAction('applyEvolutionDeepLink', ...args),
+    acceptProposal: (...args: unknown[]) => runRuntimeAction('acceptProposal', ...args),
+    rejectProposal: (...args: unknown[]) => runRuntimeAction('rejectProposal', ...args),
+    applyAcceptedProposals: (...args: unknown[]) => runRuntimeAction('applyAcceptedProposals', ...args),
+    rollback: (...args: unknown[]) => runRuntimeAction('rollback', ...args),
+    selectSampleGame: (...args: unknown[]) => runRuntimeAction('selectSampleGame', ...args),
+    loadMoreSampleGames: (...args: unknown[]) => runRuntimeAction('loadMoreSampleGames', ...args),
+    loadSampleGameDetail: (...args: unknown[]) => runRuntimeAction('loadSampleGameDetail', ...args),
+    loadVersionDetail: (...args: unknown[]) => runRuntimeAction('loadVersionDetail', ...args),
+    openTrustBundleDrawer: (...args: unknown[]) => runRuntimeAction('openTrustBundleDrawer', ...args),
+    refreshTrustBundleAudit: (...args: unknown[]) => runRuntimeAction('refreshTrustBundleAudit', ...args),
+    closeTrustBundleDrawer: (...args: unknown[]) => runRuntimeAction('closeTrustBundleDrawer', ...args),
+    toggleBatchRole: (...args: unknown[]) => runRuntimeAction('toggleBatchRole', ...args)
   }
 })

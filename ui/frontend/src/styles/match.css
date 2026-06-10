@@ -42,7 +42,7 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  z-index: 1;
+  z-index: var(--z-base);
   display: grid;
   width: 72%;
   height: 72%;
@@ -63,7 +63,7 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  z-index: 2;
+  z-index: var(--z-raised);
   display: grid;
   width: 190px;
   height: 190px;
@@ -248,7 +248,7 @@
 
 .bottom-console {
   position: fixed;
-  z-index: 30;
+  z-index: var(--z-hud);
   left: calc(var(--panel-width) + 36px);
   right: calc(var(--panel-width) + 36px);
   bottom: 22px;
@@ -324,7 +324,7 @@
 
 .toast {
   position: fixed;
-  z-index: 80;
+  z-index: var(--z-toast);
   left: 50%;
   bottom: 142px;
   padding: 12px 18px;
@@ -369,7 +369,7 @@
 
 .match-layout {
   position: relative;
-  z-index: 5;
+  z-index: var(--z-scene);
   display: grid;
   grid-template-columns: 330px minmax(620px, 1fr) 330px;
   gap: 18px;
@@ -427,7 +427,7 @@
 
 .chat-bubble span,
 .judge-list span {
-  color: color-mix(in srgb, var(--match-accent) 72%, #fff 0%);
+  color: color-mix(in srgb, var(--match-accent) 72%, var(--color-text-inverse) 0%);
   font-size: 11px;
   letter-spacing: 0.08em;
 }
@@ -470,11 +470,11 @@
   padding: 10px 12px 12px;
   border: 5px solid transparent;
   border-radius: 0;
-  color: #321807;
+  color: var(--color-parchment-text-deep);
   background:
     radial-gradient(ellipse at 18% 12%, rgba(255, 250, 222, 0.72), transparent 42%) padding-box,
     linear-gradient(180deg, rgba(243, 219, 164, 0.98), rgba(210, 159, 82, 0.97)) padding-box,
-    repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
+    repeating-linear-gradient(95deg, var(--color-parchment-accent) 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
   box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 241, 194, 0.55), inset 0 0 28px rgba(88, 42, 14, 0.16);
   pointer-events: auto;
   transform-origin: bottom center;
@@ -498,7 +498,7 @@
 
 .player-seat-chip,
 .player-skill-bar strong {
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-size: 13px;
   font-weight: 1000;
   white-space: nowrap;
@@ -522,7 +522,7 @@
 
 .player-seat-chip b,
 .player-seat-chip em {
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-style: normal;
   line-height: 1;
 }
@@ -545,7 +545,7 @@
   min-height: 30px;
   border: 1px solid rgba(91, 47, 18, 0.28);
   border-radius: 0;
-  color: #321807;
+  color: var(--color-parchment-text-deep);
   font-family: "Microsoft YaHei", Arial, sans-serif;
   font-size: 13px;
   font-weight: 900;
@@ -580,7 +580,7 @@
 
 .player-command-panel textarea {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-base);
   resize: none;
   width: 100%;
   padding: 6px 68px 6px 10px;
@@ -601,7 +601,7 @@
   border-color: rgba(91, 47, 18, 0.42);
   background: rgba(255, 248, 225, 0.42);
   box-shadow:
-    inset 0 0 0 1px rgba(91, 47, 18, 0.12),
+    inset 0 0 0 1px var(--color-parchment-ink-alpha-12),
     inset 0 0 26px rgba(255, 246, 211, 0.3),
     inset 0 0 34px rgba(114, 58, 18, 0.08);
 }
@@ -622,7 +622,7 @@
 
 .player-command-panel .primary {
   position: absolute;
-  z-index: 2;
+  z-index: var(--z-raised);
   right: 6px;
   bottom: 6px;
   min-height: 24px;
@@ -635,7 +635,7 @@
 
 .speech-countdown {
   min-width: 44px;
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-size: 13px;
   font-weight: 1000;
   text-align: right;
@@ -673,7 +673,7 @@
   padding: 0;
   border: 1px solid rgba(91, 47, 18, 0.5);
   border-radius: 0;
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   background: rgba(255, 241, 199, 0.52);
   box-shadow: inset 0 0 0 1px rgba(255, 248, 221, 0.2), 0 2px 5px rgba(56, 25, 8, 0.18);
   cursor: pointer;
@@ -806,7 +806,7 @@
 .target-action-head b {
   min-width: 0;
   overflow: hidden;
-  color: #321807;
+  color: var(--color-parchment-text-deep);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -844,7 +844,7 @@
   min-height: 39px;
   padding: 0 6px;
   border-color: rgba(91, 47, 18, 0.36);
-  color: #321807;
+  color: var(--color-parchment-text-deep);
   background:
     linear-gradient(180deg, rgba(255, 239, 198, 0.62), rgba(140, 78, 31, 0.12)),
     rgba(255, 239, 198, 0.34);
@@ -889,7 +889,7 @@
   min-height: 30px;
   padding: 0 10px;
   border: 1px solid rgba(91, 47, 18, 0.35);
-  color: #321807;
+  color: var(--color-parchment-text-deep);
   background: rgba(255, 248, 225, 0.42);
 }
 
@@ -1018,7 +1018,7 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  z-index: 5;
+  z-index: var(--z-scene);
   width: min(330px, 52%);
   min-height: 280px;
   display: grid;
@@ -1110,7 +1110,7 @@
 }
 
 .speaker-avatar.current {
-  z-index: 2;
+  z-index: var(--z-raised);
   opacity: 1;
   transform: translateX(-50%) translateY(0) scale(1);
   filter: none;
@@ -1246,7 +1246,7 @@
 .council-scene {
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: var(--z-raised);
   overflow: hidden;
   background: #010104;
 }
@@ -1306,7 +1306,7 @@
 }
 
 .scene-event-effect::before {
-  z-index: 0;
+  z-index: var(--z-background);
   width: 54%;
   height: 54%;
   border-radius: 50%;
@@ -1599,7 +1599,7 @@
   position: absolute;
   left: 0;
   top: 0;
-  z-index: 2;
+  z-index: var(--z-raised);
   width: min(280px, 22vw);
   opacity: 1;
   transform: translate(-50%, -100%);
@@ -1623,7 +1623,7 @@
   padding: 7px 10px;
   border: 2px solid rgba(80, 42, 10, 0.72);
   border-radius: 7px;
-  color: #321807;
+  color: var(--color-parchment-text-deep);
   background: linear-gradient(180deg, #fff0b8, #d49b43);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.42), inset 0 0 0 1px rgba(255, 246, 215, 0.5);
   font-family: "Microsoft YaHei", Arial, sans-serif;
@@ -1636,7 +1636,7 @@
 }
 
 .scene-vote-badge b {
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-size: 17px;
   font-weight: 1000;
   line-height: 1;
@@ -1665,7 +1665,7 @@
 
 .scene-player-namebar {
   position: relative;
-  z-index: 2;
+  z-index: var(--z-raised);
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
@@ -1675,7 +1675,7 @@
   overflow: hidden;
   border: 1px solid rgba(93, 48, 17, 0.76);
   border-radius: 3px 8px 3px 8px;
-  color: #2d1809;
+  color: var(--color-parchment-text);
   background:
     linear-gradient(90deg, rgba(111, 58, 22, 0.2), transparent 34%),
     linear-gradient(180deg, #f3dba4, #c89a55);
@@ -1698,7 +1698,7 @@
   min-width: 0;
   padding: 0 10px;
   overflow: hidden;
-  color: #2d1809;
+  color: var(--color-parchment-text);
   font-size: 12px;
   font-weight: 900;
   text-overflow: ellipsis;
@@ -1714,7 +1714,7 @@
   overflow: hidden;
   border: 1px solid rgba(93, 48, 17, 0);
   border-radius: 8px 8px 14px 14px;
-  color: #2d1809;
+  color: var(--color-parchment-text);
   background:
     radial-gradient(circle at 18% 12%, rgba(255, 248, 215, 0.56), transparent 32%),
     linear-gradient(180deg, #f1d9a0, #d6ad6c 64%, #c4934f);
@@ -1746,11 +1746,11 @@
 
 .scene-speech-paper p {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-base);
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
-  color: #2d1809;
+  color: var(--color-parchment-text);
   font-size: 14px;
   font-weight: 800;
   line-height: 1.55;
@@ -1839,7 +1839,7 @@
     radial-gradient(ellipse at 22% 18%, rgba(255, 252, 229, 0.72), transparent 38%) padding-box,
     radial-gradient(ellipse at 78% 88%, rgba(181, 116, 48, 0.1), transparent 44%) padding-box,
     linear-gradient(180deg, rgba(246, 222, 166, 0.98), rgba(233, 197, 128, 0.96) 52%, rgba(218, 174, 102, 0.96)) padding-box,
-    repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
+    repeating-linear-gradient(95deg, var(--color-parchment-accent) 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
   box-shadow:
     0 14px 30px rgba(0, 0, 0, 0.42),
     inset 0 0 0 1px rgba(255, 239, 183, 0.54),
@@ -1887,7 +1887,7 @@
 }
 
 .role-grid-seat b {
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-size: 15px;
   line-height: 1;
   font-weight: 900;
@@ -1965,7 +1965,7 @@
     radial-gradient(ellipse at 22% 18%, rgba(255, 252, 229, 0.72), transparent 38%) padding-box,
     radial-gradient(ellipse at 78% 88%, rgba(181, 116, 48, 0.1), transparent 44%) padding-box,
     linear-gradient(180deg, rgba(246, 222, 166, 0.98), rgba(233, 197, 128, 0.96) 52%, rgba(218, 174, 102, 0.96)) padding-box,
-    repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
+    repeating-linear-gradient(95deg, var(--color-parchment-accent) 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
   box-shadow:
     0 14px 30px rgba(0, 0, 0, 0.42),
     inset 0 0 0 1px rgba(255, 239, 183, 0.54),
@@ -1998,7 +1998,7 @@
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   cursor: pointer;
   transition: background 0.2s ease;
 }
@@ -2017,7 +2017,7 @@
   content: "";
   position: absolute;
   inset: 9px 10px;
-  z-index: 0;
+  z-index: var(--z-background);
   border: 1px solid rgba(77, 38, 16, 0.34);
   border-radius: 0;
   pointer-events: none;
@@ -2032,7 +2032,7 @@
 .chat-log-top,
 .chat-log-body {
   position: relative;
-  z-index: 2;
+  z-index: var(--z-raised);
 }
 
 .chat-log-top {
@@ -2042,7 +2042,7 @@
 }
 
 .chat-log-top span {
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-size: 14px;
   font-weight: 900;
   letter-spacing: 0.03em;
@@ -2071,7 +2071,7 @@
 }
 
 .chat-log-line b {
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-weight: 900;
 }
 
@@ -2193,7 +2193,7 @@
 .log-overlay {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--z-toast);
   display: grid;
   place-items: center;
   padding: 92px 40px 34px;
@@ -2325,7 +2325,7 @@
 .decision-row small,
 .empty-log {
   margin: 6px 0 0;
-  color: #2d1809;
+  color: var(--color-parchment-text);
   font-family: "Microsoft YaHei", Arial, sans-serif;
   font-size: 14px;
   line-height: 1.65;
@@ -2335,7 +2335,7 @@
 .decision-row b {
   display: inline-block;
   min-width: 64px;
-  color: #6b3518;
+  color: var(--color-parchment-accent-soft);
 }
 
 .decision-row em,
@@ -2371,7 +2371,7 @@
     radial-gradient(ellipse at 22% 18%, rgba(255, 252, 229, 0.72), transparent 38%) padding-box,
     radial-gradient(ellipse at 78% 88%, rgba(181, 116, 48, 0.1), transparent 44%) padding-box,
     linear-gradient(180deg, rgba(246, 222, 166, 0.98), rgba(233, 197, 128, 0.96) 52%, rgba(218, 174, 102, 0.96)) padding-box,
-    repeating-linear-gradient(95deg, #5a3319 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
+    repeating-linear-gradient(95deg, var(--color-parchment-accent) 0 7px, #8a5428 7px 13px, #3f220f 13px 20px) border-box;
   box-shadow:
     0 14px 30px rgba(0, 0, 0, 0.42),
     inset 0 0 0 1px rgba(255, 239, 183, 0.54),
@@ -2381,7 +2381,7 @@
 
 .strip-top-row {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-base);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -2401,7 +2401,7 @@
 
 .strip-status strong,
 .strip-status span {
-  color: #4b250d;
+  color: var(--color-parchment-text-soft);
   font-size: 16px;
   font-weight: 900;
   letter-spacing: 0.03em;
@@ -2441,7 +2441,7 @@
 
 .strip-judge-log {
   position: relative;
-  z-index: 1;
+  z-index: var(--z-base);
   display: grid;
   box-sizing: border-box;
   grid-template-columns: 38px minmax(0, 1fr);
@@ -2511,7 +2511,7 @@
 .strip-judge-copy p {
   height: 20px;
   margin: 0;
-  color: #2d1809;
+  color: var(--color-parchment-text);
   font-family: "Microsoft YaHei", Arial, sans-serif;
   font-size: 15px;
   font-weight: 800;
@@ -2525,7 +2525,7 @@
 .strip-judge-copy b {
   display: inline-block;
   margin-right: 8px;
-  color: #6b3518;
+  color: var(--color-parchment-accent-soft);
   font-weight: 1000;
 }
 
@@ -2537,7 +2537,7 @@
   border: 1px solid rgba(83, 45, 18, 0.5);
   border-radius: 4px;
   color: #f7d99c;
-  background: linear-gradient(180deg, #6b3518, #321708);
+  background: linear-gradient(180deg, var(--color-parchment-accent-soft), #321708);
   box-shadow: 0 4px 10px rgba(45, 18, 5, 0.22), inset 0 1px 0 rgba(255, 233, 176, 0.24);
   font-size: 12px;
   font-weight: 1000;
@@ -2702,7 +2702,7 @@
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: var(--z-raised);
   pointer-events: none;
   background:
     radial-gradient(circle at 50% 38%, transparent 0 34%, rgba(0, 0, 0, 0.22) 62%, rgba(0, 0, 0, 0.66) 100%),
@@ -2752,7 +2752,7 @@
   content: "";
   position: absolute;
   inset: 9px 10px;
-  z-index: 0;
+  z-index: var(--z-background);
   border: 1px solid rgba(77, 38, 16, 0.34);
   border-radius: 0;
   pointer-events: none;

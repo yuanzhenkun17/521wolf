@@ -8,14 +8,16 @@ type BenchmarkNotice = {
   [key: string]: unknown
 }
 
+type RuntimeAction = (...args: unknown[]) => unknown
+
 type BenchmarkRuntimeActions = {
-  refreshAll?: (...args: unknown[]) => unknown
-  selectBenchmarkBatch?: (batchId: string) => unknown
-  [key: string]: ((...args: any[]) => unknown) | undefined
+  refreshAll?: RuntimeAction
+  selectBenchmarkBatch?: RuntimeAction
+  [key: string]: RuntimeAction | undefined
 }
 
-type BenchmarkRunLike = Partial<BenchmarkRun> & Record<string, any>
-type LooseRecord = Record<string, any>
+type BenchmarkRunLike = Partial<BenchmarkRun> & Record<string, unknown>
+type LooseRecord = Record<string, unknown>
 
 type BenchmarkWorkbenchSnapshot = {
   suites?: BenchmarkSuite[]
@@ -138,11 +140,11 @@ function noticeOrEmpty(value: BenchmarkNotice | null | undefined): BenchmarkNoti
   return value && typeof value === 'object' ? value : { type: '', message: '' }
 }
 
-function recordOrEmpty<T extends Record<string, any>>(value: T | undefined | null): T {
+function recordOrEmpty<T extends Record<string, unknown>>(value: T | undefined | null): T {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : ({} as T)
 }
 
-function runtimeMethod(actions: BenchmarkRuntimeActions, name: string): ((...args: any[]) => unknown) | undefined {
+function runtimeMethod(actions: BenchmarkRuntimeActions, name: string): RuntimeAction | undefined {
   return typeof actions[name] === 'function' ? actions[name] : undefined
 }
 
@@ -403,7 +405,7 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
     runtimeActions.value = {}
   }
 
-  function runRuntimeAction(action: string, ...args: any[]): unknown {
+  function runRuntimeAction(action: string, ...args: unknown[]): unknown {
     return runtimeMethod(runtimeActions.value, action)?.(...args)
   }
 
@@ -622,30 +624,30 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
     setBenchmarkDiagnosticFilter,
     clearBenchmarkDiagnosticFilters,
     clearNotice,
-    loadBenchmarkLeaderboardCompare: (...args: any[]) => runRuntimeAction('loadBenchmarkLeaderboardCompare', ...args),
-    loadBenchmarkSeedSets: (...args: any[]) => runRuntimeAction('loadBenchmarkSeedSets', ...args),
-    loadBenchmarkViews: (...args: any[]) => runRuntimeAction('loadBenchmarkViews', ...args),
-    loadCurrentBenchmarkView: (...args: any[]) => runRuntimeAction('loadCurrentBenchmarkView', ...args),
-    saveCurrentBenchmarkView: (...args: any[]) => runRuntimeAction('saveCurrentBenchmarkView', ...args),
-    resetCurrentBenchmarkView: (...args: any[]) => runRuntimeAction('resetCurrentBenchmarkView', ...args),
-    setBenchmarkViewPreference: (...args: any[]) => runRuntimeAction('setBenchmarkViewPreference', ...args),
-    loadBenchmarkSnapshots: (...args: any[]) => runRuntimeAction('loadBenchmarkSnapshots', ...args),
-    loadBenchmarkSnapshotDetail: (...args: any[]) => runRuntimeAction('loadBenchmarkSnapshotDetail', ...args),
-    loadBenchmarkSnapshotCompare: (...args: any[]) => runRuntimeAction('loadBenchmarkSnapshotCompare', ...args),
-    loadBenchmarkSnapshotExport: (...args: any[]) => runRuntimeAction('loadBenchmarkSnapshotExport', ...args),
-    createBenchmarkSnapshot: (...args: any[]) => runRuntimeAction('createBenchmarkSnapshot', ...args),
-    loadBenchmarkView: (...args: any[]) => runRuntimeAction('loadBenchmarkView', ...args),
-    saveBenchmarkView: (...args: any[]) => runRuntimeAction('saveBenchmarkView', ...args),
-    deleteBenchmarkView: (...args: any[]) => runRuntimeAction('deleteBenchmarkView', ...args),
-    loadBenchmarkReportHistory: (...args: any[]) => runRuntimeAction('loadBenchmarkReportHistory', ...args),
-    loadBenchmarkDiagnosticsAggregate: (...args: any[]) => runRuntimeAction('loadBenchmarkDiagnosticsAggregate', ...args),
-    loadBenchmarkBatchDetail: (...args: any[]) => runRuntimeAction('loadBenchmarkBatchDetail', ...args),
-    loadBenchmarkBatchGamesPage: (...args: any[]) => runRuntimeAction('loadBenchmarkBatchGamesPage', ...args),
-    loadNextBenchmarkBatchGamesPage: (...args: any[]) => runRuntimeAction('loadNextBenchmarkBatchGamesPage', ...args),
-    loadBenchmarkBatchDiagnostics: (...args: any[]) => runRuntimeAction('loadBenchmarkBatchDiagnostics', ...args),
-    loadBenchmarkBatchReport: (...args: any[]) => runRuntimeAction('loadBenchmarkBatchReport', ...args),
-    loadBenchmarkBatchReportExport: (...args: any[]) => runRuntimeAction('loadBenchmarkBatchReportExport', ...args),
-    startEvaluation: (...args: any[]) => runRuntimeAction('startEvaluation', ...args),
-    stopBatch: (...args: any[]) => runRuntimeAction('stopBatch', ...args)
+    loadBenchmarkLeaderboardCompare: (...args: unknown[]) => runRuntimeAction('loadBenchmarkLeaderboardCompare', ...args),
+    loadBenchmarkSeedSets: (...args: unknown[]) => runRuntimeAction('loadBenchmarkSeedSets', ...args),
+    loadBenchmarkViews: (...args: unknown[]) => runRuntimeAction('loadBenchmarkViews', ...args),
+    loadCurrentBenchmarkView: (...args: unknown[]) => runRuntimeAction('loadCurrentBenchmarkView', ...args),
+    saveCurrentBenchmarkView: (...args: unknown[]) => runRuntimeAction('saveCurrentBenchmarkView', ...args),
+    resetCurrentBenchmarkView: (...args: unknown[]) => runRuntimeAction('resetCurrentBenchmarkView', ...args),
+    setBenchmarkViewPreference: (...args: unknown[]) => runRuntimeAction('setBenchmarkViewPreference', ...args),
+    loadBenchmarkSnapshots: (...args: unknown[]) => runRuntimeAction('loadBenchmarkSnapshots', ...args),
+    loadBenchmarkSnapshotDetail: (...args: unknown[]) => runRuntimeAction('loadBenchmarkSnapshotDetail', ...args),
+    loadBenchmarkSnapshotCompare: (...args: unknown[]) => runRuntimeAction('loadBenchmarkSnapshotCompare', ...args),
+    loadBenchmarkSnapshotExport: (...args: unknown[]) => runRuntimeAction('loadBenchmarkSnapshotExport', ...args),
+    createBenchmarkSnapshot: (...args: unknown[]) => runRuntimeAction('createBenchmarkSnapshot', ...args),
+    loadBenchmarkView: (...args: unknown[]) => runRuntimeAction('loadBenchmarkView', ...args),
+    saveBenchmarkView: (...args: unknown[]) => runRuntimeAction('saveBenchmarkView', ...args),
+    deleteBenchmarkView: (...args: unknown[]) => runRuntimeAction('deleteBenchmarkView', ...args),
+    loadBenchmarkReportHistory: (...args: unknown[]) => runRuntimeAction('loadBenchmarkReportHistory', ...args),
+    loadBenchmarkDiagnosticsAggregate: (...args: unknown[]) => runRuntimeAction('loadBenchmarkDiagnosticsAggregate', ...args),
+    loadBenchmarkBatchDetail: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchDetail', ...args),
+    loadBenchmarkBatchGamesPage: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchGamesPage', ...args),
+    loadNextBenchmarkBatchGamesPage: (...args: unknown[]) => runRuntimeAction('loadNextBenchmarkBatchGamesPage', ...args),
+    loadBenchmarkBatchDiagnostics: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchDiagnostics', ...args),
+    loadBenchmarkBatchReport: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchReport', ...args),
+    loadBenchmarkBatchReportExport: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchReportExport', ...args),
+    startEvaluation: (...args: unknown[]) => runRuntimeAction('startEvaluation', ...args),
+    stopBatch: (...args: unknown[]) => runRuntimeAction('stopBatch', ...args)
   }
 })

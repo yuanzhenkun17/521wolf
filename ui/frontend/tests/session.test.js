@@ -212,11 +212,27 @@ test('game actions use route-first view navigation instead of direct hash writes
 
   assert.match(
     source,
-    /import \{ currentLegacyView, writeViewRoute \} from '..\/router\/legacyViewNavigation'/
+    /import \{[^}]*currentLegacyView[^}]*writeCurrentViewRoute[^}]*\} from '..\/router\/legacyViewNavigation'/
   )
   assert.doesNotMatch(source, /\bwriteViewHash\b/)
-  assert.match(source, /writeViewRoute\('match'\)/)
-  assert.match(source, /writeViewRoute\('lobby'\)/)
+  assert.doesNotMatch(source, /state\.currentView\.value\s*=(?!=)/)
+  assert.match(source, /syncCurrentViewToLegacyHash\(state\.currentView, 'match'\)/)
+  assert.match(source, /writeCurrentViewRoute\(state\.currentView, 'match'\)/)
+  assert.match(source, /writeCurrentViewRoute\(state\.currentView, 'lobby'\)/)
+})
+
+test('game history uses route-first view navigation instead of direct view or hash writes', () => {
+  const source = readSource('../src/composables/useGameHistory.ts')
+
+  assert.match(
+    source,
+    /import \{[^}]*currentLegacyHash[^}]*syncCurrentViewToLegacyHash[^}]*writeCurrentViewRoute[^}]*writeViewRoute[^}]*\} from '..\/router\/legacyViewNavigation'/
+  )
+  assert.doesNotMatch(source, /state\.currentView\.value\s*=(?!=)/)
+  assert.doesNotMatch(source, /window\.location\.hash\s*=/)
+  assert.match(source, /writeCurrentViewRoute\(state\.currentView, view, query, options\)/)
+  assert.match(source, /syncCurrentViewToLegacyHash\(state\.currentView, view\)/)
+  assert.match(source, /writeLogsRoute\(\{ gameId: targetGameId, workspace: targetWorkspace \}, state\.currentView\)/)
 })
 
 test('game session helpers only return active sessions for non-terminal games', () => {

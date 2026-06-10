@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "typecheck": "vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.vitest.json",
+    "typecheck:strict": "vue-tsc --noEmit -p tsconfig.strict.json",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "npm run test:unit && npm run test:component",

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "vitest";
+import type { AppView } from "../../../src/types/ui";
 import {
   addLegacyHashChangeListener,
   currentLegacyHash,
@@ -16,8 +17,10 @@ import {
   routeQueryFromLegacyHash,
   routeQueryString,
   syncCurrentLegacyHashForView,
+  syncCurrentViewToLegacyHash,
   syncRouterToLegacyView,
   viewFromHash,
+  writeCurrentViewRoute,
   writeLegacyHashForView,
   writeViewRoute,
   writeViewHash,
@@ -296,6 +299,45 @@ test("writes router query locations through the registered router", () => {
       query: { game_id: "game-7", workspace: "archive" },
       hash: "#logs?game_id=game-7&workspace=archive",
     },
+  ]);
+});
+
+test("writes current view state and router route through one helper", () => {
+  const calls: unknown[] = [];
+  const currentView: { value: AppView } = { value: "lobby" };
+  globalThis.window = { location: locationLike() } as Window &
+    typeof globalThis;
+  registerLegacyViewRouter({
+    replace(to: unknown) {
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
+
+  writeCurrentViewRoute(currentView, "match");
+
+  assert.equal(currentView.value, "match");
+  assert.deepEqual(calls, [{ path: "/match", query: {}, hash: "#match" }]);
+});
+
+test("syncs current view state to a matching legacy hash without dropping query", () => {
+  const calls: unknown[] = [];
+  const currentView: { value: AppView } = { value: "lobby" };
+  globalThis.window = {
+    location: locationLike("#match?mode=play"),
+  } as Window & typeof globalThis;
+  registerLegacyViewRouter({
+    replace(to: unknown) {
+      calls.push(to);
+      return Promise.resolve();
+    },
+  });
+
+  assert.equal(syncCurrentViewToLegacyHash(currentView, "match"), true);
+
+  assert.equal(currentView.value, "match");
+  assert.deepEqual(calls, [
+    { path: "/match", query: { mode: "play" }, hash: "#match?mode=play" },
   ]);
 });
 

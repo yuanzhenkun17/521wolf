@@ -61,7 +61,6 @@ watchEffect(() => {
 
 const {
   logsProps,
-  lobbyProps,
   matchProps
 } = useAppRuntimeProps(runtime)
 const routeAppView = computed(() => appViewFromRouteSource(route))
@@ -172,7 +171,9 @@ const {
       />
       <LobbyPage
         v-if="inLobby"
-        v-bind="lobbyProps"
+        :external-status="state.externalStatus.value"
+        :player-count="state.playerCount.value"
+        :api-fetch="actions.apiFetch"
         @start-mode="startMode"
       />
 

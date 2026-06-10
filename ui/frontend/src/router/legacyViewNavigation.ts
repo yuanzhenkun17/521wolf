@@ -4,6 +4,7 @@ import { appViewFromLegacyHash, appViewHash, appViewPath } from "./appViews";
 
 type LegacyViewRouter = Pick<Router, "replace"> & Partial<Pick<Router, "push">>;
 type ViewRouteNavigationMode = "push" | "replace";
+type LegacyCurrentViewRef = { value: AppView };
 
 let activeRouter: LegacyViewRouter | null = null;
 
@@ -190,11 +191,29 @@ export function writeViewRoute(
   void navigate(location).catch(() => writeWindowLegacyHash(location.hash));
 }
 
+export function writeCurrentViewRoute(
+  currentView: LegacyCurrentViewRef,
+  view: AppView = "lobby",
+  query: LocationQueryRaw = {},
+  options: { mode?: ViewRouteNavigationMode } = {},
+): void {
+  currentView.value = view;
+  writeViewRoute(view, query, options);
+}
+
 export function syncCurrentLegacyHashForView(view: AppView): boolean {
   const hash = currentLegacyHash();
   if (!isLegacyHashForView(view, hash)) return false;
   syncRouterToLegacyView(view, hash);
   return true;
+}
+
+export function syncCurrentViewToLegacyHash(
+  currentView: LegacyCurrentViewRef,
+  view: AppView,
+): boolean {
+  currentView.value = view;
+  return syncCurrentLegacyHashForView(view);
 }
 
 export function writeViewHash(view: AppView = "lobby"): void {

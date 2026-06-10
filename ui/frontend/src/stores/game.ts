@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { choiceOptionsForAction, targetRequiredForAction } from '../composables/gameSnapshot'
+import { choiceOptionsForAction, targetRequiredForAction } from '../domain/game/normalizers'
 import type { Game } from '../types/game'
 
 type LooseRecord = Record<string, unknown>
