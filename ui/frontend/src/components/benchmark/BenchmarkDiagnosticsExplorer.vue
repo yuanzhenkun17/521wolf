@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
