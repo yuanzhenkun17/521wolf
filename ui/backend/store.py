@@ -1,7 +1,7 @@
 """Backend store and long-running task orchestration for the UI backend."""
 
 from __future__ import annotations
-import json
+
 import logging
 import os
 import uuid
@@ -796,87 +796,3 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         self._touch_background_task(run)
         self._persist_background_tasks()
         return run
-
-def _dict_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, dict)]
-
-
-def _text_items(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item)]
-
-
-def _optional_text(value: Any) -> str | None:
-    text = str(value or "").strip()
-    return text or None
-
-
-def _first_text(*values: Any) -> str:
-    for value in values:
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
-
-
-def _first_non_empty(*values: Any) -> Any | None:
-    for value in values:
-        if value is None:
-            continue
-        if isinstance(value, str):
-            text = value.strip()
-            if text:
-                return text
-            continue
-        if value != "":
-            return value
-    return None
-
-
-def _unique_non_empty(values: Any) -> list[str]:
-    seen: set[str] = set()
-    items: list[str] = []
-    for value in values:
-        text = str(value or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        items.append(text)
-    return items
-
-
-def _unique_texts(*values: Any) -> list[str]:
-    return _unique_non_empty(values)
-
-
-def _decode_json_field(value: Any, *, fallback: Any) -> Any:
-    if value in (None, ""):
-        return fallback
-    if isinstance(value, (dict, list)):
-        return value
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return fallback
-    return fallback
-
-
-def _json_clone(value: Any) -> Any:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
-
-
-def _row_to_dict(row: Any) -> dict[str, Any]:
-    if isinstance(row, dict):
-        return dict(row)
-    try:
-        return dict(row)
-    except Exception:
-        pass
-    keys = getattr(row, "keys", None)
-    if callable(keys):
-        return {key: row[key] for key in keys()}
-    return {}
