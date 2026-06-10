@@ -139,6 +139,156 @@ def test_game_read_gateway_facades_delegate_to_cached_gateway(
     ]
 
 
+def test_game_history_facades_delegate_to_cached_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instances: list[Any] = []
+
+    class FakeGameHistoryService:
+        def __init__(self, store: Any) -> None:
+            self.store = store
+            self.calls: list[tuple[Any, ...]] = []
+            instances.append(self)
+
+        def history_fingerprint(self) -> dict[str, Any]:
+            self.calls.append(("history_fingerprint",))
+            return {"method": "history_fingerprint"}
+
+        def memory_fingerprint(self) -> list[dict[str, Any]]:
+            self.calls.append(("memory_fingerprint",))
+            return [{"method": "memory_fingerprint"}]
+
+        def memory_item(self, game_id: str, game: dict[str, Any]) -> dict[str, Any]:
+            self.calls.append(("memory_item", game_id, game))
+            return {"method": "memory_item", "game_id": game_id}
+
+        def postgres_fingerprint(self) -> dict[str, Any]:
+            self.calls.append(("postgres_fingerprint",))
+            return {"method": "postgres_fingerprint"}
+
+        def snapshot_log_time(self, snapshot: dict[str, Any], fallback: str | None = None) -> str:
+            self.calls.append(("snapshot_log_time", snapshot, fallback))
+            return "snapshot-time"
+
+        def game_list_row(self, game: dict[str, Any]) -> dict[str, Any]:
+            self.calls.append(("game_list_row", game))
+            return {"method": "game_list_row", "game_id": game["game_id"]}
+
+        def get_game_history_shell(self, game_id: str) -> dict[str, Any]:
+            self.calls.append(("get_game_history_shell", game_id))
+            return {"method": "get_game_history_shell", "game_id": game_id}
+
+        def get_game_phase_detail(self, game_id: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("get_game_phase_detail", game_id, kwargs))
+            return {"method": "get_game_phase_detail", "game_id": game_id, "kwargs": kwargs}
+
+        def get_game_replay(self, game_id: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("get_game_replay", game_id, kwargs))
+            return {"method": "get_game_replay", "game_id": game_id, "kwargs": kwargs}
+
+        def history_shell_from_snapshot(self, game_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+            self.calls.append(("history_shell_from_snapshot", game_id, snapshot))
+            return {"method": "history_shell_from_snapshot", "game_id": game_id}
+
+        def history_phase_summaries_from_snapshot(
+            self,
+            snapshot: dict[str, Any],
+            logs: list[dict[str, Any]],
+            decisions: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            self.calls.append(("history_phase_summaries_from_snapshot", snapshot, logs, decisions))
+            return [{"method": "history_phase_summaries_from_snapshot"}]
+
+        def attach_history_state_to_phase_summaries(self, *args: Any) -> None:
+            self.calls.append(("attach_history_state_to_phase_summaries", *args))
+
+        def phase_detail_from_snapshot(self, game_id: str, snapshot: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("phase_detail_from_snapshot", game_id, snapshot, kwargs))
+            return {"method": "phase_detail_from_snapshot", "game_id": game_id, "kwargs": kwargs}
+
+        def replay_from_snapshot(self, game_id: str, snapshot: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(("replay_from_snapshot", game_id, snapshot, kwargs))
+            return {"method": "replay_from_snapshot", "game_id": game_id, "kwargs": kwargs}
+
+        def build_game_history_rows(self) -> list[dict[str, Any]]:
+            self.calls.append(("build_game_history_rows",))
+            return [{"game_id": "from-history-service"}]
+
+    monkeypatch.setattr(ui_backend_store, "GameHistoryService", FakeGameHistoryService)
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+
+    service = store._game_history_service()
+
+    assert store._game_history_service() is service
+    assert instances == [service]
+    assert service.store is store
+    assert store._game_history_fingerprint() == {"method": "history_fingerprint"}
+    assert store._game_history_memory_fingerprint() == [{"method": "memory_fingerprint"}]
+    assert store._game_history_memory_item("game-1", {"game_id": "game-1"}) == {
+        "method": "memory_item",
+        "game_id": "game-1",
+    }
+    assert store._postgres_history_fingerprint() == {"method": "postgres_fingerprint"}
+    assert store._snapshot_log_time({"game_id": "game-2"}, fallback="fallback") == "snapshot-time"
+    assert store._game_list_row({"game_id": "game-3"}) == {
+        "method": "game_list_row",
+        "game_id": "game-3",
+    }
+    assert store.get_game_history_shell("game-4") == {"method": "get_game_history_shell", "game_id": "game-4"}
+    assert store.get_game_phase_detail(
+        "game-5",
+        day=2,
+        phase="night",
+        log_offset=3,
+        log_limit=4,
+        decision_offset=5,
+        decision_limit=6,
+    ) == {
+        "method": "get_game_phase_detail",
+        "game_id": "game-5",
+        "kwargs": {
+            "day": 2,
+            "phase": "night",
+            "log_offset": 3,
+            "log_limit": 4,
+            "decision_offset": 5,
+            "decision_limit": 6,
+        },
+    }
+    assert store.get_game_replay("game-6", cursor=7, limit=8) == {
+        "method": "get_game_replay",
+        "game_id": "game-6",
+        "kwargs": {"cursor": 7, "limit": 8},
+    }
+    assert store._history_shell_from_snapshot("game-7", {"game_id": "game-7"}) == {
+        "method": "history_shell_from_snapshot",
+        "game_id": "game-7",
+    }
+    assert store._history_phase_summaries_from_snapshot({"game_id": "game-8"}, [], []) == [
+        {"method": "history_phase_summaries_from_snapshot"}
+    ]
+    store._attach_history_state_to_phase_summaries([], {"game_id": "game-9"}, [], False, object())
+    assert store._phase_detail_from_snapshot("game-10", {"game_id": "game-10"}, day=1, phase="setup") == {
+        "method": "phase_detail_from_snapshot",
+        "game_id": "game-10",
+        "kwargs": {
+            "day": 1,
+            "phase": "setup",
+            "log_offset": 0,
+            "log_limit": 300,
+            "decision_offset": 0,
+            "decision_limit": 200,
+        },
+    }
+    assert store._replay_from_snapshot("game-11", {"game_id": "game-11"}, cursor=12, limit=13) == {
+        "method": "replay_from_snapshot",
+        "game_id": "game-11",
+        "kwargs": {"cursor": 12, "limit": 13},
+    }
+    assert store._build_game_history_rows() == [{"game_id": "from-history-service"}]
+
+
 def test_live_game_lifecycle_facades_delegate_to_cached_coordinator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

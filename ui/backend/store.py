@@ -56,6 +56,7 @@ from ui.backend.services import (
     BENCHMARK_PUBLIC_METHODS,
     BenchmarkService,
     GameDeleteCoordinator,
+    GameHistoryService,
     GameReadGateway,
     LiveGameLifecycleCoordinator,
     TaskService,
@@ -287,6 +288,7 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     _task_event_log: TaskEventLog | None = field(default=None, init=False, repr=False)
     _task_service_cache: TaskService | None = field(default=None, init=False, repr=False)
     _benchmark_service_cache: BenchmarkService | None = field(default=None, init=False, repr=False)
+    _game_history_service_cache: GameHistoryService | None = field(default=None, init=False, repr=False)
     _game_read_gateway_cache: GameReadGateway | None = field(default=None, init=False, repr=False)
     _game_delete_coordinator_cache: GameDeleteCoordinator | None = field(default=None, init=False, repr=False)
     _live_game_lifecycle_cache: LiveGameLifecycleCoordinator | None = field(default=None, init=False, repr=False)
@@ -322,6 +324,9 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
             )
 
         return self._cached_component("_benchmark_service_cache", factory)
+
+    def _game_history_service(self) -> GameHistoryService:
+        return self._cached_component("_game_history_service_cache", lambda: GameHistoryService(self))
 
     def _game_read_gateway(self) -> GameReadGateway:
         return self._cached_component("_game_read_gateway_cache", lambda: GameReadGateway(self))
