@@ -11,6 +11,7 @@ from app.config import PathConfig
 import ui.backend.store as ui_backend_store
 from ui.backend.services.benchmark_service import BenchmarkService
 from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
+from ui.backend.services.evolution_read_service import EvolutionReadService
 from ui.backend.services.evolution_service import EvolutionService
 
 
@@ -472,6 +473,88 @@ def test_evolution_service_persists_actions_through_task_service() -> None:
         ("touch_background_task", run, None),
         ("persist_background_tasks",),
     ]
+
+
+def test_evolution_read_service_handles_run_detail_drilldown_without_task_service() -> None:
+    run = {
+        "kind": "role_evolution_run",
+        "run_id": "run-1",
+        "role": "seer",
+        "status": "reviewing",
+        "last_heartbeat_at": "2026-01-01T00:00:02+08:00",
+        "diff": [{"target_file": "seer.md", "action": "append_rule"}],
+        "training_games": [
+            {
+                "game_id": "game-1",
+                "status": "completed",
+                "seed": 7,
+                "events": [{"index": 1, "event_type": "game_init", "message": "started"}],
+                "decisions": [{"decision_id": "d1", "action_type": "seer_check", "selected_target": 3}],
+            },
+            {"game_id": "game-2", "status": "failed"},
+        ],
+        "battle_games": [],
+    }
+    batch = {
+        "kind": "role_evolution_batch",
+        "batch_id": "batch-1",
+        "status": "completed",
+        "last_heartbeat_at": "2026-01-01T00:00:01+08:00",
+    }
+    service = EvolutionReadService(SimpleNamespace(evolution_runs={"run-1": run}, evolution_batches={"batch-1": batch}))
+
+    listed = service.list_runs(history_requested=True, limit=1, source="evolution", status="reviewing")
+    games = service.games("run-1", status="completed", limit=1, offset=0, paginate=True)
+    decisions = service.game_detail("run-1", "game-1", "decisions")
+    events = service.game_detail("run-1", "game-1", "events")
+
+    assert listed["pagination"] == {"total": 1, "offset": 0, "limit": 1, "returned": 1, "has_more": False}
+    assert listed["runs"][0]["run_id"] == "run-1"
+    assert service.get_run("run-1") is run
+    assert service.get_run("batch-1")["batch_id"] == "batch-1"
+    assert service.diff("run-1")["diffs"] == [{"target_file": "seer.md", "action": "append_rule"}]
+    assert games["pagination"] == {"total": 1, "offset": 0, "limit": 1, "returned": 1, "has_more": False}
+    assert games["games"][0]["game_id"] == "game-1"
+    assert "events" not in games["games"][0]
+    assert decisions["decisions"][0]["id"] == "d1"
+    assert decisions["decisions"][0]["target_id"] == 3
+    assert events["events"][0]["type"] == "game_init"
+
+
+def test_evolution_read_service_trust_bundle_falls_back_to_run_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    import storage.evolution.state_gateway as state_gateway
+
+    class FakeEvolutionStateGateway:
+        def __init__(self, *, paths: Any | None = None) -> None:
+            self.paths = paths
+
+        def get_trust_bundle(self, run_id: str) -> None:
+            raise RuntimeError(f"offline: {run_id}")
+
+    monkeypatch.setattr(state_gateway, "EvolutionStateGateway", FakeEvolutionStateGateway)
+    run = {
+        "run_id": "run-1",
+        "role": "seer",
+        "started_at": "2026-01-01T00:00:00+08:00",
+        "finished_at": "2026-01-01T00:01:00+08:00",
+        "result": {
+            "trust_bundle": {
+                "schema_version": "trust_bundle_v1",
+                "trust_bundle_id": "trust-bundle-1",
+                "run_id": "run-1",
+                "role": "seer",
+                "bundle_hash": "abc123",
+            },
+        },
+    }
+    service = EvolutionReadService(SimpleNamespace(evolution_runs={"run-1": run}, evolution_batches={}, paths="pg"))
+
+    payload = service.trust_bundle_payload("run-1")
+
+    assert payload["kind"] == "evolution_trust_bundle"
+    assert payload["trust_bundle_id"] == "trust-bundle-1"
+    assert payload["bundle_hash"] == "abc123"
+    assert payload["trust_bundle"]["schema_version"] == "trust_bundle_v1"
 
 
 def test_benchmark_service_stops_batches_through_task_service(tmp_path: Path) -> None:
