@@ -5,6 +5,13 @@ import { canSubmitPendingAction, currentSpeaker, pendingCandidatePlayers } from 
 import { historyPageKey, normalizeHistoryPageSummary, parseHistoryPageKey } from '../../../src/domain/history/normalizers'
 import { historyGameEvidenceLabel, logsForPhase } from '../../../src/domain/history/selectors'
 import {
+  normalizeTaskActionResponse,
+  normalizeTaskArtifactsResponse,
+  normalizeTaskEventsResponse,
+  normalizeTaskListResponse,
+  normalizeTaskResponse
+} from '../../../src/domain/task/normalizers'
+import {
   normalizeEvolutionListResponse,
   normalizeEvolutionRoleOverview,
   normalizeEvolutionRunResponse,
@@ -20,8 +27,10 @@ import { ApiError, normalizeApiError, readErrorPayload } from '../../../src/serv
 import { createBenchmarkService } from '../../../src/services/benchmarkApi'
 import { createEvolutionService } from '../../../src/services/evolutionApi'
 import { createHistoryService } from '../../../src/services/historyApi'
+import { createTaskService } from '../../../src/services/taskApi'
 import type { ApiClient, ApiRequestOptions } from '../../../src/types/api'
 import type { EvolutionRun, ProposalReview } from '../../../src/types/evolution'
+import type { TaskActionResponse, TaskListResponse } from '../../../src/types/task'
 
 interface RecordedRequest {
   path: string
@@ -465,6 +474,164 @@ describe('history and evolution boundaries', () => {
   })
 })
 
+describe('task domain normalizers', () => {
+  it('normalizes task list and detail wrappers from backend-compatible fields', () => {
+    const list = normalizeTaskListResponse({
+      items: [
+        {
+          id: 'task-1',
+          kind: 'artifact.export',
+          status: 'running',
+          priority: '5',
+          progress: { completed_games: '2', target_games: '4', stage: 'battle' },
+          attempt: '1',
+          max_attempts: '3',
+          payload: { role: 'seer' },
+          result: null,
+          error: null,
+          cancel_requested: 'false'
+        },
+        {
+          task_id: 'task-2',
+          status: 'succeeded',
+          progress_percent: 0.25,
+          result: { artifact_count: 2 },
+          current_stage: 'done'
+        }
+      ],
+      pagination: { total: '2', offset: '0', limit: '20' }
+    })
+    const detail = normalizeTaskResponse({
+      data: {
+        task_id: 'task-3',
+        status: 'failed',
+        progress: { percent: 140 },
+        error: { message: 'boom' },
+        metadata: { source: 'queue' }
+      }
+    })
+    const legacyDetail = normalizeTaskResponse({
+      task: {
+        id: 'task-4',
+        status: 'queued',
+        progress: { overall_percent: '0.5' }
+      }
+    })
+
+    expectTypeOf(list).toMatchTypeOf<TaskListResponse>()
+    expect(list.tasks[0]).toMatchObject({
+      id: 'task-1',
+      task_id: 'task-1',
+      priority: 5,
+      progressPercent: 50,
+      progressLabel: '2 / 4',
+      stageLabel: 'battle',
+      statusLabel: '运行中',
+      isActive: true,
+      isTerminal: false
+    })
+    expect(list.tasks[1]).toMatchObject({
+      id: 'task-2',
+      progressPercent: 25,
+      progressLabel: '25%',
+      stageLabel: 'done',
+      isTerminal: true
+    })
+    expect(list.pagination).toMatchObject({ total: 2, returned: 2 })
+    expect(detail).toMatchObject({
+      id: 'task-3',
+      progressPercent: 100,
+      error: { message: 'boom' },
+      metadata: { source: 'queue' },
+      isTerminal: true
+    })
+    expect(legacyDetail).toMatchObject({
+      id: 'task-4',
+      progressPercent: 50,
+      statusLabel: '排队中',
+      isActive: true
+    })
+  })
+
+  it('normalizes task artifacts, events, and action responses', () => {
+    const artifacts = normalizeTaskArtifactsResponse({
+      task_id: 'task-1',
+      items: [
+        {
+          id: 'artifact-1',
+          task_id: 'task-1',
+          artifact_type: 'report',
+          relative_path: 'reports/run.json',
+          content_type: 'APPLICATION/JSON',
+          size_bytes: '1536',
+          sha256: 'sha256:abcdef1234567890'
+        },
+        {
+          artifact_id: 'artifact-2',
+          name: 'stdout.txt',
+          size_bytes: '',
+          sha256: ''
+        }
+      ]
+    })
+    const events = normalizeTaskEventsResponse({
+      task_id: 'task-1',
+      after_event_id: '41',
+      items: [
+        { event_id: 42, event_type: 'progress', payload: { percent: 50 } },
+        { id: '43', type: 'artifact_created', payload: { artifact_id: 'artifact-1' } }
+      ]
+    })
+    const action = normalizeTaskActionResponse({
+      task_id: 'task-1',
+      action: 'cancel',
+      changed: 'yes',
+      task: { task_id: 'task-1', status: 'cancelled' }
+    })
+
+    expectTypeOf(action).toMatchTypeOf<TaskActionResponse>()
+    expect(artifacts).toMatchObject({
+      task_id: 'task-1',
+      artifacts: [
+        {
+          id: 'artifact-1',
+          artifact_id: 'artifact-1',
+          name: 'reports/run.json',
+          content_type: 'application/json',
+          size_bytes: 1536,
+          isJson: true,
+          sizeLabel: '1.5 KB',
+          shortSha: 'abcdef123456'
+        },
+        {
+          id: 'artifact-2',
+          name: 'stdout.txt',
+          size_bytes: null,
+          isJson: false,
+          sizeLabel: '大小未知'
+        }
+      ]
+    })
+    expect(events).toMatchObject({
+      task_id: 'task-1',
+      after_event_id: 41,
+      events: [
+        { event_id: 42, event_type: 'progress' },
+        { id: '43', type: 'artifact_created' }
+      ]
+    })
+    expect(action).toMatchObject({
+      task_id: 'task-1',
+      action: 'cancel',
+      changed: true,
+      task: {
+        id: 'task-1',
+        isTerminal: true
+      }
+    })
+  })
+})
+
 describe('service error conversion', () => {
   it('normalizes API error payloads into ApiError instances', () => {
     const response = new Response('ignored', {
@@ -515,6 +682,45 @@ describe('service error conversion', () => {
 })
 
 describe('service endpoint contracts', () => {
+  it('maps task service calls to task queue backend routes and artifact URLs', async () => {
+    const { client, requests } = recordingClient()
+    const tasks = createTaskService({ client })
+
+    await tasks.list({ status: ['queued', 'running'], limit: 25 })
+    await tasks.get('task id/1')
+    await tasks.cancel('task id/1')
+    await tasks.retry('task id/1')
+    await tasks.events('task id/1', 42)
+    await tasks.artifacts('task id/1')
+    await tasks.previewJsonArtifact('task id/1', 'artifact id/2')
+    const artifactUrl = tasks.artifactUrl('task id/1', 'artifact id/2')
+
+    expect(artifactUrl).toBe('/api/tasks/task%20id%2F1/artifacts/artifact%20id%2F2')
+    expect(requests).toEqual([
+      {
+        path: '/tasks',
+        options: {
+          query: { status: ['queued', 'running'], limit: 25 }
+        }
+      },
+      { path: '/tasks/task%20id%2F1', options: {} },
+      {
+        path: '/tasks/task%20id%2F1/cancel',
+        options: { method: 'POST' }
+      },
+      {
+        path: '/tasks/task%20id%2F1/retry',
+        options: { method: 'POST' }
+      },
+      {
+        path: '/tasks/task%20id%2F1/events',
+        options: { query: { after_event_id: 42 } }
+      },
+      { path: '/tasks/task%20id%2F1/artifacts', options: {} },
+      { path: '/tasks/task%20id%2F1/artifacts/artifact%20id%2F2', options: {} }
+    ])
+  })
+
   it('maps history service calls to the current game history backend routes', async () => {
     const { client, requests } = recordingClient()
     const history = createHistoryService({ client })

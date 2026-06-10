@@ -4243,6 +4243,164 @@ function mockBenchmarkBatchReport(batchId, queryString = '') {
   throw new Error(`Unsupported benchmark report format: ${format}`)
 }
 
+function mockTaskEntityById(taskId) {
+  const evolution = findMockEvolutionEntity(taskId)
+  if (evolution) {
+    return {
+      entity: evolution,
+      taskKind: evolution.batch_id ? 'evolution_batch' : 'evolution_run'
+    }
+  }
+  const benchmark = mockBenchmarkBatches.find((batch) => batch.batch_id === taskId || batch.run_id === taskId)
+  if (benchmark) {
+    return {
+      entity: benchmark,
+      taskKind: 'benchmark_batch'
+    }
+  }
+  return null
+}
+
+function mockTaskQueueStatus(entity) {
+  const status = String(entity?.status || '').toLowerCase()
+  if (['queued'].includes(status)) return 'queued'
+  if (['running', 'training', 'battling', 'combined_battling', 'applying', 'rate_limited'].includes(status)) return 'running'
+  if (['failed', 'cancelled', 'interrupted'].includes(status)) return status
+  if (['reviewing', 'promoted', 'rejected', 'completed', 'succeeded'].includes(status)) return 'succeeded'
+  return status || 'queued'
+}
+
+function mockTaskProgress(entity) {
+  const progress = entity?.progress && typeof entity.progress === 'object' ? entity.progress : {}
+  const trainingCompleted = Number(entity?.training_completed || 0)
+  const trainingTotal = Number(entity?.training_total || entity?.training_games || entity?.config?.training_games || 0)
+  const battleCompleted = Number(entity?.battle_completed || 0)
+  const battleTotal = Number(entity?.battle_total || entity?.battle_games || entity?.config?.battle_games || 0)
+  if (progress.percent != null || progress.overall_percent != null) {
+    return {
+      ...progress,
+      stage: entity?.current_stage || entity?.stage || entity?.status || progress.stage || ''
+    }
+  }
+  if (trainingTotal || battleTotal) {
+    const total = trainingTotal + battleTotal
+    const completed = Math.min(total, trainingCompleted + battleCompleted)
+    return {
+      stage: entity?.current_stage || entity?.stage || entity?.status || '',
+      completed,
+      total,
+      percent: total ? completed / total : 0
+    }
+  }
+  if (entity?.status === 'completed') {
+    return { stage: 'completed', completed: 1, total: 1, percent: 1 }
+  }
+  return { stage: entity?.current_stage || entity?.stage || entity?.status || 'queued', percent: 0 }
+}
+
+function mockTaskRow(taskId) {
+  const found = mockTaskEntityById(taskId)
+  if (!found) return null
+  const { entity, taskKind } = found
+  const id = entity.run_id || entity.batch_id || taskId
+  const status = mockTaskQueueStatus(entity)
+  return {
+    task_id: id,
+    kind: taskKind,
+    status,
+    priority: 100,
+    payload: {
+      mock: true,
+      source_id: id,
+      roles: entity.roles || (entity.role ? [entity.role] : [])
+    },
+    result: status === 'succeeded'
+      ? {
+          status: entity.status || status,
+          run_id: entity.run_id || null,
+          batch_id: entity.batch_id || null
+        }
+      : null,
+    error: status === 'failed' ? { message: entity.error || 'mock task failed' } : null,
+    progress: mockTaskProgress(entity),
+    attempt: 1,
+    max_attempts: 1,
+    lease_owner: status === 'running' ? 'frontend-mock-worker' : null,
+    lease_expires_at: null,
+    queued_at: entity.started_at || '2026-06-05T00:00:00',
+    started_at: entity.started_at || null,
+    updated_at: entity.last_heartbeat_at || entity.finished_at || entity.started_at || null,
+    finished_at: entity.finished_at || null,
+    cancel_requested: false,
+    idempotency_key: null,
+    parent_task_id: null,
+    source: 'frontend-mock',
+    metadata: { mock: true, domain_status: entity.status || '' }
+  }
+}
+
+function mockTaskRows(queryString = '') {
+  const query = new URLSearchParams(queryString)
+  const statusValues = query.getAll('status')
+    .flatMap((value) => String(value || '').split(','))
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const statusFilter = statusValues.length ? new Set(statusValues) : null
+  const limit = Math.max(1, Math.min(500, Number(query.get('limit') || 100)))
+  return [
+    ...mockEvolutionRuns.map((run) => mockTaskRow(run.run_id)).filter(Boolean),
+    ...mockEvolutionBatches.map((batch) => mockTaskRow(batch.batch_id)).filter(Boolean),
+    ...mockBenchmarkBatches.map((batch) => mockTaskRow(batch.batch_id)).filter(Boolean)
+  ]
+    .filter((task) => !statusFilter || statusFilter.has(task.status))
+    .slice(0, limit)
+}
+
+function mockTaskArtifacts(taskId) {
+  const found = mockTaskEntityById(taskId)
+  if (!found) return []
+  const { taskKind } = found
+  const names = taskKind === 'benchmark_batch'
+    ? [
+        ['benchmark-report-json', 'benchmark-report.json', 'benchmark_report', 'application/json'],
+        ['benchmark-report-md', 'benchmark-report.md', 'benchmark_report_export', 'text/markdown'],
+        ['benchmark-report-csv', 'benchmark-report.csv', 'benchmark_report_export', 'text/csv'],
+        ['reproducibility-manifest', 'reproducibility-manifest.json', 'manifest', 'application/json']
+      ]
+    : [
+        ['evolution-result', 'evolution-result.json', 'evolution_result', 'application/json'],
+        ['gate-report', 'gate-report.json', 'gate_report', 'application/json'],
+        ['trust-bundle', 'trust-bundle.json', 'trust_bundle', 'application/json'],
+        ['paired-seed-battle-table', 'paired-seed-battle-table.json', 'paired_seed_table', 'application/json']
+      ]
+  return names.map(([suffix, name, artifactType, contentType], index) => ({
+    artifact_id: `${taskId}-${suffix}`,
+    task_id: taskId,
+    artifact_type: artifactType,
+    name,
+    relative_path: `runs/tasks/${taskId}/${name}`,
+    content_type: contentType,
+    size_bytes: 1024 + index * 337,
+    sha256: `sha256:mock-${taskId}-${suffix}`,
+    created_at: new Date(Date.UTC(2026, 5, 5, 2, index, 0)).toISOString(),
+    metadata: { mock: true }
+  }))
+}
+
+function mockTaskArtifactPayload(taskId, artifactId) {
+  const artifact = mockTaskArtifacts(taskId).find((item) => item.artifact_id === artifactId)
+  if (!artifact) throw new Error('Mock task artifact not found')
+  return {
+    kind: 'mock_task_artifact',
+    schema_version: 1,
+    task_id: taskId,
+    artifact_id: artifactId,
+    name: artifact.name,
+    artifact_type: artifact.artifact_type,
+    generated_by: 'frontend-mock'
+  }
+}
+
 function mockBenchmarkBatchReportPayload(batchId) {
   const batch = findMockBenchmarkBatch(batchId)
   const detail = mockBenchmarkBatchDetail(batchId)
@@ -5296,6 +5454,77 @@ export async function mockApiFetch(path, options: LooseRecord = {}) {
       decodeURIComponent(roleRollbackMatch[1]),
       decodeURIComponent(roleRollbackMatch[2])
     )
+  }
+
+  if (routePath === '/tasks') {
+    return {
+      kind: 'task_list',
+      schema_version: 1,
+      tasks: mockTaskRows(queryString)
+    }
+  }
+
+  const taskArtifactMatch = routePath.match(/^\/tasks\/([^/]+)\/artifacts\/([^/]+)$/)
+  if (taskArtifactMatch) {
+    return mockTaskArtifactPayload(
+      decodeURIComponent(taskArtifactMatch[1]),
+      decodeURIComponent(taskArtifactMatch[2])
+    )
+  }
+
+  const taskArtifactsMatch = routePath.match(/^\/tasks\/([^/]+)\/artifacts$/)
+  if (taskArtifactsMatch) {
+    const taskId = decodeURIComponent(taskArtifactsMatch[1])
+    return {
+      kind: 'task_artifact_list',
+      schema_version: 1,
+      task_id: taskId,
+      artifacts: mockTaskArtifacts(taskId)
+    }
+  }
+
+  const taskEventsMatch = routePath.match(/^\/tasks\/([^/]+)\/events$/)
+  if (taskEventsMatch) {
+    const taskId = decodeURIComponent(taskEventsMatch[1])
+    const query = new URLSearchParams(queryString)
+    return {
+      kind: 'task_events',
+      schema_version: 1,
+      task_id: taskId,
+      after_event_id: Number(query.get('after_event_id') || 0),
+      events: []
+    }
+  }
+
+  const taskActionMatch = routePath.match(/^\/tasks\/([^/]+)\/(cancel|retry)$/)
+  if (taskActionMatch && method === 'POST') {
+    const taskId = decodeURIComponent(taskActionMatch[1])
+    const action = taskActionMatch[2]
+    const task = mockTaskRow(taskId)
+    if (!task) throw new Error('Mock task not found')
+    return {
+      kind: 'task_action',
+      schema_version: 1,
+      task_id: taskId,
+      action,
+      changed: true,
+      task: {
+        ...task,
+        status: action === 'cancel' ? 'cancelled' : 'queued',
+        cancel_requested: action === 'cancel'
+      }
+    }
+  }
+
+  const taskMatch = routePath.match(/^\/tasks\/([^/]+)$/)
+  if (taskMatch) {
+    const task = mockTaskRow(decodeURIComponent(taskMatch[1]))
+    if (!task) throw new Error('Mock task not found')
+    return {
+      kind: 'task_detail',
+      schema_version: 1,
+      task
+    }
   }
 
   if (routePath === '/evolution-runs') {

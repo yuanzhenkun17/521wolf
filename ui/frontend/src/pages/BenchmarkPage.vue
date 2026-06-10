@@ -12,6 +12,7 @@ import BenchmarkRunReportPanel from '../components/benchmark/BenchmarkRunReportP
 import BenchmarkSnapshotReleasePanel from '../components/benchmark/BenchmarkSnapshotReleasePanel.vue'
 import BenchmarkSuiteRail from '../components/benchmark/BenchmarkSuiteRail.vue'
 import BenchmarkTargetSelector from '../components/benchmark/BenchmarkTargetSelector.vue'
+import TaskArtifactPanel from '../components/tasks/TaskArtifactPanel.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 import { addLegacyHashChangeListener, currentLegacyHash } from '../router/legacyViewNavigation.ts'
 import { benchmarkBatchIdFromHash, benchmarkBatchIdFromRoute } from '../router/workbenchDeepLinks.ts'
@@ -469,6 +470,16 @@ const benchmarkCommandMetaRows = computed(() => [
 const selectedContextRun = computed<LooseRecord | null>(() => benchmarkStore.selectedBenchmarkBatchRun || null)
 const contextRun = computed(() =>
   selectedContextRun.value || activeRuns.value[0] || recentRuns.value[0] || null
+)
+const contextTaskId = computed(() =>
+  String(
+    contextRun.value?.task_id ||
+    contextRun.value?.queue_task_id ||
+    contextRun.value?.run_id ||
+    contextRun.value?.batch_id ||
+    contextRun.value?.id ||
+    ''
+  )
 )
 const contextRunProgressLabel = computed(() => {
   const progress = contextRun.value?.progress || {}
@@ -1087,6 +1098,14 @@ onBeforeUnmount(() => {
               </span>
             </div>
           </article>
+
+          <TaskArtifactPanel
+            v-if="contextTaskId"
+            :task-id="contextTaskId"
+            title="队列任务与产物"
+            eyebrow="ArtifactStore"
+            compact
+          />
 
           <article class="bench-context-section">
             <header>

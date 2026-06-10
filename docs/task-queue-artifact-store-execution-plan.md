@@ -121,6 +121,15 @@ PostgreSQL-backed task queue
 - 默认 cleanup 范围不变，不会误扫 `runs/tasks`。
 - 显式开启后，`runs/tasks/<task_id>` 会进入 age/size retention plan，并沿用 dry-run 默认、安全 path 校验和 execute 清理流程。
 
+已完成 Phase I Frontend Task/Artifact UI 起步：
+
+- 新增前端 task domain normalizers、task API service 与类型导出，覆盖 list/detail/cancel/retry/events/artifacts/download URL。
+- 新增共享 `TaskArtifactPanel`，展示 queue status、progress、stage、error、artifact list、JSON inline preview 与下载入口。
+- Benchmark 工作台右侧上下文栏按选中/活跃 run 的 `task_id`、`queue_task_id`、`run_id`、`batch_id` 只读展示队列任务和 ArtifactStore 产物。
+- Evolution 工作台右侧上下文栏按 selected run/run summary 的稳定 id 只读展示队列任务和 ArtifactStore 产物。
+- mock API 已补齐 `/tasks`、`/tasks/{task_id}`、`/tasks/{task_id}/events`、`/tasks/{task_id}/artifacts`、`/tasks/{task_id}/artifacts/{artifact_id}` 与 cancel/retry 响应，便于前端离线验证。
+- 通用 task events 当前是 JSON replay；Benchmark/Evolution 原有实时进度仍沿用领域 SSE/状态刷新，后续如需要统一实时流再做 SSE/WebSocket 收口。
+
 已验证：
 
 ```text
@@ -549,25 +558,27 @@ Steps：
 
 Steps：
 
-1. 新增 task service：
+1. 新增 task service：（已完成起步）
    - list tasks
    - get task
    - cancel
    - retry
    - events
    - artifacts
-2. Benchmark/Evolution 页面仍保留领域视图，但共享 task 状态组件。
-3. 任务详情展示：
+2. Benchmark/Evolution 页面仍保留领域视图，但共享 task 状态组件。（已完成只读上下文栏接入）
+3. 任务详情展示：（已完成起步）
    - status
    - progress
    - current stage
-   - started/finished
    - error diagnostics
    - artifacts download list
-4. Artifact download 按 content-type 展示：
+4. Artifact download 按 content-type 展示：（已完成 JSON preview 与下载入口）
    - JSON inline preview
    - CSV/Markdown download
    - zip download
+5. 后续完整任务中心：
+   - 独立 Task Center 页面，支持队列筛选、任务详情抽屉、cancel/retry 显式操作和 event timeline。
+   - 如前端需要统一实时进度，再把 `/api/tasks/{task_id}/events` 从 JSON replay 扩展为 SSE/WebSocket；当前阶段不改变后端实时协议。
 
 验收：
 

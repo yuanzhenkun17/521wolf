@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import ApiErrorPanel from '../ApiErrorPanel.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../../composables/apiErrorDisplay.ts'
+import TaskArtifactPanel from '../tasks/TaskArtifactPanel.vue'
 
 interface EvolutionTab {
   key: string
@@ -62,6 +63,21 @@ const activeTabLabel = computed(() =>
 
 const runSummary = computed(() => props.selectedRunSummary || {})
 const selectedRun = computed(() => props.selectedRun || {})
+const selectedTaskId = computed(() =>
+  String(
+    runSummary.value.task_id ||
+    runSummary.value.queue_task_id ||
+    selectedRun.value.task_id ||
+    selectedRun.value.queue_task_id ||
+    runSummary.value.run_id ||
+    runSummary.value.batch_id ||
+    runSummary.value.id ||
+    selectedRun.value.run_id ||
+    selectedRun.value.batch_id ||
+    selectedRun.value.id ||
+    ''
+  )
+)
 const selectedReview = computed(() => props.selectedProposalReview || {})
 const selectedGate = computed(() => selectedReview.value.gate || {})
 const selectedTrustBundle = computed(() => selectedReview.value.trustBundle || selectedReview.value.trust_bundle || {})
@@ -356,6 +372,14 @@ function retryRefresh() {
             </span>
           </div>
         </section>
+
+        <TaskArtifactPanel
+          v-if="selectedTaskId"
+          :task-id="selectedTaskId"
+          title="队列任务与产物"
+          eyebrow="ArtifactStore"
+          compact
+        />
 
         <section class="evo-context-section">
           <h3>发布审计</h3>
