@@ -722,9 +722,12 @@ def test_benchmark_snapshot_facades_delegate_to_snapshot_service(tmp_path: Path)
 
         return call
 
+    def fail_report_callable(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("benchmark report methods should use BenchmarkReportService")
+
     callables = {
-        "benchmark_batch_report": recorder("benchmark_batch_report"),
-        "benchmark_reports": recorder("benchmark_reports"),
+        "benchmark_batch_report": fail_report_callable,
+        "benchmark_reports": fail_report_callable,
         "create_benchmark_snapshot": recorder("create_benchmark_snapshot"),
         "list_benchmark_snapshots": recorder("list_benchmark_snapshots"),
         "get_benchmark_snapshot": recorder("get_benchmark_snapshot"),
@@ -735,13 +738,45 @@ def test_benchmark_snapshot_facades_delegate_to_snapshot_service(tmp_path: Path)
         "get_benchmark_view": recorder("get_benchmark_view"),
         "delete_benchmark_view": recorder("delete_benchmark_view"),
     }
-    context = SimpleNamespace(paths=PathConfig(root=tmp_path), evolution_batches={})
+    batch = {
+        "kind": "benchmark_batch",
+        "batch_id": "batch-1",
+        "status": "completed",
+        "target_type": "model",
+        "benchmark": {
+            "id": "bench-1",
+            "version": "v1",
+            "evaluation_set_id": "eval-1",
+            "seed_set_id": "seed-1",
+        },
+        "results": [
+            {
+                "batch_id": "result-1",
+                "config": {
+                    "batch_id": "result-1",
+                    "comparison_type": "model",
+                    "benchmark_id": "bench-1",
+                    "evaluation_set_id": "eval-1",
+                    "seed_set_id": "seed-1",
+                    "model_id": "model-a",
+                    "model_config_hash": "hash-a",
+                },
+                "model_id": "model-a",
+                "model_config_hash": "hash-a",
+                "game_count": 1,
+                "completed": 1,
+                "rankable": True,
+                "games": [{"game_id": "game-1", "status": "completed", "seed": 1}],
+            }
+        ],
+    }
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path), evolution_batches={"batch-1": batch})
     service = BenchmarkService(context, callables=callables)
     snapshot_request = object()
     view_request = object()
 
-    assert service.benchmark_batch_report("batch-1", format="markdown")["method"] == "benchmark_batch_report"
-    assert service.benchmark_reports(scope="role_version", status="completed", offset=3)["method"] == "benchmark_reports"
+    assert service.benchmark_batch_report("batch-1")["kind"] == "benchmark_run_report"
+    assert service.benchmark_reports(scope="model", status="completed", offset=3)["kind"] == "benchmark_run_reports"
     assert service.create_benchmark_snapshot(snapshot_request)["method"] == "create_benchmark_snapshot"
     assert service.list_benchmark_snapshots(benchmark_id="bench-1", target_role="seer")["method"] == "list_benchmark_snapshots"
     assert service.get_benchmark_snapshot("snap-1")["method"] == "get_benchmark_snapshot"
@@ -755,22 +790,6 @@ def test_benchmark_snapshot_facades_delegate_to_snapshot_service(tmp_path: Path)
     assert service.delete_benchmark_view("default")["method"] == "delete_benchmark_view"
 
     assert calls == [
-        ("benchmark_batch_report", ("batch-1",), {"format": "markdown"}),
-        (
-            "benchmark_reports",
-            (),
-            {
-                "scope": "role_version",
-                "evaluation_set_id": None,
-                "benchmark_id": None,
-                "target_role": None,
-                "model_id": None,
-                "model_config_hash": None,
-                "status": "completed",
-                "limit": 50,
-                "offset": 3,
-            },
-        ),
         ("create_benchmark_snapshot", (snapshot_request,), {}),
         (
             "list_benchmark_snapshots",

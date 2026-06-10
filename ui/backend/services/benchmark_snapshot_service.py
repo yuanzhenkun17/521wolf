@@ -1,4 +1,4 @@
-"""Benchmark snapshot, saved-view, report, and export service helpers."""
+"""Benchmark snapshot, saved-view, and export service helpers."""
 
 from __future__ import annotations
 
@@ -122,38 +122,6 @@ class BenchmarkSnapshotService:
 
     def delete_benchmark_saved_view(self, view_key: str) -> bool:
         return delete_benchmark_saved_view(self._open_connection, view_key)
-
-    def benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("benchmark_batch_report", batch_id, format=format))
-
-    def benchmark_reports(
-        self,
-        *,
-        scope: str | None = None,
-        evaluation_set_id: str | None = None,
-        benchmark_id: str | None = None,
-        target_role: str | None = None,
-        model_id: str | None = None,
-        model_config_hash: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> dict[str, Any]:
-        return cast(
-            dict[str, Any],
-            self._call(
-                "benchmark_reports",
-                scope=scope,
-                evaluation_set_id=evaluation_set_id,
-                benchmark_id=benchmark_id,
-                target_role=target_role,
-                model_id=model_id,
-                model_config_hash=model_config_hash,
-                status=status,
-                limit=limit,
-                offset=offset,
-            ),
-        )
 
     def create_benchmark_snapshot(self, request: BenchmarkSnapshotRequest) -> dict[str, Any]:
         return cast(dict[str, Any], self._call("create_benchmark_snapshot", request))
