@@ -26,6 +26,7 @@ class _TransactionalConn:
         self.params: list[tuple[Any, ...]] = []
         self.entered = 0
         self.exit_args: list[tuple[Any, Any, Any]] = []
+        self.begin_writes = 0
         self.commits = 0
         self.rollbacks = 0
 
@@ -47,6 +48,9 @@ class _TransactionalConn:
         self.sql.append(" ".join(sql.split()))
         self.params.append(tuple(parameters))
         return _FakeCursor()
+
+    def begin_write(self) -> None:
+        self.begin_writes += 1
 
     def commit(self) -> None:
         self.commits += 1
@@ -77,6 +81,54 @@ def test_evaluation_save_batch_uses_single_storage_transaction() -> None:
     assert conn.rollbacks == 0
     assert len(conn.sql) == 2
     assert all("INSERT INTO evaluations" in sql for sql in conn.sql)
+
+
+def test_game_delete_uses_single_storage_transaction_and_child_order() -> None:
+    from storage.game_store import GameStore, WOLF_GAME_CHILD_TABLES
+
+    conn = _TransactionalConn()
+    store = GameStore(conn)  # type: ignore[arg-type]
+
+    store.delete_game("game-delete-1")
+
+    expected_sql = [
+        f"DELETE FROM {table} WHERE game_id = ?"
+        for table in WOLF_GAME_CHILD_TABLES
+    ]
+    expected_sql.append("DELETE FROM games WHERE id = ?")
+    assert conn.begin_writes == 1
+    assert conn.commits == 1
+    assert conn.rollbacks == 0
+    assert conn.sql == expected_sql
+    assert conn.params == [("game-delete-1",)] * len(expected_sql)
+
+
+def test_game_delete_rolls_back_on_child_delete_failure() -> None:
+    from storage.game_store import GameStore
+
+    conn = _TransactionalConn(fail_on_execute=3)
+    store = GameStore(conn)  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        store.delete_game("game-delete-1")
+
+    assert conn.begin_writes == 1
+    assert conn.commits == 0
+    assert conn.rollbacks == 1
+
+
+def test_game_delete_can_defer_transaction_to_caller() -> None:
+    from storage.game_store import GameStore, WOLF_GAME_CHILD_TABLES
+
+    conn = _TransactionalConn()
+    store = GameStore(conn, autocommit=False)  # type: ignore[arg-type]
+
+    store.delete_game("game-delete-1")
+
+    assert conn.begin_writes == 0
+    assert conn.commits == 0
+    assert conn.rollbacks == 0
+    assert len(conn.sql) == len(WOLF_GAME_CHILD_TABLES) + 1
 
 
 def test_evaluation_save_batch_rolls_back_whole_batch_on_failure() -> None:

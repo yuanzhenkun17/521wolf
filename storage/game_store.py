@@ -10,6 +10,17 @@ from storage.interfaces import storage_timestamp
 from storage.public_events import public_events_only
 from storage.shared.database import StorageConnection
 
+WOLF_GAME_CHILD_TABLES = (
+    "decision_reviews",
+    "counterfactuals",
+    "llm_judgments",
+    "evaluations",
+    "reports",
+    "decisions",
+    "game_events",
+    "players",
+)
+
 
 def _role_team(role_str: str) -> str:
     try:
@@ -26,6 +37,17 @@ class GameStore:
     def _commit(self) -> None:
         if self._autocommit:
             self._conn.commit()
+
+    def _rollback(self) -> None:
+        if self._autocommit:
+            self._conn.rollback()
+
+    def _begin_write(self) -> None:
+        if not self._autocommit:
+            return
+        begin = getattr(self._conn, "begin_write", None)
+        if callable(begin):
+            begin()
 
     def insert_game(
         self,
@@ -218,3 +240,15 @@ class GameStore:
         else:
             row = self._conn.execute("SELECT COUNT(*) FROM games").fetchone()
         return row[0] if row else 0
+
+    def delete_game(self, game_id: str) -> None:
+        """Delete a game and its wolf-schema child rows."""
+        try:
+            self._begin_write()
+            for table in WOLF_GAME_CHILD_TABLES:
+                self._conn.execute(f"DELETE FROM {table} WHERE game_id = ?", (game_id,))
+            self._conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
+            self._commit()
+        except Exception:
+            self._rollback()
+            raise

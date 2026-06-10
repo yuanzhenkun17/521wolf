@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
 from app.lib.version import ReleaseStageNotAllowedError
+from storage.game_store import GameStore as WolfGameStore
 from storage.game_read_model import (
     GameReadRepository,
     death_target_ids,
@@ -158,18 +159,6 @@ def _paginate_history_rows(
         "returned": len(page),
         "has_more": safe_offset + len(page) < total,
     }
-
-
-_WOLF_GAME_CHILD_TABLES = (
-    "decision_reviews",
-    "counterfactuals",
-    "llm_judgments",
-    "evaluations",
-    "reports",
-    "decisions",
-    "game_events",
-    "players",
-)
 
 
 class _FanoutSink:
@@ -1241,16 +1230,7 @@ class GameStoreMixin:
     def _delete_game_from_pg(self, game_id: str) -> None:
         conn = self._open_wolf_connection()
         try:
-            begin = getattr(conn, "begin_write", None)
-            if callable(begin):
-                begin()
-            for table in _WOLF_GAME_CHILD_TABLES:
-                conn.execute(f"DELETE FROM {table} WHERE game_id = ?", (game_id,))
-            conn.execute("DELETE FROM games WHERE id = ?", (game_id,))
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+            WolfGameStore(conn).delete_game(game_id)
         finally:
             conn.close()
 
