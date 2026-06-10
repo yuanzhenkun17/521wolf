@@ -845,6 +845,54 @@ def test_backend_store_caches_and_closes_registry(
     assert len(created) == 2
 
 
+def test_backend_store_ui_task_connection_uses_wolf_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import storage.provider
+    import ui.backend.store as store_mod
+
+    conn = _FakeConn()
+    seen_paths: list[Any] = []
+
+    def open_conn(provider: Any | None = None, *, paths: Any | None = None) -> _FakeConn:
+        assert provider is None
+        seen_paths.append(paths)
+        return conn
+
+    monkeypatch.setattr(storage.provider, "open_wolf_connection", open_conn)
+    paths = PathConfig(root=tmp_path)
+    store = store_mod.BackendStore(paths=paths)
+
+    assert store._open_ui_task_connection() is conn
+    assert seen_paths == [paths]
+
+
+def test_backend_game_read_connection_uses_wolf_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from app.config import PathConfig
+    import storage.provider
+    import ui.backend.store as store_mod
+
+    conn = _FakeConn()
+    seen_paths: list[Any] = []
+
+    def open_conn(provider: Any | None = None, *, paths: Any | None = None) -> _FakeConn:
+        assert provider is None
+        seen_paths.append(paths)
+        return conn
+
+    monkeypatch.setattr(storage.provider, "open_wolf_connection", open_conn)
+    paths = PathConfig(root=tmp_path)
+    store = store_mod.BackendStore(paths=paths)
+
+    assert store._open_wolf_connection() is conn
+    assert seen_paths == [paths]
+
+
 def test_postgres_backend_skips_local_checkpointer() -> None:
     from app.graphs.main import builder
 

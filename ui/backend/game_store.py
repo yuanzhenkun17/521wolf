@@ -304,7 +304,9 @@ class GameStoreMixin:
             return {"available": False, "error": type(exc).__name__}
 
     def _open_wolf_connection(self) -> Any:
-        return storage_provider_from_env(paths=self.paths).open_wolf_connection()
+        import storage.provider as provider_mod
+
+        return provider_mod.open_wolf_connection(paths=self.paths)
 
     def _load_game_from_pg(self, game_id: str) -> dict[str, Any] | None:
         return self._read_wolf_repository(lambda repo: repo.load_game_detail(game_id))
