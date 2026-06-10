@@ -9,6 +9,10 @@ from typing import Any
 from app.run import LANGFUSE_EVAL_CONFIG_KEYS
 from ui.backend.errors import domain_error_detail
 from ui.backend.schemas import BenchmarkRequest
+from ui.backend.services.benchmark_payload_utils import (
+    json_clone as _json_clone,
+    optional_text as _optional_text,
+)
 
 _BENCHMARK_PLAYER_COUNT = 12
 _BENCHMARK_DEFAULT_GAME_CONCURRENCY = 3
@@ -360,11 +364,4 @@ def _stable_runtime_hash(payload: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
-def _optional_text(value: Any) -> str | None:
-    text = str(value or "").strip()
-    return text or None
-
-
-def _json_clone(value: Any) -> Any:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 

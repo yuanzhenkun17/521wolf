@@ -9,7 +9,16 @@ from typing import Any
 
 from app.lib.benchmark_reproducibility import build_benchmark_reproducibility_manifest
 from app.util.time import beijing_now_iso
+from ui.backend.services.benchmark_payload_utils import (
+    dict_items as _dict_items,
+    json_clone as _json_clone,
+    optional_text as _optional_text,
+    text_items as _text_items,
+    unique_texts as _unique_texts,
+)
 from ui.backend.task_state import _match_filter
+
+
 def _benchmark_results(batch: dict[str, Any]) -> list[dict[str, Any]]:
     results = batch.get("results")
     if isinstance(results, list):
@@ -1443,39 +1452,6 @@ def _dedupe_benchmark_diagnostics(diagnostics: list[dict[str, Any]]) -> list[dic
         seen.add(key)
         deduped.append(item)
     return deduped
-
-
-def _dict_items(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, dict)]
-
-
-def _text_items(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item)]
-
-
-def _optional_text(value: Any) -> str | None:
-    text = str(value or "").strip()
-    return text or None
-
-
-def _unique_texts(*values: Any) -> list[str]:
-    seen: set[str] = set()
-    items: list[str] = []
-    for value in values:
-        text = str(value or "").strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        items.append(text)
-    return items
-
-
-def _json_clone(value: Any) -> Any:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
 def _stable_payload_hash(payload: dict[str, Any]) -> str:

@@ -9,18 +9,10 @@ from typing import Any
 from app.lib.benchmark_release_gate import evaluate_benchmark_release_gate
 from ui.backend.errors import domain_error_detail
 from ui.backend.schemas import BenchmarkSnapshotRequest
-def _json_clone(value: Any) -> Any:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
-
-
-def _first_text(*values: Any) -> str:
-    for value in values:
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
-
-
+from ui.backend.services.benchmark_payload_utils import (
+    first_text as _first_text,
+    json_clone as _json_clone,
+)
 def _leaderboard_subject_key(row: dict[str, Any] | None) -> str:
     if not row:
         return ""

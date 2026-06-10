@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import math
 from collections import Counter
 from typing import Any
+
+from ui.backend.services.benchmark_payload_utils import (
+    decode_json_field as _decode_json_field,
+    first_text as _first_text,
+    json_clone as _json_clone,
+    row_to_dict as _row_to_dict,
+)
+
+
 def _benchmark_results(batch: dict[str, Any]) -> list[dict[str, Any]]:
     results = batch.get("results")
     if isinstance(results, list):
@@ -101,31 +109,6 @@ def _benchmark_batch_boundary(batch: dict[str, Any]) -> dict[str, Any]:
         ),
         "roles": [str(role).strip().lower() for role in roles if str(role).strip()],
     }
-
-
-def _first_text(*values: Any) -> str:
-    for value in values:
-        text = str(value or "").strip()
-        if text:
-            return text
-    return ""
-
-
-def _decode_json_field(value: Any, *, fallback: Any) -> Any:
-    if value in (None, ""):
-        return fallback
-    if isinstance(value, (dict, list)):
-        return value
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return fallback
-    return fallback
-
-
-def _json_clone(value: Any) -> Any:
-    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
 def _leaderboard_row_payload(row: Any) -> dict[str, Any]:
@@ -850,14 +833,3 @@ def _leaderboard_compare_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _row_to_dict(row: Any) -> dict[str, Any]:
-    if isinstance(row, dict):
-        return dict(row)
-    try:
-        return dict(row)
-    except Exception:
-        pass
-    keys = getattr(row, "keys", None)
-    if callable(keys):
-        return {key: row[key] for key in keys()}
-    return {}
