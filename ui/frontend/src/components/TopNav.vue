@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useGameStore, useSessionStore } from '../stores'
 import { isReturnableGame } from '../composables/gameSession.ts'
+import { appViewFromRouteSource } from '../router/appViews'
 import type { ActiveGameSession } from '../types/game'
 import type { AppView } from '../types/ui'
 
@@ -111,22 +112,6 @@ const POLLING_STREAM_STATUSES: ReadonlySet<string> = new Set(['degraded', 'fallb
 const BACKGROUND_STREAM_STATUSES: ReadonlySet<string> = new Set(['background', 'background_running', 'detached'])
 const STOPPED_STREAM_STATUSES: ReadonlySet<string> = new Set(['closed', 'done', 'stopped', 'terminal'])
 
-const routeViewByName: Readonly<Record<string, AppView>> = {
-  lobby: 'lobby',
-  match: 'match',
-  logs: 'logs',
-  benchmark: 'benchmark',
-  evolution: 'evolution'
-}
-
-const routeViewByPath: Readonly<Record<string, AppView>> = {
-  '/': 'lobby',
-  '/match': 'match',
-  '/logs': 'logs',
-  '/benchmark': 'benchmark',
-  '/evolution': 'evolution'
-}
-
 function truthy(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true'
 }
@@ -156,17 +141,11 @@ function navItemAriaLabel(item): string {
   return activeNavView.value === item.key ? `${label}，当前页面` : label
 }
 
-const routeActiveView = computed(() => {
-  const routeName = typeof route?.name === 'string' ? route.name : String(route?.name || '')
-  if (routeViewByName[routeName]) return routeViewByName[routeName]
-  const routePath = String(route?.path || '').replace(/\/+$/, '') || '/'
-  return routeViewByPath[routePath] || ''
-})
+const routeActiveView = computed(() => appViewFromRouteSource(route))
 
 const storeActiveView = computed(() => sessionStore.currentView || '')
 const activeNavView = computed(() => {
-  if (routeActiveView.value && routeActiveView.value !== 'lobby') return routeActiveView.value
-  if (storeActiveView.value && storeActiveView.value !== 'lobby') return storeActiveView.value
+  if (routeActiveView.value) return routeActiveView.value
   return props.activeView || routeActiveView.value || storeActiveView.value || 'lobby'
 })
 

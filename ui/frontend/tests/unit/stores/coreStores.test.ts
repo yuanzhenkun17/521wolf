@@ -121,13 +121,19 @@ test('game store hydrates snapshots and clears live watch state', () => {
     game: liveGame,
     loading: true,
     error: 'failed to load',
-    watchRunning: true
+    watchRunning: true,
+    roleAssignmentComplete: false,
+    judgeBoardStarted: true,
+    judgeBoardStarting: false
   })
 
   assert.equal(store.liveGame?.game_id, 'game-1')
   assert.equal(store.loading, true)
   assert.equal(store.error, 'failed to load')
   assert.equal(store.watchRunning, true)
+  assert.equal(store.roleAssignmentComplete, false)
+  assert.equal(store.judgeBoardStarted, true)
+  assert.equal(store.judgeBoardStarting, false)
   assert.equal(store.isNight, true)
   assert.equal(store.isWatch, true)
 
@@ -153,6 +159,19 @@ test('game store hydrates snapshots and clears live watch state', () => {
 
   assert.equal(store.liveGame, null)
   assert.equal(store.watchRunning, false)
+  assert.equal(store.roleAssignmentComplete, false)
+  assert.equal(store.judgeBoardStarted, false)
+  assert.equal(store.judgeBoardStarting, false)
+
+  store.hydrateFromRuntime({
+    roleAssignmentComplete: null,
+    judgeBoardStarted: null,
+    judgeBoardStarting: null
+  })
+
+  assert.equal(store.roleAssignmentComplete, false)
+  assert.equal(store.judgeBoardStarted, false)
+  assert.equal(store.judgeBoardStarting, false)
 })
 
 test('history store hydrates selection and derives selection state', () => {
@@ -292,6 +311,9 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     loading: ref(false),
     error: ref(''),
     watchRunning: ref(false),
+    roleAssignmentComplete: ref(true),
+    judgeBoardStarted: ref(true),
+    judgeBoardStarting: ref(false),
     gameHistory: ref([historyGame]),
     selectedHistoryGameId: ref('runtime-history'),
     selectedHistoryGame: ref(historyGame),
@@ -320,11 +342,25 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     'activeSession',
     'returnToMatchAvailable'
   ])
+  assert.deepEqual(runtimeHydrationKeys.game, [
+    'liveGame',
+    'game',
+    'loading',
+    'error',
+    'watchRunning',
+    'roleAssignmentComplete',
+    'judgeBoardStarted',
+    'judgeBoardStarting'
+  ])
   assert.equal(payloads.game.liveGame?.game_id, 'runtime-game')
   assert.equal(payloads.game.game?.game_id, 'runtime-replay')
+  assert.equal(payloads.game.roleAssignmentComplete, true)
   assert.equal(sessionStore.currentView, 'match')
   assert.equal(sessionStore.activeSession.gameId, 'runtime-game')
   assert.equal(gameStore.liveGame?.game_id, 'runtime-game')
+  assert.equal(gameStore.roleAssignmentComplete, true)
+  assert.equal(gameStore.judgeBoardStarted, true)
+  assert.equal(gameStore.judgeBoardStarting, false)
   assert.equal(historyStore.games[0].game_id, 'runtime-history')
   assert.equal(historyStore.historyWorkspaceTab, 'archive')
   assert.equal(replayStore.replayGame?.game_id, 'runtime-replay')
@@ -369,6 +405,9 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
     loading: ref(false),
     error: ref(''),
     watchRunning: ref(false),
+    roleAssignmentComplete: ref(false),
+    judgeBoardStarted: ref(false),
+    judgeBoardStarting: ref(false),
     gameHistory: ref([]),
     selectedHistoryGameId: ref(null),
     selectedHistoryGame: ref(null),
@@ -393,12 +432,21 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
   assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
   assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
 
+  runtime.roleAssignmentComplete.value = true
+  hydrator.hydrate(runtime)
+
+  assert.equal(stores.session.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 2)
+  assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
+
   runtime.historyLoading.value = true
   const payloads = hydrator.hydrate(runtime)
 
   assert.equal(payloads.history.historyLoading, true)
   assert.equal(stores.session.hydrateFromRuntime.mock.calls.length, 1)
-  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 1)
+  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 2)
   assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 2)
   assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 1)
   assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 1)
@@ -407,7 +455,7 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
   hydrator.hydrate(runtime)
 
   assert.equal(stores.session.hydrateFromRuntime.mock.calls.length, 2)
-  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 2)
+  assert.equal(stores.game.hydrateFromRuntime.mock.calls.length, 3)
   assert.equal(stores.history.hydrateFromRuntime.mock.calls.length, 3)
   assert.equal(stores.replay.hydrateFromRuntime.mock.calls.length, 2)
   assert.equal(stores.ui.hydrateFromRuntime.mock.calls.length, 2)

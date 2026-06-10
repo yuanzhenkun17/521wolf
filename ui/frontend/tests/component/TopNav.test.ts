@@ -90,14 +90,36 @@ describe('TopNav router active state', () => {
     expect(evolutionButton.attributes('aria-current')).toBe('page')
   })
 
-  it('uses the session store as the transition source when the route is still the lobby shell', async () => {
+  it('uses legacy route hashes before the store while hash routing is still supported', async () => {
     const wrapper = await mountTopNav('/', { activeView: 'lobby' }, () => {
       useSessionStore().setView('logs')
     })
+    const lobbyButton = navButton(wrapper, '大厅')
+
+    expect(lobbyButton.classes()).toContain('active')
+    expect(lobbyButton.attributes('aria-current')).toBe('page')
+  })
+
+  it('keeps legacy hash routes as router-owned active navigation', async () => {
+    const wrapper = await mountTopNav('/#logs?game_id=game-7', { activeView: 'lobby' }, () => {
+      useSessionStore().setView('benchmark')
+    })
     const logsButton = navButton(wrapper, '日志')
+    const benchmarkButton = navButton(wrapper, '评测')
 
     expect(logsButton.classes()).toContain('active')
     expect(logsButton.attributes('aria-current')).toBe('page')
+    expect(benchmarkButton.classes()).not.toContain('active')
+  })
+
+  it('prefers concrete router paths over compatibility hashes', async () => {
+    const wrapper = await mountTopNav('/benchmark#logs?game_id=game-7', { activeView: 'logs' })
+    const benchmarkButton = navButton(wrapper, '评测')
+    const logsButton = navButton(wrapper, '日志')
+
+    expect(benchmarkButton.classes()).toContain('active')
+    expect(benchmarkButton.attributes('aria-current')).toBe('page')
+    expect(logsButton.classes()).not.toContain('active')
   })
 
   it('uses Pinia game state for the match exit control before App props are removed', async () => {

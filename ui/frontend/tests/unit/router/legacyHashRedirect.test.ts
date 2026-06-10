@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'vitest'
+import { appViewFromRouteSource } from '../../../src/router/appViews'
 import {
   appViewFromRoute,
   installLegacyHashBridge,
@@ -31,6 +32,16 @@ test('maps new router paths to the matching app view', () => {
 test('falls back to lobby for unknown routes', () => {
   assert.equal(appViewFromRoute({ path: '/evidence' }), 'lobby')
   assert.equal(appViewFromRoute({ path: '/missing' }), 'lobby')
+})
+
+test('resolves active app views from router source before runtime state', () => {
+  assert.equal(appViewFromRouteSource({ name: 'lobby', path: '/', hash: '' }), 'lobby')
+  assert.equal(appViewFromRouteSource({ name: 'lobby', path: '/', hash: '#logs?game_id=game-7' }), 'logs')
+  assert.equal(appViewFromRouteSource({ name: 'benchmark', path: '/benchmark', hash: '#logs?game_id=game-7' }), 'benchmark')
+  assert.equal(appViewFromRouteSource({ name: 'missing', path: '/missing', hash: '' }), '')
+  assert.equal(appViewFromRouteSource({ name: 'missing', path: '/missing', hash: '#evolution?run_id=run-1' }), 'evolution')
+  assert.equal(appViewFromRouteSource(null), '')
+  assert.equal(appViewFromRouteSource({}), '')
 })
 
 test('builds legacy hashes and preserves query parameters', () => {

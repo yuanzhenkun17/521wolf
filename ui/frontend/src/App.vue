@@ -9,7 +9,7 @@ import { useGameAudio } from './composables/useGameAudio.ts'
 import { useGameHistory } from './composables/useGameHistory.ts'
 import { useAppRuntimeProps } from './composables/appRuntimeProps'
 import { isReturnableGame } from './composables/gameSession.ts'
-import { appViewFromRoute } from './router/appViews'
+import { appViewFromRouteSource } from './router/appViews'
 import {
   createIncrementalRuntimeHydrator,
   useGameStore,
@@ -60,55 +60,50 @@ watchEffect(() => {
 })
 
 const {
-  readRuntime,
   logsProps,
   benchmarkProps,
   evolutionProps,
   lobbyProps,
   matchProps,
-  activeSession,
   audioEnabled: rawAudioEnabled,
   ttsEnabled: rawTtsEnabled,
-  ttsAvailable: rawTtsAvailable,
-  runtimeCurrentView
+  ttsAvailable: rawTtsAvailable
 } = useAppRuntimeProps(runtime)
 const audioEnabled = computed(() => Boolean(rawAudioEnabled.value))
 const ttsEnabled = computed(() => Boolean(rawTtsEnabled.value))
 const ttsAvailable = computed(() => Boolean(rawTtsAvailable.value))
-const routeAppView = computed(() => appViewFromRoute(route))
-const activeAppView = computed(() => {
-  if (route.path === '/' && runtimeCurrentView.value !== 'lobby') return runtimeCurrentView.value
-  return routeAppView.value || runtimeCurrentView.value
-})
+const routeAppView = computed(() => appViewFromRouteSource(route))
+const activeAppView = computed(() => routeAppView.value || 'lobby')
 const inLobby = computed(() => activeAppView.value === 'lobby')
 const inMatch = computed(() => activeAppView.value === 'match')
 const inLogs = computed(() => activeAppView.value === 'logs')
 const inBenchmark = computed(() => activeAppView.value === 'benchmark')
 const inEvolution = computed(() => activeAppView.value === 'evolution')
-const topNavActiveView = computed(() => readRuntime('isReplayMode') ? 'logs' : activeAppView.value)
+const activeSession = computed(() => sessionStore.activeSession)
+const topNavActiveView = computed(() => replayStore.isReplayMode ? 'logs' : activeAppView.value)
 const showActiveGamePill = computed(() => {
-  if (readRuntime('isReplayMode')) return false
+  if (replayStore.isReplayMode) return false
   if (activeAppView.value === 'match') return false
-  return isReturnableGame(readRuntime('liveGame'))
+  return isReturnableGame(gameStore.liveGame)
 })
 const showMatchBoot = computed(() => {
   return activeAppView.value === 'match'
-    && !readRuntime('isReplayMode')
+    && !replayStore.isReplayMode
     && (
-      !readRuntime('game')
+      !gameStore.liveGame
       || (
-        !readRuntime('roleAssignmentComplete')
-        && (readRuntime('judgeBoardStarted') || readRuntime('judgeBoardStarting'))
+        !gameStore.roleAssignmentComplete
+        && (gameStore.judgeBoardStarted || gameStore.judgeBoardStarting)
       )
     )
 })
 const matchBootStatus = computed(() => {
-  if (!readRuntime('game')) return '创建房间'
-  if (!readRuntime('roleAssignmentComplete')) return '分配身份'
+  if (!gameStore.liveGame) return '创建房间'
+  if (!gameStore.roleAssignmentComplete) return '分配身份'
   return '进入议事厅'
 })
 const showTopbarExitGame = computed(() => {
-  return activeAppView.value === 'match' && !readRuntime('isReplayMode') && Boolean(readRuntime('game'))
+  return activeAppView.value === 'match' && !replayStore.isReplayMode && Boolean(gameStore.liveGame)
 })
 const topbarExitDisabled = computed(() => false)
 

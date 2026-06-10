@@ -52,6 +52,29 @@ export function appViewFromRoute(route: Pick<RouteLocationNormalizedLoaded, 'pat
   return appViewFromPath(route.path)
 }
 
+export function knownAppViewFromPath(path = ''): AppView | '' {
+  if (!path) return ''
+  return PATH_VIEWS[normalizedPath(path)] || ''
+}
+
+export function appViewFromRouteSource(
+  route: Partial<Pick<RouteLocationNormalizedLoaded, 'name' | 'path' | 'hash'>> | null | undefined
+): AppView | '' {
+  if (!route) return ''
+
+  const pathView = knownAppViewFromPath(route.path || '')
+  if (pathView && pathView !== 'lobby') return pathView
+
+  const routeName = typeof route.name === 'string' ? route.name : String(route.name || '')
+  if (isAppView(routeName) && routeName !== 'lobby') return routeName
+
+  const hashView = appViewFromLegacyHash(route.hash || '')
+  if (hashView !== 'lobby') return hashView
+
+  if (pathView === 'lobby' || routeName === 'lobby') return 'lobby'
+  return ''
+}
+
 export function appViewFromLegacyHash(hash = globalThis.window?.location?.hash || ''): AppView {
   if (!hash) return 'lobby'
   const routeHash = String(hash || '').split('?')[0]

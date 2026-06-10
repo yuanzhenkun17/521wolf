@@ -34,7 +34,16 @@ export interface IncrementalRuntimeHydrator {
 
 export const runtimeHydrationKeys = {
   session: ['currentView', 'backendMode', 'activeSession', 'returnToMatchAvailable'],
-  game: ['liveGame', 'game', 'loading', 'error', 'watchRunning'],
+  game: [
+    'liveGame',
+    'game',
+    'loading',
+    'error',
+    'watchRunning',
+    'roleAssignmentComplete',
+    'judgeBoardStarted',
+    'judgeBoardStarting'
+  ],
   history: [
     'gameHistory',
     'selectedHistoryGameId',
