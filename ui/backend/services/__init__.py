@@ -9,6 +9,7 @@ from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogServic
 from ui.backend.services.evolution_service import EvolutionService
 from ui.backend.services.evolution_proposal_service import EvolutionProposalService
 from ui.backend.services.game_delete_service import GameDeleteCoordinator
+from ui.backend.services.game_persistence_service import GamePersistenceService
 from ui.backend.services.game_read_service import GameHistoryService, GameReadGateway
 from ui.backend.services.live_game_lifecycle import LiveGameLifecycleCoordinator
 from ui.backend.services.role_service import RoleService, RoleServiceStoreProtocol
@@ -24,6 +25,7 @@ __all__ = [
     "EvolutionProposalService",
     "GameDeleteCoordinator",
     "GameHistoryService",
+    "GamePersistenceService",
     "GameReadGateway",
     "LiveGameLifecycleCoordinator",
     "RoleService",
