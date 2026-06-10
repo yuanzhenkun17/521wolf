@@ -478,13 +478,6 @@ function shortId(value: unknown): string {
           <strong>{{ activeGroupInfo.label }}</strong>
         </header>
 
-        <div class="settings-rail-summary" aria-label="设置概览">
-          <span v-for="item in settingsMetaRows" :key="item.key">
-            <small>{{ item.label }}</small>
-            <b :title="String(item.value ?? '')">{{ item.value }}</b>
-          </span>
-        </div>
-
         <div class="settings-filter-panel">
           <div class="settings-filter-head">
             <span class="settings-rail-label">设置分组</span>
@@ -495,6 +488,7 @@ function shortId(value: unknown): string {
               v-for="group in GROUPS"
               :key="group.key"
               type="button"
+              :data-group="group.key"
               :class="['settings-filter-chip', { selected: activeGroup === group.key }]"
               @click="selectGroup(group.key)"
             >
@@ -521,27 +515,13 @@ function shortId(value: unknown): string {
           </div>
           <div class="settings-command-actions">
             <button type="button" class="settings-refresh-button" :disabled="healthProbeTesting || loading" @click="probeRuntimeModel">
-              <span aria-hidden="true">&#9678;</span> {{ healthProbeTesting ? '测试中' : '测试当前模型' }}
+              <span aria-hidden="true">&#9678;</span> {{ healthProbeTesting ? '测试中' : '测试' }}
             </button>
             <button type="button" class="settings-refresh-button" :disabled="loading" @click="refreshSettings">
               <span aria-hidden="true">&#8635;</span> {{ loading ? '刷新中' : '刷新' }}
             </button>
           </div>
         </header>
-
-        <div class="settings-detail-topbar">
-          <nav class="settings-nav detail-workspace-tabs" aria-label="设置视图">
-            <button
-              v-for="group in GROUPS"
-              :key="group.key"
-              type="button"
-              :class="['settings-nav-tab', { active: activeGroup === group.key }]"
-              @click="selectGroup(group.key)"
-            >
-              <span>{{ group.label }}</span>
-            </button>
-          </nav>
-        </div>
 
         <section class="settings-main-pane">
           <div class="settings-scroll">
@@ -636,31 +616,33 @@ function shortId(value: unknown): string {
                 </label>
               </div>
 
-              <div class="settings-toggle-grid">
-                <label>
-                  <input v-model="form.enabled" :disabled="!canWrite" type="checkbox" />
-                  <span>启用 Profile</span>
-                </label>
-                <label>
-                  <input v-model="form.clear_api_key" :disabled="!canWrite || !selectedProfile?.has_api_key" type="checkbox" />
-                  <span>清除已保存 key</span>
-                </label>
-              </div>
-
-              <div class="settings-scope-grid">
-                <div>
-                  <small>默认用途</small>
-                  <label v-for="scope in scopes" :key="scope.key">
-                    <input v-model="form.default_scopes[scope.key]" :disabled="!canWrite || Boolean(envLocks[scope.key])" type="checkbox" />
-                    <span>{{ scope.label }}</span>
+              <div class="settings-editor-options">
+                <div class="settings-toggle-grid">
+                  <label>
+                    <input v-model="form.enabled" :disabled="!canWrite" type="checkbox" />
+                    <span>启用 Profile</span>
+                  </label>
+                  <label>
+                    <input v-model="form.clear_api_key" :disabled="!canWrite || !selectedProfile?.has_api_key" type="checkbox" />
+                    <span>清除已保存 key</span>
                   </label>
                 </div>
-                <div>
-                  <small>Capabilities</small>
-                  <label v-for="(_value, key) in form.capabilities" :key="key">
-                    <input v-model="form.capabilities[key]" :disabled="!canWrite" type="checkbox" />
-                    <span>{{ key }}</span>
-                  </label>
+
+                <div class="settings-scope-grid">
+                  <div>
+                    <small>默认用途</small>
+                    <label v-for="scope in scopes" :key="scope.key">
+                      <input v-model="form.default_scopes[scope.key]" :disabled="!canWrite || Boolean(envLocks[scope.key])" type="checkbox" />
+                      <span>{{ scope.label }}</span>
+                    </label>
+                  </div>
+                  <div>
+                    <small>Capabilities</small>
+                    <label v-for="(_value, key) in form.capabilities" :key="key">
+                      <input v-model="form.capabilities[key]" :disabled="!canWrite" type="checkbox" />
+                      <span>{{ key }}</span>
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -806,7 +788,7 @@ function shortId(value: unknown): string {
             <b>{{ statusLabel(healthStatus) }}</b>
           </header>
 
-          <section class="settings-context-section">
+          <section class="settings-context-section settings-admin-panel">
             <h3>管理员写入</h3>
             <p class="settings-context-empty">{{ adminWriteHint() }}</p>
             <label class="settings-admin-token">
@@ -815,7 +797,7 @@ function shortId(value: unknown): string {
             </label>
           </section>
 
-          <section class="settings-context-section">
+          <section class="settings-context-section settings-profile-context">
             <h3>当前 Profile</h3>
             <template v-if="selectedProfile">
               <div class="settings-context-run-id">
@@ -844,13 +826,14 @@ function shortId(value: unknown): string {
             <p v-else class="settings-context-empty">正在编辑新 Profile。</p>
           </section>
 
-          <section class="settings-context-section">
+          <section class="settings-context-section settings-gate-panel">
             <h3>运行门禁</h3>
             <div class="settings-gate-list">
               <span v-for="gate in gateRows" :key="gate.key">
                 <b>{{ gate.label }}</b>
                 <small>{{ gate.ready ? '可启动' : gate.blockers.join(' / ') || '不可启动' }}</small>
               </span>
+              <p v-if="!gateRows.length" class="settings-context-empty">暂无门禁项。</p>
             </div>
           </section>
         </div>
@@ -901,15 +884,15 @@ function shortId(value: unknown): string {
 .settings-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr) 292px;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
     "rail command context"
-    "rail topbar context"
     "rail pane context";
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  gap: 0 18px;
+  column-gap: 18px;
+  row-gap: 0;
   padding: 26px;
   background: var(--settings-bg-texture);
 }
@@ -931,21 +914,33 @@ function shortId(value: unknown): string {
 
 .settings-control-rail {
   grid-area: rail;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--settings-border);
-  border-radius: 8px;
-  background: var(--settings-surface);
+  padding: 0 14px 0 0;
+  border-right: 1px solid rgba(91, 47, 18, 0.2);
+  background: transparent;
 }
 
-.settings-rail-header,
+.settings-rail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--settings-border);
+  background: transparent;
+}
+
 .settings-context-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 16px 16px 14px;
-  border-bottom: 1px solid var(--settings-border);
-  background: rgba(255, 252, 245, 0.34);
+  padding: 10px 12px;
 }
 
 .settings-rail-header span,
@@ -965,33 +960,33 @@ function shortId(value: unknown): string {
 .settings-context-head strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--settings-accent-strong);
-  font-size: 15px;
+  margin-left: auto;
+  color: var(--settings-accent);
+  font-size: 12px;
+  font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.settings-rail-summary,
 .settings-context-kpis {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 14px;
+  gap: 7px;
+  padding: 0 0 2px;
 }
 
-.settings-rail-summary span,
 .settings-context-kpis span,
 .settings-gate-list span {
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding: 9px;
+  min-height: 48px;
+  padding: 8px 10px;
   border: 1px solid rgba(139, 94, 52, 0.12);
   border-radius: 7px;
   background: rgba(255, 252, 245, 0.32);
 }
 
-.settings-rail-summary b,
 .settings-context-kpis b,
 .settings-gate-list b {
   min-width: 0;
@@ -1003,15 +998,20 @@ function shortId(value: unknown): string {
 }
 
 .settings-filter-panel {
-  padding: 2px 14px 14px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+  padding: 0;
 }
 
 .settings-filter-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 9px;
+  min-width: 0;
+  margin-bottom: 0;
 }
 
 .settings-refresh-note {
@@ -1023,11 +1023,18 @@ function shortId(value: unknown): string {
 
 .settings-filter-list {
   display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: max-content;
   gap: 7px;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.28) transparent;
 }
 
 .settings-filter-chip,
-.settings-nav-tab,
 .settings-refresh-button,
 .settings-card-action {
   border: 1px solid rgba(93, 48, 17, 0.18);
@@ -1039,15 +1046,66 @@ function shortId(value: unknown): string {
 }
 
 .settings-filter-chip {
+  --settings-filter-color: var(--settings-accent);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+  position: relative;
   width: 100%;
-  min-height: 52px;
-  padding: 9px 10px;
-  background: rgba(255, 252, 245, 0.34);
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  background: rgba(255, 239, 194, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
   text-align: left;
+}
+
+.settings-filter-chip::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 5px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 252, 228, 0.92) 0 2px, transparent 2px),
+    var(--settings-filter-color);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 252, 228, 0.58),
+    0 1px 2px rgba(93, 48, 17, 0.12);
+}
+
+.settings-filter-chip::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--settings-filter-color);
+  opacity: 0.62;
+}
+
+.settings-filter-chip[data-group="models"],
+.settings-filter-chip[data-group="benchmark"],
+.settings-filter-chip[data-group="evolution"] {
+  --settings-filter-color: #6a7a2c;
+}
+
+.settings-filter-chip[data-group="variables"] {
+  --settings-filter-color: #b9852f;
+}
+
+.settings-filter-chip[data-group="langfuse"] {
+  --settings-filter-color: #7a6047;
+}
+
+.settings-filter-chip[data-group="tts"] {
+  --settings-filter-color: #8b5e34;
+}
+
+.settings-filter-chip[data-group="system"] {
+  --settings-filter-color: var(--settings-danger);
 }
 
 .settings-filter-chip span,
@@ -1084,24 +1142,25 @@ function shortId(value: unknown): string {
 }
 
 .settings-filter-chip em {
-  display: grid;
-  min-width: 26px;
-  height: 26px;
-  place-items: center;
-  border-radius: 999px;
-  background: rgba(139, 94, 52, 0.08);
-  color: var(--settings-accent-strong);
+  min-width: max-content;
+  color: currentColor;
   font-style: normal;
-  font-size: 12px;
-  font-weight: 900;
+  font-size: 10px;
+  font-weight: 750;
+  opacity: 0.72;
+  white-space: nowrap;
 }
 
-.settings-filter-chip:hover,
-.settings-filter-chip.selected,
-.settings-nav-tab:hover,
-.settings-nav-tab.active {
+.settings-filter-chip:hover {
   border-color: rgba(90, 51, 25, 0.34);
-  background: var(--settings-active-bg);
+  background: rgba(255, 245, 214, 0.62);
+}
+
+.settings-filter-chip.selected {
+  border-color: rgba(93, 48, 17, 0.45);
+  color: var(--settings-text);
+  background: rgba(224, 184, 111, 0.66);
+  box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
 }
 
 .settings-command-bar {
@@ -1135,8 +1194,10 @@ function shortId(value: unknown): string {
 
 .settings-command-metrics {
   display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
   overflow: hidden;
 }
@@ -1145,9 +1206,14 @@ function shortId(value: unknown): string {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  flex: 0 0 92px;
+  flex: 1 1 0;
   min-width: 0;
-  max-width: 148px;
+  max-width: 92px;
+  overflow: hidden;
+}
+
+.settings-command-metrics span:nth-child(4) {
+  max-width: 112px;
 }
 
 .settings-command-metrics small {
@@ -1167,76 +1233,97 @@ function shortId(value: unknown): string {
   white-space: nowrap;
 }
 
+.settings-command-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
 .settings-refresh-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-width: 92px;
+  gap: 5px;
+  min-width: 56px;
   height: 42px;
-  padding: 0 15px;
-  background: #e8c484;
-  color: #2d1e10;
+  padding: 0 10px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  background: rgba(255, 239, 194, 0.42);
+  color: rgba(59, 28, 9, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
   font-size: 13px;
   font-weight: 800;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
   white-space: nowrap;
 }
 
-.settings-detail-topbar {
-  grid-area: topbar;
-  min-width: 0;
-  padding: 10px 16px;
-  border-right: 1px solid var(--settings-border);
-  border-bottom: 1px solid var(--settings-border);
-  border-left: 1px solid var(--settings-border);
-  background: rgba(255, 252, 245, 0.28);
-}
-
-.settings-nav {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: none;
-}
-
-.settings-nav::-webkit-scrollbar {
-  display: none;
-}
-
-.settings-nav-tab {
-  flex: 0 0 auto;
-  height: 34px;
-  padding: 0 13px;
-  background: rgba(255, 252, 245, 0.36);
-  font-size: 13px;
-  font-weight: 800;
+.settings-refresh-button:hover {
+  border-color: rgba(93, 48, 17, 0.32);
+  color: var(--settings-text);
+  background: rgba(255, 245, 214, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.82);
+  transform: none;
 }
 
 .settings-main-pane {
   grid-area: pane;
   overflow: hidden;
-  border-right: 1px solid var(--settings-border);
-  border-bottom: 1px solid var(--settings-border);
-  border-left: 1px solid var(--settings-border);
+  border: 1px solid var(--settings-border);
   border-radius: 0 0 8px 8px;
-  background: rgba(255, 252, 245, 0.2);
+  background: rgba(255, 252, 245, 0.24);
 }
 
-.settings-scroll,
-.settings-context-scroll {
+.settings-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   height: 100%;
+  min-height: 0;
   overflow: auto;
   padding: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.34) transparent;
+}
+
+.settings-context-scroll {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  max-width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.3) transparent;
+}
+
+.settings-scroll::-webkit-scrollbar,
+.settings-context-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-scroll::-webkit-scrollbar-thumb,
+.settings-context-scroll::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(139, 94, 52, 0.18);
 }
 
 .settings-card {
-  margin-bottom: 14px;
-  border: 1px solid var(--settings-border);
-  border-radius: 8px;
-  background: var(--settings-panel);
-  box-shadow: 0 8px 18px rgba(97, 58, 21, 0.08);
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  margin-bottom: 0;
+  padding: 14px;
+  border: 1px solid rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.36), rgba(255, 239, 194, 0.18)),
+    rgba(255, 252, 245, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.48);
 }
 
 .settings-card > header {
@@ -1244,33 +1331,48 @@ function shortId(value: unknown): string {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 15px 16px;
-  border-bottom: 1px solid var(--settings-border);
+  min-width: 0;
+  min-height: 38px;
+  margin: -2px 0 0;
+  padding: 0 0 10px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.14);
 }
 
 .settings-card h2 {
-  margin: 3px 0 0;
-  color: var(--settings-accent-strong);
-  font-size: 18px;
-  line-height: 1.1;
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 950;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-card > header > b,
 .settings-context-head > b {
   flex: 0 0 auto;
-  padding: 5px 8px;
-  border-radius: 999px;
-  background: rgba(139, 94, 52, 0.09);
-  color: var(--settings-accent-strong);
+  padding: 3px 8px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 239, 194, 0.38);
+  color: rgba(74, 37, 15, 0.72);
   font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
 }
 
 .settings-card-action {
-  min-height: 34px;
-  padding: 0 12px;
-  background: rgba(255, 252, 245, 0.58);
-  font-size: 12px;
-  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  background: rgba(255, 239, 194, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
+  font-size: 11px;
+  font-weight: 900;
   white-space: nowrap;
 }
 
@@ -1295,7 +1397,7 @@ function shortId(value: unknown): string {
 .settings-variable-list,
 .settings-health-grid {
   display: grid;
-  gap: 0;
+  gap: 7px;
 }
 
 .settings-profile-row {
@@ -1304,11 +1406,12 @@ function shortId(value: unknown): string {
   align-items: center;
   gap: 11px;
   width: 100%;
-  min-height: 64px;
-  padding: 11px 15px;
-  border: 0;
-  border-bottom: 1px solid rgba(139, 94, 52, 0.1);
-  background: transparent;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.5);
   color: var(--settings-text);
   text-align: left;
   cursor: pointer;
@@ -1316,7 +1419,13 @@ function shortId(value: unknown): string {
 
 .settings-profile-row:hover,
 .settings-profile-row.selected {
-  background: var(--settings-hover);
+  border-color: rgba(93, 48, 17, 0.26);
+  background: rgba(255, 245, 214, 0.54);
+}
+
+.settings-profile-row.selected {
+  border-color: rgba(93, 48, 17, 0.45);
+  background: rgba(224, 184, 111, 0.36);
 }
 
 .settings-status-dot {
@@ -1336,11 +1445,35 @@ function shortId(value: unknown): string {
   background: #993026;
 }
 
+.settings-editor {
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.32fr);
+  align-items: start;
+}
+
+.settings-editor > header,
+.settings-editor .settings-form-actions {
+  grid-column: 1 / -1;
+}
+
+.settings-editor .settings-form-grid {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.settings-editor-options {
+  display: grid;
+  grid-column: 2;
+  grid-row: 2;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
 .settings-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  padding: 16px;
+  gap: 10px;
+  padding: 0;
 }
 
 .settings-form-grid label,
@@ -1359,25 +1492,50 @@ function shortId(value: unknown): string {
 .settings-admin-token input {
   width: 100%;
   min-width: 0;
-  height: 38px;
+  height: 36px;
   padding: 0 10px;
   border: 1px solid var(--settings-input-border);
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--settings-input-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.46);
   color: var(--settings-text);
   font-size: 13px;
+  font-weight: 850;
   outline: none;
 }
 
 .settings-toggle-grid,
 .settings-scope-grid {
   display: grid;
-  gap: 10px;
-  padding: 0 16px 16px;
+  gap: 8px;
+  padding: 0;
+}
+
+.settings-toggle-grid,
+.settings-scope-grid > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.14)),
+    rgba(255, 252, 245, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.46);
 }
 
 .settings-scope-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-scope-grid > div {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.settings-scope-grid small {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
 }
 
 .settings-toggle-grid label,
@@ -1385,17 +1543,26 @@ function shortId(value: unknown): string {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
+  min-height: 24px;
   color: var(--settings-text);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.settings-toggle-grid input,
+.settings-scope-grid input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--settings-accent);
 }
 
 .settings-form-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 16px 16px;
+  justify-content: flex-end;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(93, 48, 17, 0.12);
 }
 
 .settings-variable-row,
@@ -1405,8 +1572,11 @@ function shortId(value: unknown): string {
   align-items: center;
   gap: 12px;
   min-height: 56px;
-  padding: 11px 15px;
-  border-bottom: 1px solid rgba(139, 94, 52, 0.1);
+  padding: 9px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.5);
 }
 
 .settings-variable-row em,
@@ -1443,7 +1613,7 @@ function shortId(value: unknown): string {
   min-height: 34px;
   padding: 5px 9px;
   border: 1px solid rgba(139, 94, 52, 0.14);
-  border-radius: 999px;
+  border-radius: 0;
   background: rgba(255, 252, 245, 0.4);
   color: var(--settings-accent-strong);
   font-size: 12px;
@@ -1463,7 +1633,7 @@ function shortId(value: unknown): string {
   height: 34px;
   padding: 0 10px;
   border: 1px solid var(--settings-input-border);
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--settings-input-bg);
   color: var(--settings-text);
   font-size: 13px;
@@ -1481,130 +1651,467 @@ function shortId(value: unknown): string {
 .settings-warning,
 .settings-notice,
 .settings-context-empty {
+  min-width: 0;
   margin: 0;
-  padding: 14px 15px;
+  overflow-wrap: anywhere;
+  padding: 10px;
   color: var(--settings-muted);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.settings-empty,
+.settings-context-empty {
+  border: 1px dashed rgba(93, 48, 17, 0.16);
+  border-radius: 0;
+  background: rgba(255, 242, 210, 0.34);
 }
 
 .settings-warning {
-  margin-bottom: 12px;
+  margin-bottom: 0;
   border: 1px solid rgba(153, 48, 38, 0.22);
-  border-radius: 7px;
+  border-radius: 0;
   background: rgba(153, 48, 38, 0.08);
   color: var(--settings-danger);
 }
 
 .settings-notice {
-  margin-bottom: 12px;
+  margin-bottom: 0;
   border: 1px solid rgba(104, 119, 43, 0.2);
-  border-radius: 7px;
+  border-radius: 0;
   background: rgba(104, 119, 43, 0.08);
   color: #4e5f22;
 }
 
 .settings-context-rail {
   grid-area: context;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--settings-border);
-  border-radius: 8px;
-  background: var(--settings-surface);
+  padding-left: 16px;
+  border-left: 1px solid rgba(93, 48, 17, 0.2);
+  background: transparent;
+}
+
+.settings-context-head,
+.settings-context-section {
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.28), rgba(255, 239, 194, 0.14)),
+    rgba(255, 252, 245, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.46);
 }
 
 .settings-context-section {
-  margin-bottom: 12px;
-  border: 1px solid var(--settings-border);
-  border-radius: 8px;
-  background: rgba(255, 252, 245, 0.34);
+  position: relative;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 0;
+  overflow: hidden;
+  padding: 10px 11px 11px;
+}
+
+.settings-context-section::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  background: var(--settings-accent);
+  opacity: 0.34;
+}
+
+.settings-admin-panel::before {
+  background: #b9852f;
+}
+
+.settings-profile-context::before {
+  background: #6a7a2c;
+}
+
+.settings-gate-panel::before {
+  background: #7a6047;
 }
 
 .settings-context-section h3 {
   margin: 0;
-  padding: 13px 14px 0;
-  color: var(--settings-accent-strong);
-  font-size: 15px;
+  padding: 0 0 7px 7px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  color: #3b1c09;
+  font-size: 13px;
+  font-weight: 950;
 }
 
 .settings-admin-token {
-  padding: 0 14px 14px;
+  padding: 0;
+}
+
+.settings-admin-token input {
+  height: 34px;
 }
 
 .settings-context-run-id {
   display: grid;
   gap: 6px;
-  margin: 12px 14px 0;
-  padding: 10px;
-  border-radius: 7px;
-  background: rgba(45, 34, 24, 0.9);
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.28);
 }
 
 .settings-context-run-id small {
-  color: rgba(232, 210, 170, 0.72);
+  color: var(--settings-muted);
   font-size: 11px;
   font-weight: 800;
 }
 
 .settings-context-run-id code {
+  min-width: 0;
+  overflow: hidden;
   overflow-wrap: anywhere;
-  color: #fff4d9;
+  color: var(--settings-text);
   font-size: 12px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-gate-list {
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  gap: 0;
+  padding: 0;
 }
 
-@media (max-width: 1180px) {
-  .settings-shell {
-    grid-template-columns: 220px minmax(0, 1fr);
-    grid-template-areas:
-      "rail command"
-      "rail topbar"
-      "rail pane"
-      "context context";
-    overflow: auto;
-  }
-
-  .settings-context-rail {
-    min-height: 320px;
-  }
+.settings-context-kpis {
+  gap: 0 10px;
 }
 
-@media (max-width: 760px) {
-  .settings-page {
-    top: 64px;
+.settings-context-kpis span,
+.settings-gate-list span {
+  min-height: 0;
+  padding: 7px 0;
+  border: 0;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.1);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+@media (max-width: 1120px) {
+  .settings-command-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    margin: 0 12px 10px;
   }
 
-  .settings-shell {
-    display: block;
-    padding: 14px;
-    overflow: auto;
+  .settings-command-metrics,
+  .settings-command-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
-  .settings-control-rail,
-  .settings-context-rail,
-  .settings-command-bar,
-  .settings-detail-topbar,
-  .settings-main-pane {
-    margin-bottom: 12px;
-    border-radius: 8px;
+  .settings-shell,
+  .settings-shell.parchment-logbook {
+    grid-template-columns: 220px minmax(0, 1fr) 260px;
+    column-gap: 14px;
   }
 
-  .settings-command-bar,
-  .settings-profile-row,
-  .settings-variable-row,
-  .settings-health-row,
-  .settings-form-grid,
-  .settings-scope-grid {
+  .settings-editor {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .settings-editor .settings-form-grid,
+  .settings-editor-options,
+  .settings-editor .settings-form-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .settings-editor-options {
+    grid-template-columns: minmax(0, 0.38fr) minmax(0, 0.62fr);
+  }
+
+  .settings-profile-row,
+  .settings-variable-row,
+  .settings-health-row {
+    grid-template-columns: 12px minmax(0, 1fr);
+  }
+
+  .settings-variable-row strong,
+  .settings-variable-input,
+  .settings-variable-toggle,
+  .settings-variable-row .settings-card-action,
+  .settings-health-row em {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 960px) {
+  .settings-page {
+    right: 18px;
+    left: 18px;
+    padding: 0 0 18px;
+  }
+
+  .settings-shell,
+  .settings-shell.parchment-logbook {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "command"
+      "rail"
+      "pane"
+      "context";
+    gap: 8px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .settings-command-bar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 10px;
+    margin: 0 12px 8px;
+    padding: 14px;
+  }
+
+  .settings-command-actions {
+    grid-column: auto;
+  }
+
+  .settings-control-rail {
+    grid-template-rows: auto auto;
+    gap: 8px;
+    padding: 0 0 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--settings-border);
+  }
+
+  .settings-filter-list {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-right: 0;
+    scrollbar-width: none;
+  }
+
+  .settings-filter-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-filter-chip {
+    flex: 0 0 176px;
+  }
+
+  .settings-main-pane {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .settings-scroll {
+    max-height: none;
+    overflow: visible;
+    padding: 12px;
+  }
+
+  .settings-editor-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-context-rail {
+    padding: 8px 0 0;
+    border-left: none;
+    border-top: 1px solid var(--settings-border);
+  }
+
+  .settings-context-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-page {
+    right: 10px;
+    left: 10px;
+    padding-bottom: 10px;
+  }
+
+  .settings-shell,
+  .settings-shell.parchment-logbook {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .settings-command-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title action"
+      "metrics metrics";
+    gap: 6px;
+    margin: 0 10px 8px;
+    padding: 9px;
+  }
+
+  .settings-command-title {
+    grid-area: title;
+  }
+
+  .settings-command-actions {
+    grid-area: action;
+    align-self: center;
+    justify-content: end;
+  }
+
   .settings-command-metrics {
+    grid-area: metrics;
+    gap: 12px;
     justify-content: flex-start;
-    flex-wrap: wrap;
+  }
+
+  .settings-command-title h2 {
+    font-size: 18px;
+  }
+
+  .settings-refresh-button {
+    width: auto;
+    min-width: 64px;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .settings-filter-chip {
+    flex-basis: 152px;
+  }
+
+  .settings-scroll {
+    padding: 10px;
+  }
+
+  .settings-form-grid,
+  .settings-scope-grid,
+  .settings-context-kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 961px) {
+  .settings-shell,
+  .settings-shell.parchment-logbook {
+    grid-template-columns: 252px minmax(0, 1fr) 300px;
+    column-gap: 8px;
+    padding: 12px;
+  }
+
+  .settings-control-rail {
+    gap: 10px;
+    padding-right: 14px;
+    border-right-color: rgba(93, 48, 17, 0.22);
+  }
+
+  .settings-rail-header {
+    min-height: 57px;
+    padding: 10px 0 12px;
+    border-bottom-color: rgba(93, 48, 17, 0.2);
+  }
+
+  .settings-rail-header span {
+    font-size: 22px;
+    font-weight: 950;
+  }
+
+  .settings-rail-header strong {
+    height: auto;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--settings-muted);
+    font-size: 13px;
+  }
+
+  .settings-filter-chip {
+    height: 36px;
+    padding: 0 11px;
+  }
+
+  .settings-command-bar {
+    grid-template-columns: 188px minmax(0, 1fr) 124px;
+    gap: 14px;
+    min-height: 57px;
+    padding: 10px 0 12px;
+    border: 0;
+    border-bottom: 1px solid rgba(93, 48, 17, 0.2);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .settings-command-title h2 {
+    color: var(--settings-text);
+    font-size: 22px;
+    font-weight: 950;
+  }
+
+  .settings-command-metrics {
+    gap: 6px;
+    justify-content: flex-end;
+    width: 100%;
+  }
+
+  .settings-command-metrics span {
+    flex: 1 1 0;
+    max-width: 72px;
+  }
+
+  .settings-command-metrics span:nth-child(1) {
+    max-width: 76px;
+  }
+
+  .settings-command-metrics span:nth-child(4) {
+    max-width: 92px;
+  }
+
+  .settings-command-metrics small {
+    color: var(--settings-muted);
+    font-size: 11px;
+  }
+
+  .settings-command-metrics b {
+    color: var(--settings-text);
+    font-size: 13px;
+  }
+
+  .settings-refresh-button {
+    flex: 0 0 58px;
+    min-width: 58px;
+    height: 34px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .settings-main-pane {
+    align-self: stretch;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .settings-scroll {
+    height: 100%;
+    max-height: none;
+    padding: 14px 0 12px;
   }
 }
 </style>

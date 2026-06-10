@@ -628,7 +628,7 @@ onBeforeUnmount(clearExitConfirm)
   position: absolute;
   right: 8px;
   justify-self: auto;
-  width: 350px;
+  width: min(430px, calc(100dvw - 96px));
   height: 48px;
   gap: 0;
   padding: 0;
@@ -642,8 +642,8 @@ onBeforeUnmount(clearExitConfirm)
 .topbar--section .primary-nav button {
   position: relative;
   flex: 1 1 0;
-  width: 56px;
-  min-width: 56px;
+  width: auto;
+  min-width: 64px;
   height: 48px;
   padding: 0 8px;
   border: 0;
@@ -655,6 +655,12 @@ onBeforeUnmount(clearExitConfirm)
   font-size: 17px;
   font-weight: 800;
   text-shadow: 0 0 12px rgba(255, 180, 168, 0.14);
+}
+
+.topbar--lobby .primary-nav .nav-label,
+.topbar--section .primary-nav .nav-label {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .topbar--lobby .primary-nav button[data-work-line="lab"] {
@@ -1220,6 +1226,7 @@ onBeforeUnmount(clearExitConfirm)
     position: relative;
     grid-template-rows: 9px 14px;
     width: auto;
+    min-width: 0;
     height: 30px;
     padding: 0 5px;
     font-size: 11px;

@@ -308,13 +308,6 @@ function eventPayload(event: TaskEventRow): string {
           <strong>{{ visibleTasks.length }} / {{ tasks.length }}</strong>
         </header>
 
-        <div class="tasks-rail-summary" aria-label="任务概览">
-          <span v-for="item in taskMetaRows" :key="item.key">
-            <small>{{ item.label }}</small>
-            <b :title="String(item.value ?? '')">{{ item.value }}</b>
-          </span>
-        </div>
-
         <div class="tasks-filter-panel">
           <div class="tasks-filter-head">
             <span class="tasks-rail-label">状态筛选</span>
@@ -819,7 +812,7 @@ function eventPayload(event: TaskEventRow): string {
 .tasks-control-rail {
   grid-area: rail;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
   min-height: 0;
@@ -863,25 +856,6 @@ function eventPayload(event: TaskEventRow): string {
   font-weight: 800;
 }
 
-.tasks-rail-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding: 0 0 2px;
-}
-
-.tasks-rail-summary span {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  min-height: 48px;
-  padding: 8px 10px;
-  border: 1px solid var(--tasks-border);
-  border-radius: 7px;
-  background: rgba(255, 252, 245, 0.3);
-}
-
-.tasks-rail-summary small,
 .task-filter-chip small,
 .task-search span,
 .task-refresh-note,
@@ -899,7 +873,6 @@ function eventPayload(event: TaskEventRow): string {
   line-height: 1.1;
 }
 
-.tasks-rail-summary b,
 .task-filter-chip b,
 .task-row b,
 .tasks-card header b,
@@ -1698,8 +1671,7 @@ function eventPayload(event: TaskEventRow): string {
     padding: 10px;
   }
 
-  .tasks-context-kpis,
-  .tasks-rail-summary {
+  .tasks-context-kpis {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -1736,17 +1708,6 @@ function eventPayload(event: TaskEventRow): string {
     background: transparent;
     color: var(--tasks-muted);
     font-size: 13px;
-  }
-
-  .tasks-rail-summary {
-    gap: 8px;
-  }
-
-  .tasks-rail-summary span {
-    min-height: 44px;
-    padding: 7px 9px;
-    border-color: rgba(93, 48, 17, 0.16);
-    background: rgba(255, 239, 194, 0.42);
   }
 
   .task-filter-chip {

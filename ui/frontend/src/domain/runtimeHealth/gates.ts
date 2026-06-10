@@ -23,6 +23,12 @@ const WARNING_LABELS: Record<string, string> = {
   artifact_root: '产物目录状态未知'
 }
 
+const ACTION_LABELS: Record<string, string> = {
+  'open settings and test the model connection': '打开设置页，测试模型连接。',
+  'configure a model profile in settings': '在设置页配置模型 Profile。',
+  'set settings_admin_enabled=true': '开启 SETTINGS_ADMIN_ENABLED=true 后再修改设置。'
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -35,6 +41,13 @@ function stringItems(value: unknown): string[] {
 
 function labelItems(items: string[], labels: Record<string, string>): string[] {
   return items.map((item) => labels[item] || item)
+}
+
+function labelActionItems(items: string[]): string[] {
+  return items.map((item) => {
+    const key = item.replace(/\.$/, '').trim().toLowerCase()
+    return ACTION_LABELS[key] || item
+  })
 }
 
 function firstText(...values: unknown[]): string {
@@ -80,9 +93,10 @@ export function runtimeHealthGateSummary(
   const ready = gate.ready !== false
   const blockerLabels = labelItems(blockers, BLOCKER_LABELS)
   const warningLabels = labelItems(warnings, WARNING_LABELS)
+  const actionLabels = labelActionItems(actions)
   const reason = ready
     ? ''
-    : firstText(actions[0], blockerLabels.join('、'), SCOPE_BLOCKED_REASON[scope], '运行环境未就绪。')
+    : firstText(blockerLabels.join('、'), actionLabels[0], SCOPE_BLOCKED_REASON[scope], '运行环境未就绪。')
   const warning = ready && warningLabels.length
     ? `运行环境有降级项：${warningLabels.join('、')}。启动时会再次检查。`
     : ''
@@ -94,7 +108,7 @@ export function runtimeHealthGateSummary(
     status: String(gate.status || (ready ? 'ok' : 'error')),
     blockers,
     warnings,
-    actions,
+    actions: actionLabels,
     disabled: !ready,
     reason,
     warning

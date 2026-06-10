@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, getCurrentInstance, onMounted, ref, watch, type PropType } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { type GameStartRoleVersionMode, gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
 import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
 import { runtimeHealthGateSummary } from '../domain/runtimeHealth/gates'
@@ -57,6 +57,7 @@ const gameStartGate = computed(() => runtimeHealthGateSummary(props.runtimeHealt
 const gameStartBlocked = computed(() => backendAvailable.value && gameStartGate.value.disabled)
 const gameStartGateMessage = computed(() => gameStartGate.value.reason || gameStartGate.value.warning)
 const gameStartGateTone = computed(() => gameStartGate.value.disabled ? 'error' : 'warning')
+const showGameStartGate = ref(false)
 const roles = ref([])
 const versionsByRole = ref({})
 const leaderboardsByRole = ref({})
@@ -66,6 +67,7 @@ const registryError = ref('')
 const startingMode = ref('')
 const roleVersionDrawerOpen = ref(false)
 const roleVersionMode = ref<GameStartRoleVersionMode>('baseline')
+let gameStartGateTimer: ReturnType<typeof setTimeout> | null = null
 let roleVersionLoadPromise = null
 
 const ROLE_VERSION_MODES: RoleVersionModeOption[] = [
@@ -208,6 +210,30 @@ function clearRoleVersionOverrides() {
   roleVersionMode.value = 'baseline'
 }
 
+function clearGameStartGateTimer() {
+  if (!gameStartGateTimer) return
+  clearTimeout(gameStartGateTimer)
+  gameStartGateTimer = null
+}
+
+function dismissGameStartGate() {
+  clearGameStartGateTimer()
+  showGameStartGate.value = false
+}
+
+function scheduleGameStartGateDismiss() {
+  clearGameStartGateTimer()
+  if (!gameStartGateMessage.value) {
+    showGameStartGate.value = false
+    return
+  }
+  showGameStartGate.value = true
+  gameStartGateTimer = setTimeout(() => {
+    showGameStartGate.value = false
+    gameStartGateTimer = null
+  }, 5200)
+}
+
 function start(mode) {
   if (gameStartBlocked.value) return
   startingMode.value = mode
@@ -267,6 +293,8 @@ async function loadRoleVersions() {
 }
 
 onMounted(loadRoleVersions)
+onBeforeUnmount(clearGameStartGateTimer)
+watch(gameStartGateMessage, scheduleGameStartGateDismiss, { immediate: true })
 watch(backendMode, () => {
   loadRoleVersions()
 })
@@ -381,7 +409,7 @@ watch(loading, (isLoading) => {
 
     <section class="lobby-actions">
       <section
-        v-if="backendAvailable && gameStartGateMessage"
+        v-if="backendAvailable && gameStartGateMessage && showGameStartGate"
         :class="['lobby-runtime-gate', gameStartGateTone]"
         aria-label="开局门禁"
         role="status"
@@ -391,6 +419,7 @@ watch(loading, (isLoading) => {
           <strong>{{ gameStartGateMessage }}</strong>
         </div>
         <small v-if="gameStartGate.actions.length">{{ gameStartGate.actions[0] }}</small>
+        <button type="button" aria-label="关闭开局门禁提示" @click="dismissGameStartGate">关闭</button>
       </section>
       <button class="mode-card watch" :disabled="loading || !backendAvailable || gameStartBlocked" @click="start('watch')">
         <span>观战模式</span>
@@ -593,9 +622,10 @@ watch(loading, (isLoading) => {
 .lobby-runtime-gate {
   grid-column: 1 / -1;
   display: grid;
-  gap: 4px;
-  min-height: 58px;
-  padding: 12px 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  min-height: 0;
+  padding: 10px 12px;
   border: 1px solid rgba(244, 213, 142, 0.3);
   border-radius: 8px;
   background: rgba(22, 12, 14, 0.72);
@@ -609,9 +639,16 @@ watch(loading, (isLoading) => {
 }
 
 .lobby-runtime-gate div {
+  grid-column: 1;
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+.lobby-runtime-gate small {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .lobby-runtime-gate span,
@@ -622,11 +659,31 @@ watch(loading, (isLoading) => {
 
 .lobby-runtime-gate strong {
   min-width: 0;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: inherit;
   font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+}
+
+.lobby-runtime-gate button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(244, 213, 142, 0.26);
+  border-radius: 6px;
+  background: rgba(244, 213, 142, 0.1);
+  color: rgba(245, 223, 170, 0.82);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.lobby-runtime-gate button:hover {
+  border-color: rgba(244, 213, 142, 0.42);
+  color: #f5dfaa;
+  background: rgba(244, 213, 142, 0.16);
 }
 
 :global(.lobby .card-fan) {

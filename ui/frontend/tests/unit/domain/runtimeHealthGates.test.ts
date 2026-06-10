@@ -25,7 +25,8 @@ describe('runtime health gate summaries', () => {
     expect(summary.known).toBe(true)
     expect(summary.disabled).toBe(true)
     expect(summary.blockers).toEqual(['llm_connectivity'])
-    expect(summary.reason).toBe('Open Settings and test the model connection.')
+    expect(summary.reason).toBe('模型连接不可用')
+    expect(summary.actions).toEqual(['打开设置页，测试模型连接。'])
   })
 
   it('surfaces degraded checks without disabling launch', () => {

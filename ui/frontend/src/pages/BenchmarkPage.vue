@@ -1247,6 +1247,7 @@ onBeforeUnmount(() => {
                 <span
                   v-for="item in planSummaryRows"
                   :key="item.key"
+                  :data-key="item.key"
                   :class="{ danger: item.danger }"
                 >
                   <small>{{ item.label }}</small>
@@ -2148,10 +2149,12 @@ onBeforeUnmount(() => {
 
 .bench-plan-summary span {
   display: grid;
+  align-content: start;
   gap: 3px;
   min-width: 0;
   min-height: 52px;
   padding: 9px 0;
+  position: relative;
   border: 0;
   border-bottom: 1px solid rgba(93, 48, 17, 0.1);
   border-radius: 0;
@@ -2159,8 +2162,10 @@ onBeforeUnmount(() => {
 }
 
 .bench-plan-summary span.danger {
-  border-color: var(--bench-danger-border);
-  background: var(--bench-danger-bg);
+  padding-left: 10px;
+  border-color: rgba(153, 48, 38, 0.16);
+  background: transparent;
+  box-shadow: inset 3px 0 0 rgba(153, 48, 38, 0.54);
 }
 
 .bench-plan-summary small,
@@ -2188,6 +2193,17 @@ onBeforeUnmount(() => {
 .bench-plan-summary span.danger b,
 .bench-plan-summary span.danger em {
   color: var(--bench-danger);
+}
+
+.bench-plan-summary span[data-key="gate"] em {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .bench-plan-warnings {
