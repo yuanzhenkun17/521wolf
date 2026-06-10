@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
 
 from fastapi import HTTPException
 
@@ -19,11 +20,14 @@ from ui.backend.evolution_serializers import (
     _evolution_batch_summary,
     _evolution_games_for_query,
     _evolution_run_summary,
+    _evolution_sse_event,
     _normalize_decision,
     _normalize_event,
     _sample_game_archive_payload,
 )
 from ui.backend.schemas import normalize_rejection_tags
+from ui.backend.services.task_service import BackgroundTaskServiceProtocol
+from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import (
     _background_source,
     _filter_values,
@@ -36,13 +40,25 @@ from ui.backend.task_state import (
 _log = logging.getLogger(__name__)
 _TERMINAL_TASK_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
 _FINISHED_ACTION_STATUSES = {"failed", "promoted", "rejected", "reviewing"}
+_TERMINAL_SSE_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
+
+
+class EvolutionServiceStoreProtocol(Protocol):
+    evolution_runs: dict[str, dict[str, Any]]
+    evolution_batches: dict[str, dict[str, Any]]
+    registry: Any
+
+    @property
+    def task_service(self) -> BackgroundTaskServiceProtocol:
+        ...
 
 
 class EvolutionService:
     """Build evolution API payloads while routes stay as HTTP adapters."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: EvolutionServiceStoreProtocol) -> None:
         self._store = store
+        self._tasks = store.task_service
 
     def list_runs(
         self,
@@ -95,6 +111,39 @@ class EvolutionService:
         if batch is not None:
             return _evolution_batch_summary(batch)
         raise HTTPException(status_code=404, detail="run not found")
+
+    def stream_events(self, run_id: str, last_event_id: int) -> AsyncIterator[str]:
+        entity = self._store.evolution_runs.get(run_id) or self._store.evolution_batches.get(run_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        task_event_log = self._tasks.task_event_log
+
+        async def stream() -> AsyncIterator[str]:
+            if task_event_log_matches_entity(
+                task_event_log,
+                run_id,
+                entity,
+                terminal_statuses=_TERMINAL_SSE_STATUSES,
+            ):
+                async for frame in stream_task_event_log_sse(
+                    task_event_log,
+                    run_id,
+                    after_event_id=last_event_id,
+                    ping_payload=lambda: {"run_id": run_id, "status": entity.get("status")},
+                    event_name=lambda item: str(item.get("event") or _evolution_sse_event(item.get("status"))),
+                    terminal_statuses=_TERMINAL_SSE_STATUSES,
+                ):
+                    yield frame
+                return
+            payload = (
+                _evolution_run_summary(entity)
+                if entity.get("run_id")
+                else _evolution_batch_summary(entity)
+            )
+            if last_event_id < 1:
+                yield _sse(_evolution_sse_event(entity.get("status")), payload, event_id=1)
+
+        return stream()
 
     def run_action(self, run_id: str, action: str) -> dict[str, Any]:
         entity = self._action_entity(run_id)
@@ -164,10 +213,10 @@ class EvolutionService:
         return entity
 
     def _persist_run_action_mutation(self, entity: dict[str, Any]) -> dict[str, Any]:
-        self._store._touch_background_task(entity)
+        self._tasks.touch_background_task(entity)
         if entity.get("status") in _FINISHED_ACTION_STATUSES:
             entity["finished_at"] = entity.get("finished_at") or beijing_now_iso()
-        self._store._persist_background_tasks()
+        self._tasks.persist_background_tasks()
         return entity
 
     def proposal_run(self, run_id: str) -> dict[str, Any]:
@@ -275,8 +324,8 @@ class EvolutionService:
         return payload
 
     def persist_proposal_mutation(self, run: dict[str, Any]) -> None:
-        self._store._touch_background_task(run)
-        self._store._persist_background_tasks()
+        self._tasks.touch_background_task(run)
+        self._tasks.persist_background_tasks()
 
     def proposals(self, run_id: str) -> dict[str, Any]:
         return self.proposal_payload(self.proposal_run(run_id))
@@ -448,4 +497,4 @@ class EvolutionService:
         raise HTTPException(status_code=404, detail="detail type not found")
 
 
-__all__ = ["EvolutionService"]
+__all__ = ["EvolutionService", "EvolutionServiceStoreProtocol"]

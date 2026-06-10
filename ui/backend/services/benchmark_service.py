@@ -32,6 +32,7 @@ from ui.backend.schemas import (
 )
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.evolution_serializers import _evolution_batch_summary
+from ui.backend.services.task_service import BackgroundTaskServiceProtocol
 from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import _set_task_contract
 
@@ -76,6 +77,11 @@ class BenchmarkServiceContextProtocol(Protocol):
     """Context capabilities required by ``BenchmarkService``."""
 
     paths: object
+    evolution_batches: dict[str, dict[str, Any]]
+
+    @property
+    def task_service(self) -> BackgroundTaskServiceProtocol:
+        ...
 
 
 class BenchmarkService:
@@ -95,6 +101,10 @@ class BenchmarkService:
     @property
     def context(self) -> BenchmarkServiceContextProtocol:
         return self._context
+
+    @property
+    def _tasks(self) -> BackgroundTaskServiceProtocol:
+        return self._context.task_service
 
     def _open_connection(self) -> Any:
         from app.lib.score import open_eval_connection
@@ -274,30 +284,31 @@ class BenchmarkService:
         _set_task_contract(batch, stop_requested=True, cancelled=True, interrupted=False, failed=False)
         batch["finished_at"] = beijing_now_iso()
         batch["error"] = batch.get("error") or MANUAL_STOP_REASON
-        self._context._mark_benchmark_stage(
+        self._tasks.mark_benchmark_stage(
             batch,
             "stopped",
             status="failed",
-            percent=self._context._task_progress_percent(batch),
+            percent=self._tasks.task_progress_percent(batch),
             completed_roles=int(batch.get("progress", {}).get("completed_roles", 0)) if isinstance(batch.get("progress"), dict) else 0,
             role_count=len(batch.get("roles", []) or []),
             diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
         )
-        self._context._persist_background_tasks()
+        self._tasks.persist_background_tasks()
         return batch
 
     def stream_benchmark_events(self, batch_id: str, last_event_id: int) -> AsyncIterator[str]:
         batch = self._batch(batch_id)
+        task_event_log = self._tasks.task_event_log
 
         async def stream() -> AsyncIterator[str]:
             if task_event_log_matches_entity(
-                self._context.task_event_log,
+                task_event_log,
                 batch_id,
                 batch,
                 terminal_statuses=_TERMINAL_BENCHMARK_SSE_STATUSES,
             ):
                 async for frame in stream_task_event_log_sse(
-                    self._context.task_event_log,
+                    task_event_log,
                     batch_id,
                     after_event_id=last_event_id,
                     ping_payload=lambda: {"batch_id": batch_id, "status": batch.get("status")},

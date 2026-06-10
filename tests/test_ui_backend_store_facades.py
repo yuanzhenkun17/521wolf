@@ -9,6 +9,8 @@ import pytest
 
 from app.config import PathConfig
 import ui.backend.store as ui_backend_store
+from ui.backend.services.benchmark_service import BenchmarkService
+from ui.backend.services.evolution_service import EvolutionService
 
 
 def test_game_read_gateway_facades_delegate_to_cached_gateway(
@@ -288,6 +290,93 @@ def test_task_service_facades_delegate_to_cached_service(
         ("open_connection",),
         ("touch_background_task", entity, "now"),
     ]
+
+
+def test_evolution_service_persists_actions_through_task_service() -> None:
+    class FakeTaskService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, ...]] = []
+
+        def touch_background_task(self, entity: dict[str, Any], *, timestamp: str | None = None) -> str:
+            self.calls.append(("touch_background_task", entity, timestamp))
+            return "heartbeat"
+
+        def persist_background_tasks(self) -> None:
+            self.calls.append(("persist_background_tasks",))
+
+    task_service = FakeTaskService()
+    run = {"kind": "role_evolution_run", "run_id": "run-1", "status": "failed"}
+    store = SimpleNamespace(
+        evolution_runs={"run-1": run},
+        evolution_batches={},
+        task_service=task_service,
+    )
+
+    result = EvolutionService(store).resume_run("run-1")
+
+    assert result is run
+    assert run["status"] == "reviewing"
+    assert run["stop_requested"] is False
+    assert task_service.calls == [
+        ("touch_background_task", run, None),
+        ("persist_background_tasks",),
+    ]
+
+
+def test_benchmark_service_stops_batches_through_task_service(tmp_path: Path) -> None:
+    class FakeTaskService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[Any, ...]] = []
+
+        def task_progress_percent(self, entity: dict[str, Any], default: float = 0.0) -> float:
+            self.calls.append(("task_progress_percent", entity, default))
+            return 0.35
+
+        def mark_benchmark_stage(
+            self,
+            batch: dict[str, Any],
+            stage: str,
+            **kwargs: Any,
+        ) -> None:
+            self.calls.append(("mark_benchmark_stage", batch, stage, kwargs))
+
+        def persist_background_tasks(self) -> None:
+            self.calls.append(("persist_background_tasks",))
+
+    task_service = FakeTaskService()
+    batch = {
+        "kind": "benchmark_batch",
+        "batch_id": "batch-1",
+        "status": "running",
+        "roles": ["seer", "villager"],
+        "progress": {"completed_roles": 1},
+    }
+    context = SimpleNamespace(
+        paths=PathConfig(root=tmp_path),
+        evolution_batches={"batch-1": batch},
+        task_service=task_service,
+    )
+
+    result = BenchmarkService(context).stop_benchmark("batch-1")
+
+    assert result is batch
+    assert batch["status"] == "failed"
+    assert batch["stop_requested"] is True
+    assert batch["cancelled"] is True
+    assert [call[0] for call in task_service.calls] == [
+        "task_progress_percent",
+        "mark_benchmark_stage",
+        "persist_background_tasks",
+    ]
+    mark_call = task_service.calls[1]
+    assert mark_call[1:3] == (batch, "stopped")
+    assert mark_call[3] == {
+        "status": "failed",
+        "percent": 0.35,
+        "completed_roles": 1,
+        "role_count": 2,
+        "diagnostic": {"kind": "benchmark_stopped", "message": batch["error"]},
+    }
 
 
 def test_benchmark_facades_delegate_to_cached_service(

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from ui.backend.services.task_service import TaskService
+from ui.backend.services.task_service import BackgroundTaskServiceProtocol, TaskService
 from ui.backend.task_events import TaskEventLog
 
 
 class BackgroundTaskStoreMixin:
     @property
-    def task_service(self) -> TaskService:
+    def task_service(self) -> BackgroundTaskServiceProtocol:
         return self._task_service()
 
     @property

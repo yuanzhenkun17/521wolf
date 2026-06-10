@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ui.backend.schemas import (
@@ -13,19 +13,11 @@ from ui.backend.schemas import (
     EvolutionStartRequest,
     automatic_evolution_request,
 )
-from ui.backend.serializers import (
-    _evolution_batch_summary,
-    _evolution_run_summary,
-    _evolution_sse_event,
-)
 from ui.backend.services import EvolutionService
-from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import (
     _history_query_requested,
     _last_event_id_from_request,
 )
-
-_TERMINAL_SSE_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
 
 
 def register_evolution_routes(api: FastAPI, store: Any) -> None:
@@ -125,34 +117,6 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
 
     @api.get("/api/evolution-runs/{run_id}/events")
     def evolution_events(run_id: str, request: Request) -> StreamingResponse:
-        entity = store.evolution_runs.get(run_id) or store.evolution_batches.get(run_id)
-        if entity is None:
-            raise HTTPException(status_code=404, detail="run not found")
         last_event_id = _last_event_id_from_request(request)
-
-        async def stream() -> AsyncIterator[str]:
-            if task_event_log_matches_entity(
-                store.task_event_log,
-                run_id,
-                entity,
-                terminal_statuses=_TERMINAL_SSE_STATUSES,
-            ):
-                async for frame in stream_task_event_log_sse(
-                    store.task_event_log,
-                    run_id,
-                    after_event_id=last_event_id,
-                    ping_payload=lambda: {"run_id": run_id, "status": entity.get("status")},
-                    event_name=lambda item: str(item.get("event") or _evolution_sse_event(item.get("status"))),
-                    terminal_statuses=_TERMINAL_SSE_STATUSES,
-                ):
-                    yield frame
-                return
-            payload = (
-                _evolution_run_summary(entity)
-                if entity.get("run_id")
-                else _evolution_batch_summary(entity)
-            )
-            if last_event_id < 1:
-                yield _sse(_evolution_sse_event(entity.get("status")), payload, event_id=1)
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
+        stream = service.stream_events(run_id, last_event_id)
+        return StreamingResponse(stream, media_type="text/event-stream")
