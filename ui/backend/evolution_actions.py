@@ -391,24 +391,6 @@ def accept_evolution_proposal(store: Any, run: dict[str, Any], proposal_id: str)
     return _proposal_action_payload(run, proposal)
 
 
-def reject_evolution_proposal(
-    store: Any,
-    run: dict[str, Any],
-    proposal_id: str,
-    *,
-    reason: str = "",
-    tags: list[str] | None = None,
-) -> dict[str, Any]:
-    from ui.backend.services.evolution_service import EvolutionService
-
-    return EvolutionService(store).reject_proposal(
-        run,
-        proposal_id,
-        reason=reason,
-        tags=tags,
-    )
-
-
 def apply_accepted_evolution_proposals(store: Any, run: dict[str, Any]) -> dict[str, Any]:
     del store
     proposals = _normalize_run_proposals(run, mutate=True)
@@ -729,16 +711,6 @@ def _proposal_id_sets(run: dict[str, Any], proposals: list[dict[str, Any]]) -> d
         "pending": pending_ids,
         "applied": applied_ids,
     }
-
-
-def _has_explicit_review(proposals: list[dict[str, Any]]) -> bool:
-    for proposal in proposals:
-        status = _proposal_status(proposal)
-        if status in _REVIEW_STATUSES:
-            return True
-        if any(key in proposal for key in ("accepted_at", "rejected_at", "reviewed_at", "rejection_reason")):
-            return True
-    return False
 
 
 def _promotion_proposals(run: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
