@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed, ref, watch } from 'vue'
 import JudgeEvidencePanel from '../history/JudgeEvidencePanel.vue'
 
@@ -1187,12 +1186,15 @@ function aggregateStatusReason(aggregate) {
   return [`${statusDisplayLabel(status)}: ${displayPhrase(reason)}`]
 }
 
-function withEvidenceMeta(details) {
-  details.total = Object.values(details).reduce((sum, rows) => (
+function withEvidenceMeta<T extends Record<string, unknown>>(details: T) {
+  const total = Object.values(details).reduce<number>((sum, rows) => (
     Array.isArray(rows) ? sum + rows.length : sum
   ), 0)
-  details.hasAny = details.total > 0
-  return details
+  return {
+    ...details,
+    total,
+    hasAny: total > 0
+  }
 }
 
 function buildBenchmarkAggregateEvidence(aggregate, diagnosticsRows) {
