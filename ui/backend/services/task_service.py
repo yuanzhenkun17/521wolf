@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from app.util.json import to_jsonable
 from app.util.time import beijing_now_iso
@@ -15,6 +15,44 @@ from ui.backend.task_events import TaskEventLog
 from ui.backend.task_state import _set_task_contract
 
 _log = logging.getLogger(__name__)
+
+
+class BackgroundTaskServiceProtocol(Protocol):
+    """Task operations exposed to backend services and routes."""
+
+    def open_connection(self) -> Any:
+        ...
+
+    @property
+    def task_event_log(self) -> TaskEventLog:
+        ...
+
+    def touch_background_task(self, entity: dict[str, Any], *, timestamp: str | None = None) -> str:
+        ...
+
+    def task_progress_percent(self, entity: dict[str, Any], default: float = 0.0) -> float:
+        ...
+
+    def mark_benchmark_stage(
+        self,
+        batch: dict[str, Any],
+        stage: str,
+        *,
+        status: str | None = None,
+        percent: float | None = None,
+        role: str | None = None,
+        role_index: int | None = None,
+        role_count: int | None = None,
+        completed_roles: int | None = None,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> None:
+        ...
+
+    def persist_background_tasks(self) -> None:
+        ...
+
+    def restore_background_tasks(self) -> int:
+        ...
 
 
 class TaskService:
@@ -325,4 +363,4 @@ def _background_payload_from_row(row: Any) -> dict[str, Any] | None:
     return dict(payload)
 
 
-__all__ = ["TaskService"]
+__all__ = ["BackgroundTaskServiceProtocol", "TaskService"]
