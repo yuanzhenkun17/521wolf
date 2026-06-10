@@ -25,6 +25,8 @@ from storage.public_events import public_events_only
 import ui.backend.app as ui_backend_app
 from ui.backend.live_game import BroadcastEventSink, LiveGameSession
 from ui.backend.schemas import BenchmarkRequest, EvolutionStartRequest, GameStartRequest
+import ui.backend.services.benchmark_service as benchmark_service_module
+from ui.backend.services.role_service import RoleService
 from ui.backend.sse import stream_queue_sse
 from ui.backend.game_serializers import _dead_players, _player_view_snapshot, _sheriff_from_events, _vote_tally
 import ui.backend.store as ui_backend_store
@@ -196,6 +198,36 @@ class FakeVersionRegistry:
 
     def load_rejected(self, role: str) -> list[dict[str, Any]]:
         return list(self._rejected.get(role, []))
+
+
+class _RoleServiceContextFake:
+    def __init__(
+        self,
+        registry: FakeVersionRegistry,
+        scores: dict[str, dict[str, dict[str, Any]]],
+    ) -> None:
+        self._registry = registry
+        self._scores = scores
+        self._role_overview_cache: dict[str, dict[str, Any]] = {}
+        self.score_calls: list[tuple[list[str], str | None]] = []
+        self.invalidations = 0
+
+    @property
+    def registry(self) -> FakeVersionRegistry:
+        return self._registry
+
+    def leaderboard_scores_for_roles(
+        self,
+        roles: list[str],
+        *,
+        evaluation_set_id: str | None = None,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        self.score_calls.append((list(roles), evaluation_set_id))
+        return {role: self._scores.get(role, {}) for role in roles}
+
+    def invalidate_role_overview_cache(self) -> None:
+        self.invalidations += 1
+        self._role_overview_cache.clear()
 
 
 class FakeModel:
@@ -2485,6 +2517,79 @@ def test_benchmark_service_facade_preserves_public_monkeypatch_compatibility(tmp
     ]
     assert payload["kind"] == "benchmark_leaderboard_compare"
     assert payload["rows"] == []
+
+
+def test_benchmark_service_uses_minimal_context_protocol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = SimpleNamespace(paths=PathConfig(root=tmp_path))
+    opened_paths: list[Any] = []
+    repository_calls: list[dict[str, Any]] = []
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    connections: list[FakeConnection] = []
+
+    def fake_open_eval_connection(paths: Any) -> FakeConnection:
+        opened_paths.append(paths)
+        connection = FakeConnection()
+        connections.append(connection)
+        return connection
+
+    class FakeLeaderboardRepository:
+        def __init__(self, conn: FakeConnection) -> None:
+            assert conn is connections[-1]
+
+        def list(
+            self,
+            *,
+            scope: str | None = None,
+            evaluation_set_id: str | None = None,
+            target_role: str | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, Any]]:
+            repository_calls.append(
+                {
+                    "scope": scope,
+                    "evaluation_set_id": evaluation_set_id,
+                    "target_role": target_role,
+                    "limit": limit,
+                }
+            )
+            return [{"id": "row-1"}]
+
+    monkeypatch.setattr("app.lib.score.open_eval_connection", fake_open_eval_connection)
+    monkeypatch.setattr(
+        benchmark_service_module,
+        "BenchmarkLeaderboardRepository",
+        FakeLeaderboardRepository,
+    )
+
+    service = benchmark_service_module.BenchmarkService(context)
+    rows = service.load_leaderboard_rows(
+        scope="role_version",
+        evaluation_set_id="suite@v1",
+        target_role="seer",
+        limit=3,
+    )
+
+    assert rows == [{"id": "row-1"}]
+    assert opened_paths == [context.paths]
+    assert repository_calls == [
+        {
+            "scope": "role_version",
+            "evaluation_set_id": "suite@v1",
+            "target_role": "seer",
+            "limit": 3,
+        }
+    ]
+    assert connections and connections[0].closed is True
 
 
 def test_leaderboard_real_store_isolates_scope_evaluation_role_and_formal_rows(
@@ -5511,6 +5616,52 @@ def test_roles_overview_batches_versions_and_leaderboards(tmp_path: Path) -> Non
     assert calls and calls[0][1] == "suite@v1"
     assert "seer" in calls[0][0]
     assert len(calls) == 1
+
+
+def test_role_service_uses_minimal_context_protocol(tmp_path: Path) -> None:
+    registry = FakeVersionRegistry(tmp_path)
+    vid = registry.publish_skills(
+        "seer",
+        {"vote.md": "# Seer baseline"},
+        source="test",
+        set_as_baseline=True,
+        expected_current=None,
+    )
+    context = _RoleServiceContextFake(
+        registry,
+        {
+            "seer": {
+                vid: {
+                    "target_version_id": vid,
+                    "avg_role_score": 8.1,
+                    "target_side_win_rate": 0.7,
+                    "fallback_rate": 0.1,
+                    "rankable": True,
+                    "games_played": 9,
+                }
+            }
+        },
+    )
+
+    service = RoleService(context)
+    payload = service.overview_payload(evaluation_set_id="suite@v1")
+    cached_payload = service.overview_payload(evaluation_set_id="suite@v1")
+
+    assert cached_payload is payload
+    assert payload["kind"] == "role_overview"
+    assert "seer" in payload["roles"]
+    assert payload["versions"]["seer"][0]["version_id"] == vid
+    entry = next(item for item in payload["leaderboards"]["seer"]["entries"] if item["target_version_id"] == vid)
+    assert entry["target_role_role_weighted_score"] == 8.1
+    assert entry["target_side_win_rate"] == 0.7
+    assert context.score_calls and context.score_calls[0][1] == "suite@v1"
+    assert "seer" in context.score_calls[0][0]
+    assert len(context.score_calls) == 1
+
+    service.clear_overview_cache()
+
+    assert context.invalidations == 1
+    assert context._role_overview_cache == {}
 
 
 def test_roles_overview_cache_invalidates_after_rollback(tmp_path: Path) -> None:

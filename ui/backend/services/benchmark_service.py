@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from inspect import isawaitable
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 from storage.benchmark.saved_view_repo import (
@@ -64,12 +64,18 @@ BENCHMARK_PUBLIC_METHODS: tuple[str, ...] = (
 )
 
 
+class BenchmarkServiceContextProtocol(Protocol):
+    """Context capabilities required by ``BenchmarkService``."""
+
+    paths: object
+
+
 class BenchmarkService:
     """Compatibility facade for benchmark-facing ``BackendStore`` methods."""
 
     def __init__(
         self,
-        context: Any,
+        context: BenchmarkServiceContextProtocol,
         callables: Mapping[str, BenchmarkCallable] | None = None,
         *,
         allow_context_fallback: bool = False,
@@ -79,7 +85,7 @@ class BenchmarkService:
         self._allow_context_fallback = allow_context_fallback
 
     @property
-    def context(self) -> Any:
+    def context(self) -> BenchmarkServiceContextProtocol:
         return self._context
 
     def _open_connection(self) -> Any:
