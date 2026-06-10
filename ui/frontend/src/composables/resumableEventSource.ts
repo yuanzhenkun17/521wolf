@@ -1,11 +1,75 @@
-// @ts-nocheck
-function eventIdFrom(event, payload = {}) {
+type ResumablePayload = Record<string, any>
+
+type ResumableEventIdPayload = {
+  event_id?: unknown
+  id?: unknown
+}
+
+type ResumableEventIdSource = {
+  lastEventId?: unknown
+  id?: unknown
+  eventId?: unknown
+}
+
+type ResumableMessageEvent = MessageEvent<string> & ResumableEventIdSource
+
+type ResumableOpenContext = {
+  id: string
+  event: Event
+  source: EventSource
+}
+
+type ResumableErrorContext = {
+  id: string
+  source: EventSource
+}
+
+type ResumableEventContext<Payload extends ResumablePayload = ResumablePayload> = {
+  id: string
+  event: ResumableMessageEvent
+  payload: Payload
+  parseError: unknown | null
+  rawData: string
+  source: EventSource
+  close: () => void
+  resetEventId: () => void
+}
+
+type ResumableEventSourceOptions<Payload extends ResumablePayload = ResumablePayload> = {
+  events: readonly string[]
+  makeUrl: (id: string, lastEventId: string) => string
+  onOpen?: (context: ResumableOpenContext) => void
+  onEvent?: (context: ResumableEventContext<Payload>) => void | Promise<void>
+  onError?: (context: ResumableErrorContext) => void
+  shouldReconnect?: (id: string) => boolean
+  isTerminal?: (event: ResumableMessageEvent, payload: Payload) => boolean
+  retryDelay?: number
+  maxRetryDelay?: number
+  backoff?: boolean
+}
+
+type ResumableEventSourceController = {
+  clearRetryTimer: (id: string) => void
+  close: (id: string) => void
+  closeAll: () => void
+  connect: (id: string) => EventSource | null
+  has: (id: string) => boolean
+  ids: () => string[]
+  resetAllEventIds: () => void
+  resetEventId: (id: string) => void
+  scheduleReconnect: (id: string) => void
+}
+
+function eventIdFrom(
+  event: ResumableEventIdSource | null | undefined,
+  payload: ResumableEventIdPayload = {}
+): string {
   const rawId = event?.lastEventId || event?.id || event?.eventId || payload?.event_id || payload?.id
   const eventId = String(rawId || '').trim()
   return !eventId || eventId === '0' ? '' : eventId
 }
 
-function createResumableEventSource({
+function createResumableEventSource<Payload extends ResumablePayload = ResumablePayload>({
   events,
   makeUrl,
   onOpen,
@@ -16,17 +80,21 @@ function createResumableEventSource({
   retryDelay = 1000,
   maxRetryDelay = 30000,
   backoff = false
-}) {
-  const sources = new Map()
-  const retryTimers = new Map()
-  const retryDelays = new Map()
-  let lastEventIds = {}
+}: ResumableEventSourceOptions<Payload>): ResumableEventSourceController {
+  const sources = new Map<string, EventSource>()
+  const retryTimers = new Map<string, number>()
+  const retryDelays = new Map<string, number>()
+  let lastEventIds: Record<string, string> = {}
 
-  function urlFor(id) {
+  function urlFor(id: string): string {
     return makeUrl(id, lastEventIds[id] || '')
   }
 
-  function rememberEventId(id, event, payload = {}) {
+  function rememberEventId(
+    id: string,
+    event: ResumableEventIdSource,
+    payload: ResumableEventIdPayload = {}
+  ): void {
     const eventId = eventIdFrom(event, payload)
     if (!id || !eventId) return
     lastEventIds = {
@@ -35,29 +103,29 @@ function createResumableEventSource({
     }
   }
 
-  function resetEventId(id) {
+  function resetEventId(id: string): void {
     if (!id || !lastEventIds[id]) return
     const next = { ...lastEventIds }
     delete next[id]
     lastEventIds = next
   }
 
-  function resetAllEventIds() {
+  function resetAllEventIds(): void {
     lastEventIds = {}
   }
 
-  function clearRetryTimer(id) {
+  function clearRetryTimer(id: string): void {
     const timer = retryTimers.get(id)
     if (!timer) return
     if (typeof window !== 'undefined') window.clearTimeout(timer)
     retryTimers.delete(id)
   }
 
-  function clearAllRetryTimers() {
+  function clearAllRetryTimers(): void {
     for (const id of [...retryTimers.keys()]) clearRetryTimer(id)
   }
 
-  function close(id) {
+  function close(id: string): void {
     clearRetryTimer(id)
     const source = sources.get(id)
     if (!source) return
@@ -65,20 +133,20 @@ function createResumableEventSource({
     sources.delete(id)
   }
 
-  function closeAll() {
+  function closeAll(): void {
     clearAllRetryTimers()
     for (const id of [...sources.keys()]) close(id)
   }
 
-  function has(id) {
+  function has(id: string): boolean {
     return sources.has(id)
   }
 
-  function ids() {
+  function ids(): string[] {
     return [...sources.keys()]
   }
 
-  function scheduleReconnect(id) {
+  function scheduleReconnect(id: string): void {
     if (!id || retryTimers.has(id) || typeof window === 'undefined') return
     const currentDelay = retryDelays.get(id) || retryDelay
     const timer = window.setTimeout(() => {
@@ -91,9 +159,9 @@ function createResumableEventSource({
     retryTimers.set(id, timer)
   }
 
-  function connect(id) {
+  function connect(id: string): EventSource | null {
     if (!id || typeof EventSource === 'undefined') return null
-    if (sources.has(id)) return sources.get(id)
+    if (sources.has(id)) return sources.get(id)!
     clearRetryTimer(id)
     const source = new EventSource(urlFor(id))
     sources.set(id, source)
@@ -104,14 +172,14 @@ function createResumableEventSource({
       onOpen?.({ id, event, source })
     })
 
-    const handle = async (event) => {
+    const handle = async (event: ResumableMessageEvent): Promise<void> => {
       clearRetryTimer(id)
       if (backoff) retryDelays.set(id, retryDelay)
       const rawData = event.data || ''
-      let payload = {}
-      let parseError = null
+      let payload = {} as Payload
+      let parseError: unknown | null = null
       try {
-        payload = JSON.parse(rawData || '{}')
+        payload = JSON.parse(rawData || '{}') as Payload
       } catch (err) {
         parseError = err
       }
@@ -133,7 +201,7 @@ function createResumableEventSource({
     }
 
     events.forEach((name) => {
-      source.addEventListener(name, handle)
+      source.addEventListener(name, handle as EventListener)
     })
 
     source.addEventListener('error', () => {
@@ -160,3 +228,11 @@ function createResumableEventSource({
 }
 
 export { createResumableEventSource, eventIdFrom }
+export type {
+  ResumableErrorContext,
+  ResumableEventContext,
+  ResumableEventSourceController,
+  ResumableEventSourceOptions,
+  ResumableMessageEvent,
+  ResumableOpenContext
+}
