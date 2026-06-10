@@ -1,11 +1,9 @@
 <script lang="ts">
-// @ts-nocheck
-const settledIntroGameIds = new Set()
+const settledIntroGameIds = new Set<string | number>()
 </script>
 
 <script setup lang="ts">
-// @ts-nocheck
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import ActionPanel from '../components/ActionPanel.vue'
 import ApiErrorPanel from '../components/ApiErrorPanel.vue'
 import ChatLog from '../components/ChatLog.vue'
@@ -19,10 +17,56 @@ import ReplayControls from '../components/ReplayControls.vue'
 import { displayPhaseLabel } from '../components/history/historyDisplay.ts'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../composables/apiErrorDisplay.ts'
 
+type LooseRecord = Record<string, any>
+type IdValue = string | number
+type NullableId = IdValue | null
+type HistoryPhaseName = (phase: unknown) => string
+type PlayerFormatter = (player: LooseRecord) => string
+type LogFormatter = (log: LooseRecord) => string
+
+interface MatchPlayer extends LooseRecord {
+  id?: IdValue
+  displaySeat?: IdValue
+  speaking?: boolean | null
+  alive?: boolean
+}
+
+interface CarouselItem extends LooseRecord {
+  key: IdValue
+  image: string
+  label: string
+  tone?: string
+}
+
+interface PendingChoiceOption extends LooseRecord {
+  value: IdValue
+  label: string
+  requiresTarget?: boolean
+}
+
+interface JudgeStripMessage extends LooseRecord {
+  message: string
+}
+
+interface SceneLoadProgress extends LooseRecord {
+  phase?: string
+  label?: string
+  loaded?: number
+  total?: number
+  progress?: number
+  ready?: boolean
+}
+
+interface IntroWaitEntry {
+  timer: number
+  resolve: () => void
+  runId: number
+}
+
 const props = defineProps({
-  game: Object,
+  game: Object as PropType<LooseRecord | null>,
   loading: Boolean,
-  matchNotice: { type: Object, default: () => ({}) },
+  matchNotice: { type: Object as PropType<LooseRecord>, default: () => ({}) },
   backendMode: { type: String, default: 'mock' },
   isNight: Boolean,
   isWatch: Boolean,
@@ -38,46 +82,46 @@ const props = defineProps({
   judgeBoardStarted: Boolean,
   judgeBoardStarting: Boolean,
   promptText: { type: String, default: '' },
-  judgeStripMessage: { type: Array, default: () => [] },
-  playerIdentityList: { type: Array, default: () => [] },
+  judgeStripMessage: { type: Array as PropType<JudgeStripMessage[]>, default: () => [] },
+  playerIdentityList: { type: Array as PropType<MatchPlayer[]>, default: () => [] },
   chatLogExpanded: Boolean,
-  chatLogs: { type: Array, default: () => [] },
-  matchRecordLogs: { type: Array, default: () => [] },
-  groupedJudgeLogs: { type: Array, default: () => [] },
+  chatLogs: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  matchRecordLogs: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  groupedJudgeLogs: { type: Array as PropType<LooseRecord[]>, default: () => [] },
   displayPhase: { type: String, default: '' },
-  livingPlayers: { type: Array, default: () => [] },
-  roleStats: { type: Array, default: () => [] },
-  speakerCarousel: { type: Array, default: () => [] },
+  livingPlayers: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  roleStats: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  speakerCarousel: { type: Array as PropType<CarouselItem[]>, default: () => [] },
   speakerMessage: { type: String, default: '' },
-  humanPlayer: Object,
+  humanPlayer: Object as PropType<LooseRecord | null>,
   roleName: { type: String, default: '' },
-  skillState: { type: Object, default: () => ({}) },
+  skillState: { type: Object as PropType<LooseRecord>, default: () => ({}) },
   isHumanWitch: Boolean,
   isHumanWhiteWolf: Boolean,
   canUseWitchAntidote: Boolean,
   canUseWitchPoison: Boolean,
   canWhiteWolfBurst: Boolean,
   pendingActionType: { type: String, default: '' },
-  pendingChoiceOptions: { type: Array, default: () => [] },
+  pendingChoiceOptions: { type: Array as PropType<PendingChoiceOption[]>, default: () => [] },
   actionInstruction: { type: String, default: '' },
   speechCountdownText: { type: String, default: '' },
-  canVotePlayers: { type: Array, default: () => [] },
-  sceneEffects: { type: Array, default: () => [] },
-  actionCandidates: { type: Array, default: () => [] },
-  whiteWolfTargets: { type: Array, default: () => [] },
+  canVotePlayers: { type: Array as PropType<MatchPlayer[]>, default: () => [] },
+  sceneEffects: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  actionCandidates: { type: Array as PropType<MatchPlayer[]>, default: () => [] },
+  whiteWolfTargets: { type: Array as PropType<MatchPlayer[]>, default: () => [] },
   needsTarget: Boolean,
   speech: { type: String, default: '' },
   witchChoice: { type: String, default: 'skip' },
   actionChoice: { type: String, default: '' },
   burstArmed: Boolean,
-  actionTarget: [String, Number, null],
-  sceneVoteTally: { type: Array, default: () => [] },
-  playerLabel: Function,
-  roleIconImage: Function,
-  logSpeaker: Function,
-  logMessage: Function,
-  historyPhaseName: Function,
-  chooseScenePlayer: Function
+  actionTarget: [String, Number, null] as unknown as PropType<NullableId>,
+  sceneVoteTally: { type: Array as PropType<LooseRecord[]>, default: () => [] },
+  playerLabel: Function as PropType<PlayerFormatter>,
+  roleIconImage: Function as PropType<PlayerFormatter>,
+  logSpeaker: Function as PropType<LogFormatter>,
+  logMessage: Function as PropType<LogFormatter>,
+  historyPhaseName: Function as PropType<HistoryPhaseName>,
+  chooseScenePlayer: Function as PropType<(id: unknown) => void>
 })
 
 const emit = defineEmits([
@@ -104,12 +148,12 @@ const emit = defineEmits([
   'submit-action'
 ])
 
-const sceneApi = ref(null)
+const sceneApi = ref<LooseRecord | null>(null)
 const compactHudHeight = ref(146)
 const introMounted = ref(true)
 const introLeaving = ref(false)
-const hoveredTargetId = ref(null)
-const sceneLoadProgress = ref({
+const hoveredTargetId = ref<NullableId>(null)
+const sceneLoadProgress = ref<SceneLoadProgress>({
   phase: 'scene',
   label: '搭建议事厅',
   loaded: 0,
@@ -121,10 +165,10 @@ const INTRO_MIN_VISIBLE_MS = 1800
 let introRunId = 0
 let introTimer = 0
 let introRemoveTimer = 0
-let introSettledGameId = null
-const introWaitTimers = new Set()
+let introSettledGameId: NullableId = null
+const introWaitTimers = new Set<IntroWaitEntry>()
 
-function phaseName(phase) {
+function phaseName(phase: unknown) {
   return props.historyPhaseName ? props.historyPhaseName(phase) : displayPhaseLabel(phase)
 }
 
@@ -178,8 +222,8 @@ const replayPhaseText = computed(() => `第${props.game?.day ?? '-'}天 · ${pha
 const replayJudgeStripMessage = computed(() => [
   { message: props.replayEventLabel || '准备回放' }
 ])
-function matchPanelErrorForNotice(notice) {
-  const error = noticeErrorForPanel(notice)
+function matchPanelErrorForNotice(notice: LooseRecord) {
+  const error = noticeErrorForPanel(notice) as LooseRecord | Error | string | null
   if (!error || error instanceof Error || typeof error !== 'object' || Array.isArray(error)) return error
   if (error.requestId || !error.request_id) return error
   return {
@@ -200,39 +244,39 @@ const hasMobileTask = computed(() => (
   (props.game?.waiting_for === 'speech' || Boolean(props.pendingActionType) || props.game?.waiting_for === 'vote')
 ))
 
-function handleCouncilReady(api) {
+function handleCouncilReady(api: LooseRecord) {
   sceneApi.value = api
   emit('council-ready', api)
 }
 
-function handleCouncilLoadingProgress(progress) {
+function handleCouncilLoadingProgress(progress: SceneLoadProgress | null | undefined) {
   sceneLoadProgress.value = {
     ...sceneLoadProgress.value,
     ...(progress || {})
   }
 }
 
-function handleScenePlayerSelect(playerId) {
+function handleScenePlayerSelect(playerId: unknown) {
   props.chooseScenePlayer?.(playerId)
 }
 
-function handleTargetHover(playerId) {
+function handleTargetHover(playerId: unknown) {
   if (playerId == null || playerId === '') {
     hoveredTargetId.value = null
     return
   }
   const numeric = Number(playerId)
-  hoveredTargetId.value = Number.isFinite(numeric) ? numeric : playerId
+  hoveredTargetId.value = Number.isFinite(numeric) ? numeric : String(playerId)
 }
 
 function closeGameOverModal() {
   dismissedGameOverKey.value = gameOverKey.value
 }
 
-function wait(ms, runId = introRunId) {
+function wait(ms: number, runId = introRunId): Promise<void> {
   if (typeof window === 'undefined') return Promise.resolve()
-  return new Promise((resolve) => {
-    const entry = { timer: 0, resolve: null, runId }
+  return new Promise<void>((resolve) => {
+    const entry: IntroWaitEntry = { timer: 0, resolve: () => {}, runId }
     entry.resolve = () => {
       introWaitTimers.delete(entry)
       resolve()
@@ -242,7 +286,7 @@ function wait(ms, runId = introRunId) {
   })
 }
 
-function clearIntroWaitTimers(runId = null) {
+function clearIntroWaitTimers(runId: number | null = null) {
   introWaitTimers.forEach((entry) => {
     if (runId != null && entry.runId !== runId) return
     window.clearTimeout(entry.timer)
