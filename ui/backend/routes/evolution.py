@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, AsyncIterator
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
@@ -13,9 +12,6 @@ from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.evolution_actions import (
     _promote_evolution_run,
     _reject_evolution_run,
-    accept_evolution_proposal,
-    apply_accepted_evolution_proposals,
-    reject_evolution_proposal,
 )
 from ui.backend.schemas import (
     EvolutionActionRequest,
@@ -25,142 +21,24 @@ from ui.backend.schemas import (
 )
 from ui.backend.serializers import (
     _evolution_batch_summary,
-    _evolution_games_for_query,
     _evolution_run_summary,
     _evolution_sse_event,
-    _normalize_decision,
-    _normalize_event,
-    _sample_game_archive_payload,
 )
+from ui.backend.services import EvolutionService
 from ui.backend.sse import _sse, stream_task_event_log_sse, task_event_log_matches_entity
 from ui.backend.task_state import (
-    _background_source,
-    _filter_values,
     _history_query_requested,
-    _history_time_key,
     _last_event_id_from_request,
-    _match_filter,
-    _pagination,
     _set_task_contract,
 )
 
 _TERMINAL_SSE_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
 _TERMINAL_TASK_STATUSES = {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
-_log = logging.getLogger(__name__)
-
-
-def _proposal_run(store: Any, run_id: str) -> dict[str, Any]:
-    run = store.evolution_runs.get(run_id)
-    if run is not None:
-        return run
-    if run_id in store.evolution_batches:
-        raise HTTPException(status_code=400, detail="batch does not support proposals; select a child run")
-    raise HTTPException(status_code=404, detail="run not found")
-
-
-def _proposal_pairs(run: dict[str, Any]) -> list[dict[str, Any]]:
-    battle = run.get("battle_result") if isinstance(run.get("battle_result"), dict) else {}
-    for value in (
-        run.get("paired_seed_pairs"),
-        run.get("paired_seed_battle_table"),
-        run.get("battle_pairs"),
-        battle.get("paired_seed_pairs"),
-        battle.get("paired_seed_battle_table"),
-        battle.get("battle_pairs"),
-    ):
-        if isinstance(value, list):
-            return [dict(item) for item in value if isinstance(item, dict)]
-    return []
-
-
-def _proposal_payload(run: dict[str, Any], *, action: dict[str, Any] | None = None) -> dict[str, Any]:
-    summary = _evolution_run_summary(run)
-    review = summary.get("proposal_review") if isinstance(summary.get("proposal_review"), dict) else {}
-    pairs = _proposal_pairs(run)
-    payload: dict[str, Any] = {
-        "kind": "role_evolution_proposals",
-        "schema_version": 1,
-        "run_id": run.get("run_id"),
-        "role": run.get("role"),
-        "proposals": [dict(item) for item in run.get("proposals", []) or [] if isinstance(item, dict)],
-        "generated_proposal_ids": list(review.get("generated_proposal_ids", []) or []),
-        "preflight_passed_proposal_ids": list(review.get("preflight_passed_proposal_ids", []) or []),
-        "accepted_proposal_ids": list(review.get("accepted_proposal_ids", []) or []),
-        "rejected_proposal_ids": list(review.get("rejected_proposal_ids", []) or []),
-        "applied_proposal_ids": list(review.get("applied_proposal_ids", []) or []),
-        "proposal_review": review,
-        "gate_report": summary.get("gate_report", {}),
-        "release_gate": summary.get("release_gate", {}),
-        "release_decision": summary.get("release_decision"),
-        "trust_bundle": summary.get("trust_bundle", {}),
-        "scenario_replay_report": summary.get("scenario_replay_report", {}),
-        "scenario_replay_summary": summary.get("scenario_replay_summary", {}),
-        "proposal_attribution_report": summary.get("proposal_attribution_report", {}),
-        "promotion_gate": summary.get("promotion_gate", {}),
-        "paired_seed_summary": summary.get("paired_seed_summary", {}),
-        "paired_seed_pairs": pairs,
-        "paired_seed_battle_table": pairs,
-        "paired_seeds": pairs,
-        "battle_pairs": pairs,
-        "run": summary,
-    }
-    if action is not None:
-        payload["action"] = action
-    return payload
-
-
-def _trust_bundle_payload_from_run(run: dict[str, Any]) -> dict[str, Any] | None:
-    bundle = run.get("trust_bundle")
-    if not isinstance(bundle, dict) and isinstance(run.get("result"), dict):
-        bundle = run["result"].get("trust_bundle")
-    if not isinstance(bundle, dict) and isinstance(run.get("battle_result"), dict):
-        bundle = run["battle_result"].get("trust_bundle")
-    if not isinstance(bundle, dict):
-        return None
-    return {
-        "kind": "evolution_trust_bundle",
-        "schema_version": 1,
-        "trust_bundle_id": bundle.get("trust_bundle_id"),
-        "run_id": run.get("run_id") or bundle.get("run_id"),
-        "role": run.get("role") or bundle.get("role"),
-        "baseline_version": bundle.get("baseline_version"),
-        "candidate_version": bundle.get("candidate_version"),
-        "bundle_hash": bundle.get("bundle_hash"),
-        "gate_report_id": bundle.get("gate_report_id"),
-        "attribution_report_id": bundle.get("attribution_report_id"),
-        "created_at": run.get("started_at"),
-        "updated_at": run.get("finished_at") or run.get("last_heartbeat_at") or run.get("started_at"),
-        "trust_bundle": bundle,
-    }
-
-
-def _trust_bundle_payload(store: Any, run_id: str) -> dict[str, Any]:
-    if run_id in store.evolution_batches:
-        raise HTTPException(status_code=400, detail="batch does not support trust bundle; select a child run")
-    run = store.evolution_runs.get(run_id)
-    try:
-        from storage.evolution.state_gateway import EvolutionStateGateway
-
-        payload = EvolutionStateGateway(paths=getattr(store, "paths", None)).get_trust_bundle(run_id)
-        if isinstance(payload, dict):
-            return payload
-    except Exception as exc:  # noqa: BLE001 - API falls back to in-memory run artifact
-        _log.debug("failed to load trust bundle from PostgreSQL for %s: %s", run_id, exc)
-
-    if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
-    payload = _trust_bundle_payload_from_run(run)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="trust bundle not found")
-    return payload
-
-
-def _persist_proposal_mutation(store: Any, run: dict[str, Any]) -> None:
-    store._touch_background_task(run)
-    store._persist_background_tasks()
 
 
 def register_evolution_routes(api: FastAPI, store: Any) -> None:
+    service = EvolutionService(store)
+
     @api.post("/api/evolution-runs")
     async def start_evolution(request: EvolutionStartRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         request = automatic_evolution_request(request)
@@ -179,54 +57,17 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         source: str | None = Query(default=None),
         status: str | None = Query(default=None),
     ) -> dict[str, Any]:
-        runs = [_evolution_run_summary(run) for run in store.evolution_runs.values()]
-        batches = [_evolution_batch_summary(batch) for batch in store.evolution_batches.values()]
-        runs.sort(key=_history_time_key, reverse=True)
-        batches.sort(key=_history_time_key, reverse=True)
-        if source:
-            sources = _filter_values(source)
-            if sources is not None and "evolution" not in sources:
-                runs = []
-            if sources is not None:
-                batches = [batch for batch in batches if _background_source(batch) in sources]
-        statuses = _filter_values(status)
-        if statuses is not None:
-            runs = [run for run in runs if _match_filter(run.get("status"), statuses)]
-            batches = [batch for batch in batches if _match_filter(batch.get("status"), statuses)]
-        payload = {
-            "kind": "evolution_runs",
-            "schema_version": 1,
-            "runs": runs,
-            "batches": batches,
-        }
-        if not _history_query_requested(request):
-            return payload
-        combined: list[tuple[str, dict[str, Any]]] = [
-            *[("run", run) for run in runs],
-            *[("batch", batch) for batch in batches],
-        ]
-        combined.sort(key=lambda item: _history_time_key(item[1]), reverse=True)
-        page, pagination = _pagination([item for _, item in combined], limit=limit, offset=offset)
-        page_ids = {
-            str(item.get("run_id") or item.get("batch_id"))
-            for item in page
-        }
-        payload["runs"] = [run for run in runs if str(run.get("run_id")) in page_ids]
-        payload["batches"] = [batch for batch in batches if str(batch.get("batch_id")) in page_ids]
-        payload["pagination"] = pagination
-        return payload
+        return service.list_runs(
+            history_requested=_history_query_requested(request),
+            limit=limit,
+            offset=offset,
+            source=source,
+            status=status,
+        )
 
     @api.get("/api/evolution-runs/{run_id}")
     def get_evolution_run(run_id: str) -> dict[str, Any]:
-        run = store.evolution_runs.get(run_id)
-        if run is not None:
-            return run
-        batch = store.evolution_batches.get(run_id)
-        if batch is not None:
-            return _evolution_batch_summary(batch)
-        if run is None:
-            raise HTTPException(status_code=404, detail="run not found")
-        return run
+        return service.get_run(run_id)
 
     @api.post("/api/evolution-runs/{run_id}/actions")
     def evolution_action(run_id: str, request: EvolutionActionRequest) -> dict[str, Any]:
@@ -270,19 +111,15 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
 
     @api.get("/api/evolution-runs/{run_id}/proposals")
     def evolution_proposals(run_id: str) -> dict[str, Any]:
-        run = _proposal_run(store, run_id)
-        return _proposal_payload(run)
+        return service.proposals(run_id)
 
     @api.get("/api/evolution-runs/{run_id}/trust-bundle")
     def evolution_trust_bundle(run_id: str) -> dict[str, Any]:
-        return _trust_bundle_payload(store, run_id)
+        return service.trust_bundle_payload(run_id)
 
     @api.post("/api/evolution-runs/{run_id}/proposals/{proposal_id}/accept")
     def accept_evolution_run_proposal(run_id: str, proposal_id: str) -> dict[str, Any]:
-        run = _proposal_run(store, run_id)
-        action = accept_evolution_proposal(store, run, proposal_id)
-        _persist_proposal_mutation(store, run)
-        return _proposal_payload(run, action=action)
+        return service.accept_proposal(run_id, proposal_id)
 
     @api.post("/api/evolution-runs/{run_id}/proposals/{proposal_id}/reject")
     def reject_evolution_run_proposal(
@@ -290,32 +127,15 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         proposal_id: str,
         request: EvolutionProposalRejectRequest,
     ) -> dict[str, Any]:
-        run = _proposal_run(store, run_id)
-        action = reject_evolution_proposal(
-            store,
-            run,
-            proposal_id,
-            reason=request.reason,
-            tags=request.tags,
-        )
-        _persist_proposal_mutation(store, run)
-        return _proposal_payload(run, action=action)
+        return service.reject_proposal(run_id, proposal_id, reason=request.reason, tags=request.tags)
 
     @api.post("/api/evolution-runs/{run_id}/proposals/apply-accepted")
     def apply_accepted_evolution_run_proposals(run_id: str) -> dict[str, Any]:
-        run = _proposal_run(store, run_id)
-        action = apply_accepted_evolution_proposals(store, run)
-        _persist_proposal_mutation(store, run)
-        return _proposal_payload(run, action=action)
+        return service.apply_accepted_proposals(run_id)
 
     @api.get("/api/evolution-runs/{run_id}/diff")
     def evolution_diff(run_id: str) -> dict[str, Any]:
-        run = store.evolution_runs.get(run_id)
-        if run is None:
-            if run_id in store.evolution_batches:
-                raise HTTPException(status_code=400, detail="batch does not support diff; select a child run")
-            raise HTTPException(status_code=404, detail="run not found")
-        return {"kind": "role_evolution_diff", "schema_version": 1, "run_id": run_id, "diffs": run.get("diff", [])}
+        return service.diff(run_id)
 
     @api.get("/api/evolution-runs/{run_id}/games")
     def evolution_games(
@@ -327,29 +147,15 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         offset: int = Query(default=0, ge=0),
         status: str | None = Query(default=None),
     ) -> dict[str, Any]:
-        run = store.evolution_runs.get(run_id)
-        if run is None:
-            if run_id in store.evolution_batches:
-                raise HTTPException(status_code=400, detail="batch does not support games; select a child run")
-            raise HTTPException(status_code=404, detail="run not found")
-        games = _evolution_games_for_query(run, phase=phase, side=side)
-        statuses = _filter_values(status)
-        if statuses is not None:
-            games = [game for game in games if _match_filter(game.get("status", "completed"), statuses)]
-        payload = {
-            "kind": "role_evolution_games",
-            "schema_version": 1,
-            "run_id": run_id,
-            "phase": phase,
-            "side": side,
-            "games": games,
-        }
-        if not any(key in request.query_params for key in ("limit", "offset", "status")):
-            return payload
-        page, pagination = _pagination(games, limit=limit, offset=offset)
-        payload["games"] = page
-        payload["pagination"] = pagination
-        return payload
+        return service.games(
+            run_id,
+            phase=phase,
+            side=side,
+            limit=limit,
+            offset=offset,
+            status=status,
+            paginate=any(key in request.query_params for key in ("limit", "offset", "status")),
+        )
 
     @api.get("/api/evolution-runs/{run_id}/games/{game_id}/{detail_type}")
     def evolution_game_detail(
@@ -359,29 +165,7 @@ def register_evolution_routes(api: FastAPI, store: Any) -> None:
         phase: str = "training",
         side: str | None = None,
     ) -> dict[str, Any]:
-        run = store.evolution_runs.get(run_id)
-        if run is None:
-            if run_id in store.evolution_batches:
-                raise HTTPException(status_code=400, detail="batch does not support game details; select a child run")
-            raise HTTPException(status_code=404, detail="run not found")
-        games = _evolution_games_for_query(run, phase=phase, side=side, include_details=True)
-        game = next((item for item in games if item.get("game_id") == game_id or item.get("id") == game_id), None)
-        if game is None:
-            raise HTTPException(status_code=404, detail="game not found")
-        if detail_type == "archive":
-            return _sample_game_archive_payload(run_id, game_id, game, phase=phase, side=side)
-        if detail_type == "decisions":
-            return {
-                "run_id": run_id,
-                "game_id": game_id,
-                "decisions": [
-                    _normalize_decision(decision, index)
-                    for index, decision in enumerate(game.get("decisions", []) or [], start=1)
-                ],
-            }
-        if detail_type == "events":
-            return {"run_id": run_id, "game_id": game_id, "events": [_normalize_event(event) for event in game.get("events", []) or []]}
-        raise HTTPException(status_code=404, detail="detail type not found")
+        return service.game_detail(run_id, game_id, detail_type, phase=phase, side=side)
 
     @api.get("/api/evolution-runs/{run_id}/events")
     def evolution_events(run_id: str, request: Request) -> StreamingResponse:
