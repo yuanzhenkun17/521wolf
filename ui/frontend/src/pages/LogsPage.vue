@@ -18,6 +18,7 @@ import {
   displayWinnerLabel,
   normalizeHistoryDisplayText
 } from '../components/history/historyDisplay.ts'
+import { useHistoryStore } from '../stores'
 
 const GameArchivePanel = defineAsyncComponent(() => import('../components/history/GameArchivePanel.vue'))
 const ReviewReportPanel = defineAsyncComponent(() => import('../components/history/ReviewReportPanel.vue'))
@@ -30,20 +31,11 @@ type RowFilterOptions = {
 }
 
 const props = defineProps({
-  returnToMatchAvailable: Boolean,
   gameHistory: { type: Array as PropType<LooseRecord[]>, default: () => [] },
   selectedHistoryGameId: [String, Number, null],
   selectedHistoryGame: Object as PropType<LooseRecord | null>,
   historyLoading: Boolean,
-  historyPagination: { type: Object as PropType<LooseRecord>, default: () => ({}) },
-  historyLoadingMore: Boolean,
-  historySourceFilter: { type: String, default: 'all' },
-  historyCounts: { type: Object as PropType<LooseRecord>, default: () => ({}) },
-  historyFacets: { type: Object as PropType<LooseRecord>, default: () => ({}) },
   historyNotice: { type: Object as PropType<LooseRecord>, default: () => ({}) },
-  historyHasMore: Boolean,
-  historyCurrentPage: { type: Number, default: 1 },
-  historyTotalPages: { type: Number, default: 1 },
   historyPages: { type: Array as PropType<LooseRecord[]>, default: () => [] },
   selectedHistoryPageKey: { type: String, default: '' },
   historyWorkspaceTab: { type: String, default: 'phase' },
@@ -117,6 +109,7 @@ const selectedAssessPlayerId = ref<any>(null)
 const workspaceTab = ref('phase')
 const rawLogFilter = ref('all')
 const expandedPhaseEvidenceKeys = ref<Set<string>>(new Set())
+const historyStore = useHistoryStore()
 const WORKSPACE_TAB_KEYS = new Set(['phase', 'review', 'archive'])
 const NIGHT_PHASES = new Set(['night'])
 const SPEECH_PHASES = new Set(['speech', 'sheriff'])
@@ -134,14 +127,18 @@ const canShowRawLogs = computed(() =>
   props.historyLogs.length > 0
   && props.selectedHistoryPage
 )
-const gameHistoryForList = computed<any[]>(() => props.gameHistory)
-const historyPagesForTabs = computed<any[]>(() => props.historyPages)
+const gameHistory = computed<any[]>(() => historyStore.games.length ? historyStore.games : props.gameHistory)
+const selectedHistoryGameId = computed(() => historyStore.selectedHistoryGameId ?? props.selectedHistoryGameId)
+const selectedHistoryGame = computed<LooseRecord | null>(() => (historyStore.selectedHistoryGame as LooseRecord | null) || props.selectedHistoryGame)
+const historyLoading = computed(() => historyStore.loading || props.historyLoading)
+const historyNotice = computed<LooseRecord>(() => (historyStore.notice as LooseRecord | null) || props.historyNotice)
+const historyPagesForTabs = computed<any[]>(() => historyStore.pages.length ? historyStore.pages : props.historyPages)
 const activeAssessScoresForPanel = computed<any[]>(() => props.activeAssessScores)
 const focusedPlayerId = computed(() => normalizePlayerId(selectedAssessPlayerId.value))
 const focusedPlayer = computed(() => {
   const id = focusedPlayerId.value
   if (id == null) return null
-  return (props.selectedHistoryGame?.players || []).find((player) => samePlayer(player?.id ?? player?.seat, id)) || null
+  return (selectedHistoryGame.value?.players || []).find((player) => samePlayer(player?.id ?? player?.seat, id)) || null
 })
 const hasPlayerFocus = computed(() => focusedPlayerId.value != null)
 const rawLogsForFocus = computed(() => props.historyLogs.filter((log) => rowMatchesFocusedPlayer(log, { includeText: true })))
@@ -157,14 +154,14 @@ const rawLogFilters = computed(() =>
       : rawLogsForFocus.value.filter((log) => rawLogKind(log) === item.key).length
   })).filter((item) => item.key === 'all' || item.count > 0)
 )
-const selectedReview = computed(() => props.reviewByGameId[props.selectedHistoryGame?.game_id] || null)
-const selectedArchive = computed(() => props.archiveByGameId[props.selectedHistoryGame?.game_id] || null)
-const selectedFlowData = computed(() => props.flowDataByGameId[props.selectedHistoryGame?.game_id] || null)
-const selectedFlowLoading = computed(() => Boolean(props.flowLoadingByGameId[props.selectedHistoryGame?.game_id]))
-const detailInlineNotice = computed(() => inlineNoticeForDisplay(props.historyNotice))
-const detailErrorNotice = computed(() => noticeErrorForPanel(props.historyNotice))
+const selectedReview = computed(() => props.reviewByGameId[selectedHistoryGame.value?.game_id] || null)
+const selectedArchive = computed(() => props.archiveByGameId[selectedHistoryGame.value?.game_id] || null)
+const selectedFlowData = computed(() => props.flowDataByGameId[selectedHistoryGame.value?.game_id] || null)
+const selectedFlowLoading = computed(() => Boolean(props.flowLoadingByGameId[selectedHistoryGame.value?.game_id]))
+const detailInlineNotice = computed(() => inlineNoticeForDisplay(historyNotice.value))
+const detailErrorNotice = computed(() => noticeErrorForPanel(historyNotice.value))
 const selectedGameConfig = computed(() => {
-  const game = props.selectedHistoryGame || {}
+  const game = selectedHistoryGame.value || {}
   const config = game.config && typeof game.config === 'object' ? game.config : {}
   return {
     ...config,
@@ -184,7 +181,7 @@ const phaseHasMore = computed(() =>
   Boolean(selectedPhasePagination.value.logs?.has_more || selectedPhasePagination.value.decisions?.has_more)
 )
 const selectedPhaseLoadingKey = computed(() => {
-  const gameId = props.selectedHistoryGame?.game_id || props.selectedHistoryGameId || ''
+  const gameId = selectedHistoryGame.value?.game_id || selectedHistoryGameId.value || ''
   const pageKey = props.selectedHistoryPage?.key || props.selectedHistoryPageKey || ''
   return gameId && pageKey ? `${gameId}:${pageKey}` : ''
 })
@@ -193,7 +190,7 @@ const selectedPhaseLoading = computed(() =>
 )
 const detailRetrying = computed(() =>
   Boolean(
-    props.historyLoading ||
+    historyLoading.value ||
     selectedPhaseLoading.value ||
     props.archiveLoading ||
     props.reviewLoading ||
@@ -201,7 +198,7 @@ const detailRetrying = computed(() =>
   )
 )
 const detailRetryAvailable = computed(() => {
-  const gameId = props.selectedHistoryGame?.game_id || props.selectedHistoryGameId
+  const gameId = selectedHistoryGame.value?.game_id || selectedHistoryGameId.value
   if (!gameId) return false
   if (workspaceTab.value === 'review') return Boolean(props.loadReview)
   if (workspaceTab.value === 'archive') return Boolean(props.loadArchive)
@@ -237,7 +234,7 @@ const activeAssessPlayerId = computed(() => {
   }
   const topScore = [...props.activeAssessScores]
     .sort((a, b) => assessOverallScore(b) - assessOverallScore(a) || Number(a.player?.seat || 0) - Number(b.player?.seat || 0))[0]
-  return topScore?.player?.id || props.selectedHistoryGame?.players?.[0]?.id || null
+  return topScore?.player?.id || selectedHistoryGame.value?.players?.[0]?.id || null
 })
 
 const phaseCategory = computed(() => {
@@ -341,7 +338,7 @@ const voteAnomalyRows = computed(() => {
   if (abstains.length) rows.push({ key: 'abstain', tone: 'warning', text: `${abstains.length} 票未指向有效目标` })
   if (tied) rows.push({ key: 'tie', tone: 'warning', text: `最高票出现并列：${voteRankingRows.value.filter((row) => row.count === top.count).map((row) => row.label).join('、')}` })
   if (!hasPlayerFocus.value) {
-    const totalPlayers = props.selectedHistoryGame?.players?.length || 0
+    const totalPlayers = selectedHistoryGame.value?.players?.length || 0
     const participated = new Set(votes.map((vote) => String(normalizePlayerId(rowActorId(vote)))).filter(Boolean)).size
     if (totalPlayers && participated && participated < totalPlayers) {
       rows.push({ key: 'missing', tone: 'info', text: `${totalPlayers - participated} 名玩家未留下投票决策记录` })
@@ -366,7 +363,7 @@ const phaseConclusion = computed(() => {
     if (top) return `${focusPrefix}最高票 ${top.label}，${top.count} 票${result ? `；${normalizeText(result)}` : ''}`
     return `${focusPrefix}暂无可统计票型`
   }
-  if (phaseCategory.value === 'result') return `最终胜方：${winnerLabel(props.selectedHistoryGame?.winner)}`
+  if (phaseCategory.value === 'result') return `最终胜方：${winnerLabel(selectedHistoryGame.value?.winner)}`
   if (phaseCategory.value === 'setup') return `角色、规则和初始状态已记录，原始记录 ${rawLogsForFocus.value.length} 条`
   return hasPlayerFocus.value ? `${focusPrefix}${focusedDecisionCount.value || rawLogsForFocus.value.length} 条相关记录` : selectedPhaseSummary.value
 })
@@ -406,7 +403,7 @@ const phaseSummaryCards = computed(() => {
 })
 
 const phaseEvidenceKey = computed(() => {
-  const gameId = props.selectedHistoryGame?.game_id ?? props.selectedHistoryGameId ?? 'game'
+  const gameId = selectedHistoryGame.value?.game_id ?? selectedHistoryGameId.value ?? 'game'
   const pageKey = props.selectedHistoryPage?.key ?? props.selectedHistoryPageKey ?? props.selectedHistoryPage?.phase ?? 'phase'
   return `${gameId}::${pageKey}`
 })
@@ -451,9 +448,9 @@ const phaseEvidenceSummary = computed(() => {
 })
 
 const selectedHistoryGameNumber = computed(() => {
-  const gameId = props.selectedHistoryGame?.game_id
+  const gameId = selectedHistoryGame.value?.game_id
   if (!gameId) return null
-  const index = props.gameHistory.findIndex((game) => game.game_id === gameId)
+  const index = gameHistory.value.findIndex((game) => game.game_id === gameId)
   return index >= 0 ? index + 1 : null
 })
 
@@ -463,18 +460,18 @@ const selectedHistoryGameLabel = computed(() => {
 })
 
 const selectedLogSource = computed(() =>
-  props.selectedHistoryGame?.log_source || selectedGameConfig.value.log_source || 'normal'
+  selectedHistoryGame.value?.log_source || selectedGameConfig.value.log_source || 'normal'
 )
 
 const selectedGameModeLabel = computed(() => {
   const source = selectedLogSource.value
   if (source === 'benchmark') return '批量评测'
   if (source === 'evolution') return '自进化'
-  return props.selectedHistoryGame?.mode === 'watch' ? '人机局' : '玩家局'
+  return selectedHistoryGame.value?.mode === 'watch' ? '人机局' : '玩家局'
 })
 
 const selectedGameTimeValue = computed(() => {
-  const game = props.selectedHistoryGame || {}
+  const game = selectedHistoryGame.value || {}
   const config = selectedGameConfig.value || {}
   return game.log_time || game.finished_at || game.started_at || config.log_time || config.finished_at || config.started_at || ''
 })
@@ -483,7 +480,7 @@ const selectedGameDateLabel = computed(() => formatGameDate(selectedGameTimeValu
 
 const selectedGameSubLabel = computed(() => {
   if (selectedLogSource.value === 'normal') return selectedGameDateLabel.value
-  const phaseLabel = props.selectedHistoryGame?.source_phase_label || selectedGameConfig.value.source_phase_label
+  const phaseLabel = selectedHistoryGame.value?.source_phase_label || selectedGameConfig.value.source_phase_label
   return phaseLabel ? `${selectedGameDateLabel.value} · ${phaseLabel}` : selectedGameDateLabel.value
 })
 
@@ -544,16 +541,16 @@ function setWorkspaceTab(tab: any, { emitUpdate = true, load = true }: { emitUpd
   const next = normalizeWorkspaceTab(tab)
   if (workspaceTab.value !== next) workspaceTab.value = next
   if (emitUpdate && props.historyWorkspaceTab !== next) emit('update:historyWorkspaceTab', next)
-  if (!load || !props.selectedHistoryGame?.game_id) return
+  if (!load || !selectedHistoryGame.value?.game_id) return
   if (next === 'review' && !reviewLoaded.value && !props.reviewLoading) {
-    props.loadReview?.(props.selectedHistoryGame.game_id)
+    props.loadReview?.(selectedHistoryGame.value.game_id)
   }
   if (next === 'archive' && !archiveLoaded.value && !props.archiveLoading) {
-    props.loadArchive?.(props.selectedHistoryGame.game_id)
+    props.loadArchive?.(selectedHistoryGame.value.game_id)
   }
 }
 
-watch(() => props.selectedHistoryGameId, () => {
+watch(() => selectedHistoryGameId.value, () => {
   selectedAssessPlayerId.value = null
   rawLogFilter.value = 'all'
   expandedPhaseEvidenceKeys.value = new Set()
@@ -563,7 +560,7 @@ watch(() => props.historyWorkspaceTab, (tab) => {
   setWorkspaceTab(tab, { emitUpdate: false })
 }, { immediate: true })
 
-watch(() => props.selectedHistoryGame?.game_id, () => {
+watch(() => selectedHistoryGame.value?.game_id, () => {
   setWorkspaceTab(props.historyWorkspaceTab, { emitUpdate: false })
 })
 
@@ -854,21 +851,21 @@ function selectHistoryGameFromList(gameId) {
 }
 
 function loadSelectedReview() {
-  props.loadReview?.(props.selectedHistoryGame?.game_id)
+  props.loadReview?.(selectedHistoryGame.value?.game_id)
 }
 
 function loadSelectedFlowData() {
-  return props.loadFlowData?.(props.selectedHistoryGame?.game_id, { clearNotice: true })
+  return props.loadFlowData?.(selectedHistoryGame.value?.game_id, { clearNotice: true })
 }
 
 function loadSelectedArchive() {
   setWorkspaceTab('archive', { load: false })
-  props.loadArchive?.(props.selectedHistoryGame?.game_id)
+  props.loadArchive?.(selectedHistoryGame.value?.game_id)
 }
 
 function loadMoreSelectedPhase() {
   return props.loadMoreHistoryPhaseDetail?.(
-    props.selectedHistoryGame?.game_id || props.selectedHistoryGameId,
+    selectedHistoryGame.value?.game_id || selectedHistoryGameId.value,
     props.selectedHistoryPage?.key || props.selectedHistoryPageKey
   )
 }
@@ -900,16 +897,6 @@ function clearPlayerFocus() {
   <section class="battle-log-page" aria-label="对战日志">
     <section class="battle-log-shell parchment-logbook">
       <HistoryGameList
-        :games="gameHistoryForList"
-        :selected-game-id="selectedHistoryGameId"
-        :loading="historyLoading"
-        :loading-more="historyLoadingMore"
-        :has-more="historyHasMore"
-        :source-filter="historySourceFilter"
-        :pagination="historyPagination"
-        :counts="historyCounts"
-        :facets="historyFacets"
-        :notice="historyNotice"
         @select-game="selectHistoryGameFromList"
         @replay-game="emit('replay-game', $event)"
         @delete-game="deleteHistoryGame?.($event)"

@@ -9,7 +9,7 @@ function readSource(relativePath) {
 test('TopNav derives StreamStatusBadge from existing activeSession stream fields', () => {
   const source = readSource('../src/components/TopNav.vue')
 
-  assert.match(source, /import \{ computed, onBeforeUnmount, ref, watch \} from 'vue'/)
+  assert.match(source, /import \{ computed, getCurrentInstance, onBeforeUnmount, ref, watch \} from 'vue'/)
   assert.match(source, /const streamStatusBadge = computed\(\(\) => \{/)
   assert.match(source, /const effectiveActiveSession = computed\(\(\) => \{/)
   assert.match(source, /const session = effectiveActiveSession\.value/)

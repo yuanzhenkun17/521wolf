@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, type PropType } from 'vue'
+import { computed, getCurrentInstance, type PropType } from 'vue'
+import { useHistoryStore } from '../stores'
 import { displayWinnerLabel } from './history/historyDisplay.ts'
 
 type GameId = string | number
@@ -76,6 +77,45 @@ const emit = defineEmits<{
   'change-page': [page: number]
   'load-more': []
 }>()
+const historyStore = useHistoryStore()
+const instance = getCurrentInstance()
+
+const PROP_ALIASES: Record<string, string[]> = {
+  games: ['games'],
+  selectedGameId: ['selectedGameId', 'selected-game-id'],
+  loading: ['loading'],
+  loadingMore: ['loadingMore', 'loading-more'],
+  sourceFilter: ['sourceFilter', 'source-filter'],
+  pagination: ['pagination'],
+  counts: ['counts'],
+  facets: ['facets'],
+  notice: ['notice']
+}
+
+function hasExplicitProp(propName: keyof typeof PROP_ALIASES) {
+  const rawProps = instance?.vnode.props || {}
+  return PROP_ALIASES[propName].some((key) => Object.prototype.hasOwnProperty.call(rawProps, key))
+}
+
+const resolvedGames = computed<HistoryGame[]>(() => hasExplicitProp('games') ? props.games : historyStore.games)
+const resolvedSelectedGameId = computed<GameId | null>(() =>
+  hasExplicitProp('selectedGameId') ? props.selectedGameId : historyStore.selectedHistoryGameId
+)
+const resolvedLoading = computed(() => hasExplicitProp('loading') ? props.loading : historyStore.loading)
+const resolvedLoadingMore = computed(() => hasExplicitProp('loadingMore') ? props.loadingMore : historyStore.loadingMore)
+const resolvedSourceFilter = computed(() => hasExplicitProp('sourceFilter') ? props.sourceFilter : historyStore.sourceFilter)
+const resolvedPagination = computed<HistoryPagination>(() =>
+  hasExplicitProp('pagination') ? props.pagination : historyStore.pagination as HistoryPagination
+)
+const resolvedCounts = computed<CountMap>(() => hasExplicitProp('counts') ? props.counts : historyStore.counts as CountMap)
+const resolvedFacets = computed<HistoryFacets>(() =>
+  hasExplicitProp('facets') ? props.facets : historyStore.facets as HistoryFacets
+)
+const resolvedNotice = computed<HistoryNotice>(() => {
+  if (hasExplicitProp('notice')) return props.notice
+  return historyStore.notice || (historyStore.error ? { type: 'error', message: historyStore.error } : {})
+})
+
 const SOURCE_OPTIONS: Array<{ key: SourceOptionKey, label: string }> = [
   { key: 'all', label: '全部' },
   { key: 'normal', label: '观战/玩家' },
@@ -167,7 +207,7 @@ function outcomeLabel(game: HistoryGame) {
 }
 
 const sourceCounts = computed(() => {
-  const backendCounts = props.facets?.source || props.counts || {}
+  const backendCounts = resolvedFacets.value?.source || resolvedCounts.value || {}
   if (Object.keys(backendCounts).length) {
     return {
       all: Number(backendCounts.all || 0),
@@ -176,8 +216,8 @@ const sourceCounts = computed(() => {
       evolution: Number(backendCounts.evolution || 0)
     }
   }
-  const counts = { all: props.games.length, normal: 0, benchmark: 0, evolution: 0 }
-  props.games.forEach((game) => {
+  const counts = { all: resolvedGames.value.length, normal: 0, benchmark: 0, evolution: 0 }
+  resolvedGames.value.forEach((game) => {
     const key = sourceKey(game)
     counts[key] = (counts[key] || 0) + 1
   })
@@ -191,12 +231,12 @@ const sourceTabs = computed(() =>
   }))
 )
 
-const sourceFilteredGames = computed(() => props.games)
-const shownTotal = computed(() => props.games.length)
-const backendTotal = computed(() => Number(props.pagination?.total ?? sourceCounts.value[props.sourceFilter] ?? props.games.length))
-const pageLimit = computed(() => Math.max(1, Number(props.pagination?.limit || shownTotal.value || 1)))
-const pageOffset = computed(() => Math.max(0, Number(props.pagination?.offset || 0)))
-const pageReturned = computed(() => Math.max(0, Number(props.pagination?.returned ?? shownTotal.value)))
+const sourceFilteredGames = computed(() => resolvedGames.value)
+const shownTotal = computed(() => resolvedGames.value.length)
+const backendTotal = computed(() => Number(resolvedPagination.value?.total ?? sourceCounts.value[resolvedSourceFilter.value] ?? resolvedGames.value.length))
+const pageLimit = computed(() => Math.max(1, Number(resolvedPagination.value?.limit || shownTotal.value || 1)))
+const pageOffset = computed(() => Math.max(0, Number(resolvedPagination.value?.offset || 0)))
+const pageReturned = computed(() => Math.max(0, Number(resolvedPagination.value?.returned ?? shownTotal.value)))
 const currentPage = computed(() => Math.max(1, Math.floor(pageOffset.value / pageLimit.value) + 1))
 const totalPages = computed(() => Math.max(1, Math.ceil(Math.max(0, backendTotal.value) / pageLimit.value)))
 const pageStartIndex = computed(() => backendTotal.value > 0 ? pageOffset.value + 1 : 0)
@@ -216,21 +256,21 @@ const pageSummary = computed(() => {
   return `${pageStartIndex.value}-${pageEndIndex.value} / ${backendTotal.value} 局`
 })
 const pageIndexSummary = computed(() => `第 ${currentPage.value} / ${totalPages.value} 页`)
-const noticeMessage = computed(() => String(props.notice?.message || '').trim())
+const noticeMessage = computed(() => String(resolvedNotice.value?.message || '').trim())
 const noticeType = computed(() => {
-  const type = String(props.notice?.type || '').trim()
+  const type = String(resolvedNotice.value?.type || '').trim()
   return ['success', 'warning', 'error'].includes(type) ? type : 'info'
 })
 
 function changePage(page: number) {
-  if (props.loading || props.loadingMore) return
+  if (resolvedLoading.value || resolvedLoadingMore.value) return
   const target = Math.max(1, Math.min(Number(page) || 1, totalPages.value))
   if (target === currentPage.value) return
   emit('change-page', target)
 }
 
 function selectSource(source: string) {
-  if (source === props.sourceFilter || props.loading) return
+  if (source === resolvedSourceFilter.value || resolvedLoading.value) return
   emit('change-source', source)
 }
 </script>
@@ -245,7 +285,7 @@ function selectSource(source: string) {
         v-for="item in sourceTabs"
         :key="item.key"
         type="button"
-        :class="{ active: sourceFilter === item.key }"
+        :class="{ active: resolvedSourceFilter === item.key }"
         @click="selectSource(item.key)"
       >
         <span>{{ item.label }}</span>
@@ -259,7 +299,7 @@ function selectSource(source: string) {
       <div
         v-for="(item, index) in sourceFilteredGames"
         :key="item.game_id"
-        :class="{ active: item.game_id === selectedGameId }"
+        :class="{ active: item.game_id === resolvedSelectedGameId }"
         class="history-game-item"
       >
         <button class="history-game-select" @click="emit('select-game', item.game_id)">
@@ -293,7 +333,7 @@ function selectSource(source: string) {
         </span>
       </div>
     </div>
-    <p v-if="!sourceFilteredGames.length && !loading" class="empty-log">暂无历史对局</p>
+    <p v-if="!sourceFilteredGames.length && !resolvedLoading" class="empty-log">暂无历史对局</p>
     <footer class="history-pagination" aria-label="历史对局分页">
       <div class="history-page-meta">
         <span>{{ pageSummary }}</span>
@@ -303,7 +343,7 @@ function selectSource(source: string) {
         <button
           type="button"
           class="history-page-step"
-          :disabled="loading || loadingMore || currentPage <= 1"
+          :disabled="resolvedLoading || resolvedLoadingMore || currentPage <= 1"
           aria-label="上一页"
           @click="changePage(currentPage - 1)"
         >
@@ -315,7 +355,7 @@ function selectSource(source: string) {
           type="button"
           class="history-page-number"
           :class="{ active: page === currentPage }"
-          :disabled="loading || loadingMore || page === currentPage"
+          :disabled="resolvedLoading || resolvedLoadingMore || page === currentPage"
           :aria-current="page === currentPage ? 'page' : undefined"
           @click="changePage(page)"
         >
@@ -324,7 +364,7 @@ function selectSource(source: string) {
         <button
           type="button"
           class="history-page-step"
-          :disabled="loading || loadingMore || currentPage >= totalPages"
+          :disabled="resolvedLoading || resolvedLoadingMore || currentPage >= totalPages"
           aria-label="下一页"
           @click="changePage(currentPage + 1)"
         >

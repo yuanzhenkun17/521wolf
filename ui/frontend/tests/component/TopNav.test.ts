@@ -7,7 +7,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
 import TopNav from '../../src/components/TopNav.vue'
-import { useGameStore, useSessionStore } from '../../src/stores'
+import { useGameStore, useSessionStore, useUiStore } from '../../src/stores'
 import type { Game } from '../../src/types/game'
 
 const EmptyRoute = defineComponent({ template: '<div />' })
@@ -135,6 +135,23 @@ describe('TopNav router active state', () => {
 
     expect(wrapper.find('button.topbar-exit-game').exists()).toBe(true)
     expect(wrapper.find('.active-session-pill').exists()).toBe(false)
+  })
+
+  it('uses Pinia UI state for audio controls when App props are absent', async () => {
+    const wrapper = await mountTopNav('/match', { variant: 'match' }, () => {
+      const uiStore = useUiStore()
+      uiStore.hydrateFromRuntime({
+        audioEnabled: true,
+        ttsEnabled: true,
+        ttsAvailable: false,
+      })
+    })
+
+    const buttons = wrapper.findAll('button.audio-toggle')
+    expect(buttons[0].attributes('aria-label')).toBe('关闭音乐')
+    expect(buttons[0].classes()).not.toContain('muted')
+    expect(buttons[1].attributes('disabled')).toBeDefined()
+    expect(buttons[1].classes()).toContain('disabled')
   })
 
   it('keeps legacy navigation events while route ownership is migrating', async () => {

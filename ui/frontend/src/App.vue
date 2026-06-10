@@ -61,14 +61,9 @@ watchEffect(() => {
 
 const {
   logsProps,
-  benchmarkProps,
-  evolutionProps,
   lobbyProps,
   matchProps
 } = useAppRuntimeProps(runtime)
-const audioEnabled = computed(() => uiStore.audioEnabled)
-const ttsEnabled = computed(() => uiStore.ttsEnabled)
-const ttsAvailable = computed(() => uiStore.ttsAvailable)
 const routeAppView = computed(() => appViewFromRouteSource(route))
 const activeAppView = computed(() => routeAppView.value || 'lobby')
 const inLobby = computed(() => activeAppView.value === 'lobby')
@@ -156,9 +151,6 @@ const {
         :class="{ 'night-mode': isNight }"
         :active-session="activeSession"
         :has-active-game="showActiveGamePill"
-        :audio-enabled="audioEnabled"
-        :tts-enabled="ttsEnabled"
-        :tts-available="ttsAvailable"
         :show-exit-game="showTopbarExitGame"
         :exit-disabled="topbarExitDisabled"
         @go-lobby="goLobby"
@@ -192,12 +184,10 @@ const {
       />
       <BenchmarkPage
         v-if="inBenchmark"
-        v-bind="benchmarkProps"
         @back-to-match="backToMatch"
       />
       <EvolutionPage
         v-if="inEvolution"
-        v-bind="evolutionProps"
         @back-to-match="backToMatch"
         @open-sample-log="openLogPage($event)"
         @replay-sample-game="replayHistoryGame($event)"

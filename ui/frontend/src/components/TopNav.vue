@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useGameStore, useSessionStore } from '../stores'
+import { useGameStore, useSessionStore, useUiStore } from '../stores'
 import { isReturnableGame } from '../composables/gameSession.ts'
 import { appViewFromRouteSource } from '../router/appViews'
 import type { ActiveGameSession } from '../types/game'
@@ -84,17 +84,16 @@ const props = withDefaults(defineProps<TopNavProps>(), {
   activeView: 'lobby',
   activeSession: () => ({}),
   hasActiveGame: false,
-  audioEnabled: false,
-  ttsEnabled: false,
-  ttsAvailable: true,
   showExitGame: false,
   exitDisabled: false
 })
 
 const emit = defineEmits(['go-lobby', 'open-logs', 'open-benchmark', 'open-evolution', 'back-to-match', 'toggle-audio', 'toggle-tts', 'exit-game'])
+const instance = getCurrentInstance()
 const route = useRoute()
 const sessionStore = useSessionStore()
 const gameStore = useGameStore()
+const uiStore = useUiStore()
 const exitConfirming = ref(false)
 let exitConfirmTimer = 0
 const topbarCharactersWebp = '/optimized/topbar-characters-320.webp'
@@ -163,6 +162,21 @@ const storeHasActiveGame = computed(() => {
 
 const effectiveHasActiveGame = computed(() => props.hasActiveGame || storeHasActiveGame.value)
 const effectiveShowExitGame = computed(() => props.showExitGame || (activeNavView.value === 'match' && Boolean(gameStore.liveGame)))
+
+const UI_PROP_ALIASES = {
+  audioEnabled: ['audioEnabled', 'audio-enabled'],
+  ttsEnabled: ['ttsEnabled', 'tts-enabled'],
+  ttsAvailable: ['ttsAvailable', 'tts-available']
+} as const
+
+function hasExplicitUiProp(propName: keyof typeof UI_PROP_ALIASES) {
+  const rawProps = instance?.vnode.props || {}
+  return UI_PROP_ALIASES[propName].some((key) => Object.prototype.hasOwnProperty.call(rawProps, key))
+}
+
+const effectiveAudioEnabled = computed(() => hasExplicitUiProp('audioEnabled') ? props.audioEnabled : uiStore.audioEnabled)
+const effectiveTtsEnabled = computed(() => hasExplicitUiProp('ttsEnabled') ? props.ttsEnabled : uiStore.ttsEnabled)
+const effectiveTtsAvailable = computed(() => hasExplicitUiProp('ttsAvailable') ? props.ttsAvailable : uiStore.ttsAvailable)
 
 const streamStatusBadge = computed(() => {
   const session = effectiveActiveSession.value
@@ -278,14 +292,14 @@ onBeforeUnmount(clearExitConfirm)
     <div v-if="variant === 'match'" class="topbar-actions">
       <button
         class="audio-toggle"
-        :class="{ muted: !audioEnabled }"
+        :class="{ muted: !effectiveAudioEnabled }"
         type="button"
-        :title="audioEnabled ? '关闭音乐' : '开启音乐'"
-        :aria-label="audioEnabled ? '关闭音乐' : '开启音乐'"
+        :title="effectiveAudioEnabled ? '关闭音乐' : '开启音乐'"
+        :aria-label="effectiveAudioEnabled ? '关闭音乐' : '开启音乐'"
         @click="emit('toggle-audio')"
       >
         <span class="audio-icon" aria-hidden="true">
-          <svg v-if="audioEnabled" viewBox="0 0 24 24" role="img">
+          <svg v-if="effectiveAudioEnabled" viewBox="0 0 24 24" role="img">
             <path d="M4 9.5h3.7L13 5.2v13.6l-5.3-4.3H4z" />
             <path d="M16.2 8.1c1.4 1.4 1.4 5.4 0 6.8" />
             <path d="M18.7 5.8c2.9 3.1 2.9 10.3 0 12.4" />
@@ -299,15 +313,15 @@ onBeforeUnmount(clearExitConfirm)
       </button>
       <button
         class="audio-toggle voice-toggle"
-        :class="{ muted: !ttsEnabled, disabled: !ttsAvailable }"
+        :class="{ muted: !effectiveTtsEnabled, disabled: !effectiveTtsAvailable }"
         type="button"
-        :disabled="!ttsAvailable"
-        :title="!ttsAvailable ? '发言朗读未配置' : (ttsEnabled ? '关闭发言朗读' : '开启发言朗读')"
-        :aria-label="!ttsAvailable ? '发言朗读未配置' : (ttsEnabled ? '关闭发言朗读' : '开启发言朗读')"
+        :disabled="!effectiveTtsAvailable"
+        :title="!effectiveTtsAvailable ? '发言朗读未配置' : (effectiveTtsEnabled ? '关闭发言朗读' : '开启发言朗读')"
+        :aria-label="!effectiveTtsAvailable ? '发言朗读未配置' : (effectiveTtsEnabled ? '关闭发言朗读' : '开启发言朗读')"
         @click="emit('toggle-tts')"
       >
         <span class="audio-icon" aria-hidden="true">
-          <svg v-if="ttsEnabled" viewBox="0 0 24 24" role="img">
+          <svg v-if="effectiveTtsEnabled" viewBox="0 0 24 24" role="img">
             <path d="M7 9.5a5 5 0 0 1 10 0v2a5 5 0 0 1-10 0z" />
             <path d="M12 16.5v3" />
             <path d="M9.5 20h5" />

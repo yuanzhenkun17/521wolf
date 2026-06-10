@@ -1,26 +1,8 @@
 import { computed, isRef } from 'vue'
-import { isAppView } from '../router/appViews'
-import type { AppView } from '../types/ui'
 
 type RuntimeRecord = Record<string, unknown>
 
 const logsPropKeys = [
-  'returnToMatchAvailable',
-  'gameHistory',
-  'selectedHistoryGameId',
-  'selectedHistoryGame',
-  'historyLoading',
-  'historyPagination',
-  'historyLoadingMore',
-  'historySourceFilter',
-  'historyStatusFilter',
-  'historyCounts',
-  'historyFacets',
-  'historyNotice',
-  'historyHasMore',
-  'historyCurrentPage',
-  'historyTotalPages',
-  'historyPages',
   'selectedHistoryPageKey',
   'historyWorkspaceTab',
   'selectedHistoryPage',
@@ -63,7 +45,6 @@ const logsPropKeys = [
   'loadMoreHistoryPhaseDetail',
   'goHistoryPage',
   'setHistorySourceFilter',
-  'setHistoryStatusFilter',
   'deleteHistoryGame',
   'loadArchive',
   'loadReview',
@@ -93,12 +74,8 @@ const matchPropKeys = [
   'judgeStripMessage',
   'playerIdentityList',
   'chatLogExpanded',
-  'chatLogs',
   'matchRecordLogs',
-  'groupedJudgeLogs',
-  'displayPhase',
   'livingPlayers',
-  'roleStats',
   'speakerCarousel',
   'speakerMessage',
   'humanPlayer',
@@ -145,24 +122,9 @@ export function pickRuntime(runtime: RuntimeRecord, keys: string[]): Record<stri
 }
 
 export function useAppRuntimeProps(runtime: RuntimeRecord) {
-  const readRuntime = (key: string) => readRuntimeValue(runtime, key)
-
-  const runtimeCurrentView = computed<AppView>(() => {
-    const view = String(readRuntime('currentView') || '')
-    return isAppView(view) ? view : 'lobby'
-  })
-
   return {
-    readRuntime,
     logsProps: computed(() => pickRuntime(runtime, logsPropKeys)),
-    benchmarkProps: computed(() => pickRuntime(runtime, ['returnToMatchAvailable'])),
-    evolutionProps: computed(() => pickRuntime(runtime, ['returnToMatchAvailable'])),
     lobbyProps: computed(() => pickRuntime(runtime, ['backendMode', 'externalStatus', 'loading', 'playerCount', 'apiFetch'])),
-    matchProps: computed(() => pickRuntime(runtime, matchPropKeys)),
-    activeSession: computed(() => readRuntime('activeSession')),
-    audioEnabled: computed(() => readRuntime('audioEnabled')),
-    ttsEnabled: computed(() => readRuntime('ttsEnabled')),
-    ttsAvailable: computed(() => readRuntime('ttsAvailable')),
-    runtimeCurrentView
+    matchProps: computed(() => pickRuntime(runtime, matchPropKeys))
   }
 }

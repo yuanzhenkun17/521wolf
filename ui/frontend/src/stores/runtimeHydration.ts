@@ -50,7 +50,16 @@ export const runtimeHydrationKeys = {
     'selectedHistoryGame',
     'historyWorkspaceTab',
     'historyLoading',
-    'historyNotice'
+    'historyPagination',
+    'historyLoadingMore',
+    'historySourceFilter',
+    'historyCounts',
+    'historyFacets',
+    'historyNotice',
+    'historyHasMore',
+    'historyCurrentPage',
+    'historyTotalPages',
+    'historyPages'
   ],
   replay: ['replayGame', 'isReplayMode', 'replayCursor', 'replayPlaying', 'replaySpeed'],
   ui: ['error', 'matchNotice', 'historyNotice', 'audioEnabled', 'ttsEnabled', 'ttsAvailable']

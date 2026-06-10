@@ -21,10 +21,6 @@ defineOptions({
   inheritAttrs: false
 })
 
-defineProps({
-  returnToMatchAvailable: Boolean
-})
-
 const route = useRoute()
 const benchmark = useEvaluationWorkbench()
 const activeView = ref('overview')

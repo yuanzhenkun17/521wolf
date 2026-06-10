@@ -16,10 +16,6 @@ defineOptions({
   inheritAttrs: false
 })
 
-defineProps({
-  returnToMatchAvailable: Boolean
-})
-
 const emit = defineEmits(['back-to-match', 'open-sample-log', 'replay-sample-game'])
 
 const route = useRoute()

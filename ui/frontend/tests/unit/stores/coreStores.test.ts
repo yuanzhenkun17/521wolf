@@ -185,7 +185,16 @@ test('history store hydrates selection and derives selection state', () => {
     selectedHistoryGame: selectedGame,
     historyWorkspaceTab: 'review',
     historyLoading: true,
-    historyNotice: { message: 'history is stale' }
+    historyPagination: { total: 8, limit: 2, offset: 2, returned: 2 },
+    historyLoadingMore: true,
+    historySourceFilter: 'benchmark',
+    historyCounts: { all: 8, benchmark: 3 },
+    historyFacets: { source: { normal: 5, benchmark: 3 } },
+    historyNotice: { type: 'warning', message: 'history is stale' },
+    historyHasMore: true,
+    historyCurrentPage: 2,
+    historyTotalPages: 4,
+    historyPages: [{ key: 'day-1-night' }]
   })
 
   assert.equal(store.games.length, 1)
@@ -194,7 +203,16 @@ test('history store hydrates selection and derives selection state', () => {
   assert.equal(store.selectedHistoryGame?.game_id, 'history-1')
   assert.equal(store.historyWorkspaceTab, 'review')
   assert.equal(store.loading, true)
+  assert.deepEqual(store.pagination, { total: 8, limit: 2, offset: 2, returned: 2 })
+  assert.equal(store.loadingMore, true)
+  assert.equal(store.sourceFilter, 'benchmark')
+  assert.deepEqual(store.counts, { all: 8, benchmark: 3 })
+  assert.deepEqual(store.facets, { source: { normal: 5, benchmark: 3 } })
   assert.equal(store.error, 'history is stale')
+  assert.equal(store.hasMore, true)
+  assert.equal(store.currentPage, 2)
+  assert.equal(store.totalPages, 4)
+  assert.deepEqual(store.pages, [{ key: 'day-1-night' }])
   assert.equal(store.hasSelection, true)
 
   store.selectGame(null)
@@ -331,7 +349,16 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
     selectedHistoryGame: ref(historyGame),
     historyWorkspaceTab: ref('archive'),
     historyLoading: ref(true),
+    historyPagination: ref({ total: 6, limit: 2, offset: 4, returned: 2 }),
+    historyLoadingMore: ref(true),
+    historySourceFilter: ref('evolution'),
+    historyCounts: ref({ all: 2, evolution: 1 }),
+    historyFacets: ref({ source: { evolution: 1 } }),
     historyNotice: ref({ type: 'warning', message: 'history warning' }),
+    historyHasMore: ref(true),
+    historyCurrentPage: ref(3),
+    historyTotalPages: ref(5),
+    historyPages: ref([{ key: 'runtime-page' }]),
     replayGame: ref(replayGame),
     isReplayMode: ref(true),
     replayCursor: ref(3),
@@ -378,6 +405,15 @@ test('runtime hydration helper unwraps runtime refs and applies core store paylo
   assert.equal(gameStore.judgeBoardStarting, false)
   assert.equal(historyStore.games[0].game_id, 'runtime-history')
   assert.equal(historyStore.historyWorkspaceTab, 'archive')
+  assert.deepEqual(historyStore.pagination, { total: 6, limit: 2, offset: 4, returned: 2 })
+  assert.equal(historyStore.loadingMore, true)
+  assert.equal(historyStore.sourceFilter, 'evolution')
+  assert.deepEqual(historyStore.counts, { all: 2, evolution: 1 })
+  assert.deepEqual(historyStore.facets, { source: { evolution: 1 } })
+  assert.equal(historyStore.hasMore, true)
+  assert.equal(historyStore.currentPage, 3)
+  assert.equal(historyStore.totalPages, 5)
+  assert.deepEqual(historyStore.pages, [{ key: 'runtime-page' }])
   assert.equal(replayStore.replayGame?.game_id, 'runtime-replay')
   assert.equal(replayStore.replaySpeed, 1.5)
   assert.deepEqual(runtimeHydrationKeys.ui, [
@@ -439,7 +475,16 @@ test('incremental runtime hydrator skips unchanged store payloads', () => {
     selectedHistoryGame: ref(null),
     historyWorkspaceTab: ref('phase'),
     historyLoading: ref(false),
+    historyPagination: ref({}),
+    historyLoadingMore: ref(false),
+    historySourceFilter: ref('all'),
+    historyCounts: ref({}),
+    historyFacets: ref({}),
     historyNotice: ref(null),
+    historyHasMore: ref(false),
+    historyCurrentPage: ref(1),
+    historyTotalPages: ref(1),
+    historyPages: ref([]),
     replayGame: ref(null),
     isReplayMode: ref(false),
     replayCursor: ref(0),
