@@ -2,27 +2,19 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-from fastapi import HTTPException
-
-from app.util.time import beijing_now_iso
-from app.lib.version import ReleaseStageNotAllowedError
 from storage.game_store import delete_game_from_env
 from storage.game_read_model import row_history_phase
 from storage.provider import storage_provider_from_env as storage_provider_from_env
 from storage.runtime import GamePersistence
-from ui.backend.errors import domain_error_detail, release_stage_not_allowed_detail
 from ui.backend.history_index import GameHistoryIndex, history_facets, source_counts
 from ui.backend.live_game import (
-    LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS,
     LIVE_GAME_TERMINAL_STATUSES,
     LiveGameSession,
 )
 from ui.backend.schemas import GameStartRequest, HumanActionRequest
 from ui.backend.serializers import (
-    _fallback_version,
     _normalize_decision,
     _player_view_snapshot,
 )
@@ -148,70 +140,13 @@ class GameStoreMixin:
         return self._game_read_gateway().list_history_rows()
 
     def _live_game_heartbeat_timeout_seconds(self) -> float:
-        value = getattr(self, "live_game_heartbeat_timeout_seconds", LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS)
-        try:
-            return max(1.0, float(value))
-        except (TypeError, ValueError):
-            return LIVE_GAME_HEARTBEAT_TIMEOUT_SECONDS
+        return self._game_session_service().live_game_heartbeat_timeout_seconds()
 
     def skill_dir_for_request(self, request: GameStartRequest) -> str | None:
-        if not request.role_versions:
-            return request.skill_dir
-        from app.lib.version import SkillVersionConfig, build_composite_skill_dir
-
-        try:
-            role_versions = self._effective_role_versions(request.role_versions)
-            if not role_versions:
-                return request.skill_dir
-            skill_dir = build_composite_skill_dir(
-                self.registry,
-                SkillVersionConfig(
-                    name=f"ui_{uuid.uuid4().hex[:8]}",
-                    created_at=beijing_now_iso(),
-                    role_versions=role_versions,
-                ),
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=f"role version not found: {exc}") from exc
-        except ReleaseStageNotAllowedError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail=domain_error_detail(
-                    code="role_version_release_stage_not_allowed",
-                    message="Role version is not allowed for normal games.",
-                    detail=f"role version not allowed: {exc}",
-                    diagnostics=[exc.diagnostic(kind="role_version_release_stage_not_allowed")],
-                ),
-            ) from exc
-        except (RuntimeError, ValueError) as exc:
-            release_stage_detail = release_stage_not_allowed_detail(
-                exc,
-                code="role_version_release_stage_not_allowed",
-                message="Role version is not allowed for normal games.",
-                detail_prefix="role version not allowed",
-                kind="role_version_release_stage_not_allowed",
-            )
-            if release_stage_detail is not None:
-                raise HTTPException(status_code=409, detail=release_stage_detail) from exc
-            raise HTTPException(status_code=409, detail=f"role version not allowed: {exc}") from exc
-        return str(skill_dir) if skill_dir is not None else request.skill_dir
+        return self._game_session_service().skill_dir_for_request(request)
 
     def _effective_role_versions(self, role_versions: dict[str, str]) -> dict[str, str]:
-        from app.lib.version import ensure_version_allowed_for_default_use
-
-        effective: dict[str, str] = {}
-        registry = self.registry
-        for role, version_id in role_versions.items():
-            if not role or not version_id:
-                continue
-            if version_id == _fallback_version(role)["version_id"]:
-                try:
-                    registry.read_skill_contents(role, version_id)
-                except FileNotFoundError:
-                    continue
-            ensure_version_allowed_for_default_use(registry, str(role), str(version_id))
-            effective[str(role)] = str(version_id)
-        return effective
+        return self._game_session_service().effective_role_versions(role_versions)
 
     def _snapshot_log_time(self, snapshot: dict[str, Any], fallback: str | None = None) -> str | None:
         return self._game_history_service().snapshot_log_time(snapshot, fallback)
@@ -456,26 +391,10 @@ class GameStoreMixin:
         }
 
     def get_human_action(self, game_id: str) -> dict[str, Any] | None:
-        self.check_live_game_watchdog()
-        live = self.live_sessions.get(game_id)
-        if live is not None:
-            return live.pending_action()
-        if self.get_game(game_id) is None:
-            raise HTTPException(status_code=404, detail="game not found")
-        return None
+        return self._game_session_service().get_human_action(game_id)
 
     def submit_human_action(self, game_id: str, request: HumanActionRequest) -> dict[str, Any]:
-        self.check_live_game_watchdog()
-        live = self.live_sessions.get(game_id)
-        if live is None:
-            if self.get_game(game_id) is None:
-                raise HTTPException(status_code=404, detail="game not found")
-            raise HTTPException(status_code=409, detail="game is not waiting for human input")
-        if not live.submit(request):
-            raise HTTPException(status_code=409, detail="game is not waiting for human input")
-        snapshot = live.snapshot()
-        self.games[game_id] = snapshot
-        return snapshot
+        return self._game_session_service().submit_human_action(game_id, request)
 
     def stop_game(self, game_id: str) -> dict[str, Any]:
         return self._live_game_lifecycle().stop_game(game_id)
