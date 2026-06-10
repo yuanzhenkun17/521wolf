@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from storage.interfaces import EvolutionRunData
+
+_log = logging.getLogger(__name__)
 
 
 class EvolutionStateGateway:
     """Open evolution storage connections and delegate run state operations."""
 
-    def __init__(self, *, paths: Any | None = None) -> None:
+    def __init__(self, *, provider: Any | None = None, paths: Any | None = None) -> None:
+        self._provider = provider
         self._paths = paths
 
     def save_run(self, run: EvolutionRunData) -> None:
@@ -19,6 +23,24 @@ class EvolutionStateGateway:
             self._store(conn).save_run(run)
         finally:
             conn.close()
+
+    def save_runtime_state(
+        self,
+        run: EvolutionRunData,
+        *,
+        trust_bundle: dict[str, Any] | None = None,
+    ) -> None:
+        conn = self._open_connection()
+        try:
+            store = self._store(conn)
+            store.save_run(run)
+            if (
+                isinstance(trust_bundle, dict)
+                and trust_bundle.get("schema_version") == "trust_bundle_v1"
+            ):
+                store.save_trust_bundle(trust_bundle)
+        finally:
+            self._close_best_effort(conn)
 
     def get_run(self, run_id: str) -> EvolutionRunData | None:
         conn = self._open_connection()
@@ -43,7 +65,9 @@ class EvolutionStateGateway:
     def _open_connection(self) -> Any:
         import storage.provider as provider_mod
 
-        if self._paths is None:
+        if self._provider is not None:
+            provider = self._provider
+        elif self._paths is None:
             provider = provider_mod.storage_provider_from_env()
         else:
             provider = provider_mod.storage_provider_from_env(paths=self._paths)
@@ -54,6 +78,13 @@ class EvolutionStateGateway:
         import storage.evolution.run_repo as run_repo
 
         return run_repo.EvolutionStore(conn)
+
+    @staticmethod
+    def _close_best_effort(conn: Any) -> None:
+        try:
+            conn.close()
+        except Exception as exc:  # noqa: BLE001 - cleanup is best-effort
+            _log.warning("failed to close evolution storage connection: %s", exc)
 
 
 __all__ = ["EvolutionStateGateway"]

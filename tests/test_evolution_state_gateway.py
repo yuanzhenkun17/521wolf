@@ -111,3 +111,93 @@ def test_evolution_state_gateway_passes_paths_when_provided(monkeypatch: Any) ->
         raise AssertionError("provider exception did not propagate")
 
     assert calls == [paths]
+
+
+def test_evolution_state_gateway_runtime_state_uses_provider_and_saves_trust_bundle(
+    monkeypatch: Any,
+) -> None:
+    import storage.evolution.run_repo as run_repo
+    import storage.provider as provider_mod
+    from storage.evolution.state_gateway import EvolutionStateGateway
+
+    opened: list["_FakeConn"] = []
+    calls: list[tuple[str, str]] = []
+
+    class _FakeConn:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _FakeProvider:
+        def open_evolution_connection(self) -> _FakeConn:
+            conn = _FakeConn()
+            opened.append(conn)
+            return conn
+
+    class _FakeEvolutionStore:
+        def __init__(self, conn: _FakeConn) -> None:
+            self._conn = conn
+
+        def save_run(self, run: EvolutionRunData) -> None:
+            assert self._conn.closed is False
+            calls.append(("save_run", run.run_id))
+
+        def save_trust_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
+            assert self._conn.closed is False
+            bundle_id = str(bundle["trust_bundle_id"])
+            calls.append(("save_trust_bundle", bundle_id))
+            return {"id": bundle_id}
+
+    def fail_provider_from_env(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("env provider should not be used")
+
+    monkeypatch.setattr(provider_mod, "storage_provider_from_env", fail_provider_from_env)
+    monkeypatch.setattr(run_repo, "EvolutionStore", _FakeEvolutionStore)
+
+    trust_bundle = {
+        "schema_version": "trust_bundle_v1",
+        "trust_bundle_id": "tb-run-1",
+    }
+    EvolutionStateGateway(provider=_FakeProvider()).save_runtime_state(
+        _run("run-rt"),
+        trust_bundle=trust_bundle,
+    )
+
+    assert calls == [
+        ("save_run", "run-rt"),
+        ("save_trust_bundle", "tb-run-1"),
+    ]
+    assert len(opened) == 1
+    assert opened[0].closed is True
+
+
+def test_evolution_state_gateway_runtime_state_close_error_is_best_effort(
+    monkeypatch: Any,
+) -> None:
+    import storage.evolution.run_repo as run_repo
+    from storage.evolution.state_gateway import EvolutionStateGateway
+
+    calls: list[tuple[str, str]] = []
+
+    class _CloseFailConn:
+        def close(self) -> None:
+            raise RuntimeError("close failed")
+
+    class _FakeProvider:
+        def open_evolution_connection(self) -> _CloseFailConn:
+            return _CloseFailConn()
+
+    class _FakeEvolutionStore:
+        def __init__(self, conn: _CloseFailConn) -> None:
+            self._conn = conn
+
+        def save_run(self, run: EvolutionRunData) -> None:
+            calls.append(("save_run", run.run_id))
+
+    monkeypatch.setattr(run_repo, "EvolutionStore", _FakeEvolutionStore)
+
+    EvolutionStateGateway(provider=_FakeProvider()).save_runtime_state(_run("run-close"))
+
+    assert calls == [("save_run", "run-close")]

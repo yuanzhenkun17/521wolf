@@ -2161,11 +2161,10 @@ def _baseline_skill_dir(
 def _persist_run_state(state: EvolveState, *, record_warning: bool = True) -> None:
     """Persist the evolution run state to PostgreSQL for dashboards / recovery."""
     from app.util.json import to_jsonable
-    from storage.evolution.run_repo import EvolutionStore
-    from storage.provider import storage_provider_from_env
+    from storage.evolution.state_gateway import EvolutionStateGateway
+    from storage.interfaces import EvolutionRunData
 
     result = state.get("result") or {}
-    conn = None
     try:
         finished_at = result.get("finished_at") if isinstance(result, dict) else None
         if not finished_at:
@@ -2247,27 +2246,29 @@ def _persist_run_state(state: EvolveState, *, record_warning: bool = True) -> No
                 "result": dict(result) if isinstance(result, dict) else {},
             }
         )
-        provider = state.get("storage_provider") or storage_provider_from_env(paths=state.get("paths"))
-        conn = provider.open_evolution_connection()
-        evolution_store = EvolutionStore(conn)
-        evolution_store.save_runtime_state(
-            str(state.get("run_id", "")),
-            role=str(state.get("role", "")),
-            parent_hash=str(state.get("parent_hash", "")),
-            status=str(state.get("status", "")),
-            training_games=len(state.get("training_games", []) or []),
-            battle_games=len(state.get("battle_games", []) or []),
-            baseline_config=baseline_config,
-            candidate_hash=state.get("candidate_hash"),
-            battle_result=result.get("battle_result") or state.get("battle_result"),
-            errors=list(state.get("errors", [])),
-            runtime_state=runtime_state,
-            started_at=started_at,
-            finished_at=finished_at,
+        EvolutionStateGateway(
+            provider=state.get("storage_provider") or None,
+            paths=state.get("paths"),
+        ).save_runtime_state(
+            EvolutionRunData(
+                run_id=str(state.get("run_id", "")),
+                role=str(state.get("role", "")),
+                parent_hash=str(state.get("parent_hash", "")),
+                status=str(state.get("status", "")),
+                training_games=len(state.get("training_games", []) or []),
+                battle_games=len(state.get("battle_games", []) or []),
+                baseline_config=baseline_config,
+                candidate_hash=state.get("candidate_hash"),
+                battle_result=result.get("battle_result") or state.get("battle_result"),
+                errors=list(state.get("errors", [])),
+                runtime_state=runtime_state,
+                started_at=started_at,
+                finished_at=finished_at,
+            ),
+            trust_bundle=runtime_state.get("trust_bundle")
+            if isinstance(runtime_state, dict)
+            else None,
         )
-        trust_bundle = runtime_state.get("trust_bundle")
-        if isinstance(trust_bundle, dict) and trust_bundle.get("schema_version") == "trust_bundle_v1":
-            evolution_store.save_trust_bundle(trust_bundle)
     except Exception as exc:  # noqa: BLE001 — persistence is best-effort
         message = f"decide: failed to persist run state: {exc}"
         _log.warning(message)
@@ -2277,12 +2278,6 @@ def _persist_run_state(state: EvolveState, *, record_warning: bool = True) -> No
             if isinstance(state.get("result"), dict):
                 state["result"]["warnings"] = state.get("warnings", [])
                 state["result"]["diagnostics"] = state.get("diagnostics", [])
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
-                _log.warning("failed to close evolution persistence connection: %s", exc)
 
 
 def _state_consolidation(state: EvolveState) -> SkillConsolidation | None:
