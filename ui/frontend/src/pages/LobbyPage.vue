@@ -2,9 +2,10 @@
 import { computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { type GameStartRoleVersionMode, gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
 import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
-import { runtimeHealthGateSummary } from '../domain/runtimeHealth/gates'
+import { runtimeHealthGateSummary, runtimeHealthPayloadFromPreflight } from '../domain/runtimeHealth/gates'
 import { useGameStore, useSessionStore } from '../stores'
 import type { RuntimeHealthPayload } from '../types/health'
+import type { ModelProfile } from '../types/settings'
 
 type RoleVersionModeOption = {
   key: GameStartRoleVersionMode
@@ -19,6 +20,7 @@ type StartModeOptions = {
   player_count: number
   human_player_id: number | null
   role_versions?: Record<string, unknown>
+  model_profile_id?: string
 }
 
 const props = defineProps({
@@ -53,29 +55,34 @@ const backendAvailable = computed(() => (
 ))
 const loading = computed(() => hasExplicitLobbyProp('loading') ? props.loading : gameStore.loading)
 const supportsHuman = computed(() => props.externalStatus?.supports_human !== false)
-const gameStartGate = computed(() => runtimeHealthGateSummary(props.runtimeHealth, 'game_start'))
-const gameStartBlocked = computed(() => backendAvailable.value && gameStartGate.value.disabled)
-const gameStartGateMessage = computed(() => gameStartGate.value.reason || gameStartGate.value.warning)
-const gameStartGateTone = computed(() => gameStartGate.value.disabled ? 'error' : 'warning')
+const baseGameStartGate = computed(() => runtimeHealthGateSummary(props.runtimeHealth, 'game_start'))
 const showGameStartGate = ref(false)
 const roles = ref([])
 const versionsByRole = ref({})
 const leaderboardsByRole = ref({})
 const roleVersionSelections = ref({})
+const modelProfiles = ref<ModelProfile[]>([])
+const modelProfilePreflight = ref<Record<string, any> | null>(null)
 const registryLoading = ref(false)
 const registryError = ref('')
+const modelProfilePreflightLoading = ref(false)
+const modelProfilePreflightError = ref('')
+const modelProfilesLoading = ref(false)
+const modelProfilesError = ref('')
 const startingMode = ref('')
+const selectedModelProfileId = ref('')
 const roleVersionDrawerOpen = ref(false)
 const roleVersionMode = ref<GameStartRoleVersionMode>('baseline')
 let gameStartGateTimer: ReturnType<typeof setTimeout> | null = null
 let roleVersionLoadPromise = null
+let modelProfilesLoadPromise: Promise<void> | null = null
+let modelProfilePreflightRequestId = 0
 
 const ROLE_VERSION_MODES: RoleVersionModeOption[] = [
   { key: 'baseline', label: '当前基线' },
   { key: 'latest', label: '最新晋升' },
   { key: 'custom', label: '自定义覆盖' }
 ]
-
 const roleRows = computed(() => roles.value
   .map((role) => {
     const rawVersions = versionsByRole.value[role] || []
@@ -151,6 +158,50 @@ const registryStatusType = computed(() => {
   if (fallbackRoleCount.value) return 'warning'
   return 'neutral'
 })
+const launchModelProfiles = computed(() =>
+  modelProfiles.value
+    .filter((profile) => profile.enabled && profile.has_api_key)
+    .sort((left, right) => Number(Boolean(right.default_scopes?.game_decision)) - Number(Boolean(left.default_scopes?.game_decision)))
+)
+const selectedModelProfile = computed(() =>
+  launchModelProfiles.value.find((profile) => profile.profile_id === selectedModelProfileId.value) || null
+)
+const modelProfilePreflightHealth = computed(() =>
+  runtimeHealthPayloadFromPreflight(modelProfilePreflight.value, 'game_start')
+)
+const gameStartGate = computed(() =>
+  selectedModelProfileId.value && modelProfilePreflightHealth.value
+    ? runtimeHealthGateSummary(modelProfilePreflightHealth.value, 'game_start')
+    : baseGameStartGate.value
+)
+const modelProfileStatusText = computed(() => {
+  if (!backendAvailable.value) return ''
+  if (modelProfilesLoading.value) return '模型读取中'
+  if (modelProfilesError.value) return modelProfilesError.value
+  if (modelProfilePreflightLoading.value) return '模型预检中'
+  if (modelProfilePreflightError.value) return modelProfilePreflightError.value
+  if (modelProfilePreflight.value?.ready === false) return '模型预检未通过'
+  if (modelProfilePreflight.value?.ready === true) return '模型预检通过'
+  if (selectedModelProfile.value) return `${selectedModelProfile.value.name} · ${selectedModelProfile.value.model}`
+  if (launchModelProfiles.value.length) return '自动使用默认模型'
+  return '未配置本地模型'
+})
+const gameStartBlocked = computed(() => {
+  if (!backendAvailable.value) return false
+  if (selectedModelProfileId.value) {
+    if (modelProfilePreflightLoading.value || modelProfilePreflightError.value || !modelProfilePreflight.value) return true
+  }
+  return gameStartGate.value.disabled
+})
+const gameStartGateMessage = computed(() => {
+  if (selectedModelProfileId.value) {
+    if (modelProfilePreflightLoading.value) return '模型 Profile 预检中。'
+    if (modelProfilePreflightError.value) return modelProfilePreflightError.value
+    if (!modelProfilePreflight.value) return '模型 Profile 尚未完成启动预检。'
+  }
+  return gameStartGate.value.reason || gameStartGate.value.warning
+})
+const gameStartGateTone = computed(() => gameStartBlocked.value ? 'error' : 'warning')
 
 function versionSource(version) {
   return sourceText(version?.source || (version?.is_baseline ? 'baseline' : 'version'))
@@ -234,15 +285,86 @@ function scheduleGameStartGateDismiss() {
   }, 5200)
 }
 
-function start(mode) {
-  if (gameStartBlocked.value) return
+async function loadModelProfilePreflight() {
+  if (!props.apiFetch || !backendAvailable.value) return false
+  const profileId = String(selectedModelProfileId.value || '').trim()
+  const requestId = ++modelProfilePreflightRequestId
+  modelProfilePreflight.value = null
+  modelProfilePreflightError.value = ''
+  if (!profileId) {
+    modelProfilePreflightLoading.value = false
+    return true
+  }
+  modelProfilePreflightLoading.value = true
+  try {
+    const query = new URLSearchParams({
+      scope: 'game_start',
+      model_scope: 'game_decision',
+      model_profile_id: profileId
+    })
+    const payload = await props.apiFetch(`/health/preflight?${query.toString()}`, { method: 'POST' })
+    if (requestId !== modelProfilePreflightRequestId) return false
+    modelProfilePreflight.value = payload || null
+    return Boolean(payload?.ready)
+  } catch (err) {
+    if (requestId === modelProfilePreflightRequestId) {
+      modelProfilePreflight.value = null
+      modelProfilePreflightError.value = err?.message || '模型 Profile 预检失败'
+    }
+    return false
+  } finally {
+    if (requestId === modelProfilePreflightRequestId) modelProfilePreflightLoading.value = false
+  }
+}
+
+async function start(mode) {
+  if (selectedModelProfileId.value) {
+    await loadModelProfilePreflight()
+  }
+  if (gameStartBlocked.value) {
+    showGameStartGate.value = true
+    scheduleGameStartGateDismiss()
+    return
+  }
   startingMode.value = mode
   const body: StartModeOptions = {
     player_count: Number(props.playerCount) || 12,
     human_player_id: mode === 'play' ? 1 : null
   }
   if (selectedOverrideCount.value) body.role_versions = selectedRoleVersions.value
+  if (selectedModelProfileId.value) body.model_profile_id = selectedModelProfileId.value
   emit('start-mode', { mode, options: body })
+}
+
+async function loadModelProfiles() {
+  if (!props.apiFetch || !backendAvailable.value) return
+  if (modelProfilesLoadPromise) return modelProfilesLoadPromise
+  modelProfilesLoading.value = true
+  modelProfilesError.value = ''
+  modelProfilesLoadPromise = (async () => {
+    const payload = await props.apiFetch('/settings/model-profiles')
+    const profiles = Array.isArray(payload.profiles) ? payload.profiles : []
+    modelProfiles.value = profiles
+    const available = profiles
+      .filter((profile) => profile.enabled && profile.has_api_key)
+      .sort((left, right) => Number(Boolean(right.default_scopes?.game_decision)) - Number(Boolean(left.default_scopes?.game_decision)))
+    if (selectedModelProfileId.value && available.some((profile) => profile.profile_id === selectedModelProfileId.value)) {
+      void loadModelProfilePreflight()
+      return
+    }
+    selectedModelProfileId.value = available.find((profile) => profile.default_scopes?.game_decision)?.profile_id || ''
+    if (selectedModelProfileId.value) void loadModelProfilePreflight()
+  })()
+  try {
+    await modelProfilesLoadPromise
+  } catch (err) {
+    modelProfiles.value = []
+    selectedModelProfileId.value = ''
+    modelProfilesError.value = err?.message || '模型读取失败'
+  } finally {
+    modelProfilesLoadPromise = null
+    modelProfilesLoading.value = false
+  }
 }
 
 async function loadRoleVersions() {
@@ -292,11 +414,18 @@ async function loadRoleVersions() {
   }
 }
 
-onMounted(loadRoleVersions)
+onMounted(() => {
+  void loadRoleVersions()
+  void loadModelProfiles()
+})
 onBeforeUnmount(clearGameStartGateTimer)
 watch(gameStartGateMessage, scheduleGameStartGateDismiss, { immediate: true })
 watch(backendMode, () => {
-  loadRoleVersions()
+  void loadRoleVersions()
+  void loadModelProfiles()
+})
+watch(selectedModelProfileId, () => {
+  void loadModelProfilePreflight()
 })
 watch(loading, (isLoading) => {
   if (!isLoading) startingMode.value = ''
@@ -420,6 +549,34 @@ watch(loading, (isLoading) => {
         </div>
         <small v-if="gameStartGate.actions.length">{{ gameStartGate.actions[0] }}</small>
         <button type="button" aria-label="关闭开局门禁提示" @click="dismissGameStartGate">关闭</button>
+      </section>
+      <section
+        v-if="backendAvailable && (launchModelProfiles.length || modelProfilesLoading || modelProfilesError)"
+        class="lobby-model-panel"
+        aria-label="开局模型"
+      >
+        <label>
+          <span>本地模型</span>
+          <select v-model="selectedModelProfileId" :disabled="loading || modelProfilesLoading">
+            <option value="">自动选择</option>
+            <option
+              v-for="profile in launchModelProfiles"
+              :key="profile.profile_id"
+              :value="profile.profile_id"
+            >
+              {{ profile.name }} · {{ profile.model }}{{ profile.default_scopes?.game_decision ? ' · 默认游戏' : '' }}
+            </option>
+          </select>
+        </label>
+        <small :class="{ error: Boolean(modelProfilesError || modelProfilePreflightError) }">{{ modelProfileStatusText }}</small>
+        <button
+          v-if="modelProfilesError"
+          type="button"
+          :disabled="modelProfilesLoading"
+          @click="loadModelProfiles"
+        >
+          重试
+        </button>
       </section>
       <button class="mode-card watch" :disabled="loading || !backendAvailable || gameStartBlocked" @click="start('watch')">
         <span>观战模式</span>
@@ -684,6 +841,72 @@ watch(loading, (isLoading) => {
   border-color: rgba(244, 213, 142, 0.42);
   color: #f5dfaa;
   background: rgba(244, 213, 142, 0.16);
+}
+
+.lobby-model-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 6px 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(224, 198, 128, 0.34);
+  background: rgba(14, 14, 14, 0.74);
+  color: #f1e7cf;
+}
+
+.lobby-model-panel label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.lobby-model-panel span,
+.lobby-model-panel small {
+  color: rgba(244, 213, 142, 0.78);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.lobby-model-panel small {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lobby-model-panel small.error {
+  color: #ffd9c8;
+}
+
+.lobby-model-panel select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(224, 198, 128, 0.34);
+  border-radius: 0;
+  color: #f1e7cf;
+  background: rgba(22, 12, 14, 0.78);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.lobby-model-panel button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(244, 213, 142, 0.3);
+  border-radius: 0;
+  color: #f5dfaa;
+  background: rgba(244, 213, 142, 0.1);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 :global(.lobby .card-fan) {
@@ -1158,6 +1381,20 @@ watch(loading, (isLoading) => {
 }
 
 @media (max-width: 620px) {
+  .lobby-model-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .lobby-model-panel button {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+
+  .lobby-model-panel small {
+    white-space: normal;
+  }
+
   .lobby-version-status {
     grid-template-columns: 1fr;
   }

@@ -114,3 +114,22 @@ export function runtimeHealthGateSummary(
     warning
   }
 }
+
+export function runtimeHealthPayloadFromPreflight(
+  result: Record<string, unknown> | null | undefined,
+  scope: RuntimeHealthGateScope
+): RuntimeHealthPayload | null {
+  if (!result || typeof result !== 'object') return null
+  const gate = asRecord(result.gate)
+  if (!Object.keys(gate).length) return null
+  const checks = asRecord(result.checks)
+  return {
+    status: String(result.status || gate.status || (result.ready ? 'ok' : 'error')),
+    ready: Boolean(result.ready),
+    checks,
+    gates: {
+      [scope]: gate
+    },
+    actions: Array.isArray(result.actions) ? result.actions : (Array.isArray(gate.actions) ? gate.actions : [])
+  }
+}

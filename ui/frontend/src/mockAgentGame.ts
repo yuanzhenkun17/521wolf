@@ -5356,6 +5356,42 @@ function mockHealthPayload() {
   }
 }
 
+function mockHealthPreflight(queryString = '') {
+  const query = new URLSearchParams(queryString)
+  const scope = query.get('scope') || 'game_start'
+  const modelScope = query.get('model_scope') || (
+    scope === 'benchmark_start' ? 'benchmark' : scope === 'evolution_start' ? 'evolution' : 'game_decision'
+  )
+  const modelProfileId = query.get('model_profile_id') || null
+  const health = mockHealthPayload()
+  const gate = health.gates[scope] || { ready: true, status: 'ok', blockers: [], warnings: [], actions: [] }
+  const checks = {
+    ...health.checks,
+    llm_config: {
+      status: 'ok',
+      source: modelProfileId ? 'settings_profile' : 'frontend-mock',
+      model_scope: modelScope,
+      model_profile_id: modelProfileId
+    },
+    llm_connectivity: {
+      status: 'ok',
+      source: modelProfileId ? 'settings_profile' : 'frontend-mock',
+      model_scope: modelScope,
+      model_profile_id: modelProfileId
+    }
+  }
+  return {
+    scope,
+    model_scope: modelScope,
+    model_profile_id: modelProfileId,
+    ready: true,
+    status: gate.status === 'error' ? 'ok' : gate.status || 'ok',
+    gate: { ...gate, ready: true, blockers: [], warnings: [], actions: [] },
+    checks,
+    actions: []
+  }
+}
+
 function mockSettingsProfiles() {
   return {
     kind: 'settings_model_profiles',
@@ -5406,6 +5442,10 @@ export async function mockApiFetch(path, options: LooseRecord = {}) {
 
   if (path === '/health') {
     return mockHealthPayload()
+  }
+
+  if (routePath === '/health/preflight') {
+    return mockHealthPreflight(queryString)
   }
 
   if (routePath === '/settings/model-profiles') {

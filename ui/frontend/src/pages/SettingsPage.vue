@@ -160,7 +160,7 @@ const profileGuidanceRows = computed(() => {
     rows.push('当前 Profile 已禁用，启动任务不会选用它。')
   }
   if (selectedProfile.value && ['error', 'stale', 'untested'].includes(String(selectedProfile.value.last_test_status || 'untested'))) {
-    rows.push('保存后先测试连接；失败会阻断开始游戏、Benchmark 或 Evolution。')
+    rows.push('保存后建议测试连接；启动入口会重新预检，失败才会阻断任务。')
   }
   if (form.clear_api_key && !form.api_key.trim()) {
     rows.push('清除 key 后需要重新填写 API key 才能用于启动。')
@@ -972,7 +972,7 @@ function shortId(value: unknown): string {
                 </span>
               </div>
               <p class="settings-context-empty">
-                {{ ['error', 'stale', 'untested'].includes(String(selectedProfile.last_test_status || 'untested')) ? '连接未确认会阻断使用该 Profile 的启动入口。' : '连接状态可用于启动门禁判断。' }}
+                {{ ['error', 'stale', 'untested'].includes(String(selectedProfile.last_test_status || 'untested')) ? '连接未确认时，启动入口会重新预检；预检失败才会阻断。' : '连接状态可用于启动门禁判断。' }}
               </p>
             </template>
             <p v-else class="settings-context-empty">正在编辑新 Profile。</p>

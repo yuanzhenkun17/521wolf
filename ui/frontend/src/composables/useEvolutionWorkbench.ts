@@ -1,10 +1,10 @@
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
 import { createResumableEventSource } from './resumableEventSource.ts'
 import { addLegacyHashChangeListener, currentLegacyHash } from '../router/legacyViewNavigation'
-import { runtimeHealthGateSummary } from '../domain/runtimeHealth/gates'
+import { runtimeHealthGateSummary, runtimeHealthPayloadFromPreflight } from '../domain/runtimeHealth/gates'
 import {
   evolutionDeepLinkFromHash as routeEvolutionDeepLinkFromHash,
   evolutionDeepLinkFromRoute as routeEvolutionDeepLinkFromRoute,
@@ -1976,6 +1976,12 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   const sse = ref(null)
   const runFilter = ref('')
   const sampleGameFilter = ref('')
+  const modelProfilePreflight = ref(null)
+  const modelProfilePreflightLoading = ref(false)
+  const modelProfilePreflightError = ref('')
+  const modelProfiles = ref([])
+  const modelProfilesLoading = ref(false)
+  const modelProfilesError = ref('')
   const runPageSize = Math.max(1, Number(options.runListLimit || DEFAULT_RUN_PAGE_SIZE))
   const sampleGamePageSize = Math.max(1, Number(options.sampleGameListLimit || DEFAULT_SAMPLE_GAME_PAGE_SIZE))
   const runPagination = ref(createPagination(runPageSize))
@@ -1996,12 +2002,15 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   const trustBundleRequests = createLatestOnlyTracker()
   const actionRequests = createLatestOnlyTracker()
   const runtimeHealthRequests = createLatestOnlyTracker()
+  const modelProfileRequests = createLatestOnlyTracker()
+  const modelProfilePreflightRequests = createLatestOnlyTracker()
 
   const form = ref({
     training_games: 5,
     battle_games: 4,
     max_days: 5,
-    auto_promote: true
+    auto_promote: true,
+    model_profile_id: ''
   })
 
   const roleRows = computed(() => roles.value.map((role) => {
@@ -2205,9 +2214,37 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (!selectedVersion.value) return '请选择一个版本。'
     return selectedVersion.value.rollbackDisabledReason || ''
   })
-  const runtimeHealthGate = computed(() => runtimeHealthGateSummary(runtimeHealth.value, 'evolution_start'))
-  const runtimeHealthGateBlocked = computed(() => runtimeHealthGate.value.disabled)
-  const runtimeHealthGateReason = computed(() => runtimeHealthGate.value.reason || runtimeHealthGate.value.warning)
+  const launchModelProfiles = computed(() =>
+    modelProfiles.value
+      .filter((profile) => profile?.enabled && profile?.has_api_key)
+      .sort((left, right) => Number(Boolean(right?.default_scopes?.evolution)) - Number(Boolean(left?.default_scopes?.evolution)))
+  )
+  const selectedModelProfile = computed(() =>
+    launchModelProfiles.value.find((profile) => profile.profile_id === form.value.model_profile_id) || null
+  )
+  const modelProfilePreflightHealth = computed(() =>
+    runtimeHealthPayloadFromPreflight(modelProfilePreflight.value, 'evolution_start')
+  )
+  const effectiveRuntimeHealth = computed(() =>
+    form.value.model_profile_id && modelProfilePreflightHealth.value
+      ? modelProfilePreflightHealth.value
+      : runtimeHealth.value
+  )
+  const runtimeHealthGate = computed(() => runtimeHealthGateSummary(effectiveRuntimeHealth.value, 'evolution_start'))
+  const runtimeHealthGateBlocked = computed(() => {
+    if (form.value.model_profile_id) {
+      if (modelProfilePreflightLoading.value || modelProfilePreflightError.value || !modelProfilePreflight.value) return true
+    }
+    return runtimeHealthGate.value.disabled
+  })
+  const runtimeHealthGateReason = computed(() => {
+    if (form.value.model_profile_id) {
+      if (modelProfilePreflightLoading.value) return '模型 Profile 预检中。'
+      if (modelProfilePreflightError.value) return modelProfilePreflightError.value
+      if (!modelProfilePreflight.value) return '模型 Profile 尚未完成启动预检。'
+    }
+    return runtimeHealthGate.value.reason || runtimeHealthGate.value.warning
+  })
 
   function setError(message) {
     error.value = message || ''
@@ -2237,6 +2274,66 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     } catch {
       if (token.isLatest()) runtimeHealth.value = null
       return false
+    }
+  }
+
+  async function loadModelProfilePreflight() {
+    const profileId = String(form.value.model_profile_id || '').trim()
+    const token = modelProfilePreflightRequests.next()
+    modelProfilePreflight.value = null
+    modelProfilePreflightError.value = ''
+    if (!profileId) {
+      modelProfilePreflightLoading.value = false
+      return true
+    }
+    modelProfilePreflightLoading.value = true
+    try {
+      const query = new URLSearchParams({
+        scope: 'evolution_start',
+        model_scope: 'evolution',
+        model_profile_id: profileId
+      })
+      const data = await apiFetch(`/health/preflight?${query.toString()}`, { method: 'POST' })
+      if (!token.isLatest()) return false
+      modelProfilePreflight.value = data || null
+      return Boolean(data?.ready)
+    } catch (err) {
+      if (token.isLatest()) {
+        modelProfilePreflight.value = null
+        modelProfilePreflightError.value = err?.message || '模型 Profile 预检失败'
+      }
+      return false
+    } finally {
+      if (token.isLatest()) modelProfilePreflightLoading.value = false
+    }
+  }
+
+  async function loadModelProfiles() {
+    const token = modelProfileRequests.next()
+    modelProfilesLoading.value = true
+    modelProfilesError.value = ''
+    try {
+      const data = await apiFetch('/settings/model-profiles')
+      if (!token.isLatest()) return false
+      const profiles = Array.isArray(data?.profiles) ? data.profiles : []
+      modelProfiles.value = profiles
+      const launchableProfiles = profiles.filter((profile) => profile?.enabled && profile?.has_api_key)
+      if (form.value.model_profile_id && !launchableProfiles.some((profile) => profile.profile_id === form.value.model_profile_id)) {
+        form.value.model_profile_id = ''
+      }
+      if (!form.value.model_profile_id) {
+        form.value.model_profile_id = launchableProfiles.find((profile) => profile?.default_scopes?.evolution)?.profile_id || ''
+      }
+      if (form.value.model_profile_id) void loadModelProfilePreflight()
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        modelProfiles.value = []
+        modelProfilesError.value = err?.message || '模型 Profile 读取失败'
+      }
+      return false
+    } finally {
+      if (token.isLatest()) modelProfilesLoading.value = false
     }
   }
 
@@ -2677,7 +2774,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (!silent) loading.value = true
     setError('')
     try {
-      await loadRoles()
+      await Promise.all([loadRoles(), loadModelProfiles()])
       if (!token.isLatest()) return
       const { pageRuns, pageBatches, pagination } = await fetchRunPage(0)
       if (!token.isLatest()) return
@@ -3119,6 +3216,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       setNotice('warning', message)
       return
     }
+    if (form.value.model_profile_id) {
+      await loadModelProfilePreflight()
+    }
     if (runtimeHealthGateBlocked.value) {
       const message = runtimeHealthGateReason.value || '运行环境未就绪，不能启动进化任务。'
       setError(message)
@@ -3138,7 +3238,8 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
           training_games: numberField('training_games', 5),
           battle_games: numberField('battle_games', 4),
           max_days: numberField('max_days', 5),
-          auto_promote: autoPromoteField()
+          auto_promote: autoPromoteField(),
+          ...(String(form.value.model_profile_id || '').trim() ? { model_profile_id: String(form.value.model_profile_id || '').trim() } : {})
         })
       })
       if (!token.isLatest()) return
@@ -3171,6 +3272,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       setNotice('warning', message)
       return
     }
+    if (form.value.model_profile_id) {
+      await loadModelProfilePreflight()
+    }
     if (runtimeHealthGateBlocked.value) {
       const message = runtimeHealthGateReason.value || '运行环境未就绪，不能启动进化任务。'
       setError(message)
@@ -3190,7 +3294,8 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
           training_games: numberField('training_games', 5),
           battle_games: numberField('battle_games', 4),
           max_days: numberField('max_days', 5),
-          auto_promote: autoPromoteField()
+          auto_promote: autoPromoteField(),
+          ...(String(form.value.model_profile_id || '').trim() ? { model_profile_id: String(form.value.model_profile_id || '').trim() } : {})
         })
       })
       if (!token.isLatest()) return
@@ -3362,6 +3467,13 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     })
   }
 
+  watch(
+    () => form.value.model_profile_id,
+    () => {
+      void loadModelProfilePreflight()
+    }
+  )
+
   return {
     loading,
     actionLoading,
@@ -3414,6 +3526,16 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     runtimeHealthGateBlocked,
     runtimeHealthGateReason,
     loadRuntimeHealth,
+    modelProfiles,
+    launchModelProfiles,
+    selectedModelProfile,
+    modelProfilePreflight,
+    modelProfilePreflightLoading,
+    modelProfilePreflightError,
+    loadModelProfilePreflight,
+    modelProfilesLoading,
+    modelProfilesError,
+    loadModelProfiles,
     baselinePromoteTrustDisabledReason: selectedBaselinePromoteTrustDisabledReason,
     selectedGames,
     sampleBuckets,

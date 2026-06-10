@@ -1298,6 +1298,13 @@ onBeforeUnmount(() => {
   background: rgba(255, 239, 194, 0.22);
 }
 
+.evo-console-field--model {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 4px 8px;
+}
+
 .evo-console-field span {
   min-width: 0;
   overflow: hidden;
@@ -1329,6 +1336,36 @@ onBeforeUnmount(() => {
   outline: none;
   border-color: rgba(93, 48, 17, 0.36);
   box-shadow: 0 2px 0 rgba(139, 94, 52, 0.08);
+}
+
+.evo-console-field--model small {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(74, 37, 15, 0.58);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evo-console-field--model small.error {
+  color: var(--evo-danger);
+}
+
+.evo-console-field--model button {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  align-self: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(93, 48, 17, 0.18);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.44);
+  color: var(--evo-text);
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
 }
 
 .evo-runtime-gate {

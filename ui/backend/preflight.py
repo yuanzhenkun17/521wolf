@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ui.backend.health import build_health_payload, build_runtime_gates, probe_llm_connectivity
+from ui.backend.health import build_health_payload, build_runtime_gates, llm_config_check, probe_llm_connectivity
 
 _LLM_SCOPES = {"game_start", "benchmark_start", "evolution_start", "settings_model_test"}
 
@@ -37,6 +37,11 @@ async def check_runtime_ready(
         else:
             checks = health.get("checks") if isinstance(health.get("checks"), dict) else {}
             checks = dict(checks)
+            checks["llm_config"] = llm_config_check(
+                store,
+                model_scope=resolved_model_scope,
+                model_profile_id=normalized_profile_id,
+            )
             checks["llm_connectivity"] = probe
             gates = build_runtime_gates(checks, store=store)
             health = {**health, "checks": checks, "gates": gates}

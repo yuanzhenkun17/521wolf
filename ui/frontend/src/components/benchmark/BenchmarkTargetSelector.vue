@@ -8,6 +8,7 @@ type ReadableRef<T> = {
 interface BenchmarkTargetForm {
   model_id: string
   model_config_hash: string
+  model_profile_id: string
   target_version_id: string
 }
 
@@ -29,15 +30,34 @@ interface BenchmarkRoleTargetVersion {
   targetDisabledReason?: string
 }
 
+interface BenchmarkModelProfile {
+  profile_id: string
+  name: string
+  model: string
+  enabled?: boolean
+  has_api_key?: boolean
+  default_scopes?: Record<string, boolean>
+  last_test_status?: string
+  model_config_hash?: string
+}
+
 interface BenchmarkTargetBenchmark {
   roleRows: ReadableRef<BenchmarkRoleRow[]>
   roleTargetVersionRows: ReadableRef<BenchmarkRoleTargetVersion[]>
+  launchModelProfiles: ReadableRef<BenchmarkModelProfile[]>
+  selectedModelProfile: ReadableRef<BenchmarkModelProfile | null>
+  modelProfilePreflight: ReadableRef<Record<string, any> | null>
+  modelProfilePreflightLoading: ReadableRef<boolean>
+  modelProfilePreflightError: ReadableRef<string>
+  modelProfilesLoading: ReadableRef<boolean>
+  modelProfilesError: ReadableRef<string>
   selectedBenchmarkIsModelSuite: ReadableRef<boolean>
   selectedRoleTargetVersion: ReadableRef<BenchmarkRoleTargetVersion | null>
   selectedRoleTargetVersionBlockedReason: ReadableRef<string>
   selectedRole: ReadableRef<string>
   form: ReadableRef<BenchmarkTargetForm>
   selectRole: (role: string) => void
+  loadModelProfiles: () => void | Promise<void>
 }
 
 const props = defineProps({
@@ -49,9 +69,22 @@ const props = defineProps({
 
 const roleRows = computed(() => props.benchmark.roleRows.value || [])
 const roleVersionRows = computed(() => props.benchmark.roleTargetVersionRows.value || [])
+const modelProfiles = computed(() => props.benchmark.launchModelProfiles.value || [])
 const isModel = computed(() => props.benchmark.selectedBenchmarkIsModelSuite.value)
 const selectedTargetVersion = computed(() => props.benchmark.selectedRoleTargetVersion.value || null)
 const selectedTargetBlockedReason = computed(() => props.benchmark.selectedRoleTargetVersionBlockedReason.value || '')
+const selectedModelProfile = computed(() => props.benchmark.selectedModelProfile.value || null)
+const modelProfileStatus = computed(() => {
+  if (props.benchmark.modelProfilesLoading.value) return '读取模型中'
+  if (props.benchmark.modelProfilesError.value) return props.benchmark.modelProfilesError.value
+  if (props.benchmark.modelProfilePreflightLoading.value) return '模型预检中'
+  if (props.benchmark.modelProfilePreflightError.value) return props.benchmark.modelProfilePreflightError.value
+  if (props.benchmark.modelProfilePreflight.value?.ready === false) return '模型预检未通过'
+  if (props.benchmark.modelProfilePreflight.value?.ready === true) return '模型预检通过'
+  if (selectedModelProfile.value) return `${selectedModelProfile.value.name} · ${selectedModelProfile.value.model}`
+  if (modelProfiles.value.length) return '自动使用默认模型'
+  return '未配置本地模型'
+})
 
 const versionStageLabels: Record<string, string> = {
   baseline: '基线',
@@ -94,13 +127,27 @@ function versionOptionText(version: BenchmarkRoleTargetVersion) {
     </header>
 
     <section v-if="isModel" class="target-fields target-fields--model">
+      <label class="target-profile-field">
+        <span>模型 Profile</span>
+        <select v-model.trim="benchmark.form.value.model_profile_id" :disabled="benchmark.modelProfilesLoading.value">
+          <option value="">自动选择</option>
+          <option
+            v-for="profile in modelProfiles"
+            :key="profile.profile_id"
+            :value="profile.profile_id"
+          >
+            {{ profile.name }} · {{ profile.model }}{{ profile.default_scopes?.benchmark ? ' · 默认评测' : '' }}
+          </option>
+        </select>
+      </label>
       <label>
         <span>模型 ID</span>
         <input
           v-model.trim="benchmark.form.value.model_id"
           type="text"
           autocomplete="off"
-          placeholder="留空使用当前后端模型"
+          :disabled="Boolean(benchmark.form.value.model_profile_id)"
+          :placeholder="benchmark.form.value.model_profile_id ? '由 Profile 解析' : '留空使用当前后端模型'"
         />
       </label>
       <label>
@@ -109,9 +156,24 @@ function versionOptionText(version: BenchmarkRoleTargetVersion) {
           v-model.trim="benchmark.form.value.model_config_hash"
           type="text"
           autocomplete="off"
-          placeholder="留空由后端生成"
+          :disabled="Boolean(benchmark.form.value.model_profile_id)"
+          :placeholder="benchmark.form.value.model_profile_id ? '由 Profile 生成' : '留空由后端生成'"
         />
       </label>
+      <p
+        class="target-warning"
+        :class="{ neutral: !benchmark.modelProfilesError.value && !benchmark.modelProfilePreflightError.value }"
+        role="status"
+      >
+        {{ modelProfileStatus }}
+        <button
+          v-if="benchmark.modelProfilesError.value"
+          type="button"
+          @click="benchmark.loadModelProfiles()"
+        >
+          重试
+        </button>
+      </p>
     </section>
 
     <section v-else class="target-fields target-fields--role">
@@ -397,5 +459,18 @@ function versionOptionText(version: BenchmarkRoleTargetVersion) {
   border-color: var(--target-border);
   background: var(--target-soft);
   color: var(--target-muted);
+}
+
+.target-warning button {
+  height: 24px;
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 1px solid rgba(90, 51, 25, 0.22);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.54);
+  color: var(--target-text);
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
 }
 </style>

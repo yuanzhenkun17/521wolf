@@ -3,7 +3,7 @@ import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
 import { createResumableEventSource } from './resumableEventSource.ts'
-import { runtimeHealthGateSummary } from '../domain/runtimeHealth/gates'
+import { runtimeHealthGateSummary, runtimeHealthPayloadFromPreflight } from '../domain/runtimeHealth/gates'
 import {
   isBenchmarkBatch,
   normalizeLeaderboardEntry,
@@ -32,7 +32,6 @@ const BENCHMARK_BUDGET_METRIC_LABELS = {
   estimated_cost: '预计成本',
   estimated_tokens: '预计 token'
 }
-
 const BENCHMARK_SUITE_STATUS_LABELS = {
   enabled: '启用',
   active: '启用',
@@ -1190,6 +1189,12 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkLeaderboardCompareLoading = ref(false)
   const benchmarkLeaderboardCompareError = ref('')
   const runtimeHealth = ref(null)
+  const modelProfilePreflight = ref(null)
+  const modelProfilePreflightLoading = ref(false)
+  const modelProfilePreflightError = ref('')
+  const modelProfiles = ref([])
+  const modelProfilesLoading = ref(false)
+  const modelProfilesError = ref('')
   const benchmarkSavedViews = ref([])
   const benchmarkSavedViewsLoading = ref(false)
   const benchmarkSavedViewsError = ref('')
@@ -1220,6 +1225,8 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkViewRequests = createLatestOnlyTracker()
   const benchmarkViewActionRequests = createLatestOnlyTracker()
   const runtimeHealthRequests = createLatestOnlyTracker()
+  const modelProfileRequests = createLatestOnlyTracker()
+  const modelProfilePreflightRequests = createLatestOnlyTracker()
   let lastRunsError = null
 
   const form = ref({
@@ -1230,7 +1237,8 @@ function useEvaluationWorkbench(options = {}) {
     stop_after_budget_units: '',
     target_version_id: '',
     model_id: '',
-    model_config_hash: ''
+    model_config_hash: '',
+    model_profile_id: ''
   })
 
   const selectedBenchmarkSuite = computed(() =>
@@ -1302,6 +1310,37 @@ function useEvaluationWorkbench(options = {}) {
     }
     return ''
   })
+  const launchModelProfiles = computed(() =>
+    modelProfiles.value
+      .filter((profile) => profile?.enabled && profile?.has_api_key)
+      .sort((left, right) => Number(Boolean(right?.default_scopes?.benchmark)) - Number(Boolean(left?.default_scopes?.benchmark)))
+  )
+  const selectedModelProfile = computed(() =>
+    launchModelProfiles.value.find((profile) => profile.profile_id === form.value.model_profile_id) || null
+  )
+  const modelProfilePreflightHealth = computed(() =>
+    runtimeHealthPayloadFromPreflight(modelProfilePreflight.value, 'benchmark_start')
+  )
+  const effectiveRuntimeHealth = computed(() =>
+    selectedBenchmarkIsModelSuite.value && form.value.model_profile_id && modelProfilePreflightHealth.value
+      ? modelProfilePreflightHealth.value
+      : runtimeHealth.value
+  )
+  const runtimeHealthGate = computed(() => runtimeHealthGateSummary(effectiveRuntimeHealth.value, 'benchmark_start'))
+  const runtimeHealthGateBlocked = computed(() => {
+    if (selectedBenchmarkIsModelSuite.value && form.value.model_profile_id) {
+      if (modelProfilePreflightLoading.value || modelProfilePreflightError.value || !modelProfilePreflight.value) return true
+    }
+    return runtimeHealthGate.value.disabled
+  })
+  const runtimeHealthGateReason = computed(() => {
+    if (selectedBenchmarkIsModelSuite.value && form.value.model_profile_id) {
+      if (modelProfilePreflightLoading.value) return '模型 Profile 预检中。'
+      if (modelProfilePreflightError.value) return modelProfilePreflightError.value
+      if (!modelProfilePreflight.value) return '模型 Profile 尚未完成启动预检。'
+    }
+    return runtimeHealthGate.value.reason || runtimeHealthGate.value.warning
+  })
   const selectedBenchmarkCanLaunch = computed(() =>
     (selectedBenchmarkIsModelSuite.value || Boolean(selectedRole.value)) &&
     !selectedBenchmarkSuiteLaunchDisabledReason.value &&
@@ -1309,9 +1348,6 @@ function useEvaluationWorkbench(options = {}) {
     !selectedRoleTargetVersionBlockedReason.value &&
     !runtimeHealthGateBlocked.value
   )
-  const runtimeHealthGate = computed(() => runtimeHealthGateSummary(runtimeHealth.value, 'benchmark_start'))
-  const runtimeHealthGateBlocked = computed(() => runtimeHealthGate.value.disabled)
-  const runtimeHealthGateReason = computed(() => runtimeHealthGate.value.reason || runtimeHealthGate.value.warning)
   const currentBenchmarkLeaderboardRows = computed(() =>
     selectedBenchmarkIsModelSuite.value ? modelLeaderboardRows.value : roleLeaderboardRows.value
   )
@@ -1435,13 +1471,15 @@ function useEvaluationWorkbench(options = {}) {
     const targetVersionId = normalizeTargetVersionId(form.value.target_version_id)
     const modelId = String(form.value.model_id || '').trim()
     const modelConfigHash = String(form.value.model_config_hash || '').trim()
+    const modelProfileId = String(form.value.model_profile_id || '').trim()
     return {
       ...(selectedBenchmarkId.value ? { benchmark_id: selectedBenchmarkId.value } : {}),
       ...(selectedBenchmarkIsModelSuite.value
         ? {
             target_type: 'model',
-            ...(modelId ? { model_id: modelId } : {}),
-            ...(modelConfigHash ? { model_config_hash: modelConfigHash } : {})
+            ...(modelProfileId ? { model_profile_id: modelProfileId } : {}),
+            ...(!modelProfileId && modelId ? { model_id: modelId } : {}),
+            ...(!modelProfileId && modelConfigHash ? { model_config_hash: modelConfigHash } : {})
           }
         : {
             ...(selectedRole.value ? { roles: [selectedRole.value] } : {}),
@@ -1723,6 +1761,66 @@ function useEvaluationWorkbench(options = {}) {
     } catch {
       if (token.isLatest()) runtimeHealth.value = null
       return false
+    }
+  }
+
+  async function loadModelProfilePreflight() {
+    const profileId = selectedBenchmarkIsModelSuite.value ? String(form.value.model_profile_id || '').trim() : ''
+    const token = modelProfilePreflightRequests.next()
+    modelProfilePreflight.value = null
+    modelProfilePreflightError.value = ''
+    if (!profileId) {
+      modelProfilePreflightLoading.value = false
+      return true
+    }
+    modelProfilePreflightLoading.value = true
+    try {
+      const query = new URLSearchParams({
+        scope: 'benchmark_start',
+        model_scope: 'benchmark',
+        model_profile_id: profileId
+      })
+      const data = await apiFetch(`/health/preflight?${query.toString()}`, { method: 'POST' })
+      if (!token.isLatest()) return false
+      modelProfilePreflight.value = data || null
+      return Boolean(data?.ready)
+    } catch (err) {
+      if (token.isLatest()) {
+        modelProfilePreflight.value = null
+        modelProfilePreflightError.value = err?.message || '模型 Profile 预检失败'
+      }
+      return false
+    } finally {
+      if (token.isLatest()) modelProfilePreflightLoading.value = false
+    }
+  }
+
+  async function loadModelProfiles() {
+    const token = modelProfileRequests.next()
+    modelProfilesLoading.value = true
+    modelProfilesError.value = ''
+    try {
+      const data = await apiFetch('/settings/model-profiles')
+      if (!token.isLatest()) return false
+      const profiles = Array.isArray(data?.profiles) ? data.profiles : []
+      modelProfiles.value = profiles
+      const launchableProfiles = profiles.filter((profile) => profile?.enabled && profile?.has_api_key)
+      if (form.value.model_profile_id && !launchableProfiles.some((profile) => profile.profile_id === form.value.model_profile_id)) {
+        form.value.model_profile_id = ''
+      }
+      if (!form.value.model_profile_id) {
+        form.value.model_profile_id = launchableProfiles.find((profile) => profile?.default_scopes?.benchmark)?.profile_id || ''
+      }
+      if (form.value.model_profile_id) void loadModelProfilePreflight()
+      return true
+    } catch (err) {
+      if (token.isLatest()) {
+        modelProfiles.value = []
+        modelProfilesError.value = err?.message || '模型 Profile 读取失败'
+      }
+      return false
+    } finally {
+      if (token.isLatest()) modelProfilesLoading.value = false
     }
   }
 
@@ -2797,7 +2895,7 @@ function useEvaluationWorkbench(options = {}) {
     error.value = ''
     if (notify) clearNotice()
     try {
-      await loadBenchmarkSuites()
+      await Promise.all([loadBenchmarkSuites(), loadModelProfiles()])
       if (!token.isLatest()) return false
       const rolesLoaded = await loadRoles()
       if (!token.isLatest()) return false
@@ -2956,6 +3054,9 @@ function useEvaluationWorkbench(options = {}) {
       setNotice('warning', message)
       return
     }
+    if (selectedBenchmarkIsModelSuite.value && form.value.model_profile_id) {
+      await loadModelProfilePreflight()
+    }
     if (runtimeHealthGateBlocked.value) {
       const message = runtimeHealthGateReason.value || '运行环境未就绪，不能启动评测。'
       error.value = message
@@ -3046,10 +3147,18 @@ function useEvaluationWorkbench(options = {}) {
       form.value.stop_after_budget_units,
       form.value.target_version_id,
       form.value.model_id,
-      form.value.model_config_hash
+      form.value.model_config_hash,
+      form.value.model_profile_id
     ],
     () => {
       void loadBenchmarkPlan()
+    }
+  )
+
+  watch(
+    () => [selectedBenchmarkIsModelSuite.value, form.value.model_profile_id],
+    () => {
+      void loadModelProfilePreflight()
     }
   )
 
@@ -3065,6 +3174,16 @@ function useEvaluationWorkbench(options = {}) {
     runtimeHealthGateBlocked,
     runtimeHealthGateReason,
     loadRuntimeHealth,
+    modelProfiles,
+    launchModelProfiles,
+    selectedModelProfile,
+    modelProfilePreflight,
+    modelProfilePreflightLoading,
+    modelProfilePreflightError,
+    loadModelProfilePreflight,
+    modelProfilesLoading,
+    modelProfilesError,
+    loadModelProfiles,
     roles,
     roleMeta,
     roleRows,

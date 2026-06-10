@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.config import load_tts_config
 from ui.backend.health import build_health_payload, probe_llm_connectivity
+from ui.backend.preflight import check_runtime_ready
 from ui.backend.schemas import TtsSpeechRequest
 from ui.backend.settings_model_profiles import settings_admin_authorized, settings_admin_payload
 from ui.backend.tts_dashscope import (
@@ -37,6 +38,19 @@ def register_core_routes(api: FastAPI, store: Any) -> None:
             model_scope=model_scope,
             model_profile_id=normalized_profile_id,
             cache=normalized_profile_id is None,
+        )
+
+    @api.post("/api/health/preflight")
+    async def health_preflight(
+        scope: str = "game_start",
+        model_scope: str | None = None,
+        model_profile_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await check_runtime_ready(
+            store,
+            scope=scope,
+            model_scope=model_scope,
+            model_profile_id=model_profile_id,
         )
 
     @api.post("/api/tts/speech/stream")

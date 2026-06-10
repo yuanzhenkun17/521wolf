@@ -1108,6 +1108,39 @@ test('startMode does not send enable_sheriff from the frontend start request', (
   assert.equal(Object.hasOwn(startBody, 'enable_sheriff'), false)
 }))
 
+test('startMode sends the selected model profile to game start', () => withWindow(async () => {
+  const state = useGameState()
+  let startBody = null
+  const watchGame = game('profile-watch-game', {
+    mode: 'watch',
+    human_player_id: null,
+    player_count: 12,
+    players: Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      seat: index + 1,
+      name: `${index + 1}号`,
+      role_hint: '未知',
+      alive: true
+    }))
+  })
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiFetch: async (path, options = {}) => {
+      if (path === '/games') {
+        startBody = JSON.parse(options.body)
+        return watchGame
+      }
+      if (path === '/games/profile-watch-game?advance=1') return watchGame
+      if (path === '/health') return { mode: 'mock', external: { supports_human: true } }
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  await actions.startMode({ mode: 'watch', options: { model_profile_id: 'profile-game-main' } })
+
+  assert.equal(startBody.model_profile_id, 'profile-game-main')
+}))
+
 test('player mode hides other identities for villagers and reveals wolf teammates for wolves', () => {
   const state = useGameState()
   state.backendMode.value = 'api'
@@ -3505,6 +3538,65 @@ test('evolution workbench shows success notice after starting a single run', asy
   assert.equal(workbench.selectedRunId.value, 'evo-new')
 })
 
+test('evolution workbench sends the selected model profile when starting a single run', async () => {
+  const requests = []
+  let runs = []
+  const createdRun = {
+    run_id: 'evo-profile-new',
+    role: 'seer',
+    status: 'training',
+    started_at: '2026-06-07T15:00:00'
+  }
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path.startsWith('/health/preflight?scope=evolution_start')) {
+      return {
+        ready: true,
+        status: 'ok',
+        gate: { ready: true, status: 'ok', blockers: [], warnings: [], actions: [] },
+        checks: { llm_connectivity: { status: 'ok' } }
+      }
+    }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/roles/seer/versions') return { versions: [] }
+    if (path === '/roles/seer/leaderboard') return { entries: [] }
+    if (path === '/evolution-runs') {
+      runs = [createdRun]
+      return { run_id: 'evo-profile-new' }
+    }
+    if (path === '/evolution-runs?limit=80&offset=0&source=evolution') {
+      return {
+        runs,
+        batches: [],
+        pagination: { total: runs.length, offset: 0, limit: 80, returned: runs.length, has_more: false }
+      }
+    }
+    if (path === '/evolution-runs/evo-profile-new') return createdRun
+    if (path === '/evolution-runs/evo-profile-new/diff') return { diffs: [] }
+    if (path === '/evolution-runs/evo-profile-new/proposals') return { proposals: [] }
+    if (/^\/evolution-runs\/evo-profile-new\/games\?/.test(path)) {
+      return { games: [], pagination: { total: 0, offset: 0, limit: 80, returned: 0, has_more: false } }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
+  workbench.selectedRole.value = 'seer'
+  workbench.form.value.auto_promote = false
+  workbench.form.value.model_profile_id = 'profile-evolution-main'
+  await workbench.startSingle()
+
+  assert.deepEqual(requests.find((item) => item.path === '/evolution-runs')?.body, {
+    roles: ['seer'],
+    training_games: 5,
+    battle_games: 4,
+    max_days: 5,
+    auto_promote: false,
+    model_profile_id: 'profile-evolution-main'
+  })
+  assert.deepEqual(workbench.notice.value, { type: 'success', message: '单角色进化已启动。' })
+})
+
 test('evolution workbench maps run action failures to warning notices', async () => {
   const apiFetch = async (path) => {
     if (path === '/evolution-runs/missing-run/actions') throw new Error('run not found')
@@ -4927,6 +5019,90 @@ test('evaluation workbench keeps model benchmark suite out of role-version leade
   assert.equal(Object.hasOwn(launchBody, 'roles'), false)
   assert.equal(Object.hasOwn(launchBody, 'target_versions'), false)
   assert.equal(workbench.filteredBatchRunRows.value[0].id, 'model-suite-new')
+  assert.deepEqual(workbench.notice.value, { type: 'success', message: '评测已启动。' })
+}))
+
+test('evaluation workbench launches model benchmark with selected model profile only', () => withWindow(async () => {
+  const requests = []
+  const suite = {
+    id: 'model-profile-standard-v1',
+    version: 1,
+    name: 'Model Profile Standard',
+    target_type: 'model',
+    roles: ['seer'],
+    game_count: 12,
+    max_days: 4,
+    evaluation_set_id: 'model-profile-standard-v1@v1'
+  }
+  let batches = []
+  const apiFetch = async (path, options = {}) => {
+    requests.push({ path, body: options.body ? JSON.parse(options.body) : null })
+    if (path.startsWith('/health/preflight?scope=benchmark_start')) {
+      return {
+        ready: true,
+        status: 'ok',
+        gate: { ready: true, status: 'ok', blockers: [], warnings: [], actions: [] },
+        checks: { llm_connectivity: { status: 'ok' } }
+      }
+    }
+    if (path === '/settings/model-profiles') {
+      return {
+        profiles: [{
+          profile_id: 'profile-benchmark-main',
+          name: '主评测模型',
+          provider: 'openai-compatible',
+          model: 'qwen-max',
+          enabled: true,
+          has_api_key: true,
+          default_scopes: { benchmark: true },
+          last_test_status: 'ok',
+          model_config_hash: 'profile-hash'
+        }]
+      }
+    }
+    if (path === '/benchmarks') return { items: [suite] }
+    if (path === '/roles') return { roles: ['seer'] }
+    if (path === '/models/leaderboard?evaluation_set_id=model-profile-standard-v1%40v1') return { entries: [] }
+    if (path === '/benchmark/plan') return { budget: {}, estimates: {}, warnings: [] }
+    if (path === '/evolution-runs') return { runs: [], batches }
+    if (path === '/benchmark') {
+      batches = [{
+        kind: 'benchmark_batch',
+        batch_id: 'model-profile-run',
+        roles: ['seer'],
+        status: 'queued',
+        started_at: '2026-06-07T11:00:00',
+        benchmark: {
+          id: suite.id,
+          version: suite.version,
+          target_type: suite.target_type,
+          evaluation_set_id: suite.evaluation_set_id
+        }
+      }]
+      return { batch_id: 'model-profile-run' }
+    }
+    throw new Error(`unexpected ${path}`)
+  }
+
+  const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
+  await workbench.refreshAll()
+
+  assert.equal(workbench.form.value.model_profile_id, 'profile-benchmark-main')
+  workbench.form.value.model_id = 'manual-model'
+  workbench.form.value.model_config_hash = 'manual-hash'
+  await flushPromises()
+  await workbench.startEvaluation()
+
+  const launchBody = requests.find((item) => item.path === '/benchmark')?.body
+  assert.deepEqual(launchBody, {
+    benchmark_id: 'model-profile-standard-v1',
+    target_type: 'model',
+    model_profile_id: 'profile-benchmark-main',
+    battle_games: 12,
+    max_days: 4
+  })
+  assert.equal(Object.hasOwn(launchBody, 'model_id'), false)
+  assert.equal(Object.hasOwn(launchBody, 'model_config_hash'), false)
   assert.deepEqual(workbench.notice.value, { type: 'success', message: '评测已启动。' })
 }))
 

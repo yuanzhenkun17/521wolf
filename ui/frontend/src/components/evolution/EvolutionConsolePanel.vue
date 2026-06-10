@@ -153,6 +153,7 @@ interface EvolutionConsoleModel {
     training_games: MaybeNumber
     battle_games: MaybeNumber
     max_days: MaybeNumber
+    model_profile_id?: string
   }>
   selectedRole: Ref<string>
   selectedRoleLabel: Ref<string>
@@ -166,6 +167,14 @@ interface EvolutionConsoleModel {
   runtimeHealthGateBlocked?: Ref<boolean>
   runtimeHealthGateReason?: Ref<string>
   runtimeHealthGate?: Ref<{ actions?: unknown[] }>
+  launchModelProfiles?: Ref<Array<Record<string, any>>>
+  selectedModelProfile?: Ref<Record<string, any> | null>
+  modelProfilePreflight?: Ref<Record<string, any> | null>
+  modelProfilePreflightLoading?: Ref<boolean>
+  modelProfilePreflightError?: Ref<string>
+  modelProfilesLoading?: Ref<boolean>
+  modelProfilesError?: Ref<string>
+  loadModelProfiles?: () => void | Promise<void>
   statusText?: (value: unknown) => string
   startSingle: () => void | Promise<void>
   runAction: (id: string, action: 'promote' | 'reject' | 'terminate') => void | Promise<void>
@@ -407,6 +416,24 @@ function childRunRows(run: EvolutionRun | null | undefined): ChildRunRow[] {
 function childRunKey(run: ChildRunRow, index: number): string | number {
   return run?.id || run?.run_id || index
 }
+
+function modelProfileStatus(evo: EvolutionConsoleModel): string {
+  if (evo.modelProfilesLoading?.value) return '模型读取中'
+  if (evo.modelProfilesError?.value) return evo.modelProfilesError.value
+  if (evo.modelProfilePreflightLoading?.value) return '模型预检中'
+  if (evo.modelProfilePreflightError?.value) return evo.modelProfilePreflightError.value
+  if (evo.modelProfilePreflight?.value?.ready === false) return '模型预检未通过'
+  if (evo.modelProfilePreflight?.value?.ready === true) return '模型预检通过'
+  const profile = evo.selectedModelProfile?.value
+  if (profile) return `${profile.name || '模型'} · ${profile.model || '未命名'}`
+  if (evo.launchModelProfiles?.value?.length) return '自动使用默认模型'
+  return '未配置本地模型'
+}
+
+function modelProfileOptionText(profile: Record<string, any>): string {
+  const suffix = profile?.default_scopes?.evolution ? ' · 默认进化' : ''
+  return `${profile?.name || '模型'} · ${profile?.model || '未命名'}${suffix}`
+}
 </script>
 
 <template>
@@ -429,6 +456,31 @@ function childRunKey(run: ChildRunRow, index: number): string | number {
           <label class="evo-console-field">
             <span>最大天数</span>
             <input v-model.number="evo.form.value.max_days" type="number" min="1" max="100" inputmode="numeric" />
+          </label>
+          <label
+            v-if="evo.launchModelProfiles?.value?.length || evo.modelProfilesLoading?.value || evo.modelProfilesError?.value"
+            class="evo-console-field evo-console-field--model"
+          >
+            <span>模型 Profile</span>
+            <select v-model="evo.form.value.model_profile_id" :disabled="Boolean(evo.modelProfilesLoading?.value)">
+              <option value="">自动选择</option>
+              <option
+                v-for="profile in evo.launchModelProfiles?.value || []"
+                :key="profile.profile_id"
+                :value="profile.profile_id"
+              >
+                {{ modelProfileOptionText(profile) }}
+              </option>
+            </select>
+            <small :class="{ error: Boolean(evo.modelProfilesError?.value || evo.modelProfilePreflightError?.value) }">{{ modelProfileStatus(evo) }}</small>
+            <button
+              v-if="evo.modelProfilesError?.value"
+              type="button"
+              :disabled="Boolean(evo.modelProfilesLoading?.value)"
+              @click="evo.loadModelProfiles?.()"
+            >
+              重试
+            </button>
           </label>
         </div>
         <div

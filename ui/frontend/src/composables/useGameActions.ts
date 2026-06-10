@@ -51,6 +51,7 @@ interface StartOptions extends LooseRecord {
   seed?: unknown
   skill_dir?: unknown
   role_versions?: unknown
+  model_profile_id?: unknown
 }
 
 interface StartNoticeOptions {
@@ -521,9 +522,11 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     const seed = optionalInt(options.seed)
     const skillDir = String(options.skill_dir || '').trim()
     const roleVersions = compactRoleVersions(options.role_versions)
+    const modelProfileId = String(options.model_profile_id || '').trim()
     if (seed !== undefined) body.seed = seed
     if (skillDir) body.skill_dir = skillDir
     if (roleVersions) body.role_versions = roleVersions
+    if (modelProfileId) body.model_profile_id = modelProfileId
     return body
   }
 

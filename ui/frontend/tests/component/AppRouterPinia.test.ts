@@ -15,6 +15,7 @@ const mockRuntimeState = vi.hoisted(() => {
     currentView: runtimeRef('match'),
     backendMode: runtimeRef('mock'),
     externalStatus: runtimeRef(null),
+    runtimeHealth: runtimeRef(null),
     playerCount: runtimeRef(12),
     activeSession: runtimeRef(null),
     returnToMatchAvailable: runtimeRef(false),
@@ -124,13 +125,14 @@ vi.mock('../../src/pages/LobbyPage.vue', () => ({
   __esModule: true,
   default: {
     name: 'LobbyPage',
-    props: ['backendMode', 'loading', 'externalStatus', 'playerCount', 'apiFetch'],
+    props: ['backendMode', 'loading', 'externalStatus', 'runtimeHealth', 'playerCount', 'apiFetch'],
     template: `
       <section
         data-test="lobby-page"
         :data-has-backend-mode="String(backendMode !== undefined)"
         :data-has-loading="String(loading !== undefined)"
         :data-external-status="String(externalStatus?.supports_human)"
+        :data-runtime-health="String(runtimeHealth !== undefined)"
         :data-player-count="String(playerCount)"
         :data-api-fetch="typeof apiFetch"
       />

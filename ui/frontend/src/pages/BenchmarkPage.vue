@@ -444,9 +444,16 @@ const planWarningRows = computed(() =>
     message: displayPlanWarningMessage(warning)
   }))
 )
+const selectedModelProfileLabel = computed(() => {
+  const profile = benchmark.selectedModelProfile?.value
+  if (!profile) return ''
+  const name = String(profile.name || '模型 Profile').trim()
+  const model = String(profile.model || '未命名模型').trim()
+  return `${name} · ${model}`
+})
 const launchSubjectLabel = computed(() => {
   if (benchmark.selectedBenchmarkIsModelSuite.value) {
-    return benchmark.form.value.model_config_hash || benchmark.form.value.model_id || '当前后端模型'
+    return selectedModelProfileLabel.value || benchmark.form.value.model_config_hash || benchmark.form.value.model_id || '当前后端模型'
   }
   return `${benchmark.selectedRoleLabel.value} / ${benchmark.form.value.target_version_id || '基线'}`
 })

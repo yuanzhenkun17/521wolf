@@ -148,6 +148,7 @@ export interface GameStartRequest {
   skill_dir?: string | null
   human_player_id?: number | null
   role_versions?: Record<string, string>
+  model_profile_id?: string | null
 }
 
 export interface HumanActionRequest {

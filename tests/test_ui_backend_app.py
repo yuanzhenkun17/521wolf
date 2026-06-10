@@ -1311,6 +1311,21 @@ def test_health_probe_llm_updates_connectivity_cache(tmp_path: Path, monkeypatch
     assert llm_connectivity["source"] == "injected_model"
 
 
+def test_health_preflight_endpoint_returns_runtime_gate(tmp_path: Path) -> None:
+    with _test_client(tmp_path) as client:
+        response = client.post("/api/health/preflight?scope=benchmark_start&model_scope=benchmark")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["scope"] == "benchmark_start"
+    assert payload["model_scope"] == "benchmark"
+    assert payload["model_profile_id"] is None
+    assert payload["ready"] is True
+    assert payload["gate"]["ready"] is True
+    assert payload["checks"]["llm_connectivity"]["status"] == "ok"
+    assert "secret" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_game_start_blocks_when_llm_probe_fails(tmp_path: Path) -> None:
     app = ui_backend_app.create_app(paths=PathConfig(root=tmp_path), model=FailingModel())
     store = app.state.backend_store
@@ -1764,13 +1779,23 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
                 "capabilities": {"chat": True, "json_mode": True},
             },
         )
+        profile_id = create_response.json()["profile"]["profile_id"]
+        preflight_response = client.post(
+            f"/api/health/preflight?scope=benchmark_start&model_scope=benchmark&model_profile_id={profile_id}"
+        )
         health_response = client.get("/api/health")
 
     assert create_response.status_code == 200
     created_profile = create_response.json()["profile"]
-    profile_id = created_profile["profile_id"]
     assert created_profile["base_url"] == "https://token.example.test/v1"
     assert "api_key=hidden" not in json.dumps(create_response.json(), ensure_ascii=False)
+    assert preflight_response.status_code == 200
+    preflight = preflight_response.json()
+    assert preflight["ready"] is True
+    assert preflight["checks"]["llm_config"]["source"] == "settings_profile"
+    assert preflight["checks"]["llm_config"]["model_profile_id"] == profile_id
+    assert preflight["checks"]["llm_connectivity"]["model_profile_id"] == profile_id
+    assert preflight["gate"]["ready"] is True
     health = health_response.json()
     assert health["checks"]["llm_config"]["source"] == "settings_profile"
     assert health["checks"]["llm_config"]["model"] == "qwen-runtime"
