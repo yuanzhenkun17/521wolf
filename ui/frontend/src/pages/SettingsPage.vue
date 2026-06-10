@@ -6,6 +6,25 @@ import type { ModelProfile, ModelProfilePayload, SettingsAdminState, SettingsMod
 
 type SettingsGroupKey = 'models' | 'variables' | 'benchmark' | 'evolution' | 'langfuse' | 'tts' | 'system'
 
+const DEFAULT_RUNTIME_PROBE_SCOPE = 'settings_model_test'
+const DEFAULT_MODEL_PROBE_SCOPE = 'prompt_test'
+const MODEL_SCOPE_GROUPS = new Set<SettingsGroupKey>(['benchmark', 'evolution'])
+const HEALTH_GATE_BLOCKER_LABELS: Record<string, string> = {
+  llm_config: '模型配置缺失',
+  llm_connectivity: '模型连接不可用',
+  task_queue: '任务队列不可用',
+  task_worker: '任务 Worker 不可用',
+  artifact_root: '产物目录不可写',
+  health_gate_missing: '健康门禁缺失'
+}
+const HEALTH_GATE_WARNING_LABELS: Record<string, string> = {
+  llm_config: '模型配置降级',
+  llm_connectivity: '模型连接尚未探测',
+  task_queue: '任务队列降级',
+  task_worker: '任务 Worker 心跳异常',
+  artifact_root: '产物目录状态未知'
+}
+
 const GROUPS: Array<{ key: SettingsGroupKey; label: string; caption: string }> = [
   { key: 'models', label: '模型', caption: 'Profiles' },
   { key: 'variables', label: '运行变量', caption: 'Runtime' },
@@ -91,13 +110,17 @@ const gateRows = computed(() => {
   const gates = health.value.gates && typeof health.value.gates === 'object' ? health.value.gates : {}
   return Object.entries(gates).map(([key, value]) => {
     const row = value && typeof value === 'object' ? value as Record<string, any> : {}
+    const ready = Boolean(row.ready)
+    const blockers = gateIssueLabels(row.blockers, HEALTH_GATE_BLOCKER_LABELS)
+    const warnings = gateIssueLabels(row.warnings, HEALTH_GATE_WARNING_LABELS)
     return {
       key,
       label: gateLabel(key),
-      ready: Boolean(row.ready),
+      ready,
       status: String(row.status || 'unknown'),
-      blockers: Array.isArray(row.blockers) ? row.blockers : [],
-      warnings: Array.isArray(row.warnings) ? row.warnings : []
+      blockers,
+      warnings,
+      summary: ready ? '可启动' : blockers.join(' / ') || '不可启动'
     }
   })
 })
@@ -137,7 +160,11 @@ async function probeRuntimeModel() {
   error.value = ''
   notice.value = ''
   try {
-    const result = await settingsService.probeRuntimeModel('settings_model_test')
+    const result = await settingsService.probeRuntimeModel({
+      scope: DEFAULT_RUNTIME_PROBE_SCOPE,
+      model_scope: runtimeProbeModelScope(),
+      model_profile_id: selectedProfileId.value || undefined
+    })
     notice.value = runtimeProbeNotice(result)
     await refreshSettings()
   } catch (err) {
@@ -454,6 +481,19 @@ function gateLabel(key: string): string {
     benchmark_start: '启动 Benchmark',
     evolution_start: '启动 Evolution'
   }[key] || key
+}
+
+function gateIssueLabels(value: unknown, labels: Record<string, string>): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => {
+        const key = String(item || '').trim()
+        return key ? labels[key] || checkLabel(key) : ''
+      }).filter(Boolean)
+    : []
+}
+
+function runtimeProbeModelScope(): string {
+  return MODEL_SCOPE_GROUPS.has(activeGroup.value) ? activeGroup.value : DEFAULT_MODEL_PROBE_SCOPE
 }
 
 function scopeText(profile: ModelProfile): string {
@@ -831,7 +871,7 @@ function shortId(value: unknown): string {
             <div class="settings-gate-list">
               <span v-for="gate in gateRows" :key="gate.key">
                 <b>{{ gate.label }}</b>
-                <small>{{ gate.ready ? '可启动' : gate.blockers.join(' / ') || '不可启动' }}</small>
+                <small>{{ gate.summary }}</small>
               </span>
               <p v-if="!gateRows.length" class="settings-context-empty">暂无门禁项。</p>
             </div>

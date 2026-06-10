@@ -1,6 +1,12 @@
 export type SettingsScopeKey = 'game_decision' | 'judge' | 'benchmark' | 'evolution' | 'prompt_test'
 export type SettingsStatus = 'ok' | 'degraded' | 'error' | 'unknown' | 'stale' | 'untested' | string
 
+export interface SettingsRuntimeModelProbeOptions {
+  scope?: string
+  model_scope?: SettingsScopeKey | string
+  model_profile_id?: string | null
+}
+
 export interface ModelProfile {
   profile_id: string
   name: string

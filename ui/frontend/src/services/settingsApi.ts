@@ -1,19 +1,39 @@
-import type { ServiceOptions } from '../types/api'
+import type { QueryParams, ServiceOptions } from '../types/api'
 import type { RuntimeHealthProbeResult } from '../types/health'
 import type {
   ModelProfilePayload,
   ModelProfileResponse,
   ModelProfileTestResponse,
   SettingsModelProfilesResponse,
+  SettingsRuntimeModelProbeOptions,
   SettingsRuntimeVariablePayload,
   SettingsRuntimeVariableResponse,
   SettingsRuntimeVariablesResponse
 } from '../types/settings'
 import { defaultApiClient } from './api'
 
+const DEFAULT_RUNTIME_PROBE_SCOPE = 'settings_model_test'
+
 function adminHeaders(token = ''): Record<string, string> {
   const text = String(token || '').trim()
   return text ? { 'X-Settings-Admin-Token': text } : {}
+}
+
+function queryText(value: unknown): string | undefined {
+  const text = String(value ?? '').trim()
+  return text || undefined
+}
+
+function normalizeProbeRuntimeModelQuery(options: string | SettingsRuntimeModelProbeOptions = DEFAULT_RUNTIME_PROBE_SCOPE): QueryParams {
+  if (typeof options === 'string') {
+    return { scope: queryText(options) || DEFAULT_RUNTIME_PROBE_SCOPE }
+  }
+
+  return {
+    scope: queryText(options.scope) || DEFAULT_RUNTIME_PROBE_SCOPE,
+    model_scope: queryText(options.model_scope),
+    model_profile_id: queryText(options.model_profile_id)
+  }
 }
 
 export function createSettingsService(options: ServiceOptions = {}) {
@@ -26,10 +46,10 @@ export function createSettingsService(options: ServiceOptions = {}) {
     async listRuntimeVariables(): Promise<SettingsRuntimeVariablesResponse> {
       return client.fetch('/settings/runtime-variables')
     },
-    async probeRuntimeModel(scope = 'settings_model_test'): Promise<RuntimeHealthProbeResult> {
+    async probeRuntimeModel(options: string | SettingsRuntimeModelProbeOptions = DEFAULT_RUNTIME_PROBE_SCOPE): Promise<RuntimeHealthProbeResult> {
       return client.fetch('/health/probes/llm', {
         method: 'POST',
-        query: { scope }
+        query: normalizeProbeRuntimeModelQuery(options)
       })
     },
     async updateRuntimeVariable(settingKey: string, payload: SettingsRuntimeVariablePayload, token = ''): Promise<SettingsRuntimeVariableResponse> {
