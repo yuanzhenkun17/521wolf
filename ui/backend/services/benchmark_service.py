@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.util.time import beijing_now_iso
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
 from ui.backend.services.benchmark_leaderboard_service import BenchmarkLeaderboardService
+from ui.backend.services.benchmark_run_service import BenchmarkRunService
 from ui.backend.services.benchmark_snapshot_service import BenchmarkSnapshotService
 from ui.backend.schemas import (
     BenchmarkLifecycleRequest,
@@ -76,6 +77,7 @@ class BenchmarkService:
         self._allow_context_fallback = allow_context_fallback
         self._catalog = BenchmarkCatalogService(context)
         self._leaderboards = BenchmarkLeaderboardService(context)
+        self._runs = BenchmarkRunService(context, catalog=self._catalog)
         self._snapshots = BenchmarkSnapshotService(context, self._callables, resolver=self._resolve)
 
     @property
@@ -363,16 +365,43 @@ class BenchmarkService:
         return self._catalog.benchmark_metadata(spec, seed_set)
 
     def plan_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("plan_benchmark", request))
+        return self._runs.plan_benchmark(request)
 
     def queue_benchmark(self, request: BenchmarkRequest) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("queue_benchmark", request))
+        return self._runs.queue_benchmark(request)
 
     async def run_queued_benchmark(self, batch_id: str, request: BenchmarkRequest) -> None:
-        await self._acall("run_queued_benchmark", batch_id, request)
+        await self._runs.run_queued_benchmark(batch_id, request)
 
     def benchmark_model_runtime(self, request: BenchmarkRequest | None = None) -> dict[str, Any]:
-        return cast(dict[str, Any], self._call("benchmark_model_runtime", request))
+        return self._runs.benchmark_model_runtime(request)
+
+    def benchmark_run_plan(self, request: BenchmarkRequest) -> dict[str, Any]:
+        return self._runs.benchmark_run_plan(request)
+
+    def validate_benchmark_target_versions(
+        self,
+        roles: list[str],
+        request: BenchmarkRequest,
+        *,
+        target_type: str,
+    ) -> None:
+        self._runs.validate_benchmark_target_versions(roles, request, target_type=target_type)
+
+    def benchmark_batch_config(
+        self,
+        batch_id: str,
+        role: str | None,
+        request: BenchmarkRequest,
+        index: int,
+    ) -> dict[str, Any]:
+        return self._runs.benchmark_batch_config(batch_id, role, request, index)
+
+    def benchmark_roles(self, request: BenchmarkRequest, spec: Any | None) -> list[str]:
+        return self._runs.benchmark_roles(request, spec)
+
+    def benchmark_request_config(self, request: BenchmarkRequest, spec: Any | None = None) -> dict[str, Any]:
+        return self._runs.benchmark_request_config(request, spec)
 
     def benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
         return cast(dict[str, Any], self._call("benchmark_batch_detail", batch_id))
