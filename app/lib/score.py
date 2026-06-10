@@ -3,42 +3,14 @@
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from storage.benchmark.batch_repo import BenchmarkBatchRepository
-from storage.benchmark.evaluation_repo import open_benchmark_connection
-from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
+from storage.benchmark import evaluation_repo as _evaluation_repo
 
-_log = logging.getLogger(__name__)
-
-
-class PersistenceWarning(str):
-    """Backward-compatible warning string carrying structured diagnostics."""
-
-    diagnostic: dict[str, Any]
-
-    def __new__(cls, operation: str, exc: Exception) -> "PersistenceWarning":
-        message = f"{operation} failed: {type(exc).__name__}: {exc}"
-        value = str.__new__(cls, message)
-        value.diagnostic = _persistence_diagnostic(operation, exc, message)
-        return value
-
-
-def _persistence_diagnostic(operation: str, exc: Exception, message: str) -> dict[str, Any]:
-    return {
-        "kind": "persistence_error",
-        "stage": f"persist_batch.{operation}",
-        "level": "warning",
-        "message": message,
-        "exception_type": type(exc).__name__,
-        "exception_message": str(exc),
-    }
-
-
-def _persistence_warning(operation: str, exc: Exception) -> PersistenceWarning:
-    return PersistenceWarning(operation, exc)
+BenchmarkBatchRepository = _evaluation_repo.BenchmarkBatchRepository
+BenchmarkLeaderboardRepository = _evaluation_repo.BenchmarkLeaderboardRepository
+PersistenceWarning = _evaluation_repo.PersistenceWarning
 
 
 @dataclass(slots=True)
@@ -387,12 +359,7 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
     batch overwrites its row rather than accumulating duplicates. Returns a
     warning string when the best-effort write fails.
     """
-    try:
-        BenchmarkLeaderboardRepository(conn).save(entry)
-        return None
-    except Exception as exc:  # noqa: BLE001 — leaderboard write is best-effort
-        _log.warning("persist_leaderboard_entry failed", exc_info=True)
-        return _persistence_warning("persist_leaderboard_entry", exc)
+    return _evaluation_repo.persist_leaderboard_entry(conn, entry)
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +368,12 @@ def persist_leaderboard_entry(conn: Any, entry: dict[str, Any]) -> str | None:
 
 def open_eval_connection(paths: Any = None) -> Any:
     """Open the wolf-domain storage connection used by evaluation persistence."""
-    return open_benchmark_connection(paths=paths)
+    return _evaluation_repo.open_eval_connection(paths=paths)
+
+
+def open_benchmark_connection(paths: Any = None) -> Any:
+    """Backward-compatible alias for benchmark persistence connection opening."""
+    return _evaluation_repo.open_benchmark_connection(paths=paths)
 
 
 def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
@@ -409,16 +381,7 @@ def save_evaluation_batch(conn: Any, batch: dict[str, Any]) -> str | None:
 
     Returns a warning string when the best-effort write fails.
     """
-    try:
-        BenchmarkBatchRepository(conn).save(batch)
-        return None
-    except Exception as exc:  # noqa: BLE001 — persistence is best-effort
-        try:
-            conn.rollback()
-        except Exception:  # noqa: BLE001 — keep original persistence warning
-            pass
-        _log.warning("save_evaluation_batch failed", exc_info=True)
-        return _persistence_warning("save_evaluation_batch", exc)
+    return _evaluation_repo.save_evaluation_batch(conn, batch)
 
 
 def load_comparison_group(conn: Any, comparison_group_id: str, *, exclude_batch_id: str = "") -> list[dict[str, Any]]:
@@ -427,14 +390,11 @@ def load_comparison_group(conn: Any, comparison_group_id: str, *, exclude_batch_
     Read failures are raised so callers can distinguish storage problems from
     a genuinely empty comparison group.
     """
-    try:
-        return BenchmarkBatchRepository(conn).load_comparison_group(
-            comparison_group_id,
-            exclude_batch_id=exclude_batch_id,
-        )
-    except Exception:  # noqa: BLE001 — keep the original error for caller diagnostics
-        _log.warning("load_comparison_group failed", exc_info=True)
-        raise
+    return _evaluation_repo.load_comparison_group(
+        conn,
+        comparison_group_id,
+        exclude_batch_id=exclude_batch_id,
+    )
 
 
 def compute_group_fairness(

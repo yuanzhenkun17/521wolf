@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from storage.benchmark.batch_repo import BenchmarkBatchRepository
-from storage.benchmark.evaluation_repo import BenchmarkEvaluationRepository
+from storage.benchmark.evaluation_repo import (
+    BenchmarkEvaluationRepository,
+    PersistenceWarning,
+    persist_leaderboard_entry,
+    save_evaluation_batch,
+)
 from storage.benchmark.leaderboard_repo import BenchmarkLeaderboardRepository
 from storage.benchmark.saved_view_repo import BenchmarkSavedViewRepository
 from storage.benchmark.snapshot_repo import BenchmarkSnapshotRepository
@@ -28,12 +33,14 @@ class _Connection:
         *,
         rowcount: int = 1,
         fail_execute: bool = False,
+        fail_commit: bool = False,
         rows: list[Any] | None = None,
     ) -> None:
         self.calls: list[str] = []
         self.executions: list[tuple[str, tuple[Any, ...]]] = []
         self.rowcount = rowcount
         self.fail_execute = fail_execute
+        self.fail_commit = fail_commit
         self.rows = rows or []
 
     def begin_write(self) -> None:
@@ -48,6 +55,8 @@ class _Connection:
 
     def commit(self) -> None:
         self.calls.append("commit")
+        if self.fail_commit:
+            raise RuntimeError("commit failed")
 
     def rollback(self) -> None:
         self.calls.append("rollback")
@@ -230,3 +239,114 @@ def test_benchmark_evaluation_repository_remains_compatible_facade() -> None:
 
     assert rows == [row]
     assert conn.calls == ["execute"]
+
+
+def test_benchmark_evaluation_facade_batch_warning_rolls_back() -> None:
+    conn = _Connection(fail_execute=True)
+
+    warning = save_evaluation_batch(conn, {"batch_id": "warn_batch"})
+
+    assert isinstance(warning, PersistenceWarning)
+    assert warning == "save_evaluation_batch failed: RuntimeError: write failed"
+    assert warning.diagnostic == {
+        "kind": "persistence_error",
+        "stage": "persist_batch.save_evaluation_batch",
+        "level": "warning",
+        "message": "save_evaluation_batch failed: RuntimeError: write failed",
+        "exception_type": "RuntimeError",
+        "exception_message": "write failed",
+    }
+    assert conn.calls == ["execute", "rollback"]
+
+
+def test_benchmark_evaluation_facade_commit_warning_rolls_back() -> None:
+    conn = _Connection(fail_commit=True)
+
+    warning = save_evaluation_batch(conn, {"batch_id": "warn_batch"})
+
+    assert isinstance(warning, PersistenceWarning)
+    assert warning == "save_evaluation_batch failed: RuntimeError: commit failed"
+    assert warning.diagnostic["stage"] == "persist_batch.save_evaluation_batch"
+    assert warning.diagnostic["exception_message"] == "commit failed"
+    assert conn.calls == ["execute", "commit", "rollback"]
+
+
+def test_benchmark_evaluation_facade_leaderboard_warning_keeps_diagnostic() -> None:
+    conn = _Connection(fail_execute=True)
+
+    warning = persist_leaderboard_entry(conn, {"batch_id": "warn_batch"})
+
+    assert isinstance(warning, PersistenceWarning)
+    assert warning == "persist_leaderboard_entry failed: RuntimeError: write failed"
+    assert warning.diagnostic == {
+        "kind": "persistence_error",
+        "stage": "persist_batch.persist_leaderboard_entry",
+        "level": "warning",
+        "message": "persist_leaderboard_entry failed: RuntimeError: write failed",
+        "exception_type": "RuntimeError",
+        "exception_message": "write failed",
+    }
+    assert conn.calls == ["execute"]
+
+
+def test_score_persistence_facade_delegates_to_storage(monkeypatch) -> None:
+    import app.lib.score as score_lib
+    import storage.benchmark.evaluation_repo as evaluation_repo
+
+    calls: list[tuple[str, Any]] = []
+
+    class _Conn:
+        pass
+
+    conn = _Conn()
+
+    def fake_open_eval_connection(paths: Any = None) -> _Conn:
+        calls.append(("open", paths))
+        return conn
+
+    def fake_open_benchmark_connection(paths: Any = None) -> _Conn:
+        calls.append(("open_benchmark", paths))
+        return conn
+
+    def fake_save_evaluation_batch(conn_arg: Any, batch: dict[str, Any]) -> str | None:
+        calls.append(("save", (conn_arg, batch)))
+        return None
+
+    def fake_persist_leaderboard_entry(conn_arg: Any, entry: dict[str, Any]) -> str | None:
+        calls.append(("leaderboard", (conn_arg, entry)))
+        return None
+
+    def fake_load_comparison_group(
+        conn_arg: Any,
+        comparison_group_id: str,
+        *,
+        exclude_batch_id: str = "",
+    ) -> list[dict[str, Any]]:
+        calls.append(("load", (conn_arg, comparison_group_id, exclude_batch_id)))
+        return [{"batch_id": "sibling"}]
+
+    monkeypatch.setattr(evaluation_repo, "open_eval_connection", fake_open_eval_connection)
+    monkeypatch.setattr(evaluation_repo, "open_benchmark_connection", fake_open_benchmark_connection)
+    monkeypatch.setattr(evaluation_repo, "save_evaluation_batch", fake_save_evaluation_batch)
+    monkeypatch.setattr(evaluation_repo, "persist_leaderboard_entry", fake_persist_leaderboard_entry)
+    monkeypatch.setattr(evaluation_repo, "load_comparison_group", fake_load_comparison_group)
+
+    paths = object()
+    batch = {"batch_id": "batch-1"}
+    entry = {"batch_id": "batch-1"}
+
+    assert score_lib.BenchmarkBatchRepository is evaluation_repo.BenchmarkBatchRepository
+    assert score_lib.BenchmarkLeaderboardRepository is evaluation_repo.BenchmarkLeaderboardRepository
+    assert score_lib.PersistenceWarning is evaluation_repo.PersistenceWarning
+    assert score_lib.open_eval_connection(paths) is conn
+    assert score_lib.open_benchmark_connection(paths) is conn
+    assert score_lib.save_evaluation_batch(conn, batch) is None
+    assert score_lib.persist_leaderboard_entry(conn, entry) is None
+    assert score_lib.load_comparison_group(conn, "group-1", exclude_batch_id="batch-1") == [{"batch_id": "sibling"}]
+    assert calls == [
+        ("open", paths),
+        ("open_benchmark", paths),
+        ("save", (conn, batch)),
+        ("leaderboard", (conn, entry)),
+        ("load", (conn, "group-1", "batch-1")),
+    ]
