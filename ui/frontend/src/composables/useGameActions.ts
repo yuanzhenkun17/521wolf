@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { API, createGameApi } from './gameApi.ts'
 import { createLatestOnlyTracker } from './latestOnly.ts'
@@ -22,7 +21,42 @@ import {
   writeStoredGameSession
 } from './gameSession.ts'
 import { currentLegacyView, writeViewHash } from '../router/legacyViewNavigation'
+import type { AppView, NoticeType } from '../types/ui'
+import type { GameStartRequest } from '../types/game'
 import { applyLogToPlayers, applyLogsToPlayers } from './gameTimeline.ts'
+
+type LooseRecord = Record<string, any>
+type ApiFetch = (path: string, options?: RequestInit & LooseRecord) => Promise<any>
+type TimerId = number | null
+type ViewRoute = AppView | ''
+
+interface GameActionsOptions {
+  apiFetch?: ApiFetch
+  apiBase?: string
+  historyApi?: LooseRecord
+  sceneApi?: LooseRecord
+  installLifecycle?: boolean
+  restoreStoredGameOnMount?: boolean | 'immediate'
+  restoreStoredGameDelayMs?: number
+}
+
+interface GameSnapshotOptions extends LooseRecord {
+  mode?: string
+  pending?: unknown
+}
+
+interface StartOptions extends LooseRecord {
+  max_days?: unknown
+  player_count?: unknown
+  seed?: unknown
+  skill_dir?: unknown
+  role_versions?: unknown
+}
+
+interface StartNoticeOptions {
+  successType?: NoticeType
+  successMessage?: string
+}
 
 const SPEECH_EVENT_TYPES = new Set([
   'speech',
@@ -45,11 +79,11 @@ function emptyMatchNotice() {
   return { type: '', message: '' }
 }
 
-function normalizeErrorMessage(error) {
-  return String(error?.message || '').trim()
+function normalizeErrorMessage(error: unknown) {
+  return String((error as LooseRecord | null | undefined)?.message || '').trim()
 }
 
-function localizeMatchError(error, fallback) {
+function localizeMatchError(error: unknown, fallback: string) {
   const message = normalizeErrorMessage(error)
   if (!message) return fallback
   const lower = message.toLowerCase()
@@ -79,7 +113,7 @@ function localizeMatchError(error, fallback) {
   return message
 }
 
-function actionSuccessMessage(actionType) {
+function actionSuccessMessage(actionType: unknown) {
   const action = canonicalActionType(actionType)
   if (isSpeechAction(action)) return '发言已提交。'
   if (action === 'exile_vote' || action === 'pk_vote' || action === 'sheriff_vote' || action === 'vote') return '投票已提交。'
@@ -88,21 +122,23 @@ function actionSuccessMessage(actionType) {
   return '行动已提交。'
 }
 
-function useGameActions(state, options = {}) {
-  const apiClient = options.apiFetch ? { apiFetch: options.apiFetch, apiBase: options.apiBase || API } : createGameApi(options.apiBase || API)
+function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
+  const apiClient: { apiFetch: ApiFetch; apiBase: string } = options.apiFetch
+    ? { apiFetch: options.apiFetch, apiBase: options.apiBase || API }
+    : createGameApi(options.apiBase || API)
   const { apiFetch, apiBase } = apiClient
   let historyApi = options.historyApi || {}
   let sceneApi = options.sceneApi || {}
-  let timer = null
-  let speechTimer = null
-  let eventSource = null
-  let eventSourceGameId = null
-  let roleAssignmentTimer = null
-  let roleAssignmentNoticeTimer = null
-  let mountedRestoreTimer = null
+  let timer: TimerId = null
+  let speechTimer: TimerId = null
+  let eventSource: EventSource | null = null
+  let eventSourceGameId: string | null = null
+  let roleAssignmentTimer: TimerId = null
+  let roleAssignmentNoticeTimer: TimerId = null
+  let mountedRestoreTimer: TimerId = null
   let mountedRestoreIdle = false
   let lastPendingKey = ''
-  let lastStartOptions = {}
+  let lastStartOptions: StartOptions = {}
   const healthRequests = createLatestOnlyTracker()
   const gameSnapshotRequests = createLatestOnlyTracker()
   const humanActionRequests = createLatestOnlyTracker()
@@ -114,11 +150,11 @@ function useGameActions(state, options = {}) {
     }
   })
 
-  function setHistoryApi(api = {}) { historyApi = api || {} }
+  function setHistoryApi(api: LooseRecord = {}) { historyApi = api || {} }
 
-  function setSceneApi(api = {}) { sceneApi = api || {} }
+  function setSceneApi(api: LooseRecord = {}) { sceneApi = api || {} }
 
-  function setMatchNotice(type, message) {
+  function setMatchNotice(type: NoticeType, message: string) {
     if (!state.matchNotice) return
     state.matchNotice.value = message ? { type, message } : emptyMatchNotice()
   }
@@ -127,7 +163,7 @@ function useGameActions(state, options = {}) {
     setMatchNotice('', '')
   }
 
-  function beginVisibleLoading(enabled = true) {
+  function beginVisibleLoading(enabled = true): symbol | null {
     if (!enabled) return null
     const key = Symbol('loading')
     visibleLoadingRequests.add(key)
@@ -135,7 +171,7 @@ function useGameActions(state, options = {}) {
     return key
   }
 
-  function endVisibleLoading(key) {
+  function endVisibleLoading(key: symbol | null) {
     if (!key) return
     visibleLoadingRequests.delete(key)
     state.loading.value = visibleLoadingRequests.size > 0
@@ -206,7 +242,7 @@ function useGameActions(state, options = {}) {
     mountedRestoreTimer = window.setTimeout(restore, Number(options.restoreStoredGameDelayMs ?? 350))
   }
 
-  function completeRoleAssignmentForGame(gameId, { notice = true } = {}) {
+  function completeRoleAssignmentForGame(gameId: unknown, { notice = true }: { notice?: boolean } = {}) {
     if (!isReturnableGame(state.liveGame.value) || state.liveGame.value?.game_id !== gameId) return
     state.roleAssignmentComplete.value = true
     state.judgeBoardStarting.value = false
@@ -220,7 +256,7 @@ function useGameActions(state, options = {}) {
     }, 1400)
   }
 
-  function enterStartedGame(game, { notice = false, skipIntro = false } = {}) {
+  function enterStartedGame(game: LooseRecord | null, { notice = false, skipIntro = false }: { notice?: boolean; skipIntro?: boolean } = {}) {
     if (!isReturnableGame(game)) return false
     clearRoleAssignmentTimers()
     state.judgeBoardStarted.value = true
@@ -232,7 +268,7 @@ function useGameActions(state, options = {}) {
     return true
   }
 
-  function scheduleRoleAssignmentComplete(gameId, delayMs = 800) {
+  function scheduleRoleAssignmentComplete(gameId: unknown, delayMs = 800) {
     if (!gameId || state.roleAssignmentComplete.value || typeof window === 'undefined') return
     if (options.installLifecycle === false) {
       completeRoleAssignmentForGame(gameId, { notice: false })
@@ -245,7 +281,17 @@ function useGameActions(state, options = {}) {
     }, delayMs)
   }
 
-  function finishGameSession({ clearGame = false, route = '', resetLive = false, refreshHistory = false } = {}) {
+  function finishGameSession({
+    clearGame = false,
+    route = '',
+    resetLive = false,
+    refreshHistory = false
+  }: {
+    clearGame?: boolean
+    route?: ViewRoute
+    resetLive?: boolean
+    refreshHistory?: boolean
+  } = {}) {
     const finishedGameId = state.liveGame.value?.game_id || state.activeSession.value?.gameId
     invalidateLiveHttpRequests()
     closeLiveTransport()
@@ -266,12 +312,12 @@ function useGameActions(state, options = {}) {
     if (refreshHistory) historyApi.refreshHistoryList?.({ silent: true })
   }
 
-  function stopGameInBackground(gameId, { refreshHistory = false } = {}) {
+  function stopGameInBackground(gameId: unknown, { refreshHistory = false }: { refreshHistory?: boolean } = {}) {
     if (!gameId) {
       if (refreshHistory) historyApi.refreshHistoryList?.({ silent: true })
       return Promise.resolve(null)
     }
-    return apiFetch(`/games/${encodeURIComponent(gameId)}/stop`, { method: 'POST' })
+    return apiFetch(`/games/${encodeURIComponent(String(gameId))}/stop`, { method: 'POST' })
       .catch((err) => {
         setMatchNotice('warning', localizeMatchError(err, '后台停止对局失败。'))
         return { stopFailed: true }
@@ -303,17 +349,17 @@ function useGameActions(state, options = {}) {
     lastPendingKey = ''
   }
 
-  function makeLiveEventSourceUrl(gameId, lastEventId = '') {
+  function makeLiveEventSourceUrl(gameId: string, lastEventId = '') {
     const base = `${apiBase}/games/${encodeURIComponent(gameId)}/events`
     if (!lastEventId) return base
     return `${base}?lastEventId=${encodeURIComponent(lastEventId)}`
   }
 
-  function resetLiveEventId(gameId) {
+  function resetLiveEventId(gameId: string) {
     liveStream.resetEventId(gameId)
   }
 
-  function pendingControlKey(game) {
+  function pendingControlKey(game: LooseRecord | null | undefined) {
     if (!game) return ''
     const pending = game.pending_human_action || {}
     const action = pending.action_type || game.pending_action?.type || game.waiting_for || ''
@@ -321,7 +367,7 @@ function useGameActions(state, options = {}) {
     return `${action}:${game.day}:${game.phase}:${pending.retry_count ?? ''}:${candidates.join(',')}`
   }
 
-  function hasPendingHumanAction(game = state.liveGame.value) {
+  function hasPendingHumanAction(game: LooseRecord | null | undefined = state.liveGame.value) {
     const pending = game?.pending_human_action
     if (!pending) return false
     const pendingPlayerId = Number(pending.player_id)
@@ -329,7 +375,7 @@ function useGameActions(state, options = {}) {
     return !pendingPlayerId || !humanPlayerId || pendingPlayerId === humanPlayerId
   }
 
-  function syncPendingControls(game) {
+  function syncPendingControls(game: LooseRecord | null | undefined) {
     const key = pendingControlKey(game)
     if (key !== lastPendingKey) {
       state.actionTarget.value = null
@@ -351,9 +397,10 @@ function useGameActions(state, options = {}) {
     }
   }
 
-  function setGameSnapshot(raw, normalizeOptions = {}) {
+  function setGameSnapshot(raw: unknown, normalizeOptions: GameSnapshotOptions = {}) {
     if (!raw) return null
     const normalized = normalizeGameSnapshot(raw, normalizeOptions)
+    if (!normalized) return null
     const privilegedSnapshot = normalized.mode === 'watch' || state.isReplayMode.value || normalized.winner
     const gameForState = privilegedSnapshot
       ? { ...normalized, players: applyLogsToPlayers(normalized.players, normalized.logs || []) }
@@ -463,8 +510,8 @@ function useGameActions(state, options = {}) {
     return entries.length ? Object.fromEntries(entries) : undefined
   }
 
-  function startGameBody(mode, options = {}) {
-    const body = {
+  function startGameBody(mode: string, options: StartOptions = {}): GameStartRequest {
+    const body: GameStartRequest = {
       max_days: positiveInt(options.max_days, 20, 1, 100),
       player_count: positiveInt(options.player_count ?? state.playerCount.value, 12, 12, 12),
       human_player_id: mode === 'play' ? 1 : null
@@ -603,7 +650,7 @@ function useGameActions(state, options = {}) {
     }
   }
 
-  async function startMode(payload, noticeOptions = {}) {
+  async function startMode(payload: unknown, noticeOptions: StartNoticeOptions = {}) {
     const { mode, options: payloadOptions, hasOptions } = parseStartPayload(payload)
     const startOptions = hasOptions ? payloadOptions : lastStartOptions
     if (hasOptions) lastStartOptions = { ...payloadOptions }
