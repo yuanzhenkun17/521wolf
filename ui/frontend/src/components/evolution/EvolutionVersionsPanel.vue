@@ -1,16 +1,158 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, type PropType } from 'vue'
 import { roleLabel, sourceText } from '../../composables/workbenchShared.ts'
 import TrustBundleDrawer from './TrustBundleDrawer.vue'
 
+interface RefLike<T> {
+  value: T
+}
+
+type VersionScalar = string | number | boolean | null | undefined
+type VersionKeyScalar = string | number | null | undefined
+
+interface VersionProvenance {
+  source?: VersionScalar
+  source_run_id?: string
+  sourceRunId?: string
+  gate_report_id?: string
+  gateReportId?: string
+  trust_bundle_id?: string
+  trustBundleId?: string
+  bundle_hash?: string
+  bundleHash?: string
+  release_stage?: VersionScalar
+  releaseStage?: VersionScalar
+}
+
+interface VersionPatternSource {
+  source_games?: unknown
+  sourceGames?: unknown
+}
+
+interface VersionPatternRaw extends VersionPatternSource {
+  pattern_id?: VersionScalar
+  id?: VersionScalar
+  pattern?: VersionScalar
+  role?: string
+  situation?: VersionScalar
+  name?: VersionScalar
+  recommendation?: VersionScalar
+  summary?: VersionScalar
+  description?: VersionScalar
+  win_rate_with?: VersionScalar
+  winRateWith?: VersionScalar
+  win_rate_without?: VersionScalar
+  winRateWithout?: VersionScalar
+  sample_size?: VersionScalar
+  sampleSize?: VersionScalar
+  games?: VersionScalar
+  confidence?: VersionScalar
+  conf?: VersionScalar
+  status?: string
+}
+
+interface VersionPattern {
+  pattern_id: string
+  role: string
+  situation: string
+  recommendation: string
+  win_rate_with: number
+  win_rate_without: number
+  sample_size: number
+  confidence: number
+  status: string
+  source_games: string[]
+}
+
+interface VersionSkill {
+  title?: VersionScalar
+  label?: VersionScalar
+  name?: VersionScalar
+  content_hash?: VersionKeyScalar
+  hash?: VersionScalar
+  path?: VersionKeyScalar
+}
+
+interface VersionMetrics {
+  win_rate?: VersionScalar
+  score?: VersionScalar
+  games_played?: VersionScalar
+}
+
+interface VersionData {
+  version_id?: string
+  short?: string
+  role?: string
+  source?: VersionScalar
+  is_baseline?: boolean
+  releaseStageLabel?: string
+  release_stage?: VersionScalar
+  releaseStage?: VersionScalar
+  source_run_id?: string
+  sourceRunId?: string
+  gate_report_id?: string
+  gateReportId?: string
+  trust_bundle_id?: string
+  trustBundleId?: string
+  bundle_hash?: string
+  bundleHash?: string
+  rollbackDisabledReason?: string
+  provenance?: VersionProvenance
+  metrics?: VersionMetrics
+  skills?: VersionSkill[]
+  patterns?: VersionPatternRaw[]
+}
+
+interface RoleVersionRow extends VersionData {
+  version_id: string
+  short: string
+  createdLabel?: string
+  rollbackDisabled?: boolean
+  rollbackLabel?: string
+}
+
+interface VersionDetailState {
+  loading?: boolean
+  error?: string
+  data?: VersionData | null
+}
+
+interface ReleaseAuditRow {
+  key: string
+  label: string
+  value: VersionScalar
+  code?: boolean
+  href?: string
+  wide?: boolean
+  blocked?: boolean
+}
+
+interface VersionAuditField {
+  key: string
+  label: string
+  value: VersionScalar
+}
+
+interface EvolutionVersionsModel {
+  selectedVersionDetail: RefLike<VersionDetailState>
+  selectedRoleVersions: RefLike<RoleVersionRow[]>
+  selectedVersion?: RefLike<RoleVersionRow | null>
+  selectedVersionId: RefLike<string>
+  selectedRole: RefLike<string>
+  actionLoading: RefLike<unknown>
+  loadVersionDetail: (role: string, versionId: string) => unknown
+  rollback: (role: string, versionId: string) => unknown
+  shortId: (value: unknown) => string
+  openTrustBundleDrawer?: (source?: string, payload?: Record<string, unknown>) => unknown
+}
+
 const props = defineProps({
-  evo: { type: Object, required: true }
+  evo: { type: Object as PropType<EvolutionVersionsModel>, required: true }
 })
 
 const patternRoleFilter = ref('')
 const patternStatusFilter = ref('')
-const expandedPatterns = reactive(new Set())
+const expandedPatterns = reactive(new Set<string>())
 
 const versionDetail = computed(() => props.evo.selectedVersionDetail.value?.data || null)
 
@@ -20,7 +162,7 @@ const PATTERN_STATUS_COLORS = {
   crystallized: 'var(--evo-warning)',
   archived: 'var(--evo-text-secondary)',
   deprecated: 'var(--evo-danger)'
-}
+} as const
 
 const PATTERN_STATUS_LABELS = {
   candidate: '候选',
@@ -28,27 +170,46 @@ const PATTERN_STATUS_LABELS = {
   crystallized: '结晶',
   archived: '归档',
   deprecated: '废弃'
+} as const
+
+function textValue(value: unknown) {
+  const text = String(value ?? '').trim()
+  return text
+}
+
+function textFromValues(...values: unknown[]) {
+  for (const value of values) {
+    const text = textValue(value)
+    if (text) return text
+  }
+  return ''
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => textValue(item)).filter(Boolean)
+    : []
 }
 
 const versionPatterns = computed(() => {
   const data = versionDetail.value
   if (!data?.patterns?.length) return []
   return data.patterns.map((pattern) => ({
-    pattern_id: pattern.pattern_id || pattern.id || pattern.pattern || '未知模式',
+    pattern_id: textFromValues(pattern.pattern_id, pattern.id, pattern.pattern) || '未知模式',
     role: pattern.role || data.role || '',
-    situation: pattern.situation || pattern.pattern || pattern.name || '—',
-    recommendation: pattern.recommendation || pattern.summary || pattern.description || pattern.pattern || '—',
+    situation: textFromValues(pattern.situation, pattern.pattern, pattern.name) || '—',
+    recommendation: textFromValues(pattern.recommendation, pattern.summary, pattern.description, pattern.pattern) || '—',
     win_rate_with: Number(pattern.win_rate_with ?? pattern.winRateWith ?? 0),
     win_rate_without: Number(pattern.win_rate_without ?? pattern.winRateWithout ?? 0),
     sample_size: Number(pattern.sample_size ?? pattern.sampleSize ?? pattern.games ?? 0),
     confidence: Number(pattern.confidence ?? pattern.conf ?? 0),
     status: pattern.status || 'candidate',
     source_games: Array.isArray(pattern.source_games)
-      ? pattern.source_games
+      ? stringArray(pattern.source_games)
       : Array.isArray(pattern.sourceGames)
-        ? pattern.sourceGames
+        ? stringArray(pattern.sourceGames)
         : []
-  }))
+  } satisfies VersionPattern))
 })
 
 const versionAuditFields = computed(() => {
@@ -154,14 +315,14 @@ const releaseAuditRows = computed(() => {
   ]
 })
 
-function versionMetric(value) {
+function versionMetric(value: unknown) {
   if (value == null) return '—'
   const n = Number(value)
   if (!Number.isFinite(n)) return String(value)
   return n <= 1 ? `${Math.round(n * 100)}%` : String(Math.round(n * 100) / 100)
 }
 
-function versionSkillLabel(skill) {
+function versionSkillLabel(skill: VersionSkill) {
   if (!skill) return '技能文件'
   const rawLabel = skill.title || skill.label || skill.name || ''
   const label = rawLabel && !/^[a-z0-9_.:/\\-]+$/i.test(String(rawLabel)) ? rawLabel : '技能文件'
@@ -169,42 +330,42 @@ function versionSkillLabel(skill) {
   return hash ? `${label} · ${String(hash).slice(0, 8)}` : label
 }
 
-function versionSourceLabel(version) {
+function versionSourceLabel(version: RoleVersionRow) {
   const source = sourceText(version?.source || (version?.is_baseline ? 'baseline' : 'version'))
   const stage = version?.releaseStageLabel || sourceText(version?.release_stage || version?.provenance?.release_stage)
   return stage && stage !== '未知' ? `${source} · ${stage}` : source
 }
 
-function versionDetailSourceLabel(data) {
+function versionDetailSourceLabel(data: VersionData | null | undefined) {
   const source = sourceText(data?.provenance?.source || data?.source || 'version')
   const stage = sourceText(data?.release_stage || data?.provenance?.release_stage)
   return stage && stage !== '未知' ? `${source} · ${stage}` : source
 }
 
-function patternStatusColor(status) {
-  return PATTERN_STATUS_COLORS[status] || 'var(--evo-text-secondary)'
+function patternStatusColor(status: string) {
+  return PATTERN_STATUS_COLORS[status as keyof typeof PATTERN_STATUS_COLORS] || 'var(--evo-text-secondary)'
 }
 
-function patternStatusLabel(status) {
-  return PATTERN_STATUS_LABELS[status] || status || '未知'
+function patternStatusLabel(status: string) {
+  return PATTERN_STATUS_LABELS[status as keyof typeof PATTERN_STATUS_LABELS] || status || '未知'
 }
 
-function patternRoleLabel(role) {
+function patternRoleLabel(role: unknown) {
   return roleLabel(role)
 }
 
-function winRatePct(value) {
+function winRatePct(value: unknown) {
   return `${Math.round((Number(value) || 0) * 100)}%`
 }
 
-function winRateBarColor(value) {
+function winRateBarColor(value: unknown) {
   const n = Number(value) || 0
   if (n >= 0.6) return 'var(--evo-success)'
   if (n >= 0.45) return 'var(--evo-warning)'
   return 'var(--evo-danger)'
 }
 
-function togglePatternSource(patternId) {
+function togglePatternSource(patternId: string) {
   if (expandedPatterns.has(patternId)) {
     expandedPatterns.delete(patternId)
   } else {
@@ -212,16 +373,16 @@ function togglePatternSource(patternId) {
   }
 }
 
-function confidenceWidth(value) {
+function confidenceWidth(value: unknown) {
   return `${Math.round((Number(value) || 0) * 100)}%`
 }
 
-function auditFieldText(value) {
+function auditFieldText(value: unknown) {
   const text = String(value ?? '').trim()
   return text || '—'
 }
 
-function shortVersionId(value) {
+function shortVersionId(value: unknown) {
   return value ? String(value).slice(0, 8) : ''
 }
 

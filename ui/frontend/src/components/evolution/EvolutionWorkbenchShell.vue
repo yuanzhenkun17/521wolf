@@ -1,8 +1,28 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { computed } from 'vue'
 import ApiErrorPanel from '../ApiErrorPanel.vue'
 import { inlineNoticeForDisplay, noticeErrorForPanel } from '../../composables/apiErrorDisplay.ts'
+
+interface EvolutionTab {
+  key: string
+  label: string
+}
+
+interface EvolutionRole {
+  key: string
+  label: string
+  image?: string
+  baselineShort?: string
+}
+
+interface EvolutionRunRow {
+  role?: string
+  displayRole?: string
+  isActive?: boolean
+  status?: string
+  warningCount?: number
+  errorCount?: number
+}
 
 const props = defineProps({
   title: { type: String, required: true },
@@ -28,12 +48,16 @@ const props = defineProps({
 
 const emit = defineEmits(['update:activeTab', 'refresh', 'select-role'])
 
+const tabs = computed(() => props.tabs as EvolutionTab[])
+const roles = computed(() => props.roles as EvolutionRole[])
+const runRows = computed(() => props.runRows as EvolutionRunRow[])
+
 const selectedRoleRow = computed(() =>
-  props.roles.find((role) => role.key === props.selectedRole) || props.roles[0] || null
+  roles.value.find((role) => role.key === props.selectedRole) || roles.value[0] || null
 )
 
 const activeTabLabel = computed(() =>
-  props.tabs.find((tab) => tab.key === props.activeTab)?.label || '—'
+  tabs.value.find((tab) => tab.key === props.activeTab)?.label || '—'
 )
 
 const runSummary = computed(() => props.selectedRunSummary || {})
@@ -45,13 +69,13 @@ const refreshRetrying = computed(() => Boolean(runSummary.value.loading))
 const refreshRetryDisabled = computed(() => Boolean(runSummary.value.loading || runSummary.value.actionLoading))
 const pageNotice = computed(() => {
   if (props.notice?.message) return props.notice
-  if (props.error) return { type: 'error', message: props.error?.message || props.error, error: props.error }
+  if (props.error) return { type: 'error', message: errorMessage(props.error), error: props.error }
   return null
 })
 const inlineNotice = computed(() => inlineNoticeForDisplay(pageNotice.value))
 const errorNotice = computed(() => noticeErrorForPanel(pageNotice.value))
 const railCounts = computed(() => {
-  const rows = props.runRows || []
+  const rows = runRows.value
   return {
     active: rows.filter((run) => Boolean(run?.isActive)).length,
     reviewing: rows.filter((run) => run?.status === 'reviewing').length,
@@ -152,10 +176,17 @@ function signedDelta(value) {
 }
 
 function roleRunCounts(role) {
-  const rows = (props.runRows || []).filter((run) => run?.role === role || run?.displayRole === role)
+  const rows = runRows.value.filter((run) => run?.role === role || run?.displayRole === role)
   const active = rows.filter((run) => Boolean(run?.isActive)).length
   const reviewing = rows.filter((run) => run?.status === 'reviewing').length
   return { active, reviewing }
+}
+
+function errorMessage(value) {
+  if (value && typeof value === 'object' && 'message' in value) {
+    return String(value.message || value)
+  }
+  return value
 }
 
 function diagnosticKey(diagnostic, index) {

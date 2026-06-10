@@ -1,9 +1,127 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType } from 'vue'
 import { sourceText } from '../../composables/workbenchShared.ts'
 
+interface RefLike<T> {
+  value: T
+}
+
+type SampleScalar = string | number | boolean | null | undefined
+type SampleKeyScalar = string | number | null | undefined
+
+interface SampleBucketRow {
+  key: string
+  label: string
+  count: number
+}
+
+interface SamplePagination {
+  total?: number
+  has_more?: boolean
+}
+
+interface SampleState {
+  loading?: boolean
+  error?: string
+  unsupported?: boolean
+}
+
+interface SampleGameRow {
+  id: string
+  game_id?: string | number
+  bucket: string
+  short?: string
+  winner?: string
+  winnerLabel?: string
+  phase?: SampleScalar
+  phaseLabel?: string
+  stage?: SampleScalar
+  side?: string
+  day?: SampleScalar
+  days?: SampleScalar
+  dayLabel?: string
+  seed?: SampleScalar
+  eventCount?: number
+  decisionCount?: number
+}
+
+interface SampleArchive {
+  game_id?: string | number
+  title?: string
+  summary?: string
+  winner?: string
+  phase?: SampleScalar
+  stage?: SampleScalar
+  side?: string
+  day?: SampleScalar
+  days?: SampleScalar
+  seed?: SampleScalar
+  event_count?: SampleScalar
+  decision_count?: SampleScalar
+  highlights?: string[]
+  review?: Record<string, unknown> | null
+}
+
+interface SampleDecision {
+  id?: string | number
+  actor_name?: string
+  role?: string
+  public_summary?: SampleScalar
+  reason?: SampleScalar
+  private_reasoning?: SampleScalar
+  action?: SampleKeyScalar
+  day?: SampleScalar
+  phase?: SampleScalar
+  target_id?: SampleScalar
+  choice?: SampleScalar
+  source?: SampleScalar
+}
+
+interface SampleEvent {
+  sequence?: string | number
+  event_type?: SampleKeyScalar
+  type?: SampleKeyScalar
+  phase?: SampleScalar
+  message?: SampleScalar
+  public_summary?: SampleScalar
+  day?: SampleScalar
+  actor_id?: SampleScalar
+  target_id?: SampleScalar
+  visibility?: SampleScalar
+}
+
+interface SampleGameDetail {
+  loading?: boolean
+  error?: string
+  warning?: string
+  archive?: SampleArchive | null
+  decisions?: SampleDecision[]
+  events?: SampleEvent[]
+}
+
+interface EvolutionSamplesModel {
+  selectedSamplePagination: RefLike<SamplePagination>
+  selectedGameRows: RefLike<SampleGameRow[]>
+  selectedSampleState: RefLike<SampleState>
+  sampleBuckets: RefLike<SampleBucketRow[]>
+  selectedGameBucket: RefLike<string>
+  selectSampleGame: (bucket: string, gameId?: string) => unknown
+  sampleGameFilter: RefLike<string>
+  visibleSampleGameRows: RefLike<SampleGameRow[]>
+  filteredSampleGameRows: RefLike<SampleGameRow[]>
+  selectedSampleBucketError: RefLike<string>
+  selectedGameId: RefLike<string>
+  sampleGameHasMore: RefLike<boolean>
+  sampleGameLoadingMore: RefLike<boolean>
+  loadMoreSampleGames: (bucket: string) => unknown
+  selectedGameDetail: RefLike<SampleGameDetail>
+  selectedSampleGame: RefLike<SampleGameRow | null>
+  selectedSampleHistoryGameId: RefLike<string>
+  selectedSampleHistoryUnavailableReason: RefLike<string>
+}
+
 defineProps({
-  evo: { type: Object, required: true }
+  evo: { type: Object as PropType<EvolutionSamplesModel>, required: true }
 })
 
 const emit = defineEmits(['open-sample-log', 'replay-sample-game'])
@@ -11,63 +129,81 @@ const emit = defineEmits(['open-sample-log', 'replay-sample-game'])
 const DECISION_PREVIEW_LIMIT = 8
 const EVENT_PREVIEW_LIMIT = 10
 
-function sampleTitle(game) {
+function textValue(value: unknown) {
+  const text = String(value ?? '').trim()
+  return text
+}
+
+function textFromValues(...values: unknown[]) {
+  for (const value of values) {
+    const text = textValue(value)
+    if (text) return text
+  }
+  return ''
+}
+
+function arrayItems(value: unknown) {
+  return Array.isArray(value) ? value : []
+}
+
+function sampleTitle(game: SampleGameRow | null | undefined) {
   if (!game) return '—'
   return `${game.short} · ${game.winnerLabel}`
 }
 
-function decisionText(decision) {
-  return decision?.public_summary || decision?.reason || decision?.private_reasoning || sourceText(decision?.action) || '—'
+function decisionText(decision: SampleDecision | null | undefined) {
+  return textFromValues(decision?.public_summary, decision?.reason, decision?.private_reasoning) || sourceText(decision?.action) || '—'
 }
 
-function eventText(event) {
-  return event?.message || event?.public_summary || sourceText(event?.event_type || event?.type) || '—'
+function eventText(event: SampleEvent | null | undefined) {
+  return textFromValues(event?.message, event?.public_summary) || sourceText(event?.event_type || event?.type) || '—'
 }
 
-function actorLabel(decision) {
+function actorLabel(decision: SampleDecision | null | undefined) {
   return decision?.actor_name || decision?.role || sourceText(decision?.action) || '智能体'
 }
 
-function eventLabel(event) {
+function eventLabel(event: SampleEvent | null | undefined) {
   return sourceText(event?.phase || event?.event_type || event?.type) || '事件'
 }
 
-function valueText(value) {
+function valueText(value: unknown) {
   if (value == null || value === '') return '—'
   return String(value)
 }
 
-function labelText(value) {
+function labelText(value: unknown) {
   if (value == null || value === '') return '—'
   const label = sourceText(value)
   return label === '未知' ? String(value) : label
 }
 
-function sideText(value) {
-  return {
+function sideText(value: unknown) {
+  const labels: Record<string, string> = {
     baseline: '基线',
     candidate: '候选',
     training: '训练'
-  }[value] || labelText(value)
+  }
+  return labels[String(value || '')] || labelText(value)
 }
 
-function winnerText(archive, game) {
+function winnerText(archive: SampleArchive | null | undefined, game: SampleGameRow | null | undefined) {
   const raw = archive?.winner || game?.winner
-  const mapped = {
+  const mapped = ({
     good: '好人',
     village: '好人',
     werewolves: '狼人',
     wolf: '狼人'
-  }[raw]
+  } as Record<string, string>)[String(raw || '')]
   if (mapped) return mapped
   if (game?.winnerLabel && game.winnerLabel !== '未知') return game.winnerLabel
   return valueText(raw)
 }
 
-function selectedMeta(evo) {
-  const detail = evo.selectedGameDetail.value || {}
-  const archive = detail.archive || {}
-  const game = evo.selectedSampleGame.value || {}
+function selectedMeta(evo: EvolutionSamplesModel) {
+  const detail = evo.selectedGameDetail.value
+  const archive = detail.archive || ({} as SampleArchive)
+  const game = evo.selectedSampleGame.value || ({} as SampleGameRow)
   const decisions = detail.decisions || []
   const events = detail.events || []
   const phase = archive.phase || game.phase || archive.stage || game.stage
@@ -85,23 +221,23 @@ function selectedMeta(evo) {
   ]
 }
 
-function detailDecisions(evo) {
+function detailDecisions(evo: EvolutionSamplesModel) {
   return evo.selectedGameDetail.value.decisions || []
 }
 
-function detailEvents(evo) {
+function detailEvents(evo: EvolutionSamplesModel) {
   return evo.selectedGameDetail.value.events || []
 }
 
-function decisionOverflowCount(evo) {
+function decisionOverflowCount(evo: EvolutionSamplesModel) {
   return Math.max(0, detailDecisions(evo).length - DECISION_PREVIEW_LIMIT)
 }
 
-function eventOverflowCount(evo) {
+function eventOverflowCount(evo: EvolutionSamplesModel) {
   return Math.max(0, detailEvents(evo).length - EVENT_PREVIEW_LIMIT)
 }
 
-function decisionMeta(decision) {
+function decisionMeta(decision: SampleDecision) {
   return [
     decision?.day ? `第${decision.day}天` : '',
     decision?.phase ? sourceText(decision.phase) : '',
@@ -112,7 +248,7 @@ function decisionMeta(decision) {
   ].filter(Boolean).join(' · ')
 }
 
-function eventMeta(event) {
+function eventMeta(event: SampleEvent) {
   return [
     event?.day ? `第${event.day}天` : '',
     event?.phase ? sourceText(event.phase) : '',
@@ -123,32 +259,35 @@ function eventMeta(event) {
   ].filter(Boolean).join(' · ')
 }
 
-function reviewText(item) {
+function reviewText(item: unknown) {
   if (typeof item === 'string') return item
-  return item?.description || item?.summary || item?.title || sourceText(item)
+  const record = item && typeof item === 'object' && !Array.isArray(item)
+    ? item as Record<string, unknown>
+    : {}
+  return textFromValues(record.description, record.summary, record.title) || sourceText(item)
 }
 
-function reviewItems(archive) {
+function reviewItems(archive: SampleArchive | null | undefined) {
   const review = archive?.review
   if (!review || typeof review !== 'object') return []
   return [
-    ...(review.key_turning_points || []),
-    ...(review.recommendations || []),
-    ...(review.turning_points || [])
+    ...arrayItems(review.key_turning_points),
+    ...arrayItems(review.recommendations),
+    ...arrayItems(review.turning_points)
   ].map(reviewText).filter(Boolean).slice(0, 8)
 }
 
-function openSampleLog(historyId) {
+function openSampleLog(historyId: string | null | undefined) {
   if (!historyId) return
   emit('open-sample-log', historyId)
 }
 
-function replaySampleGame(historyId) {
+function replaySampleGame(historyId: string | null | undefined) {
   if (!historyId) return
   emit('replay-sample-game', historyId)
 }
 
-function sampleEmptyText(evo) {
+function sampleEmptyText(evo: EvolutionSamplesModel) {
   if (evo.selectedSampleState.value.unsupported) return evo.selectedSampleState.value.error
   if (evo.selectedSampleState.value.loading) return '正在读取样本局...'
   return evo.selectedSampleBucketError.value || evo.selectedSampleState.value.error || '暂无样本局'

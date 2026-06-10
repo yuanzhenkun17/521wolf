@@ -1,9 +1,183 @@
 <script setup lang="ts">
-// @ts-nocheck
+import type { PropType, Ref } from 'vue'
 import EvolutionDiffViewer from './EvolutionDiffViewer.vue'
 
+type BattleSideName = 'baseline' | 'candidate'
+type MaybeNumber = number | string | null | undefined
+
+interface EvolutionRunConfig {
+  max_days?: MaybeNumber
+  auto_promote?: boolean | number | string | null
+}
+
+interface BattleSideData {
+  target_win_rate?: unknown
+  avg_role_weighted_score?: unknown
+  completed?: unknown
+  games?: unknown
+  [key: string]: unknown
+}
+
+interface BattleResult {
+  baseline?: BattleSideData | null
+  candidate?: BattleSideData | null
+  baseline_win_rate?: unknown
+  candidate_win_rate?: unknown
+  win_rate_delta?: unknown
+  skipped?: boolean | null
+  significant?: boolean | null
+  significance?: {
+    significant?: boolean | null
+    reasons?: unknown
+  } | null
+  reason?: unknown
+  error?: unknown
+  [key: string]: unknown
+}
+
+interface DiagnosticRow {
+  id?: string | number
+  kind?: string
+  stage?: string
+  message?: unknown
+  level?: string
+  type?: string
+  summary?: unknown
+  reason?: unknown
+  error?: unknown
+}
+
+interface ProposalRow {
+  proposal_id?: string | number
+  id?: string | number
+  target_file?: string
+  operation?: string
+  action?: string
+  rationale?: unknown
+  summary?: unknown
+  description?: unknown
+  recommendation?: unknown
+  reason?: unknown
+}
+
+interface ChildRunRow {
+  id?: string
+  run_id?: string
+  status?: string
+  statusLabel?: string
+  displayRole?: string
+  progressPercent?: MaybeNumber
+}
+
+interface EvolutionRun {
+  id?: string
+  run_id?: string
+  entityLabel?: string
+  status?: string
+  statusLabel?: string
+  stage?: string
+  current_stage?: string
+  currentStage?: string
+  currentStageLabel?: string
+  progressPercent?: MaybeNumber
+  progressLabel?: string
+  overallProgressPercent?: MaybeNumber
+  overallProgressLabel?: string
+  stageProgressPercent?: MaybeNumber
+  stageProgressLabel?: string
+  trainingProgressPercent?: MaybeNumber
+  trainingProgressLabel?: string
+  battleProgressPercent?: MaybeNumber
+  battleProgressLabel?: string
+  recommendation?: string
+  recommendationLabel?: string
+  battle_result?: BattleResult | null
+  combined_battle_result?: BattleResult | null
+  completedRoleCount?: MaybeNumber
+  roleCount?: MaybeNumber
+  childRunCount?: MaybeNumber
+  parentShort?: string
+  candidateShort?: string
+  publishedReleaseStageLabel?: string
+  trainingGameCompleted?: MaybeNumber
+  trainingGameRequested?: MaybeNumber
+  battleGameCompleted?: MaybeNumber
+  battleGameRequested?: MaybeNumber
+  config?: EvolutionRunConfig | null
+  startedLabel?: unknown
+  heartbeatLabel?: unknown
+  finishedLabel?: unknown
+  proposalCount?: MaybeNumber
+  diffCount?: MaybeNumber
+  diagnosticCount?: MaybeNumber
+  warningCount?: MaybeNumber
+  errorCount?: MaybeNumber
+  diagnostics?: DiagnosticRow[] | null
+  proposals?: ProposalRow[] | null
+  childRuns?: ChildRunRow[] | null
+}
+
+interface SampleGames {
+  training?: unknown[] | null
+  baseline?: unknown[] | null
+  candidate?: unknown[] | null
+  [bucket: string]: unknown[] | null | undefined
+}
+
+interface SampleState {
+  error?: string
+}
+
+interface LegacyDiffItem {
+  filename?: string
+  file?: string
+  action?: string
+  action_type?: string
+  title?: string
+  label?: string
+  display_name?: string
+}
+
+interface EvolutionDiffData {
+  skill_changes?: unknown[]
+  patterns_added?: unknown[]
+  patterns_removed?: unknown[]
+  patterns_updated?: unknown[]
+  metrics_delta?: Record<string, number | string | null> | null
+}
+
+interface EvolutionConsoleModel {
+  loading: Ref<boolean>
+  actionLoading: Ref<string>
+  form: Ref<{
+    training_games: MaybeNumber
+    battle_games: MaybeNumber
+    max_days: MaybeNumber
+  }>
+  selectedRole: Ref<string>
+  selectedRoleLabel: Ref<string>
+  selectedRunId: Ref<string>
+  selectedRun: Ref<EvolutionRun>
+  hasSelection: Ref<boolean>
+  selectedGames: Ref<SampleGames>
+  selectedSampleState: Ref<SampleState>
+  selectedDiffData: Ref<EvolutionDiffData | null>
+  selectedDiff: Ref<LegacyDiffItem[]>
+  statusText?: (value: unknown) => string
+  startSingle: () => void | Promise<void>
+  runAction: (id: string, action: 'promote' | 'reject' | 'terminate') => void | Promise<void>
+  selectRun: (id: string) => void | Promise<void>
+}
+
+interface ProgressRow {
+  key: string
+  label: string
+  percent?: MaybeNumber
+  text?: string
+}
+
 defineProps({
-  evo: { type: Object, required: true },
+  evo: { type: Object as PropType<EvolutionConsoleModel>, required: true },
   selectedIsBatch: Boolean,
   selectedCanReview: Boolean,
   selectedCanPromote: Boolean,
@@ -11,7 +185,7 @@ defineProps({
   selectedCanTerminate: Boolean
 })
 
-function actionLoadingText(value, loading = false) {
+function actionLoadingText(value: unknown, loading = false): string {
   const text = String(value || '')
   if (text.startsWith('start-single')) return '正在启动当前角色'
   if (text.startsWith('promote')) return '晋升中'
@@ -21,100 +195,103 @@ function actionLoadingText(value, loading = false) {
   return loading ? '读取中' : ''
 }
 
-function stageLabel(evo) {
+function stageLabel(evo: EvolutionConsoleModel): string {
   const run = evo.selectedRun.value || {}
   if (run.currentStageLabel) return run.currentStageLabel
   const value = run.current_stage || run.currentStage || run.stage || run.status
-  return evo.statusText?.(value) || value || '未知'
+  return evo.statusText?.(value) || (value ? String(value) : '未知')
 }
 
-function asArray(value) {
-  return Array.isArray(value) ? value : []
+function asArray<T = unknown>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
 }
 
-function finiteNumber(value) {
+function finiteNumber(value: unknown): number | null {
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
 
-function clampPercent(value) {
+function clampPercent(value: unknown): number {
   const number = finiteNumber(value)
   if (number == null) return 0
   return Math.max(0, Math.min(100, Math.round(number)))
 }
 
-function progressLabel(run) {
+function progressLabel(run: EvolutionRun | null | undefined): string {
   if (!run) return '—'
   if (run.progressLabel) return run.progressLabel
   const percent = finiteNumber(run.progressPercent)
   return percent == null ? '—' : `${Math.round(percent)}%`
 }
 
-function displayText(value, fallback = '—') {
+function displayText(value: unknown, fallback = '—'): string {
   const text = String(value ?? '').trim()
   return text || fallback
 }
 
-function verdictText(value) {
-  return {
+function verdictText(value: unknown): string {
+  const verdictLabels: Record<string, string> = {
     promote: '建议晋升',
     reject: '建议拒绝',
     hold: '继续观察',
     pending: '待评审',
     baseline: '基线'
-  }[value] || displayText(value)
+  }
+  return verdictLabels[String(value ?? '')] || displayText(value)
 }
 
-function recommendationLabel(run) {
+function recommendationLabel(run: EvolutionRun | null | undefined): string {
   if (!run) return '—'
   return run.recommendationLabel || verdictText(run.recommendation || run.battle_result?.recommendation)
 }
 
-function timeLabel(value) {
+function timeLabel(value: unknown): string {
   return displayText(value)
 }
 
-function sampleCount(games, bucket) {
+function sampleCount(games: SampleGames | null | undefined, bucket: string): number {
   return asArray(games?.[bucket]).length
 }
 
-function sampleTotal(games) {
+function sampleTotal(games: SampleGames | null | undefined): number {
   return sampleCount(games, 'training') + sampleCount(games, 'baseline') + sampleCount(games, 'candidate')
 }
 
-function diagnosticRows(run) {
-  return asArray(run?.diagnostics).slice(0, 5)
+function diagnosticRows(run: EvolutionRun | null | undefined): DiagnosticRow[] {
+  return asArray<DiagnosticRow>(run?.diagnostics).slice(0, 5)
 }
 
-function diagnosticKey(diagnostic, index) {
-  return diagnostic?.id || diagnostic?.kind || diagnostic?.stage || diagnostic?.message || index
+function diagnosticKey(diagnostic: DiagnosticRow, index: number): string | number {
+  const key = diagnostic?.id || diagnostic?.kind || diagnostic?.stage || diagnostic?.message
+  if (typeof key === 'string' || typeof key === 'number') return key
+  return key == null ? index : String(key)
 }
 
-function diagnosticLabel(diagnostic) {
+function diagnosticLabel(diagnostic: DiagnosticRow): string {
   return displayText(diagnostic?.level || diagnostic?.kind || diagnostic?.type || diagnostic?.stage, '诊断')
 }
 
-function diagnosticText(diagnostic) {
+function diagnosticText(diagnostic: DiagnosticRow): string {
   return displayText(diagnostic?.message || diagnostic?.summary || diagnostic?.reason || diagnostic?.error)
 }
 
-function proposalRows(run) {
-  return asArray(run?.proposals).slice(0, 5)
+function proposalRows(run: EvolutionRun | null | undefined): ProposalRow[] {
+  return asArray<ProposalRow>(run?.proposals).slice(0, 5)
 }
 
-function proposalKey(proposal, index) {
+function proposalKey(proposal: ProposalRow, index: number): string | number {
   return proposal?.proposal_id || proposal?.id || proposal?.target_file || index
 }
 
-function proposalLabel(proposal, index) {
+function proposalLabel(proposal: ProposalRow, index: number): string {
   return displayText(proposal?.proposal_id || proposal?.id || proposal?.target_file, `提案 ${index + 1}`)
 }
 
-function proposalMeta(proposal) {
+function proposalMeta(proposal: ProposalRow): string {
   return displayText([proposal?.target_file, proposal?.operation || proposal?.action].filter(Boolean).join(' · '))
 }
 
-function proposalText(proposal) {
+function proposalText(proposal: ProposalRow): string {
   return displayText(
     proposal?.rationale ||
       proposal?.summary ||
@@ -124,35 +301,36 @@ function proposalText(proposal) {
   )
 }
 
-function battleResult(run) {
+function battleResult(run: EvolutionRun | null | undefined): BattleResult | null {
   return run?.combined_battle_result || run?.battle_result || null
 }
 
-function battleSide(result, side) {
-  return result?.[side] && typeof result[side] === 'object' ? result[side] : {}
+function battleSide(result: BattleResult | null | undefined, side: BattleSideName): BattleSideData {
+  const sideData = result?.[side]
+  return sideData && typeof sideData === 'object' ? sideData : {}
 }
 
-function battleRate(result, side) {
+function battleRate(result: BattleResult | null | undefined, side: BattleSideName): number | null {
   if (!result) return null
   const sideData = battleSide(result, side)
   const topLevel = side === 'candidate' ? result.candidate_win_rate : result.baseline_win_rate
   return finiteNumber(topLevel ?? sideData.target_win_rate ?? sideData.avg_role_weighted_score)
 }
 
-function rateLabel(value) {
+function rateLabel(value: unknown): string {
   const number = finiteNumber(value)
   if (number == null) return '—'
   return `${Math.round(number * 100)}%`
 }
 
-function signedRateLabel(value) {
+function signedRateLabel(value: unknown): string {
   const number = finiteNumber(value)
   if (number == null) return '—'
   const percent = Math.round(number * 100)
   return `${percent > 0 ? '+' : ''}${percent}%`
 }
 
-function battleDelta(result) {
+function battleDelta(result: BattleResult | null | undefined): number | null {
   if (!result) return null
   const direct = finiteNumber(result.win_rate_delta)
   if (direct != null) return direct
@@ -162,7 +340,7 @@ function battleDelta(result) {
   return candidate - baseline
 }
 
-function battleSideMeta(result, side) {
+function battleSideMeta(result: BattleResult | null | undefined, side: BattleSideName): string {
   const data = battleSide(result, side)
   const completed = finiteNumber(data.completed)
   const games = finiteNumber(data.games)
@@ -170,7 +348,7 @@ function battleSideMeta(result, side) {
   return `${completed ?? 0} / ${games ?? completed ?? 0} 局`
 }
 
-function battleSignificantLabel(result) {
+function battleSignificantLabel(result: BattleResult | null | undefined): string {
   if (!result || result.skipped) return '—'
   const value = result.significant ?? result.significance?.significant
   if (value === true) return '是'
@@ -178,18 +356,18 @@ function battleSignificantLabel(result) {
   return '—'
 }
 
-function battleSkippedLabel(result) {
+function battleSkippedLabel(result: BattleResult | null | undefined): string {
   if (!result) return '—'
   return result.skipped ? '是' : '否'
 }
 
-function battleReason(result) {
+function battleReason(result: BattleResult | null | undefined): string {
   if (!result) return '—'
   const reasons = asArray(result.significance?.reasons).join(', ')
   return displayText(result.reason || result.error || reasons)
 }
 
-function progressRows(run) {
+function progressRows(run: EvolutionRun | null | undefined): ProgressRow[] {
   if (!run) return []
   return [
     {
@@ -219,11 +397,11 @@ function progressRows(run) {
   ]
 }
 
-function childRunRows(run) {
-  return asArray(run?.childRuns).slice(0, 12)
+function childRunRows(run: EvolutionRun | null | undefined): ChildRunRow[] {
+  return asArray<ChildRunRow>(run?.childRuns).slice(0, 12)
 }
 
-function childRunKey(run, index) {
+function childRunKey(run: ChildRunRow, index: number): string | number {
   return run?.id || run?.run_id || index
 }
 </script>
