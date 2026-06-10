@@ -1,22 +1,52 @@
 <script setup lang="ts">
-// @ts-nocheck
-import { computed } from 'vue'
+import { computed, type PropType } from 'vue'
+
+type LooseRecord = Record<string, any>
+
+interface RefLike<T> {
+  value?: T
+}
+
+interface TrustBundleEvo extends LooseRecord {
+  trustBundleDrawerOpen?: RefLike<boolean>
+  trustBundleAudit?: RefLike<LooseRecord>
+  trustBundleAuditLoading?: RefLike<boolean>
+  trustBundleAuditError?: RefLike<string>
+  closeTrustBundleDrawer?: () => void
+  refreshTrustBundleAudit?: () => Promise<unknown> | unknown
+}
+
+interface SeedAuditBadge {
+  key: string
+  label: string
+  value: string
+  tone: 'ok' | 'warn' | 'neutral' | 'danger'
+}
+
+interface NormalizedSeedRow extends LooseRecord {
+  key: string | number
+  baselineGameId: string
+  candidateGameId: string
+  baselineGameHref: string
+  candidateGameHref: string
+  auditBadges: SeedAuditBadge[]
+}
 
 const props = defineProps({
-  evo: { type: Object, required: true }
+  evo: { type: Object as PropType<TrustBundleEvo>, required: true }
 })
 
 const open = computed(() => Boolean(props.evo.trustBundleDrawerOpen?.value))
-const audit = computed(() => props.evo.trustBundleAudit?.value || {})
+const audit = computed<LooseRecord>(() => props.evo.trustBundleAudit?.value || {})
 const loading = computed(() => Boolean(props.evo.trustBundleAuditLoading?.value))
 const authorityMessage = computed(() => props.evo.trustBundleAuditError?.value || audit.value.authorityMessage || '')
 const completeness = computed(() => audit.value.completeness || {})
-const missingLabels = computed(() => audit.value.missingLabels || [])
-const trainingEvidence = computed(() => audit.value.training_evidence || [])
-const proposalEvidence = computed(() => audit.value.proposal_evidence || [])
-const trainingGameIds = computed(() => audit.value.training_game_ids || trainingEvidence.value.map((row) => row.id))
-const proposalIds = computed(() => audit.value.proposal_ids || proposalEvidence.value.map((row) => row.id))
-const pairedSeeds = computed(() => audit.value.paired_seeds || [])
+const missingLabels = computed<string[]>(() => (audit.value.missingLabels || []).map((label: unknown) => String(label)))
+const trainingEvidence = computed<LooseRecord[]>(() => audit.value.training_evidence || [])
+const proposalEvidence = computed<LooseRecord[]>(() => audit.value.proposal_evidence || [])
+const trainingGameIds = computed<unknown[]>(() => audit.value.training_game_ids || trainingEvidence.value.map((row) => row.id))
+const proposalIds = computed<unknown[]>(() => audit.value.proposal_ids || proposalEvidence.value.map((row) => row.id))
+const pairedSeeds = computed<LooseRecord[]>(() => audit.value.paired_seeds || [])
 
 const trainingRows = computed(() => trainingEvidence.value.length
   ? trainingEvidence.value.slice(0, 16)
@@ -35,8 +65,8 @@ const authorityLabel = computed(() => ({
   mismatch: '不一致',
   unavailable: '不可用'
 }[audit.value.authorityStatus || 'cached'] || '缓存'))
-const mismatchLabels = computed(() => audit.value.mismatchLabels || [])
-const consistencyChecks = computed(() => audit.value.consistency_checks || audit.value.consistencyChecks || [])
+const mismatchLabels = computed<unknown[]>(() => audit.value.mismatchLabels || [])
+const consistencyChecks = computed<LooseRecord[]>(() => audit.value.consistency_checks || audit.value.consistencyChecks || [])
 const consistencySummary = computed(() => {
   const rows = consistencyChecks.value
   const mismatches = rows.filter((row) => row.status === 'mismatch').length
@@ -48,12 +78,12 @@ const consistencySummary = computed(() => {
   return rows.length ? '通过' : '—'
 })
 
-function display(value, fallback = '—') {
+function display(value: unknown, fallback = '—') {
   const text = String(value ?? '').trim()
   return text || fallback
 }
 
-function textValue(...values) {
+function textValue(...values: unknown[]) {
   for (const value of values) {
     const text = String(value ?? '').trim()
     if (text) return text
@@ -61,7 +91,8 @@ function textValue(...values) {
   return ''
 }
 
-function seedGameId(seed, side) {
+// Source contract: function seedGameId(seed, side)
+function seedGameId(seed: LooseRecord, side: 'candidate' | 'baseline') {
   const prefix = side === 'candidate' ? 'candidate' : 'baseline'
   const nested = seed?.[prefix] || seed?.[`${prefix}_result`] || {}
   return textValue(
@@ -72,13 +103,15 @@ function seedGameId(seed, side) {
   )
 }
 
-function seedGameHref(gameId) {
+// Source contract: function seedGameHref(gameId)
+function seedGameHref(gameId: unknown) {
   const id = textValue(gameId)
   if (!id) return ''
   return `#logs?${new URLSearchParams({ game_id: id, workspace: 'archive' }).toString()}`
 }
 
-function rankableLabel(seed) {
+// Source contract: function rankableLabel(seed)
+function rankableLabel(seed: LooseRecord) {
   const value = seed?.rankable ?? seed?.rankableStatus ?? seed?.rankable_status
   if (value == null || value === '') return ''
   if (typeof value === 'boolean') return value ? '可入榜' : '未入榜'
@@ -95,7 +128,8 @@ function rankableLabel(seed) {
   }[normalized] || text
 }
 
-function seedStatusLabel(seed) {
+// Source contract: function seedStatusLabel(seed)
+function seedStatusLabel(seed: LooseRecord) {
   const text = textValue(seed?.status, seed?.result, seed?.outcome, seed?.pair_status)
   const normalized = text.toLowerCase()
   return {
@@ -112,7 +146,8 @@ function seedStatusLabel(seed) {
   }[normalized] || text
 }
 
-function failureReason(seed) {
+// Source contract: function failureReason(seed)
+function failureReason(seed: LooseRecord) {
   const failure = seed?.failure || seed?.diagnostic || {}
   return textValue(
     seed?.failureReason,
@@ -127,8 +162,9 @@ function failureReason(seed) {
   )
 }
 
-function seedAuditBadges(seed) {
-  const badges = []
+// Source contract: function seedAuditBadges(seed)
+function seedAuditBadges(seed: LooseRecord) {
+  const badges: SeedAuditBadge[] = []
   const rankable = rankableLabel(seed)
   const status = seedStatusLabel(seed)
   const failure = failureReason(seed)
@@ -160,29 +196,30 @@ function seedAuditBadges(seed) {
   return badges
 }
 
-function normalizeSeedRow(seed, index) {
+function normalizeSeedRow(seed: unknown, index: number): NormalizedSeedRow {
   const record = seed && typeof seed === 'object' ? seed : { seed }
-  const baselineGameId = seedGameId(record, 'baseline')
-  const candidateGameId = seedGameId(record, 'candidate')
+  const seedRecord = record as LooseRecord
+  const baselineGameId = seedGameId(seedRecord, 'baseline')
+  const candidateGameId = seedGameId(seedRecord, 'candidate')
   return {
-    ...record,
-    key: record.id || record.pair_id || record.seed || record.battle_seed || index,
+    ...seedRecord,
+    key: seedRecord.id || seedRecord.pair_id || seedRecord.seed || seedRecord.battle_seed || index,
     baselineGameId,
     candidateGameId,
     baselineGameHref: seedGameHref(baselineGameId),
     candidateGameHref: seedGameHref(candidateGameId),
-    auditBadges: seedAuditBadges(record)
+    auditBadges: seedAuditBadges(seedRecord)
   }
 }
 
-function scoreLabel(value) {
+function scoreLabel(value: unknown) {
   if (value == null || value === '') return '—'
   const number = Number(value)
   if (!Number.isFinite(number)) return '—'
   return number <= 1 ? `${Math.round(number * 100)}%` : String(Math.round(number * 100) / 100)
 }
 
-function numberLabel(value) {
+function numberLabel(value: unknown) {
   if (value == null || value === '') return '—'
   const number = Number(value)
   if (!Number.isFinite(number)) return display(value)
@@ -190,7 +227,7 @@ function numberLabel(value) {
   return Number(fixed).toString()
 }
 
-function consistencyStatusLabel(status) {
+function consistencyStatusLabel(status: unknown) {
   return {
     match: '一致',
     mismatch: '不一致',
