@@ -264,4 +264,3 @@ def _benchmark_snapshot_boundary_warnings(
     if scope == "role_version" and target_role and row_role and row_role != target_role:
         warnings.append("target_role_mismatch")
     return warnings
-

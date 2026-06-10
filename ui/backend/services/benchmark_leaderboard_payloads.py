@@ -380,5 +380,3 @@ def _leaderboard_compare_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "by_change": dict(sorted(changes.items())),
     }
-
-

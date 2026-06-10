@@ -362,6 +362,3 @@ def _benchmark_model_runtime_payload(
 def _stable_runtime_hash(payload: dict[str, Any]) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
-
-
-
