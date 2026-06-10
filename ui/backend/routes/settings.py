@@ -8,6 +8,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from ui.backend.health import build_health_payload
 from ui.backend.schemas import ModelProfileCreateRequest, ModelProfileUpdateRequest, SettingsRuntimeVariableUpdateRequest
+from ui.backend.settings_audit import SettingsAuditStore, settings_audit_details_for_profile
 from ui.backend.settings_runtime_variables import SettingsRuntimeVariableStore
 from ui.backend.settings_model_profiles import SettingsModelProfileStore, settings_admin_authorized, settings_admin_payload
 
@@ -15,6 +16,7 @@ from ui.backend.settings_model_profiles import SettingsModelProfileStore, settin
 def register_settings_routes(api: FastAPI, store: Any) -> None:
     profile_store = SettingsModelProfileStore.from_backend_store(store)
     runtime_store = SettingsRuntimeVariableStore.from_backend_store(store)
+    audit_store = SettingsAuditStore.from_backend_store(store)
 
     @api.get("/api/settings/model-profiles")
     def list_model_profiles() -> dict[str, Any]:
@@ -26,6 +28,10 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     def list_runtime_variables() -> dict[str, Any]:
         return runtime_store.list_payload()
 
+    @api.get("/api/settings/audit-log")
+    def list_settings_audit_log(limit: int = 50) -> dict[str, Any]:
+        return audit_store.list_payload(limit=limit)
+
     @api.patch("/api/settings/runtime-variables/{setting_key}")
     def update_runtime_variable(
         setting_key: str,
@@ -34,10 +40,24 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     ) -> dict[str, Any]:
         _require_settings_admin(x_settings_admin_token)
         try:
+            variable = runtime_store.update_variable(setting_key, request.value)
+            audit_store.record_best_effort(
+                action="runtime_variable.updated",
+                entity_kind="runtime_variable",
+                entity_id=variable["key"],
+                message="Runtime variable updated from Settings.",
+                details={
+                    "key": variable["key"],
+                    "label": variable.get("label"),
+                    "state": variable.get("state"),
+                    "source": variable.get("source"),
+                    "value_type": variable.get("value_type"),
+                },
+            )
             return {
                 "kind": "settings_runtime_variable",
                 "schema_version": 1,
-                "variable": runtime_store.update_variable(setting_key, request.value),
+                "variable": variable,
             }
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_runtime_variable_not_found", "runtime variable not found") from exc
@@ -53,10 +73,21 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     ) -> dict[str, Any]:
         _require_settings_admin(x_settings_admin_token)
         try:
+            profile = profile_store.create_profile(request)
+            audit_store.record_best_effort(
+                action="model_profile.created",
+                entity_kind="model_profile",
+                entity_id=profile["profile_id"],
+                message="Model profile created from Settings.",
+                details=settings_audit_details_for_profile(
+                    profile,
+                    fields=sorted(request.model_fields_set),
+                ),
+            )
             return {
                 "kind": "settings_model_profile",
                 "schema_version": 1,
-                "profile": profile_store.create_profile(request),
+                "profile": profile,
             }
         except ValueError as exc:
             raise _settings_error(422, "settings_model_profile_invalid", str(exc)) from exc
@@ -69,10 +100,21 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     ) -> dict[str, Any]:
         _require_settings_admin(x_settings_admin_token)
         try:
+            profile = profile_store.update_profile(profile_id, request)
+            audit_store.record_best_effort(
+                action="model_profile.updated",
+                entity_kind="model_profile",
+                entity_id=profile["profile_id"],
+                message="Model profile updated from Settings.",
+                details=settings_audit_details_for_profile(
+                    profile,
+                    fields=sorted(request.model_fields_set),
+                ),
+            )
             return {
                 "kind": "settings_model_profile",
                 "schema_version": 1,
-                "profile": profile_store.update_profile(profile_id, request),
+                "profile": profile,
             }
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
@@ -86,7 +128,22 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     ) -> dict[str, Any]:
         _require_settings_admin(x_settings_admin_token)
         try:
-            return await profile_store.test_profile(profile_id)
+            result = await profile_store.test_profile(profile_id)
+            audit_store.record_best_effort(
+                action="model_profile.tested",
+                entity_kind="model_profile",
+                entity_id=profile_id,
+                status=str(result.get("status") or "unknown"),
+                message=str(result.get("message") or "Model profile connection tested."),
+                details={
+                    "profile_id": profile_id,
+                    "model": result.get("model"),
+                    "status": result.get("status"),
+                    "latency_ms": result.get("latency_ms"),
+                    "error_type": (result.get("error") or {}).get("type") if isinstance(result.get("error"), dict) else None,
+                },
+            )
+            return result
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
         except ValueError as exc:
@@ -99,10 +156,18 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     ) -> dict[str, Any]:
         _require_settings_admin(x_settings_admin_token)
         try:
+            profile = profile_store.disable_profile(profile_id)
+            audit_store.record_best_effort(
+                action="model_profile.disabled",
+                entity_kind="model_profile",
+                entity_id=profile["profile_id"],
+                message="Model profile disabled from Settings.",
+                details=settings_audit_details_for_profile(profile, fields=["enabled"]),
+            )
             return {
                 "kind": "settings_model_profile",
                 "schema_version": 1,
-                "profile": profile_store.disable_profile(profile_id),
+                "profile": profile,
             }
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
@@ -114,7 +179,15 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     ) -> dict[str, Any]:
         _require_settings_admin(x_settings_admin_token)
         try:
-            return profile_store.delete_profile(profile_id)
+            result = profile_store.delete_profile(profile_id)
+            audit_store.record_best_effort(
+                action="model_profile.deleted",
+                entity_kind="model_profile",
+                entity_id=profile_id,
+                message="Model profile deleted from Settings.",
+                details={"profile_id": profile_id, "deleted": True},
+            )
+            return result
         except FileNotFoundError as exc:
             raise _settings_error(404, "settings_model_profile_not_found", "model profile not found") from exc
 

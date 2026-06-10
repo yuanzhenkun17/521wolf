@@ -8,6 +8,7 @@ BASELINE = Path("migrations/versions/20260608_0001_postgresql_baseline.py")
 BENCHMARK_SAVED_VIEWS = Path("migrations/versions/20260610_0002_benchmark_saved_views.py")
 UI_MODEL_PROFILES = Path("migrations/versions/20260611_0005_ui_model_profiles.py")
 UI_RUNTIME_SETTINGS = Path("migrations/versions/20260611_0006_ui_runtime_settings.py")
+UI_SETTINGS_AUDIT_LOG = Path("migrations/versions/20260611_0007_ui_settings_audit_log.py")
 
 
 def _baseline_text() -> str:
@@ -24,6 +25,10 @@ def _ui_model_profiles_text() -> str:
 
 def _ui_runtime_settings_text() -> str:
     return UI_RUNTIME_SETTINGS.read_text(encoding="utf-8")
+
+
+def _ui_settings_audit_log_text() -> str:
+    return UI_SETTINGS_AUDIT_LOG.read_text(encoding="utf-8")
 
 
 def test_postgresql_baseline_uses_namespaces_for_storage_domains() -> None:
@@ -197,3 +202,18 @@ def test_ui_runtime_settings_migration_owns_non_secret_variable_schema() -> None
     assert "updated_at timestamptz NOT NULL" in migration_text
     assert "updated_by text" in migration_text
     assert "secret" not in migration_text.lower()
+
+
+def test_ui_settings_audit_log_migration_owns_settings_governance_schema() -> None:
+    migration_text = _ui_settings_audit_log_text()
+    compact_migration = re.sub(r"\s+", " ", migration_text)
+
+    assert 'down_revision = "20260611_0006"' in migration_text
+    assert "CREATE TABLE IF NOT EXISTS wolf.ui_settings_audit_log" in compact_migration
+    assert "audit_id text PRIMARY KEY" in migration_text
+    assert "action text NOT NULL" in migration_text
+    assert "entity_kind text NOT NULL" in migration_text
+    assert "entity_id text NOT NULL" in migration_text
+    assert "details jsonb NOT NULL" in migration_text
+    assert "idx_ui_settings_audit_created" in migration_text
+    assert "api_key text" not in migration_text

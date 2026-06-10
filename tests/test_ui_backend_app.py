@@ -391,6 +391,8 @@ class _UiMemoryDatabase:
         self.model_profiles_enabled = False
         self.runtime_settings: dict[str, dict[str, Any]] = {}
         self.runtime_settings_enabled = False
+        self.settings_audit: dict[str, dict[str, Any]] = {}
+        self.settings_audit_enabled = False
         self.background_upserts = 0
         self.event_upserts = 0
         self.deletes = 0
@@ -426,7 +428,7 @@ class _UiMemoryConnection:
             return _UiCursor([{"ok": 1}])
 
         if text.startswith("SELECT version_num FROM public.alembic_version"):
-            return _UiCursor([{"version_num": "20260611_0006"}])
+            return _UiCursor([{"version_num": "20260611_0007"}])
 
         if text == "SELECT status, COUNT(*) AS count FROM ui_task_queue GROUP BY status":
             counts: dict[str, int] = {}
@@ -589,6 +591,32 @@ class _UiMemoryConnection:
                 }
             return _UiCursor()
 
+        if text.startswith("INSERT INTO ui_settings_audit_log"):
+            audit_id, action, entity_kind, entity_id, status, actor, message, details, created_at = params
+            with self._db.lock:
+                self._db.settings_audit[str(audit_id)] = {
+                    "audit_id": str(audit_id),
+                    "action": action,
+                    "entity_kind": entity_kind,
+                    "entity_id": str(entity_id),
+                    "status": status,
+                    "actor": actor,
+                    "message": message,
+                    "details": json.loads(details) if isinstance(details, str) else details,
+                    "created_at": created_at,
+                }
+            return _UiCursor()
+
+        if text.startswith("SELECT audit_id, action, entity_kind, entity_id, status, actor, message, details, created_at FROM ui_settings_audit_log"):
+            limit = int(params[0])
+            with self._db.lock:
+                rows = sorted(
+                    (dict(row) for row in self._db.settings_audit.values()),
+                    key=lambda row: (str(row.get("created_at") or ""), str(row.get("audit_id") or "")),
+                    reverse=True,
+                )[:limit]
+            return _UiCursor(rows)
+
         if text.startswith("INSERT INTO ui_task_events"):
             event_id, entity_id, entity_kind, event, status, payload, created_at = params
             with self._db.lock:
@@ -674,6 +702,8 @@ class _UiMemoryConnection:
             return self._db.model_profiles_enabled
         if table_name == "ui_runtime_settings":
             return self._db.runtime_settings_enabled
+        if table_name == "ui_settings_audit_log":
+            return self._db.settings_audit_enabled
         return table_name in {
             "ui_background_tasks",
             "ui_task_events",
@@ -1345,6 +1375,7 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
         disable_response = client.post(f"/api/settings/model-profiles/{profile_id}/disable", headers=headers)
         list_response = client.get("/api/settings/model-profiles")
         delete_response = client.delete(f"/api/settings/model-profiles/{profile_id}", headers=headers)
+        audit_response = client.get("/api/settings/audit-log?limit=10")
         final_response = client.get("/api/settings/model-profiles")
 
     assert forbidden_response.status_code == 403
@@ -1380,6 +1411,19 @@ def test_settings_model_profile_admin_crud_masks_secret_and_tests_connection(
 
     assert delete_response.status_code == 200
     assert delete_response.json()["deleted"] is True
+    assert audit_response.status_code == 200
+    audit_payload = audit_response.json()
+    assert audit_payload["kind"] == "settings_audit_log"
+    audit_actions = {event["action"] for event in audit_payload["events"]}
+    assert {
+        "model_profile.deleted",
+        "model_profile.disabled",
+        "model_profile.tested",
+        "model_profile.updated",
+        "model_profile.created",
+    }.issubset(audit_actions)
+    assert all(event["actor"] == "settings_admin" for event in audit_payload["events"])
+    assert "sk-secret" not in json.dumps(audit_payload, ensure_ascii=False)
     assert final_response.json()["profiles"] == []
 
 
@@ -1470,6 +1514,7 @@ def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
     _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     _fake_ui_pg_provider.db.runtime_settings_enabled = True
+    _fake_ui_pg_provider.db.settings_audit_enabled = True
     monkeypatch.delenv("TASK_WORKER_REQUIRED", raising=False)
     monkeypatch.delenv("WOLF_USE_PG_TASK_QUEUE", raising=False)
     monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
@@ -1485,6 +1530,7 @@ def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
         )
         health_response = client.get("/api/health")
         settings_response = client.get("/api/settings/model-profiles")
+        audit_response = client.get("/api/settings/audit-log?limit=5")
 
     assert list_response.status_code == 200
     listed = list_response.json()["variables"]
@@ -1499,6 +1545,12 @@ def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
     assert updated["raw_value"] is True
     assert updated["source"] == "settings"
     assert _fake_ui_pg_provider.db.runtime_settings["TASK_WORKER_REQUIRED"]["value_json"] is True
+    assert audit_response.status_code == 200
+    audit_events = audit_response.json()["events"]
+    assert audit_events[0]["action"] == "runtime_variable.updated"
+    assert audit_events[0]["entity_id"] == "TASK_WORKER_REQUIRED"
+    assert audit_events[0]["details"]["value_type"] == "boolean"
+    assert _fake_ui_pg_provider.db.settings_audit
 
     health = health_response.json()
     assert health["ready"] is False

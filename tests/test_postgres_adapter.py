@@ -312,6 +312,35 @@ def test_execute_casts_runtime_setting_value_json_insert_parameter() -> None:
     assert params[1] == "true"
 
 
+def test_execute_casts_settings_audit_details_insert_parameter() -> None:
+    raw = _FakeRawConnection()
+    adapter = _adapter(raw)
+    raw.calls.clear()
+
+    adapter.execute(
+        """
+        INSERT INTO ui_settings_audit_log
+        (audit_id, action, entity_kind, entity_id, status, actor, message, details, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "audit-1",
+            "model_profile.created",
+            "model_profile",
+            "model-1",
+            "ok",
+            "settings_admin",
+            "created",
+            '{"fields":["model"]}',
+            "2026-06-11T00:00:00+08:00",
+        ),
+    )
+
+    sql, params = raw.calls[0]
+    assert "VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)" in " ".join(sql.split())
+    assert params[7] == '{"fields":["model"]}'
+
+
 def test_execute_casts_jsonb_update_parameters_and_adapts_boolean_where() -> None:
     raw = _FakeRawConnection()
     adapter = _adapter(raw)
