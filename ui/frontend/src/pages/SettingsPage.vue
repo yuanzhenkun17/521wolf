@@ -2936,6 +2936,15 @@ function shortId(value: unknown): string {
   line-height: 1.38;
 }
 
+.settings-gate-panel .settings-gate-list b,
+.settings-gate-panel .settings-gate-list small {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: normal;
+}
+
 @media (max-width: 1120px) {
   .settings-command-bar {
     grid-template-columns: minmax(0, 1fr) auto;

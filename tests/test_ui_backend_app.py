@@ -1843,6 +1843,81 @@ def test_settings_model_profiles_store_api_keys_encrypted_in_postgres(
     assert cleared_row["api_key_masked"] == ""
 
 
+def test_settings_model_profile_delete_does_not_decrypt_rotated_postgres_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "old-settings-secret")
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Rotated Secret Model",
+                "provider": "openai_compatible",
+                "base_url": "https://api.example.test/v1",
+                "model": "rotated-secret-model",
+                "api_key": "sk-old-secret",
+            },
+        )
+        profile_id = create_response.json()["profile"]["profile_id"]
+        monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "new-settings-secret")
+        delete_response = client.delete(f"/api/settings/model-profiles/{profile_id}", headers=headers)
+
+    assert create_response.status_code == 200
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+    assert profile_id not in _fake_ui_pg_provider.db.model_profiles
+
+
+def test_settings_model_profile_default_update_does_not_decrypt_rotated_postgres_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+) -> None:
+    _fake_ui_pg_provider.db.model_profiles_enabled = True
+    monkeypatch.setenv("SETTINGS_ADMIN_ENABLED", "true")
+    monkeypatch.setenv("SETTINGS_ADMIN_TOKEN", "token-123")
+    monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "old-settings-secret")
+    headers = {"X-Settings-Admin-Token": "token-123"}
+
+    with _test_client(tmp_path) as client:
+        create_response = client.post(
+            "/api/settings/model-profiles",
+            headers=headers,
+            json={
+                "name": "Rotated Secret Model",
+                "provider": "openai_compatible",
+                "base_url": "https://api.example.test/v1",
+                "model": "rotated-secret-model",
+                "api_key": "sk-old-secret",
+            },
+        )
+        profile_id = create_response.json()["profile"]["profile_id"]
+        original_ciphertext = _fake_ui_pg_provider.db.model_profiles[profile_id]["api_key_ciphertext"]
+        monkeypatch.setenv("SETTINGS_SECRET_ENCRYPTION_KEY", "new-settings-secret")
+        update_response = client.patch(
+            f"/api/settings/model-profiles/{profile_id}",
+            headers=headers,
+            json={"default_scopes": {"game_decision": True, "benchmark": True, "evolution": True}},
+        )
+
+    assert create_response.status_code == 200
+    assert update_response.status_code == 200
+    profile = update_response.json()["profile"]
+    assert profile["has_api_key"] is True
+    assert profile["default_scopes"]["game_decision"] is True
+    assert profile["default_scopes"]["benchmark"] is True
+    assert profile["default_scopes"]["evolution"] is True
+    assert _fake_ui_pg_provider.db.model_profiles[profile_id]["api_key_ciphertext"] == original_ciphertext
+
+
 def test_settings_runtime_variables_update_health_gates_and_respect_env_locks(
     tmp_path: Path,
     monkeypatch,
@@ -2075,6 +2150,34 @@ def test_settings_model_profile_runtime_resolver_feeds_launch_provenance(
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail["code"] == "benchmark_model_profile_invalid"
     assert "override is not allowed" in exc_info.value.detail["detail"]
+
+
+def test_env_locked_model_runtime_skips_unreadable_settings_profile_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ui.backend.settings_model_profiles import SettingsModelProfileStore
+    from ui.backend.settings_secret_crypto import SettingsSecretEncryptionError
+
+    monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "env-secret")
+    monkeypatch.setenv("WEREWOLF_LLM_BASE_URL", "https://env.example.test/v1")
+    monkeypatch.setenv("WEREWOLF_LLM_MODEL", "env-model")
+
+    store = SettingsModelProfileStore(tmp_path)
+
+    def fail_read_profiles() -> list[dict[str, Any]]:
+        raise AssertionError("env-locked runtime should not read Settings profiles")
+
+    def fail_read_secrets() -> dict[str, str]:
+        raise SettingsSecretEncryptionError("settings secret cannot be decrypted")
+
+    monkeypatch.setattr(store, "_read_profiles", fail_read_profiles)
+    monkeypatch.setattr(store, "_read_secrets", fail_read_secrets)
+
+    assert store.model_runtime_payload(scope="game_decision") is None
+    assert store.create_llm_for_scope(scope="game_decision") is None
+    with pytest.raises(ValueError, match="environment LLM config is locked"):
+        store.create_llm_for_scope(scope="game_decision", profile_id="model_1")
 
 
 def test_benchmark_start_probes_selected_model_profile_before_queueing(

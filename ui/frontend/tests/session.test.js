@@ -1030,11 +1030,10 @@ test('startMode in watch mode starts god view without skipping the model intro',
   assert.equal(timers.intervalCount(), 1)
 }))
 
-test('startMode waits for council models before opening the live stream', () => withWindow(async () => {
+test('startMode opens the live stream before council model warmup finishes', () => withWindow(async () => {
   const state = useGameState()
   state.backendMode.value = 'api'
   const paths = []
-  const modelReady = createDeferred()
   let waitForModels = 0
   let syncScene = 0
   const watchGame = game('wait-scene-game', {
@@ -1054,7 +1053,7 @@ test('startMode waits for council models before opening the live stream', () => 
     sceneApi: {
       waitForCouncilModels() {
         waitForModels += 1
-        return modelReady.promise
+        return new Promise(() => {})
       },
       scheduleSyncCouncilScene() {
         syncScene += 1
@@ -1068,25 +1067,23 @@ test('startMode waits for council models before opening the live stream', () => 
     }
   })
 
-  const started = actions.startMode({ mode: 'watch' })
+  let resolved = false
+  const started = actions.startMode({ mode: 'watch' }).then(() => {
+    resolved = true
+  })
   await flushPromises()
 
-  assert.deepEqual(paths, ['/games'])
-  assert.equal(window.location.hash, '#match')
-  assert.equal(state.liveGame.value.game_id, 'wait-scene-game')
-  assert.equal(state.judgeBoardStarted.value, true)
-  assert.equal(state.judgeBoardStarting.value, true)
-  assert.equal(state.roleAssignmentComplete.value, false)
-  assert.equal(state.watchRunning.value, false)
-  assert.equal(waitForModels, 1)
-
-  modelReady.resolve()
   await started
 
   assert.deepEqual(paths, ['/games', '/health'])
-  assert.equal(state.roleAssignmentComplete.value, true)
+  assert.equal(resolved, true)
+  assert.equal(window.location.hash, '#match')
+  assert.equal(state.liveGame.value.game_id, 'wait-scene-game')
+  assert.equal(state.judgeBoardStarted.value, true)
   assert.equal(state.judgeBoardStarting.value, false)
+  assert.equal(state.roleAssignmentComplete.value, true)
   assert.equal(state.watchRunning.value, true)
+  assert.equal(waitForModels, 0)
   assert.equal(syncScene >= 1, true)
 }, {
   eventSource: class FakeEventSource {

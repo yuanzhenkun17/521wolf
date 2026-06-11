@@ -184,9 +184,17 @@ class SettingsModelProfileStore:
     def update_profile(self, profile_id: str, request: ModelProfileUpdateRequest) -> dict[str, Any]:
         profiles = self._read_profiles()
         profile = self._find_profile(profiles, profile_id)
-        secrets = self._read_secrets()
-        changed_runtime = False
         fields = set(request.model_fields_set)
+        backend = self._profile_backend()
+        secrets: dict[str, str] | None = None
+        secrets_changed = False
+        changed_runtime = False
+
+        def writable_secrets() -> dict[str, str]:
+            nonlocal secrets
+            if secrets is None:
+                secrets = {} if backend is not None else self._read_secrets()
+            return secrets
 
         for key in ("name", "provider", "base_url", "model", "temperature", "timeout_seconds", "max_retries", "enabled"):
             if key not in fields:
@@ -215,8 +223,9 @@ class SettingsModelProfileStore:
 
         if request.clear_api_key:
             secret_ref = str(profile.get("api_key_secret_ref") or "")
-            if secret_ref:
-                secrets.pop(secret_ref, None)
+            if secret_ref and backend is None:
+                writable_secrets().pop(secret_ref, None)
+                secrets_changed = True
             profile["api_key_secret_ref"] = ""
             profile["api_key_masked"] = ""
             changed_runtime = True
@@ -227,7 +236,8 @@ class SettingsModelProfileStore:
             self._ensure_secret_can_be_saved(api_key)
             secret_ref = str(profile.get("api_key_secret_ref") or "") or f"model_profile:{profile_id}:api_key"
             profile["api_key_secret_ref"] = secret_ref
-            secrets[secret_ref] = api_key
+            writable_secrets()[secret_ref] = api_key
+            secrets_changed = True
             changed_runtime = True
 
         if changed_runtime:
@@ -235,8 +245,9 @@ class SettingsModelProfileStore:
             profile["last_test_error"] = ""
         profile["updated_at"] = beijing_now_iso()
         self._write_profiles(profiles)
-        self._write_secrets(secrets)
-        return self._public_profile(profile, secrets=secrets)
+        if secrets_changed and secrets is not None:
+            self._write_secrets(secrets)
+        return self._public_profile(profile, secrets=secrets or {})
 
     async def test_profile(self, profile_id: str) -> dict[str, Any]:
         profiles = self._read_profiles()
@@ -298,6 +309,15 @@ class SettingsModelProfileStore:
     def delete_profile(self, profile_id: str) -> dict[str, Any]:
         profiles = self._read_profiles()
         profile = self._find_profile(profiles, profile_id)
+        backend = self._profile_backend()
+        if backend is not None:
+            backend.delete_profile(profile_id)
+            return {
+                "kind": "settings_model_profile_deleted",
+                "schema_version": 1,
+                "profile_id": profile_id,
+                "deleted": True,
+            }
         secrets = self._read_secrets()
         secret_ref = str(profile.get("api_key_secret_ref") or "")
         if secret_ref:
@@ -326,14 +346,15 @@ class SettingsModelProfileStore:
     ) -> tuple[dict[str, Any], str, bool] | None:
         normalized_scope = normalize_scope(scope)
         normalized_profile_id = str(profile_id or "").strip()
-        profiles = self._read_profiles()
-        secrets = self._read_secrets()
         env_locked = any(env_locks_payload()["sources"].values())
 
         if env_locked:
             if normalized_profile_id:
                 raise ValueError("environment LLM config is locked; model_profile_id override is not allowed")
             return None
+
+        profiles = self._read_profiles()
+        secrets = self._read_secrets()
 
         if normalized_profile_id:
             profile = self._find_profile(profiles, normalized_profile_id)
@@ -516,6 +537,17 @@ class _PostgresModelProfileBackend:
                 repo.upsert(row)
             for profile_id in sorted(set(existing) - incoming_ids):
                 repo.delete(profile_id)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def delete_profile(self, profile_id: str) -> None:
+        conn = self._connection_factory()
+        try:
+            ModelProfileRepository(conn).delete(profile_id)
             conn.commit()
         except Exception:
             conn.rollback()

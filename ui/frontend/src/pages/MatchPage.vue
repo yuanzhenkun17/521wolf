@@ -155,20 +155,27 @@ const gameStore = useGameStore()
 const replayStore = useReplayStore()
 const sessionStore = useSessionStore()
 const uiStore = useUiStore()
-const sceneLoadProgress = ref<SceneLoadProgress>({
-  phase: 'scene',
-  label: '搭建议事厅',
-  loaded: 0,
-  total: 1,
-  progress: 0.08,
-  ready: false
-})
+
+function initialSceneLoadProgress(): SceneLoadProgress {
+  return {
+    phase: 'scene',
+    label: '搭建议事厅',
+    loaded: 0,
+    total: 1,
+    progress: 0.08,
+    ready: false
+  }
+}
+
+const sceneLoadProgress = ref<SceneLoadProgress>(initialSceneLoadProgress())
+const introAssetsReady = ref(false)
 const INTRO_MIN_VISIBLE_MS = 1800
 let introRunId = 0
 let introTimer = 0
 let introRemoveTimer = 0
 let introSettledGameId: NullableId = null
 let introModelWarmupGameId: NullableId = null
+let introAssetsReadyGameId: NullableId = null
 const introWaitTimers = new Set<IntroWaitEntry>()
 
 const MATCH_STORE_PROP_ALIASES = {
@@ -423,6 +430,7 @@ const introStage = computed(() => {
   if (!game.value) return '创建房间'
   if (!sceneApi.value) return '点亮议事厅'
   if (!roleAssignmentComplete.value && !isReplayMode.value) return '分配身份'
+  if (!introAssetsReadyFor(game.value?.game_id ?? null) && !isReplayMode.value) return '加载角色模型'
   return '召集玩家'
 })
 const introStageText = computed(() => sceneLoadProgress.value?.label || introStage.value)
@@ -438,6 +446,7 @@ const introReady = computed(() =>
   Boolean(game.value)
   && Boolean(sceneApi.value)
   && (roleAssignmentComplete.value || isReplayMode.value)
+  && (isReplayMode.value || introAssetsReadyFor(game.value?.game_id ?? null))
 )
 const showIntro = computed(() => !isReplayMode.value && introMounted.value)
 const replayPhaseText = computed(() => `第${game.value?.day ?? '-'}天 · ${phaseName(game.value?.phase)}`)
@@ -475,6 +484,14 @@ function handleCouncilLoadingProgress(progress: SceneLoadProgress | null | undef
   sceneLoadProgress.value = {
     ...sceneLoadProgress.value,
     ...(progress || {})
+  }
+  const gameId = game.value?.game_id ?? null
+  if (
+    gameId != null
+    && sceneLoadProgress.value.ready
+    && (!introModelWarmupGameId || sameIntroGameId(introModelWarmupGameId, gameId))
+  ) {
+    markIntroAssetsReady(gameId)
   }
 }
 
@@ -534,6 +551,27 @@ function clearIntroDelayTimer() {
     window.clearTimeout(introTimer)
     introTimer = 0
   }
+}
+
+function sameIntroGameId(left: unknown, right: unknown) {
+  if (left == null && right == null) return true
+  return String(left ?? '') === String(right ?? '')
+}
+
+function resetIntroSceneProgress() {
+  sceneLoadProgress.value = initialSceneLoadProgress()
+  introAssetsReady.value = false
+  introAssetsReadyGameId = null
+  introModelWarmupGameId = null
+}
+
+function markIntroAssetsReady(gameId: NullableId) {
+  introAssetsReadyGameId = gameId
+  introAssetsReady.value = true
+}
+
+function introAssetsReadyFor(gameId: NullableId) {
+  return introAssetsReady.value && sameIntroGameId(introAssetsReadyGameId, gameId)
 }
 
 function updateChatLogExpanded(value: boolean) {
@@ -600,11 +638,23 @@ async function settleIntro() {
     return
   }
   showIntroOverlay()
-  if (!introReady.value) return
-  if (gameId !== introModelWarmupGameId) {
+  if (!game.value || !sceneApi.value || (!roleAssignmentComplete.value && !isReplayMode.value)) return
+  if (!isReplayMode.value && !introAssetsReadyFor(gameId)) {
+    if (sameIntroGameId(gameId, introModelWarmupGameId)) return
     introModelWarmupGameId = gameId
-    sceneApi.value?.scheduleSyncCouncilScene?.()
+    try {
+      sceneApi.value?.scheduleSyncCouncilScene?.()
+      await Promise.resolve(sceneApi.value?.waitForCouncilModels?.())
+      if (runId !== introRunId) return
+      markIntroAssetsReady(gameId)
+    } catch {
+      if (runId !== introRunId) return
+      markIntroAssetsReady(gameId)
+    } finally {
+      sceneApi.value?.scheduleSyncCouncilScene?.()
+    }
   }
+  if (!introReady.value) return
   await wait(INTRO_MIN_VISIBLE_MS, runId).finally(() => clearIntroWaitTimers(runId))
   if (runId !== introRunId) return
   introSettledGameId = gameId
@@ -620,10 +670,18 @@ watch(
     () => skipIntroGameId.value,
     () => roleAssignmentComplete.value,
     () => isReplayMode.value,
-    () => sceneApi.value
+    () => sceneApi.value,
+    () => introAssetsReady.value
   ],
   settleIntro,
   { immediate: true }
+)
+
+watch(
+  () => game.value?.game_id ?? null,
+  (gameId, previousGameId) => {
+    if (!sameIntroGameId(gameId, previousGameId)) resetIntroSceneProgress()
+  }
 )
 
 onBeforeUnmount(() => {

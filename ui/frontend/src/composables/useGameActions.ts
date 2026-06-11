@@ -715,7 +715,6 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
         method: 'POST',
         body: JSON.stringify(startGameBody(mode, startOptions))
       }, { mode })
-      if (isReturnableGame(game)) await waitForCouncilEntryReady()
       endVisibleLoading(bootLoadingKey)
       bootLoadingActive = false
       if (enterStartedGame(game, { skipIntro: false })) {

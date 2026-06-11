@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -17,8 +17,23 @@ vi.mock('../../src/components/MobileTaskShell.vue', () => ({
 vi.mock('../../src/components/CouncilScene.vue', () => ({
   default: {
     name: 'CouncilScene',
-    props: ['game', 'isNight', 'isWatch', 'isReplayMode', 'roleAssignmentComplete', 'judgeBoardStarted', 'players', 'speakerMessage', 'voteTally', 'sceneEffects'],
-    template: '<section class="council-scene-stub" :data-game-id="game?.game_id" :data-night="String(isNight)" :data-watch="String(isWatch)" :data-replay="String(isReplayMode)" :data-role-ready="String(roleAssignmentComplete)" :data-judge-started="String(judgeBoardStarted)" :data-player-count="String(players.length)" :data-speaker-message="speakerMessage" :data-vote-count="String(voteTally.length)" :data-effect-count="String(sceneEffects.length)" />',
+    props: ['game', 'isNight', 'isWatch', 'isReplayMode', 'roleAssignmentComplete', 'judgeBoardStarted', 'players', 'speakerMessage', 'voteTally', 'sceneEffects', 'deferModelLoading'],
+    emits: ['ready', 'loading-progress'],
+    setup(_props, { emit }) {
+      function emitReady() {
+        emit('ready', (globalThis as any).__matchSceneApi || {})
+      }
+      function emitLoaded() {
+        emit('loading-progress', { label: '议事厅就绪', progress: 1, ready: true })
+      }
+      return { emitReady, emitLoaded }
+    },
+    template: `
+      <section class="council-scene-stub" :data-game-id="game?.game_id" :data-night="String(isNight)" :data-watch="String(isWatch)" :data-replay="String(isReplayMode)" :data-role-ready="String(roleAssignmentComplete)" :data-judge-started="String(judgeBoardStarted)" :data-player-count="String(players.length)" :data-speaker-message="speakerMessage" :data-vote-count="String(voteTally.length)" :data-effect-count="String(sceneEffects.length)" :data-defer="String(deferModelLoading)">
+        <button class="emit-ready" @click="emitReady" />
+        <button class="emit-loaded" @click="emitLoaded" />
+      </section>
+    `,
   },
 }))
 
@@ -138,6 +153,16 @@ function gameFixture(gameId: string, overrides: Partial<Game> = {}): Game {
   }
 }
 
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 function mountMatchPage(props = {}, setupStores: () => void) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -152,6 +177,61 @@ function mountMatchPage(props = {}, setupStores: () => void) {
 }
 
 describe('MatchPage Pinia fallback', () => {
+  it('keeps the intro overlay until council models finish warming', async () => {
+    vi.useFakeTimers()
+    const modelReady = createDeferred()
+    let waitForModels = 0
+    let syncScene = 0
+    ;(globalThis as any).__matchSceneApi = {
+      waitForCouncilModels() {
+        waitForModels += 1
+        return modelReady.promise
+      },
+      scheduleSyncCouncilScene() {
+        syncScene += 1
+      },
+    }
+    let wrapper: ReturnType<typeof mountMatchPage> | null = null
+
+    try {
+      wrapper = mountMatchPage(
+        {
+          game: gameFixture('intro-game', {
+            players: [
+              { id: 1, seat: 1, name: '1号', role_hint: '村民', alive: true, is_human: false, is_sheriff: false },
+              { id: 2, seat: 2, name: '2号', role_hint: '狼人', alive: true, is_human: false, is_sheriff: false },
+            ],
+          }),
+          roleAssignmentComplete: true,
+          judgeBoardStarted: true,
+        },
+        () => {}
+      )
+
+      await wrapper.find('.emit-ready').trigger('click')
+      await flushPromises()
+
+      expect(waitForModels).toBe(1)
+      expect(wrapper.find('.match-intro-overlay').exists()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(5000)
+      await flushPromises()
+      expect(wrapper.find('.match-intro-overlay').exists()).toBe(true)
+
+      modelReady.resolve()
+      await flushPromises()
+      expect(syncScene).toBeGreaterThan(0)
+
+      await vi.advanceTimersByTimeAsync(2500)
+      await flushPromises()
+      expect(wrapper.find('.match-intro-overlay').exists()).toBe(false)
+    } finally {
+      wrapper?.unmount()
+      delete (globalThis as any).__matchSceneApi
+      vi.useRealTimers()
+    }
+  })
+
   it('uses core game, session, replay, and notice state from stores when props are absent', () => {
     const wrapper = mountMatchPage({}, () => {
       useGameStore().hydrateFromRuntime({
