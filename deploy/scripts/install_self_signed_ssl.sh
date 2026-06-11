@@ -11,6 +11,8 @@ NGINX_TEMPLATE="${NGINX_TEMPLATE:-$APP_DIR/deploy/nginx/521wolf.ssl.conf.example
 NGINX_SITE_NAME="${NGINX_SITE_NAME:-521wolf}"
 INSTALL_NGINX_CONFIG="${INSTALL_NGINX_CONFIG:-true}"
 RELOAD_NGINX="${RELOAD_NGINX:-true}"
+NGINX_VHOST_DIR="${NGINX_VHOST_DIR:-}"
+REGENERATE_CERT="${REGENERATE_CERT:-false}"
 
 CERT_PATH="${CERT_PATH:-$CERT_DIR/$NGINX_SITE_NAME.crt}"
 KEY_PATH="${KEY_PATH:-$CERT_DIR/$NGINX_SITE_NAME.key}"
@@ -71,17 +73,21 @@ EOF
 } > "$openssl_conf"
 
 sudo_if_available mkdir -p "$CERT_DIR"
-sudo_if_available openssl req \
-  -x509 \
-  -nodes \
-  -newkey rsa:2048 \
-  -sha256 \
-  -days "$CERT_DAYS" \
-  -keyout "$KEY_PATH" \
-  -out "$CERT_PATH" \
-  -config "$openssl_conf"
-sudo_if_available chmod 600 "$KEY_PATH"
-sudo_if_available chmod 644 "$CERT_PATH"
+if [ "$REGENERATE_CERT" = "true" ] || [ ! -s "$CERT_PATH" ] || [ ! -s "$KEY_PATH" ]; then
+  sudo_if_available openssl req \
+    -x509 \
+    -nodes \
+    -newkey rsa:2048 \
+    -sha256 \
+    -days "$CERT_DAYS" \
+    -keyout "$KEY_PATH" \
+    -out "$CERT_PATH" \
+    -config "$openssl_conf"
+  sudo_if_available chmod 600 "$KEY_PATH"
+  sudo_if_available chmod 644 "$CERT_PATH"
+else
+  echo "reusing existing certificate: $CERT_PATH"
+fi
 
 if [ "$INSTALL_NGINX_CONFIG" = "true" ]; then
   rendered="$tmp_dir/$NGINX_SITE_NAME.conf"
@@ -93,7 +99,12 @@ if [ "$INSTALL_NGINX_CONFIG" = "true" ]; then
     -e "s/__API_UPSTREAM__/$(escape_sed_replacement "${API_UPSTREAM%/}")/g" \
     "$NGINX_TEMPLATE" > "$rendered"
 
-  if [ -d /etc/nginx/sites-available ]; then
+  if [ -n "$NGINX_VHOST_DIR" ]; then
+    sudo_if_available mkdir -p "$NGINX_VHOST_DIR"
+    sudo_if_available cp "$rendered" "$NGINX_VHOST_DIR/$NGINX_SITE_NAME.conf"
+  elif [ -d /www/server/panel/vhost/nginx ]; then
+    sudo_if_available cp "$rendered" "/www/server/panel/vhost/nginx/$NGINX_SITE_NAME.conf"
+  elif [ -d /etc/nginx/sites-available ]; then
     site_available="/etc/nginx/sites-available/$NGINX_SITE_NAME"
     site_enabled="/etc/nginx/sites-enabled/$NGINX_SITE_NAME"
     sudo_if_available cp "$rendered" "$site_available"

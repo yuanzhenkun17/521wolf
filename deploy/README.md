@@ -162,8 +162,8 @@ This generates:
 /etc/nginx/ssl/521wolf/521wolf.key
 ```
 
-and installs an nginx site that redirects HTTP to HTTPS and proxies `/api/` to
-`http://127.0.0.1:8000`. Browsers will show a certificate warning because the
+and installs an nginx site that serves both HTTP and HTTPS and proxies `/api/`
+to `http://127.0.0.1:8000`. Browsers will show a certificate warning because the
 certificate is self-signed. For production public access, replace this with a
 CA-issued certificate such as Let's Encrypt.
 
@@ -293,6 +293,9 @@ POST_DEPLOY_CHECK_SYSTEMD=true
 POST_DEPLOY_CHECK_PORTS=true
 POST_DEPLOY_REQUIRE_HTTPS=false
 POST_DEPLOY_CURL_INSECURE=false
+DEPLOY_ENABLE_SELF_SIGNED_SSL=false
+DEPLOY_SERVER_NAME=117.72.217.45
+DEPLOY_HTTPS_BASE_URL=https://117.72.217.45
 PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 UV_RELOCK_FOR_INDEX=true

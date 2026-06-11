@@ -17,6 +17,7 @@ FAIL_ON_LANGFUSE_CAPTURE_DISABLED="${FAIL_ON_LANGFUSE_CAPTURE_DISABLED:-false}"
 CHECK_PORTS="${CHECK_PORTS:-true}"
 REQUIRE_HTTPS="${REQUIRE_HTTPS:-false}"
 CURL_INSECURE="${CURL_INSECURE:-false}"
+HTTPS_BASE_URL="${HTTPS_BASE_URL:-}"
 CURL_TIMEOUT_SECONDS="${CURL_TIMEOUT_SECONDS:-10}"
 MAX_ASSET_CHECKS="${MAX_ASSET_CHECKS:-20}"
 TASK_ARTIFACT_VERIFY_LIMIT="${TASK_ARTIFACT_VERIFY_LIMIT:-100}"
@@ -225,6 +226,17 @@ while IFS= read -r asset_path; do
   info "checking asset $asset_url"
   check_url "$asset_url"
 done < "$asset_list"
+
+if [ "$REQUIRE_HTTPS" = "true" ]; then
+  if [ -z "$HTTPS_BASE_URL" ]; then
+    HTTPS_BASE_URL="$(printf '%s' "$base_without_trailing_slash" | sed -E 's#^http://#https://#')"
+  fi
+  https_without_trailing_slash="${HTTPS_BASE_URL%/}"
+  info "checking HTTPS app shell at $https_without_trailing_slash/"
+  https_body="$tmp_dir/index-https.html"
+  fetch_to_file "$https_without_trailing_slash/" "$https_body"
+  grep -qi "<html" "$https_body" || fail "HTTPS app shell did not return HTML"
+fi
 
 if [ "$CHECK_NGINX" != "false" ] && command -v nginx >/dev/null 2>&1; then
   info "checking nginx configuration"

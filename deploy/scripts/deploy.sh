@@ -15,6 +15,9 @@ APP_BASE_URL="${APP_BASE_URL:-http://127.0.0.1}"
 API_HEALTH_URL="${API_HEALTH_URL:-$HEALTH_URL}"
 REQUIRE_HTTPS="${REQUIRE_HTTPS:-false}"
 CURL_INSECURE="${CURL_INSECURE:-false}"
+ENABLE_SELF_SIGNED_SSL="${ENABLE_SELF_SIGNED_SSL:-false}"
+SSL_INSTALL_SCRIPT="${SSL_INSTALL_SCRIPT:-$APP_DIR/deploy/scripts/install_self_signed_ssl.sh}"
+SERVER_NAME="${SERVER_NAME:-117.72.217.45}"
 PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
 NPM_CONFIG_REGISTRY="${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}"
 UV_RELOCK_FOR_INDEX="${UV_RELOCK_FOR_INDEX:-true}"
@@ -64,6 +67,12 @@ npm run build --prefix ui/frontend
 
 uv run alembic upgrade head
 uv run python -m app.tools.seed_default_baseline
+
+if [ "$ENABLE_SELF_SIGNED_SSL" = "true" ]; then
+  SERVER_NAME="$SERVER_NAME" \
+  APP_DIR="$APP_DIR" \
+  bash "$SSL_INSTALL_SCRIPT"
+fi
 
 if command -v systemctl >/dev/null 2>&1; then
   sudo systemctl restart "$SERVICE_NAME"
