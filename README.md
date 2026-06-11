@@ -166,18 +166,29 @@ meaningful.
 | `WEREWOLF_LLM_API_KEY` | Required for real LLM runs. Keep it server-side only. |
 | `WEREWOLF_LLM_BASE_URL` | OpenAI-compatible model endpoint. |
 | `WEREWOLF_LLM_MODEL` | Default model used by runtime agents unless overridden by settings. |
-| `WEREWOLF_LLM_*` retry settings | Optional retry, timeout, and circuit-breaker tuning. See `.env.example`. |
+| `WEREWOLF_LLM_*` runtime settings | Optional timeout, retry, circuit-breaker, and global concurrency tuning. See `.env.example`. |
 | `UI_BACKEND_USE_FAKE_LLM` | Optional local/demo switch. Do not enable for real evaluation. |
 | `SETTINGS_ADMIN_ENABLED` / `SETTINGS_ADMIN_TOKEN` | Required for Settings page writes. |
 | `SETTINGS_SECRET_ENCRYPTION_KEY` | Required to store model Profile API keys. Keep stable; rotating it invalidates saved secrets. |
 | `WOLF_USE_PG_TASK_QUEUE` / `TASK_WORKER_REQUIRED` | Optional durable task queue and worker health gate controls. |
 | `WEREWOLF_GAME_CONCURRENCY` | Optional shared concurrency cap for benchmark, evolution training, and evolution battle games. |
+| `WEREWOLF_JUDGE_CONCURRENCY` | Judge concurrency used when a workflow does not provide an explicit policy. |
+| `WEREWOLF_LLM_MAX_CONCURRENCY` | Total LLM request cap within one event loop across games, Judge, and related calls. |
 | `WEREWOLF_GAME_TIMEOUT` / `WEREWOLF_BATCH_GAME_TIMEOUT` | Optional game and batch execution timeouts. |
 | `PG_POOL_MIN_SIZE` / `PG_POOL_MAX_SIZE` | Optional PostgreSQL connection-pool sizing. |
 | `WEREWOLF_TTS_*` | Optional DashScope realtime TTS settings for spoken player lines. |
 | `VITE_API_BASE` / `UI_FRONTEND_API_PROXY_TARGET` | Optional frontend API base and Vite dev proxy target. |
 | `WOLF_APP_RELEASE` / `WOLF_GIT_SHA` / `WOLF_APP_ENVIRONMENT` | Optional release metadata shown in health/ops payloads. |
 | `LANGFUSE_*` | Optional self-hosted Langfuse tracing. For enabled, non-degraded tracing set public/secret keys, base URL, environment, release, sample rate, and input/output capture. |
+
+For a single 2-core/4-thread host, use one Uvicorn process and one task worker,
+then start with:
+
+```bash
+WEREWOLF_GAME_CONCURRENCY=4
+WEREWOLF_JUDGE_CONCURRENCY=6
+WEREWOLF_LLM_MAX_CONCURRENCY=8
+```
 
 If PostgreSQL is only reachable through a remote host, keep an SSH tunnel open
 and point `POSTGRES_DATABASE_URL` at the local forwarded port.

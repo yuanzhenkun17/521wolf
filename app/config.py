@@ -12,6 +12,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
+def _positive_env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw in {None, ""}:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
 # ---------------------------------------------------------------------------
 # LLM configuration
 # ---------------------------------------------------------------------------
@@ -29,9 +41,10 @@ LLM_RUNTIME_DEFAULT_RETRY_INITIAL_DELAY = 0.25
 LLM_RUNTIME_DEFAULT_RETRY_MAX_DELAY = 2.0
 LLM_RUNTIME_DEFAULT_CIRCUIT_FAILURES = 3
 LLM_RUNTIME_DEFAULT_CIRCUIT_COOLDOWN = 30.0
+LLM_DEFAULT_MAX_CONCURRENCY = 8
 PROMPT_DEFAULT_MAX_TOTAL_CHARS = 24000
 PROMPT_DEFAULT_MAX_MESSAGE_CHARS = 8000
-DEFAULT_GAME_CONCURRENCY = 10
+DEFAULT_GAME_CONCURRENCY = _positive_env_int("WEREWOLF_GAME_CONCURRENCY", 4)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LLM_ENV_PATH = _PROJECT_ROOT / ".env"
 

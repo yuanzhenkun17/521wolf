@@ -215,6 +215,44 @@ class TestServicesLLM:
 
         asyncio.run(_run())
 
+    def test_invoke_llm_with_policy_limits_concurrent_requests(self, monkeypatch):
+        import asyncio
+
+        from app.services.llm import LLMRuntimePolicy, invoke_llm_with_policy, reset_llm_circuit
+
+        monkeypatch.setenv("WEREWOLF_LLM_MAX_CONCURRENCY", "2")
+        active = 0
+        max_active = 0
+
+        class SlowModel:
+            async def ainvoke(self, messages):
+                nonlocal active, max_active
+                active += 1
+                max_active = max(max_active, active)
+                try:
+                    await asyncio.sleep(0.01)
+                    return type("Result", (), {"content": str(messages)})()
+                finally:
+                    active -= 1
+
+        async def _run():
+            reset_llm_circuit()
+            policy = LLMRuntimePolicy(max_attempts=1, timeout=None)
+            results = await asyncio.gather(*(
+                invoke_llm_with_policy(
+                    SlowModel(),
+                    [{"role": "user", "content": str(index)}],
+                    stage=f"limit_{index}",
+                    circuit_key=f"limit_{index}",
+                    policy=policy,
+                )
+                for index in range(6)
+            ))
+            assert len(results) == 6
+
+        asyncio.run(_run())
+        assert max_active == 2
+
 
 # ===========================================================================
 # app/services/memory.py — AgentMemory, Segment, CompressedSegmentSummary

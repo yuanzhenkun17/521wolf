@@ -16,6 +16,7 @@ import pytest
 
 from app.config import PathConfig
 from app.graphs.subgraphs.eval.nodes import (
+    _attach_eval_decision_judge_reports,
     _resolve_role_version_dirs,
     aggregate_node,
     fairness_node,
@@ -750,6 +751,52 @@ def test_aggregate_node_uses_dedicated_decision_judge_model(tmp_path, monkeypatc
     assert captured_models == [judge_model]
 
 
+def test_eval_decision_judge_runs_games_concurrently_with_shared_limit(monkeypatch):
+    active = 0
+    max_active = 0
+    semaphore_ids: set[int] = set()
+
+    async def fake_judge_key_decisions(_model, **kwargs):
+        nonlocal active, max_active
+        semaphore = kwargs["shared_semaphore"]
+        semaphore_ids.add(id(semaphore))
+        async with semaphore:
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.01)
+            finally:
+                active -= 1
+        return {
+            "status": "ok",
+            "metrics": {"judged": 0},
+            "judgments": [],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr("app.lib.decision_judge.judge_key_decisions", fake_judge_key_decisions)
+    games = [
+        {"game_id": f"judge_game_{index}", "winner": "villagers", "error": None}
+        for index in range(5)
+    ]
+    state = {
+        "batch_config": {
+            "eval_decision_judge": True,
+            "eval_judge_concurrency": 2,
+        },
+        "games": games,
+        "model": object(),
+    }
+
+    aggregate = asyncio.run(_attach_eval_decision_judge_reports(state))
+
+    assert aggregate is not None
+    assert aggregate["reported_games"] == 5
+    assert max_active == 2
+    assert len(semaphore_ids) == 1
+    assert all(game["review"]["decision_judge"]["status"] == "ok" for game in games)
+
+
 def test_decision_judge_timeout_records_degraded_reason():
     from app.lib.decision_judge import judge_key_decisions
 
@@ -787,6 +834,59 @@ def test_decision_judge_timeout_records_degraded_reason():
     assert report["metrics"]["failed"] == 1
     assert report["diagnostics"][0]["reason"] == "timeout"
     assert report["diagnostics"][0]["decision_id"] == "d_timeout"
+
+
+def test_decision_judge_honors_shared_semaphore_across_games():
+    from app.lib.decision_judge import judge_key_decisions
+
+    active = 0
+    max_active = 0
+
+    async def _run():
+        nonlocal active, max_active
+        shared_semaphore = asyncio.Semaphore(2)
+
+        async def slow_judge(_messages):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.01)
+                return '{"schema_version":"1.0","score":7,"quality":"good","reason":"ok"}'
+            finally:
+                active -= 1
+
+        async def judge_game(index: int):
+            return await judge_key_decisions(
+                object(),
+                game_id=f"shared_judge_{index}",
+                winner="villagers",
+                roles={"1": "seer", "2": "werewolf"},
+                decisions=[
+                    {
+                        "decision_id": f"d_{index}",
+                        "player_id": 1,
+                        "role": "seer",
+                        "day": 1,
+                        "phase": "night",
+                        "action_type": "seer_check",
+                        "selected_target": 2,
+                        "private_reasoning": "先验 2 号。",
+                    }
+                ],
+                events=[{"event_type": "night_end", "day": 1, "phase": "night"}],
+                max_decisions=1,
+                concurrency=8,
+                judge_fn=slow_judge,
+                shared_semaphore=shared_semaphore,
+            )
+
+        return await asyncio.gather(*(judge_game(index) for index in range(5)))
+
+    reports = asyncio.run(_run())
+
+    assert max_active == 2
+    assert all(report["status"] == "ok" for report in reports)
 
 
 def test_invalid_winners_are_not_rankable_or_persisted_as_game_count(monkeypatch, tmp_path):

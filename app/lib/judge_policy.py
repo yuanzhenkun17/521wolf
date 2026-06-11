@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +14,15 @@ class JudgePolicy:
     max_decisions: int
     concurrency: int
     timeout_seconds: float
+
+
+def _default_concurrency() -> int:
+    raw = os.environ.get("WEREWOLF_JUDGE_CONCURRENCY")
+    try:
+        value = int(raw) if raw not in {None, ""} else 1
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, min(value, 64))
 
 
 _PROFILE_DEFAULTS: dict[str, JudgePolicy] = {
@@ -109,12 +119,13 @@ def resolve_judge_policy(profile: str, config: Any = None, state: Any = None) ->
     """
     normalized = _normalize_profile(profile)
     default = _PROFILE_DEFAULTS[normalized]
+    default_concurrency = _default_concurrency()
     containers = _containers(config, state)
     return JudgePolicy(
         profile=normalized,
         enabled=_first_bool(containers, _ENABLE_KEYS[normalized], default.enabled),
         max_decisions=_first_positive_int(containers, _MAX_KEYS[normalized], default.max_decisions),
-        concurrency=_first_positive_int(containers, _CONCURRENCY_KEYS[normalized], default.concurrency),
+        concurrency=_first_positive_int(containers, _CONCURRENCY_KEYS[normalized], default_concurrency),
         timeout_seconds=_first_positive_float(containers, _TIMEOUT_KEYS[normalized], default.timeout_seconds),
     )
 

@@ -32,7 +32,7 @@
   "judge": {
     "enable_decision_judge": true,
     "judge_max_decisions": 20,
-    "judge_concurrency": 4,
+    "judge_concurrency": 6,
     "judge_timeout_seconds": 60
   },
   "enabled": true,

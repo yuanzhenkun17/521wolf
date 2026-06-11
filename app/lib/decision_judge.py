@@ -72,6 +72,7 @@ async def judge_key_decisions(
     concurrency: int = 3,
     timeout_seconds: float | None = None,
     judge_fn: JudgeCall | None = None,
+    shared_semaphore: asyncio.Semaphore | None = None,
 ) -> dict[str, Any]:
     """Judge rule-selected key decisions and return an explainable report.
 
@@ -154,7 +155,7 @@ async def judge_key_decisions(
         ).to_dict()
 
     call_judge = judge_fn or _chain_judge_call(model)
-    semaphore = asyncio.Semaphore(effective_concurrency)
+    semaphore = shared_semaphore or asyncio.Semaphore(effective_concurrency)
 
     async def _judge_one(key: Any) -> tuple[DecisionJudgment | None, str | None, dict[str, Any] | None]:
         evidence_input = input_by_id.get(key.decision_id)

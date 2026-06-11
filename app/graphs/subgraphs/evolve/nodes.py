@@ -5,8 +5,9 @@ Nodes: init → training → consolidate → apply → scenario_replay → battl
 
 from __future__ import annotations
 
-import logging
+import asyncio
 import importlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -2413,11 +2414,12 @@ async def _attach_training_evidence(
     warnings: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Attach compact evidence summaries to successful training-game records."""
-    enriched: list[dict[str, Any]] = []
-    for game in games:
+    shared_semaphore = asyncio.Semaphore(max(1, judge_concurrency)) if enable_judge else None
+
+    async def _enrich_game(game: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        game_warnings: list[str] = []
         if not isinstance(game, dict) or game.get("error"):
-            enriched.append(game)
-            continue
+            return game, game_warnings
         row = dict(game)
         try:
             row["evidence"] = _build_training_evidence_summary(row, role=role)
@@ -2429,17 +2431,21 @@ async def _attach_training_evidence(
                     concurrency=judge_concurrency,
                     timeout_seconds=judge_timeout_seconds,
                     judge_fn=judge_fn,
-                    warnings=warnings,
+                    warnings=game_warnings,
+                    shared_semaphore=shared_semaphore,
                 )
         except Exception as exc:  # noqa: BLE001 — evidence is advisory, not a training blocker
             message = f"training: evidence extraction failed for game={row.get('game_id')}: {exc}"
             _log.warning(message)
-            if warnings is not None:
-                warnings.append(message)
+            game_warnings.append(message)
             row.setdefault("warnings", []).append(message)
             row["evidence"] = {"error": str(exc), "key_decisions": [], "role_key_decisions": []}
-        enriched.append(row)
-    return enriched
+        return row, game_warnings
+
+    enriched_games = await asyncio.gather(*(_enrich_game(game) for game in games))
+    if warnings is not None:
+        warnings.extend(warning for _row, game_warnings in enriched_games for warning in game_warnings)
+    return [row for row, _game_warnings in enriched_games]
 
 
 async def _attach_training_decision_judge(
@@ -2451,6 +2457,7 @@ async def _attach_training_decision_judge(
     timeout_seconds: float | None = None,
     judge_fn: Any = None,
     warnings: list[str] | None = None,
+    shared_semaphore: asyncio.Semaphore | None = None,
 ) -> None:
     """Attach LLM judge output to one training game's compact evidence."""
     from app.lib.decision_judge import attach_judgments_to_evidence_summary, judge_key_decisions
@@ -2468,6 +2475,7 @@ async def _attach_training_decision_judge(
             concurrency=concurrency,
             timeout_seconds=timeout_seconds,
             judge_fn=judge_fn,
+            shared_semaphore=shared_semaphore,
         )
         row["evidence"] = attach_judgments_to_evidence_summary(row.get("evidence") or {}, report)
         report_warnings = [

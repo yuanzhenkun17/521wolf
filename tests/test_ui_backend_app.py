@@ -3925,9 +3925,9 @@ def test_benchmark_queue_freezes_default_planned_game_concurrency(
         0,
     )
 
-    assert batch["run_plan"]["concurrency_policy"]["game_concurrency"] == 3
-    assert batch["config"]["game_concurrency"] == 3
-    assert eval_config["game_concurrency"] == 3
+    assert batch["run_plan"]["concurrency_policy"]["game_concurrency"] == 4
+    assert batch["config"]["game_concurrency"] == 4
+    assert eval_config["game_concurrency"] == 4
 
 
 def test_benchmark_request_accepts_suite_and_target_versions() -> None:

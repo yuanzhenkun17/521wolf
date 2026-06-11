@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from app.graphs.subgraphs.evolve.nodes import (
+    _attach_training_evidence,
     apply_node,
     battle_node,
     consolidate_node,
@@ -859,6 +860,63 @@ def test_training_node_attaches_decision_judge_when_enabled(tmp_path):
     assert key["decision_id"] == "d_check"
     assert key["judge"]["score"] == 8.0
     assert key["judge"]["quality"] == "good"
+
+
+def test_training_evidence_judges_games_concurrently_with_shared_limit(monkeypatch):
+    import app.graphs.subgraphs.evolve.nodes as nodes
+
+    active = 0
+    max_active = 0
+    semaphore_ids: set[int] = set()
+
+    monkeypatch.setattr(
+        nodes,
+        "_build_training_evidence_summary",
+        lambda _game, *, role: {
+            "role": role,
+            "key_decisions": [],
+            "role_key_decisions": [],
+            "counts": {},
+        },
+    )
+
+    async def fake_judge_key_decisions(_model, **kwargs):
+        nonlocal active, max_active
+        semaphore = kwargs["shared_semaphore"]
+        semaphore_ids.add(id(semaphore))
+        async with semaphore:
+            active += 1
+            max_active = max(max_active, active)
+            try:
+                await asyncio.sleep(0.01)
+            finally:
+                active -= 1
+        return {
+            "status": "ok",
+            "summary": {"average_score": None},
+            "metrics": {"judged": 0},
+            "judgments": [],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr("app.lib.decision_judge.judge_key_decisions", fake_judge_key_decisions)
+    games = [
+        {"game_id": f"training_judge_{index}", "winner": "villagers", "error": None}
+        for index in range(5)
+    ]
+
+    enriched = asyncio.run(_attach_training_evidence(
+        games,
+        role="seer",
+        model=object(),
+        enable_judge=True,
+        judge_concurrency=2,
+    ))
+
+    assert len(enriched) == 5
+    assert max_active == 2
+    assert len(semaphore_ids) == 1
+    assert all(game["evidence"]["decision_judge"]["status"] == "ok" for game in enriched)
 
 
 def test_scenario_replay_node_freezes_contract_snapshots(tmp_path):

@@ -3097,6 +3097,7 @@ class TestRun:
         from app.run import run_evaluation, run_evolution, run_game
         import asyncio
 
+        monkeypatch.setenv("WEREWOLF_JUDGE_CONCURRENCY", "6")
         captured = []
 
         class FakeGraph:
@@ -3124,19 +3125,19 @@ class TestRun:
         assert play_config["review_decision_judge"] is True
         assert play_config["judge_max_decisions"] == 3
         assert play_config["review_judge_max_decisions"] == 3
-        assert play_config["judge_concurrency"] == 1
+        assert play_config["judge_concurrency"] == 6
         assert play_config["judge_timeout_seconds"] == 20.0
         assert play_config["review_judge_timeout_seconds"] == 20.0
         assert eval_config["enable_llm_judge"] is True
         assert eval_config["eval_decision_judge"] is True
         assert eval_config["eval_judge_max_decisions"] == 1
-        assert eval_config["eval_judge_concurrency"] == 1
+        assert eval_config["eval_judge_concurrency"] == 6
         assert eval_config["eval_judge_timeout_seconds"] == 20.0
         assert evolve_config["enable_llm_judge"] is True
         assert evolve_config["training_decision_judge"] is True
         assert evolve_config["evolve_decision_judge"] is True
         assert evolve_config["training_judge_max_decisions"] == 1
-        assert evolve_config["training_judge_concurrency"] == 1
+        assert evolve_config["training_judge_concurrency"] == 6
         assert evolve_config["training_judge_timeout_seconds"] == 20.0
         assert evolve_config["evolve_judge_timeout_seconds"] == 20.0
 

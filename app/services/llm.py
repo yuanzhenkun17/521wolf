@@ -13,10 +13,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from app.config import (
     LLM_BASE_URL,
     LLM_DEFAULT_MAX_RETRIES,
+    LLM_DEFAULT_MAX_CONCURRENCY,
     LLM_DEFAULT_MODEL,
     LLM_DEFAULT_RETRY_INITIAL_DELAY,
     LLM_DEFAULT_RETRY_MAX_DELAY,
@@ -46,6 +48,7 @@ DEFAULT_RUNTIME_RETRY_INITIAL_DELAY = LLM_RUNTIME_DEFAULT_RETRY_INITIAL_DELAY
 DEFAULT_RUNTIME_RETRY_MAX_DELAY = LLM_RUNTIME_DEFAULT_RETRY_MAX_DELAY
 DEFAULT_RUNTIME_CIRCUIT_FAILURES = LLM_RUNTIME_DEFAULT_CIRCUIT_FAILURES
 DEFAULT_RUNTIME_CIRCUIT_COOLDOWN = LLM_RUNTIME_DEFAULT_CIRCUIT_COOLDOWN
+DEFAULT_MAX_CONCURRENCY = LLM_DEFAULT_MAX_CONCURRENCY
 
 _POLICY_ATTR = "_wolf_llm_runtime_policy"
 
@@ -77,6 +80,7 @@ class LLMCircuitOpenError(RuntimeError):
 
 
 _CIRCUITS: dict[str, _CircuitState] = {}
+_LOOP_LIMITERS: WeakKeyDictionary[Any, tuple[int, asyncio.Semaphore]] = WeakKeyDictionary()
 
 
 def default_runtime_policy() -> LLMRuntimePolicy:
@@ -122,6 +126,27 @@ def reset_llm_circuit(circuit_key: str | None = None) -> None:
         _CIRCUITS.pop(circuit_key, None)
 
 
+def llm_max_concurrency() -> int:
+    """Return the per-event-loop cap for in-flight LLM requests."""
+    configured = _env_int("WEREWOLF_LLM_MAX_CONCURRENCY", DEFAULT_MAX_CONCURRENCY)
+    return max(1, min(configured if configured > 0 else DEFAULT_MAX_CONCURRENCY, 256))
+
+
+def _llm_concurrency_limiter() -> asyncio.Semaphore:
+    """Return a limiter scoped to the active event loop.
+
+    UI task workers create a fresh loop for each long-running task, so a
+    module-level asyncio.Semaphore cannot safely be reused across tasks.
+    """
+    loop = asyncio.get_running_loop()
+    limit = llm_max_concurrency()
+    current = _LOOP_LIMITERS.get(loop)
+    if not isinstance(current, tuple) or len(current) != 2 or current[0] != limit:
+        current = (limit, asyncio.Semaphore(limit))
+        _LOOP_LIMITERS[loop] = current
+    return current[1]
+
+
 async def invoke_llm_with_policy(
     llm: Any,
     messages: Any,
@@ -142,7 +167,8 @@ async def invoke_llm_with_policy(
 
     for attempt in range(1, attempts + 1):
         try:
-            result = await _invoke_once(llm, messages, runtime_policy.timeout)
+            async with _llm_concurrency_limiter():
+                result = await _invoke_once(llm, messages, runtime_policy.timeout)
             _record_circuit_success(key)
             return result
         except Exception as exc:

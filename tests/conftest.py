@@ -3,12 +3,23 @@
 The test suite is layered with markers instead of directory moves, so legacy
 commands such as ``pytest`` and ``pytest tests/test_util.py`` remain unchanged.
 """
+import os
 import sys
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
 
 _project_root = Path(__file__).resolve().parent.parent
+load_dotenv(_project_root / ".env", override=False)
+os.environ.update({
+    "TASK_WORKER_REQUIRED": "false",
+    "WOLF_USE_PG_TASK_QUEUE": "false",
+    "WEREWOLF_GAME_CONCURRENCY": "0",
+    "WEREWOLF_JUDGE_CONCURRENCY": "1",
+    "PYTHON_DOTENV_DISABLED": "1",
+})
+
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 

@@ -5,6 +5,7 @@ Nodes: init_batch → run_games → aggregate → fairness → persist_batch
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import sys
@@ -403,12 +404,12 @@ async def _attach_eval_decision_judge_reports(state: EvalBatchState) -> dict[str
     if not policy.enabled:
         return _aggregate_decision_judge_reports([], game_count=len(games), skipped_reason="disabled")
 
-    reports: list[dict[str, Any]] = []
-    warnings: list[str] = []
     judge_model = state.get("decision_judge_model")
     if judge_model is None:
         judge_model = state.get("model")
-    for game in games:
+    shared_semaphore = asyncio.Semaphore(policy.concurrency)
+
+    async def _judge_game(game: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         try:
             report = await judge_key_decisions(
                 judge_model,
@@ -422,25 +423,30 @@ async def _attach_eval_decision_judge_reports(state: EvalBatchState) -> dict[str
                 concurrency=policy.concurrency,
                 timeout_seconds=policy.timeout_seconds,
                 judge_fn=state.get("decision_judge_fn"),
+                shared_semaphore=shared_semaphore,
             )
             for judgment in report.get("judgments", []) if isinstance(report, dict) else []:
                 if isinstance(judgment, dict):
                     judgment.setdefault("game_id", game.get("game_id"))
             game.setdefault("review", {})["decision_judge"] = report
-            reports.append(report)
-            for warning in report.get("warnings", []) if isinstance(report, dict) else []:
-                text = str(warning)
-                if text:
-                    warnings.append(text)
+            report_warnings = [
+                str(warning)
+                for warning in report.get("warnings", [])
+                if isinstance(report, dict) and str(warning)
+            ]
+            return report, report_warnings
         except Exception as exc:  # noqa: BLE001 - eval judge is advisory
             message = f"eval decision judge failed for game={game.get('game_id')}: {type(exc).__name__}: {exc}"
-            warnings.append(message)
             game.setdefault("review", {})["decision_judge"] = {
                 "status": "failed",
                 "error": str(exc),
                 "warnings": [message],
             }
+            return None, [message]
 
+    judged_games = await asyncio.gather(*(_judge_game(game) for game in games))
+    reports = [report for report, _warnings in judged_games if report is not None]
+    warnings = [warning for _report, game_warnings in judged_games for warning in game_warnings]
     aggregate = _aggregate_decision_judge_reports(reports, game_count=len(games), warnings=warnings)
     if warnings:
         state.setdefault("warnings", []).extend(warning for warning in warnings if warning not in state.get("warnings", []))
