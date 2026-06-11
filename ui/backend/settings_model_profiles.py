@@ -44,6 +44,8 @@ class SettingsModelProfileStore:
         self._profile_path = self._root / "model-profiles.json"
         self._secret_path = self._root / "model-profile-secrets.json"
         self._connection_factory = connection_factory
+        self._backend_status_cache: tuple[float, "_PostgresModelProfileBackend | None", dict[str, Any]] | None = None
+        self._profile_list_cache: tuple[float, list[dict[str, Any]]] | None = None
 
     @classmethod
     def from_backend_store(cls, store: Any) -> "SettingsModelProfileStore":
@@ -52,15 +54,19 @@ class SettingsModelProfileStore:
         connection_factory = getattr(store, "_open_ui_task_connection", None)
         return cls(data_dir / "settings", connection_factory=connection_factory if callable(connection_factory) else None)
 
-    def list_payload(self) -> dict[str, Any]:
-        storage_status = self.storage_status()
-        profiles = self._read_profiles()
-        try:
-            secrets = self._read_secrets()
-        except SettingsSecretEncryptionError:
+    def list_payload(self, *, include_variables: bool = True) -> dict[str, Any]:
+        backend, storage_status = self._profile_backend_with_status()
+        if backend is not None:
+            profiles = self._cached_backend_profiles(backend)
             secrets = {}
+        else:
+            profiles = self._read_profiles()
+            try:
+                secrets = self._read_secrets()
+            except SettingsSecretEncryptionError:
+                secrets = {}
         public_profiles = [self._public_profile(profile, secrets=secrets) for profile in profiles]
-        return {
+        payload = {
             "kind": "settings_model_profiles",
             "schema_version": 1,
             "profiles": public_profiles,
@@ -72,11 +78,13 @@ class SettingsModelProfileStore:
                 for scope in MODEL_PROFILE_SCOPES
             ],
             "providers": sorted(MODEL_PROFILE_PROVIDERS),
-            "variables": SettingsRuntimeVariableStore(
+        }
+        if include_variables:
+            payload["variables"] = SettingsRuntimeVariableStore(
                 self._root,
                 connection_factory=self._connection_factory,
-            ).list_variables(),
-        }
+            ).list_variables()
+        return payload
 
     def storage_status(self) -> dict[str, Any]:
         _backend, status = self._profile_backend_with_status()
@@ -179,6 +187,7 @@ class SettingsModelProfileStore:
         profiles.append(profile)
         self._write_profiles(profiles)
         self._write_secrets(secrets)
+        self._clear_profile_list_cache()
         return self._public_profile(profile, secrets=secrets)
 
     def update_profile(self, profile_id: str, request: ModelProfileUpdateRequest) -> dict[str, Any]:
@@ -247,6 +256,7 @@ class SettingsModelProfileStore:
         self._write_profiles(profiles)
         if secrets_changed and secrets is not None:
             self._write_secrets(secrets)
+        self._clear_profile_list_cache()
         return self._public_profile(profile, secrets=secrets or {})
 
     async def test_profile(self, profile_id: str) -> dict[str, Any]:
@@ -301,6 +311,7 @@ class SettingsModelProfileStore:
         profile["last_tested_at"] = checked_at
         profile["updated_at"] = checked_at
         self._write_profiles(profiles)
+        self._clear_profile_list_cache()
         return result
 
     def disable_profile(self, profile_id: str) -> dict[str, Any]:
@@ -312,6 +323,7 @@ class SettingsModelProfileStore:
         backend = self._profile_backend()
         if backend is not None:
             backend.delete_profile(profile_id)
+            self._clear_profile_list_cache()
             return {
                 "kind": "settings_model_profile_deleted",
                 "schema_version": 1,
@@ -325,6 +337,7 @@ class SettingsModelProfileStore:
         remaining = [item for item in profiles if item.get("profile_id") != profile_id]
         self._write_profiles(remaining)
         self._write_secrets(secrets)
+        self._clear_profile_list_cache()
         return {
             "kind": "settings_model_profile_deleted",
             "schema_version": 1,
@@ -409,8 +422,10 @@ class SettingsModelProfileStore:
         backend = self._profile_backend()
         if backend is not None:
             backend.write_profiles(profiles)
+            self._clear_profile_list_cache()
             return
         _write_json(self._profile_path, {"schema_version": 1, "profiles": profiles})
+        self._clear_profile_list_cache()
 
     def _read_secrets(self) -> dict[str, str]:
         backend = self._profile_backend()
@@ -441,6 +456,9 @@ class SettingsModelProfileStore:
         return backend
 
     def _profile_backend_with_status(self) -> tuple["_PostgresModelProfileBackend | None", dict[str, Any]]:
+        cached = self._backend_status_cache
+        if cached is not None and cached[0] > time.monotonic():
+            return cached[1], dict(cached[2])
         if self._connection_factory is None:
             return None, local_file_storage_status(path=str(self._profile_path))
         try:
@@ -500,11 +518,24 @@ class SettingsModelProfileStore:
                 actions=["set SETTINGS_SECRET_ENCRYPTION_KEY before editing model profiles"],
                 secret_encryption="missing",
             )
-        return backend, postgres_storage_status(
+        status = postgres_storage_status(
             table="ui_model_profiles",
             ready=True,
             secret_encryption="configured",
         )
+        self._backend_status_cache = (time.monotonic() + 5.0, backend, dict(status))
+        return backend, status
+
+    def _cached_backend_profiles(self, backend: "_PostgresModelProfileBackend") -> list[dict[str, Any]]:
+        cached = self._profile_list_cache
+        if cached is not None and cached[0] > time.monotonic():
+            return [dict(item) for item in cached[1]]
+        profiles = backend.read_profiles()
+        self._profile_list_cache = (time.monotonic() + 5.0, [dict(item) for item in profiles])
+        return profiles
+
+    def _clear_profile_list_cache(self) -> None:
+        self._profile_list_cache = None
 
 
 class _PostgresModelProfileBackend:

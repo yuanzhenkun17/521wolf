@@ -15,14 +15,14 @@ _UNKNOWN = "unknown"
 _LIVE_GAME_TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted", "stopped", "error"}
 
 
-def build_ops_metrics_payload(store: Any) -> dict[str, Any]:
+def build_ops_metrics_payload(store: Any, *, health: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build a compact, public operational metrics snapshot.
 
     This endpoint intentionally reuses the public health payload and local
     in-memory counters. It does not include raw task payloads, filesystem paths,
     worker ids, API keys, or other operator secrets.
     """
-    health = build_health_payload(store)
+    health = health or build_health_payload(store)
     checks = _mapping(health.get("checks"))
     gates = _mapping(health.get("gates"))
     task_queue = _mapping(checks.get("task_queue"))

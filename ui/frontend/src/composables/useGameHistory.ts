@@ -1101,12 +1101,15 @@ function useGameHistory(state, options: LooseRecord = {}) {
 
   function normalizeFlowData(raw: LooseRecord = {}, gameId = '') {
     const payload: LooseRecord = raw?.data || raw
+    const decisions = Array.isArray(payload.decisions)
+      ? payload.decisions
+      : (Array.isArray(payload.rows) ? payload.rows : (Array.isArray(payload.items) ? payload.items : []))
     const normalized = normalizeGameSnapshot({
       ...payload,
       game_id: payload.game_id || gameId,
       logs: [],
       events: [],
-      decisions: Array.isArray(payload.decisions) ? payload.decisions : [],
+      decisions,
       players: payload.players || state.selectedHistoryGame.value?.players || []
     }, { mode: 'watch' })
     return {
@@ -1920,8 +1923,11 @@ function useGameHistory(state, options: LooseRecord = {}) {
     }
   }
 
-  async function loadReview(gameId = state.selectedHistoryGameId.value, { silentSuccess = false, clearNotice = true } = {}) {
-    if (!gameId || (state.reviewByGameId.value[gameId] && !state.reviewByGameId.value[gameId].error)) return
+  async function loadReview(
+    gameId = state.selectedHistoryGameId.value,
+    { silentSuccess = false, clearNotice = true, force = false } = {}
+  ) {
+    if (!gameId || (!force && state.reviewByGameId.value[gameId] && !state.reviewByGameId.value[gameId].error)) return
     const token = reviewRequests.next(gameId)
     state.reviewLoading.value = true
     if (clearNotice) clearHistoryNotice()

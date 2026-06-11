@@ -27,10 +27,16 @@ _DOTENV_LOADED = False
 _PRESERVED_HEALTH_ENV_KEYS = ("SETTINGS_ADMIN_ENABLED", "SETTINGS_ADMIN_TOKEN")
 
 
-def build_health_payload(store: Any) -> dict[str, Any]:
+def build_health_payload(store: Any, *, force_refresh: bool = False) -> dict[str, Any]:
+    if not force_refresh:
+        cached = _cached_health_payload(store)
+        if cached is not None:
+            return cached
     preserved_env = _snapshot_env(_PRESERVED_HEALTH_ENV_KEYS)
     try:
-        return _build_health_payload(store)
+        payload = _build_health_payload(store)
+        _set_health_payload_cache(store, payload)
+        return payload
     finally:
         _restore_env(preserved_env)
 
@@ -627,6 +633,42 @@ def _set_llm_probe_cache(store: Any, result: dict[str, Any], *, success: bool) -
     cached = dict(result)
     cached["_expires_monotonic"] = time.monotonic() + max(0.0, ttl)
     setattr(store, "_llm_connectivity_cache", cached)
+    _clear_health_payload_cache(store)
+
+
+def _cached_health_payload(store: Any) -> dict[str, Any] | None:
+    ttl = _env_float("HEALTH_PAYLOAD_TTL_SECONDS", 1.0)
+    if ttl <= 0:
+        return None
+    cached = getattr(store, "_health_payload_cache", None)
+    if not isinstance(cached, dict):
+        return None
+    expires_at = float(cached.get("_expires_monotonic") or 0)
+    if expires_at < time.monotonic():
+        return None
+    payload = cached.get("payload")
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def _set_health_payload_cache(store: Any, payload: dict[str, Any]) -> None:
+    ttl = _env_float("HEALTH_PAYLOAD_TTL_SECONDS", 1.0)
+    if ttl <= 0:
+        return
+    setattr(
+        store,
+        "_health_payload_cache",
+        {
+            "_expires_monotonic": time.monotonic() + ttl,
+            "payload": dict(payload),
+        },
+    )
+
+
+def _clear_health_payload_cache(store: Any) -> None:
+    try:
+        delattr(store, "_health_payload_cache")
+    except AttributeError:
+        pass
 
 
 def _task_control_health(store: Any) -> dict[str, Any]:

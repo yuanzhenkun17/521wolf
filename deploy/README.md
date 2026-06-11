@@ -144,6 +144,37 @@ SKIP_GIT_UPDATE=true \
 bash /opt/521wolf/app/deploy/scripts/deploy.sh
 ```
 
+## Self-Signed HTTPS
+
+For an IP-only server or an internal deployment without a public domain, install
+a self-signed nginx certificate:
+
+```bash
+SERVER_NAME=117.72.217.45 \
+APP_DIR=/opt/521wolf/app \
+bash /opt/521wolf/app/deploy/scripts/install_self_signed_ssl.sh
+```
+
+This generates:
+
+```text
+/etc/nginx/ssl/521wolf/521wolf.crt
+/etc/nginx/ssl/521wolf/521wolf.key
+```
+
+and installs an nginx site that redirects HTTP to HTTPS and proxies `/api/` to
+`http://127.0.0.1:8000`. Browsers will show a certificate warning because the
+certificate is self-signed. For production public access, replace this with a
+CA-issued certificate such as Let's Encrypt.
+
+When using self-signed HTTPS in deployment smoke checks, set:
+
+```text
+APP_BASE_URL=https://117.72.217.45
+REQUIRE_HTTPS=true
+CURL_INSECURE=true
+```
+
 The script:
 
 - Optionally updates the working tree to `origin/main` when
@@ -178,6 +209,7 @@ CHECK_TASK_ARTIFACTS=true
 TASK_ARTIFACT_VERIFY_LIMIT=100
 CHECK_PORTS=true
 REQUIRE_HTTPS=false
+CURL_INSECURE=false
 ```
 
 Install the worker service on single-node deployments that enable the
@@ -260,6 +292,7 @@ POST_DEPLOY_CHECK_NGINX=true
 POST_DEPLOY_CHECK_SYSTEMD=true
 POST_DEPLOY_CHECK_PORTS=true
 POST_DEPLOY_REQUIRE_HTTPS=false
+POST_DEPLOY_CURL_INSECURE=false
 PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 UV_RELOCK_FOR_INDEX=true

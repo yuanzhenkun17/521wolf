@@ -90,6 +90,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function firstPresent(...values: unknown[]) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== '') return value
+  }
+  return undefined
+}
+
+function nestedRecord(decision: DecisionLike, key: string) {
+  const value = (decision as Record<string, unknown>)?.[key]
+  return isRecord(value) ? value : {}
+}
+
 const props = defineProps({
   decisions: { type: Array as PropType<DecisionLike[]>, default: () => [] },
   players: { type: Array as PropType<PlayerLike[]>, default: () => [] }
@@ -125,7 +137,17 @@ const NODE_COLORS = [
 ]
 
 function actionType(decision: DecisionLike) {
-  return String(decision?.action || decision?.action_type || '')
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
+  return String(firstPresent(
+    decision?.action,
+    decision?.action_type,
+    (decision as Record<string, unknown>)?.type,
+    (decision as Record<string, unknown>)?.event_type,
+    payload.action,
+    payload.action_type,
+    metadata.action
+  ) || '')
 }
 
 function voteAction(decision: DecisionLike) {
@@ -133,16 +155,51 @@ function voteAction(decision: DecisionLike) {
 }
 
 function voteDay(decision: DecisionLike) {
-  const day = Number(decision?.day)
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
+  const day = Number(firstPresent(
+    decision?.day,
+    (decision as Record<string, unknown>)?.round,
+    payload.day,
+    payload.round,
+    metadata.day
+  ))
   return Number.isFinite(day) && day > 0 ? day : 1
 }
 
 function voterId(decision: DecisionLike) {
-  return decision?.actor_id ?? decision?.player_id
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
+  return firstPresent(
+    decision?.actor_id,
+    (decision as Record<string, unknown>)?.actor,
+    decision?.player_id,
+    (decision as Record<string, unknown>)?.playerId,
+    (decision as Record<string, unknown>)?.player_seat,
+    (decision as Record<string, unknown>)?.seat,
+    payload.actor_id,
+    payload.player_id,
+    metadata.actor_id
+  )
 }
 
 function targetId(decision: DecisionLike) {
-  return decision?.target_id ?? decision?.selected_target
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
+  const choice = nestedRecord(decision, 'choice')
+  return firstPresent(
+    decision?.target_id,
+    (decision as Record<string, unknown>)?.target,
+    (decision as Record<string, unknown>)?.targetId,
+    (decision as Record<string, unknown>)?.target_seat,
+    decision?.selected_target,
+    (decision as Record<string, unknown>)?.selectedTarget,
+    payload.target_id,
+    payload.selected_target,
+    metadata.target_id,
+    choice.target,
+    choice.target_id
+  )
 }
 
 const votes = computed(() =>
@@ -272,41 +329,69 @@ const heatmapValueRange = computed(() => {
 const heatmapHeight = computed(() =>
   Math.max(190, Math.min(420, 82 + heatmapPlayers.value.length * 26))
 )
+const heatmapWidth = computed(() =>
+  Math.max(760, phaseRounds.value.length * 132)
+)
 
 function seatLabel(id: unknown) {
   return `${id}号`
 }
 
 function actorId(decision: DecisionLike) {
-  return decision?.actor_id ?? decision?.player_id
+  return voterId(decision)
 }
 
 function decisionText(decision: DecisionLike) {
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
   return [
     decision?.public_summary,
+    (decision as Record<string, unknown>)?.summary,
+    (decision as Record<string, unknown>)?.public_text,
     decision?.private_reasoning,
     decision?.reason,
-    decision?.message
+    decision?.message,
+    payload.public_summary,
+    payload.message,
+    payload.reason,
+    metadata.reason
   ].filter(Boolean).map(String).join(' ')
 }
 
 function confidenceScore(decision: DecisionLike) {
-  const value = Number(decision?.confidence)
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
+  const value = Number(firstPresent(decision?.confidence, payload.confidence, metadata.confidence))
   if (!Number.isFinite(value)) return 70
   if (value <= 1) return Math.round(value * 100)
   return Math.max(0, Math.min(Math.round(value), 100))
 }
 
+function candidatesCount(decision: DecisionLike) {
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
+  const candidates = firstPresent(decision?.candidates, payload.candidates, metadata.candidates)
+  return Array.isArray(candidates) ? candidates.length : 0
+}
+
 function phaseKeyForDecision(decision: DecisionLike) {
   const action = actionType(decision)
-  const phase = String(decision?.phase || '').toLowerCase()
+  const payload = nestedRecord(decision, 'payload')
+  const metadata = nestedRecord(decision, 'metadata')
+  const phase = String(firstPresent(
+    decision?.phase,
+    (decision as Record<string, unknown>)?.stage,
+    (decision as Record<string, unknown>)?.round_phase,
+    payload.phase,
+    metadata.phase
+  ) || '').toLowerCase()
   const day = voteDay(decision)
   if (phase === 'setup' || action.includes('setup') || action.includes('role_assign')) return 'setup'
   if (END_ACTIONS.has(action) || ['result', 'finished', 'ended', 'end'].includes(phase)) return 'end'
-  if (SHERIFF_ACTIONS.has(action) || ['sheriff', 'sheriff_vote', 'sheriff_result'].includes(phase)) return 'sheriff'
+  if (SHERIFF_ACTIONS.has(action) || ['sheriff', 'sheriff_election', 'sheriff_vote', 'sheriff_result'].includes(phase)) return 'sheriff'
   if (NIGHT_ACTIONS.has(action) || phase === 'night') return `night-${day}`
-  if (SPEECH_ACTIONS.has(action) || phase === 'speech') return `speech-${day}`
-  if (VOTE_ACTIONS.has(action) || phase === 'vote') return `vote-${day}`
+  if (SPEECH_ACTIONS.has(action) || ['speech', 'day_speech', 'pk_speak'].includes(phase)) return `speech-${day}`
+  if (VOTE_ACTIONS.has(action) || ['vote', 'exile_vote', 'pk_vote'].includes(phase)) return `vote-${day}`
   return ''
 }
 
@@ -317,14 +402,13 @@ const phaseRounds = computed<PhaseRound[]>(() => {
     if (day > 0) days.add(day)
   })
   const sortedDays = [...days].sort((a, b) => a - b)
-  const rounds = [{ key: 'setup', label: '开局准备' }]
+  const rounds: PhaseRound[] = []
   sortedDays.forEach((day) => {
     rounds.push({ key: `night-${day}`, label: `第${day}夜` })
     if (day === 1) rounds.push({ key: 'sheriff', label: '警长竞选' })
     rounds.push({ key: `speech-${day}`, label: `第${day}天发言` })
     rounds.push({ key: `vote-${day}`, label: `第${day}天投票` })
   })
-  rounds.push({ key: 'end', label: '终局' })
   return rounds
 })
 
@@ -352,7 +436,7 @@ function phaseScore(rows: DecisionLike[], phaseKey: string): HeatmapScore {
   const textLength = rows.reduce((sum, row) => sum + decisionText(row).length, 0)
   const avgConfidence = rows.reduce((sum, row) => sum + confidenceScore(row), 0) / rows.length
   const withTarget = rows.filter((row) => targetId(row) != null).length
-  const candidateCount = rows.reduce((sum, row) => sum + (Array.isArray(row?.candidates) ? row.candidates.length : 0), 0)
+  const candidateCount = rows.reduce((sum, row) => sum + candidatesCount(row), 0)
   let score = 18
   score += Math.min(rows.length * 12, 28)
   score += Math.round(avgConfidence * 0.24)
@@ -695,7 +779,7 @@ onBeforeUnmount(() => {
       <h4>玩家 × 回合热力图</h4>
     </header>
     <div class="vote-chart-body">
-      <div ref="heatmapEl" class="vote-heatmap-chart" :style="{ height: heatmapHeight + 'px' }" role="img" aria-label="玩家回合投票热力图"></div>
+      <div ref="heatmapEl" class="vote-heatmap-chart" :style="{ height: heatmapHeight + 'px', minWidth: heatmapWidth + 'px' }" role="img" aria-label="玩家回合投票热力图"></div>
     </div>
   </section>
 </template>
@@ -742,6 +826,34 @@ onBeforeUnmount(() => {
   min-width: 0;
   padding: 12px 10px 14px;
   background: rgba(255, 252, 245, 0.32);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: rgba(139, 94, 52, 0.62) rgba(255, 239, 194, 0.52);
+  scrollbar-width: thin;
+}
+
+.vote-round-heatmap .vote-chart-body {
+  padding-bottom: 18px;
+}
+
+.vote-chart-body::-webkit-scrollbar {
+  height: 12px;
+}
+
+.vote-chart-body::-webkit-scrollbar-track {
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 239, 194, 0.52);
+}
+
+.vote-chart-body::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(255, 239, 194, 0.78);
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(139, 94, 52, 0.72), rgba(93, 48, 17, 0.72));
+}
+
+.vote-chart-body::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(90deg, rgba(139, 94, 52, 0.9), rgba(93, 48, 17, 0.9));
 }
 
 .vote-flow-analysis nav {

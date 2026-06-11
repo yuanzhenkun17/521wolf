@@ -21,7 +21,7 @@ async def check_runtime_ready(
     """Return the runtime gate for *scope*, probing the LLM when required."""
     normalized_profile_id = str(model_profile_id or "").strip() or None
     resolved_model_scope = model_scope or _model_scope_for_runtime_scope(scope)
-    health = build_health_payload(store)
+    health = build_health_payload(store, force_refresh=True)
     gate = _gate_for(health, scope)
     if scope in _LLM_SCOPES and (normalized_profile_id is not None or _needs_llm_probe(gate, health)):
         probe = await probe_llm_connectivity(
@@ -31,7 +31,7 @@ async def check_runtime_ready(
             model_profile_id=normalized_profile_id,
             cache=normalized_profile_id is None,
         )
-        health = build_health_payload(store)
+        health = build_health_payload(store, force_refresh=True)
         if normalized_profile_id is None:
             gate = _gate_for(health, scope)
         else:

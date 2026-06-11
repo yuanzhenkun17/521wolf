@@ -247,6 +247,12 @@ function sourceLabel(source: string | undefined) {
   return labels[source] || '其他'
 }
 
+function formatScore(value: unknown) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return number.toFixed(2)
+}
+
 function selectBenchmarkSuite(event: Event) {
   props.benchmark.selectBenchmarkSuite((event.target as HTMLSelectElement | null)?.value || '')
 }
@@ -449,7 +455,7 @@ function selectBenchmarkSuite(event: Event) {
             <span>
               <small>最优模型</small>
               <b>{{ modelLabel(bestModelRow) }}</b>
-              <em>{{ bestModelRow ? bestModelRow.scorePct + '%' : '--' }}</em>
+              <em>{{ bestModelRow ? formatScore(bestModelRow.scorePct) : '--' }}</em>
             </span>
           </div>
         </div>
@@ -473,7 +479,7 @@ function selectBenchmarkSuite(event: Event) {
             <div v-if="modelPreviewRows.length" class="bench-mini-list">
               <div v-for="(item, index) in modelPreviewRows" :key="item.hash" class="bench-mini-row">
                 <span>{{ modelLabel(item, index) }}</span>
-                <b>{{ item.scorePct }}%</b>
+                <b>{{ formatScore(item.scorePct) }}</b>
                 <em>{{ item.winRatePct }}%</em>
               </div>
             </div>
@@ -487,7 +493,7 @@ function selectBenchmarkSuite(event: Event) {
             <div v-if="!benchmark.selectedBenchmarkIsModelSuite.value && rolePreviewRows.length" class="bench-mini-list">
               <div v-for="(item, index) in rolePreviewRows" :key="item.version_id" class="bench-mini-row">
                 <span>{{ versionLabel(item, index) }}</span>
-                <b>{{ item.scorePct }}%</b>
+                <b>{{ formatScore(item.scorePct) }}</b>
                 <em>{{ sourceLabel(item.source) }}</em>
               </div>
             </div>

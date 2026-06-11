@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +101,7 @@ class SettingsRuntimeVariableStore:
         self._root = Path(root)
         self._path = self._root / "runtime-variables.json"
         self._connection_factory = connection_factory
+        self._backend_status_cache: tuple[float, "_PostgresRuntimeVariableBackend | None", dict[str, Any]] | None = None
 
     @classmethod
     def from_backend_store(cls, store: Any) -> "SettingsRuntimeVariableStore":
@@ -216,6 +218,9 @@ class SettingsRuntimeVariableStore:
         return backend
 
     def _backend_with_status(self) -> tuple["_PostgresRuntimeVariableBackend | None", dict[str, Any]]:
+        cached = self._backend_status_cache
+        if cached is not None and cached[0] > time.monotonic():
+            return cached[1], dict(cached[2])
         if self._connection_factory is None:
             return None, local_file_storage_status(path=str(self._path))
         try:
@@ -259,10 +264,13 @@ class SettingsRuntimeVariableStore:
                 conn.close()
             except Exception:
                 pass
-        return _PostgresRuntimeVariableBackend(self._connection_factory), postgres_storage_status(
+        backend = _PostgresRuntimeVariableBackend(self._connection_factory)
+        status = postgres_storage_status(
             table="ui_runtime_settings",
             ready=True,
         )
+        self._backend_status_cache = (time.monotonic() + 5.0, backend, dict(status))
+        return backend, status
 
 
 class _PostgresRuntimeVariableBackend:

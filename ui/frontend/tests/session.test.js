@@ -3605,6 +3605,7 @@ test('evolution workbench paginates runs and selected sample games', async () =>
   })
 
   await workbench.refreshAll()
+  await flushPromises()
   assert.equal(requests.find((path) => path.startsWith('/evolution-runs?')), '/evolution-runs?limit=1&offset=0&source=evolution')
   assert.equal(requests.includes('/evolution-runs/evo-run-a'), true)
   assert.equal(requests.includes('/evolution-runs/evo-run-a/games?phase=training&limit=1&offset=0'), true)
@@ -3771,6 +3772,7 @@ test('evolution run progress exposes overall stage training and battle progress 
     battle_game_count: 10,
     training_completed: 20,
     battle_completed: 4,
+    overall_progress: { percent: 0 },
     progress: {
       stage: 'battling',
       percent: 0.4,
@@ -3799,11 +3801,12 @@ test('evolution run progress exposes overall stage training and battle progress 
 
   const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
   await workbench.refreshAll()
+  await flushPromises()
 
   assert.equal(workbench.selectedIsRun.value, true)
   assert.equal(workbench.selectedRun.value.overallProgressPercent, 60)
   assert.equal(workbench.selectedRun.value.overallProgressLabel, '24 / 40')
-  assert.equal(workbench.selectedRun.value.stageProgressPercent, 40)
+  assert.equal(workbench.selectedRun.value.stageProgressPercent, 20)
   assert.equal(workbench.selectedRun.value.stageProgressLabel, '4 / 20')
   assert.equal(workbench.selectedRun.value.trainingProgressPercent, 100)
   assert.equal(workbench.selectedRun.value.trainingProgressLabel, '20 / 20')
@@ -3858,6 +3861,7 @@ test('evolution sample loading surfaces list and detail failures', async () => {
 
   const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
   await workbench.refreshAll()
+  await flushPromises()
 
   assert.equal(workbench.selectedSampleState.value.error, 'training api failed')
   assert.equal(workbench.selectedSampleBucketError.value, '')
@@ -3937,6 +3941,7 @@ test('evolution run selection ignores stale sample responses', async () => {
   })
 
   await workbench.refreshAll()
+  await flushPromises()
   assert.equal(requests.includes('/evolution-runs/run-b'), true)
   assert.equal(workbench.selectedRunId.value, 'run-b')
   assert.deepEqual(workbench.selectedGames.value.training.map((item) => item.game_id), ['b-train'])
@@ -4949,8 +4954,8 @@ test('evaluation workbench can switch to ad-hoc model scope without evaluation s
     name: 'Model Baseline Standard',
     target_type: 'model',
     roles: ['seer'],
-    game_count: 30,
-    max_days: 5,
+    game_count: 20,
+    max_days: 20,
     evaluation_set_id: 'model-baseline-standard-v1@v1'
   }
   const apiFetch = async (path, options = {}) => {
@@ -5392,10 +5397,10 @@ test('evaluation workbench keeps model benchmark suite out of role-version leade
     name: 'Model Baseline Standard',
     target_type: 'model',
     roles: ['seer', 'witch'],
-    game_count: 30,
-    max_days: 5,
+    game_count: 20,
+    max_days: 20,
     seed_set_id: 'model-baseline-standard-202606',
-    seed_count: 30,
+    seed_count: 20,
     seed_preview: ['271000', '271001', '271002', '271003', '271004'],
     cost_tier: 'release',
     evaluation_set_id: 'model-baseline-standard-v1@v1'
@@ -5427,7 +5432,7 @@ test('evaluation workbench keeps model benchmark suite out of role-version leade
           strength_score: 0.68,
           avg_role_score: 0.66,
           target_side_win_rate: 0.57,
-          game_count: 30,
+          game_count: 20,
           rankable: true
         }]
       }
@@ -5460,9 +5465,9 @@ test('evaluation workbench keeps model benchmark suite out of role-version leade
   assert.equal(workbench.selectedBenchmarkIsModelSuite.value, true)
   assert.equal(workbench.selectedBenchmarkCanLaunch.value, true)
   assert.deepEqual(workbench.selectedBenchmarkSuite.value.roles, ['seer', 'witch'])
-  assert.equal(workbench.form.value.battle_games, 30)
-  assert.equal(workbench.form.value.max_days, 5)
-  assert.equal(workbench.selectedBenchmarkSuite.value.seed_count, 30)
+  assert.equal(workbench.form.value.battle_games, 20)
+  assert.equal(workbench.form.value.max_days, 20)
+  assert.equal(workbench.selectedBenchmarkSuite.value.seed_count, 20)
   assert.deepEqual(workbench.selectedBenchmarkSuite.value.seed_preview, ['271000', '271001', '271002', '271003', '271004'])
   assert.equal(workbench.selectedBenchmarkSuite.value.cost_tier, 'release')
   assert.equal(workbench.filteredBatchRunRows.value[0].benchmarkTargetType, 'model')
@@ -5484,8 +5489,8 @@ test('evaluation workbench keeps model benchmark suite out of role-version leade
     target_type: 'model',
     model_id: 'qwen-max',
     model_config_hash: 'runtime_hash_v1',
-    battle_games: 30,
-    max_days: 5
+    battle_games: 20,
+    max_days: 20
   })
   assert.equal(Object.hasOwn(launchBody, 'roles'), false)
   assert.equal(Object.hasOwn(launchBody, 'target_versions'), false)
@@ -5516,7 +5521,7 @@ test('evaluation workbench launches model benchmark with selected model profile 
         checks: { llm_connectivity: { status: 'ok' } }
       }
     }
-    if (path === '/settings/model-profiles') {
+    if (path === '/settings/model-profiles?compact=true') {
       return {
         profiles: [{
           profile_id: 'profile-benchmark-main',
@@ -5557,6 +5562,7 @@ test('evaluation workbench launches model benchmark with selected model profile 
 
   const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
   await workbench.refreshAll()
+  await flushPromises()
 
   assert.equal(workbench.form.value.model_profile_id, 'profile-benchmark-main')
   workbench.form.value.model_id = 'manual-model'
@@ -6272,7 +6278,7 @@ test('evaluation workbench loads report history and keeps canonical report selec
       target_type: 'role_version',
       roles: ['seer'],
       game_count: 20,
-      max_days: 5,
+      max_days: 20,
       evaluation_set_id: 'role-baseline-standard-v1@v2',
       seed_set_id: 'role-standard-202606',
       config_hash: 'sha256:history-suite'
@@ -6680,6 +6686,7 @@ test('evaluation workbench refreshAll loads benchmark views without blocking pri
 
   const success = createHarness()
   const refreshed = await success.workbench.refreshAll()
+  await flushPromises()
   assert.equal(refreshed, true)
   assert.equal(success.workbench.benchmarkSuites.value[0].id, 'role-baseline-quick-v1')
   assert.equal(success.workbench.roleLeaderboardRows.value[0].version_id, 'seer_candidate_v1')

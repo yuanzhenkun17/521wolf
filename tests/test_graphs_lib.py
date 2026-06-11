@@ -817,6 +817,55 @@ class TestLibReview:
         )
         assert review.total_days > 0
 
+    def test_speech_quality_uses_content_diversity_and_source_signals(self):
+        from app.lib.review import analyze_game
+        from engine.models import Role, Team
+
+        review = analyze_game(
+            game_log=[],
+            agent_decisions={
+                1: [
+                    {
+                        "day": 1,
+                        "action_type": "speak",
+                        "source": "llm",
+                        "confidence": 0.82,
+                        "public_text": "结合昨夜信息和当前票型，我认为需要优先核验二号的身份，并保留对六号的观察。",
+                    },
+                    {
+                        "day": 2,
+                        "action_type": "speak",
+                        "source": "llm",
+                        "confidence": 0.76,
+                        "public_text": "二号前后逻辑出现矛盾，六号的投票与发言一致，因此今天建议集中分析二号。",
+                    },
+                ],
+                2: [
+                    {
+                        "day": 1,
+                        "action_type": "speak",
+                        "source": "fallback",
+                        "confidence": 0.2,
+                        "public_text": "暂无信息。",
+                    },
+                    {
+                        "day": 2,
+                        "action_type": "speak",
+                        "source": "fallback",
+                        "confidence": 0.2,
+                        "public_text": "暂无信息。",
+                    },
+                ],
+            },
+            roles={1: Role.VILLAGER, 2: Role.WEREWOLF},
+            winner_team=Team.VILLAGERS,
+            game_id="speech-quality",
+        )
+
+        assert review.agent_scores[1].speech_quality > review.agent_scores[2].speech_quality
+        assert review.agent_scores[1].speech_quality != 9.0
+        assert review.agent_scores[2].speech_quality < 5.0
+
     def test_game_review_to_dict(self):
         from app.lib.review import GameReview, AgentScores
         review = GameReview(game_id="g1", winner="villagers", total_days=3)

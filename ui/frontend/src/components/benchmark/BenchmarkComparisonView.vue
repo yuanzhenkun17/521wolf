@@ -76,20 +76,23 @@ const compareLoading = computed(() => Boolean(props.benchmark.benchmarkLeaderboa
 const compareError = computed(() => String(props.benchmark.benchmarkLeaderboardCompareError?.value || '').trim())
 const compareSourceTone = computed(() => {
   if (compareLoading.value) return 'loading'
-  if (comparePayload.value) return 'server'
+  if (hasApiCompareRows.value) return 'server'
   if (compareError.value) return 'fallback'
+  if (comparePayload.value) return 'fallback'
   return 'local'
 })
 const compareSourceLabel = computed(() => {
   if (compareLoading.value) return '正在加载服务端比较'
-  if (comparePayload.value) return '服务端标准比较'
+  if (hasApiCompareRows.value) return '服务端标准比较'
   if (compareError.value) return '本地兜底比较'
+  if (comparePayload.value) return '服务端比较为空，保留本地榜单'
   return '本地当前榜单'
 })
 const compareSourceDetail = computed(() => {
   if (compareLoading.value) return '正在读取 /leaderboards/compare'
-  if (comparePayload.value) return '正式 rows 与未入榜证据已分离'
+  if (hasApiCompareRows.value) return '正式 rows 与未入榜证据已分离'
   if (compareError.value) return compareError.value
+  if (comparePayload.value) return '服务端 compare 暂无 rows，当前展示不会清空已加载榜单。'
   return '等待服务端 compare，暂按当前榜单行计算'
 })
 
@@ -98,9 +101,10 @@ const apiCompareRows = computed(() => {
   if (!compare || !Array.isArray(compare.rows)) return []
   return compare.rows
 })
+const hasApiCompareRows = computed(() => apiCompareRows.value.length > 0)
 
 const rawRows = computed(() =>
-  comparePayload.value
+  hasApiCompareRows.value
     ? apiCompareRows.value
     : (mode.value === 'model'
       ? props.benchmark.modelLeaderboardRows.value
@@ -277,7 +281,7 @@ const summary = computed(() => {
     },
     {
       label: '最高分',
-      value: topRow.value ? formatPct(topRow.value.scoreValue) : '--',
+      value: topRow.value ? formatScore(topRow.value.scoreValue) : '--',
       caption: topRow.value ? topRow.value.primary : '暂无入榜行'
     },
     {
@@ -288,7 +292,7 @@ const summary = computed(() => {
     {
       label: '置信度',
       value: lowSampleCount ? `${lowSampleCount} 小样本` : '置信区间正常',
-      caption: topDelta == null ? '基线待定' : `${formatSignedPct(topDelta)} 最高分差`
+      caption: topDelta == null ? '基线待定' : `${formatSignedScore(topDelta)} 最高分差`
     }
   ]
 })
@@ -305,11 +309,11 @@ const emptyCaption = computed(() =>
 
 function normalizeRow(row, index, currentMode) {
   const score = numberFrom(
-    row?.scorePct,
-    percentFromFraction(row?.score),
     percentFromFraction(row?.strength_score),
     percentFromFraction(row?.avg_role_score),
-    percentFromFraction(row?.target_role_role_weighted_score)
+    percentFromFraction(row?.target_role_role_weighted_score),
+    row?.scorePct,
+    percentFromFraction(row?.score)
   )
   const winRate = numberFrom(
     row?.winRatePct,
@@ -635,6 +639,7 @@ function sourceLabel(source) {
 
 function numberFrom(...values) {
   for (const value of values) {
+    if (value == null || value === '') continue
     const number = Number(value)
     if (Number.isFinite(number)) return number
   }
@@ -642,6 +647,7 @@ function numberFrom(...values) {
 }
 
 function percentFromFraction(value) {
+  if (value == null || value === '') return null
   const number = Number(value)
   if (!Number.isFinite(number)) return null
   return Math.abs(number) <= 1 ? number * 100 : number
@@ -796,6 +802,12 @@ function formatPct(value) {
   return `${Math.round(number)}%`
 }
 
+function formatScore(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return number.toFixed(2)
+}
+
 function formatStandardError(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return '--'
@@ -806,6 +818,12 @@ function formatSignedPct(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return '--'
   return `${number >= 0 ? '+' : ''}${Math.round(number)}%`
+}
+
+function formatSignedScore(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return `${number >= 0 ? '+' : ''}${number.toFixed(2)}`
 }
 
 function valueOrDash(value) {
@@ -936,10 +954,10 @@ watch(viewStorageKey, () => {
               <small>{{ row.primary }}</small>
             </span>
             <span>{{ row.modelConfigHash }}</span>
-            <span v-if="isColumnEnabled('score')">{{ formatPct(row.scoreValue) }}</span>
+            <span v-if="isColumnEnabled('score')">{{ formatScore(row.scoreValue) }}</span>
             <span v-if="isColumnEnabled('winRate')">{{ formatPct(row.winRateValue) }}</span>
             <span v-if="isColumnEnabled('delta')" :class="['delta-cell', row.displayDeltaValue >= 0 ? 'positive' : 'negative']">
-              <b>{{ formatSignedPct(row.displayDeltaValue) }}</b>
+              <b>{{ formatSignedScore(row.displayDeltaValue) }}</b>
               <small>{{ row.displayDeltaSource }}</small>
             </span>
             <span v-if="isColumnEnabled('confidence')" class="ci-cell">
@@ -969,10 +987,10 @@ watch(viewStorageKey, () => {
               <small>{{ row.secondary }}</small>
             </span>
             <span>{{ row.source }}</span>
-            <span v-if="isColumnEnabled('score')">{{ formatPct(row.scoreValue) }}</span>
+            <span v-if="isColumnEnabled('score')">{{ formatScore(row.scoreValue) }}</span>
             <span v-if="isColumnEnabled('winRate')">{{ formatPct(row.winRateValue) }}</span>
             <span v-if="isColumnEnabled('delta')" :class="['delta-cell', row.displayDeltaValue >= 0 ? 'positive' : 'negative']">
-              <b>{{ formatSignedPct(row.displayDeltaValue) }}</b>
+              <b>{{ formatSignedScore(row.displayDeltaValue) }}</b>
               <small>{{ row.displayDeltaSource }}</small>
             </span>
             <span v-if="isColumnEnabled('confidence')" class="ci-cell">

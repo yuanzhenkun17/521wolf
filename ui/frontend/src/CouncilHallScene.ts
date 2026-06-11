@@ -302,7 +302,7 @@
 
     let seatCardImage = null;
     const seatNumberPlates = []; // track all plate meshes for texture refresh
-    textureLoader.load('/seat-card-bg.png', (tex) => {
+    textureLoader.load('/livehall-assets/optimized/seat-card-bg-320.webp', (tex) => {
       seatCardImage = tex.image;
       // Regenerate textures for all existing seat number plates
       for (const { mesh, label } of seatNumberPlates) {

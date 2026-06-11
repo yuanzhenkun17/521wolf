@@ -20,6 +20,11 @@ test('review vote-flow chart keeps the ECharts flow and heatmap implementation',
   assert.match(voteFlowSource, /HeatmapChart/)
   assert.match(voteFlowSource, /echarts\.init/)
   assert.match(voteFlowSource, /class="vote-flow-chart"/)
+  assert.match(voteFlowSource, /const heatmapWidth = computed/)
+  assert.match(voteFlowSource, /\['speech', 'day_speech', 'pk_speak'\]\.includes\(phase\)/)
+  assert.match(voteFlowSource, /\['vote', 'exile_vote', 'pk_vote'\]\.includes\(phase\)/)
+  assert.match(voteFlowSource, /overflow-x:\s*auto/)
+  assert.doesNotMatch(voteFlowSource, /rounds\.push\(\{ key: 'end', label: '终局' \}\)/)
 })
 
 test('review report auto requests flow data before mounting vote-flow charts', () => {
@@ -30,11 +35,50 @@ test('review report auto requests flow data before mounting vote-flow charts', (
   assert.match(reviewSource, /requestFlowCharts/)
   assert.match(reviewSource, /flowData/)
   assert.match(reviewSource, /loadFlowData/)
+  assert.match(reviewSource, /flowDataPayload\.value\?\.rows/)
+  assert.match(reviewSource, /const reviewFlowPlayers = computed/)
   assert.doesNotMatch(reviewSource, /IntersectionObserver/)
   assert.doesNotMatch(reviewSource, /展开图表/)
   assert.match(reviewSource, /props\.game\?\.decisions/)
   assert.doesNotMatch(reviewSource, /class="review-flow-gate"/)
   assert.match(reviewSource, /<VoteFlowSankey\s+v-if="showFlowCharts"/)
+})
+
+test('history side assessment only uses authoritative review scores', () => {
+  const derivedSource = source('src/composables/useHistoryDerivedState.ts')
+  const logsPageSource = source('src/pages/LogsPage.vue')
+
+  assert.doesNotMatch(derivedSource, /buildAssessmentScores/)
+  assert.match(derivedSource, /const reviewRows = normalizeReviewScoreRows\(reviewPayload\)/)
+  assert.match(derivedSource, /if \(!reviewRows\.length\) return \[\]/)
+  assert.match(derivedSource, /optionalReviewScorePercent/)
+  assert.doesNotMatch(derivedSource, /\['logic_score', 'logic', 'information_score', 'information', 'overall'\]/)
+  assert.match(logsPageSource, /runHistoryAction\('loadFlowData', gameId\)/)
+})
+
+test('history result phase shows the terminal winner outside raw logs', () => {
+  const logsPageSource = source('src/pages/LogsPage.vue')
+
+  assert.match(logsPageSource, /const resultWinnerText = computed/)
+  assert.match(logsPageSource, /终局胜方/)
+  assert.match(logsPageSource, /class="phase-result-summary"/)
+  assert.match(logsPageSource, /selectedHistoryGame\.value\?\.winner/)
+  assert.match(logsPageSource, /phaseCategory\.value === 'result' && !collapsedPhaseEvidenceKeys\.value\.has/)
+  assert.match(logsPageSource, /collapsedPhaseEvidenceKeys\.value = new Set\(\)/)
+})
+
+test('history selection preloads authoritative review scores', () => {
+  const logsPageSource = source('src/pages/LogsPage.vue')
+  const historySource = source('src/composables/useGameHistory.ts')
+
+  assert.match(logsPageSource, /selectedReview\.value \? 'loaded' : ''/)
+  assert.match(logsPageSource, /const hasScores = \[review\.player_evaluations, review\.player_scores, review\.agent_scores\]/)
+  assert.match(logsPageSource, /review\.scoring_version !== 'speech_quality_v2'/)
+  assert.match(logsPageSource, /refreshedEmptyReviewKeys\.value\.has\(key\)/)
+  assert.match(logsPageSource, /\{ force: true, silentSuccess: true, clearNotice: false \}/)
+  assert.match(logsPageSource, /runHistoryAction\('loadReview', gameId\)/)
+  assert.match(historySource, /\{ silentSuccess = false, clearNotice = true, force = false \}/)
+  assert.match(historySource, /!force && state\.reviewByGameId\.value\[gameId\]/)
 })
 
 test('review score stacked bars keep the target branch alignment contract', () => {
@@ -71,8 +115,9 @@ test('history review and evidence deletion expose trust boundaries', () => {
   const historyListSource = source('src/components/HistoryGameList.vue')
   const logsPageSource = source('src/pages/LogsPage.vue')
 
-  assert.match(reviewSource, /local_estimate/)
-  assert.match(reviewSource, /本地推算，仅供浏览/)
+  assert.doesNotMatch(reviewSource, /local_estimate/)
+  assert.doesNotMatch(reviewSource, /buildAssessmentScores/)
+  assert.match(reviewSource, /复盘报告真实评分/)
   assert.match(reviewSource, /class="\['review-score-source', reviewScoreSourceClass\]"/)
 
   assert.match(historyListSource, /function isEvidenceGame/)

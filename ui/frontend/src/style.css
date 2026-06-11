@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Anton&display=swap");
 @import "./styles/foundation/index.css";
 @import "./styles/base.css";
 @import "./styles/lobby.css";
@@ -6,3 +5,11 @@
 @import "./styles/history.css";
 @import "./styles/workbenches.css";
 @import "./styles/cascade-overrides.css";
+
+@font-face {
+  font-family: "Anton";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/anton-latin.woff2") format("woff2");
+}

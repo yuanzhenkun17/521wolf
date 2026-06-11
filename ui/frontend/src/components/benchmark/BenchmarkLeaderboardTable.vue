@@ -82,7 +82,7 @@ const baselineRow = computed(() => props.rows.find((item) => item.is_baseline) |
 const averageScore = computed(() => {
   if (!props.rows.length) return '--'
   const total = props.rows.reduce((sum, item) => sum + Number(item.scorePct || 0), 0)
-  return Math.round(total / props.rows.length) + '%'
+  return formatScore(total / props.rows.length)
 })
 const averageWinRate = computed(() => {
   if (!props.rows.length) return '--'
@@ -186,6 +186,7 @@ function rowLabel(item) {
 
 function numberFrom(...values) {
   for (const value of values) {
+    if (value == null || value === '') continue
     const number = Number(value)
     if (Number.isFinite(number)) return number
   }
@@ -193,6 +194,7 @@ function numberFrom(...values) {
 }
 
 function percentFromFraction(value) {
+  if (value == null || value === '') return null
   const number = Number(value)
   if (!Number.isFinite(number)) return null
   return Math.abs(number) <= 1 ? number * 100 : number
@@ -202,6 +204,12 @@ function formatPct(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return '--'
   return `${Math.round(number)}%`
+}
+
+function formatScore(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return number.toFixed(2)
 }
 
 function formatSignedPct(value) {
@@ -271,12 +279,12 @@ function warningText(item) {
       <span>
         <small>最优</small>
         <b>{{ topRow ? rowLabel(topRow) : '--' }}</b>
-        <em>{{ topRow ? topRow.scorePct + '%' : '暂无' }}</em>
+        <em>{{ topRow ? formatScore(topRow.scorePct) : '暂无' }}</em>
       </span>
       <span>
         <small>基线</small>
         <b>{{ baselineRow ? rowLabel(baselineRow) : '--' }}</b>
-        <em>{{ baselineRow ? baselineRow.scorePct + '%' : '未标记' }}</em>
+        <em>{{ baselineRow ? formatScore(baselineRow.scorePct) : '未标记' }}</em>
       </span>
       <span>
         <small>平均得分</small>
@@ -328,7 +336,7 @@ function warningText(item) {
           >
             <template v-if="kind === 'model'">
               <span>{{ rowLabel(item) }}</span>
-              <span>{{ item.scorePct }}%</span>
+              <span>{{ formatScore(item.scorePct) }}</span>
               <span>{{ item.winRatePct }}%</span>
               <span class="bench-stat-cell" :class="Number(item.paired_delta ?? item.pairedDelta ?? item.deltaScore ?? 0) >= 0 ? 'positive' : 'negative'">
                 <b>{{ pairedDeltaLabel(item) }}</b>
@@ -346,7 +354,7 @@ function warningText(item) {
             <template v-else>
               <span>{{ rowLabel(item) }}</span>
               <span>{{ sourceLabel(item.source) }}</span>
-              <span>{{ item.scorePct }}%</span>
+              <span>{{ formatScore(item.scorePct) }}</span>
               <span>{{ item.winRatePct }}%</span>
               <span class="bench-stat-cell">
                 <b>{{ sampleSize(item) }} 样本</b>
@@ -394,7 +402,7 @@ function warningText(item) {
           <div class="bench-rank-meter" aria-hidden="true">
             <i :style="{ width: item.scorePct + '%' }"></i>
           </div>
-          <b>{{ item.scorePct }}%</b>
+          <b>{{ formatScore(item.scorePct) }}</b>
         </div>
       </div>
       <div v-if="rankedRows.length" class="bench-rank-block">

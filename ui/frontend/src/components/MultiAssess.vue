@@ -48,6 +48,11 @@ const dimensions: AssessmentDimension[] = [
   { key: 'team', label: '团队' },
   { key: 'role_score', label: '综合' }
 ]
+const availableDimensions = computed(() =>
+  dimensions.filter((dimension) =>
+    dimension.key === 'role_score' || props.scores.some((item) => item?.[dimension.key] != null)
+  )
+)
 
 const hasExtendedDimensions = computed(() =>
   props.scores.some((item) => item.logic != null || item.team != null || item.role_score != null)
@@ -142,7 +147,9 @@ const radarDimensions = computed(() => {
     { key: 'logic', label: '逻辑' },
     { key: 'team', label: '团队' }
   ]
-  return base
+  return base.filter((dimension) =>
+    props.scores.some((item) => item?.[dimension.key] != null)
+  )
 })
 
 const radarPlayer = computed(() => {
@@ -232,7 +239,7 @@ function radarScoreForDim(key: string) {
         </div>
       </section>
 
-      <section v-if="radarPlayer" class="ma-compact-section ma-compact-profile" aria-label="玩家画像">
+      <section v-if="radarPlayer && radarDimensions.length" class="ma-compact-section ma-compact-profile" aria-label="玩家画像">
         <header class="ma-profile-head">
           <img :src="roleImage(radarPlayer.player)" :alt="roleText(radarPlayer.player)" class="ma-profile-avatar" />
           <span class="ma-profile-meta">
@@ -304,7 +311,7 @@ function radarScoreForDim(key: string) {
       <!-- Bar chart tabs (dimension switching) -->
       <nav v-if="activeViewMode === 'bar'" class="ma-tabs">
         <button
-          v-for="dim in dimensions"
+          v-for="dim in availableDimensions"
           :key="dim.key"
           :class="['ma-tab', { active: dimension === dim.key }]"
           @click="emit('update:dimension', dim.key)"
@@ -338,7 +345,7 @@ function radarScoreForDim(key: string) {
         </div>
       </div>
 
-      <div v-if="activeViewMode === 'radar' && radarPlayer && !props.compact" class="ma-radar-area">
+      <div v-if="activeViewMode === 'radar' && radarPlayer && radarDimensions.length && !props.compact" class="ma-radar-area">
         <div class="ma-radar-header">
           <img :src="roleImage(radarPlayer.player)" :alt="radarPlayer.player.role_hint" class="ma-radar-avatar" />
           <span class="ma-radar-name">{{ radarPlayer.player.seat }}号玩家</span>

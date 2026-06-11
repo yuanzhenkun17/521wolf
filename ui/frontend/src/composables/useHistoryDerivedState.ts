@@ -376,13 +376,16 @@ export function createHistoryDerivedState(refs: LooseRecord, computedState: Loos
     const gameId = selectedHistoryGame.value?.game_id
     const review = gameId ? reviewByGameId.value[gameId] : null
     const reviewPayload = review?.data || review
-    return normalizeReviewScoreRows(reviewPayload).map((ev) => {
-      const speech = reviewScorePercent(firstReviewScoreValue(ev, ['speech_score', 'speech', 'speech_quality']))
-      const vote = reviewScorePercent(firstReviewScoreValue(ev, ['vote_score', 'vote', 'vote_accuracy']))
-      const skill = reviewScorePercent(firstReviewScoreValue(ev, ['skill_score', 'skill', 'skill_accuracy']))
-      const logic = reviewScorePercent(firstReviewScoreValue(ev, ['logic_score', 'logic', 'information_score', 'information', 'overall']))
-      const team = reviewScorePercent(firstReviewScoreValue(ev, ['team_score', 'team', 'cooperation_score', 'cooperation', 'team_contribution']))
+    const reviewRows = normalizeReviewScoreRows(reviewPayload)
+    if (!reviewRows.length) return []
+    return reviewRows.map((ev) => {
+      const speech = optionalReviewScorePercent(firstReviewScoreValue(ev, ['speech_score', 'speech', 'speech_quality'], null))
+      const vote = optionalReviewScorePercent(firstReviewScoreValue(ev, ['vote_score', 'vote', 'vote_accuracy'], null))
+      const skill = optionalReviewScorePercent(firstReviewScoreValue(ev, ['skill_score', 'skill', 'skill_accuracy'], null))
+      const logic = optionalReviewScorePercent(firstReviewScoreValue(ev, ['logic_score', 'logic', 'information_score', 'information'], null))
+      const team = optionalReviewScorePercent(firstReviewScoreValue(ev, ['team_score', 'team', 'cooperation_score', 'cooperation', 'team_contribution'], null))
       const overall = firstReviewScoreValue(ev, ['role_score', 'overall_score', 'overall', 'total_score'], null)
+      const availableDimensions = [speech, vote, skill, logic, team].filter((value) => value != null)
       return {
         player: playerForReviewScore(ev),
         speech,
@@ -392,7 +395,9 @@ export function createHistoryDerivedState(refs: LooseRecord, computedState: Loos
         team,
         risk_penalty: ev.risk_penalty ?? 0,
         role_score: overall == null
-          ? Math.round((speech + vote + skill + logic + team) / 5)
+          ? (availableDimensions.length
+            ? Math.round(availableDimensions.reduce((sum, value) => sum + value, 0) / availableDimensions.length)
+            : 0)
           : reviewScorePercent(overall),
         information: logic,
         cooperation: team
@@ -501,6 +506,10 @@ export function createHistoryDerivedState(refs: LooseRecord, computedState: Loos
     if (number <= 1) return Math.round(Math.max(0, Math.min(number * 100, 100)))
     if (number <= 10) return Math.round(Math.max(0, Math.min(number * 10, 100)))
     return Math.round(Math.max(0, Math.min(number, 100)))
+  }
+
+  function optionalReviewScorePercent(value: unknown) {
+    return value == null || value === '' ? undefined : reviewScorePercent(value)
   }
 
   return {

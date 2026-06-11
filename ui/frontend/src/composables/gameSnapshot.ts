@@ -99,6 +99,27 @@ function arrayOrEmpty<T = unknown>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : []
 }
 
+function firstPresent(...values: unknown[]): unknown {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== '') return value
+  }
+  return undefined
+}
+
+function textValue(value: unknown, fallback = ''): string {
+  return value == null ? fallback : String(value)
+}
+
+function idValue(value: unknown): string | number | null {
+  if (value == null || value === '') return null
+  return typeof value === 'number' || typeof value === 'string' ? value : textValue(value)
+}
+
+function numberValue(value: unknown, fallback = 0): number {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
 function normalizePhase(phase: unknown): GamePhase {
   const text = typeof phase === 'string' ? phase : String(phase || '')
   return PHASE_ALIASES[text] || text || 'setup'
@@ -129,28 +150,69 @@ function normalizeLogEntry(log: unknown = {}): GameLog {
 
 function normalizeDecisionEntry(decision: unknown = {}, index = 0): Decision {
   const source = objectOrEmpty(decision)
-  const action = source.action || source.action_type || ''
-  const actorId = source.actor_id ?? source.player_id
-  const targetId = source.target_id ?? source.selected_target
-  const publicSummary = source.public_summary || source.public_text || source.text || ''
+  const metadata = objectOrEmpty(source.metadata)
+  const payload = objectOrEmpty(source.payload)
+  const choice = objectOrEmpty(source.choice)
+  const action = textValue(firstPresent(
+    source.action,
+    source.action_type,
+    source.type,
+    source.event_type,
+    metadata.action,
+    payload.action,
+    payload.action_type
+  ))
+  const actorId = firstPresent(
+    source.actor_id,
+    source.actor,
+    source.player_id,
+    source.playerId,
+    source.player_seat,
+    source.seat,
+    metadata.actor_id,
+    payload.actor_id,
+    payload.player_id
+  )
+  const targetId = firstPresent(
+    source.target_id,
+    source.target,
+    source.targetId,
+    source.target_seat,
+    source.selected_target,
+    source.selectedTarget,
+    metadata.target_id,
+    payload.target_id,
+    payload.selected_target,
+    choice.target,
+    choice.target_id
+  )
+  const publicSummary = textValue(firstPresent(
+    source.public_summary,
+    source.public_text,
+    source.summary,
+    source.message,
+    source.text,
+    payload.public_summary,
+    payload.message
+  ))
   const selectedSkills = arrayOrEmpty(source.selected_skills)
   return {
     ...source,
     index: source.index ?? index,
     id: source.id || source.decision_id || `decision_${index}`,
-    actor_id: actorId,
-    player_id: source.player_id ?? actorId,
-    target_id: targetId,
+    actor_id: idValue(actorId),
+    player_id: idValue(source.player_id ?? actorId),
+    target_id: idValue(targetId),
     action,
     action_type: action,
     phase: normalizePhase(source.phase),
     public_summary: publicSummary,
-    reason: source.reason || source.private_reasoning || publicSummary,
+    reason: textValue(firstPresent(source.reason, source.private_reasoning, metadata.reason, payload.reason, publicSummary)),
     selected_skill: source.selected_skill || selectedSkills[0] || null,
     memory_refs: source.memory_refs || source.memory_summary || [],
     belief_snapshot: source.belief_snapshot || {},
     source: source.source || 'llm',
-    confidence: source.confidence ?? 0
+    confidence: numberValue(firstPresent(source.confidence, metadata.confidence, payload.confidence, 0))
   }
 }
 

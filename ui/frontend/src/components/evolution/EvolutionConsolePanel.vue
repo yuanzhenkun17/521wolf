@@ -432,8 +432,17 @@ function modelProfileStatus(evo: EvolutionConsoleModel): string {
 }
 
 function modelProfileOptionText(profile: Record<string, any>): string {
-  const suffix = profile?.default_scopes?.evolution ? ' · 默认进化' : ''
-  return `${profile?.name || '模型'} · ${profile?.model || '未命名'}${suffix}`
+  const name = String(profile?.name || '').trim()
+  const model = String(profile?.model || '').trim()
+  if (name && model && name !== model) return `${name} / ${model}`
+  return name || model || '未命名模型'
+}
+
+function modelProfileOptionTitle(profile: Record<string, any>): string {
+  const provider = String(profile?.provider || '').trim()
+  const model = String(profile?.model || '').trim()
+  const suffix = profile?.default_scopes?.evolution ? '默认进化' : ''
+  return [provider, model, suffix].filter(Boolean).join(' · ')
 }
 </script>
 
@@ -469,6 +478,7 @@ function modelProfileOptionText(profile: Record<string, any>): string {
                 v-for="profile in evo.launchModelProfiles?.value || []"
                 :key="profile.profile_id"
                 :value="profile.profile_id"
+                :title="modelProfileOptionTitle(profile)"
               >
                 {{ modelProfileOptionText(profile) }}
               </option>

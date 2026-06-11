@@ -700,14 +700,27 @@ class GameReadRepository:
         status = self._status_for_game(game, final_state)
         review = _json_object(final_state.get("review"))
         winner = _first_value(game.get("winner"), final_state.get("winner"))
+        evaluations = [
+            _row_dict(row)
+            for row in self._conn.execute(
+                "SELECT * FROM evaluations WHERE game_id = ? ORDER BY player_seat",
+                (game_id,),
+            ).fetchall()
+        ]
         if review and self._review_visible_for_game(game, config, final_state, status=status):
-            return review
-        return {
-            "game_id": str(game.get("id") or game_id),
-            "winner": winner,
-            "review_status": "暂无复盘报告",
-            "notes": [],
-        }
+            payload = dict(review)
+        else:
+            payload = {
+                "review_status": "暂无复盘报告",
+                "notes": [],
+            }
+        payload.setdefault("game_id", str(game.get("id") or game_id))
+        payload.setdefault("winner", winner)
+        if evaluations:
+            payload["player_evaluations"] = evaluations
+            payload["player_scores"] = evaluations
+            payload["score_source"] = "evaluations"
+        return payload
 
     def _aggregate_fingerprint(self, table: str, *columns: str) -> dict[str, Any]:
         select_parts = ["COUNT(*) AS total"]

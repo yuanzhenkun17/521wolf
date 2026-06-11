@@ -378,7 +378,7 @@ async function loadModelProfiles() {
   modelProfilesLoading.value = true
   modelProfilesError.value = ''
   modelProfilesLoadPromise = (async () => {
-    const payload = await props.apiFetch('/settings/model-profiles')
+    const payload = await props.apiFetch('/settings/model-profiles?compact=true')
     const profiles = Array.isArray(payload.profiles) ? payload.profiles : []
     modelProfiles.value = profiles
     const available = profiles

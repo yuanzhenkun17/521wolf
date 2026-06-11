@@ -26,6 +26,22 @@ _DEFAULT_PHASE_DECISION_LIMIT = 200
 _DEFAULT_REPLAY_LIMIT = 500
 
 
+def _review_evaluation_row(score: dict[str, Any]) -> dict[str, Any]:
+    player_id = score.get("player_seat", score.get("player_id", score.get("seat")))
+    if player_id is None:
+        return {}
+    logic_score = score.get("logic_score")
+    team_score = score.get("team_score")
+    role_score = score.get("role_score")
+    return {
+        **score,
+        "player_seat": player_id,
+        "information_score": score.get("information_score", logic_score),
+        "cooperation_score": score.get("cooperation_score", team_score),
+        "overall_score": score.get("overall_score", role_score),
+    }
+
+
 class GameStoreMixin:
     def _deleted_game_ids(self) -> set[str]:
         deleted = getattr(self, "_deleted_game_ids_cache", None)
@@ -246,11 +262,60 @@ class GameStoreMixin:
         self.check_live_game_watchdog()
         live = self.live_sessions.get(game_id)
         if live is not None:
-            return self._review_payload(game_id, live.snapshot())
+            snapshot = live.snapshot()
+            review = self._review_payload(game_id, snapshot)
+            review = self._merge_persisted_review_scores(game_id, review)
+            return self._ensure_review_player_scores(game_id, review, game=snapshot)
         cached = self.games.get(game_id)
         if cached is not None:
-            return self._review_payload(game_id, cached)
-        return self._load_game_review_from_pg(game_id)
+            review = self._review_payload(game_id, cached)
+            review = self._merge_persisted_review_scores(game_id, review)
+            return self._ensure_review_player_scores(game_id, review, game=cached)
+        review = self._load_game_review_from_pg(game_id)
+        if review is None:
+            return None
+        return self._ensure_review_player_scores(game_id, review)
+
+    def _merge_persisted_review_scores(
+        self,
+        game_id: str,
+        review: dict[str, Any],
+    ) -> dict[str, Any]:
+        persisted = self._load_game_review_from_pg(game_id)
+        if not persisted:
+            return review
+        merged = dict(review)
+        for key in ("player_evaluations", "player_scores", "agent_scores", "score_source"):
+            value = persisted.get(key)
+            if value:
+                merged[key] = value
+        return merged
+
+    def _ensure_review_player_scores(
+        self,
+        game_id: str,
+        review: dict[str, Any],
+        *,
+        game: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if any(review.get(key) for key in ("player_evaluations", "player_scores", "agent_scores")):
+            return review
+        score_game = game or self._load_game_from_pg(game_id)
+        if not score_game:
+            return review
+
+        from app.graphs.subgraphs.eval.nodes import _score_game
+
+        scores = [_review_evaluation_row(item) for item in _score_game(score_game)]
+        scores = [item for item in scores if item]
+        if not scores:
+            return review
+        merged = dict(review)
+        merged["player_evaluations"] = scores
+        merged["player_scores"] = scores
+        merged["score_source"] = "evaluation_pipeline"
+        merged["scoring_version"] = "speech_quality_v2"
+        return merged
 
     def _review_payload(self, game_id: str, game: dict[str, Any]) -> dict[str, Any]:
         view_game = _player_view_snapshot(game)
@@ -260,7 +325,6 @@ class GameStoreMixin:
             "review_status": "暂无复盘报告",
             "notes": [],
         }
-
     def _history_shell_from_snapshot(self, game_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
         return self._game_history_service().history_shell_from_snapshot(game_id, snapshot)
 

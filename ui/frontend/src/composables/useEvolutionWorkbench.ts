@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createGameApi } from './gameApi.ts'
 import { createLatestOnlyMap, createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
@@ -187,8 +187,9 @@ function progressFromCount(completed, target, fallbackLabel = '等待') {
 }
 
 function progressWithExplicit(explicit, completed, target, fallbackLabel = '等待') {
-  const pct = percentValue(explicit)
   const counted = progressFromCount(completed, target, fallbackLabel)
+  if ((finiteNumber(target) ?? 0) > 0) return counted
+  const pct = percentValue(explicit)
   if (pct == null) return counted
   return {
     percent: pct,
@@ -215,7 +216,15 @@ function normalizeChildRun(child) {
   const trainingCompleted = firstFinite(overall.training_completed, child?.training_completed)
   const battleTarget = firstFinite(overall.battle_total, child?.battle_total, child?.battle_game_count)
   const battleCompleted = firstFinite(overall.battle_completed, child?.battle_completed)
-  const explicit = percentValue(overall.percent ?? progress.overall_percent ?? child?.overall_percent ?? stage.percent)
+  const counted = progressFromCount(
+    (trainingCompleted ?? 0) + (battleCompleted ?? 0),
+    (trainingTarget ?? 0) + (battleTarget ?? 0)
+  )
+  const explicit = progressWithExplicit(
+    overall.percent ?? progress.overall_percent ?? child?.overall_percent ?? stage.percent,
+    (trainingCompleted ?? 0) + (battleCompleted ?? 0),
+    (trainingTarget ?? 0) + (battleTarget ?? 0)
+  )
   return {
     ...child,
     id: child?.run_id || child?.id || '',
@@ -226,8 +235,8 @@ function normalizeChildRun(child) {
     trainingCompleted: trainingCompleted ?? 0,
     battleTarget: battleTarget ?? 0,
     battleCompleted: battleCompleted ?? 0,
-    progressPercent: explicit ?? 0,
-    progressLabel: explicit == null ? '等待' : `${explicit}%`
+    progressPercent: explicit.percent ?? counted.percent,
+    progressLabel: explicit.label ?? counted.label
   }
 }
 
@@ -497,9 +506,18 @@ function normalizeVersion(version) {
 
 function normalizeSampleGame(game, bucket) {
   const id = game?.game_id || game?.id || ''
+  const historyGameId = firstTextValue(
+    game?.history_game_id,
+    game?.historyGameId,
+    game?.history_id,
+    game?.historyId,
+    game?.archive?.history_game_id,
+    game?.archive?.historyGameId
+  )
   return {
     ...game,
     id,
+    history_game_id: historyGameId || game?.history_game_id || '',
     bucket,
     short: shortId(id, 14),
     phaseLabel: sourceText(game?.phase || bucket),
@@ -2158,8 +2176,16 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     selectedGameRows.value.find((game) => game.id === selectedGameId.value) || null
   )
   const selectedSampleHistoryGameId = computed(() =>
-    selectedGameDetail.value.archive?.history_game_id ||
-    selectedSampleGame.value?.history_game_id ||
+    firstTextValue(
+      selectedGameDetail.value.archive?.history_game_id,
+      selectedGameDetail.value.archive?.historyGameId,
+      selectedGameDetail.value.archive?.history_id,
+      selectedGameDetail.value.archive?.historyId,
+      selectedSampleGame.value?.history_game_id,
+      selectedSampleGame.value?.historyGameId,
+      selectedSampleGame.value?.history_id,
+      selectedSampleGame.value?.historyId
+    ) ||
     ''
   )
   const filteredSampleGameRows = computed(() => {
@@ -2254,7 +2280,8 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   const runtimeHealthGate = computed(() => runtimeHealthGateSummary(effectiveRuntimeHealth.value, 'evolution_start'))
   const runtimeHealthGateBlocked = computed(() => {
     if (form.value.model_profile_id) {
-      if (modelProfilePreflightLoading.value || modelProfilePreflightError.value || !modelProfilePreflight.value) return true
+      if (modelProfilePreflightLoading.value || modelProfilePreflightError.value) return true
+      if (!modelProfilePreflight.value) return false
     }
     return runtimeHealthGate.value.disabled
   })
@@ -2262,7 +2289,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (form.value.model_profile_id) {
       if (modelProfilePreflightLoading.value) return '模型 Profile 预检中。'
       if (modelProfilePreflightError.value) return modelProfilePreflightError.value
-      if (!modelProfilePreflight.value) return '模型 Profile 尚未完成启动预检。'
+      if (!modelProfilePreflight.value) return ''
     }
     return runtimeHealthGate.value.reason || runtimeHealthGate.value.warning
   })
@@ -2334,7 +2361,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     modelProfilesLoading.value = true
     modelProfilesError.value = ''
     try {
-      const data = await apiFetch('/settings/model-profiles')
+      const data = await apiFetch('/settings/model-profiles?compact=true')
       if (!token.isLatest()) return false
       const profiles = Array.isArray(data?.profiles) ? data.profiles : []
       modelProfiles.value = profiles
@@ -2345,7 +2372,6 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       if (!form.value.model_profile_id) {
         form.value.model_profile_id = launchableProfiles.find((profile) => profile?.default_scopes?.evolution)?.profile_id || ''
       }
-      if (form.value.model_profile_id) void loadModelProfilePreflight()
       return true
     } catch (err) {
       if (token.isLatest()) {
@@ -2837,7 +2863,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
         message: '批量任务不直接提供样本局和 diff，请在子运行中查看单角色详情。'
       })
     } else {
-      await Promise.all([
+      void Promise.all([
         loadDiff(id, { parentToken: token }),
         loadRunGames(id, { parentToken: token }),
         loadProposalReview(id, { parentToken: token })
@@ -3487,13 +3513,6 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       removeEvolutionHashChangeListener = () => {}
     })
   }
-
-  watch(
-    () => form.value.model_profile_id,
-    () => {
-      void loadModelProfilePreflight()
-    }
-  )
 
   return {
     loading,

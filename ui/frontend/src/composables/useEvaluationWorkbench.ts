@@ -580,6 +580,7 @@ function benchmarkRowSecondary(row, scope) {
 
 function benchmarkRowNumber(...values) {
   for (const value of values) {
+    if (value == null || value === '') continue
     const number = Number(value)
     if (Number.isFinite(number)) return number
   }
@@ -588,10 +589,10 @@ function benchmarkRowNumber(...values) {
 
 function normalizeBenchmarkLeaderboardRow(row, index, scope) {
   const score = benchmarkRowNumber(
-    row?.score,
     row?.strength_score,
     row?.avg_role_score,
-    row?.target_role_role_weighted_score
+    row?.target_role_role_weighted_score,
+    row?.score
   )
   const winRate = benchmarkRowNumber(
     row?.winRate,
@@ -1809,7 +1810,7 @@ function useEvaluationWorkbench(options = {}) {
     modelProfilesLoading.value = true
     modelProfilesError.value = ''
     try {
-      const data = await apiFetch('/settings/model-profiles')
+      const data = await apiFetch('/settings/model-profiles?compact=true')
       if (!token.isLatest()) return false
       const profiles = Array.isArray(data?.profiles) ? data.profiles : []
       modelProfiles.value = profiles
@@ -2910,20 +2911,16 @@ function useEvaluationWorkbench(options = {}) {
       if (!token.isLatest()) return false
       await loadBenchmarkPlan()
       if (!token.isLatest()) return false
-      await loadBenchmarkLeaderboardCompare({ silent: true })
+      const [compareLoaded, viewsLoaded, runsLoaded, reportsLoaded] = await Promise.all([
+        loadBenchmarkLeaderboardCompare({ silent: true }),
+        loadBenchmarkViews({ silent: true }),
+        loadRuns(),
+        loadBenchmarkReportHistory({ silent: true })
+      ])
       if (!token.isLatest()) return false
-      await loadBenchmarkViews({ silent: true })
-      if (!token.isLatest()) return false
-      await loadCurrentBenchmarkView()
-      if (!token.isLatest()) return false
-      const runsLoaded = await loadRuns()
-      if (!token.isLatest()) return false
-      await loadBenchmarkReportHistory({ silent: true })
-      if (!token.isLatest()) return false
-      await loadBenchmarkDiagnosticsAggregate({ silent: true })
-      if (!token.isLatest()) return false
-      await loadBenchmarkSnapshots({ silent: true })
-      if (!token.isLatest()) return false
+      void loadCurrentBenchmarkView()
+      void loadBenchmarkDiagnosticsAggregate({ silent: true })
+      void loadBenchmarkSnapshots({ silent: true })
       if (!rolesLoaded || !runsLoaded) {
         const message = benchmarkErrorMessage(lastRunsError, '评测数据刷新不完整，请手动刷新。')
         error.value = message
@@ -2931,7 +2928,7 @@ function useEvaluationWorkbench(options = {}) {
         return false
       }
       if (notify) setNotice('success', '评测数据已刷新。')
-      return true
+      return rolesLoaded || compareLoaded || viewsLoaded || runsLoaded || reportsLoaded
     } catch (err) {
       if (token.isLatest()) {
         const message = benchmarkErrorMessage(err, '评测数据读取失败')

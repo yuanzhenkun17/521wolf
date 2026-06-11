@@ -39,6 +39,20 @@ function progressFromCount(completed: unknown, target: unknown, fallbackLabel = 
   return { percent: 0, label: fallbackLabel }
 }
 
+function progressWithExplicit(
+  explicit: unknown,
+  completed: unknown,
+  target: unknown,
+  fallbackLabel = '等待'
+): { percent: number; label: string } {
+  const total = nullableNumber(target)
+  const counted = progressFromCount(completed, target, fallbackLabel)
+  if (total != null && total > 0) return counted
+  const pct = percentValue(explicit)
+  if (pct == null) return counted
+  return { percent: pct, label: counted.label === fallbackLabel ? `${pct}%` : counted.label }
+}
+
 function firstArrayValue<T = unknown>(...values: unknown[]): T[] {
   for (const value of values) {
     if (Array.isArray(value)) return value as T[]
@@ -83,19 +97,23 @@ export function normalizeChildRun(raw: unknown): EvolutionChildRun {
   const progress = objectOrEmpty(source.progress)
   const overall = objectOrEmpty(source.overall_progress)
   const stage = objectOrEmpty(source.stage_progress ?? progress)
-  const explicit = percentValue(overall.percent ?? progress.overall_percent ?? source.overall_percent ?? stage.percent)
   const trainingTarget = firstNumber(overall.training_total, source.training_total, source.training_game_count) ?? 0
   const trainingCompleted = firstNumber(overall.training_completed, source.training_completed) ?? 0
   const battleTarget = firstNumber(overall.battle_total, source.battle_total, source.battle_game_count) ?? 0
   const battleCompleted = firstNumber(overall.battle_completed, source.battle_completed) ?? 0
+  const overallProgress = progressWithExplicit(
+    overall.percent ?? progress.overall_percent ?? source.overall_percent ?? stage.percent,
+    trainingCompleted + battleCompleted,
+    trainingTarget + battleTarget
+  )
   return {
     ...source,
     id: firstString(source.run_id, source.id),
     run_id: firstString(source.run_id, source.id),
     displayRole: stringValue(source.role, '—'),
     status: stringValue(source.status || source.stage),
-    progressPercent: explicit ?? 0,
-    progressLabel: explicit == null ? '等待' : `${explicit}%`,
+    progressPercent: overallProgress.percent,
+    progressLabel: overallProgress.label,
     trainingTarget,
     trainingCompleted,
     battleTarget,
@@ -112,20 +130,25 @@ export function normalizeRun(raw: unknown): EvolutionRun {
     : []
   const progress = objectOrEmpty(source.progress)
   const overall = objectOrEmpty(source.overall_progress)
-  const stageProgress = objectOrEmpty(source.stage_progress ?? progress)
+  const stageProgressSource = objectOrEmpty(source.stage_progress ?? progress)
   const trainingGames = arrayOrEmpty(source.training_games)
   const battleGames = arrayOrEmpty(source.battle_games)
   const currentStage = firstString(source.current_stage, progress.stage, source.stage, source.status)
-  const explicit = percentValue(overall.percent ?? progress.overall_percent ?? source.overall_percent ?? stageProgress.percent)
   const roleKeys = arrayOrEmpty(source.roles).map((role) => stringValue(role)).filter(Boolean)
   const trainingTarget = firstNumber(overall.training_total, progress.training_total, source.training_total, source.training_target, source.training_requested, objectOrEmpty(source.config).training_games, trainingGames.length) ?? 0
   const trainingCompleted = firstNumber(overall.training_completed, progress.training_completed, source.training_completed, trainingGames.length) ?? 0
   const battleTarget = firstNumber(overall.battle_total, progress.battle_total, source.battle_total, source.battle_target, source.battle_requested, objectOrEmpty(source.config).battle_games, battleGames.length) ?? 0
   const battleCompleted = firstNumber(overall.battle_completed, progress.battle_completed, source.battle_completed, battleGames.length) ?? 0
-  const overallProgress = explicit == null
-    ? progressFromCount(trainingCompleted + battleCompleted, trainingTarget + battleTarget)
-    : { percent: explicit, label: `${explicit}%` }
-  const stageProgressValue = percentValue(stageProgress.percent ?? progress.percent)
+  const overallProgress = progressWithExplicit(
+    overall.percent ?? progress.overall_percent ?? source.overall_percent ?? stageProgressSource.percent,
+    trainingCompleted + battleCompleted,
+    trainingTarget + battleTarget
+  )
+  const stageProgress = progressWithExplicit(
+    stageProgressSource.percent ?? progress.percent,
+    stageProgressSource.completed_games ?? progress.completed_games,
+    stageProgressSource.target_games ?? progress.target_games
+  )
   const status = stringValue(source.status)
   return {
     ...source,
@@ -141,7 +164,9 @@ export function normalizeRun(raw: unknown): EvolutionRun {
     progressPercent: overallProgress.percent,
     progressLabel: overallProgress.label,
     overallProgressPercent: overallProgress.percent,
-    stageProgressPercent: stageProgressValue ?? 0,
+    overallProgressLabel: overallProgress.label,
+    stageProgressPercent: stageProgress.percent,
+    stageProgressLabel: stageProgress.label,
     trainingProgressPercent: progressFromCount(trainingCompleted, trainingTarget).percent,
     battleProgressPercent: progressFromCount(battleCompleted, battleTarget).percent,
     trainingGameRequested: trainingTarget,

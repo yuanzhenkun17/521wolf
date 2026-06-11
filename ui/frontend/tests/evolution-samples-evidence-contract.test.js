@@ -39,6 +39,9 @@ test('Evolution sample detail exposes evidence traceability fields and existing 
   assert.match(samplesPanel, /emit\('open-sample-log', historyId\)/)
   assert.match(samplesPanel, /emit\('replay-sample-game', historyId\)/)
   assert.match(samplesPanel, /:disabled="Boolean\(evo\.selectedSampleHistoryUnavailableReason\.value\)"/)
+  assert.match(workbench, /game\?\.historyGameId/)
+  assert.match(workbench, /selectedGameDetail\.value\.archive\?\.historyGameId/)
+  assert.match(workbench, /selectedSampleGame\.value\?\.history_id/)
 })
 
 test('Evolution sample decision and event previews stay compact and point overflow to logs', () => {

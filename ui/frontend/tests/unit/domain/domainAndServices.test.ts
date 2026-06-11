@@ -283,7 +283,7 @@ describe('history and evolution boundaries', () => {
     expect(historyGameEvidenceLabel(null)).toBe('对局')
   })
 
-  it('clamps evolution progress and excludes rollback-blocked versions', () => {
+  it('prefers counted evolution progress and excludes rollback-blocked versions', () => {
     const active = normalizeRun({
       run_id: 'run-1',
       roles: ['seer', ''],
@@ -298,7 +298,8 @@ describe('history and evolution boundaries', () => {
     const done = normalizeRun({ run_id: 'run-2', status: 'completed' })
 
     expect(active.displayRole).toBe('seer')
-    expect(active.progressPercent).toBe(100)
+    expect(active.progressPercent).toBe(80)
+    expect(active.progressLabel).toBe('8 / 10')
     expect(active.trainingProgressPercent).toBe(100)
     expect(active.battleProgressPercent).toBe(50)
     expect(active.proposalCount).toBe(1)

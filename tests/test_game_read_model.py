@@ -166,6 +166,31 @@ def test_load_game_flow_data_trims_heavy_decision_fields_and_excludes_logs() -> 
     }
 
 
+def test_load_game_review_merges_authoritative_player_evaluations() -> None:
+    conn = _HistoryLayerConnection()
+    conn.evaluations = [{
+        "id": "evaluation-1",
+        "game_id": "game-1",
+        "player_seat": 1,
+        "role": "seer",
+        "speech_score": 7.5,
+        "vote_score": 8.0,
+        "skill_score": 6.5,
+        "logic_score": 7.0,
+        "information_score": 7.25,
+        "cooperation_score": 8.5,
+        "overall_score": 7.46,
+    }]
+
+    review = GameReadRepository(conn).load_game_review("game-1")
+
+    assert review is not None
+    assert review["review_status"] == "ok"
+    assert review["score_source"] == "evaluations"
+    assert review["player_evaluations"] == conn.evaluations
+    assert review["player_scores"] == conn.evaluations
+
+
 def test_load_game_replay_chunks_events_and_scopes_decisions_to_event_window() -> None:
     repo = GameReadRepository(_HistoryLayerConnection())
 
@@ -370,6 +395,7 @@ class _HistoryLayerConnection:
             _decision_row(id="decision-speech-2", day=1, phase="day_speech", action_type="speak", public_text="speech two"),
             _decision_row(id="decision-night-2", day=2, phase="night", action_type="werewolf_kill", public_text="night two"),
         ]
+        self.evaluations: list[dict[str, Any]] = []
 
     def execute(self, sql: str, parameters: Any = ()) -> _Cursor:
         text = " ".join(sql.split())
@@ -382,6 +408,8 @@ class _HistoryLayerConnection:
             return _Cursor(self.events)
         if text == "SELECT * FROM decisions WHERE game_id = ? ORDER BY created_at, id":
             return _Cursor(self.decisions)
+        if text == "SELECT * FROM evaluations WHERE game_id = ? ORDER BY player_seat":
+            return _Cursor(self.evaluations)
         if text.startswith("SELECT day, phase, event_type, COUNT(*) AS log_count"):
             return _Cursor(self._event_phase_rows())
         if text.startswith("SELECT day, phase, action_type, COUNT(*) AS decision_count"):

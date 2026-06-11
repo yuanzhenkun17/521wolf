@@ -159,8 +159,10 @@ function shortId(value: unknown, length = 8, fallback = '—'): string {
 }
 
 function pct(value: unknown): number {
-  const n = Number(value || 0)
-  return Math.max(0, Math.min(100, Math.round(n * 100)))
+  const n = Number(value ?? 0)
+  if (!Number.isFinite(n)) return 0
+  const percent = Math.abs(n) <= 1 ? n * 100 : n
+  return Math.max(0, Math.min(100, Math.round(percent * 100) / 100))
 }
 
 function statusText(status: unknown): string {
@@ -187,7 +189,7 @@ function normalizeLeaderboardEntry<T extends LeaderboardEntry>(entry: T): Normal
   return {
     ...entry,
     short: shortId(entry.hash),
-    scorePct: pct(score),
+    scorePct: Math.round(score * 100) / 100,
     winRatePct: pct(winRate),
     deltaScore: Number(entry.delta_vs_baseline?.target_role_role_weighted_score || 0),
     fallbackPct: pct(entry.target_role_fallback_rate || 0),

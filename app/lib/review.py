@@ -133,6 +133,50 @@ def get_role_of(player_id: int, roles: dict[int, Role]) -> Role | None:
     return roles.get(player_id)
 
 
+def _speech_text(decision: dict[str, Any]) -> str:
+    for key in ("public_text", "message", "text", "content", "final_response"):
+        value = decision.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            nested = value.get("text") or value.get("content") or value.get("message")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+    return ""
+
+
+def _speech_quality(decisions: list[dict[str, Any]]) -> float:
+    if not decisions:
+        return 5.0
+    count = len(decisions)
+    texts = [_speech_text(decision) for decision in decisions]
+    nonempty_texts = [text for text in texts if text]
+    fallback_rate = sum(1 for decision in decisions if decision.get("source") == "fallback") / count
+    adjusted_rate = sum(1 for decision in decisions if decision.get("source") == "policy_adjusted") / count
+    source_quality = max(0.0, 1.0 - fallback_rate - adjusted_rate * 0.35)
+    completion_rate = len(nonempty_texts) / count
+    unique_rate = len(set(nonempty_texts)) / len(nonempty_texts) if nonempty_texts else 0.0
+    average_length = sum(len(text) for text in nonempty_texts) / len(nonempty_texts) if nonempty_texts else 0.0
+    information_density = min(1.0, average_length / 120.0)
+    confidences = []
+    for decision in decisions:
+        try:
+            confidence = float(decision.get("confidence"))
+        except (TypeError, ValueError):
+            continue
+        confidences.append(max(0.0, min(confidence, 1.0)))
+    confidence_quality = sum(confidences) / len(confidences) if confidences else 0.5
+    score = (
+        2.0
+        + source_quality * 2.5
+        + completion_rate * 2.0
+        + unique_rate * 1.5
+        + information_density
+        + confidence_quality
+    )
+    return round(max(0.0, min(score, 10.0)), 2)
+
+
 # ---------------------------------------------------------------------------
 # Scoring helpers
 # ---------------------------------------------------------------------------
@@ -155,11 +199,7 @@ def _score_agent(player_id: int, role: Role, decisions: list[dict], winner_team,
     correct_skills = sum(1 for d in skill_decisions if _is_good_skill_use(d.get("action_type"), d.get("selected_choice"), _decision_target(d), role, game_log, roles))
     scores.skill_accuracy = correct_skills / len(skill_decisions) * 10 if skill_decisions else 5.0
     speech_decisions = [d for d in decisions if d.get("action_type") in SPEECH_ACTION_TYPES]
-    if speech_decisions:
-        fallback_rate = sum(1 for d in speech_decisions if d.get("source") == "fallback") / len(speech_decisions)
-        scores.speech_quality = 7.0 * (1 - fallback_rate) + 2
-    else:
-        scores.speech_quality = 5.0
+    scores.speech_quality = _speech_quality(speech_decisions)
     wolves_win = is_werewolf_win(str(winner_team))
     w = str(winner_team).lower()
     villagers_win = w in ("villagers", "villager") or "villager" in w

@@ -30,12 +30,38 @@ import ui.backend.services.benchmark_leaderboard_service as benchmark_leaderboar
 import ui.backend.services.benchmark_service as benchmark_service_module
 from ui.backend.services.role_service import RoleService
 from ui.backend.sse import stream_queue_sse
-from ui.backend.game_serializers import _dead_players, _player_view_snapshot, _sheriff_from_events, _vote_tally
+from ui.backend.game_serializers import _dead_players, _frontend_review, _player_view_snapshot, _sheriff_from_events, _vote_tally
 import ui.backend.store as ui_backend_store
 from ui.backend.task_events import TaskEventLog
 
 LIVE_GAME_TIMEOUT_SECONDS = 30.0
 LIVE_GAME_POLL_SECONDS = 0.1
+
+
+def test_frontend_review_does_not_copy_overall_into_missing_dimensions() -> None:
+    review = _frontend_review(
+        {
+            "agent_scores": {
+                "1": {
+                    "role": "seer",
+                    "scores": {
+                        "speech_quality": 8.0,
+                        "vote_accuracy": 7.0,
+                        "skill_accuracy": 9.0,
+                        "team_contribution": 6.0,
+                        "overall": 7.5,
+                    },
+                }
+            }
+        },
+        events=[],
+    )
+
+    score = review["player_evaluations"][0]
+    assert score["speech_score"] == 0.8
+    assert score["role_score"] == 0.75
+    assert score["logic_score"] is None
+    assert score["information_score"] is None
 
 
 @dataclass

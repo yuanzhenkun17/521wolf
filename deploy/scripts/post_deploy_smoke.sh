@@ -16,6 +16,7 @@ FAIL_ON_OPS_DEGRADED_ALERTS="${FAIL_ON_OPS_DEGRADED_ALERTS:-false}"
 FAIL_ON_LANGFUSE_CAPTURE_DISABLED="${FAIL_ON_LANGFUSE_CAPTURE_DISABLED:-false}"
 CHECK_PORTS="${CHECK_PORTS:-true}"
 REQUIRE_HTTPS="${REQUIRE_HTTPS:-false}"
+CURL_INSECURE="${CURL_INSECURE:-false}"
 CURL_TIMEOUT_SECONDS="${CURL_TIMEOUT_SECONDS:-10}"
 MAX_ASSET_CHECKS="${MAX_ASSET_CHECKS:-20}"
 TASK_ARTIFACT_VERIFY_LIMIT="${TASK_ARTIFACT_VERIFY_LIMIT:-100}"
@@ -25,6 +26,12 @@ cleanup() {
   rm -rf "$tmp_dir"
 }
 trap cleanup EXIT
+
+if [ "$CURL_INSECURE" = "true" ]; then
+  curl_tls_args=(-k)
+else
+  curl_tls_args=()
+fi
 
 fail() {
   echo "post-deploy smoke failed: $*" >&2
@@ -46,13 +53,13 @@ sudo_if_available() {
 fetch_to_file() {
   local url="$1"
   local output="$2"
-  curl -fsS --max-time "$CURL_TIMEOUT_SECONDS" "$url" -o "$output" \
+  curl "${curl_tls_args[@]}" -fsS --max-time "$CURL_TIMEOUT_SECONDS" "$url" -o "$output" \
     || fail "curl failed for $url"
 }
 
 check_url() {
   local url="$1"
-  curl -fsS --max-time "$CURL_TIMEOUT_SECONDS" "$url" -o /dev/null \
+  curl "${curl_tls_args[@]}" -fsS --max-time "$CURL_TIMEOUT_SECONDS" "$url" -o /dev/null \
     || fail "curl failed for $url"
 }
 

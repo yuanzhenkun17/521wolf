@@ -45,14 +45,19 @@ def get_pool(
         )
         conn.commit()
 
+    check_connection = os.environ.get("PG_POOL_CHECK_CONNECTION", "true").lower() not in {"0", "false", "no"}
+    pool_kwargs: dict[str, Any] = {}
+    if check_connection:
+        pool_kwargs["check"] = ConnectionPool.check_connection
+
     pool = ConnectionPool(
         conninfo=conninfo_str,
         min_size=min_size,
         max_size=max_size,
         kwargs=kwargs,
         configure=configure,
-        check=ConnectionPool.check_connection,
         open=True,
+        **pool_kwargs,
     )
     _pools[key] = pool
     _log.info(

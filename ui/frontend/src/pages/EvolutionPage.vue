@@ -1317,6 +1317,8 @@ onBeforeUnmount(() => {
 
 .evo-form-grid input,
 .evo-form-grid select {
+  appearance: none;
+  -webkit-appearance: none;
   box-sizing: border-box;
   width: 100%;
   height: 30px;
@@ -1329,6 +1331,54 @@ onBeforeUnmount(() => {
   font-size: 16px;
   font-weight: 950;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.evo-form-grid select {
+  min-width: 0;
+  padding-right: 26px;
+  background:
+    linear-gradient(45deg, transparent 50%, rgba(59, 28, 9, 0.82) 50%) right 13px center / 6px 6px no-repeat,
+    linear-gradient(135deg, rgba(59, 28, 9, 0.82) 50%, transparent 50%) right 8px center / 6px 6px no-repeat,
+    rgba(255, 245, 214, 0.38);
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.evo-console-field--model select {
+  height: 34px;
+  padding: 0 34px 0 10px;
+  border: 1px solid rgba(93, 48, 17, 0.2);
+  border-bottom-color: rgba(93, 48, 17, 0.34);
+  border-radius: 6px;
+  background:
+    linear-gradient(45deg, transparent 50%, rgba(59, 28, 9, 0.86) 50%) right 16px center / 6px 6px no-repeat,
+    linear-gradient(135deg, rgba(59, 28, 9, 0.86) 50%, transparent 50%) right 11px center / 6px 6px no-repeat,
+    linear-gradient(180deg, rgba(255, 252, 245, 0.82), rgba(244, 223, 177, 0.62));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 252, 228, 0.78),
+    0 1px 2px rgba(74, 37, 15, 0.08);
+  color: #3b1c09;
+  font-size: 15px;
+}
+
+.evo-console-field--model select:hover:not(:disabled) {
+  border-color: rgba(93, 48, 17, 0.38);
+  background:
+    linear-gradient(45deg, transparent 50%, rgba(59, 28, 9, 0.92) 50%) right 16px center / 6px 6px no-repeat,
+    linear-gradient(135deg, rgba(59, 28, 9, 0.92) 50%, transparent 50%) right 11px center / 6px 6px no-repeat,
+    linear-gradient(180deg, rgba(255, 252, 245, 0.92), rgba(232, 197, 139, 0.68));
+}
+
+.evo-console-field--model select:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.evo-console-field--model select option {
+  background: #f6e7bf;
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 800;
 }
 
 .evo-form-grid input:focus,

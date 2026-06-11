@@ -22,17 +22,20 @@ def register_settings_routes(api: FastAPI, store: Any) -> None:
     audit_store = SettingsAuditStore.from_backend_store(store)
 
     @api.get("/api/settings/model-profiles")
-    def list_model_profiles() -> dict[str, Any]:
-        payload = profile_store.list_payload()
+    def list_model_profiles(compact: bool = False) -> dict[str, Any]:
+        payload = profile_store.list_payload(include_variables=False)
+        if compact:
+            return payload
         storage = dict(payload.get("storage") or {})
         storage["runtime_variables"] = runtime_store.storage_status()
         payload["storage"] = storage
         payload["admin"] = settings_admin_payload(storage=storage)
         payload["variables"] = runtime_store.list_variables()
+        health = build_health_payload(store)
         return {
             **payload,
-            "health": build_health_payload(store),
-            "ops_metrics": build_ops_metrics_payload(store),
+            "health": health,
+            "ops_metrics": build_ops_metrics_payload(store, health=health),
         }
 
     @api.get("/api/settings/runtime-variables")

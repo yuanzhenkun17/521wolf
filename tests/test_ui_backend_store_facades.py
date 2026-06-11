@@ -149,6 +149,99 @@ def test_game_read_gateway_facades_delegate_to_cached_gateway(
     ]
 
 
+def test_cached_game_review_merges_persisted_player_scores(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+    store.games["game-with-scores"] = {
+        "game_id": "game-with-scores",
+        "winner": "villagers",
+        "review": {
+            "review_status": "ok",
+            "notes": ["cached narrative"],
+        },
+    }
+    persisted_scores = [{
+        "player_seat": 1,
+        "role": "seer",
+        "speech_score": 7.5,
+        "overall_score": 7.5,
+    }]
+    monkeypatch.setattr(
+        store,
+        "_load_game_review_from_pg",
+        lambda game_id: {
+            "game_id": game_id,
+            "player_evaluations": persisted_scores,
+            "player_scores": persisted_scores,
+            "score_source": "evaluations",
+        },
+    )
+
+    review = store.get_game_review("game-with-scores")
+
+    assert review is not None
+    assert review["notes"] == ["cached narrative"]
+    assert review["player_evaluations"] == persisted_scores
+    assert review["player_scores"] == persisted_scores
+    assert review["score_source"] == "evaluations"
+
+
+def test_game_review_computes_pipeline_scores_when_persisted_scores_are_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.graphs.subgraphs.eval import nodes as eval_nodes
+
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path))
+    game = {
+        "game_id": "game-without-scores",
+        "winner": "villagers",
+        "review": {"review_status": "ok"},
+        "events": [{"event_type": "game_end"}],
+        "decisions": [{"player_id": 1}],
+        "player_roles": {1: "seer"},
+    }
+    store.games["game-without-scores"] = game
+    monkeypatch.setattr(store, "_load_game_review_from_pg", lambda _game_id: None)
+    monkeypatch.setattr(
+        eval_nodes,
+        "_score_game",
+        lambda score_game: [{
+            "player_id": 1,
+            "role": "seer",
+            "speech_score": 7.5,
+            "vote_score": 8.0,
+            "skill_score": 6.5,
+            "logic_score": 7.0,
+            "team_score": 8.5,
+            "role_score": 7.46,
+        }] if score_game is game else [],
+    )
+
+    review = store.get_game_review("game-without-scores")
+
+    assert review is not None
+    assert review["score_source"] == "evaluation_pipeline"
+    assert review["scoring_version"] == "speech_quality_v2"
+    assert review["player_evaluations"] == review["player_scores"]
+    assert review["player_evaluations"][0] == {
+        "player_id": 1,
+        "player_seat": 1,
+        "role": "seer",
+        "speech_score": 7.5,
+        "vote_score": 8.0,
+        "skill_score": 6.5,
+        "logic_score": 7.0,
+        "information_score": 7.0,
+        "team_score": 8.5,
+        "cooperation_score": 8.5,
+        "role_score": 7.46,
+        "overall_score": 7.46,
+    }
+
+
 def test_game_history_facades_delegate_to_cached_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

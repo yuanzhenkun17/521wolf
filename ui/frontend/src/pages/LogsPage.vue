@@ -111,6 +111,8 @@ const selectedAssessPlayerId = ref<any>(null)
 const workspaceTab = ref('phase')
 const rawLogFilter = ref('all')
 const expandedPhaseEvidenceKeys = ref<Set<string>>(new Set())
+const collapsedPhaseEvidenceKeys = ref<Set<string>>(new Set())
+const refreshedEmptyReviewKeys = ref<Set<string>>(new Set())
 const historyStore = useHistoryStore()
 const historyActionProps = props as Record<HistoryActionName, LooseFn | undefined>
 const historyActionStore = historyStore as unknown as Record<HistoryActionName, LooseFn>
@@ -199,7 +201,8 @@ const focusedPlayer = computed(() => {
   return (selectedHistoryGame.value?.players || []).find((player) => samePlayer(player?.id ?? player?.seat, id)) || null
 })
 const hasPlayerFocus = computed(() => focusedPlayerId.value != null)
-const rawLogsForFocus = computed(() => historyLogs.value.filter((log) => rowMatchesFocusedPlayer(log, { includeText: true })))
+const uniqueRawLogs = computed(() => dedupeRawLogs(historyLogs.value))
+const rawLogsForFocus = computed(() => uniqueRawLogs.value.filter((log) => rowMatchesFocusedPlayer(log, { includeText: true })))
 const filteredRawLogs = computed(() =>
   rawLogsForFocus.value.filter((log) => rawLogFilter.value === 'all' || rawLogKind(log) === rawLogFilter.value)
 )
@@ -464,6 +467,37 @@ const phaseSummaryCards = computed(() => {
     { label: '投票', value: focusedVoteDecisions.value.length }
   ]
 })
+const resultWinnerText = computed(() =>
+  winnerLabel(
+    selectedHistoryGame.value?.winner
+    ?? selectedHistoryGame.value?.result?.winner
+    ?? selectedHistoryGame.value?.game_summary?.winner
+    ?? selectedHistoryGame.value?.summary?.winner
+  )
+)
+const resultSummaryText = computed(() => {
+  const logs = [
+    ...rawLogsForFocus.value,
+    ...(Array.isArray(selectedHistoryGame.value?.logs) ? selectedHistoryGame.value.logs : [])
+  ]
+  const row = logs.find((log) => {
+    const type = String(log?.event_type || log?.type || log?.action || '').toLowerCase()
+    return ['game_end', 'game_over', 'finished', 'ended', 'result'].includes(type)
+  })
+  return normalizeText(
+    row?.message
+    || row?.summary
+    || selectedHistoryGame.value?.result?.summary
+    || selectedHistoryGame.value?.summary
+    || ''
+  )
+})
+const resultMetaCards = computed(() => [
+  { label: '胜方', value: resultWinnerText.value },
+  { label: '天数', value: selectedHistoryGame.value?.day ?? selectedGameConfig.value.max_days ?? '—' },
+  { label: '日志', value: rawLogsForFocus.value.length },
+  { label: '决策', value: focusedDecisionCount.value || selectedHistoryGame.value?.decision_count || 0 }
+])
 
 const phaseEvidenceKey = computed(() => {
   const gameId = selectedHistoryGame.value?.game_id ?? selectedHistoryGameId.value ?? 'game'
@@ -477,6 +511,7 @@ const phaseEvidenceBodyId = computed(() =>
 
 const phaseEvidenceExpanded = computed(() =>
   expandedPhaseEvidenceKeys.value.has(phaseEvidenceKey.value)
+  || (phaseCategory.value === 'result' && !collapsedPhaseEvidenceKeys.value.has(phaseEvidenceKey.value))
 )
 const phaseEvidenceExpandedAttr = computed(() => String(phaseEvidenceExpanded.value) as 'true' | 'false')
 
@@ -638,6 +673,7 @@ watch(() => selectedHistoryGameId.value, () => {
   selectedAssessPlayerId.value = null
   rawLogFilter.value = 'all'
   expandedPhaseEvidenceKeys.value = new Set()
+  collapsedPhaseEvidenceKeys.value = new Set()
 })
 
 watch(() => props.historyWorkspaceTab, (tab) => {
@@ -648,9 +684,55 @@ watch(() => selectedHistoryGame.value?.game_id, () => {
   setWorkspaceTab(props.historyWorkspaceTab, { emitUpdate: false })
 })
 
+watch(
+  () => [
+    selectedHistoryGame.value?.game_id || '',
+    selectedReview.value ? 'loaded' : '',
+    reviewLoading.value ? 'loading' : ''
+  ],
+  () => {
+    const gameId = selectedHistoryGame.value?.game_id
+    if (!gameId || reviewLoading.value || !hasHistoryAction('loadReview')) return
+    if (!selectedReview.value) {
+      runHistoryAction('loadReview', gameId)
+      return
+    }
+    const review = selectedReview.value
+    const hasScores = [review.player_evaluations, review.player_scores, review.agent_scores]
+      .some((value) => Array.isArray(value) ? value.length > 0 : value && typeof value === 'object' && Object.keys(value).length > 0)
+    const outdatedPipelineScores = review.score_source === 'evaluation_pipeline'
+      && review.scoring_version !== 'speech_quality_v2'
+    const key = `${String(gameId)}:${outdatedPipelineScores ? 'legacy-scores' : 'empty-scores'}`
+    if ((hasScores && !outdatedPipelineScores) || refreshedEmptyReviewKeys.value.has(key)) return
+    refreshedEmptyReviewKeys.value = new Set(refreshedEmptyReviewKeys.value).add(key)
+    runHistoryAction('loadReview', gameId, { force: true, silentSuccess: true, clearNotice: false })
+  },
+  { immediate: true }
+)
+
 watch(() => selectedHistoryPage.value?.key, () => {
   rawLogFilter.value = 'all'
 })
+
+watch(
+  () => [
+    selectedHistoryGame.value?.game_id || '',
+    selectedHistoryGame.value?.decision_count || 0,
+    selectedHistoryGame.value?.decisions?.length || 0,
+    selectedFlowData.value ? 'loaded' : '',
+    selectedFlowLoading.value ? 'loading' : ''
+  ],
+  () => {
+    const gameId = selectedHistoryGame.value?.game_id
+    if (!gameId || selectedFlowData.value || selectedFlowLoading.value || !hasHistoryAction('loadFlowData')) return
+    const hasLocalDecisions = Array.isArray(selectedHistoryGame.value?.decisions) && selectedHistoryGame.value.decisions.length > 0
+    const expectedDecisions = Number(selectedHistoryGame.value?.decision_count || 0)
+    if (!hasLocalDecisions && expectedDecisions > 0) {
+      runHistoryAction('loadFlowData', gameId)
+    }
+  },
+  { immediate: true }
+)
 
 watch(
   () => [
@@ -676,13 +758,17 @@ watch(
 function togglePhaseEvidence() {
   const key = phaseEvidenceKey.value
   if (!key) return
-  const next = new Set(expandedPhaseEvidenceKeys.value)
-  if (next.has(key)) {
-    next.delete(key)
+  const expanded = new Set(expandedPhaseEvidenceKeys.value)
+  const collapsed = new Set(collapsedPhaseEvidenceKeys.value)
+  if (phaseEvidenceExpanded.value) {
+    expanded.delete(key)
+    collapsed.add(key)
   } else {
-    next.add(key)
+    collapsed.delete(key)
+    expanded.add(key)
   }
-  expandedPhaseEvidenceKeys.value = next
+  expandedPhaseEvidenceKeys.value = expanded
+  collapsedPhaseEvidenceKeys.value = collapsed
 }
 
 function phaseName(phase: any) {
@@ -831,6 +917,32 @@ function rawLogKind(log: any = {}) {
   if (/(vote|exile|pk|sheriff_vote|投票|票|放逐|警长票)/.test(`${type} ${phase} ${text}`)) return 'vote'
   if (rowActorId(log) != null || rowTargetId(log) != null || /(kill|guard|seer|witch|poison|shoot|speech|speak|死亡|查验|守护|发言|击杀|开枪)/.test(`${type} ${text}`)) return 'action'
   return 'system'
+}
+
+function rawLogIdentity(log: any = {}, index = 0) {
+  const stable = log.id ?? log.log_id ?? log.event_id ?? log.sequence ?? log.seq
+  if (stable != null && stable !== '') {
+    return `stable:${stable}`
+  }
+  return [
+    log.day ?? '',
+    log.phase ?? '',
+    log.event_type ?? log.type ?? log.action ?? '',
+    log.speaker ?? log.actor_id ?? log.player_id ?? '',
+    normalizeText(log.message ?? log.public_summary ?? log.summary ?? '')
+  ].map((part) => String(part)).join('|')
+}
+
+function dedupeRawLogs(logs: any[] = []) {
+  const seen = new Set()
+  const rows: any[] = []
+  logs.forEach((log, index) => {
+    const key = rawLogIdentity(log, index)
+    if (seen.has(key)) return
+    seen.add(key)
+    rows.push(log)
+  })
+  return rows
 }
 
 function decisionKey(decision: any, index = 0) {
@@ -1166,6 +1278,19 @@ function clearPlayerFocus() {
                     <div v-if="!speechTimelineRows.length" class="phase-empty-state">暂无发言决策记录</div>
                   </div>
 
+                  <div v-else-if="phaseCategory === 'result'" class="phase-result-summary">
+                    <div class="phase-result-winner">
+                      <small>终局胜方</small>
+                      <b>{{ resultWinnerText }}</b>
+                    </div>
+                    <p>{{ resultSummaryText }}</p>
+                    <div>
+                      <span v-for="item in resultMetaCards" :key="'result-' + item.label">
+                        <small>{{ item.label }}</small><b>{{ item.value }}</b>
+                      </span>
+                    </div>
+                  </div>
+
                   <div v-else class="phase-generic-evidence">
                     <span v-for="item in phaseSummaryCards" :key="'generic-' + item.label">
                       <small>{{ item.label }}</small><b>{{ item.value }}</b>
@@ -1369,7 +1494,7 @@ function clearPlayerFocus() {
                     <span>多维测评</span>
                   </header>
                   <div class="history-assess-empty-body">
-                    <strong>暂无测评数据</strong>
+                    <strong>{{ reviewLoading ? '正在读取真实评分' : '暂无真实评分数据' }}</strong>
                     <button type="button" :disabled="reviewLoading" @click="loadSelectedReview">
                       {{ reviewLoading ? '读取中' : (selectedReview?.error ? '重试报告' : '读取复盘报告') }}
                     </button>
@@ -6339,6 +6464,7 @@ function clearPlayerFocus() {
 .phase-vote-layout,
 .phase-night-matrix,
 .phase-speech-timeline,
+.phase-result-summary,
 .phase-generic-evidence {
   display: grid;
   gap: 8px;
@@ -6515,6 +6641,58 @@ function clearPlayerFocus() {
 
 .phase-generic-evidence {
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.phase-result-summary {
+  padding: 10px;
+  border: 1px solid rgba(93, 48, 17, 0.14);
+  background: rgba(255, 239, 194, 0.46);
+}
+
+.phase-result-winner {
+  display: grid;
+  gap: 3px;
+}
+
+.phase-result-winner small,
+.phase-result-summary small {
+  color: rgba(74, 37, 15, 0.56);
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.phase-result-winner b {
+  color: #7f2430;
+  font-size: 20px;
+  font-weight: 950;
+}
+
+.phase-result-summary p {
+  margin: 0;
+  color: rgba(59, 28, 9, 0.78);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.phase-result-summary > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 6px;
+}
+
+.phase-result-summary > div:last-child span {
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px;
+  border: 1px solid rgba(93, 48, 17, 0.1);
+  background: rgba(255, 252, 245, 0.4);
+}
+
+.phase-result-summary > div:last-child b {
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 950;
 }
 
 .phase-generic-evidence span {

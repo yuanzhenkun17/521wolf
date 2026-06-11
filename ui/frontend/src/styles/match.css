@@ -931,15 +931,15 @@
 .player-command-panel .skill-card.white-wolf-card {
   border-color: rgba(87, 31, 13, 0.72);
   background-color: rgba(54, 19, 14, 0.55);
-  background-image: url("/skill-cards/white-wolf-burst.png");
+  background-image: url("/skill-cards/optimized/white-wolf-burst-512.webp");
 }
 
 .player-command-panel .skill-card.witch-antidote-card {
-  background-image: url("/skill-cards/witch-antidote.png");
+  background-image: url("/skill-cards/optimized/witch-antidote-512.webp");
 }
 
 .player-command-panel .skill-card.witch-poison-card {
-  background-image: url("/skill-cards/witch-poison.png");
+  background-image: url("/skill-cards/optimized/witch-poison-512.webp");
 }
 
 .player-command-panel .skill-card:disabled,

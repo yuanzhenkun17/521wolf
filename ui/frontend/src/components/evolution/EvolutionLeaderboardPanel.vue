@@ -78,7 +78,7 @@ function rowTypeLabel(item: EvolutionLeaderboardRow) {
 
 function scoreLabel(item: EvolutionLeaderboardRow) {
   const value = Number(item?.scorePct)
-  return Number.isFinite(value) ? `${Math.round(value)}%` : '—'
+  return Number.isFinite(value) ? value.toFixed(2) : '—'
 }
 
 function winRateLabel(item: EvolutionLeaderboardRow) {

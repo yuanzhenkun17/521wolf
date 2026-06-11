@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
-import { buildAssessmentScores } from '../../composables/assessmentScores.ts'
 import JudgeEvidencePanel from './JudgeEvidencePanel.vue'
 import {
   displayActionLabel,
@@ -40,10 +39,16 @@ const flowDataPayload = computed(() => {
 })
 const flowDataError = computed(() => props.flowData?.error || '')
 const reviewFlowDecisions = computed(() => {
-  const flowRows = decisionArray(flowDataPayload.value?.decisions)
+  const flowRows = [
+    flowDataPayload.value?.decisions,
+    flowDataPayload.value?.rows,
+    flowDataPayload.value?.items
+  ].flatMap(decisionArray)
   if (flowRows.length) return dedupeDecisions(flowRows)
   const candidates = [
     reviewData.value?.flow_data?.decisions,
+    reviewData.value?.flow_data?.rows,
+    reviewData.value?.flow_data?.items,
     props.game?.decisions,
     reviewData.value?.decisions,
     reviewData.value?.archive?.decisions,
@@ -53,6 +58,16 @@ const reviewFlowDecisions = computed(() => {
   return dedupeDecisions(candidates.flatMap(decisionArray))
 })
 const hasFlowChartData = computed(() => reviewFlowDecisions.value.length > 0)
+const reviewFlowPlayers = computed(() => {
+  const candidates = [
+    flowDataPayload.value?.players,
+    props.game?.players,
+    reviewData.value?.players,
+    reviewData.value?.game?.players,
+    reviewData.value?.snapshot?.players
+  ]
+  return candidates.find((value) => Array.isArray(value) && value.length) || []
+})
 const flowDecisionCount = computed(() => {
   const value = Number(
     flowDataPayload.value?.decision_count
@@ -125,21 +140,7 @@ const reviewPlayerScores = computed(() => {
   const raw = candidates.find((candidate) =>
     Array.isArray(candidate) ? candidate.length > 0 : candidate && typeof candidate === 'object' && Object.keys(candidate).length > 0
   )
-  if (!raw) {
-    return buildAssessmentScores(props.game).map((score) => ({
-      player_seat: score.player?.seat ?? score.player?.id,
-      role: score.player?.role ?? score.player?.role_hint,
-      speech_score: score.speech / 100,
-      vote_score: score.vote / 100,
-      skill_score: score.skill / 100,
-      logic_score: score.logic / 100,
-      information_score: score.information / 100,
-      team_score: score.team / 100,
-      cooperation_score: score.cooperation / 100,
-      role_score: score.role_score / 100,
-      overall_score: score.role_score / 100
-    }))
-  }
+  if (!raw) return []
   if (Array.isArray(raw)) return raw
   if (raw && typeof raw === 'object') {
     return Object.entries(raw).map(([seat, score]) => {
@@ -155,16 +156,10 @@ const reviewPlayerScores = computed(() => {
 })
 const reviewScoreSource = computed(() => {
   if (!reviewScoreCards.value.length) return null
-  return reviewData.value ? 'report' : 'local_estimate'
+  return 'report'
 })
-const reviewScoreSourceLabel = computed(() =>
-  reviewScoreSource.value === 'local_estimate'
-    ? '本地推算，仅供浏览'
-    : '复盘报告评分'
-)
-const reviewScoreSourceClass = computed(() =>
-  reviewScoreSource.value === 'local_estimate' ? 'local-estimate' : 'report'
-)
+const reviewScoreSourceLabel = computed(() => '复盘报告真实评分')
+const reviewScoreSourceClass = computed(() => 'report')
 const reviewTurningPoints = computed(() => reviewData.value?.turning_points || [])
 const reviewCounterfactuals = computed(() => reviewData.value?.counterfactuals || [])
 const reviewTimeline = computed(() => reviewData.value?.timeline || [])
@@ -216,10 +211,13 @@ const scoreDimensions = [
 const overallScoreField = { fields: ['role_score', 'overall_score', 'overall', 'total_score'] }
 const reviewScoreCards = computed(() =>
   reviewPlayerScores.value.map((score, index) => {
-    const dimensions = scoreDimensions.map((dim) => ({
-      ...dim,
-      value: scorePercent(scoreValue(score, dim))
-    }))
+    const dimensions = scoreDimensions.flatMap((dim) => {
+      const rawValue = scoreValue(score, dim, null)
+      return rawValue == null ? [] : [{
+        ...dim,
+        value: scorePercent(rawValue)
+      }]
+    })
     const rawOverall = scoreValue(score, overallScoreField, null)
     const dimensionAverage = dimensions.length
       ? Math.round(dimensions.reduce((sum, dim) => sum + dim.value, 0) / dimensions.length)
@@ -514,7 +512,7 @@ function jsonText(value) {
       </section>
 
       <template v-if="canShowFlowChartGate">
-        <VoteFlowSankey v-if="showFlowCharts" :decisions="reviewFlowDecisions" :players="game.players || []" />
+        <VoteFlowSankey v-if="showFlowCharts" :decisions="reviewFlowDecisions" :players="reviewFlowPlayers" />
         <section v-else class="review-flow-status">
           <header class="review-flow-status-head">
             <h4>流向图</h4>
