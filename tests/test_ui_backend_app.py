@@ -5723,6 +5723,41 @@ def test_background_task_loads_are_coalesced_with_force_refresh(
     assert _fake_ui_pg_provider.db.background_reads == 2
 
 
+def test_expired_background_task_refresh_does_not_block_requests(
+    tmp_path: Path,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UI_BACKGROUND_REFRESH_INTERVAL_SECONDS", "60")
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path), model=FakeModel())
+    persistence = store.task_service._persistence
+    persistence.load_background_tasks()
+
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def slow_refresh() -> None:
+        nonlocal calls
+        calls += 1
+        started.set()
+        release.wait(timeout=2)
+
+    monkeypatch.setenv("UI_BACKGROUND_REFRESH_INTERVAL_SECONDS", "0")
+    monkeypatch.setattr(persistence, "_refresh_background_tasks", slow_refresh)
+
+    before = time.monotonic()
+    persistence.load_background_tasks()
+    elapsed = time.monotonic() - before
+
+    assert elapsed < 0.2
+    assert started.wait(timeout=1)
+    persistence.load_background_tasks()
+    assert calls == 1
+
+    release.set()
+
+
 def test_background_tasks_persist_is_thread_safe(
     tmp_path: Path,
     _fake_ui_pg_provider: _UiFakeStorageProvider,

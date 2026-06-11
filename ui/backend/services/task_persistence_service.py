@@ -34,6 +34,8 @@ class TaskPersistenceService:
         self._open_connection = open_connection
         self._task_event_log = task_event_log
         self._background_load_lock = threading.Lock()
+        self._background_load_state_lock = threading.Lock()
+        self._background_refreshing = False
         self._last_background_load_monotonic = 0.0
 
     @staticmethod
@@ -183,10 +185,29 @@ class TaskPersistenceService:
         now = time.monotonic()
         if not force and now - self._last_background_load_monotonic < refresh_interval:
             return
+        if not force and self._last_background_load_monotonic > 0:
+            with self._background_load_state_lock:
+                now = time.monotonic()
+                if now - self._last_background_load_monotonic < refresh_interval or self._background_refreshing:
+                    return
+                self._background_refreshing = True
+            threading.Thread(
+                target=self._refresh_background_tasks_in_background,
+                name="ui-background-task-refresh",
+                daemon=True,
+            ).start()
+            return
+        self._refresh_background_tasks()
+
+    def _refresh_background_tasks_in_background(self) -> None:
+        try:
+            self._refresh_background_tasks()
+        finally:
+            with self._background_load_state_lock:
+                self._background_refreshing = False
+
+    def _refresh_background_tasks(self) -> None:
         with self._background_load_lock:
-            now = time.monotonic()
-            if not force and now - self._last_background_load_monotonic < refresh_interval:
-                return
             conn = None
             try:
                 conn = self._open_connection()
