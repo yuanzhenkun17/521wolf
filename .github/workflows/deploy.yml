@@ -12,7 +12,7 @@ on:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -32,8 +32,8 @@ jobs:
       SERVICE_NAME: ${{ vars.DEPLOY_SERVICE_NAME || '521wolf' }}
       HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL || 'http://127.0.0.1:8000/api/health' }}
       HEALTH_TIMEOUT_SECONDS: ${{ vars.DEPLOY_HEALTH_TIMEOUT_SECONDS || '60' }}
-      APP_BASE_URL: ${{ vars.DEPLOY_APP_BASE_URL || 'http://127.0.0.1' }}
-      API_HEALTH_URL: ${{ vars.DEPLOY_API_HEALTH_URL || 'http://127.0.0.1/api/health' }}
+      APP_BASE_URL: ${{ vars.DEPLOY_APP_BASE_URL || format('http://{0}', secrets.DEPLOY_HOST) }}
+      API_HEALTH_URL: ${{ vars.DEPLOY_API_HEALTH_URL || vars.DEPLOY_HEALTH_URL || 'http://127.0.0.1:8000/api/health' }}
       POST_DEPLOY_SMOKE: ${{ vars.POST_DEPLOY_SMOKE || 'true' }}
       CHECK_NGINX: ${{ vars.POST_DEPLOY_CHECK_NGINX || 'true' }}
       CHECK_SYSTEMD: ${{ vars.POST_DEPLOY_CHECK_SYSTEMD || 'true' }}

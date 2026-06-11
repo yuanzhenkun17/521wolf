@@ -164,8 +164,8 @@ app shell, referenced JS/CSS assets, nginx config, the API/worker systemd
 services, and the HTTP listener. Useful overrides:
 
 ```text
-APP_BASE_URL=http://127.0.0.1
-API_HEALTH_URL=http://127.0.0.1/api/health
+APP_BASE_URL=http://117.72.217.45
+API_HEALTH_URL=http://127.0.0.1:8000/api/health
 APP_DIR=/opt/521wolf/app
 POST_DEPLOY_SMOKE=true
 CHECK_NGINX=true
@@ -237,8 +237,8 @@ DEPLOY_ENV_FILE=/opt/521wolf/.env
 DEPLOY_SERVICE_NAME=521wolf
 DEPLOY_HEALTH_URL=http://127.0.0.1:8000/api/health
 DEPLOY_HEALTH_TIMEOUT_SECONDS=60
-DEPLOY_APP_BASE_URL=http://127.0.0.1
-DEPLOY_API_HEALTH_URL=http://127.0.0.1/api/health
+DEPLOY_APP_BASE_URL=http://117.72.217.45
+DEPLOY_API_HEALTH_URL=http://127.0.0.1:8000/api/health
 POST_DEPLOY_SMOKE=true
 POST_DEPLOY_CHECK_NGINX=true
 POST_DEPLOY_CHECK_SYSTEMD=true
@@ -262,5 +262,17 @@ selected mirror. The deploy script restores `uv.lock` after dependency sync.
 Keep production database and server runtime secrets in `/opt/521wolf/.env`.
 Keep GitHub-side deployment and real LLM smoke secrets in the protected
 `production` environment. Do not commit them.
+
+Model Profile writes require both settings admin auth and a stable encryption
+key in `/opt/521wolf/.env`:
+
+```text
+SETTINGS_ADMIN_ENABLED=true
+SETTINGS_ADMIN_TOKEN=<strong-random-token>
+SETTINGS_SECRET_ENCRYPTION_KEY=<openssl rand -hex 32>
+```
+
+Do not rotate `SETTINGS_SECRET_ENCRYPTION_KEY` casually. Existing saved model
+profile secrets are encrypted with it and must be re-entered if the key changes.
 
 Keep CD restricted to `main` and the protected `production` environment.

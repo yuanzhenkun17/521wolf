@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_BASE_URL="${APP_BASE_URL:-http://127.0.0.1}"
-API_HEALTH_URL="${API_HEALTH_URL:-http://127.0.0.1/api/health}"
+API_HEALTH_URL="${API_HEALTH_URL:-http://127.0.0.1:8000/api/health}"
 APP_DIR="${APP_DIR:-/opt/521wolf/app}"
 SERVICE_NAME="${SERVICE_NAME:-521wolf}"
 WORKER_SERVICE_NAME="${WORKER_SERVICE_NAME:-521wolf-worker}"
