@@ -204,7 +204,9 @@ const effectiveExitDisabled = computed(() => hasExplicitTopNavProp('exitDisabled
 
 const effectiveAudioEnabled = computed(() => hasExplicitUiProp('audioEnabled') ? props.audioEnabled : uiStore.audioEnabled)
 const effectiveTtsEnabled = computed(() => hasExplicitUiProp('ttsEnabled') ? props.ttsEnabled : uiStore.ttsEnabled)
-const effectiveTtsAvailable = computed(() => hasExplicitUiProp('ttsAvailable') ? props.ttsAvailable : uiStore.ttsAvailable)
+const configuredTtsAvailable = computed(() => hasExplicitUiProp('ttsAvailable') ? props.ttsAvailable : uiStore.ttsAvailable)
+const effectiveTtsAvailable = computed(() => !replayStore.isReplayMode && Boolean(configuredTtsAvailable.value))
+const ttsDisabledTitle = computed(() => replayStore.isReplayMode ? '回放不支持发言朗读' : '发言朗读未配置')
 
 const streamStatusBadge = computed(() => {
   const session = effectiveActiveSession.value
@@ -340,8 +342,8 @@ onBeforeUnmount(clearExitConfirm)
         :class="{ muted: !effectiveTtsEnabled, disabled: !effectiveTtsAvailable }"
         type="button"
         :disabled="!effectiveTtsAvailable"
-        :title="!effectiveTtsAvailable ? '发言朗读未配置' : (effectiveTtsEnabled ? '关闭发言朗读' : '开启发言朗读')"
-        :aria-label="!effectiveTtsAvailable ? '发言朗读未配置' : (effectiveTtsEnabled ? '关闭发言朗读' : '开启发言朗读')"
+        :title="!effectiveTtsAvailable ? ttsDisabledTitle : (effectiveTtsEnabled ? '关闭发言朗读' : '开启发言朗读')"
+        :aria-label="!effectiveTtsAvailable ? ttsDisabledTitle : (effectiveTtsEnabled ? '关闭发言朗读' : '开启发言朗读')"
         @click="emit('toggle-tts')"
       >
         <span class="audio-icon" aria-hidden="true">

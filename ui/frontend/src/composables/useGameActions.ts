@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { API, createGameApi } from './gameApi.ts'
 import { createLatestOnlyTracker } from './latestOnly.ts'
 import { createNoticeAutoDismiss } from './noticeAutoDismiss.ts'
@@ -35,6 +35,7 @@ interface GameActionsOptions {
   apiBase?: string
   historyApi?: LooseRecord
   sceneApi?: LooseRecord
+  audioApi?: LooseRecord
   installLifecycle?: boolean
   restoreStoredGameOnMount?: boolean | 'immediate'
   restoreStoredGameDelayMs?: number
@@ -57,6 +58,13 @@ interface StartOptions extends LooseRecord {
 interface StartNoticeOptions {
   successType?: NoticeType
   successMessage?: string
+}
+
+interface PendingLiveEvent {
+  gameId: string
+  type: string
+  payload: LooseRecord
+  parseError: unknown | null
 }
 
 const SPEECH_EVENT_TYPES = new Set([
@@ -130,6 +138,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
   const { apiFetch, apiBase } = apiClient
   let historyApi = options.historyApi || {}
   let sceneApi = options.sceneApi || {}
+  const audioApi = ref<LooseRecord>(options.audioApi || {})
   let timer: TimerId = null
   let speechTimer: TimerId = null
   let eventSource: EventSource | null = null
@@ -140,6 +149,9 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
   let mountedRestoreIdle = false
   let lastPendingKey = ''
   let lastStartOptions: StartOptions = {}
+  let pendingLiveEvents: PendingLiveEvent[] = []
+  let flushingPendingLiveEvents = false
+  let ttsSettlePending = false
   const healthRequests = createLatestOnlyTracker()
   const gameSnapshotRequests = createLatestOnlyTracker()
   const humanActionRequests = createLatestOnlyTracker()
@@ -154,6 +166,28 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
   function setHistoryApi(api: LooseRecord = {}) { historyApi = api || {} }
 
   function setSceneApi(api: LooseRecord = {}) { sceneApi = api || {} }
+
+  function setAudioApi(api: LooseRecord = {}) { audioApi.value = api || {} }
+
+  function optionValue(item: unknown) {
+    return item && typeof item === 'object' && 'value' in item ? (item as LooseRecord).value : item
+  }
+
+  function watchTtsBackpressureActive() {
+    if (!state.isWatch.value || !state.watchRunning.value || state.isReplayMode.value) return false
+    return Boolean(ttsSettlePending || optionValue(audioApi.value.ttsNarrationActive))
+  }
+
+  function watchTtsPotentiallyEnabled() {
+    if (!state.isWatch.value || state.isReplayMode.value) return false
+    return Boolean(optionValue(audioApi.value.ttsEnabled) && optionValue(audioApi.value.ttsAvailable))
+  }
+
+  function clearPendingLiveEvents() {
+    pendingLiveEvents = []
+    flushingPendingLiveEvents = false
+    ttsSettlePending = false
+  }
 
   function setMatchNotice(type: NoticeType, message: string) {
     if (!state.matchNotice) return
@@ -232,6 +266,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
 
   function closeLiveTransport() {
     state.watchRunning.value = false
+    clearPendingLiveEvents()
     liveStream.closeAll()
     eventSource = null
     eventSourceGameId = null
@@ -367,6 +402,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
 
   function resetLiveState() {
     invalidateLiveHttpRequests()
+    clearPendingLiveEvents()
     clearRoleAssignmentTimers()
     state.isReplayMode.value = false
     state.lastLiveGame.value = null
@@ -774,6 +810,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
 
   function stepGame() {
     if (state.isReplayMode.value) return Promise.resolve()
+    if (watchTtsBackpressureActive()) return Promise.resolve(null)
     return loadCurrentGame({ advance: state.backendMode.value === 'mock' })
   }
 
@@ -784,6 +821,96 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       mode: liveGame.mode,
       pending
     })
+  }
+
+  function pendingLiveEventFromContext({ id, event, payload, parseError }: LooseRecord): PendingLiveEvent {
+    return {
+      gameId: String(id || state.liveGame.value?.game_id || ''),
+      type: String(event?.type || ''),
+      payload: payload || {},
+      parseError: parseError || null
+    }
+  }
+
+  function liveEventMayTriggerTts(item: PendingLiveEvent) {
+    if (!watchTtsPotentiallyEnabled() || item.type !== 'log') return false
+    const logType = String(
+      item.payload?.type
+      || item.payload?.event_type
+      || item.payload?.action
+      || item.payload?.action_type
+      || item.payload?.kind
+      || ''
+    )
+    return SPEECH_EVENT_TYPES.has(logType)
+  }
+
+  async function applyPendingLiveEvent(item: PendingLiveEvent) {
+    if (!item.gameId || state.liveGame.value?.game_id !== item.gameId) return
+    if (item.parseError) {
+      refreshLiveGameSilently()
+      return
+    }
+    if (item.type === 'log') {
+      try {
+        applyLiveLog(item.payload)
+      } catch {
+        refreshLiveGameSilently()
+      }
+      return
+    }
+    if (item.type === 'decision') {
+      try {
+        applyLiveDecision(item.payload)
+      } catch {
+        refreshLiveGameSilently()
+      }
+      return
+    }
+    if (item.type === 'decision_needed') {
+      try {
+        applyPendingHumanAction(item.payload)
+      } catch {
+        refreshLiveGameSilently()
+      }
+      return
+    }
+    if (item.type === 'done') {
+      eventSource = null
+      eventSourceGameId = null
+      try {
+        setGameSnapshot(item.payload, { mode: state.liveGame.value?.mode })
+      } catch {
+        void loadCurrentGame({ silent: true })
+      }
+      historyApi.refreshHistoryList?.({ silent: true })
+    }
+  }
+
+  async function applyLiveEventWithTtsSettle(item: PendingLiveEvent) {
+    const shouldSettle = liveEventMayTriggerTts(item)
+    if (shouldSettle) ttsSettlePending = true
+    try {
+      await applyPendingLiveEvent(item)
+      await nextTick()
+    } finally {
+      if (shouldSettle) ttsSettlePending = false
+    }
+  }
+
+  async function flushPendingLiveEvents() {
+    if (flushingPendingLiveEvents || watchTtsBackpressureActive()) return
+    flushingPendingLiveEvents = true
+    try {
+      while (pendingLiveEvents.length && !watchTtsBackpressureActive()) {
+        const item = pendingLiveEvents.shift()
+        if (!item) continue
+        await applyLiveEventWithTtsSettle(item)
+      }
+    } finally {
+      flushingPendingLiveEvents = false
+    }
+    if (pendingLiveEvents.length && !watchTtsBackpressureActive()) void flushPendingLiveEvents()
   }
 
   const liveStream = createResumableEventSource({
@@ -809,45 +936,14 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
       state.activeSession.value = { ...state.activeSession.value, sseConnected: false }
       state.watchRunning.value = isReturnableGame(state.liveGame.value)
     },
-    async onEvent({ event, payload, parseError }) {
-      if (parseError) {
-        refreshLiveGameSilently()
+    async onEvent(context) {
+      const pending = pendingLiveEventFromContext(context)
+      if (watchTtsBackpressureActive()) {
+        pendingLiveEvents.push(pending)
         return
       }
-      if (event.type === 'log') {
-        try {
-          applyLiveLog(payload)
-        } catch {
-          refreshLiveGameSilently()
-        }
-        return
-      }
-      if (event.type === 'decision') {
-        try {
-          applyLiveDecision(payload)
-        } catch {
-          refreshLiveGameSilently()
-        }
-        return
-      }
-      if (event.type === 'decision_needed') {
-        try {
-          applyPendingHumanAction(payload)
-        } catch {
-          refreshLiveGameSilently()
-        }
-        return
-      }
-      if (event.type === 'done') {
-        eventSource = null
-        eventSourceGameId = null
-        try {
-          setGameSnapshot(payload, { mode: state.liveGame.value?.mode })
-        } catch {
-          loadCurrentGame({ silent: true })
-        }
-        historyApi.refreshHistoryList?.({ silent: true })
-      }
+      await applyLiveEventWithTtsSettle(pending)
+      await flushPendingLiveEvents()
     }
   })
 
@@ -872,12 +968,17 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
 
     stepGame()
     timer = window.setInterval(() => {
-      if (!state.loading.value && isReturnableGame(state.liveGame.value)) stepGame()
+      if (!state.loading.value && isReturnableGame(state.liveGame.value) && !watchTtsBackpressureActive()) stepGame()
     }, 1500)
   }
 
   function refreshLiveGameSilently() {
-    if (state.watchRunning.value && !state.loading.value && isReturnableGame(state.liveGame.value)) {
+    if (
+      state.watchRunning.value
+      && !state.loading.value
+      && isReturnableGame(state.liveGame.value)
+      && !watchTtsBackpressureActive()
+    ) {
       loadCurrentGame({ silent: true })
     }
   }
@@ -946,6 +1047,14 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     if (timer) return
     timer = window.setInterval(progressPlayerGame, 1500)
   }
+
+  const stopTtsBackpressureWatch = watch(
+    () => watchTtsBackpressureActive(),
+    (active) => {
+      if (!active) void flushPendingLiveEvents()
+    },
+    { flush: 'post' }
+  )
 
   function toggleWatch() {
     if (state.watchRunning.value) {
@@ -1126,6 +1235,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
 
     onBeforeUnmount(() => {
       stopWatch()
+      stopTtsBackpressureWatch()
       clearMountedRestoreTimer()
       clearRoleAssignmentTimers()
       clearSpeechTimer()
@@ -1134,7 +1244,7 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
   }
 
   return {
-    API, apiBase, apiFetch, setHistoryApi, setSceneApi,
+    API, apiBase, apiFetch, setHistoryApi, setSceneApi, setAudioApi,
     refreshHealth, request, startMode, resetGame, exitGame,
     stepGame, startWatch, startFromJudgeBoard, stopWatch, toggleWatch,
     clearSpeechTimer, startSpeechTimer, submitSpeech, submitVote,

@@ -638,6 +638,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
   const replayChunkRequestKeysByGameId = new Map()
   const replayCacheVersionsByGameId = new Map()
   const flowDataPromises = new Map()
+  let replayEntryRunId = 0
   let historyListLoaded = false
   const historyPageSize = Math.max(1, Number(options.historyListLimit || DEFAULT_HISTORY_PAGE_SIZE))
   const historyPagination = ref(createPagination(historyPageSize))
@@ -680,6 +681,53 @@ function useGameHistory(state, options: LooseRecord = {}) {
 
   function setSceneApi(api = {}) {
     sceneApi = api || {}
+  }
+
+  function waitForDelay(ms) {
+    if (typeof window === 'undefined' || ms <= 0) return Promise.resolve()
+    return new Promise((resolve) => window.setTimeout(resolve, ms))
+  }
+
+  async function waitForCouncilSceneApi(timeoutMs = 7000) {
+    if (options.installLifecycle === false || typeof window === 'undefined') return sceneApi
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      if (typeof sceneApi.waitForCouncilModels === 'function') return sceneApi
+      await waitForDelay(80)
+    }
+    return sceneApi
+  }
+
+  function isCurrentReplayEntry(runId, gameId) {
+    return runId === replayEntryRunId
+      && state.isReplayMode.value
+      && String(state.replaySourceGameId.value || '') === String(gameId || '')
+  }
+
+  async function completeReplayEntryWhenReady(runId, gameId) {
+    if (options.installLifecycle === false) {
+      if (isCurrentReplayEntry(runId, gameId)) {
+        state.roleAssignmentComplete.value = true
+        state.judgeBoardStarting.value = false
+      }
+      return
+    }
+    const api = await waitForCouncilSceneApi()
+    try {
+      if (typeof api.waitForCouncilModels === 'function') {
+        await Promise.race([
+          Promise.resolve(api.waitForCouncilModels()),
+          waitForDelay(18000)
+        ])
+      }
+    } catch {
+      // Replay entry should not deadlock when scene model loading fails.
+    } finally {
+      if (!isCurrentReplayEntry(runId, gameId)) return
+      state.roleAssignmentComplete.value = true
+      state.judgeBoardStarting.value = false
+      api.scheduleSyncCouncilScene?.()
+    }
   }
 
   function clearHistoryNotice() {
@@ -1767,6 +1815,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     const source = sourceOverride
     if (!source) return
     const gameId = source.game_id || state.selectedHistoryGame.value?.game_id || null
+    const runId = ++replayEntryRunId
     if (gameId) replaySourceByGameId.set(String(gameId), source)
     actionApi.stopWatch?.()
     if (!state.isReplayMode.value) {
@@ -1776,9 +1825,11 @@ function useGameHistory(state, options: LooseRecord = {}) {
     state.replaySourceGameId.value = gameId
     state.replayTotal.value = replayTotalForSource(source)
     state.judgeBoardStarted.value = true
-    state.roleAssignmentComplete.value = true
+    state.judgeBoardStarting.value = options.installLifecycle !== false
+    state.roleAssignmentComplete.value = options.installLifecycle === false
     applyReplayCursor(cursor, source)
     writeHistoryViewRoute('match')
+    void completeReplayEntryWhenReady(runId, gameId)
   }
 
   async function enterReplayPage(page = state.selectedHistoryPage.value) {
@@ -1824,6 +1875,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
 
   function exitReplayMode() {
     if (!state.isReplayMode.value) return
+    replayEntryRunId += 1
     replayCursorRequests.invalidate()
     stopReplayTimer()
     state.isReplayMode.value = false
@@ -1834,6 +1886,7 @@ function useGameHistory(state, options: LooseRecord = {}) {
     state.replayTotal.value = 0
     state.replayEventLabel.value = ''
     state.replayGame.value = null
+    state.judgeBoardStarting.value = false
     if (isReturnableGame(state.lastLiveGame.value) && !state.liveGame.value) state.liveGame.value = state.lastLiveGame.value
     const hasLiveGame = isReturnableGame(state.liveGame.value)
     const nextView = hasLiveGame ? 'match' : 'lobby'

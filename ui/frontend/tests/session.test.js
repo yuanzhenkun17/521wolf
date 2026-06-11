@@ -221,6 +221,16 @@ test('game actions use route-first view navigation instead of direct hash writes
   assert.match(source, /writeCurrentViewRoute\(state\.currentView, 'lobby'\)/)
 })
 
+test('match boot overlay includes replay model loading', () => {
+  const source = readSource('../src/App.vue')
+
+  assert.doesNotMatch(source, /&&\s*!replayStore\.isReplayMode/)
+  assert.match(source, /const matchGamePresent = computed\(\(\) => replayStore\.isReplayMode/)
+  assert.match(source, /!matchGamePresent\.value/)
+  assert.match(source, /读取回放/)
+  assert.match(source, /加载回放模型/)
+})
+
 test('game history uses route-first view navigation instead of direct view or hash writes', () => {
   const source = readSource('../src/composables/useGameHistory.ts')
 
@@ -326,6 +336,56 @@ test('history replay writes replayGame and restores the live game on exit', () =
   assert.equal(state.replayGame.value, null)
   assert.equal(state.liveGame.value.game_id, live.game_id)
   assert.equal(state.game.value.game_id, live.game_id)
+}))
+
+test('history replay waits for council models before completing match entry', () => withWindow(async () => {
+  const state = useGameState()
+  const ready = createDeferred()
+  let waitForModels = 0
+  let syncScene = 0
+  let history
+
+  state.selectedHistoryGame.value = game('history-replay-ready', {
+    winner: 'villagers',
+    logs: [
+      { type: 'setup', day: 1, phase: 'setup', message: 'start', speaker: '法官' },
+      { type: 'speech', day: 1, phase: 'speech', actor_id: 1, message: 'hello', speaker: '1号' }
+    ]
+  })
+
+  const unmount = mountLifecycleComposable(() => {
+    history = useGameHistory(state, {
+      apiFetch: async () => ({ games: [], pagination: { total: 0, offset: 0, limit: 8, returned: 0, has_more: false } }),
+      sceneApi: {
+        waitForCouncilModels() {
+          waitForModels += 1
+          return ready.promise
+        },
+        scheduleSyncCouncilScene() {
+          syncScene += 1
+        }
+      }
+    })
+  })
+
+  history.enterReplayAt(1)
+  await flushPromises()
+
+  assert.equal(state.isReplayMode.value, true)
+  assert.equal(state.currentView.value, 'match')
+  assert.equal(state.replayGame.value.game_id, 'history-replay-ready')
+  assert.equal(state.judgeBoardStarted.value, true)
+  assert.equal(state.judgeBoardStarting.value, true)
+  assert.equal(state.roleAssignmentComplete.value, false)
+  assert.equal(waitForModels, 1)
+
+  ready.resolve()
+  await flushPromises(10)
+
+  assert.equal(state.judgeBoardStarting.value, false)
+  assert.equal(state.roleAssignmentComplete.value, true)
+  assert.equal(syncScene >= 1, true)
+  unmount()
 }))
 
 test('exitGame stops the live game even when replay mode is active', () => withWindow(async () => {
@@ -1762,6 +1822,93 @@ test('SSE errors keep polling active and schedule reconnect', () => withWindow((
   actions.stopWatch()
 }))
 
+test('watch TTS backpressure queues SSE events and pauses live polling', () => withWindow(async ({ timers }) => {
+  const instances = []
+  class FakeEventSource {
+    constructor(url) {
+      this.url = url
+      this.listeners = {}
+      instances.push(this)
+    }
+
+    addEventListener(type, callback) {
+      this.listeners[type] = callback
+    }
+
+    close() {}
+
+    emit(type, data = {}, options = {}) {
+      return this.listeners[type]?.({
+        type,
+        data: JSON.stringify(data),
+        lastEventId: options.lastEventId || '',
+        id: options.id || ''
+      })
+    }
+  }
+
+  globalThis.EventSource = FakeEventSource
+  const state = useGameState()
+  const requests = []
+  const ttsNarrationActive = ref(true)
+  state.backendMode.value = 'api'
+  state.liveGame.value = game('sse-tts-pause', {
+    mode: 'watch',
+    phase: 'speech',
+    waiting_for: 'none',
+    logs: []
+  })
+  const actions = useGameActions(state, {
+    installLifecycle: false,
+    apiBase: '/api',
+    apiFetch: async (path) => {
+      requests.push(path)
+      if (path === '/games/sse-tts-pause') return state.liveGame.value
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+  actions.setAudioApi({ ttsNarrationActive })
+
+  actions.startWatch()
+  assert.equal(instances.length, 1)
+  assert.equal(timers.intervalCount(), 1)
+
+  timers.runNextInterval()
+  await flushPromises()
+  assert.deepEqual(requests, [])
+
+  await instances[0].emit('log', {
+    type: 'speech',
+    actor_id: 1,
+    speaker: '1号',
+    message: '第一句',
+    visibility: 'public'
+  }, { lastEventId: '1' })
+  assert.equal(state.liveGame.value.logs.length, 0)
+
+  ttsNarrationActive.value = false
+  await nextTick()
+  await flushPromises(10)
+  assert.equal(state.liveGame.value.logs.length, 1)
+  assert.equal(state.liveGame.value.logs[0].message, '第一句')
+
+  timers.runNextInterval()
+  await flushPromises()
+  assert.deepEqual(requests, ['/games/sse-tts-pause'])
+
+  await instances[0].emit('log', {
+    type: 'speech',
+    actor_id: 2,
+    speaker: '2号',
+    message: '第二句',
+    visibility: 'public'
+  }, { lastEventId: '2' })
+  await flushPromises()
+  assert.equal(state.liveGame.value.logs.length, 2)
+  assert.equal(state.liveGame.value.logs[1].message, '第二句')
+  actions.stopWatch()
+}))
+
 test('game audio dispose clears delayed TTS retry timers', () => withWindow(async ({ timers }) => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => {
@@ -1994,6 +2141,129 @@ test('game audio uses the realtime TTS stream endpoint', () => withWindow(async 
   }
 }))
 
+test('game audio queues player speeches without interrupting active TTS', () => withWindow(async ({ timers }) => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  const sources = []
+  const stoppedSources = []
+
+  class FakeAudioContext {
+    constructor() {
+      this.currentTime = 1
+      this.destination = {}
+      this.state = 'running'
+    }
+    createBuffer(_channels, frameCount, sampleRate) {
+      return {
+        duration: frameCount / sampleRate,
+        getChannelData: () => new Float32Array(frameCount)
+      }
+    }
+    createBufferSource() {
+      const source = {
+        onended: null,
+        connect() {},
+        disconnect() {},
+        start() {
+          sources.push(source)
+        },
+        stop() {
+          stoppedSources.push(source)
+        }
+      }
+      return source
+    }
+    createGain() {
+      return {
+        gain: { value: 0 },
+        connect() {},
+        disconnect() {}
+      }
+    }
+    resume() {
+      return Promise.resolve()
+    }
+    close() {
+      return Promise.resolve()
+    }
+  }
+  window.AudioContext = FakeAudioContext
+
+  globalThis.fetch = async (_url, options = {}) => {
+    requests.push(JSON.parse(options.body))
+    let reads = 0
+    return {
+      ok: true,
+      headers: { get: (key) => key === 'X-TTS-Sample-Rate' ? '24000' : null },
+      body: {
+        getReader: () => ({
+          async read() {
+            reads += 1
+            return reads === 1
+              ? { done: false, value: new Uint8Array([0, 0, 255, 127]) }
+              : { done: true }
+          },
+          releaseLock() {}
+        })
+      }
+    }
+  }
+
+  try {
+    const runtime = {
+      currentView: ref('match'),
+      game: ref(null),
+      isReplayMode: ref(false),
+      externalStatus: ref({ tts: 'configured' }),
+      apiBase: ref('/api'),
+      roleAssignmentComplete: ref(true)
+    }
+    const audio = useGameAudio(runtime, { installLifecycle: false })
+    const firstSpeech = { type: 'speech', actor_id: 1, speaker: '1号', message: '我先发言。', visibility: 'public' }
+    const secondSpeech = { type: 'speech', actor_id: 2, speaker: '2号', message: '我接着发言。', visibility: 'public' }
+
+    runtime.game.value = game('audio-queued-tts', {
+      phase: 'speech',
+      waiting_for: 'speech',
+      logs: [firstSpeech]
+    })
+    await nextTick()
+    await flushPromises(10)
+
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].text, /我先发言。$/)
+    assert.equal(sources.length, 1)
+    assert.equal(audio.ttsNarrationActive.value, true)
+
+    runtime.game.value = game('audio-queued-tts', {
+      phase: 'speech',
+      waiting_for: 'speech',
+      logs: [firstSpeech, secondSpeech]
+    })
+    await nextTick()
+    await flushPromises(10)
+
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].text, /我先发言。$/)
+    assert.equal(stoppedSources.length, 0)
+    assert.equal(audio.ttsQueuedCount.value, 1)
+
+    sources[0].onended?.()
+    assert.equal(timers.timeoutCount(), 1)
+    timers.runNextTimeout()
+    await flushPromises(10)
+
+    assert.equal(requests.length, 2)
+    assert.match(requests[0].text, /我先发言。$/)
+    assert.match(requests[1].text, /我接着发言。$/)
+    assert.equal(stoppedSources.length, 0)
+    audio.dispose()
+  } finally {
+    if (originalFetch === undefined) delete globalThis.fetch
+    else globalThis.fetch = originalFetch
+  }
+}))
+
 test('game audio does not scan or request TTS outside match view', () => withWindow(async () => {
   const originalFetch = globalThis.fetch
   const requests = []
@@ -2024,6 +2294,46 @@ test('game audio does not scan or request TTS outside match view', () => withWin
     await flushPromises()
 
     assert.deepEqual(requests, [])
+    audio.dispose()
+  } finally {
+    if (originalFetch === undefined) delete globalThis.fetch
+    else globalThis.fetch = originalFetch
+  }
+}))
+
+test('game audio never requests TTS in replay mode', () => withWindow(async () => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (url) => {
+    requests.push(String(url))
+    throw new Error('tts should stay disabled in replay')
+  }
+
+  try {
+    const runtime = {
+      currentView: ref('match'),
+      game: ref(null),
+      isReplayMode: ref(true),
+      externalStatus: ref({ tts: 'configured' }),
+      apiBase: ref('/api'),
+      roleAssignmentComplete: ref(true)
+    }
+    const audio = useGameAudio(runtime, { installLifecycle: false })
+
+    runtime.game.value = game('audio-replay-tts', {
+      phase: 'speech',
+      waiting_for: 'speech',
+      logs: [
+        { type: 'speech', actor_id: 1, speaker: '1号', message: '这句来自回放。', visibility: 'public' }
+      ]
+    })
+    await nextTick()
+    await flushPromises()
+    audio.toggleTts()
+    await flushPromises()
+
+    assert.deepEqual(requests, [])
+    assert.equal(audio.ttsNarrationActive.value, false)
     audio.dispose()
   } finally {
     if (originalFetch === undefined) delete globalThis.fetch

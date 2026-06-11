@@ -214,6 +214,8 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
   const ttsError = ref('')
   const audioUnlocked = ref(false)
   const ttsSpeaking = ref(false)
+  const ttsQueuedCount = ref(0)
+  const ttsStreamActive = ref(false)
   let audioContext: AudioContext | null = null
   let bgmAudio: HTMLAudioElement | null = null
   let currentBgmKey = ''
@@ -234,6 +236,12 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
   const externalStatus = computed(() => valueOf(runtime.externalStatus))
   const apiBase = computed(() => String(valueOf(runtime.apiBase) || '/api').replace(/\/$/, ''))
   const ttsAvailable = computed(() => TTS_CONFIG.enabled && externalStatus.value?.tts === 'configured')
+  const ttsNarrationActive = computed(() => Boolean(
+    ttsEnabled.value
+    && ttsAvailable.value
+    && !isReplayMode.value
+    && (ttsSpeaking.value || ttsStreamActive.value || ttsQueuedCount.value > 0)
+  ))
   const audioRuntimeActive = computed(() => currentView.value === 'match')
   const bgmKey = computed(() => {
     if (currentView.value === 'lobby') return 'lobby'
@@ -282,6 +290,14 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     ttsDelayTimer = 0
   }
 
+  function syncTtsQueueState() {
+    ttsQueuedCount.value = ttsQueue.length
+  }
+
+  function syncTtsStreamState() {
+    ttsStreamActive.value = Boolean(activeTtsKey || activeTtsController || activeTtsStreamSources.size)
+  }
+
   function scheduleNextTts(delay = 100) {
     if (!hasWindow()) return
     clearTtsDelayTimer()
@@ -299,6 +315,7 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
       ttsQueue = []
       ttsQueuedKeys = new Set()
     }
+    syncTtsQueueState()
     activeTtsController?.abort?.()
     activeTtsController = null
     if (activeTtsStreamSources.size) {
@@ -317,6 +334,7 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
       activeTtsGain = null
     }
     ttsSpeaking.value = false
+    syncTtsStreamState()
     void syncBgm()
   }
 
@@ -331,6 +349,7 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     activeTtsKey = ''
     gain?.disconnect?.()
     ttsSpeaking.value = false
+    syncTtsStreamState()
     void syncBgm()
     if (continueQueue) scheduleNextTts(100)
   }
@@ -497,12 +516,14 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     const next = ttsQueue.shift()
     if (!next) return
     if (next.key) ttsQueuedKeys.delete(next.key)
+    syncTtsQueueState()
 
     const controller = new AbortController()
     const runId = ttsRunId + 1
     ttsRunId = runId
     activeTtsKey = next.key || ''
     activeTtsController = controller
+    syncTtsStreamState()
     try {
       if (!ensureAudioContext()) throw new Error('浏览器不支持流式音频播放')
       if (!audioUnlocked.value) await unlockAudio()
@@ -518,25 +539,32 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
   }
 
   function enqueueTts(logs: Array<Partial<GameLog> | LooseRecord>) {
-    const item = logs
+    if (!canPlayTts()) return
+    const queuedNow = new Set<string>()
+    const items = logs
       .map((log) => ({
         key: speechLogKey(log, 0),
         text: buildTtsText(log),
         speaker: cleanTtsText(log?.speaker || (log?.actor_id ? `${log.actor_id}号` : '')),
         seat: Number(log?.actor_id || log?.seat || 0) || null
       }))
-      .filter((item) => item.text && !ttsQueuedKeys.has(item.key))
-      .at(-1)
-    if (!item || activeTtsKey === item.key) return
-    if (activeTtsKey || activeTtsStreamSources.size || activeTtsController || ttsSpeaking.value) {
-      stopTts({ clearQueue: true })
+      .filter((item) => {
+        if (!item.text || !item.key) return false
+        if (item.key === activeTtsKey || ttsQueuedKeys.has(item.key) || queuedNow.has(item.key)) return false
+        queuedNow.add(item.key)
+        return true
+      })
+    if (!items.length) return
+    for (const item of items) {
+      ttsQueue.push(item)
+      ttsQueuedKeys.add(item.key)
     }
-    ttsQueuedKeys = new Set([item.key])
-    ttsQueue = [item]
-    playNextTts()
+    syncTtsQueueState()
+    void playNextTts()
   }
 
   function enqueueLatestTts({ includeSeen = false }: { includeSeen?: boolean } = {}) {
+    if (!canPlayTts()) return false
     const items = speechLogItems(game.value)
     for (let index = items.length - 1; index >= 0; index -= 1) {
       const item = items[index]
@@ -720,6 +748,10 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
 
   function toggleTts() {
     if (!ttsAvailable.value) return
+    if (isReplayMode.value) {
+      stopTts()
+      return
+    }
     ttsEnabled.value = !ttsEnabled.value
     writeBooleanPreference(TTS_ENABLED_KEY, ttsEnabled.value)
     if (!ttsEnabled.value) {
@@ -871,6 +903,8 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     ttsEnabled,
     ttsAvailable,
     ttsSpeaking,
+    ttsQueuedCount,
+    ttsNarrationActive,
     ttsError,
     audioUnlocked,
     audioSceneLabel,

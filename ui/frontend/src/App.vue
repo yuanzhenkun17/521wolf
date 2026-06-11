@@ -37,6 +37,7 @@ const history = useGameHistory(state, { apiFetch: actions.apiFetch, actionApi: a
 actions.setHistoryApi?.(history)
 history.setActionApi?.(actions)
 const audio = useGameAudio({ ...state, apiBase: actions.apiBase })
+actions.setAudioApi?.(audio)
 const runtime = { ...state, ...utils, ...actions, ...history, ...audio } as RuntimeRecord
 const sessionStore = useSessionStore()
 const gameStore = useGameStore()
@@ -77,11 +78,14 @@ const inSettings = computed(() => activeAppView.value === 'settings')
 const isNight = computed(() => gameStore.isNight)
 const audioError = computed(() => String(audio.ttsError?.value || ''))
 const toastError = computed(() => uiStore.errorMessage || audioError.value)
+const matchGamePresent = computed(() => replayStore.isReplayMode
+  ? Boolean(replayStore.replayGame)
+  : Boolean(gameStore.liveGame)
+)
 const showMatchBoot = computed(() => {
   return activeAppView.value === 'match'
-    && !replayStore.isReplayMode
     && (
-      !gameStore.liveGame
+      !matchGamePresent.value
       || (
         !gameStore.roleAssignmentComplete
         && (gameStore.judgeBoardStarted || gameStore.judgeBoardStarting)
@@ -89,6 +93,9 @@ const showMatchBoot = computed(() => {
     )
 })
 const matchBootStatus = computed(() => {
+  if (replayStore.isReplayMode && !replayStore.replayGame) return '读取回放'
+  if (replayStore.isReplayMode && !gameStore.roleAssignmentComplete) return '加载回放模型'
+  if (replayStore.isReplayMode) return '进入回放'
   if (!gameStore.liveGame) return '创建房间'
   if (!gameStore.roleAssignmentComplete) return '分配身份'
   return '进入议事厅'
