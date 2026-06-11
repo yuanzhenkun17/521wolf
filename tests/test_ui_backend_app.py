@@ -471,13 +471,22 @@ class _UiMemoryConnection:
         if text.startswith("SELECT COUNT(*) AS count FROM ui_task_queue WHERE status = 'running'"):
             now = str(params[0])
             with self._db.lock:
-                count = sum(
-                    1
-                    for task in self._db.task_queue.values()
-                    if task.get("status") == "running"
-                    and task.get("lease_expires_at") is not None
-                    and str(task.get("lease_expires_at")) <= now
-                )
+                if "lease_expires_at > ?" in text:
+                    count = sum(
+                        1
+                        for task in self._db.task_queue.values()
+                        if task.get("status") == "running"
+                        and task.get("lease_expires_at") is not None
+                        and str(task.get("lease_expires_at")) > now
+                    )
+                else:
+                    count = sum(
+                        1
+                        for task in self._db.task_queue.values()
+                        if task.get("status") == "running"
+                        and task.get("lease_expires_at") is not None
+                        and str(task.get("lease_expires_at")) <= now
+                    )
             return _UiCursor([{"count": count}])
 
         if text.startswith("SELECT worker_id, status, last_heartbeat_at, lease_seconds, current_task_id, metadata FROM ui_task_workers"):

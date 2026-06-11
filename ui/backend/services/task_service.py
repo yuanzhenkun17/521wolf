@@ -350,6 +350,7 @@ class TaskService:
                 worker_repo = TaskWorkerRepository(conn)
                 queue_status_counts = queue_repo.status_counts()
                 stale_running_count = queue_repo.stale_running_count(now=now)
+                fresh_running_count = queue_repo.fresh_running_count(now=now)
                 workers = worker_repo.list_recent(limit=5)
                 conn.commit()
             finally:
@@ -360,13 +361,14 @@ class TaskService:
                 "message": "Task control storage is unavailable.",
                 "queue_status_counts": {},
                 "stale_running_count": 0,
+                "fresh_running_count": 0,
                 "worker_fresh": False,
                 "workers": [],
                 "artifact_root": artifact_root,
                 "error": _safe_task_error(exc),
             }
 
-        worker_fresh = any(_worker_is_fresh(worker, now=now) for worker in workers)
+        worker_fresh = fresh_running_count > 0 or any(_worker_is_fresh(worker, now=now) for worker in workers)
         if artifact_root["status"] == "error":
             status = "error"
             message = "Task artifact root is not writable."
@@ -381,6 +383,7 @@ class TaskService:
             "message": message,
             "queue_status_counts": queue_status_counts,
             "stale_running_count": stale_running_count,
+            "fresh_running_count": fresh_running_count,
             "worker_fresh": worker_fresh,
             "workers": workers,
             "artifact_root": artifact_root,

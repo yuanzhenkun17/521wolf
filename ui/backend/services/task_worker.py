@@ -76,6 +76,7 @@ class TaskExecutionContext:
         clock: Callable[[], datetime],
         after_repository_update: Callable[[], None] | None = None,
         event_publisher: Callable[[dict[str, Any], str | None], Any] | None = None,
+        worker_heartbeat: Callable[[str], None] | None = None,
     ) -> None:
         self._repository = repository
         self._task = dict(task)
@@ -84,6 +85,7 @@ class TaskExecutionContext:
         self._clock = clock
         self._after_repository_update = after_repository_update
         self._event_publisher = event_publisher
+        self._worker_heartbeat = worker_heartbeat
 
     @property
     def task(self) -> dict[str, Any]:
@@ -115,6 +117,8 @@ class TaskExecutionContext:
             latest = self._repository.get(self.task_id)
             if latest is not None:
                 self._task = dict(latest)
+            if self._worker_heartbeat is not None:
+                self._worker_heartbeat(self.task_id)
             if self._after_repository_update is not None:
                 self._after_repository_update()
             if self._event_publisher is not None:
@@ -148,6 +152,7 @@ class TaskWorker:
         clock: Callable[[], datetime] = beijing_now,
         after_repository_update: Callable[[], None] | None = None,
         event_publisher: Callable[[dict[str, Any], str | None], Any] | None = None,
+        worker_heartbeat: Callable[[str], None] | None = None,
     ) -> None:
         self._repository = repository
         self.registry = executors if isinstance(executors, TaskExecutorRegistry) else TaskExecutorRegistry(executors)
@@ -156,6 +161,7 @@ class TaskWorker:
         self._clock = clock
         self._after_repository_update = after_repository_update
         self._event_publisher = event_publisher
+        self._worker_heartbeat = worker_heartbeat
 
     def run_once(self) -> TaskWorkerRunResult:
         kinds = self.registry.kinds()
@@ -181,6 +187,7 @@ class TaskWorker:
             clock=self._clock,
             after_repository_update=self._after_repository_update,
             event_publisher=self._event_publisher,
+            worker_heartbeat=self._worker_heartbeat,
         )
         task_id = str(task["task_id"])
         kind = str(task["kind"])
@@ -331,6 +338,11 @@ class TaskWorkerLoop:
                 clock=self._clock,
                 after_repository_update=conn.commit,
                 event_publisher=self._event_publisher,
+                worker_heartbeat=lambda task_id: self._record_worker_heartbeat(
+                    conn,
+                    status="running",
+                    current_task_id=task_id,
+                ),
             )
             result = worker.run_once()
             if result.task_id is not None:

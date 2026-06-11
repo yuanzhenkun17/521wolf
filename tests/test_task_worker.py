@@ -114,6 +114,41 @@ def test_task_worker_claims_executes_and_marks_succeeded() -> None:
     assert task["progress"] == {"stage": "executing", "percent": 0.5}
 
 
+def test_task_context_heartbeat_refreshes_worker_record() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    worker_repo = TaskWorkerRepository(conn)
+    _enqueue(repo)
+    clock = _TickingClock()
+
+    def _execute(_task: dict[str, Any], context) -> dict[str, Any]:
+        assert context.heartbeat(progress={"stage": "executing"})
+        worker = worker_repo.get("worker-live")
+        assert worker is not None
+        assert worker["status"] == "running"
+        assert worker["current_task_id"] == "task_a"
+        return {"ok": True}
+
+    worker = TaskWorker(
+        repository=repo,
+        executors={"demo": _execute},
+        worker_id="worker-live",
+        clock=clock,
+        after_repository_update=conn.commit,
+        worker_heartbeat=lambda task_id: worker_repo.upsert_heartbeat(
+            worker_id="worker-live",
+            status="running",
+            last_heartbeat_at=clock().isoformat(),
+            lease_seconds=300,
+            current_task_id=task_id,
+        ),
+    )
+
+    result = worker.run_once()
+
+    assert result.status == "succeeded"
+
+
 def test_task_worker_marks_executor_exception_failed() -> None:
     conn = _connect()
     repo = TaskQueueRepository(conn)

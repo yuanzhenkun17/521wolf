@@ -248,7 +248,9 @@ def test_task_queue_repository_reports_status_counts_and_stale_running() -> None
     )
 
     assert repo.status_counts() == {"queued": 1, "running": 1}
+    assert repo.fresh_running_count(now="2026-06-10T10:00:30+08:00") == 1
     assert repo.stale_running_count(now="2026-06-10T10:00:30+08:00") == 0
+    assert repo.fresh_running_count(now="2026-06-10T10:02:00+08:00") == 0
     assert repo.stale_running_count(now="2026-06-10T10:02:00+08:00") == 1
 
 
