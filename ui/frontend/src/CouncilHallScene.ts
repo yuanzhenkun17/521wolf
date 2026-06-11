@@ -506,15 +506,15 @@
     frontSpot.castShadow = false;
     scene.add(frontSpot, frontSpot.target);
 
-    const leftRed = new THREE.PointLight(0xff204f, 1.45, 13, 2.0);
+    const leftRed = new THREE.PointLight(0xff204f, 0, 13, 2.0);
     leftRed.position.set(-6.6, 2.8, 1.4);
     scene.add(leftRed);
 
-    const rightPurple = new THREE.PointLight(0x8e4dff, 1.15, 13, 2.0);
+    const rightPurple = new THREE.PointLight(0x8e4dff, 0, 13, 2.0);
     rightPurple.position.set(6.5, 2.8, 1.4);
     scene.add(rightPurple);
 
-    const backBlue = new THREE.PointLight(0x3764ff, 0.9, 12, 2.1);
+    const backBlue = new THREE.PointLight(0x3764ff, 0, 12, 2.1);
     backBlue.position.set(0, 2.7, -6.8);
     scene.add(backBlue);
 
@@ -852,7 +852,7 @@
 
         const lampY = 4.36;
 
-        const lamp = new THREE.PointLight(new THREE.Color(cfg.accent), 0.58, 3.2, 1.8);
+        const lamp = new THREE.PointLight(new THREE.Color(cfg.accent), 0, 3.2, 1.8);
         lamp.position.set(x * 0.99, lampY, z * 0.99);
         posterGroup.add(lamp);
 
@@ -1579,9 +1579,15 @@
 
       let activeModel = null;
       let modelOutline = null;
+      let modelLight = null;
       let modelLoading = false;
       let modelMountPromise = null;
       let mountModel = () => Promise.resolve();
+      const updateModelFrontLight = () => {
+        if (!modelLight) return;
+        modelLight.intensity = nightMode ? 1.22 : 2.1;
+      };
+      group.userData.updateModelFrontLight = updateModelFrontLight;
       const setObjectDead = (object, dead) => {
         object.traverse((child) => {
           if (!child.isMesh || child === modelOutline) return;
@@ -1628,9 +1634,11 @@
             modelOutline.visible = false;
             group.add(modelOutline);
             group.add(model);
-            const modelLight = new THREE.PointLight(0xffdfc5, 2.1, 3.0, 1.4);
+            modelLight = new THREE.PointLight(0xffdfc5, 2.1, 3.0, 1.4);
             modelLight.position.set(0, 1.62, 0.82);
+            modelLight.castShadow = false;
             group.add(modelLight);
+            updateModelFrontLight();
             figure.visible = false;
             backPlate.visible = false;
             foot.visible = false;
@@ -1685,17 +1693,15 @@
         const speech = group.userData.dead ? "" : (speechByPlayer[group.userData.playerId] || "");
         const text = typeof speech === "string" ? speech : speech.text || "";
         const tone = typeof speech === "string" ? "" : speech.tone || "";
-        updateStandeeSpeech(group, text, tone);
-        const selected = group.userData.selectedTarget === true;
-        const outlined = selected || group.userData.hovered === true;
-        outline.visible = !useModelOnlyPlayers && outlined && !modelOutline;
-        if (modelOutline) modelOutline.visible = outlined;
-        activeRing.visible = nextActive;
-        activeHalo.visible = !useModelOnlyPlayers && outlined && !modelOutline;
-        glow.color.set(selected ? 0xf2ca50 : outlined ? 0xffffff : 0xffc07a);
+        const thinking = typeof speech === "string" ? false : speech.thinking === true;
+        updateStandeeSpeech(group, text, tone, thinking);
+        outline.visible = false;
+        if (modelOutline) modelOutline.visible = false;
+        activeRing.visible = false;
+        activeHalo.visible = false;
         if (!nextActive) resetStandeeSpeakerAnimation(group);
-        glow.intensity = nextActive ? 1.0 : selected ? 0.5 : group.userData.hovered ? 0.48 : group.userData.selectable ? 0.32 : 0.18;
-        glow.visible = true;
+        glow.intensity = 0;
+        glow.visible = false;
         markDirty();
       };
       group.userData.setHover = (hovered) => {
@@ -1780,9 +1786,10 @@
       });
     }
 
-    function updateStandeeSpeech(standee, nextText = "", nextTone = "") {
+    function updateStandeeSpeech(standee, nextText = "", nextTone = "", nextThinking = false) {
       const text = String(nextText || "");
       const tone = String(nextTone || "");
+      const thinking = Boolean(nextThinking);
       const callout = standee.userData.bubble;
       const speechText = standee.userData.speechText;
       const state = standee.userData.speechState;
@@ -1790,7 +1797,8 @@
 
       callout.classList.toggle("speaking", Boolean(text));
       callout.classList.toggle("night-speaking", tone === "night" && Boolean(text));
-      callout.classList.toggle("typing", Boolean(text) && state.visibleText !== text);
+      callout.classList.toggle("thinking", thinking && Boolean(text));
+      callout.classList.toggle("typing", !thinking && Boolean(text) && state.visibleText !== text);
 
       if (state.fullText === text && state.tone === tone) {
         scrollSpeechToLatest(standee);
@@ -1813,6 +1821,15 @@
         speechText.textContent = "";
         standee.userData.speechScroll?.style.removeProperty("height");
         callout.classList.remove("typing");
+        return;
+      }
+
+      if (thinking) {
+        state.fullText = text;
+        state.visibleText = text;
+        speechText.textContent = text;
+        callout.classList.remove("typing");
+        scrollSpeechToLatest(standee);
         return;
       }
 
@@ -1953,13 +1970,11 @@
         if (!refs) return;
         const elapsed = Math.max(0, t - (standee.userData.activeStartedAt || t));
         const inEase = THREE.MathUtils.smoothstep(Math.min(elapsed / 0.45, 1), 0, 1);
-        const pulse = (Math.sin(t * 4.4) + 1) * 0.5;
         const bob = Math.sin(t * 3.1) * 0.018 * inEase;
-        const ringScale = 1.03 + pulse * 0.11 * inEase;
-        refs.activeRing.scale.setScalar(ringScale);
-        refs.activeHalo.scale.setScalar(1 + pulse * 0.035 * inEase);
-        refs.glow.intensity = 0.5 + pulse * 0.34 * inEase;
-        refs.glow.visible = true;
+        refs.activeRing.visible = false;
+        refs.activeHalo.visible = false;
+        refs.glow.intensity = 0;
+        refs.glow.visible = false;
 
         const figure = refs.figure;
         const outline = refs.outline;
@@ -2871,6 +2886,12 @@
         clearActiveSceneEffects();
       }
       const effects = Array.isArray(sceneEffects) ? sceneEffects : [];
+      if (!effects.length) {
+        seenSceneEffectIds.clear();
+        clearActiveSceneEffects();
+        initialEffectsPrimed = true;
+        return;
+      }
       if (!initialEffectsPrimed) {
         const initialPlayable = new Set(latestSceneEffectBatch(playInitial ? effects : []).map(sceneEffectDataId));
         effects.forEach((effect) => {
@@ -3488,6 +3509,7 @@
       leftRed.intensity = night ? 0.72 : 1.45;
       rightPurple.intensity = night ? 0.58 : 1.15;
       backBlue.intensity = night ? 0.52 : 0.9;
+      playerStandeeGroup.children.forEach((standee) => standee.userData.updateModelFrontLight?.());
       lampCore.material.color.set(night ? 0xe9efff : 0xffe0b0);
       lampCore.material.emissive.set(night ? 0x9eb7ff : 0xffbb77);
       lampCore.material.emissiveIntensity = night ? 0.76 : 1.38;

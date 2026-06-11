@@ -59,6 +59,8 @@ const judgeAnnouncementTypes = new Set([
   'night_death_reveal',
   'day_speech_start',
   'day_speech_end',
+  'speech_prompt',
+  'action_request',
   'vote_prompt',
   'exile',
   'death',
@@ -311,7 +313,11 @@ export function createLiveGameState(refs: LooseRecord, helpers: LooseRecord) {
     const logs = game.value?.logs ?? []
     for (let index = logs.length - 1; index >= 0; index -= 1) {
       const log = logs[index]
-      if (log?.visibility === 'private' || chatKindForLog(log)?.key !== 'speech') continue
+      if (log?.visibility === 'private') continue
+      if (normalizedLogType(log) === 'speech_prompt') {
+        return logActorId(log)
+      }
+      if (chatKindForLog(log)?.key !== 'speech') continue
       const actorId = logActorId(log)
       if (actorId) return actorId
       const player = playerForLog(log)

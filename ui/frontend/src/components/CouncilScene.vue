@@ -100,6 +100,7 @@ interface GameLike {
 interface SpeechPayload {
   text: string
   tone: string
+  thinking?: boolean
 }
 
 type SpeechByPlayer = Record<string | number, string | SpeechPayload>
@@ -182,7 +183,19 @@ const NON_PLAYER_LOG_TYPES = new Set(['system', 'judge', 'announcement', 'phase'
 const NIGHT_ACTION_TYPES = new Set([
   'guard_result',
   'werewolf_result',
+  'seer_result',
   'witch_result'
+])
+const NIGHT_ACTION_REQUEST_TYPES = new Set(['guard_protect', 'werewolf_kill', 'seer_check', 'witch_act'])
+const SPEECH_PROMPT_TYPE = 'speech_prompt'
+const BUBBLE_ACTION_TYPES = new Set([
+  ...SPEECH_EVENT_TYPES,
+  ...NIGHT_ACTION_REQUEST_TYPES,
+  'sheriff_run',
+  'sheriff_withdraw',
+  'speech_order',
+  'hunter_shoot',
+  'white_wolf_explode'
 ])
 
 const props = defineProps({
@@ -311,11 +324,41 @@ function isSpeechLog(log) {
   return logTypeCandidates(log).some((type) => SPEECH_EVENT_TYPES.has(type))
 }
 
+function latestActiveSpeechPrompt(logs) {
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const log = logs[index]
+    if (log?.visibility === 'private') continue
+    if (normalizedLogType(log) === SPEECH_PROMPT_TYPE) return log
+    if (isSpeechLog(log)) return null
+  }
+  return null
+}
+
 function isNightActionLog(log) {
   const phase = String(log?.phase || log?.event_phase || log?.stage || '').trim()
   const type = normalizedLogType(log)
   return NIGHT_ACTION_TYPES.has(type)
     && (phase === 'night' || props.isNight)
+}
+
+function isNightActionRequest(log) {
+  const phase = String(log?.phase || log?.event_phase || log?.stage || '').trim()
+  const actionType = String(log?.payload?.action_type || '').trim()
+  return normalizedLogType(log) === 'action_request'
+    && NIGHT_ACTION_REQUEST_TYPES.has(actionType)
+    && (phase === 'night' || props.isNight)
+}
+
+function latestNightVisualEvent(logs) {
+  if (!props.isWatch || !props.isNight) return null
+  const currentDay = Number(props.game?.day)
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const log = logs[index]
+    if (!isNightActionLog(log) && !isNightActionRequest(log)) continue
+    if (Number.isFinite(currentDay) && log?.day != null && Number(log.day) !== currentDay) continue
+    return log
+  }
+  return null
 }
 
 function nightActionText(log) {
@@ -352,22 +395,106 @@ function nightActionPlayerId(log) {
 }
 
 function nightActionsByPlayer(logs) {
-  if (!props.isWatch || !props.isNight) return {}
-  const currentDay = Number(props.game?.day)
-  for (let index = logs.length - 1; index >= 0; index -= 1) {
-    const log = logs[index]
-    if (!isNightActionLog(log)) continue
-    if (Number.isFinite(currentDay) && log?.day != null && Number(log.day) !== currentDay) continue
-    const playerId = nightActionPlayerId(log)
-    if (!playerId) continue
-    const text = nightActionText(log)
-    if (!text) continue
-    const seat = props.players.find((player) => Number(player?.id) === playerId)?.displaySeat ?? playerId
+  const latestLog = latestNightVisualEvent(logs)
+  if (!latestLog) return {}
+  const latestPlayerId = nightActionPlayerId(latestLog)
+  if (!latestPlayerId) return {}
+  if (isNightActionRequest(latestLog)) {
     return {
-      [playerId]: {
-        text: `${seat}号：${text}`,
-        tone: 'night'
+      [latestPlayerId]: {
+        text: '...',
+        tone: 'night',
+        thinking: true
       }
+    }
+  }
+  const latestText = nightActionText(latestLog)
+  if (!latestText) return {}
+  const latestSeat = props.players.find((player) => Number(player?.id) === latestPlayerId)?.displaySeat ?? latestPlayerId
+  return {
+    [latestPlayerId]: {
+      text: `${latestSeat}号：${latestText}`,
+      tone: 'night'
+    }
+  }
+}
+
+function requestedActionType(log) {
+  if (normalizedLogType(log) === SPEECH_PROMPT_TYPE) {
+    return String(log?.payload?.action_type || '').trim()
+  }
+  if (normalizedLogType(log) !== 'action_request') return ''
+  return String(log?.payload?.action_type || '').trim()
+}
+
+function canShowActionRequest(log) {
+  const actionType = requestedActionType(log)
+  if (!BUBBLE_ACTION_TYPES.has(actionType)) return false
+  return props.isWatch || log?.visibility !== 'private' || normalizedLogType(log) === SPEECH_PROMPT_TYPE
+}
+
+function actionResultText(log, actionType) {
+  const directText = normalizeSpeechText(
+    log?.payload?.text
+    ?? log?.text
+    ?? log?.content
+    ?? log?.public_summary
+    ?? log?.public_text
+    ?? log?.message
+    ?? ''
+  )
+  if (directText) return directText
+
+  const targetId = numericId(log?.target_id ?? log?.target ?? log?.payload?.target_id)
+  const targetSeat = props.players.find((player) => Number(player?.id) === targetId)?.displaySeat ?? targetId
+  const choice = String(log?.payload?.choice || log?.choice || '').trim()
+  if (actionType === 'guard_protect') return targetSeat ? `守护了${targetSeat}号` : '选择本夜不守护'
+  if (actionType === 'werewolf_kill') return targetSeat ? `选择袭击${targetSeat}号` : '选择本夜不袭击'
+  if (actionType === 'seer_check') return targetSeat ? `查验了${targetSeat}号` : ''
+  if (actionType === 'witch_act') {
+    if (choice === 'save') return targetSeat ? `使用解药救了${targetSeat}号` : '使用了解药'
+    if (choice === 'poison') return targetSeat ? `使用毒药毒了${targetSeat}号` : '使用了毒药'
+    return '选择本夜不使用药剂'
+  }
+  return ''
+}
+
+function actionResultForRequest(logs, requestIndex, request) {
+  const actionType = requestedActionType(request)
+  const actorId = playerIdFromLog(request)
+  if (!actionType || !actorId) return null
+
+  for (let index = requestIndex + 1; index < logs.length; index += 1) {
+    const log = logs[index]
+    const type = normalizedLogType(log)
+    const logActionType = String(log?.payload?.action_type || '').trim()
+    if (canShowActionRequest(log)) break
+    if (playerIdFromLog(log) !== actorId) continue
+    if (type !== actionType && !(type === 'action_response' && logActionType === actionType)) continue
+    const text = actionResultText(log, actionType)
+    if (text) return { log, text }
+  }
+  return null
+}
+
+function latestActionBubble(logs) {
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const request = logs[index]
+    if (!canShowActionRequest(request)) continue
+    const playerId = playerIdFromLog(request)
+    if (!playerId) continue
+    const result = actionResultForRequest(logs, index, request)
+    if (!result) {
+      return {
+        [playerId]: {
+          text: '...',
+          tone: props.isNight ? 'night' : '',
+          thinking: true
+        }
+      }
+    }
+    return {
+      [playerId]: speechPayload({ ...result.log, message: result.text }, playerId)
     }
   }
   return {}
@@ -441,21 +568,48 @@ function explicitCurrentSpeakerId() {
   )
 }
 
-const speechByPlayer = computed(() => {
+function isVotePhase() {
+  const phase = String(props.game?.phase || '').trim()
+  const waitingFor = String(props.game?.waiting_for || '').trim()
+  const pendingType = String(
+    props.game?.pending_human_action?.action_type
+    || props.game?.pending_human_action?.type
+    || ''
+  ).trim()
+  return waitingFor === 'vote'
+    || ['vote', 'exile_vote', 'pk_vote', 'sheriff_vote'].includes(phase)
+    || ['exile_vote', 'pk_vote', 'sheriff_vote'].includes(pendingType)
+}
+
+const rawSpeechByPlayer = computed(() => {
+  if (isVotePhase()) return {}
   const eventLogs = [...(props.game?.logs || []), ...(props.game?.events || [])]
   const logs = eventLogs.length ? eventLogs : (props.game?.decisions || [])
+  const actionBubble = latestActionBubble(logs)
+  if (Object.keys(actionBubble).length) return actionBubble
   const nightActions = nightActionsByPlayer(logs)
   if (Object.keys(nightActions).length) return nightActions
   const latestLog = latestPublicLog(logs)
   if (!isSpeechWindow() && !isSpeechLog(latestLog)) return {}
 
-  const currentSpeakerId = explicitCurrentSpeakerId() || pendingSpeakerId()
+  const prompt = latestActiveSpeechPrompt(logs)
+  const promptSpeakerId = playerIdFromLog(prompt)
+  const currentSpeakerId = promptSpeakerId || explicitCurrentSpeakerId() || pendingSpeakerId()
   const hasCurrentSpeaker = Boolean(currentSpeakerId)
   const currentSpeaker = hasCurrentSpeaker
     ? props.players.find((player) => Number(player?.id) === currentSpeakerId)
     : null
 
   if (hasCurrentSpeaker) {
+    if (promptSpeakerId === currentSpeakerId) {
+      return {
+        [currentSpeakerId]: {
+          text: '...',
+          tone: props.isNight ? 'night' : '',
+          thinking: true
+        }
+      }
+    }
     for (let index = logs.length - 1; index >= 0; index -= 1) {
       const log = logs[index]
       if (!logMatchesSpeaker(log, currentSpeakerId, currentSpeaker) || !isPublicPlayerLog(log) || !isSpeechLog(log)) continue
@@ -489,8 +643,105 @@ const speechByPlayer = computed(() => {
   return {}
 })
 
+const speechByPlayer = ref<SpeechByPlayer>({})
+let speechPresentationTimer: ReturnType<typeof setTimeout> | null = null
+const pendingSpeechPresentations: SpeechByPlayer[] = []
+
+function speechPresentationSignature(value: SpeechByPlayer = {}) {
+  return Object.entries(value)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([id, speech]) => {
+      const text = typeof speech === 'string' ? speech : speech?.text
+      const tone = typeof speech === 'string' ? '' : speech?.tone
+      const thinking = typeof speech === 'string' ? false : speech?.thinking
+      return `${id}:${tone || ''}:${thinking ? 1 : 0}:${text || ''}`
+    })
+    .join('|')
+}
+
+function presentationIsThinking(value: SpeechByPlayer = {}) {
+  return Object.values(value).some((speech) => typeof speech !== 'string' && speech?.thinking)
+}
+
+function presentationText(value: SpeechByPlayer = {}) {
+  const speech = Object.values(value)[0]
+  return typeof speech === 'string' ? speech : String(speech?.text || '')
+}
+
+function resultDisplayDuration(value: SpeechByPlayer = {}) {
+  const text = presentationText(value)
+  const punctuationCount = Array.from(text).filter((char) => '，。？！；、,.?!;:'.includes(char)).length
+  return Math.min(18000, 180 + Array.from(text).length * 86 + punctuationCount * 124 + 2000)
+}
+
+function clearSpeechPresentationTimer() {
+  if (!speechPresentationTimer) return
+  clearTimeout(speechPresentationTimer)
+  speechPresentationTimer = null
+}
+
+function presentNextSpeechBubble() {
+  clearSpeechPresentationTimer()
+  const next = pendingSpeechPresentations.shift()
+  if (!next) return
+  speechByPlayer.value = next
+  if (!presentationIsThinking(next) && pendingSpeechPresentations.length) {
+    speechPresentationTimer = setTimeout(presentNextSpeechBubble, resultDisplayDuration(next))
+  } else if (presentationIsThinking(next) && pendingSpeechPresentations.length) {
+    speechPresentationTimer = setTimeout(presentNextSpeechBubble, 450)
+  }
+}
+
+watch(rawSpeechByPlayer, (next) => {
+  if (isVotePhase()) {
+    clearSpeechPresentationTimer()
+    pendingSpeechPresentations.length = 0
+    speechByPlayer.value = {}
+    return
+  }
+  const nextSignature = speechPresentationSignature(next)
+  const currentSignature = speechPresentationSignature(speechByPlayer.value)
+  if (nextSignature === currentSignature) return
+
+  const queuedSignature = speechPresentationSignature(pendingSpeechPresentations.at(-1) || {})
+  if (nextSignature === queuedSignature) return
+
+  const currentIsThinking = presentationIsThinking(speechByPlayer.value)
+  const nextIsThinking = presentationIsThinking(next)
+  if (!currentSignature || (currentIsThinking && !nextIsThinking)) {
+    clearSpeechPresentationTimer()
+    speechByPlayer.value = next
+    if (!nextIsThinking && pendingSpeechPresentations.length) {
+      speechPresentationTimer = setTimeout(presentNextSpeechBubble, resultDisplayDuration(next))
+    }
+    return
+  }
+
+  pendingSpeechPresentations.push(next)
+  if (!speechPresentationTimer) {
+    speechPresentationTimer = setTimeout(
+      presentNextSpeechBubble,
+      currentIsThinking ? 450 : resultDisplayDuration(speechByPlayer.value)
+    )
+  }
+}, { immediate: true, deep: true })
+
+watch(() => [
+  props.game?.phase,
+  props.game?.waiting_for,
+  props.game?.pending_human_action?.action_type,
+  props.game?.pending_human_action?.type
+], () => {
+  if (!isVotePhase()) return
+  clearSpeechPresentationTimer()
+  pendingSpeechPresentations.length = 0
+  speechByPlayer.value = {}
+})
+
 const effectiveCurrentSpeakerId = computed(() => {
-  const currentSpeakerId = explicitCurrentSpeakerId() || pendingSpeakerId()
+  if (isVotePhase()) return null
+  const logs = [...(props.game?.logs || []), ...(props.game?.events || [])]
+  const currentSpeakerId = playerIdFromLog(latestActiveSpeechPrompt(logs)) || explicitCurrentSpeakerId() || pendingSpeakerId()
   if (currentSpeakerId) return currentSpeakerId
   const [speakerId] = Object.keys(speechByPlayer.value)
   const id = Number(speakerId)
@@ -545,7 +796,7 @@ function scenePayload(revealPlayers = props.roleAssignmentComplete || props.isRe
     onPlayerSelect: (id) => emit('player-select', id),
     pageVoteTally: props.voteTally,
     voteTally: props.voteTally,
-    sceneEffects: props.sceneEffects,
+    sceneEffects: [],
     instantSpeech: props.isReplayMode,
     playInitialSceneEffects: props.isReplayMode,
     deferModelLoading: props.deferModelLoading
@@ -574,7 +825,8 @@ function speechSceneSignature(value: SpeechByPlayer = {}) {
     .map(([id, speech]) => {
       const text = typeof speech === 'string' ? speech : speech?.text
       const tone = typeof speech === 'string' ? '' : speech?.tone
-      return `${id}:${tone || ''}:${text || ''}`
+      const thinking = typeof speech === 'string' ? false : speech?.thinking
+      return `${id}:${tone || ''}:${thinking ? 1 : 0}:${text || ''}`
     })
     .join('|')
 }
@@ -615,7 +867,7 @@ function buildSceneSignature(revealPlayers = props.roleAssignmentComplete || pro
     playerSceneSignature(props.players),
     speechSceneSignature(speechByPlayer.value),
     voteSceneSignature(props.voteTally),
-    effectSceneSignature(props.sceneEffects),
+    '',
     props.deferModelLoading ? 1 : 0
   ].join('||')
 }
@@ -657,6 +909,8 @@ watch(() => [props.players, props.currentSpeakerId, props.isNight, props.roleAss
 onBeforeUnmount(() => {
   disposed = true
   lastSceneSignature = ''
+  clearSpeechPresentationTimer()
+  pendingSpeechPresentations.length = 0
   if (rafId) cancelAnimationFrame(rafId)
   scene?.setLoadProgressHandler?.(null)
   scene?.dispose?.()

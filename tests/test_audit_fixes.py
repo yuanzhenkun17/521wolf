@@ -454,7 +454,9 @@ def test_private_night_action_log_is_not_public():
     asyncio.run(ask(engine, 1, ActionType.WEREWOLF_KILL, candidates=(2,)))
 
     action_event = next(row for row in engine.records if row["event_type"] == "werewolf_kill")
+    request_event = next(row for row in engine.records if row["event_type"] == "action_request")
     assert action_event["public"] is False
+    assert request_event["message"] == "请狼人开始行动"
 
 
 def test_public_speech_action_remains_public():
@@ -481,7 +483,11 @@ def test_public_speech_action_remains_public():
     asyncio.run(ask(engine, 1, ActionType.SPEAK))
 
     action_event = next(row for row in engine.records if row["event_type"] == "speak")
+    prompt_event = next(row for row in engine.records if row["event_type"] == "speech_prompt")
     assert action_event["public"] is True
+    assert prompt_event["public"] is True
+    assert prompt_event["actor"] == 1
+    assert prompt_event["payload"]["action_type"] == "speak"
 
 
 def test_speech_action_ignores_target_and_choice_noise():
@@ -566,7 +572,7 @@ def test_action_logs_use_chinese_action_labels():
     request_event = next(row for row in engine.records if row["event_type"] == "action_request")
     response_event = next(row for row in engine.records if row["event_type"] == "action_response")
 
-    assert request_event["message"] == "请求11号执行警长投票"
+    assert request_event["message"] == "请11号开始警长投票"
     assert response_event["message"].startswith("11号响应警长投票")
     assert response_message(11, ActionResponse(ActionType.SHERIFF_VOTE, target=3, choice="stay")) == "11号响应警长投票，目标3号，选择留警上"
     assert "sheriff_vote" not in request_event["message"]

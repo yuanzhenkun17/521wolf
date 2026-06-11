@@ -198,7 +198,7 @@ const gameStartGateMessage = computed(() => {
   return gameStartGate.value.reason || gameStartGate.value.warning
 })
 const gameStartGateTone = computed(() => gameStartGate.value.disabled || gameStartPreflightError.value || modelProfilePreflightError.value ? 'error' : 'warning')
-const gameStartButtonBusy = computed(() => gameStartPreflightLoading.value || modelProfilePreflightLoading.value)
+const gameStartButtonBusy = computed(() => gameStartPreflightLoading.value)
 
 function versionSource(version) {
   return sourceText(version?.source || (version?.is_baseline ? 'baseline' : 'version'))
