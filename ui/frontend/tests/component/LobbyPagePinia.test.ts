@@ -76,7 +76,7 @@ describe('LobbyPage Pinia state handoff', () => {
   it('blocks starting from a selected model profile when preflight fails', async () => {
     const apiFetch = vi.fn(async (path: string) => {
       if (path === '/roles/overview') return { roles: [], versions: {}, leaderboards: {} }
-      if (path === '/settings/model-profiles') {
+      if (path === '/settings/model-profiles?compact=true') {
         return {
           profiles: [{
             profile_id: 'profile-game-main',
@@ -124,7 +124,7 @@ describe('LobbyPage Pinia state handoff', () => {
   it('does not keep a stale runtime gate on screen when click preflight succeeds', async () => {
     const apiFetch = vi.fn(async (path: string) => {
       if (path === '/roles/overview') return { roles: [], versions: {}, leaderboards: {} }
-      if (path === '/settings/model-profiles') return { profiles: [] }
+      if (path === '/settings/model-profiles?compact=true') return { profiles: [] }
       if (path.startsWith('/health/preflight?scope=game_start')) {
         return {
           ready: true,
@@ -176,7 +176,7 @@ describe('LobbyPage Pinia state handoff', () => {
   it('keeps start buttons idle while model profile preflight refreshes in the background', async () => {
     const apiFetch = vi.fn(async (path: string) => {
       if (path === '/roles/overview') return { roles: [], versions: {}, leaderboards: {} }
-      if (path === '/settings/model-profiles') {
+      if (path === '/settings/model-profiles?compact=true') {
         return {
           profiles: [{
             profile_id: 'profile-game-main',
