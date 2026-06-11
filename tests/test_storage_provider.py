@@ -34,8 +34,8 @@ def test_postgres_storage_provider_delegates_to_domain_factories(
     calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def factory(name: str):
-        def _open(conninfo: str | None = None, **kwargs: Any) -> object:
-            calls.append((name, conninfo or "", kwargs))
+        def _open(conninfo: str | None = None, connect_kwargs: dict[str, Any] | None = None, **kwargs: Any) -> object:
+            calls.append((name, conninfo or "", connect_kwargs or {}))
             return object()
 
         return _open
@@ -252,8 +252,8 @@ def test_domain_connection_helpers_apply_connect_kwargs_to_env_postgres_provider
 
     calls: list[tuple[str, dict[str, Any]]] = []
 
-    def factory(conninfo: str | None = None, **kwargs: Any) -> _FakeConn:
-        calls.append((conninfo or "", kwargs))
+    def factory(conninfo: str | None = None, connect_kwargs: dict[str, Any] | None = None, **kwargs: Any) -> _FakeConn:
+        calls.append((conninfo or "", connect_kwargs or {}))
         return _FakeConn()
 
     monkeypatch.setattr(storage.postgres, factory_name, factory)
@@ -280,8 +280,8 @@ def test_domain_connection_helpers_do_not_override_existing_connect_kwargs(
 
     calls: list[dict[str, Any]] = []
 
-    def factory(conninfo: str | None = None, **kwargs: Any) -> _FakeConn:
-        calls.append(kwargs)
+    def factory(conninfo: str | None = None, connect_kwargs: dict[str, Any] | None = None, **kwargs: Any) -> _FakeConn:
+        calls.append(connect_kwargs or {})
         return _FakeConn()
 
     monkeypatch.setattr(storage.postgres, "get_wolf_postgres_connection", factory)
@@ -367,8 +367,8 @@ def test_startup_postgresql_check_uses_short_connect_timeout(
     seen_paths: list[Any] = []
     conn = _Conn()
 
-    def factory(conninfo: str | None = None, **kwargs: Any) -> _Conn:
-        calls.append((conninfo or "", kwargs))
+    def factory(conninfo: str | None = None, connect_kwargs: dict[str, Any] | None = None, **kwargs: Any) -> _Conn:
+        calls.append((conninfo or "", connect_kwargs or {}))
         return conn
 
     def provider_from_env(*, paths: Any | None = None) -> PostgresStorageProvider:
@@ -410,8 +410,8 @@ def test_startup_alembic_check_uses_short_connect_timeout(
     seen_paths: list[Any] = []
     conn = _Conn()
 
-    def factory(conninfo: str | None = None, **kwargs: Any) -> _Conn:
-        calls.append((conninfo or "", kwargs))
+    def factory(conninfo: str | None = None, connect_kwargs: dict[str, Any] | None = None, **kwargs: Any) -> _Conn:
+        calls.append((conninfo or "", connect_kwargs or {}))
         return conn
 
     def provider_from_env(*, paths: Any | None = None) -> PostgresStorageProvider:
@@ -460,8 +460,8 @@ def test_startup_registry_check_uses_short_connect_timeout(
     seen_paths: list[Any] = []
     conn = _FakeConn()
 
-    def factory(conninfo: str | None = None, **kwargs: Any) -> _FakeConn:
-        calls.append((conninfo or "", kwargs))
+    def factory(conninfo: str | None = None, connect_kwargs: dict[str, Any] | None = None, **kwargs: Any) -> _FakeConn:
+        calls.append((conninfo or "", connect_kwargs or {}))
         return conn
 
     def provider_from_env(*, paths: Any | None = None) -> PostgresStorageProvider:
