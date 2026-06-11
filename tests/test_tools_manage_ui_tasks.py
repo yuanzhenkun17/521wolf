@@ -128,3 +128,16 @@ def test_manage_ui_tasks_verifies_artifact_hashes(tmp_path: Path) -> None:
     assert failed_report["failed"] == 1
     assert failed_report["exit_code"] == 2
     assert "sha256_mismatch" in failed_report["artifacts"][0]["status"]
+
+
+def test_manage_ui_tasks_global_verification_ignores_orphan_artifacts(tmp_path: Path) -> None:
+    service = FakeTaskService(tmp_path / "tasks.sqlite", tmp_path / "runs" / "tasks")
+    current_artifact = _write_artifact(service)
+    orphan_artifact = _write_artifact(service, task_id="deleted-task")
+    (service.task_artifact_root / orphan_artifact["relative_path"]).unlink()
+
+    report = verify_artifacts(service)
+
+    assert report["ok"] is True
+    assert report["checked"] == 1
+    assert report["artifacts"][0]["artifact_id"] == current_artifact["artifact_id"]

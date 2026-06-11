@@ -108,11 +108,22 @@ def verify_artifacts(service: Any, *, task_id: str = "", limit: int = 100) -> di
 def _list_artifacts(service: Any, *, task_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
     if task_id:
         return service.list_task_artifacts(task_id)[:limit]
-    conn = service.open_connection()
-    try:
-        return TaskArtifactRepository(conn).list_recent(limit=limit)
-    finally:
-        conn.close()
+
+    artifacts: list[dict[str, Any]] = []
+    tasks = service.list_task_queue_rows(statuses=None, limit=limit)
+    for task in tasks:
+        current_task_id = str(task.get("task_id") or "").strip()
+        if current_task_id:
+            artifacts.extend(service.list_task_artifacts(current_task_id))
+
+    artifacts.sort(
+        key=lambda artifact: (
+            str(artifact.get("created_at") or ""),
+            str(artifact.get("artifact_id") or ""),
+        ),
+        reverse=True,
+    )
+    return artifacts[:limit]
 
 
 def _verify_artifact(service: Any, *, root: Path, artifact: dict[str, Any]) -> dict[str, Any]:
