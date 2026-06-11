@@ -3445,6 +3445,7 @@ def test_evolution_reads_overlay_pg_task_queue_state(
         }
 
         monkeypatch.setattr(store.task_service, "get_task_queue_row", lambda task_id: task_rows.get(str(task_id)))
+        monkeypatch.setattr(store.task_service, "get_task_queue_rows", lambda task_ids: {tid: task_rows[tid] for tid in task_ids if tid in task_rows})
 
         active_detail = client.get(f"/api/evolution-runs/{active_run_id}").json()
         done_detail = client.get(f"/api/evolution-runs/{done_run_id}").json()

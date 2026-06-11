@@ -73,13 +73,13 @@ fetch_to_file "$API_HEALTH_URL" "$health_body"
 if ! grep -q "{" "$health_body"; then
   fail "API health did not return JSON-like content"
 fi
-if command -v python3 >/dev/null 2>&1; then
-  python_bin="python3"
-elif command -v python >/dev/null 2>&1; then
-  python_bin="python"
-else
-  python_bin=""
-fi
+python_bin=""
+for _candidate in python3 python; do
+  if command -v "$_candidate" >/dev/null 2>&1 && "$_candidate" -c "import sys" >/dev/null 2>&1; then
+    python_bin="$_candidate"
+    break
+  fi
+done
 if [ -n "$python_bin" ]; then
   CHECK_TASK_QUEUE="$CHECK_TASK_QUEUE" \
   CHECK_TASK_WORKER="$CHECK_TASK_WORKER" \
