@@ -420,6 +420,7 @@ class _UiMemoryDatabase:
         self.settings_audit: dict[str, dict[str, Any]] = {}
         self.settings_audit_enabled = False
         self.background_upserts = 0
+        self.background_reads = 0
         self.event_upserts = 0
         self.deletes = 0
         self.begin_writes = 0
@@ -504,6 +505,7 @@ class _UiMemoryConnection:
 
         if text.startswith("SELECT entity_id, entity_kind, status, payload, updated_at FROM ui_background_tasks"):
             with self._db.lock:
+                self._db.background_reads += 1
                 rows = sorted(
                     (dict(row) for row in self._db.background_tasks.values()),
                     key=lambda row: (str(row.get("updated_at") or ""), str(row.get("entity_id") or "")),
@@ -5701,6 +5703,24 @@ def test_background_tasks_persist_skips_unchanged_state(
     payload = json.loads(row["payload"])
     assert payload["batch_id"] == batch["batch_id"]
     assert payload["progress"]["stage"] == "evaluating"
+
+
+def test_background_task_loads_are_coalesced_with_force_refresh(
+    tmp_path: Path,
+    _fake_ui_pg_provider: _UiFakeStorageProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UI_BACKGROUND_REFRESH_INTERVAL_SECONDS", "60")
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path), model=FakeModel())
+
+    store.task_service.load_background_tasks()
+    store.task_service.load_background_tasks()
+
+    assert _fake_ui_pg_provider.db.background_reads == 1
+
+    store.task_service._persistence.load_background_tasks(force=True)
+
+    assert _fake_ui_pg_provider.db.background_reads == 2
 
 
 def test_background_tasks_persist_is_thread_safe(

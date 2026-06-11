@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
+import time
 from typing import Any, Callable
 
 from app.util.json import to_jsonable
@@ -30,6 +33,8 @@ class TaskPersistenceService:
         self._store = store
         self._open_connection = open_connection
         self._task_event_log = task_event_log
+        self._background_load_lock = threading.Lock()
+        self._last_background_load_monotonic = 0.0
 
     @staticmethod
     def touch_background_task(entity: dict[str, Any], *, timestamp: str | None = None) -> str:
@@ -173,46 +178,55 @@ class TaskPersistenceService:
         }
         return json.dumps(to_jsonable(comparable), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
-    def load_background_tasks(self) -> None:
-        conn = None
-        try:
-            conn = self._open_connection()
-            rows = BackgroundTaskRepository(conn).list_all()
-        except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
-            _log.warning("failed to load ui backend task index from PostgreSQL", exc_info=True)
+    def load_background_tasks(self, *, force: bool = False) -> None:
+        refresh_interval = _background_refresh_interval_seconds()
+        now = time.monotonic()
+        if not force and now - self._last_background_load_monotonic < refresh_interval:
             return
-        finally:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 - cleanup is best-effort
-                    pass
-        for row in rows:
-            payload = _background_payload_from_row(row)
-            if payload is None:
-                continue
-            entity_id = str(payload.get("run_id") or payload.get("batch_id") or row["entity_id"])
-            if not entity_id:
-                continue
-            if payload.get("run_id") or payload.get("kind") == "role_evolution_run":
-                payload.setdefault("run_id", entity_id)
-                if (
-                    entity_id not in self._store.evolution_runs
-                    or self.is_queue_backed_background_task(payload)
-                ):
-                    self._store.evolution_runs[entity_id] = payload
-            elif payload.get("batch_id") or payload.get("kind") in {"role_evolution_batch", "benchmark_batch"}:
-                payload.setdefault("batch_id", entity_id)
-                if (
-                    entity_id not in self._store.evolution_batches
-                    or self.is_queue_backed_background_task(payload)
-                ):
-                    self._store.evolution_batches[entity_id] = payload
-        self._store._background_state_fingerprint = self.background_tasks_fingerprint(self.background_tasks_payload())
-        for entity in [*self._store.evolution_runs.values(), *self._store.evolution_batches.values()]:
-            key = self.task_entity_key(entity)
-            if key:
-                self._store._task_event_fingerprints[key] = self.task_entity_fingerprint(entity)
+        with self._background_load_lock:
+            now = time.monotonic()
+            if not force and now - self._last_background_load_monotonic < refresh_interval:
+                return
+            conn = None
+            try:
+                conn = self._open_connection()
+                rows = BackgroundTaskRepository(conn).list_all()
+            except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
+                _log.warning("failed to load ui backend task index from PostgreSQL", exc_info=True)
+                return
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001 - cleanup is best-effort
+                        pass
+            for row in rows:
+                payload = _background_payload_from_row(row)
+                if payload is None:
+                    continue
+                entity_id = str(payload.get("run_id") or payload.get("batch_id") or row["entity_id"])
+                if not entity_id:
+                    continue
+                if payload.get("run_id") or payload.get("kind") == "role_evolution_run":
+                    payload.setdefault("run_id", entity_id)
+                    if (
+                        entity_id not in self._store.evolution_runs
+                        or self.is_queue_backed_background_task(payload)
+                    ):
+                        self._store.evolution_runs[entity_id] = payload
+                elif payload.get("batch_id") or payload.get("kind") in {"role_evolution_batch", "benchmark_batch"}:
+                    payload.setdefault("batch_id", entity_id)
+                    if (
+                        entity_id not in self._store.evolution_batches
+                        or self.is_queue_backed_background_task(payload)
+                    ):
+                        self._store.evolution_batches[entity_id] = payload
+            self._store._background_state_fingerprint = self.background_tasks_fingerprint(self.background_tasks_payload())
+            for entity in [*self._store.evolution_runs.values(), *self._store.evolution_batches.values()]:
+                key = self.task_entity_key(entity)
+                if key:
+                    self._store._task_event_fingerprints[key] = self.task_entity_fingerprint(entity)
+            self._last_background_load_monotonic = time.monotonic()
 
     def recover_background_tasks(self) -> int:
         now = beijing_now_iso()
@@ -283,7 +297,7 @@ class TaskPersistenceService:
         return bool(entity.get("task_id") or entity.get("task_queue_status"))
 
     def restore_background_tasks(self) -> int:
-        self.load_background_tasks()
+        self.load_background_tasks(force=True)
         return self.recover_background_tasks()
 
 
@@ -298,6 +312,14 @@ def _background_payload_from_row(row: Any) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     return dict(payload)
+
+
+def _background_refresh_interval_seconds() -> float:
+    try:
+        value = float(os.environ.get("UI_BACKGROUND_REFRESH_INTERVAL_SECONDS", "10"))
+    except (TypeError, ValueError):
+        return 10.0
+    return max(0.0, value)
 
 
 __all__ = ["TaskPersistenceService"]
