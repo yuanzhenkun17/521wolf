@@ -31,17 +31,17 @@ class PostgresStorageProvider:
     def open_wolf_connection(self) -> StorageConnection:
         from storage.postgres import get_wolf_postgres_connection
 
-        return get_wolf_postgres_connection(self.conninfo, connect_kwargs=self.connect_kwargs)
+        return get_wolf_postgres_connection(self.conninfo, **self.connect_kwargs)
 
     def open_registry_connection(self) -> StorageConnection:
         from storage.postgres import get_registry_postgres_connection
 
-        return get_registry_postgres_connection(self.conninfo, connect_kwargs=self.connect_kwargs)
+        return get_registry_postgres_connection(self.conninfo, **self.connect_kwargs)
 
     def open_evolution_connection(self) -> StorageConnection:
         from storage.postgres import get_evolution_postgres_connection
 
-        return get_evolution_postgres_connection(self.conninfo, connect_kwargs=self.connect_kwargs)
+        return get_evolution_postgres_connection(self.conninfo, **self.connect_kwargs)
 
 
 def storage_provider_from_env(*, paths: Any | None = None) -> StorageProvider:

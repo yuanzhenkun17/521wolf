@@ -11,19 +11,19 @@ import logging
 import os
 from typing import Any
 
-from psycopg_pool import ConnectionPool
-
 _log = logging.getLogger(__name__)
 
-_pools: dict[tuple[str, str], ConnectionPool] = {}
+_pools: dict[tuple[str, str], Any] = {}
 
 
 def get_pool(
     schema: str,
     conninfo: str | None,
     connect_kwargs: dict[str, Any] | None = None,
-) -> ConnectionPool:
+) -> Any:
     """Return a lazy singleton :class:`ConnectionPool` for *schema* + *conninfo*."""
+    from psycopg_pool import ConnectionPool
+
     resolved_conninfo = conninfo or ""
     key = (schema, resolved_conninfo)
     pool = _pools.get(key)
@@ -52,6 +52,7 @@ def get_pool(
         kwargs=kwargs,
         configure=configure,
         check=ConnectionPool.check_connection,
+        open=True,
     )
     _pools[key] = pool
     _log.info(

@@ -400,7 +400,11 @@ def get_wolf_postgres_connection(
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
     """Open a PostgreSQL connection for the wolf storage namespace."""
-    return _get_domain_postgres_connection(conninfo, schema="wolf", connect_kwargs=connect_kwargs, **kwargs)
+    return _get_domain_postgres_connection(
+        conninfo,
+        schema="wolf",
+        connect_kwargs=_merge_connect_kwargs(connect_kwargs, kwargs),
+    )
 
 
 def get_registry_postgres_connection(
@@ -409,7 +413,11 @@ def get_registry_postgres_connection(
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
     """Open a PostgreSQL connection for the registry storage namespace."""
-    return _get_domain_postgres_connection(conninfo, schema="registry", connect_kwargs=connect_kwargs, **kwargs)
+    return _get_domain_postgres_connection(
+        conninfo,
+        schema="registry",
+        connect_kwargs=_merge_connect_kwargs(connect_kwargs, kwargs),
+    )
 
 
 def get_evolution_postgres_connection(
@@ -418,7 +426,20 @@ def get_evolution_postgres_connection(
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
     """Open a PostgreSQL connection for the evolution storage namespace."""
-    return _get_domain_postgres_connection(conninfo, schema="evolution", connect_kwargs=connect_kwargs, **kwargs)
+    return _get_domain_postgres_connection(
+        conninfo,
+        schema="evolution",
+        connect_kwargs=_merge_connect_kwargs(connect_kwargs, kwargs),
+    )
+
+
+def _merge_connect_kwargs(
+    connect_kwargs: dict[str, Any] | None,
+    flat_kwargs: dict[str, Any],
+) -> dict[str, Any] | None:
+    merged = dict(connect_kwargs or {})
+    merged.update(flat_kwargs)
+    return merged or None
 
 
 def _get_domain_postgres_connection(
@@ -426,23 +447,29 @@ def _get_domain_postgres_connection(
     *,
     schema: str,
     connect_kwargs: dict[str, Any] | None = None,
-    **kwargs: Any,
 ) -> PostgresConnectionAdapter:
-    from storage.postgres._pool import get_pool
-
     resolved = conninfo or _postgres_database_url()
-    if not resolved and not kwargs and not connect_kwargs:
+    if not resolved and not connect_kwargs:
         raise ValueError(
             "PostgreSQL connection info is required; pass conninfo or set "
             "POSTGRES_DATABASE_URL/DATABASE_URL"
         )
-    pool = get_pool(schema, resolved, connect_kwargs=connect_kwargs)
+
+    pool = None
+    try:
+        from storage.postgres._pool import get_pool
+
+        pool = get_pool(schema, resolved, connect_kwargs=connect_kwargs)
+    except Exception:  # noqa: BLE001 - direct connections still work without a pool
+        pool = None
+
+    direct_kwargs = {} if pool is not None else dict(connect_kwargs or {})
     return connect_postgres(
         resolved,
         schema=schema,
         search_path=(schema, "public"),
         pool=pool,
-        **kwargs,
+        **direct_kwargs,
     )
 
 
