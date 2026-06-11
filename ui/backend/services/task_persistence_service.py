@@ -196,10 +196,18 @@ class TaskPersistenceService:
                 continue
             if payload.get("run_id") or payload.get("kind") == "role_evolution_run":
                 payload.setdefault("run_id", entity_id)
-                self._store.evolution_runs.setdefault(entity_id, payload)
+                if (
+                    entity_id not in self._store.evolution_runs
+                    or self.is_queue_backed_background_task(payload)
+                ):
+                    self._store.evolution_runs[entity_id] = payload
             elif payload.get("batch_id") or payload.get("kind") in {"role_evolution_batch", "benchmark_batch"}:
                 payload.setdefault("batch_id", entity_id)
-                self._store.evolution_batches.setdefault(entity_id, payload)
+                if (
+                    entity_id not in self._store.evolution_batches
+                    or self.is_queue_backed_background_task(payload)
+                ):
+                    self._store.evolution_batches[entity_id] = payload
         self._store._background_state_fingerprint = self.background_tasks_fingerprint(self.background_tasks_payload())
         for entity in [*self._store.evolution_runs.values(), *self._store.evolution_batches.values()]:
             key = self.task_entity_key(entity)

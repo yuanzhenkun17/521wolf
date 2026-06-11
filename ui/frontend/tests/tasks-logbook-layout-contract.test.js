@@ -13,12 +13,23 @@ test('TasksPage is rebuilt on the self-evolution logbook layout instead of the o
   assert.doesNotMatch(source, /<LabWorkbenchShell/)
   assert.match(source, /class="tasks-shell parchment-logbook"/)
   assert.match(source, /class="tasks-command-bar"/)
-  assert.match(source, /class="tasks-detail-topbar"/)
+  assert.doesNotMatch(source, /class="tasks-detail-topbar"/)
+  assert.doesNotMatch(source, /detail-workspace-tabs/)
   assert.match(source, /class="tasks-control-rail"/)
   assert.match(source, /class="tasks-main-pane"/)
   assert.match(source, /class="tasks-context-rail"[\s\S]*data-tasks-context-rail/)
-  assert.match(source, /grid-template-areas:[\s\S]*"rail command context"[\s\S]*"rail topbar context"[\s\S]*"rail pane context"/)
+  assert.match(source, /grid-template-areas:[\s\S]*"rail command context"[\s\S]*"rail pane context"/)
   assert.match(source, /@media \(min-width: 961px\)[\s\S]*\.tasks-shell,[\s\S]*\.tasks-shell\.parchment-logbook\s*\{[\s\S]*grid-template-columns:\s*252px minmax\(0, 1fr\) 300px/)
+})
+
+test('TasksPage keeps the event timeline inline and collapsed by default', () => {
+  const source = readSource('../src/pages/TasksPage.vue')
+
+  assert.match(source, /const eventsExpanded = ref\(false\)/)
+  assert.match(source, /class="task-events-toggle"[\s\S]*:aria-expanded="eventsExpanded"/)
+  assert.match(source, /v-show="eventsExpanded"[\s\S]*id="task-events-content"/)
+  assert.match(source, /\.task-events-panel\.expanded/)
+  assert.doesNotMatch(source, /activeWorkspace|selectWorkspace|queueSectionRef|eventsSectionRef/)
 })
 
 test('TasksPage shares the self-evolution parchment palette and context treatment', () => {

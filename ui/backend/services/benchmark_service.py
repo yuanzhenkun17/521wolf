@@ -157,10 +157,17 @@ class BenchmarkService:
         return event_name
 
     def _batch(self, batch_id: str) -> dict[str, Any]:
+        self._refresh_background_tasks()
         batch = self._context.evolution_batches.get(batch_id)
         if batch is None:
             raise HTTPException(status_code=404, detail="batch not found")
         return batch
+
+    def _refresh_background_tasks(self) -> None:
+        task_service = getattr(self._context, "task_service", None)
+        load_background_tasks = getattr(task_service, "load_background_tasks", None)
+        if callable(load_background_tasks):
+            load_background_tasks()
 
     def benchmark_specs_payload(self) -> dict[str, Any]:
         return {"kind": "benchmark_specs", "schema_version": 1, "items": self.list_benchmark_specs()}
@@ -355,6 +362,11 @@ class BenchmarkService:
                 model_profile_id=request.model_profile_id,
             )
         )
+        self.restore_benchmark_task_snapshot(
+            payload=payload,
+            batch_id=batch_id,
+        )
+
         def progress_sink(progress: dict[str, Any]) -> None:
             payload = dict(progress)
             payload.setdefault("stage", "benchmark_running")
@@ -377,6 +389,28 @@ class BenchmarkService:
             "status": batch.get("status"),
             "artifact_ids": [artifact["artifact_id"] for artifact in artifacts],
         }
+
+    def restore_benchmark_task_snapshot(
+        self,
+        *,
+        payload: dict[str, Any],
+        batch_id: str,
+    ) -> dict[str, Any]:
+        if not batch_id:
+            raise RuntimeError("benchmark task is missing batch_id")
+        snapshot = payload.get("snapshot") if isinstance(payload.get("snapshot"), dict) else {}
+        batch_snapshot = snapshot.get("batch") if isinstance(snapshot.get("batch"), dict) else {}
+        if batch_id not in self._context.evolution_batches and batch_snapshot:
+            self._context.evolution_batches[batch_id] = dict(batch_snapshot)
+        if batch_id not in self._context.evolution_batches:
+            self._tasks.load_background_tasks()
+        batch = self._context.evolution_batches.get(batch_id)
+        if not isinstance(batch, dict):
+            raise RuntimeError(f"benchmark batch snapshot not found: {batch_id}")
+        batch["task_id"] = batch_id
+        batch["task_queue_status"] = "running"
+        self._tasks.persist_background_tasks()
+        return batch
 
     def persist_benchmark_task_artifacts(self, batch_id: str) -> list[dict[str, Any]]:
         batch = self._context.evolution_batches.get(batch_id)
@@ -453,6 +487,7 @@ class BenchmarkService:
         return self._runs.benchmark_request_config(request, spec)
 
     def benchmark_batch_detail(self, batch_id: str) -> dict[str, Any]:
+        self._refresh_background_tasks()
         return self._reports.benchmark_batch_detail(batch_id)
 
     def benchmark_batch_games(
@@ -466,6 +501,7 @@ class BenchmarkService:
         limit: int | None = None,
         offset: int = 0,
     ) -> dict[str, Any]:
+        self._refresh_background_tasks()
         return self._reports.benchmark_batch_games(
             batch_id,
             result_batch_id=result_batch_id,
@@ -487,6 +523,7 @@ class BenchmarkService:
         stage: str | None = None,
         seed: str | None = None,
     ) -> dict[str, Any]:
+        self._refresh_background_tasks()
         return self._reports.benchmark_batch_diagnostics(
             batch_id,
             target_role=target_role,
@@ -498,6 +535,7 @@ class BenchmarkService:
         )
 
     def benchmark_batch_report(self, batch_id: str, *, format: str = "json") -> dict[str, Any]:
+        self._refresh_background_tasks()
         return self._reports.benchmark_batch_report(batch_id, format=format)
 
     def benchmark_reports(
@@ -513,6 +551,7 @@ class BenchmarkService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
+        self._refresh_background_tasks()
         return self._reports.benchmark_reports(
             scope=scope,
             evaluation_set_id=evaluation_set_id,
@@ -542,6 +581,7 @@ class BenchmarkService:
         limit: int = 200,
         offset: int = 0,
     ) -> dict[str, Any]:
+        self._refresh_background_tasks()
         return self._reports.benchmark_diagnostics(
             scope=scope,
             evaluation_set_id=evaluation_set_id,

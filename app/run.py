@@ -165,7 +165,16 @@ async def run_evaluation(
         "batch_config": config,
     }
     _copy_config_keys(state, config, *LANGFUSE_EVAL_CONFIG_KEYS)
-    _copy_optional(state, kwargs, "model", "skill_dir", "paths", "storage_provider", "decision_judge_fn")
+    _copy_optional(
+        state,
+        kwargs,
+        "model",
+        "decision_judge_model",
+        "skill_dir",
+        "paths",
+        "storage_provider",
+        "decision_judge_fn",
+    )
     _ensure_model(state)
 
     graph = build_root_graph(use_checkpointer=bool(kwargs.get("use_checkpointer", False)))

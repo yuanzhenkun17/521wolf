@@ -111,8 +111,11 @@ class EvaluationStore:
                 self._conn.execute(
                     "INSERT INTO evaluations "
                     "(id, game_id, player_seat, role, speech_score, vote_score, "
-                    "skill_score, information_score, cooperation_score, overall_score, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "skill_score, logic_score, team_score, risk_penalty, role_score, "
+                    "score_completeness, information_score, cooperation_score, "
+                    "overall_score, scoring_version, evaluator_config_hash, "
+                    "ruleset_version, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(id) DO UPDATE SET "
                     "game_id = excluded.game_id, "
                     "player_seat = excluded.player_seat, "
@@ -120,9 +123,17 @@ class EvaluationStore:
                     "speech_score = excluded.speech_score, "
                     "vote_score = excluded.vote_score, "
                     "skill_score = excluded.skill_score, "
+                    "logic_score = excluded.logic_score, "
+                    "team_score = excluded.team_score, "
+                    "risk_penalty = excluded.risk_penalty, "
+                    "role_score = excluded.role_score, "
+                    "score_completeness = excluded.score_completeness, "
                     "information_score = excluded.information_score, "
                     "cooperation_score = excluded.cooperation_score, "
                     "overall_score = excluded.overall_score, "
+                    "scoring_version = excluded.scoring_version, "
+                    "evaluator_config_hash = excluded.evaluator_config_hash, "
+                    "ruleset_version = excluded.ruleset_version, "
                     "created_at = excluded.created_at",
                     (
                         eid,
@@ -132,9 +143,17 @@ class EvaluationStore:
                         ev.get("speech_score"),
                         ev.get("vote_score"),
                         ev.get("skill_score"),
+                        ev.get("logic_score"),
+                        ev.get("team_score"),
+                        ev.get("risk_penalty", 0.0),
+                        ev.get("role_score"),
+                        ev.get("score_completeness", 1.0),
                         ev.get("information_score"),
                         ev.get("cooperation_score"),
                         ev.get("overall_score"),
+                        ev.get("scoring_version") or "scoring_v1",
+                        ev.get("evaluator_config_hash") or "rule_heuristic_v1",
+                        ev.get("ruleset_version") or "werewolf_12p_v1",
                         str(ev.get("created_at") or now),
                     ),
                 )

@@ -146,6 +146,16 @@ class DecisionReviewStore:
         if quality:
             conditions.append("quality = ?")
             params.append(quality)
+        if role:
+            conditions.append(
+                "EXISTS ("
+                "SELECT 1 FROM decisions "
+                "WHERE decisions.game_id = decision_reviews.game_id "
+                "AND decisions.seat = decision_reviews.player_seat "
+                "AND decisions.role = ?"
+                ")"
+            )
+            params.append(role)
         if action_type:
             conditions.append("action_type = ?")
             params.append(action_type)

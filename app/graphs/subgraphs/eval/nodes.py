@@ -405,10 +405,13 @@ async def _attach_eval_decision_judge_reports(state: EvalBatchState) -> dict[str
 
     reports: list[dict[str, Any]] = []
     warnings: list[str] = []
+    judge_model = state.get("decision_judge_model")
+    if judge_model is None:
+        judge_model = state.get("model")
     for game in games:
         try:
             report = await judge_key_decisions(
-                state.get("model"),
+                judge_model,
                 game_id=str(game.get("game_id") or ""),
                 winner=game.get("winner"),
                 roles=game.get("player_roles") or game.get("roles"),

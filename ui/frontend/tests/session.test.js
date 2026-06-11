@@ -3999,9 +3999,9 @@ test('evolution workbench shows success notice after starting a single run', asy
 
   assert.deepEqual(requests.find((item) => item.path === '/evolution-runs')?.body, {
     roles: ['seer'],
-    training_games: 5,
-    battle_games: 4,
-    max_days: 5,
+    training_games: 20,
+    battle_games: 20,
+    max_days: 20,
     auto_promote: false
   })
   assert.deepEqual(workbench.notice.value, { type: 'success', message: '单角色进化已启动。' })
@@ -4059,9 +4059,9 @@ test('evolution workbench sends the selected model profile when starting a singl
 
   assert.deepEqual(requests.find((item) => item.path === '/evolution-runs')?.body, {
     roles: ['seer'],
-    training_games: 5,
-    battle_games: 4,
-    max_days: 5,
+    training_games: 20,
+    battle_games: 20,
+    max_days: 20,
     auto_promote: false,
     model_profile_id: 'profile-evolution-main'
   })

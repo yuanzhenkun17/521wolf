@@ -275,8 +275,17 @@ class BenchmarkRunService:
         model_runtime = self._benchmark_model_runtime_from_plan(run_plan) or self.benchmark_model_runtime(request)
         request_config = self.benchmark_request_config(request, spec)
         workflow_game_concurrency = run_plan.get("workflow_game_concurrency")
-        if workflow_game_concurrency is not None:
-            request_config["game_concurrency"] = int(workflow_game_concurrency)
+        concurrency_policy = (
+            run_plan.get("concurrency_policy")
+            if isinstance(run_plan.get("concurrency_policy"), dict)
+            else {}
+        )
+        planned_game_concurrency = (
+            concurrency_policy.get("game_concurrency")
+            or workflow_game_concurrency
+        )
+        if planned_game_concurrency is not None:
+            request_config["game_concurrency"] = int(planned_game_concurrency)
         if spec is not None or request.target_type == "model" or request.model_id or request.model_config_hash:
             request_config["model_id"] = model_runtime["model_id"]
             request_config["model_config_hash"] = model_runtime["model_config_hash"]
@@ -330,6 +339,9 @@ class BenchmarkRunService:
             payload={
                 "batch_id": batch_id,
                 "request": request.model_dump(mode="json", exclude_none=True),
+                "snapshot": {
+                    "batch": _json_clone(batch),
+                },
             },
             priority=50,
             idempotency_key=f"benchmark_batch:{batch_id}",

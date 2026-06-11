@@ -262,7 +262,12 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
         model: Any | None,
         paths: PathConfig,
     ) -> dict[str, Any]:
-        return await run_evaluation(batch_config=batch_config, model=model, paths=paths)
+        return await run_evaluation(
+            batch_config=batch_config,
+            model=model,
+            decision_judge_model=self.model_for_run(scope="judge"),
+            paths=paths,
+        )
 
     def evolution_runner(self) -> Any:
         return run_evolution

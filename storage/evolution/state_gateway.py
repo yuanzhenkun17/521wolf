@@ -34,11 +34,9 @@ class EvolutionStateGateway:
         try:
             store = self._store(conn)
             store.save_run(run)
-            if (
-                isinstance(trust_bundle, dict)
-                and trust_bundle.get("schema_version") == "trust_bundle_v1"
-            ):
-                store.save_trust_bundle(trust_bundle)
+            trust_bundle_payload = self._trust_bundle_payload(trust_bundle)
+            if trust_bundle_payload is not None:
+                store.save_trust_bundle(trust_bundle_payload)
         finally:
             self._close_best_effort(conn)
 
@@ -79,6 +77,22 @@ class EvolutionStateGateway:
         import storage.evolution.run_repo as run_repo
 
         return run_repo.EvolutionStore(conn)
+
+    @staticmethod
+    def _trust_bundle_payload(
+        trust_bundle: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not isinstance(trust_bundle, dict):
+            return None
+        if trust_bundle.get("schema_version") == "trust_bundle_v1":
+            return trust_bundle
+        nested = trust_bundle.get("trust_bundle")
+        if (
+            isinstance(nested, dict)
+            and nested.get("schema_version") == "trust_bundle_v1"
+        ):
+            return nested
+        return None
 
     @staticmethod
     def _close_best_effort(conn: Any) -> None:

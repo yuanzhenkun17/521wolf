@@ -428,7 +428,7 @@ class _UiMemoryConnection:
             return _UiCursor([{"ok": 1}])
 
         if text.startswith("SELECT version_num FROM public.alembic_version"):
-            return _UiCursor([{"version_num": "20260611_0007"}])
+            return _UiCursor([{"version_num": "20260611_0008"}])
 
         if text == "SELECT status, COUNT(*) AS count FROM ui_task_queue GROUP BY status":
             counts: dict[str, int] = {}
@@ -3486,7 +3486,7 @@ def test_langfuse_task_routes_enqueue_pg_tasks(
     assert verification.json()["task_queue_status"] == "queued"
 
 
-def test_evolution_start_normalizes_legacy_manual_defaults(
+def test_evolution_start_preserves_requested_counts_when_enabling_auto_promote(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -3539,18 +3539,62 @@ def test_evolution_start_normalizes_legacy_manual_defaults(
     assert response.status_code == 200
     assert captured == {
         "role": "seer",
-        "training_games": 5,
-        "battle_games": 4,
+        "training_games": 20,
+        "battle_games": 10,
         "auto_promote": True,
     }
     assert detail_response.status_code == 200
     assert detail_response.json()["config"] == {
         "roles": ["seer"],
-        "training_games": 5,
-        "battle_games": 4,
+        "training_games": 20,
+        "battle_games": 10,
         "max_days": 5,
         "auto_promote": True,
     }
+
+
+def test_evolution_start_request_defaults_to_twenty_games_and_days() -> None:
+    request = EvolutionStartRequest()
+
+    assert request.training_games == 20
+    assert request.battle_games == 20
+    assert request.max_days == 20
+
+
+def test_benchmark_evaluation_resolves_default_judge_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path), model=FakeModel())
+    game_model = object()
+    judge_model = object()
+    resolved_scopes: list[str] = []
+    captured: dict[str, Any] = {}
+
+    def model_for_run(*, scope: str = "game_decision", model_profile_id: str | None = None) -> Any:
+        assert model_profile_id is None
+        resolved_scopes.append(scope)
+        return judge_model
+
+    async def fake_run_evaluation(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(store, "model_for_run", model_for_run)
+    monkeypatch.setattr(ui_backend_store, "run_evaluation", fake_run_evaluation)
+
+    result = asyncio.run(
+        store.evaluate_benchmark_batch(
+            batch_config={"batch_id": "judge-model-scope"},
+            model=game_model,
+            paths=store.paths,
+        )
+    )
+
+    assert result["status"] == "completed"
+    assert resolved_scopes == ["judge"]
+    assert captured["model"] is game_model
+    assert captured["decision_judge_model"] is judge_model
 
 
 def test_fake_model_game_review_evolution_benchmark_smoke(tmp_path: Path, monkeypatch) -> None:
@@ -3767,7 +3811,12 @@ def test_benchmark_uses_battle_games_for_game_count(tmp_path: Path, monkeypatch)
     assert captured["comparison_group_id"] == batch_id
     assert set(captured) >= {"batch_id", "game_count", "max_days", "comparison_group_id", "model_id"}
     listed = next(item for item in listed_response.json()["batches"] if item["batch_id"] == batch_id)
-    assert listed["config"] == {"roles": ["seer"], "battle_games": 3, "max_days": 1}
+    assert listed["config"] == {
+        "roles": ["seer"],
+        "battle_games": 3,
+        "max_days": 1,
+        "game_concurrency": 3,
+    }
     assert listed["result"]["game_count"] == 3
 
 
@@ -3852,6 +3901,33 @@ def test_workflow_game_concurrency_setting_feeds_benchmark_and_evolution(
     assert benchmark_config["game_concurrency"] == 4
     assert evolution_response.status_code == 200
     assert evolution_config["game_concurrency"] == 4
+
+
+def test_benchmark_queue_freezes_default_planned_game_concurrency(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("WEREWOLF_GAME_CONCURRENCY", raising=False)
+    paths = PathConfig(root=tmp_path)
+    store = ui_backend_store.BackendStore(paths=paths, model=FakeModel())
+    request = BenchmarkRequest(
+        target_type="model",
+        roles=["seer"],
+        battle_games=10,
+        max_days=1,
+    )
+
+    batch = store.benchmark_service.queue_benchmark(request)
+    eval_config = store.benchmark_service.benchmark_batch_config(
+        batch["batch_id"],
+        "seer",
+        request,
+        0,
+    )
+
+    assert batch["run_plan"]["concurrency_policy"]["game_concurrency"] == 3
+    assert batch["config"]["game_concurrency"] == 3
+    assert eval_config["game_concurrency"] == 3
 
 
 def test_benchmark_request_accepts_suite_and_target_versions() -> None:
@@ -5409,7 +5485,12 @@ def test_legacy_benchmark_queue_stays_ad_hoc_compatible(tmp_path: Path, monkeypa
     assert response.status_code == 200
     assert batch["benchmark"] is None
     assert batch["target_type"] == "role_version"
-    assert batch["config"] == {"roles": ["seer"], "battle_games": 0, "max_days": 1}
+    assert batch["config"] == {
+        "roles": ["seer"],
+        "battle_games": 0,
+        "max_days": 1,
+        "game_concurrency": 1,
+    }
     assert captured["game_count"] == 0
     assert captured["max_days"] == 1
     assert "evaluation_set_id" not in captured
@@ -5417,7 +5498,12 @@ def test_legacy_benchmark_queue_stays_ad_hoc_compatible(tmp_path: Path, monkeypa
     assert "benchmark_id" not in captured
     assert stored_batch["benchmark"] is None
     listed = next(item for item in listed_response.json()["batches"] if item["batch_id"] == batch["batch_id"])
-    assert listed["config"] == {"roles": ["seer"], "battle_games": 0, "max_days": 1}
+    assert listed["config"] == {
+        "roles": ["seer"],
+        "battle_games": 0,
+        "max_days": 1,
+        "game_concurrency": 1,
+    }
 
 
 def test_benchmark_queue_passes_langfuse_config_to_eval_launcher(tmp_path: Path, monkeypatch) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 import pytest
@@ -74,7 +75,20 @@ def test_evaluation_save_batch_uses_single_storage_transaction() -> None:
 
     saved = store.save_batch(
         [
-            {"id": "ev1", "game_id": "g1", "player_seat": 1, "role": "seer"},
+            {
+                "id": "ev1",
+                "game_id": "g1",
+                "player_seat": 1,
+                "role": "seer",
+                "logic_score": 0.41,
+                "team_score": 0.52,
+                "risk_penalty": 0.13,
+                "role_score": 0.74,
+                "score_completeness": 0.91,
+                "scoring_version": "scoring_v2",
+                "evaluator_config_hash": "eval-hash",
+                "ruleset_version": "rules-v2",
+            },
             {"id": "ev2", "game_id": "g1", "player_seat": 2, "role": "werewolf"},
         ]
     )
@@ -85,6 +99,22 @@ def test_evaluation_save_batch_uses_single_storage_transaction() -> None:
     assert conn.rollbacks == 0
     assert len(conn.sql) == 2
     assert all("INSERT INTO evaluations" in sql for sql in conn.sql)
+    assert "logic_score" in conn.sql[0]
+    assert "team_score" in conn.sql[0]
+    assert "risk_penalty" in conn.sql[0]
+    assert "role_score" in conn.sql[0]
+    assert "score_completeness" in conn.sql[0]
+    assert "scoring_version" in conn.sql[0]
+    assert "evaluator_config_hash" in conn.sql[0]
+    assert "ruleset_version" in conn.sql[0]
+    assert 0.41 in conn.params[0]
+    assert 0.52 in conn.params[0]
+    assert 0.13 in conn.params[0]
+    assert 0.74 in conn.params[0]
+    assert 0.91 in conn.params[0]
+    assert "scoring_v2" in conn.params[0]
+    assert "eval-hash" in conn.params[0]
+    assert "rules-v2" in conn.params[0]
 
 
 def test_game_delete_uses_single_storage_transaction_and_child_order() -> None:
@@ -415,6 +445,69 @@ def test_review_and_counterfactual_batches_use_transactions() -> None:
     assert conn.commits == 2
     assert any("INSERT INTO decision_reviews" in sql for sql in conn.sql)
     assert any("INSERT INTO counterfactuals" in sql for sql in conn.sql)
+
+
+def test_review_query_filters_role_via_decisions_table() -> None:
+    from storage.review_store import DecisionReviewStore
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE decision_reviews ("
+        "id TEXT PRIMARY KEY, "
+        "game_id TEXT NOT NULL, "
+        "decision_id TEXT NOT NULL, "
+        "player_seat INTEGER NOT NULL, "
+        "day INTEGER NOT NULL, "
+        "phase TEXT NOT NULL, "
+        "action_type TEXT NOT NULL, "
+        "quality TEXT NOT NULL, "
+        "reason TEXT, "
+        "alternative_action TEXT, "
+        "created_at TEXT NOT NULL"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE decisions ("
+        "id TEXT PRIMARY KEY, "
+        "game_id TEXT NOT NULL, "
+        "seat INTEGER NOT NULL, "
+        "role TEXT NOT NULL"
+        ")"
+    )
+    conn.executemany(
+        "INSERT INTO decision_reviews "
+        "(id, game_id, decision_id, player_seat, day, phase, action_type, "
+        "quality, reason, alternative_action, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("r-seer", "g1", "d-seer", 1, 1, "day", "vote", "good", None, None, "2"),
+            (
+                "r-wolf",
+                "g1",
+                "d-wolf",
+                2,
+                1,
+                "day",
+                "vote",
+                "good",
+                None,
+                None,
+                "1",
+            ),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO decisions (id, game_id, seat, role) VALUES (?, ?, ?, ?)",
+        [
+            ("d-seer", "g1", 1, "seer"),
+            ("d-wolf", "g1", 2, "werewolf"),
+        ],
+    )
+
+    rows = DecisionReviewStore(conn).query(role="seer")
+
+    assert [row["id"] for row in rows] == ["r-seer"]
 
 
 def test_experience_save_candidates_uses_transaction_and_pg_upsert() -> None:

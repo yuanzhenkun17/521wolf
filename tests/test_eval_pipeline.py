@@ -716,6 +716,40 @@ def test_aggregate_node_adds_decision_judge_aggregate(tmp_path):
     assert aggregate["lowest_decisions"][0]["recommended_skill_files"] == ["seer/check_priority.md"]
 
 
+def test_aggregate_node_uses_dedicated_decision_judge_model(tmp_path, monkeypatch):
+    game_model = object()
+    judge_model = object()
+    captured_models = []
+
+    async def fake_judge_key_decisions(model, **_kwargs):
+        captured_models.append(model)
+        return {
+            "status": "ok",
+            "metrics": {"judged": 0},
+            "judgments": [],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr("app.lib.decision_judge.judge_key_decisions", fake_judge_key_decisions)
+    state = {
+        "batch_id": "dedicated_judge_model_batch",
+        "batch_config": {
+            "game_count": 1,
+            "eval_decision_judge": True,
+            "eval_judge_max_decisions": 1,
+        },
+        "games": [_valid_game("villagers")],
+        "player_scores": [],
+        "paths": PathConfig(root=tmp_path),
+        "model": game_model,
+        "decision_judge_model": judge_model,
+    }
+
+    asyncio.run(aggregate_node(state))
+
+    assert captured_models == [judge_model]
+
+
 def test_decision_judge_timeout_records_degraded_reason():
     from app.lib.decision_judge import judge_key_decisions
 

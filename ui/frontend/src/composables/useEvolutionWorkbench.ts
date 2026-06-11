@@ -2027,9 +2027,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   const modelProfilePreflightRequests = createLatestOnlyTracker()
 
   const form = ref({
-    training_games: 5,
-    battle_games: 4,
-    max_days: 5,
+    training_games: 20,
+    battle_games: 20,
+    max_days: 20,
     auto_promote: true,
     model_profile_id: ''
   })
@@ -3256,9 +3256,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
         method: 'POST',
         body: JSON.stringify({
           roles: [selectedRole.value],
-          training_games: numberField('training_games', 5),
-          battle_games: numberField('battle_games', 4),
-          max_days: numberField('max_days', 5),
+          training_games: numberField('training_games', 20),
+          battle_games: numberField('battle_games', 20),
+          max_days: numberField('max_days', 20),
           auto_promote: autoPromoteField(),
           ...(String(form.value.model_profile_id || '').trim() ? { model_profile_id: String(form.value.model_profile_id || '').trim() } : {})
         })
@@ -3312,9 +3312,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
         method: 'POST',
         body: JSON.stringify({
           roles: [...selectedBatchRoles.value],
-          training_games: numberField('training_games', 5),
-          battle_games: numberField('battle_games', 4),
-          max_days: numberField('max_days', 5),
+          training_games: numberField('training_games', 20),
+          battle_games: numberField('battle_games', 20),
+          max_days: numberField('max_days', 20),
           auto_promote: autoPromoteField(),
           ...(String(form.value.model_profile_id || '').trim() ? { model_profile_id: String(form.value.model_profile_id || '').trim() } : {})
         })

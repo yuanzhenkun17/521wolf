@@ -173,6 +173,54 @@ def test_evolution_state_gateway_runtime_state_uses_provider_and_saves_trust_bun
     assert opened[0].closed is True
 
 
+def test_evolution_state_gateway_runtime_state_unwraps_trust_bundle_payload(
+    monkeypatch: Any,
+) -> None:
+    import storage.evolution.run_repo as run_repo
+    from storage.evolution.state_gateway import EvolutionStateGateway
+
+    calls: list[tuple[str, str]] = []
+
+    class _FakeConn:
+        def close(self) -> None:
+            return None
+
+    class _FakeProvider:
+        def open_evolution_connection(self) -> _FakeConn:
+            return _FakeConn()
+
+    class _FakeEvolutionStore:
+        def __init__(self, conn: _FakeConn) -> None:
+            self._conn = conn
+
+        def save_run(self, run: EvolutionRunData) -> None:
+            calls.append(("save_run", run.run_id))
+
+        def save_trust_bundle(self, bundle: dict[str, Any]) -> dict[str, Any]:
+            bundle_id = str(bundle["trust_bundle_id"])
+            calls.append(("save_trust_bundle", bundle_id))
+            return {"id": bundle_id}
+
+    monkeypatch.setattr(run_repo, "EvolutionStore", _FakeEvolutionStore)
+
+    EvolutionStateGateway(provider=_FakeProvider()).save_runtime_state(
+        _run("run-wrapper"),
+        trust_bundle={
+            "kind": "evolution_trust_bundle",
+            "schema_version": 1,
+            "trust_bundle": {
+                "schema_version": "trust_bundle_v1",
+                "trust_bundle_id": "tb-run-wrapper",
+            },
+        },
+    )
+
+    assert calls == [
+        ("save_run", "run-wrapper"),
+        ("save_trust_bundle", "tb-run-wrapper"),
+    ]
+
+
 def test_evolution_state_gateway_runtime_state_close_error_is_best_effort(
     monkeypatch: Any,
 ) -> None:

@@ -2,7 +2,7 @@
 import { computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { type GameStartRoleVersionMode, gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
 import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
-import { runtimeHealthGateSummary, runtimeHealthPayloadFromPreflight, runtimeHealthPreflightStatusText } from '../domain/runtimeHealth/gates'
+import { runtimeHealthGateSummary, runtimeHealthPayloadFromPreflight } from '../domain/runtimeHealth/gates'
 import { useGameStore, useSessionStore } from '../stores'
 import type { RuntimeHealthPayload } from '../types/health'
 import type { ModelProfile } from '../types/settings'
@@ -183,19 +183,11 @@ const gameStartGate = computed(() =>
     ? runtimeHealthGateSummary(modelProfilePreflightHealth.value, 'game_start')
     : baseGameStartGate.value
 )
-const modelProfileStatusText = computed(() => {
-  if (!backendAvailable.value) return ''
-  if (modelProfilesLoading.value) return '模型读取中'
-  if (modelProfilesError.value) return modelProfilesError.value
-  if (gameStartPreflightLoading.value) return '开局预检中'
-  if (modelProfilePreflightLoading.value) return '模型预检中'
-  if (modelProfilePreflightError.value) return modelProfilePreflightError.value
-  if (modelProfilePreflight.value?.ready === false) return runtimeHealthPreflightStatusText(modelProfilePreflight.value, 'game_start')
-  if (modelProfilePreflight.value?.ready === true) return '模型预检通过'
-  if (selectedModelProfile.value) return `${selectedModelProfile.value.name} · ${selectedModelProfile.value.model}`
-  if (launchModelProfiles.value.length) return '自动使用默认模型'
-  return '未配置本地模型'
-})
+const modelProfilePreflightPassed = computed(() =>
+  !modelProfilePreflightLoading.value
+  && !modelProfilePreflightError.value
+  && modelProfilePreflight.value?.ready === true
+)
 const gameStartGateMessage = computed(() => {
   if (gameStartPreflightLoading.value) return '开局预检中。'
   if (gameStartPreflightError.value) return gameStartPreflightError.value
@@ -216,6 +208,13 @@ function isFallbackVersion(version) {
   const source = String(version?.source || '').trim().toLowerCase()
   const status = String(version?.status || '').trim().toLowerCase()
   return source === 'app-fallback' || source === 'app_fallback' || status === 'missing_registry'
+}
+
+function modelProfileOptionText(profile) {
+  const name = String(profile?.name || '').trim()
+  const model = String(profile?.model || '').trim()
+  const identity = name && model && name !== model ? `${name} · ${model}` : name || model || '未命名模型'
+  return `${identity}${profile?.default_scopes?.game_decision ? ' · 默认游戏' : ''}`
 }
 
 function scoreForVersion(version, entries = []) {
@@ -595,28 +594,24 @@ watch(loading, (isLoading) => {
         class="lobby-model-panel"
         aria-label="开局模型"
       >
-        <label>
-          <span>本地模型</span>
-          <select v-model="selectedModelProfileId" :disabled="loading || modelProfilesLoading">
+        <div class="lobby-model-select">
+          <select
+            v-model="selectedModelProfileId"
+            aria-label="本地模型"
+            :class="{ 'has-inline-status': modelProfilePreflightPassed }"
+            :disabled="loading || modelProfilesLoading"
+          >
             <option value="">自动选择</option>
             <option
               v-for="profile in launchModelProfiles"
               :key="profile.profile_id"
               :value="profile.profile_id"
             >
-              {{ profile.name }} · {{ profile.model }}{{ profile.default_scopes?.game_decision ? ' · 默认游戏' : '' }}
+              {{ modelProfileOptionText(profile) }}
             </option>
           </select>
-        </label>
-        <small :class="{ error: Boolean(modelProfilesError || modelProfilePreflightError) }">{{ modelProfileStatusText }}</small>
-        <button
-          v-if="modelProfilesError"
-          type="button"
-          :disabled="modelProfilesLoading"
-          @click="loadModelProfiles"
-        >
-          重试
-        </button>
+          <small v-if="modelProfilePreflightPassed" aria-hidden="true">模型预检通过</small>
+        </div>
       </section>
       <button class="mode-card watch" :disabled="loading || !backendAvailable || gameStartButtonBusy" @click="start('watch')">
         <span>观战模式</span>
@@ -885,41 +880,13 @@ watch(loading, (isLoading) => {
 
 .lobby-model-panel {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 6px 12px;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(224, 198, 128, 0.34);
-  background: rgba(14, 14, 14, 0.74);
-  color: #f1e7cf;
-}
-
-.lobby-model-panel label {
-  display: grid;
-  gap: 5px;
+  display: block;
   min-width: 0;
 }
 
-.lobby-model-panel span,
-.lobby-model-panel small {
-  color: rgba(244, 213, 142, 0.78);
-  font-size: 11px;
-  font-weight: 850;
-  line-height: 1.25;
-}
-
-.lobby-model-panel small {
-  grid-column: 1 / -1;
+.lobby-model-select {
+  position: relative;
   min-width: 0;
-  overflow-wrap: anywhere;
-  line-height: 1.35;
-  white-space: normal;
-}
-
-.lobby-model-panel small.error {
-  color: #ffd9c8;
 }
 
 .lobby-model-panel select {
@@ -935,18 +902,22 @@ watch(loading, (isLoading) => {
   font-weight: 850;
 }
 
-.lobby-model-panel button {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid rgba(244, 213, 142, 0.3);
-  border-radius: 0;
-  color: #f5dfaa;
-  background: rgba(244, 213, 142, 0.1);
-  font-size: 12px;
+.lobby-model-panel select.has-inline-status {
+  padding-right: 122px;
+}
+
+.lobby-model-select small {
+  position: absolute;
+  top: 50%;
+  right: 30px;
+  z-index: 1;
+  color: #9fd6a9;
+  font-size: 11px;
   font-weight: 900;
-  cursor: pointer;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+  white-space: nowrap;
 }
 
 :global(.lobby .card-fan) {
@@ -1421,20 +1392,6 @@ watch(loading, (isLoading) => {
 }
 
 @media (max-width: 620px) {
-  .lobby-model-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .lobby-model-panel button {
-    grid-column: 1;
-    grid-row: auto;
-    justify-self: start;
-  }
-
-  .lobby-model-panel small {
-    white-space: normal;
-  }
-
   .lobby-version-status {
     grid-template-columns: 1fr;
   }

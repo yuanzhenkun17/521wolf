@@ -6,7 +6,6 @@ import { createTaskService } from '../services/taskApi'
 import type { TaskActionResponse, TaskEventRow, TaskQueueRow } from '../types/task'
 
 type StatusFilterKey = 'all' | 'active' | 'queued' | 'running' | 'terminal' | 'failed'
-type TaskWorkspaceKey = 'queue' | 'events'
 
 const STATUS_FILTERS: Array<{
   key: StatusFilterKey
@@ -48,9 +47,7 @@ const error = ref('')
 const detailError = ref('')
 const eventsError = ref('')
 const refreshedAt = ref('')
-const activeWorkspace = ref<TaskWorkspaceKey>('queue')
-const queueSectionRef = ref<HTMLElement | null>(null)
-const eventsSectionRef = ref<HTMLElement | null>(null)
+const eventsExpanded = ref(false)
 
 const selectedFilter = computed(() =>
   STATUS_FILTERS.find((item) => item.key === activeFilter.value) || STATUS_FILTERS[0]
@@ -198,17 +195,12 @@ function selectFilter(filter: StatusFilterKey) {
   activeFilter.value = filter
 }
 
-function selectWorkspace(workspace: TaskWorkspaceKey) {
-  activeWorkspace.value = workspace
-  const target = workspace === 'events' ? eventsSectionRef.value : queueSectionRef.value
-  target?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-}
-
 function selectTask(task: TaskQueueRow | null) {
   const nextId = task?.task_id || task?.id || ''
   selectedTaskId.value = nextId
   selectedTask.value = task
   events.value = []
+  eventsExpanded.value = false
   detailError.value = ''
   eventsError.value = ''
   const query = { ...route.query }
@@ -353,30 +345,11 @@ function eventPayload(event: TaskEventRow): string {
           </div>
         </header>
 
-        <div class="tasks-detail-topbar">
-          <nav class="tasks-nav detail-workspace-tabs" aria-label="任务视图">
-            <button
-              type="button"
-              :class="['tasks-nav-tab', { active: activeWorkspace === 'queue' }]"
-              @click="selectWorkspace('queue')"
-            >
-              <span>任务列表</span>
-            </button>
-            <button
-              type="button"
-              :class="['tasks-nav-tab', { active: activeWorkspace === 'events' }]"
-              @click="selectWorkspace('events')"
-            >
-              <span>事件时间线</span>
-            </button>
-          </nav>
-        </div>
-
         <section class="tasks-main-pane">
           <div class="tasks-scroll">
             <div v-if="error" class="task-warning">{{ error }}</div>
 
-            <section ref="queueSectionRef" class="tasks-card task-list-panel" aria-label="任务列表">
+            <section class="tasks-card task-list-panel" aria-label="任务列表">
               <header>
                 <div>
                   <small>任务列表</small>
@@ -412,28 +385,42 @@ function eventPayload(event: TaskEventRow): string {
               </div>
             </section>
 
-            <section ref="eventsSectionRef" class="tasks-card task-events-panel" aria-label="任务事件时间线">
-              <header>
-                <div>
-                  <small>事件时间线</small>
-                  <h2>{{ eventRows.length }} 条事件</h2>
-                </div>
+            <section
+              :class="['tasks-card', 'task-events-panel', { expanded: eventsExpanded }]"
+              aria-label="任务事件时间线"
+            >
+              <header class="task-events-header">
+                <button
+                  type="button"
+                  class="task-events-toggle"
+                  :aria-expanded="eventsExpanded"
+                  aria-controls="task-events-content"
+                  @click="eventsExpanded = !eventsExpanded"
+                >
+                  <span>
+                    <small>事件时间线</small>
+                    <strong>{{ eventRows.length }} 条事件</strong>
+                  </span>
+                  <i aria-hidden="true"></i>
+                </button>
                 <button type="button" class="tasks-card-action" :disabled="!selectedTaskId || eventsLoading" @click="loadSelectedTask">
                   {{ eventsLoading ? '读取中' : '刷新事件' }}
                 </button>
               </header>
-              <p v-if="eventsError" class="task-warning">{{ eventsError }}</p>
-              <ol v-else-if="eventRows.length" class="task-event-list">
-                <li v-for="event in eventRows" :key="event.key">
-                  <span>
-                    <b>{{ event.type }}</b>
-                    <small>{{ event.time || event.key }}</small>
-                  </span>
-                  <pre>{{ event.payload }}</pre>
-                </li>
-              </ol>
-              <div v-else class="task-empty">
-                {{ selectedTaskId ? '暂无任务事件。' : '选择任务后显示事件。' }}
+              <div v-show="eventsExpanded" id="task-events-content" class="task-events-content">
+                <p v-if="eventsError" class="task-warning">{{ eventsError }}</p>
+                <ol v-else-if="eventRows.length" class="task-event-list">
+                  <li v-for="event in eventRows" :key="event.key">
+                    <span>
+                      <b>{{ event.type }}</b>
+                      <small>{{ event.time || event.key }}</small>
+                    </span>
+                    <pre>{{ event.payload }}</pre>
+                  </li>
+                </ol>
+                <div v-else class="task-empty">
+                  {{ selectedTaskId ? '暂无任务事件。' : '选择任务后显示事件。' }}
+                </div>
               </div>
             </section>
           </div>
@@ -580,10 +567,9 @@ function eventPayload(event: TaskEventRow): string {
 .tasks-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr) 292px;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
     "rail command context"
-    "rail topbar context"
     "rail pane context";
   column-gap: 18px;
   row-gap: 0;
@@ -735,36 +721,6 @@ function eventPayload(event: TaskEventRow): string {
   cursor: not-allowed;
 }
 
-.tasks-detail-topbar {
-  grid-area: topbar;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "workspace";
-  align-items: center;
-  gap: 8px 14px;
-  min-width: 0;
-  padding: 10px 16px;
-  border-right: 1px solid var(--tasks-border);
-  border-left: 1px solid var(--tasks-border);
-  border-bottom: 1px solid var(--tasks-border);
-  background: rgba(255, 252, 245, 0.28);
-}
-
-.tasks-nav {
-  grid-area: workspace;
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: none;
-}
-
-.tasks-nav::-webkit-scrollbar {
-  display: none;
-}
-
-.tasks-nav-tab,
 .task-filter-chip,
 .tasks-refresh-button {
   border: 1px solid rgba(93, 48, 17, 0.18);
@@ -775,7 +731,6 @@ function eventPayload(event: TaskEventRow): string {
   box-shadow: inset 0 1px 0 rgba(255, 252, 228, 0.76);
 }
 
-.tasks-nav-tab:hover,
 .task-filter-chip:hover,
 .tasks-refresh-button:hover {
   border-color: rgba(93, 48, 17, 0.32);
@@ -785,28 +740,11 @@ function eventPayload(event: TaskEventRow): string {
   transform: none;
 }
 
-.tasks-nav-tab.active,
 .task-filter-chip.selected {
   border-color: rgba(93, 48, 17, 0.45);
   color: var(--tasks-text);
   background: rgba(224, 184, 111, 0.66);
   box-shadow: inset 0 1px 2px rgba(93, 48, 17, 0.18);
-}
-
-.tasks-nav-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  flex: 0 0 auto;
-  width: auto;
-  height: 34px;
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 800;
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
 }
 
 .tasks-control-rail {
@@ -1160,6 +1098,83 @@ function eventPayload(event: TaskEventRow): string {
   cursor: pointer;
 }
 
+.task-events-panel {
+  gap: 0;
+  padding-block: 10px;
+}
+
+.task-events-panel.expanded {
+  gap: 12px;
+  padding-block: 14px;
+}
+
+.task-events-panel > .task-events-header {
+  min-height: 34px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.task-events-panel.expanded > .task-events-header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(93, 48, 17, 0.14);
+}
+
+.task-events-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: var(--tasks-text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-events-toggle span {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.task-events-toggle small {
+  color: var(--tasks-muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.task-events-toggle strong {
+  color: #3b1c09;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.task-events-toggle i {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-right: 3px;
+  border-right: 2px solid rgba(74, 37, 15, 0.66);
+  border-bottom: 2px solid rgba(74, 37, 15, 0.66);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.16s ease;
+}
+
+.task-events-toggle[aria-expanded="true"] i {
+  transform: rotate(225deg) translate(-2px, -2px);
+}
+
+.task-events-content {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
 .task-table {
   display: grid;
   align-content: start;
@@ -1484,12 +1499,6 @@ function eventPayload(event: TaskEventRow): string {
     column-gap: 14px;
   }
 
-  .tasks-detail-topbar {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "workspace";
-    align-items: stretch;
-  }
-
   .task-row {
     grid-template-columns: 10px minmax(0, 1fr);
   }
@@ -1505,10 +1514,9 @@ function eventPayload(event: TaskEventRow): string {
   .tasks-shell,
   .tasks-shell.parchment-logbook {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     grid-template-areas:
       "command"
-      "topbar"
       "rail"
       "pane"
       "context";
@@ -1553,11 +1561,6 @@ function eventPayload(event: TaskEventRow): string {
 
   .task-filter-chip {
     flex: 0 0 176px;
-  }
-
-  .tasks-detail-topbar {
-    overflow: hidden;
-    padding: 10px 12px;
   }
 
   .tasks-main-pane {
@@ -1643,24 +1646,6 @@ function eventPayload(event: TaskEventRow): string {
     height: 30px;
     padding: 0 10px;
     font-size: 12px;
-  }
-
-  .tasks-detail-topbar {
-    padding: 8px;
-  }
-
-  .tasks-nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 5px;
-    padding-bottom: 0;
-  }
-
-  .tasks-nav-tab {
-    width: 100%;
-    height: 30px;
-    justify-content: center;
-    padding: 0 6px;
   }
 
   .task-filter-chip {
@@ -1769,23 +1754,6 @@ function eventPayload(event: TaskEventRow): string {
     height: 34px;
     padding: 0 12px;
     font-size: 12px;
-  }
-
-  .tasks-detail-topbar {
-    padding: 10px 0;
-    border: 0;
-    border-bottom: 1px solid rgba(93, 48, 17, 0.16);
-    background: transparent;
-  }
-
-  .tasks-nav {
-    gap: 8px;
-    padding: 0;
-  }
-
-  .tasks-nav-tab {
-    height: 32px;
-    padding: 0 14px;
   }
 
   .tasks-main-pane {

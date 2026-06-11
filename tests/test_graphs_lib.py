@@ -3045,6 +3045,8 @@ class TestRun:
             lambda **_kwargs: FakeGraph(),
         )
 
+        judge_model = object()
+
         async def _run():
             model = object()
             judge_fn = object()
@@ -3058,6 +3060,7 @@ class TestRun:
             await run_evaluation(
                 batch_config={"batch_id": "judge_eval"},
                 model=model,
+                decision_judge_model=judge_model,
                 enable_llm_judge=True,
                 review_judge_max_decisions=2,
                 training_llm_judge=True,
@@ -3082,6 +3085,7 @@ class TestRun:
         assert captured[0]["decision_judge_fn"] is not None
         assert eval_config["enable_llm_judge"] is True
         assert eval_config["review_judge_max_decisions"] == 2
+        assert captured[1]["decision_judge_model"] is judge_model
         assert "training_llm_judge" not in eval_config
         assert "evolve_judge_concurrency" not in eval_config
         assert evolve_config["training_llm_judge"] is True

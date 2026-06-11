@@ -16,14 +16,16 @@ test('runtime health gates are consumed by all launch surfaces', () => {
   const evolutionConsole = read('../src/components/evolution/EvolutionConsolePanel.vue')
 
   assert.match(lobby, /runtimeHealthGateSummary\(props\.runtimeHealth,\s*'game_start'\)/)
-  assert.match(lobby, /runtimeHealthPreflightStatusText\(modelProfilePreflight\.value,\s*'game_start'\)/)
   assert.match(lobby, /const gameStartGate = computed/)
   assert.match(lobby, /showGameStartGate/)
   assert.match(lobby, /'lobby-runtime-gate'/)
   assert.match(lobby, /runtimeHealthPayloadFromPreflight/)
   assert.match(lobby, /\/health\/preflight\?\$\{query\.toString\(\)\}/)
   assert.match(lobby, /model_profile_id/)
-  assert.match(lobby, /\.lobby-model-panel small \{[\s\S]*overflow-wrap: anywhere;[\s\S]*white-space: normal;/)
+  assert.match(lobby, /class="lobby-model-panel"[\s\S]*<select[\s\S]*aria-label="本地模型"/)
+  assert.match(lobby, /class="lobby-model-select"[\s\S]*<small v-if="modelProfilePreflightPassed" aria-hidden="true">模型预检通过<\/small>/)
+  assert.match(lobby, /function modelProfileOptionText\(profile\)[\s\S]*name !== model/)
+  assert.doesNotMatch(lobby, /<span>本地模型<\/span>|lobby-model-select-row/)
 
   assert.match(benchmarkWorkbench, /runtimeHealthGateSummary\(effectiveRuntimeHealth\.value,\s*'benchmark_start'\)/)
   assert.match(benchmarkWorkbench, /async function loadRuntimeHealth\(\)/)

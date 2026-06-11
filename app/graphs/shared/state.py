@@ -200,6 +200,7 @@ class EvalBatchState(TypedDict, total=False):
     langfuse_run_name: str
     game_subgraph: Any
     model: Any
+    decision_judge_model: Any
     skill_dir: str
     paths: Any
     storage_provider: Any

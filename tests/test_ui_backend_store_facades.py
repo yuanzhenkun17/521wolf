@@ -548,11 +548,21 @@ class _FakeEvolutionRunContext:
 
 
 class _FakeBenchmarkTaskService:
+    def __init__(self) -> None:
+        self.load_count = 0
+        self.persist_count = 0
+
     def put_task_json_artifact(self, **kwargs: Any) -> dict[str, Any]:
         return {"artifact_id": f"{kwargs['task_id']}:{kwargs['name']}", **kwargs}
 
     def put_task_bytes_artifact(self, **kwargs: Any) -> dict[str, Any]:
         return {"artifact_id": f"{kwargs['task_id']}:{kwargs['name']}", **kwargs}
+
+    def load_background_tasks(self) -> None:
+        self.load_count += 1
+
+    def persist_background_tasks(self) -> None:
+        self.persist_count += 1
 
 
 def test_benchmark_task_executor_preflights_before_running(
@@ -598,6 +608,62 @@ def test_benchmark_task_executor_preflights_before_running(
             "model_profile_id": "bad-profile",
         }
     ]
+
+
+def test_benchmark_task_executor_restores_snapshot_before_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def ready_preflight(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"ready": True}
+
+    monkeypatch.setattr("ui.backend.services.benchmark_service.require_runtime_ready", ready_preflight)
+    task_service = _FakeBenchmarkTaskService()
+    context = SimpleNamespace(
+        paths=PathConfig(root=tmp_path),
+        evolution_batches={},
+        task_service=task_service,
+    )
+    service = BenchmarkService(context)
+    observed: dict[str, Any] = {}
+
+    async def run_queued_benchmark(batch_id: str, _request: Any, **_kwargs: Any) -> None:
+        observed.update(context.evolution_batches[batch_id])
+        context.evolution_batches[batch_id]["status"] = "completed"
+
+    service.run_queued_benchmark = run_queued_benchmark  # type: ignore[method-assign]
+    service.persist_benchmark_task_artifacts = lambda _batch_id: []  # type: ignore[method-assign]
+    batch_id = "bench_worker_restore"
+
+    result = service.execute_benchmark_task(
+        {
+            "task_id": batch_id,
+            "payload": {
+                "batch_id": batch_id,
+                "request": BenchmarkRequest(
+                    target_type="model",
+                    battle_games=0,
+                    max_days=1,
+                ).model_dump(mode="json", exclude_none=True),
+                "snapshot": {
+                    "batch": {
+                        "kind": "benchmark_batch",
+                        "batch_id": batch_id,
+                        "status": "running",
+                        "current_stage": "queued",
+                    },
+                },
+            },
+        },
+        SimpleNamespace(heartbeat=lambda progress=None: True, cancel_requested=lambda: False),
+    )
+
+    assert observed["batch_id"] == batch_id
+    assert observed["task_id"] == batch_id
+    assert observed["task_queue_status"] == "running"
+    assert result["status"] == "completed"
+    assert task_service.load_count == 0
+    assert task_service.persist_count == 1
 
 
 def test_evolution_task_executor_restores_snapshot_before_running(
