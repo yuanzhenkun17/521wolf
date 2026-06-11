@@ -132,6 +132,16 @@ npm run dev --prefix ui/frontend
 打开前端命令输出的 Vite 地址，通常是 `http://127.0.0.1:5173`。默认情况下，
 前端会把 `/api` 代理到 `http://127.0.0.1:8000`。
 
+单机容器化部署可以直接用 Docker Compose：
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d --build
+```
+
+Compose 会启动 PostgreSQL、执行 Alembic 迁移、发布默认角色基线、启动 API、
+启动 task worker，并在 `http://127.0.0.1:8080` 提供前端。
+
 ## Fake LLM 演示模式
 
 如果只是验证 UI 和工作流，不想调用真实模型，可以在启动后端前启用 fake LLM：
@@ -178,6 +188,8 @@ GET /api/health
 启动诊断会检查 PostgreSQL 连接、Alembic 版本、角色基线、模型配置、
 fake-model 模式和链路追踪可用性。`status=degraded` 对 fake LLM 演示通常仍可用；
 `status=error` 表示缺少 PostgreSQL、迁移或其他必需依赖。
+如果看到 `ui_task_queue` 这类 relation 不存在，说明当前数据库还没有成功执行
+`alembic upgrade head`。
 
 ## 验证
 

@@ -298,4 +298,63 @@ SETTINGS_SECRET_ENCRYPTION_KEY=<openssl rand -hex 32>
 Do not rotate `SETTINGS_SECRET_ENCRYPTION_KEY` casually. Existing saved model
 profile secrets are encrypted with it and must be re-entered if the key changes.
 
+## Docker Compose Deployment
+
+The repository also includes a Docker Compose stack for single-node deployment:
+
+- `postgres`: PostgreSQL 16 runtime database.
+- `migrate`: one-shot Alembic migration and default role baseline seed.
+- `api`: FastAPI backend on port `8000`.
+- `worker`: PostgreSQL task queue worker for Benchmark/Evolution background jobs.
+- `frontend`: nginx-served Vue build on `APP_PORT`, default `8080`.
+
+Prepare environment values first:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at least the model credentials, settings admin token,
+settings encryption key, and any Langfuse/TTS values you need. Compose overrides
+`POSTGRES_DATABASE_URL` and `DATABASE_URL` so the app talks to the `postgres`
+container, even if `.env` points at a host database for non-Docker runs.
+
+Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+Check status:
+
+```bash
+docker compose ps
+docker compose logs -f migrate api worker
+```
+
+Open:
+
+```text
+http://127.0.0.1:8080
+```
+
+If you see an error such as `relation "ui_task_queue" does not exist`, the
+database schema has not been migrated. In the Compose stack, inspect the
+`migrate` service logs and rerun:
+
+```bash
+docker compose run --rm migrate
+```
+
+The SQL table definitions live in Alembic migrations under
+`migrations/versions/`; they are not maintained as separate hand-written `.sql`
+bootstrap files. Current UI/task/settings tables include:
+
+- `wolf.ui_task_queue`, `wolf.ui_task_artifacts`, `wolf.ui_task_events`,
+  `wolf.ui_task_workers`
+- `wolf.ui_model_profiles`, `wolf.ui_runtime_settings`,
+  `wolf.ui_settings_audit_log`
+- the baseline game, benchmark, registry, and evolution tables created by
+  `20260608_0001_postgresql_baseline.py`
+
 Keep CD restricted to `main` and the protected `production` environment.

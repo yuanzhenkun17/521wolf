@@ -134,6 +134,17 @@ Open the Vite URL printed by the frontend command, usually
 `http://127.0.0.1:5173`. The frontend proxies `/api` to
 `http://127.0.0.1:8000` by default.
 
+For a containerized single-node setup, use Docker Compose:
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d --build
+```
+
+Compose starts PostgreSQL, runs Alembic migrations, seeds default role baselines,
+starts the API, starts the task worker, and serves the built frontend at
+`http://127.0.0.1:8080`.
+
 ## Fake LLM Demo Mode
 
 For UI and workflow demos that should not call a real model, enable the fake LLM
@@ -183,6 +194,8 @@ Startup diagnostics cover PostgreSQL connectivity, Alembic head status, role
 registry baselines, model configuration, fake-model mode, and tracing readiness.
 `status=degraded` can still be usable for fake LLM demos; `status=error` means a
 required dependency such as PostgreSQL or the schema migration is missing.
+Missing-table errors such as `ui_task_queue` mean `alembic upgrade head` has not
+completed against the active database.
 
 ## Verification
 
