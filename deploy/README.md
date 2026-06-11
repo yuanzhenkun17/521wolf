@@ -117,8 +117,10 @@ Optional:
 
 ```dotenv
 WEREWOLF_TTS_API_KEY=...
-WEREWOLF_TTS_BASE_URL=...
+WEREWOLF_TTS_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/realtime
 UI_BACKEND_USE_FAKE_LLM=false
+PG_POOL_MIN_SIZE=1
+PG_POOL_MAX_SIZE=10
 ```
 
 ## Deployment Templates
@@ -200,6 +202,20 @@ fails when tracing is expected but disabled or missing required keys. It warns
 when `LANGFUSE_CAPTURE_INPUT_OUTPUT=false`, because traces can still be created
 while Langfuse shows `Input null` and `Output undefined`.
 
+For backend health to report Langfuse as non-degraded when tracing is enabled,
+configure all of these in the backend service environment and restart it:
+
+```dotenv
+LANGFUSE_TRACING_ENABLED=true
+LANGFUSE_PUBLIC_KEY=...
+LANGFUSE_SECRET_KEY=...
+LANGFUSE_BASE_URL=http://your-langfuse-host:3000
+LANGFUSE_ENVIRONMENT=production
+LANGFUSE_RELEASE=<release-name-or-git-sha>
+LANGFUSE_SAMPLE_RATE=1.0
+LANGFUSE_CAPTURE_INPUT_OUTPUT=true
+```
+
 ## GitHub Secrets And Variables
 
 Required GitHub Secrets:
@@ -222,7 +238,7 @@ Optional GitHub Secrets:
 
 ```text
 WEREWOLF_TTS_API_KEY
-WEREWOLF_TTS_BASE_URL
+WEREWOLF_TTS_WS_URL
 LANGFUSE_PUBLIC_KEY
 LANGFUSE_SECRET_KEY
 LANGFUSE_BASE_URL
@@ -249,7 +265,14 @@ NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 UV_RELOCK_FOR_INDEX=true
 WEREWOLF_LLM_TIMEOUT=60
 WEREWOLF_GAME_TIMEOUT=900
+WEREWOLF_BATCH_GAME_TIMEOUT=900
+WEREWOLF_GAME_CONCURRENCY=0
+TASK_WORKER_REQUIRED=false
+WOLF_USE_PG_TASK_QUEUE=true
 LANGFUSE_TRACING_ENABLED=false
+LANGFUSE_ENVIRONMENT=production
+LANGFUSE_RELEASE=<release-name>
+LANGFUSE_SAMPLE_RATE=1.0
 EXPECT_LANGFUSE_ENABLED=false
 REQUIRE_LANGFUSE_CAPTURE_INPUT_OUTPUT=false
 ```

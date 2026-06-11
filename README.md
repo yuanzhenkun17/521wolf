@@ -155,9 +155,18 @@ meaningful.
 | `WEREWOLF_LLM_API_KEY` | Required for real LLM runs. Keep it server-side only. |
 | `WEREWOLF_LLM_BASE_URL` | OpenAI-compatible model endpoint. |
 | `WEREWOLF_LLM_MODEL` | Default model used by runtime agents unless overridden by settings. |
+| `WEREWOLF_LLM_*` retry settings | Optional retry, timeout, and circuit-breaker tuning. See `.env.example`. |
 | `UI_BACKEND_USE_FAKE_LLM` | Optional local/demo switch. Do not enable for real evaluation. |
+| `SETTINGS_ADMIN_ENABLED` / `SETTINGS_ADMIN_TOKEN` | Required for Settings page writes. |
+| `SETTINGS_SECRET_ENCRYPTION_KEY` | Required to store model Profile API keys. Keep stable; rotating it invalidates saved secrets. |
+| `WOLF_USE_PG_TASK_QUEUE` / `TASK_WORKER_REQUIRED` | Optional durable task queue and worker health gate controls. |
+| `WEREWOLF_GAME_CONCURRENCY` | Optional shared concurrency cap for benchmark, evolution training, and evolution battle games. |
+| `WEREWOLF_GAME_TIMEOUT` / `WEREWOLF_BATCH_GAME_TIMEOUT` | Optional game and batch execution timeouts. |
+| `PG_POOL_MIN_SIZE` / `PG_POOL_MAX_SIZE` | Optional PostgreSQL connection-pool sizing. |
 | `WEREWOLF_TTS_*` | Optional DashScope realtime TTS settings for spoken player lines. |
-| `LANGFUSE_*` | Optional self-hosted Langfuse tracing. `LANGFUSE_BASE_URL` should point to your own deployment. |
+| `VITE_API_BASE` / `UI_FRONTEND_API_PROXY_TARGET` | Optional frontend API base and Vite dev proxy target. |
+| `WOLF_APP_RELEASE` / `WOLF_GIT_SHA` / `WOLF_APP_ENVIRONMENT` | Optional release metadata shown in health/ops payloads. |
+| `LANGFUSE_*` | Optional self-hosted Langfuse tracing. For enabled, non-degraded tracing set public/secret keys, base URL, environment, release, sample rate, and input/output capture. |
 
 If PostgreSQL is only reachable through a remote host, keep an SSH tunnel open
 and point `POSTGRES_DATABASE_URL` at the local forwarded port.
@@ -220,8 +229,11 @@ full policy.
 ## Notes
 
 - Keep secrets in `.env`; do not put API keys in frontend `VITE_*` variables.
-- Keep `LANGFUSE_CAPTURE_INPUT_OUTPUT=false` unless prompt/response capture has
-  been reviewed and redacted.
+- When `LANGFUSE_TRACING_ENABLED=true`, non-degraded health requires
+  `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL`,
+  `LANGFUSE_ENVIRONMENT`, `LANGFUSE_RELEASE`, `LANGFUSE_SAMPLE_RATE>0`, and
+  `LANGFUSE_CAPTURE_INPUT_OUTPUT=true`. Only enable input/output capture after
+  prompt/response data has been reviewed and redacted.
 - `POSTGRES_DISABLE_DOTENV=1` is useful for tests that must prove connection
   information is not implicitly loaded from `.env`.
 - Self-evolution can promote candidate skill versions. Use dry-run/review

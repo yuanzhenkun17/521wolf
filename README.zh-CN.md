@@ -151,9 +151,18 @@ uv run uvicorn ui.backend.main:app --reload --host 127.0.0.1 --port 8000
 | `WEREWOLF_LLM_API_KEY` | 真实 LLM 运行必填。只放在服务端环境里。 |
 | `WEREWOLF_LLM_BASE_URL` | OpenAI 兼容模型服务地址。 |
 | `WEREWOLF_LLM_MODEL` | 默认智能体模型，可被设置页里的模型配置覆盖。 |
+| `WEREWOLF_LLM_*` 重试配置 | 可选的超时、重试和熔断调优，详见 `.env.example`。 |
 | `UI_BACKEND_USE_FAKE_LLM` | 本地/演示开关。真实评测不要启用。 |
+| `SETTINGS_ADMIN_ENABLED` / `SETTINGS_ADMIN_TOKEN` | 设置页写入必需。 |
+| `SETTINGS_SECRET_ENCRYPTION_KEY` | 保存模型 Profile API Key 必需，必须保持稳定；轮换后旧密钥需要重新录入。 |
+| `WOLF_USE_PG_TASK_QUEUE` / `TASK_WORKER_REQUIRED` | 可选的 PostgreSQL 长任务队列和 worker 健康门禁控制。 |
+| `WEREWOLF_GAME_CONCURRENCY` | 可选的多局并发上限，同时用于评测、自进化训练和自进化对战。 |
+| `WEREWOLF_GAME_TIMEOUT` / `WEREWOLF_BATCH_GAME_TIMEOUT` | 可选的单局和批量任务超时。 |
+| `PG_POOL_MIN_SIZE` / `PG_POOL_MAX_SIZE` | 可选 PostgreSQL 连接池大小。 |
 | `WEREWOLF_TTS_*` | 可选 DashScope realtime TTS 配置，用于玩家发言朗读。 |
-| `LANGFUSE_*` | 可选自部署 Langfuse 链路追踪；`LANGFUSE_BASE_URL` 应指向你自己的部署。 |
+| `VITE_API_BASE` / `UI_FRONTEND_API_PROXY_TARGET` | 可选前端 API 基址和 Vite 开发代理目标。 |
+| `WOLF_APP_RELEASE` / `WOLF_GIT_SHA` / `WOLF_APP_ENVIRONMENT` | 可选发布元数据，会显示在 health/ops payload。 |
+| `LANGFUSE_*` | 可选自部署 Langfuse 链路追踪。开启且不降级时，需要 key、base URL、environment、release、sample rate 和 input/output capture 都配置好。 |
 
 如果 PostgreSQL 只能通过远端机器访问，保持 SSH 隧道打开，并把
 `POSTGRES_DATABASE_URL` 指向本地转发端口。
@@ -211,6 +220,10 @@ JSON、SQLite、pid、log、截图或生成报告来迁移运行数据。
 ## 注意事项
 
 - 密钥只放在 `.env`，不要放进前端 `VITE_*` 变量。
-- 除非已经完成脱敏和审查，否则保持 `LANGFUSE_CAPTURE_INPUT_OUTPUT=false`。
+- 当 `LANGFUSE_TRACING_ENABLED=true` 时，不降级需要配置
+  `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASE_URL`、
+  `LANGFUSE_ENVIRONMENT`、`LANGFUSE_RELEASE`、`LANGFUSE_SAMPLE_RATE>0` 和
+  `LANGFUSE_CAPTURE_INPUT_OUTPUT=true`。只有在 prompt/response 已审查和脱敏后，
+  才建议开启 input/output 捕获。
 - `POSTGRES_DISABLE_DOTENV=1` 可用于验证测试没有隐式读取 `.env`。
 - 自进化可以晋级候选技能版本。真实使用前建议先 dry-run/review，并检查 diff。
