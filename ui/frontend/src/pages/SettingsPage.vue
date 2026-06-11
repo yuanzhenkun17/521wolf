@@ -1528,10 +1528,12 @@ function shortId(value: unknown): string {
               </span>
             </div>
             <div class="settings-gate-list">
-              <span v-for="gate in gateRows" :key="gate.key" :data-status="gate.severity">
-                <b>{{ gate.label }}</b>
-                <small>{{ gate.summary }}；{{ gate.detail }}</small>
-              </span>
+              <div v-for="gate in gateRows" :key="gate.key" class="settings-gate-item" :data-status="gate.severity">
+                <div class="settings-gate-copy">
+                  <b>{{ gate.label }}</b>
+                  <small>{{ gate.summary }}；{{ gate.detail }}</small>
+                </div>
+              </div>
               <p v-if="!gateRows.length" class="settings-context-empty">暂无门禁项。</p>
             </div>
           </section>
@@ -1675,7 +1677,7 @@ function shortId(value: unknown): string {
 }
 
 .settings-context-kpis span,
-.settings-gate-list span {
+.settings-gate-item {
   display: grid;
   gap: 4px;
   min-width: 0;
@@ -2815,7 +2817,7 @@ function shortId(value: unknown): string {
 
 .settings-gate-list {
   display: grid;
-  gap: 0;
+  gap: 8px;
   padding: 0;
 }
 
@@ -2823,8 +2825,7 @@ function shortId(value: unknown): string {
   gap: 0 10px;
 }
 
-.settings-context-kpis span,
-.settings-gate-list span {
+.settings-context-kpis span {
   min-height: 0;
   padding: 7px 0;
   border: 0;
@@ -2834,16 +2835,50 @@ function shortId(value: unknown): string {
   box-shadow: none;
 }
 
-.settings-gate-list span[data-status="error"] b {
+.settings-gate-item {
+  gap: 0;
+  min-height: 0;
+  padding: 8px 9px 8px 11px;
+  border: 1px solid rgba(93, 48, 17, 0.12);
+  border-left: 3px solid rgba(104, 119, 43, 0.68);
+  border-radius: 0;
+  background: rgba(255, 252, 245, 0.3);
+  box-shadow: none;
+}
+
+.settings-gate-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.settings-gate-item[data-status="error"] {
+  border-left-color: var(--settings-danger);
+  background: rgba(153, 48, 38, 0.06);
+}
+
+.settings-gate-item[data-status="warning"] {
+  border-left-color: #b9852f;
+  background: rgba(255, 239, 194, 0.32);
+}
+
+.settings-gate-item[data-status="error"] b {
   color: var(--settings-danger);
 }
 
-.settings-gate-list span[data-status="warning"] b {
+.settings-gate-item[data-status="warning"] b {
   color: #7a6047;
 }
 
 .settings-gate-list small {
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
   white-space: normal;
+  word-break: normal;
+  line-height: 1.38;
 }
 
 @media (max-width: 1120px) {
