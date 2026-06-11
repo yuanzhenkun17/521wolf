@@ -1217,6 +1217,48 @@ def test_evolution_read_service_parent_batch_task_does_not_override_child_status
     assert batch_detail["task_artifact_ids"] == ["batch-artifact"]
 
 
+def test_evolution_read_service_batches_task_queue_overlay_queries() -> None:
+    class FakeTaskService:
+        def __init__(self) -> None:
+            self.batch_calls: list[set[str]] = []
+            self.single_calls: list[str] = []
+
+        def get_task_queue_rows(self, task_ids: set[str]) -> dict[str, dict[str, Any]]:
+            self.batch_calls.append(set(task_ids))
+            return {
+                task_id: {
+                    "task_id": task_id,
+                    "kind": "evolution_run",
+                    "status": "running",
+                    "progress": {"stage": "training", "percent": 25},
+                    "cancel_requested": False,
+                }
+                for task_id in task_ids
+            }
+
+        def get_task_queue_row(self, task_id: str) -> dict[str, Any] | None:
+            self.single_calls.append(task_id)
+            return None
+
+    task_service = FakeTaskService()
+    service = EvolutionReadService(
+        SimpleNamespace(
+            evolution_runs={
+                "run-1": {"run_id": "run-1", "task_id": "run-1", "status": "queued"},
+                "run-2": {"run_id": "run-2", "task_id": "run-2", "status": "queued"},
+            },
+            evolution_batches={},
+            task_service=task_service,
+        )
+    )
+
+    listed = service.list_runs(history_requested=False)
+
+    assert task_service.batch_calls == [{"run-1", "run-2"}]
+    assert task_service.single_calls == []
+    assert {run["status"] for run in listed["runs"]} == {"running"}
+
+
 def test_evolution_read_service_trust_bundle_falls_back_to_run_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
     import storage.evolution.state_gateway as state_gateway
 

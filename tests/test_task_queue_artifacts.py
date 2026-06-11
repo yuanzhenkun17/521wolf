@@ -152,6 +152,24 @@ def test_task_queue_repository_claims_and_completes_task() -> None:
     assert completed["progress"] == {"stage": "training", "percent": 0.2}
 
 
+def test_task_queue_repository_gets_many_tasks_in_one_query() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    for task_id in ("task_a", "task_b", "task_c"):
+        repo.enqueue(
+            task_id=task_id,
+            kind="benchmark_batch",
+            payload={"task_id": task_id},
+            queued_at="2026-06-10T10:00:00+08:00",
+        )
+
+    tasks = repo.get_many(["task_c", "task_a", "task_a", "missing"])
+
+    assert set(tasks) == {"task_a", "task_c"}
+    assert tasks["task_a"]["payload"] == {"task_id": "task_a"}
+    assert tasks["task_c"]["payload"] == {"task_id": "task_c"}
+
+
 def test_task_queue_repository_postgres_claim_uses_skip_locked_cte() -> None:
     conn = _FakePostgresClaimConnection()
     repo = TaskQueueRepository(conn)  # type: ignore[arg-type]

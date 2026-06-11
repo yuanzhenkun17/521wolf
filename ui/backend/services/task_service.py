@@ -32,6 +32,9 @@ class BackgroundTaskServiceProtocol(Protocol):
     def get_task_queue_row(self, task_id: str) -> dict[str, Any] | None:
         ...
 
+    def get_task_queue_rows(self, task_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        ...
+
     def enqueue_task(
         self,
         *,
@@ -153,6 +156,13 @@ class TaskService:
         conn = self.open_connection()
         try:
             return TaskQueueRepository(conn).get(task_id)
+        finally:
+            conn.close()
+
+    def get_task_queue_rows(self, task_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        conn = self.open_connection()
+        try:
+            return TaskQueueRepository(conn).get_many(task_ids)
         finally:
             conn.close()
 

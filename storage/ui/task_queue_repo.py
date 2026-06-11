@@ -89,6 +89,19 @@ class TaskQueueRepository:
         ).fetchone()
         return _task_from_row(row) if row is not None else None
 
+    def get_many(self, task_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        values = list(dict.fromkeys(str(task_id) for task_id in task_ids if str(task_id)))
+        if not values:
+            return {}
+        placeholders = ", ".join("?" for _ in values)
+        rows = self._conn.execute(
+            f"SELECT {_task_columns_sql()} FROM ui_task_queue "
+            f"WHERE task_id IN ({placeholders})",
+            tuple(values),
+        ).fetchall()
+        tasks = [_task_from_row(row) for row in rows]
+        return {str(task["task_id"]): task for task in tasks}
+
     def get_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
         row = self._conn.execute(
             f"SELECT {_task_columns_sql()} FROM ui_task_queue WHERE idempotency_key = ?",

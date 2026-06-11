@@ -46,12 +46,15 @@ class EvolutionReadService:
         source: str | None = None,
         status: str | None = None,
     ) -> dict[str, Any]:
+        task_rows = self._task_queue_rows(
+            [*self._store.evolution_runs.values(), *self._store.evolution_batches.values()]
+        )
         runs = [
-            self._with_task_queue_state(_evolution_run_summary(run), run)
+            self._with_task_queue_state(_evolution_run_summary(run), run, task_rows=task_rows)
             for run in self._store.evolution_runs.values()
         ]
         batches = [
-            self._with_task_queue_state(_evolution_batch_summary(batch), batch)
+            self._with_task_queue_state(_evolution_batch_summary(batch), batch, task_rows=task_rows)
             for batch in self._store.evolution_batches.values()
         ]
         runs.sort(key=_history_time_key, reverse=True)
@@ -95,13 +98,19 @@ class EvolutionReadService:
             return self._with_task_queue_state(_evolution_batch_summary(batch), batch)
         raise HTTPException(status_code=404, detail="run not found")
 
-    def _with_task_queue_state(self, payload: dict[str, Any], entity: dict[str, Any]) -> dict[str, Any]:
+    def _with_task_queue_state(
+        self,
+        payload: dict[str, Any],
+        entity: dict[str, Any],
+        *,
+        task_rows: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         task_id = str(entity.get("task_id") or "")
         if not task_id and entity.get("task_queue_status"):
             task_id = str(entity.get("run_id") or entity.get("batch_id") or "")
         if not task_id:
             return payload
-        task = self._task_queue_row(task_id)
+        task = task_rows.get(task_id) if task_rows is not None else self._task_queue_row(task_id)
         if task is None:
             if entity.get("task_id") or entity.get("task_queue_status"):
                 payload.setdefault("task_id", task_id)
@@ -149,6 +158,26 @@ class EvolutionReadService:
         overlaid["overall_progress"] = overall
         overlaid["stage_progress"] = dict(progress)
         return overlaid
+
+    def _task_queue_rows(self, entities: list[dict[str, Any]]) -> dict[str, dict[str, Any]] | None:
+        task_ids = {
+            str(entity.get("task_id") or entity.get("run_id") or entity.get("batch_id") or "")
+            for entity in entities
+            if entity.get("task_id") or entity.get("task_queue_status")
+        }
+        task_ids.discard("")
+        if not task_ids:
+            return {}
+        task_service = getattr(self._store, "task_service", None)
+        getter = getattr(task_service, "get_task_queue_rows", None)
+        if not callable(getter):
+            return None
+        try:
+            tasks = getter(task_ids)
+        except Exception as exc:  # noqa: BLE001 - task queue state is an optional overlay
+            _log.debug("failed to batch load task queue rows: %s", exc)
+            return {}
+        return tasks if isinstance(tasks, dict) else {}
 
     def _task_queue_row(self, task_id: str) -> dict[str, Any] | None:
         task_service = getattr(self._store, "task_service", None)
