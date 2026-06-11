@@ -409,16 +409,9 @@ function buildPublicDecisionEffects(decisions: LooseRecord[], effects: SceneEffe
       })
       return
     }
-    if (!VOTE_ACTIONS.has(type)) return
-    addEffect(effects, seen, {
-      id: effectId('vote_mark', row, target),
-      type: 'vote_mark',
-      actorId: actorId(decision),
-      targetId: target,
-      day: dayOf(decision),
-      sequence: sequenceOf(row),
-      source: 'decision'
-    })
+    // Vote totals already provide continuous visual feedback. Playing a large
+    // flash for every ballot obscures the tally and feels like an action effect.
+    if (VOTE_ACTIONS.has(type)) return
   })
 }
 

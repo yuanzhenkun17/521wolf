@@ -30,6 +30,13 @@ ACTION_LABELS = {
     ActionType.HUNTER_SHOOT: "猎人开枪",
 }
 
+ACTION_PROMPTS = {
+    ActionType.GUARD_PROTECT: "请守卫开始行动",
+    ActionType.WEREWOLF_KILL: "请狼人开始行动",
+    ActionType.SEER_CHECK: "请预言家开始行动",
+    ActionType.WITCH_ACT: "请女巫开始行动",
+}
+
 CHOICE_LABELS = {
     "pass": "跳过",
     "skip": "跳过",
@@ -63,6 +70,14 @@ async def ask(
     validator = validator or (lambda response: response.action_type == action_type)
     max_attempts = _configured_max_attempts(engine)
     retry_delay = _configured_retry_delay(engine)
+    if action_type in _SPEECH_TEXT_ACTION_TYPES:
+        engine._record(
+            "speech_prompt",
+            message=f"请{player_id}号开始发言",
+            public=True,
+            actor=player_id,
+            payload={"action_type": action_type.value},
+        )
     for retry in range(max_attempts):
         request = ActionRequest(
             player_id=player_id,
@@ -76,7 +91,7 @@ async def ask(
         )
         engine._record(
             "action_request",
-            message=f"请求{player_id}号执行{action_label(action_type)}",
+            message=ACTION_PROMPTS.get(action_type, f"请{player_id}号开始{action_label(action_type)}"),
             public=False,
             actor=player_id,
             payload={

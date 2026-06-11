@@ -407,6 +407,24 @@ export function createHistoryDerivedState(refs: LooseRecord, computedState: Loos
     }))
   )
   computedState.judgeStripMessage = computed(() => {
+    const activePrompt = computedState.judgeLogs.value.findLast?.((log) => {
+      const type = String(log?.type || log?.event_type || log?.action || log?.action_type || '')
+      return type === 'speech_prompt' || type === 'action_request'
+    })
+    if (activePrompt) {
+      const promptSequence = Number(activePrompt?.sequence ?? activePrompt?.index ?? 0)
+      const resolvedAction = (refs.game.value?.logs ?? []).findLast?.((log: LooseRecord) => {
+        const type = String(log?.type || log?.event_type || log?.action || log?.action_type || '')
+        const sequence = Number(log?.sequence ?? log?.index ?? 0)
+        return sequence > promptSequence
+          && type !== 'speech_prompt'
+          && type !== 'action_request'
+          && Number(log?.actor_id ?? log?.actor) === Number(activePrompt?.actor_id ?? activePrompt?.actor)
+      })
+      if (!resolvedAction) {
+        return [{ speaker: logSpeaker(activePrompt), message: logMessage(activePrompt) }]
+      }
+    }
     if (computedState.judgeBoardMessage.value) return [{ speaker: '法官', message: computedState.judgeBoardMessage.value }]
     const latestDecision = computedState.decisionRows.value.at(-1)
     if (latestDecision?.action?.startsWith('sheriff_')) {

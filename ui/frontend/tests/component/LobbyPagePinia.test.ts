@@ -172,4 +172,40 @@ describe('LobbyPage Pinia state handoff', () => {
     expect(wrapper.find('.lobby-runtime-gate').exists()).toBe(false)
     expect(wrapper.emitted('start-mode')?.[0]?.[0]).toMatchObject({ mode: 'watch' })
   })
+
+  it('keeps start buttons idle while model profile preflight refreshes in the background', async () => {
+    const apiFetch = vi.fn(async (path: string) => {
+      if (path === '/roles/overview') return { roles: [], versions: {}, leaderboards: {} }
+      if (path === '/settings/model-profiles') {
+        return {
+          profiles: [{
+            profile_id: 'profile-game-main',
+            name: '主游戏模型',
+            model: 'qwen-max',
+            enabled: true,
+            has_api_key: true,
+            default_scopes: { game_decision: true },
+            last_test_status: 'ok'
+          }]
+        }
+      }
+      if (path.startsWith('/health/preflight?scope=game_start')) return new Promise(() => {})
+      throw new Error(`unexpected ${path}`)
+    })
+
+    const wrapper = mountLobbyPage({ apiFetch, runtimeHealth: { gates: {} } }, () => {
+      useSessionStore().setBackendMode('api')
+      useGameStore().setLoading(false)
+    })
+
+    await flushPromises()
+
+    const watchButton = modeButton(wrapper, '观战模式')
+    const select = wrapper.find('.lobby-model-panel select')
+    expect(select.exists()).toBe(true)
+    expect(select.attributes('disabled')).toBeUndefined()
+    expect((select.element as HTMLSelectElement).value).toBe('profile-game-main')
+    expect(watchButton.attributes('disabled')).toBeUndefined()
+    expect(watchButton.text()).toContain('观看智能体对局')
+  })
 })

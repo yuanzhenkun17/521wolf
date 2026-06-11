@@ -1381,6 +1381,70 @@
   animation: sceneSpeechTypingGlow 1.45s ease-in-out infinite;
 }
 
+.scene-player-callout.thinking .scene-speech-paper p {
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 4px;
+  width: 23px;
+  height: 18px;
+  overflow: visible;
+  color: transparent !important;
+  font-size: 0 !important;
+  line-height: 1;
+  text-shadow: none !important;
+  white-space: nowrap;
+}
+
+.scene-player-callout.thinking .scene-speech-paper p::before,
+.scene-player-callout.thinking .scene-speech-paper p::after,
+.scene-player-callout.thinking .scene-speech-scroll::after {
+  content: "";
+  display: block;
+  flex: 0 0 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-parchment-text-deep);
+  animation: modeLoadingDot 1.05s ease-in-out infinite;
+}
+
+.scene-player-callout.thinking .scene-speech-paper p::after {
+  animation-delay: 0.28s;
+}
+
+.scene-player-callout.thinking .scene-speech-scroll {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 4px;
+  width: auto;
+  height: 18px !important;
+  min-height: 18px;
+  max-height: 18px;
+  overflow: visible;
+}
+
+.scene-player-callout.thinking .scene-speech-scroll::after {
+  order: 0;
+  animation-delay: 0.14s;
+}
+
+.scene-player-callout.thinking .scene-speech-scroll p {
+  order: -1;
+}
+
+.scene-player-callout.thinking .scene-speech-paper,
+.scene-bubble-layer.instant-speech .scene-player-callout.thinking .scene-speech-paper {
+  min-height: 38px;
+  max-height: 38px;
+  padding-top: 7px;
+  padding-bottom: calc(5px + var(--tail-h));
+}
+
+.scene-player-callout.thinking.typing .scene-speech-paper {
+  animation: none;
+}
+
 .role-grid article.speaking,
 .role-grid article.linked {
   animation: currentSpeakerHudPulse 1.35s ease-in-out infinite;
@@ -2861,31 +2925,34 @@
   z-index: var(--z-raised);
 }
 
-/* Vote tally uses the daytime parchment speech-bubble language. */
+/* Compact ballot counter: distinct from speech bubbles and readable at a glance. */
 .scene-vote-badge {
-  min-width: 104px;
-  max-width: 210px;
-  padding: 9px 12px 15px;
-  border: 0;
-  border-radius: 0;
+  min-width: 68px;
+  max-width: 128px;
+  padding: 7px 10px 8px;
+  border: 1px solid rgba(84, 44, 15, 0.72);
+  border-radius: 8px;
   color: var(--color-parchment-text-deep);
   background:
-    radial-gradient(circle at 38% 28%, rgba(255, 245, 205, 0.62), transparent 50%),
-    linear-gradient(180deg, #f3dca7, #e1b66e 72%, #c98e46);
-  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 14px), calc(50% + 7px) calc(100% - 14px), 50% 100%, calc(50% - 7px) calc(100% - 14px), 0 calc(100% - 14px), 0 8px);
-  filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.36));
-  box-shadow: inset 0 0 0 2px rgba(90, 43, 13, 0.72);
+    linear-gradient(180deg, rgba(255, 238, 182, 0.98), rgba(216, 164, 78, 0.98));
+  clip-path: none;
+  filter: none;
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(255, 248, 217, 0.55);
 }
 
 .scene-vote-badge b {
-  font-size: 15px;
+  color: #51290f;
+  font-size: 16px;
+  line-height: 1.05;
 }
 
 .scene-vote-badge span {
-  color: var(--color-parchment-text-soft);
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: normal;
+  color: #70421d;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 /* Final compact HUD contract: stable rails, stable scrollbar, left-aligned judge copy. */
