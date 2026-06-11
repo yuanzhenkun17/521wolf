@@ -733,7 +733,7 @@ function langfuseDetailRows(raw: Record<string, any>): IntegrationDetailRow[] {
     rows.push({
       key: 'base_url',
       label: 'Base URL',
-      value: shortId(raw.base_url),
+      value: String(raw.base_url),
       detail: String(raw.base_url),
       severity: 'ok'
     })
@@ -808,7 +808,7 @@ function ttsDetailRows(raw: Record<string, any>): IntegrationDetailRow[] {
       key: 'max_chars',
       label: '单次长度',
       value: raw.max_chars ? `${raw.max_chars} 字符` : '未限制',
-      detail: raw.ws_url ? `WebSocket：${shortId(raw.ws_url)}` : '未提供 WebSocket 地址',
+      detail: raw.ws_url ? `WebSocket：${String(raw.ws_url)}` : '未提供 WebSocket 地址',
       severity: 'ok'
     }
   ]
@@ -1450,15 +1450,6 @@ function shortId(value: unknown): string {
                   <em :data-status="item.status">{{ statusLabel(item.status) }}</em>
                 </div>
               </div>
-              <div class="settings-gate-grid" aria-label="启动门禁状态">
-                <div v-for="gate in gateRows" :key="gate.key" class="settings-gate-row" :data-status="gate.severity">
-                  <span>
-                    <b>{{ gate.label }}</b>
-                    <small>{{ gate.detail }}</small>
-                  </span>
-                  <em>{{ gate.summary }}</em>
-                </div>
-              </div>
             </section>
           </div>
         </section>
@@ -1906,26 +1897,22 @@ function shortId(value: unknown): string {
 
 .settings-command-metrics {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px 12px;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .settings-command-metrics span {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
-  flex: 1 1 0;
+  flex: 0 0 auto;
   min-width: 0;
-  max-width: 92px;
-  overflow: hidden;
-}
-
-.settings-command-metrics span:nth-child(4) {
-  max-width: 112px;
+  max-width: none;
+  overflow: visible;
 }
 
 .settings-command-metrics small {
@@ -1936,12 +1923,12 @@ function shortId(value: unknown): string {
 }
 
 .settings-command-metrics b {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   color: #fff4d9;
   font-size: 14px;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
 }
 
@@ -2026,6 +2013,7 @@ function shortId(value: unknown): string {
 
 .settings-card {
   display: grid;
+  flex: 0 0 auto;
   align-content: start;
   gap: 12px;
   margin-bottom: 0;
@@ -2158,27 +2146,45 @@ function shortId(value: unknown): string {
 }
 
 .settings-editor {
-  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.32fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
+  grid-template-areas:
+    "head head"
+    "guard guard"
+    "form options"
+    "actions actions";
+  column-gap: 12px;
+  row-gap: 12px;
+  grid-auto-rows: auto;
+  align-content: start;
   align-items: start;
+  overflow: visible;
 }
 
-.settings-editor > header,
-.settings-editor .settings-form-actions {
-  grid-column: 1 / -1;
+.settings-editor > header {
+  grid-area: head;
+}
+
+.settings-editor .settings-guardrail {
+  grid-area: guard;
 }
 
 .settings-editor .settings-form-grid {
-  grid-column: 1;
-  grid-row: 2;
+  grid-area: form;
 }
 
 .settings-editor-options {
   display: grid;
-  grid-column: 2;
-  grid-row: 2;
+  grid-area: options;
+  align-self: start;
   align-content: start;
   gap: 10px;
+  width: 100%;
   min-width: 0;
+}
+
+.settings-editor .settings-form-actions {
+  grid-area: actions;
 }
 
 .settings-form-grid {
@@ -2219,7 +2225,9 @@ function shortId(value: unknown): string {
 .settings-toggle-grid,
 .settings-scope-grid {
   display: grid;
+  align-self: start;
   gap: 8px;
+  min-width: 0;
   padding: 0;
 }
 
@@ -2237,6 +2245,7 @@ function shortId(value: unknown): string {
 
 .settings-scope-grid {
   grid-template-columns: minmax(0, 1fr);
+  align-content: start;
 }
 
 .settings-scope-grid > div {
@@ -2270,9 +2279,11 @@ function shortId(value: unknown): string {
 
 .settings-form-actions {
   display: flex;
+  align-self: start;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+  min-width: 0;
   padding: 10px 0 0;
   border-top: 1px solid rgba(93, 48, 17, 0.12);
 }
@@ -2333,7 +2344,7 @@ function shortId(value: unknown): string {
 
 .settings-integration-grid > div {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 8px;
   min-width: 0;
@@ -2440,8 +2451,8 @@ function shortId(value: unknown): string {
 .settings-integration-grid em,
 .settings-ops-row em,
 .settings-alert-row em {
-  justify-self: end;
-  max-width: 132px;
+  justify-self: start;
+  max-width: 100%;
   padding: 4px 7px;
   border-radius: 999px;
   background: rgba(139, 94, 52, 0.08);
@@ -2449,7 +2460,8 @@ function shortId(value: unknown): string {
   font-size: 11px;
   font-style: normal;
   font-weight: 900;
-  text-align: right;
+  text-align: left;
+  white-space: normal;
 }
 
 .settings-gate-grid {
@@ -2854,17 +2866,23 @@ function shortId(value: unknown): string {
 
   .settings-editor {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "head"
+      "guard"
+      "form"
+      "options"
+      "actions";
   }
 
   .settings-editor .settings-form-grid,
   .settings-editor-options,
   .settings-editor .settings-form-actions {
-    grid-column: 1;
+    grid-column: auto;
     grid-row: auto;
   }
 
   .settings-editor-options {
-    grid-template-columns: minmax(0, 0.38fr) minmax(0, 0.62fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .settings-profile-row,
@@ -3104,22 +3122,14 @@ function shortId(value: unknown): string {
   }
 
   .settings-command-metrics {
-    gap: 6px;
+    gap: 6px 12px;
     justify-content: flex-end;
     width: 100%;
   }
 
   .settings-command-metrics span {
-    flex: 1 1 0;
-    max-width: 72px;
-  }
-
-  .settings-command-metrics span:nth-child(1) {
-    max-width: 76px;
-  }
-
-  .settings-command-metrics span:nth-child(4) {
-    max-width: 92px;
+    flex: 0 0 auto;
+    max-width: none;
   }
 
   .settings-command-metrics small {
