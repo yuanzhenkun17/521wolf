@@ -428,21 +428,15 @@ def _get_domain_postgres_connection(
     connect_kwargs: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
+    from storage.postgres._pool import get_pool
+
     resolved = conninfo or _postgres_database_url()
     if not resolved and not kwargs and not connect_kwargs:
         raise ValueError(
             "PostgreSQL connection info is required; pass conninfo or set "
             "POSTGRES_DATABASE_URL/DATABASE_URL"
         )
-
-    pool = None
-    try:
-        from storage.postgres._pool import get_pool
-
-        pool = get_pool(schema, resolved, connect_kwargs=connect_kwargs)
-    except Exception:  # noqa: BLE001 - fall back to direct connection if pool init fails
-        pool = None
-
+    pool = get_pool(schema, resolved, connect_kwargs=connect_kwargs)
     return connect_postgres(
         resolved,
         schema=schema,
