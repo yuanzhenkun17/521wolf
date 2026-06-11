@@ -133,3 +133,16 @@ export function runtimeHealthPayloadFromPreflight(
     actions: Array.isArray(result.actions) ? result.actions : (Array.isArray(gate.actions) ? gate.actions : [])
   }
 }
+
+export function runtimeHealthPreflightStatusText(
+  result: Record<string, unknown> | null | undefined,
+  scope: RuntimeHealthGateScope,
+  fallback = '模型预检未通过'
+): string {
+  const payload = runtimeHealthPayloadFromPreflight(result, scope)
+  const summary = runtimeHealthGateSummary(payload, scope)
+  if (!summary.known) return fallback
+  if (summary.ready) return '模型预检通过'
+  const reason = firstText(summary.reason, summary.warning)
+  return reason ? `${fallback}：${reason.replace(/。$/, '')}` : fallback
+}

@@ -211,6 +211,7 @@ function buildTtsText(log: Partial<GameLog> | LooseRecord) {
 export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecycle?: boolean } = {}) {
   const audioEnabled = ref(readBooleanPreference(AUDIO_ENABLED_KEY, true))
   const ttsEnabled = ref(readBooleanPreference(TTS_ENABLED_KEY, TTS_CONFIG.enabled))
+  const ttsError = ref('')
   const audioUnlocked = ref(false)
   const ttsSpeaking = ref(false)
   let audioContext: AudioContext | null = null
@@ -270,6 +271,7 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
       && ttsEnabled.value
       && audioRuntimeActive.value
       && !isReplayMode.value
+      && roleAssignmentComplete.value
       && !game.value?.winner
     )
   }
@@ -350,6 +352,36 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     })
   }
 
+  async function responseErrorMessage(response: Response) {
+    try {
+      const contentType = response.headers?.get?.('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const payload = await response.clone().json()
+        const detail = payload?.detail || payload?.message || payload?.error
+        if (typeof detail === 'string' && detail.trim()) return detail.trim()
+        if (detail && typeof detail === 'object') {
+          const text = detail.message || detail.error || detail.reason
+          if (typeof text === 'string' && text.trim()) return text.trim()
+        }
+      }
+      const text = await response.clone().text()
+      if (text.trim()) return text.trim()
+    } catch {}
+    return ''
+  }
+
+  function ttsFailureMessage(error: unknown) {
+    const message = String((error as Error | null | undefined)?.message || '').trim()
+    if (!message) return '发言朗读失败，请稍后重试。'
+    if (/音频上下文未解锁|autoplay|notallowed|user gesture|interrupted/i.test(message)) {
+      return '发言朗读被浏览器拦截，点击页面后再开启朗读。'
+    }
+    if (/failed to fetch|networkerror|load failed|fetch/i.test(message)) {
+      return '发言朗读连接失败，请检查后端 TTS 服务。'
+    }
+    return `发言朗读失败：${message}`
+  }
+
   function concatBytes(left: Uint8Array, right: Uint8Array) {
     if (!left?.length) return right
     if (!right?.length) return left
@@ -403,7 +435,8 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     if (context.state !== 'running') throw new Error('音频上下文未解锁')
 
     const response = await requestTtsStream(item, controller.signal)
-    if (!response.ok || !response.body?.getReader) throw new Error('流式发言朗读不可用')
+    if (!response.ok) throw new Error(await responseErrorMessage(response) || '流式发言朗读不可用')
+    if (!response.body?.getReader) throw new Error('流式发言朗读不可用')
     const sampleRate = Number(response.headers?.get?.('X-TTS-Sample-Rate')) || 24000
     const reader = response.body.getReader()
     const gain = context.createGain()
@@ -471,10 +504,14 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     activeTtsKey = next.key || ''
     activeTtsController = controller
     try {
+      if (!ensureAudioContext()) throw new Error('浏览器不支持流式音频播放')
       if (!audioUnlocked.value) await unlockAudio()
+      if (!audioUnlocked.value) throw new Error('音频上下文未解锁')
       await playTtsStream(next, controller, runId)
-    } catch {
+      ttsError.value = ''
+    } catch (error) {
       if (runId !== ttsRunId) return
+      ttsError.value = ttsFailureMessage(error)
       stopTts({ clearQueue: false })
       scheduleNextTts(120)
     }
@@ -686,6 +723,7 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     ttsEnabled.value = !ttsEnabled.value
     writeBooleanPreference(TTS_ENABLED_KEY, ttsEnabled.value)
     if (!ttsEnabled.value) {
+      ttsError.value = ''
       stopTts()
       return
     }
@@ -732,6 +770,7 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
       const currentGame = game.value
       return {
         gameId: currentGame?.game_id || '',
+        ready: roleAssignmentComplete.value ? 1 : 0,
         keys: speechLogItems(currentGame).map((item) => item.key).join('\n')
       }
     },
@@ -754,11 +793,11 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
       }
       if (current.gameId !== ttsSeenGameId) {
         ttsSeenGameId = current.gameId
-        ttsSeenKeys = new Set(items.map((item) => item.key))
+        ttsSeenKeys = new Set()
         ttsQueuedKeys = new Set()
         stopTts()
-        return
       }
+      if (!canPlayTts()) return
       const fresh = []
       for (const item of items) {
         if (ttsSeenKeys.has(item.key)) continue
@@ -832,6 +871,7 @@ export function useGameAudio(runtime: GameAudioRuntime, options: { installLifecy
     ttsEnabled,
     ttsAvailable,
     ttsSpeaking,
+    ttsError,
     audioUnlocked,
     audioSceneLabel,
     bgmPauseReason,

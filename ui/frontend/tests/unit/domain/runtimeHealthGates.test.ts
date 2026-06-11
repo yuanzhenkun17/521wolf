@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { runtimeHealthGateSummary } from '../../../src/domain/runtimeHealth/gates'
+import { runtimeHealthGateSummary, runtimeHealthPreflightStatusText } from '../../../src/domain/runtimeHealth/gates'
 
 describe('runtime health gate summaries', () => {
   it('does not block launch while health is not loaded yet', () => {
@@ -43,5 +43,19 @@ describe('runtime health gate summaries', () => {
 
     expect(summary.disabled).toBe(false)
     expect(summary.warning).toContain('模型连接尚未探测')
+  })
+
+  it('localizes failed model preflight status with the gate blocker reason', () => {
+    const message = runtimeHealthPreflightStatusText({
+      ready: false,
+      status: 'error',
+      gate: {
+        ready: false,
+        status: 'error',
+        blockers: ['llm_connectivity']
+      }
+    }, 'benchmark_start')
+
+    expect(message).toBe('模型预检未通过：模型连接不可用')
   })
 })

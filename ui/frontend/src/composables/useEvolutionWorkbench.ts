@@ -1884,6 +1884,27 @@ function evolutionNoticeFromError(error, fallback = '操作失败', context = ''
   ) {
     return { type: 'warning', message: '信任包不完整，不能晋升为基线。', reason: 'trustBundleIncomplete' }
   }
+  if (code === 'evolution_model_profile_invalid' || message.includes('evolution model profile is unavailable')) {
+    const detail = String(error?.detail || raw || '').toLowerCase()
+    if (detail.includes('environment llm config is locked')) {
+      return {
+        type: 'warning',
+        message: '自进化模型 Profile 不可用：当前由 WEREWOLF_LLM_* 环境变量锁定默认模型，请不要再指定单独的 Profile。',
+        reason: 'modelProfileInvalid'
+      }
+    }
+    if (detail.includes('disabled')) {
+      return { type: 'warning', message: '自进化模型 Profile 不可用：该 Profile 已禁用。', reason: 'modelProfileInvalid' }
+    }
+    if (detail.includes('api key')) {
+      return { type: 'warning', message: '自进化模型 Profile 不可用：该 Profile 没有保存 API key。', reason: 'modelProfileInvalid' }
+    }
+    return {
+      type: 'warning',
+      message: '自进化模型 Profile 不可用，请在设置页启用 Profile、保存 API key 并勾选 Evolution 默认用途。',
+      reason: 'modelProfileInvalid'
+    }
+  }
   if (message.includes('proposal not found') || (context === 'proposal' && notFound)) {
     return { type: 'warning', message: '提案不存在，请刷新审核面板。', reason: 'proposalNotFound' }
   }

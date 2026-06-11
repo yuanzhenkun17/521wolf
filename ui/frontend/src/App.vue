@@ -75,7 +75,8 @@ const inEvolution = computed(() => activeAppView.value === 'evolution')
 const inTasks = computed(() => activeAppView.value === 'tasks')
 const inSettings = computed(() => activeAppView.value === 'settings')
 const isNight = computed(() => gameStore.isNight)
-const toastError = computed(() => uiStore.errorMessage)
+const audioError = computed(() => String(audio.ttsError?.value || ''))
+const toastError = computed(() => uiStore.errorMessage || audioError.value)
 const showMatchBoot = computed(() => {
   return activeAppView.value === 'match'
     && !replayStore.isReplayMode

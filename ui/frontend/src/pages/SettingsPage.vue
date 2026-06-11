@@ -298,6 +298,26 @@ const scopedProfiles = computed(() =>
 const inactiveScopedProfiles = computed(() =>
   scopedProfileCandidates.value.filter((profile) => !profileCanLaunch(profile))
 )
+const activeScopedEnvLocked = computed(() =>
+  ['benchmark', 'evolution'].includes(activeGroup.value) && Boolean(envLocks.value[activeGroup.value])
+)
+const envLockSourceNames = computed(() => {
+  const sources = envLocks.value.sources && typeof envLocks.value.sources === 'object'
+    ? envLocks.value.sources as Record<string, unknown>
+    : {}
+  const names = Object.entries(sources)
+    .filter(([, locked]) => Boolean(locked))
+    .map(([name]) => name)
+  return names.length ? names : ['WEREWOLF_LLM_*']
+})
+const scopedDefaultTitle = computed(() =>
+  activeScopedEnvLocked.value ? '环境变量默认模型' : `${scopedProfiles.value.length} 个可用默认模型`
+)
+const scopedDefaultEmptyText = computed(() =>
+  activeScopedEnvLocked.value
+    ? `${activeGroupInfo.value.label} 默认模型由 ${envLockSourceNames.value.join(' / ')} 提供。`
+    : `还没有为 ${activeGroupInfo.value.label} 指定可用默认模型。`
+)
 
 onMounted(() => {
   void refreshSettings()
@@ -682,12 +702,23 @@ function storageActionText(state: SettingsStorageState): string {
 
 function storageHint(state: SettingsStorageState, action: string): string {
   const reason = String(state.reason || '')
+  if (storageWritable(state)) return '设置存储已就绪。'
   if (action) return action
   if (reason === 'missing_table') return '执行数据库迁移后刷新。'
   if (reason === 'secret_encryption_missing') return '配置 SETTINGS_SECRET_ENCRYPTION_KEY 后重启。'
   if (reason === 'connection_unavailable') return '检查 PostgreSQL 连接配置。'
   const message = String(state.message || '').trim()
-  return message || '恢复设置存储后再写入。'
+  return localizeStorageMessage(message) || '恢复设置存储后再写入。'
+}
+
+function localizeStorageMessage(message: string): string {
+  const key = String(message || '').trim().toLowerCase()
+  if (!key) return ''
+  if (key.includes('postgresql settings storage is ready')) return 'PostgreSQL 设置存储已就绪。'
+  if (key.includes('settings storage is ready')) return '设置存储已就绪。'
+  if (key.includes('postgresql connectivity')) return '检查 PostgreSQL 连接配置。'
+  if (key.includes('schema permissions')) return '检查 PostgreSQL schema 权限。'
+  return message
 }
 
 function integrationDetailRows(group: SettingsGroupKey, checks: Array<{ key: string; raw: Record<string, any> }>): IntegrationDetailRow[] {
@@ -701,12 +732,16 @@ function integrationGuidanceRows(group: SettingsGroupKey, checks: Array<{ key: s
   const rows: string[] = []
   if (!Object.keys(raw).length) return rows
   if (group === 'langfuse') {
+    const warnings = textArray(raw.warnings)
+    if (raw.enabled && warnings.length) {
+      rows.push('要取消降级：设置 LANGFUSE_CAPTURE_INPUT_OUTPUT=true、LANGFUSE_SAMPLE_RATE=1、LANGFUSE_ENVIRONMENT 和 LANGFUSE_RELEASE 后重启。')
+    }
     if (raw.enabled && raw.capture_input_output === false) {
       rows.push('Langfuse 输入/输出捕获已关闭；generation 的 Input/Output 会显示为空。')
     }
     const missing = textArray(raw.missing)
     if (missing.length) rows.push(`缺少配置：${missing.join('、')}。`)
-    rows.push(...textArray(raw.warnings).map(langfuseWarningText))
+    rows.push(...warnings.map(langfuseWarningText))
   }
   rows.push(...textArray(raw.actions).map(integrationActionText))
   return Array.from(new Set(rows.filter(Boolean))).slice(0, 5)
@@ -950,10 +985,13 @@ function opsAlertLabel(code: string): string {
 function opsAlertDetail(alert: SettingsOpsAlert): string {
   const code = String(alert.code || '')
   const message = String(alert.message || '').trim()
-  if (code === 'health_not_ready') return '部署或入口检查不能只看进程存活，需要先恢复 health ready。'
+  if (code === 'health_not_ready') return '部署入口健康检查未就绪，需要先恢复 API 健康状态。'
+  if (code.startsWith('gate_blocked.')) return `${gateLabel(code.replace('gate_blocked.', ''))}门禁未通过，请先处理下方阻断项。`
   if (code === 'task_worker.not_fresh') return '启动 worker 服务并等待心跳刷新，Benchmark/Evolution 会因此被阻断。'
   if (code === 'artifact_root.not_writable') return '检查任务产物目录权限，避免报告和回放产物写入失败。'
   if (code === 'langfuse.capture_input_output_disabled') return '设置 LANGFUSE_CAPTURE_INPUT_OUTPUT=true 并重启后，Langfuse 才会显示 Input/Output。'
+  if (message.toLowerCase().includes('gate is blocked')) return '运行门禁未通过，请先处理下方阻断项。'
+  if (message.toLowerCase().includes('health ready')) return 'API 健康状态未就绪，请查看系统状态。'
   return message || '查看 health checks 和运行门禁获取恢复路径。'
 }
 
@@ -1047,8 +1085,8 @@ function checkLabel(key: string): string {
 function gateLabel(key: string): string {
   return {
     game_start: '开始游戏',
-    benchmark_start: '启动 Benchmark',
-    evolution_start: '启动 Evolution'
+    benchmark_start: '启动评测',
+    evolution_start: '启动自进化'
   }[key] || key
 }
 
@@ -1351,7 +1389,7 @@ function shortId(value: unknown): string {
               <header>
                 <div>
                   <small>{{ activeGroupInfo.label }}</small>
-                  <h2>{{ scopedProfiles.length }} 个可用默认模型</h2>
+                  <h2>{{ scopedDefaultTitle }}</h2>
                 </div>
                 <b>{{ Boolean(envLocks[activeGroup]) ? '环境锁定' : '可配置' }}</b>
               </header>
@@ -1361,6 +1399,21 @@ function shortId(value: unknown): string {
                 </span>
               </div>
               <div class="settings-profile-table compact">
+                <div
+                  v-if="activeScopedEnvLocked"
+                  class="settings-profile-row settings-env-profile-row"
+                  data-status="ok"
+                >
+                  <span class="settings-status-dot" aria-hidden="true"></span>
+                  <span class="settings-main-cell">
+                    <b>WEREWOLF_LLM_* 环境变量</b>
+                    <small>{{ envLockSourceNames.join(' / ') }}</small>
+                  </span>
+                  <span class="settings-time-cell">
+                    <b>环境锁定</b>
+                    <small>优先级最高</small>
+                  </span>
+                </div>
                 <button
                   v-for="profile in scopedProfiles"
                   :key="profile.profile_id"
@@ -1378,7 +1431,7 @@ function shortId(value: unknown): string {
                     <small>{{ shortId(profile.model_config_hash) }}</small>
                   </span>
                 </button>
-                <div v-if="!scopedProfiles.length" class="settings-empty">还没有为 {{ activeGroupInfo.label }} 指定可用默认模型。</div>
+                <div v-if="!scopedProfiles.length && !activeScopedEnvLocked" class="settings-empty">{{ scopedDefaultEmptyText }}</div>
               </div>
             </section>
 
@@ -1484,11 +1537,11 @@ function shortId(value: unknown): string {
           <section class="settings-context-section settings-profile-context">
             <h3>当前 Profile</h3>
             <template v-if="selectedProfile">
-              <div class="settings-context-run-id">
-                <small>profile_id</small>
-                <code>{{ selectedProfile.profile_id }}</code>
-              </div>
               <div class="settings-context-kpis">
+                <span>
+                  <small>profile_id</small>
+                  <b class="settings-profile-id" :title="selectedProfile.profile_id">{{ selectedProfile.profile_id }}</b>
+                </span>
                 <span>
                   <small>模型</small>
                   <b :title="selectedProfile.model">{{ selectedProfile.model }}</b>
@@ -1506,9 +1559,6 @@ function shortId(value: unknown): string {
                   <b>{{ shortId(selectedProfile.model_config_hash) }}</b>
                 </span>
               </div>
-              <p class="settings-context-empty">
-                {{ ['error', 'stale', 'untested'].includes(String(selectedProfile.last_test_status || 'untested')) ? '连接未确认时，启动入口会重新预检；预检失败才会阻断。' : '连接状态可用于启动门禁判断。' }}
-              </p>
               <p v-if="selectedProfileLastTestError" class="settings-context-empty error">
                 上次失败：{{ selectedProfileLastTestError }}
               </p>
@@ -1671,7 +1721,7 @@ function shortId(value: unknown): string {
 
 .settings-context-kpis {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
   padding: 0 0 2px;
 }
@@ -2130,6 +2180,15 @@ function shortId(value: unknown): string {
   background: rgba(224, 184, 111, 0.36);
 }
 
+.settings-env-profile-row {
+  cursor: default;
+}
+
+.settings-env-profile-row:hover {
+  border-color: rgba(93, 48, 17, 0.14);
+  background: rgba(255, 252, 245, 0.38);
+}
+
 .settings-status-dot {
   width: 9px;
   height: 9px;
@@ -2376,6 +2435,11 @@ function shortId(value: unknown): string {
   min-height: 0;
   border-left-color: #b9852f;
   background: rgba(255, 239, 194, 0.32);
+}
+
+.settings-alert-list span {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
 }
 
 .settings-ops-row[data-status="warning"],
@@ -2744,7 +2808,8 @@ function shortId(value: unknown): string {
 
 .settings-storage-list span {
   display: grid;
-  grid-template-columns: minmax(0, 0.74fr) minmax(0, 0.8fr);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 3px 8px;
   min-width: 0;
   padding: 8px 9px;
@@ -2776,6 +2841,7 @@ function shortId(value: unknown): string {
   font-size: 11px;
   font-weight: 800;
   text-align: right;
+  white-space: nowrap;
 }
 
 .settings-storage-list em {
@@ -2787,34 +2853,6 @@ function shortId(value: unknown): string {
   line-height: 1.35;
 }
 
-.settings-context-run-id {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(93, 48, 17, 0.12);
-  border-radius: 0;
-  background: rgba(255, 252, 245, 0.28);
-}
-
-.settings-context-run-id small {
-  color: var(--settings-muted);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.settings-context-run-id code {
-  min-width: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  color: var(--settings-text);
-  font-size: 12px;
-  font-weight: 850;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .settings-gate-list {
   display: grid;
   gap: 8px;
@@ -2822,10 +2860,13 @@ function shortId(value: unknown): string {
 }
 
 .settings-context-kpis {
-  gap: 0 10px;
+  gap: 0;
 }
 
 .settings-context-kpis span {
+  grid-template-columns: minmax(58px, 0.34fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   min-height: 0;
   padding: 7px 0;
   border: 0;
@@ -2833,6 +2874,20 @@ function shortId(value: unknown): string {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.settings-context-kpis b {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.24;
+}
+
+.settings-context-kpis .settings-profile-id {
+  font-size: 12px;
+  line-height: 1.28;
 }
 
 .settings-gate-item {

@@ -195,6 +195,41 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     window.setTimeout(preload, 120)
   }
 
+  function waitForDelay(ms: number) {
+    if (typeof window === 'undefined' || ms <= 0) return Promise.resolve()
+    return new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+  }
+
+  async function waitForCouncilSceneApi(timeoutMs = 7000) {
+    if (options.installLifecycle === false || typeof window === 'undefined') return sceneApi
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      if (typeof sceneApi.waitForCouncilModels === 'function') return sceneApi
+      await waitForDelay(80)
+    }
+    return sceneApi
+  }
+
+  async function waitForCouncilEntryReady() {
+    if (options.installLifecycle === false) return
+    state.judgeBoardStarted.value = true
+    state.judgeBoardStarting.value = true
+    state.roleAssignmentComplete.value = false
+    const api = await waitForCouncilSceneApi()
+    try {
+      if (typeof api.waitForCouncilModels === 'function') {
+        await Promise.race([
+          Promise.resolve(api.waitForCouncilModels()),
+          waitForDelay(18000)
+        ])
+      }
+    } catch {
+      // The match intro should not deadlock on a scene preload failure.
+    } finally {
+      api.scheduleSyncCouncilScene?.()
+    }
+  }
+
   function closeLiveTransport() {
     state.watchRunning.value = false
     liveStream.closeAll()
@@ -672,22 +707,32 @@ function useGameActions(state: LooseRecord, options: GameActionsOptions = {}) {
     }
     resetLiveState()
     preloadCouncilAssets()
-    const game = await request('/games', {
-      method: 'POST',
-      body: JSON.stringify(startGameBody(mode, startOptions))
-    }, { mode })
-    if (enterStartedGame(game, { skipIntro: false })) {
-      if ((game.mode || mode) === 'watch') {
-        startWatch()
-      } else {
-        startPlayerPolling({ immediate: true })
+    const bootLoadingKey = beginVisibleLoading()
+    let bootLoadingActive = Boolean(bootLoadingKey)
+    let game: LooseRecord | null = null
+    try {
+      game = await request('/games', {
+        method: 'POST',
+        body: JSON.stringify(startGameBody(mode, startOptions))
+      }, { mode })
+      if (isReturnableGame(game)) await waitForCouncilEntryReady()
+      endVisibleLoading(bootLoadingKey)
+      bootLoadingActive = false
+      if (enterStartedGame(game, { skipIntro: false })) {
+        if ((game.mode || mode) === 'watch') {
+          startWatch()
+        } else {
+          startPlayerPolling({ immediate: true })
+        }
+        setMatchNotice(
+          noticeOptions.successType || 'success',
+          noticeOptions.successMessage || ((game.mode || mode) === 'watch' ? '观战对局已开始。' : '玩家对局已开始。')
+        )
+      } else if (!game) {
+        setMatchNotice('error', state.error.value || '对局创建失败，请稍后重试。')
       }
-      setMatchNotice(
-        noticeOptions.successType || 'success',
-        noticeOptions.successMessage || ((game.mode || mode) === 'watch' ? '观战对局已开始。' : '玩家对局已开始。')
-      )
-    } else if (!game) {
-      setMatchNotice('error', state.error.value || '对局创建失败，请稍后重试。')
+    } finally {
+      if (bootLoadingActive) endVisibleLoading(bootLoadingKey)
     }
     await refreshHealth()
     return game

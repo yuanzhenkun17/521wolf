@@ -1030,6 +1030,72 @@ test('startMode in watch mode starts god view without skipping the model intro',
   assert.equal(timers.intervalCount(), 1)
 }))
 
+test('startMode waits for council models before opening the live stream', () => withWindow(async () => {
+  const state = useGameState()
+  state.backendMode.value = 'api'
+  const paths = []
+  const modelReady = createDeferred()
+  let waitForModels = 0
+  let syncScene = 0
+  const watchGame = game('wait-scene-game', {
+    mode: 'watch',
+    human_player_id: null,
+    pending_human_action: null,
+    player_count: 12,
+    players: Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      seat: index + 1,
+      name: `${index + 1}号`,
+      role_hint: index === 0 ? '村民' : '狼人',
+      alive: true
+    }))
+  })
+  const actions = useGameActions(state, {
+    sceneApi: {
+      waitForCouncilModels() {
+        waitForModels += 1
+        return modelReady.promise
+      },
+      scheduleSyncCouncilScene() {
+        syncScene += 1
+      }
+    },
+    apiFetch: async (path) => {
+      paths.push(path)
+      if (path === '/games') return watchGame
+      if (path === '/health') return { mode: 'api', external: { supports_human: true } }
+      throw new Error(`unexpected ${path}`)
+    }
+  })
+
+  const started = actions.startMode({ mode: 'watch' })
+  await flushPromises()
+
+  assert.deepEqual(paths, ['/games'])
+  assert.equal(window.location.hash, '#match')
+  assert.equal(state.liveGame.value.game_id, 'wait-scene-game')
+  assert.equal(state.judgeBoardStarted.value, true)
+  assert.equal(state.judgeBoardStarting.value, true)
+  assert.equal(state.roleAssignmentComplete.value, false)
+  assert.equal(state.watchRunning.value, false)
+  assert.equal(waitForModels, 1)
+
+  modelReady.resolve()
+  await started
+
+  assert.deepEqual(paths, ['/games', '/health'])
+  assert.equal(state.roleAssignmentComplete.value, true)
+  assert.equal(state.judgeBoardStarting.value, false)
+  assert.equal(state.watchRunning.value, true)
+  assert.equal(syncScene >= 1, true)
+}, {
+  eventSource: class FakeEventSource {
+    constructor() {}
+    addEventListener() {}
+    close() {}
+  }
+}))
+
 test('resetGame restarts the match and warns when stopping the old game fails', () => withWindow(async () => {
   const state = useGameState()
   const paths = []
@@ -1729,8 +1795,106 @@ test('game audio dispose clears delayed TTS retry timers', () => withWindow(asyn
     await flushPromises()
 
     assert.equal(timers.timeoutCount(), 1)
+    assert.match(audio.ttsError.value, /发言朗读/)
     audio.dispose()
     assert.equal(timers.timeoutCount(), 0)
+  } finally {
+    if (originalFetch === undefined) delete globalThis.fetch
+    else globalThis.fetch = originalFetch
+  }
+}))
+
+test('game audio reads the latest speech after role assignment completes', () => withWindow(async () => {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  const startedAt = []
+
+  class FakeAudioContext {
+    constructor() {
+      this.currentTime = 1
+      this.destination = {}
+      this.state = 'running'
+    }
+    createBuffer(_channels, frameCount, sampleRate) {
+      return {
+        duration: frameCount / sampleRate,
+        getChannelData: () => new Float32Array(frameCount)
+      }
+    }
+    createBufferSource() {
+      return {
+        connect() {},
+        disconnect() {},
+        start: (when) => startedAt.push(when),
+        stop() {}
+      }
+    }
+    createGain() {
+      return {
+        gain: { value: 0 },
+        connect() {},
+        disconnect() {}
+      }
+    }
+    resume() {
+      return Promise.resolve()
+    }
+    close() {
+      return Promise.resolve()
+    }
+  }
+  window.AudioContext = FakeAudioContext
+
+  globalThis.fetch = async (url) => {
+    requests.push(String(url))
+    let reads = 0
+    return {
+      ok: true,
+      headers: { get: (key) => key === 'X-TTS-Sample-Rate' ? '24000' : null },
+      body: {
+        getReader: () => ({
+          async read() {
+            reads += 1
+            return reads === 1
+              ? { done: false, value: new Uint8Array([0, 0, 255, 127]) }
+              : { done: true }
+          },
+          releaseLock() {}
+        })
+      }
+    }
+  }
+
+  try {
+    const runtime = {
+      currentView: ref('match'),
+      game: ref(null),
+      isReplayMode: ref(false),
+      externalStatus: ref({ tts: 'configured' }),
+      apiBase: ref('/api'),
+      roleAssignmentComplete: ref(false)
+    }
+    const audio = useGameAudio(runtime, { installLifecycle: false })
+
+    runtime.game.value = game('audio-role-ready-tts', {
+      phase: 'speech',
+      waiting_for: 'speech',
+      logs: [
+        { type: 'speech', actor_id: 3, speaker: '3号', message: '我先起跳预言家。', visibility: 'public' }
+      ]
+    })
+    await nextTick()
+    await flushPromises()
+
+    assert.deepEqual(requests, [])
+
+    runtime.roleAssignmentComplete.value = true
+    await nextTick()
+    await flushPromises()
+
+    assert.deepEqual(requests, ['/api/tts/speech/stream'])
+    assert.equal(startedAt.length, 1)
+    audio.dispose()
   } finally {
     if (originalFetch === undefined) delete globalThis.fetch
     else globalThis.fetch = originalFetch

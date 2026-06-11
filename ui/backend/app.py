@@ -58,6 +58,9 @@ def create_app(
             yield
         finally:
             store.close()
+            from storage.postgres._pool import close_pools
+
+            close_pools()
 
     api = FastAPI(title="521wolf UI Backend", lifespan=_lifespan)
     api.state.backend_store = store

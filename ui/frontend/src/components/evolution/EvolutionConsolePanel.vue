@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { PropType, Ref } from 'vue'
+import { runtimeHealthPreflightStatusText } from '../../domain/runtimeHealth/gates'
 import EvolutionDiffViewer from './EvolutionDiffViewer.vue'
 
 type BattleSideName = 'baseline' | 'candidate'
@@ -422,7 +423,7 @@ function modelProfileStatus(evo: EvolutionConsoleModel): string {
   if (evo.modelProfilesError?.value) return evo.modelProfilesError.value
   if (evo.modelProfilePreflightLoading?.value) return '模型预检中'
   if (evo.modelProfilePreflightError?.value) return evo.modelProfilePreflightError.value
-  if (evo.modelProfilePreflight?.value?.ready === false) return '模型预检未通过'
+  if (evo.modelProfilePreflight?.value?.ready === false) return runtimeHealthPreflightStatusText(evo.modelProfilePreflight.value, 'evolution_start')
   if (evo.modelProfilePreflight?.value?.ready === true) return '模型预检通过'
   const profile = evo.selectedModelProfile?.value
   if (profile) return `${profile.name || '模型'} · ${profile.model || '未命名'}`

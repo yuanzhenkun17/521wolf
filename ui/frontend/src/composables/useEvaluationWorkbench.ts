@@ -278,6 +278,15 @@ function benchmarkErrorMessage(err, fallback) {
     if (detail.includes('disabled')) return BENCHMARK_SUITE_DISABLED_REASONS.disabled
     return '该评测套件当前不可启动。'
   }
+  if (err?.code === 'benchmark_model_profile_invalid' || text.includes('benchmark model profile is unavailable')) {
+    const detail = String(err?.detail || raw || '').toLowerCase()
+    if (detail.includes('environment llm config is locked')) {
+      return '评测模型 Profile 不可用：当前由 WEREWOLF_LLM_* 环境变量锁定默认模型，请不要再指定单独的 Profile。'
+    }
+    if (detail.includes('disabled')) return '评测模型 Profile 不可用：该 Profile 已禁用。'
+    if (detail.includes('api key')) return '评测模型 Profile 不可用：该 Profile 没有保存 API key。'
+    return '评测模型 Profile 不可用，请在设置页启用 Profile、保存 API key 并勾选 Benchmark 默认用途。'
+  }
   if (text.includes('batch not found')) return '评测批次不存在，已刷新列表。'
   if (text.includes('benchmark failed')) return '评测执行失败，请查看评测记录。'
   if (text.includes('invalid config') || text.includes('invalid benchmark config')) return '评测配置无效，请检查局数和天数。'

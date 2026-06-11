@@ -114,8 +114,62 @@ describe('LobbyPage Pinia state handoff', () => {
     await flushPromises()
 
     const watchButton = modeButton(wrapper, '观战模式')
-    expect(watchButton.attributes('disabled')).toBeDefined()
+    expect(watchButton.attributes('disabled')).toBeUndefined()
     await watchButton.trigger('click')
+    await flushPromises()
     expect(wrapper.emitted('start-mode')).toBeUndefined()
+    expect(wrapper.find('.lobby-runtime-gate').text()).toContain('模型连接不可用')
+  })
+
+  it('does not keep a stale runtime gate on screen when click preflight succeeds', async () => {
+    const apiFetch = vi.fn(async (path: string) => {
+      if (path === '/roles/overview') return { roles: [], versions: {}, leaderboards: {} }
+      if (path === '/settings/model-profiles') return { profiles: [] }
+      if (path.startsWith('/health/preflight?scope=game_start')) {
+        return {
+          ready: true,
+          status: 'ok',
+          gate: {
+            ready: true,
+            status: 'ok',
+            blockers: [],
+            warnings: [],
+            actions: []
+          },
+          checks: { llm_connectivity: { status: 'ok' } }
+        }
+      }
+      throw new Error(`unexpected ${path}`)
+    })
+
+    const wrapper = mountLobbyPage({
+      apiFetch,
+      runtimeHealth: {
+        gates: {
+          game_start: {
+            ready: false,
+            status: 'error',
+            blockers: ['llm_connectivity'],
+            warnings: [],
+            actions: []
+          }
+        }
+      }
+    }, () => {
+      useSessionStore().setBackendMode('api')
+      useGameStore().setLoading(false)
+    })
+
+    await flushPromises()
+
+    const watchButton = modeButton(wrapper, '观战模式')
+    expect(wrapper.find('.lobby-runtime-gate').exists()).toBe(false)
+    expect(watchButton.attributes('disabled')).toBeUndefined()
+
+    await watchButton.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.lobby-runtime-gate').exists()).toBe(false)
+    expect(wrapper.emitted('start-mode')?.[0]?.[0]).toMatchObject({ mode: 'watch' })
   })
 })

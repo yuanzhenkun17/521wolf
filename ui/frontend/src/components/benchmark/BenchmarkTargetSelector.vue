@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
+import { runtimeHealthPreflightStatusText } from '../../domain/runtimeHealth/gates'
 
 type ReadableRef<T> = {
   readonly value: T
@@ -79,7 +80,7 @@ const modelProfileStatus = computed(() => {
   if (props.benchmark.modelProfilesError.value) return props.benchmark.modelProfilesError.value
   if (props.benchmark.modelProfilePreflightLoading.value) return '模型预检中'
   if (props.benchmark.modelProfilePreflightError.value) return props.benchmark.modelProfilePreflightError.value
-  if (props.benchmark.modelProfilePreflight.value?.ready === false) return '模型预检未通过'
+  if (props.benchmark.modelProfilePreflight.value?.ready === false) return runtimeHealthPreflightStatusText(props.benchmark.modelProfilePreflight.value, 'benchmark_start')
   if (props.benchmark.modelProfilePreflight.value?.ready === true) return '模型预检通过'
   if (selectedModelProfile.value) return `${selectedModelProfile.value.name} · ${selectedModelProfile.value.model}`
   if (modelProfiles.value.length) return '自动使用默认模型'
@@ -444,7 +445,9 @@ function versionOptionText(version: BenchmarkRoleTargetVersion) {
 
 .target-warning {
   grid-column: 1 / -1;
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
   padding: 7px 9px;
   border: 1px solid rgba(90, 51, 25, 0.24);
   border-radius: 0;
@@ -453,6 +456,7 @@ function versionOptionText(version: BenchmarkRoleTargetVersion) {
   font-size: 12px;
   font-weight: 800;
   line-height: 1.35;
+  word-break: break-word;
 }
 
 .target-warning.neutral {

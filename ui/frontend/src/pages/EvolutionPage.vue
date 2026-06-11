@@ -1341,12 +1341,14 @@ onBeforeUnmount(() => {
 .evo-console-field--model small {
   grid-column: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
+  overflow-wrap: anywhere;
   color: rgba(74, 37, 15, 0.58);
   font-size: 11px;
   font-weight: 800;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .evo-console-field--model small.error {
@@ -1412,9 +1414,10 @@ onBeforeUnmount(() => {
 .evo-runtime-gate span,
 .evo-runtime-gate small {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .evo-runtime-gate strong {

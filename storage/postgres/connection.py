@@ -185,6 +185,7 @@ class PostgresConnectionAdapter:
         placeholder_style: PlaceholderStyle = "format",
         storage_timezone: str = "Asia/Shanghai",
         configure_search_path: bool = True,
+        pool: Any = None,
     ) -> None:
         _validate_identifier(schema, kind="schema")
         if placeholder_style not in {"format", "numeric"}:
@@ -192,6 +193,7 @@ class PostgresConnectionAdapter:
                 "PostgreSQL placeholder_style must be 'format' or 'numeric'"
             )
         self._raw_conn = raw_conn
+        self._pool = pool
         self.schema = schema
         self.placeholder_style = placeholder_style
         self.storage_timezone = storage_timezone
@@ -229,7 +231,14 @@ class PostgresConnectionAdapter:
         self._raw_conn.rollback()
 
     def close(self) -> None:
-        self._raw_conn.close()
+        if self._pool is not None:
+            try:
+                self._raw_conn.rollback()
+            except Exception:  # noqa: BLE001 - best-effort cleanup before returning to pool
+                pass
+            self._pool.putconn(self._raw_conn)
+        else:
+            self._raw_conn.close()
 
     def __enter__(self) -> "PostgresConnectionAdapter":
         return self
@@ -352,9 +361,22 @@ def connect_postgres(
     placeholder_style: PlaceholderStyle = "format",
     storage_timezone: str = "Asia/Shanghai",
     configure_search_path: bool = True,
+    pool: Any = None,
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
     """Open a psycopg connection and wrap it in :class:`PostgresConnectionAdapter`."""
+    if pool is not None:
+        raw_conn = pool.getconn()
+        return PostgresConnectionAdapter(
+            raw_conn,
+            schema=schema,
+            search_path=search_path,
+            placeholder_style=placeholder_style,
+            storage_timezone=storage_timezone,
+            configure_search_path=False,
+            pool=pool,
+        )
+
     import psycopg
 
     raw_conn = (
@@ -374,44 +396,52 @@ def connect_postgres(
 
 def get_wolf_postgres_connection(
     conninfo: str | None = None,
+    connect_kwargs: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
     """Open a PostgreSQL connection for the wolf storage namespace."""
-    return _get_domain_postgres_connection(conninfo, schema="wolf", **kwargs)
+    return _get_domain_postgres_connection(conninfo, schema="wolf", connect_kwargs=connect_kwargs, **kwargs)
 
 
 def get_registry_postgres_connection(
     conninfo: str | None = None,
+    connect_kwargs: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
     """Open a PostgreSQL connection for the registry storage namespace."""
-    return _get_domain_postgres_connection(conninfo, schema="registry", **kwargs)
+    return _get_domain_postgres_connection(conninfo, schema="registry", connect_kwargs=connect_kwargs, **kwargs)
 
 
 def get_evolution_postgres_connection(
     conninfo: str | None = None,
+    connect_kwargs: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
     """Open a PostgreSQL connection for the evolution storage namespace."""
-    return _get_domain_postgres_connection(conninfo, schema="evolution", **kwargs)
+    return _get_domain_postgres_connection(conninfo, schema="evolution", connect_kwargs=connect_kwargs, **kwargs)
 
 
 def _get_domain_postgres_connection(
     conninfo: str | None,
     *,
     schema: str,
+    connect_kwargs: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> PostgresConnectionAdapter:
+    from storage.postgres._pool import get_pool
+
     resolved = conninfo or _postgres_database_url()
-    if not resolved and not kwargs:
+    if not resolved and not kwargs and not connect_kwargs:
         raise ValueError(
             "PostgreSQL connection info is required; pass conninfo or set "
             "POSTGRES_DATABASE_URL/DATABASE_URL"
         )
+    pool = get_pool(schema, resolved, connect_kwargs=connect_kwargs)
     return connect_postgres(
         resolved,
         schema=schema,
         search_path=(schema, "public"),
+        pool=pool,
         **kwargs,
     )
 

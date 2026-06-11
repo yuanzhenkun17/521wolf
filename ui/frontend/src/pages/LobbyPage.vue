@@ -2,7 +2,7 @@
 import { computed, getCurrentInstance, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { type GameStartRoleVersionMode, gameStartRoleVersionState } from '../composables/gameStartRoleVersions.ts'
 import { roleLabel, roleMeta, shortId, sourceText } from '../composables/workbenchShared.ts'
-import { runtimeHealthGateSummary, runtimeHealthPayloadFromPreflight } from '../domain/runtimeHealth/gates'
+import { runtimeHealthGateSummary, runtimeHealthPayloadFromPreflight, runtimeHealthPreflightStatusText } from '../domain/runtimeHealth/gates'
 import { useGameStore, useSessionStore } from '../stores'
 import type { RuntimeHealthPayload } from '../types/health'
 import type { ModelProfile } from '../types/settings'
@@ -63,10 +63,13 @@ const leaderboardsByRole = ref({})
 const roleVersionSelections = ref({})
 const modelProfiles = ref<ModelProfile[]>([])
 const modelProfilePreflight = ref<Record<string, any> | null>(null)
+const gameStartPreflight = ref<Record<string, any> | null>(null)
 const registryLoading = ref(false)
 const registryError = ref('')
 const modelProfilePreflightLoading = ref(false)
 const modelProfilePreflightError = ref('')
+const gameStartPreflightLoading = ref(false)
+const gameStartPreflightError = ref('')
 const modelProfilesLoading = ref(false)
 const modelProfilesError = ref('')
 const startingMode = ref('')
@@ -77,6 +80,7 @@ let gameStartGateTimer: ReturnType<typeof setTimeout> | null = null
 let roleVersionLoadPromise = null
 let modelProfilesLoadPromise: Promise<void> | null = null
 let modelProfilePreflightRequestId = 0
+let gameStartPreflightRequestId = 0
 
 const ROLE_VERSION_MODES: RoleVersionModeOption[] = [
   { key: 'baseline', label: '当前基线' },
@@ -169,8 +173,13 @@ const selectedModelProfile = computed(() =>
 const modelProfilePreflightHealth = computed(() =>
   runtimeHealthPayloadFromPreflight(modelProfilePreflight.value, 'game_start')
 )
+const gameStartPreflightHealth = computed(() =>
+  runtimeHealthPayloadFromPreflight(gameStartPreflight.value, 'game_start')
+)
 const gameStartGate = computed(() =>
-  selectedModelProfileId.value && modelProfilePreflightHealth.value
+  gameStartPreflightHealth.value
+    ? runtimeHealthGateSummary(gameStartPreflightHealth.value, 'game_start')
+    : selectedModelProfileId.value && modelProfilePreflightHealth.value
     ? runtimeHealthGateSummary(modelProfilePreflightHealth.value, 'game_start')
     : baseGameStartGate.value
 )
@@ -178,30 +187,26 @@ const modelProfileStatusText = computed(() => {
   if (!backendAvailable.value) return ''
   if (modelProfilesLoading.value) return '模型读取中'
   if (modelProfilesError.value) return modelProfilesError.value
+  if (gameStartPreflightLoading.value) return '开局预检中'
   if (modelProfilePreflightLoading.value) return '模型预检中'
   if (modelProfilePreflightError.value) return modelProfilePreflightError.value
-  if (modelProfilePreflight.value?.ready === false) return '模型预检未通过'
+  if (modelProfilePreflight.value?.ready === false) return runtimeHealthPreflightStatusText(modelProfilePreflight.value, 'game_start')
   if (modelProfilePreflight.value?.ready === true) return '模型预检通过'
   if (selectedModelProfile.value) return `${selectedModelProfile.value.name} · ${selectedModelProfile.value.model}`
   if (launchModelProfiles.value.length) return '自动使用默认模型'
   return '未配置本地模型'
 })
-const gameStartBlocked = computed(() => {
-  if (!backendAvailable.value) return false
-  if (selectedModelProfileId.value) {
-    if (modelProfilePreflightLoading.value || modelProfilePreflightError.value || !modelProfilePreflight.value) return true
-  }
-  return gameStartGate.value.disabled
-})
 const gameStartGateMessage = computed(() => {
+  if (gameStartPreflightLoading.value) return '开局预检中。'
+  if (gameStartPreflightError.value) return gameStartPreflightError.value
   if (selectedModelProfileId.value) {
     if (modelProfilePreflightLoading.value) return '模型 Profile 预检中。'
     if (modelProfilePreflightError.value) return modelProfilePreflightError.value
-    if (!modelProfilePreflight.value) return '模型 Profile 尚未完成启动预检。'
   }
   return gameStartGate.value.reason || gameStartGate.value.warning
 })
-const gameStartGateTone = computed(() => gameStartBlocked.value ? 'error' : 'warning')
+const gameStartGateTone = computed(() => gameStartGate.value.disabled || gameStartPreflightError.value || modelProfilePreflightError.value ? 'error' : 'warning')
+const gameStartButtonBusy = computed(() => gameStartPreflightLoading.value || modelProfilePreflightLoading.value)
 
 function versionSource(version) {
   return sourceText(version?.source || (version?.is_baseline ? 'baseline' : 'version'))
@@ -317,16 +322,48 @@ async function loadModelProfilePreflight() {
   }
 }
 
-async function start(mode) {
-  if (selectedModelProfileId.value) {
-    await loadModelProfilePreflight()
+async function runGameStartPreflight() {
+  if (!props.apiFetch || !backendAvailable.value) return true
+  const profileId = String(selectedModelProfileId.value || '').trim()
+  const requestId = ++gameStartPreflightRequestId
+  gameStartPreflight.value = null
+  gameStartPreflightError.value = ''
+  gameStartPreflightLoading.value = true
+  try {
+    const query = new URLSearchParams({
+      scope: 'game_start',
+      model_scope: 'game_decision'
+    })
+    if (profileId) query.set('model_profile_id', profileId)
+    const payload = await props.apiFetch(`/health/preflight?${query.toString()}`, { method: 'POST' })
+    if (requestId !== gameStartPreflightRequestId) return false
+    gameStartPreflight.value = payload || null
+    if (profileId) {
+      modelProfilePreflight.value = payload || null
+      modelProfilePreflightError.value = ''
+    }
+    return Boolean(payload?.ready)
+  } catch (err) {
+    if (requestId === gameStartPreflightRequestId) {
+      gameStartPreflight.value = null
+      gameStartPreflightError.value = err?.message || '开局预检失败'
+    }
+    return false
+  } finally {
+    if (requestId === gameStartPreflightRequestId) gameStartPreflightLoading.value = false
   }
-  if (gameStartBlocked.value) {
-    showGameStartGate.value = true
+}
+
+async function start(mode) {
+  dismissGameStartGate()
+  startingMode.value = mode
+  const preflightReady = await runGameStartPreflight()
+  if (!preflightReady || gameStartGate.value.disabled) {
     scheduleGameStartGateDismiss()
+    startingMode.value = ''
     return
   }
-  startingMode.value = mode
+  dismissGameStartGate()
   const body: StartModeOptions = {
     player_count: Number(props.playerCount) || 12,
     human_player_id: mode === 'play' ? 1 : null
@@ -419,12 +456,15 @@ onMounted(() => {
   void loadModelProfiles()
 })
 onBeforeUnmount(clearGameStartGateTimer)
-watch(gameStartGateMessage, scheduleGameStartGateDismiss, { immediate: true })
 watch(backendMode, () => {
+  gameStartPreflight.value = null
+  gameStartPreflightError.value = ''
   void loadRoleVersions()
   void loadModelProfiles()
 })
 watch(selectedModelProfileId, () => {
+  gameStartPreflight.value = null
+  gameStartPreflightError.value = ''
   void loadModelProfilePreflight()
 })
 watch(loading, (isLoading) => {
@@ -578,19 +618,19 @@ watch(loading, (isLoading) => {
           重试
         </button>
       </section>
-      <button class="mode-card watch" :disabled="loading || !backendAvailable || gameStartBlocked" @click="start('watch')">
+      <button class="mode-card watch" :disabled="loading || !backendAvailable || gameStartButtonBusy" @click="start('watch')">
         <span>观战模式</span>
         <strong>
-          {{ !backendAvailable ? '后端未连接' : gameStartBlocked ? '开局门禁未通过' : '观看智能体对局' }}
+          {{ !backendAvailable ? '后端未连接' : gameStartButtonBusy ? '开局预检中' : '观看智能体对局' }}
           <i v-if="startingMode === 'watch' && loading" class="mode-loading-dots" aria-label="加载中">
             <b></b><b></b><b></b>
           </i>
         </strong>
       </button>
-      <button class="mode-card play" :disabled="loading || !backendAvailable || !supportsHuman || gameStartBlocked" @click="start('play')">
+      <button class="mode-card play" :disabled="loading || !backendAvailable || !supportsHuman || gameStartButtonBusy" @click="start('play')">
         <span>玩家模式</span>
         <strong>
-          {{ gameStartBlocked ? '开局门禁未通过' : supportsHuman ? '加入智能体对局' : '后端暂不支持加入' }}
+          {{ gameStartButtonBusy ? '开局预检中' : supportsHuman ? '加入智能体对局' : '后端暂不支持加入' }}
           <i v-if="startingMode === 'play' && loading" class="mode-loading-dots" aria-label="加载中">
             <b></b><b></b><b></b>
           </i>
@@ -871,11 +911,11 @@ watch(loading, (isLoading) => {
 }
 
 .lobby-model-panel small {
-  grid-column: 1;
+  grid-column: 1 / -1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .lobby-model-panel small.error {
