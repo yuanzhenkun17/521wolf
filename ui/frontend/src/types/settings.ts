@@ -49,6 +49,7 @@ export interface SettingsOpsMetrics {
   runtime?: Record<string, unknown>
   llm?: Record<string, unknown>
   integrations?: Record<string, unknown>
+  release?: Record<string, unknown>
   alerts?: SettingsOpsAlert[]
   [key: string]: unknown
 }

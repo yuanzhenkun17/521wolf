@@ -1208,6 +1208,13 @@ def test_health_public_task_control_omits_artifact_paths_and_worker_details(
     _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
+    monkeypatch.delenv("WOLF_GIT_SHA", raising=False)
+    monkeypatch.delenv("APP_GIT_SHA", raising=False)
+    monkeypatch.delenv("WOLF_APP_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("APP_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("WOLF_APP_RELEASE", "release-20260611")
+    monkeypatch.setenv("GITHUB_SHA", "abcdef1234567890")
+    monkeypatch.setenv("LANGFUSE_ENVIRONMENT", "production")
     worker_secret = "worker-secret-id"
     task_secret = "task-secret-id"
     metadata_secret = "sk-worker-health-secret"
@@ -1237,6 +1244,18 @@ def test_health_public_task_control_omits_artifact_paths_and_worker_details(
     assert task_control["worker_count"] == 1
     assert "workers" not in task_control
     assert "path" not in task_control["artifact_root"]
+    assert payload["release"] == {
+        "release": "release-20260611",
+        "git_sha": "abcdef1234567890",
+        "git_sha_short": "abcdef123456",
+        "environment": "production",
+        "configured": True,
+        "sources": {
+            "release": "WOLF_APP_RELEASE",
+            "git_sha": "GITHUB_SHA",
+            "environment": "LANGFUSE_ENVIRONMENT",
+        },
+    }
 
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     assert worker_secret not in serialized
@@ -1251,6 +1270,10 @@ def test_ops_metrics_reports_public_counts_without_sensitive_details(
     _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
     monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
+    monkeypatch.delenv("WOLF_APP_RELEASE", raising=False)
+    monkeypatch.delenv("WOLF_GIT_SHA", raising=False)
+    monkeypatch.setenv("APP_RELEASE", "ops-release")
+    monkeypatch.setenv("APP_GIT_SHA", "1234567890abcdef")
     worker_secret = "worker-secret-id"
     task_secret = "task-secret-id"
     metadata_secret = "sk-worker-health-secret"
@@ -1299,6 +1322,9 @@ def test_ops_metrics_reports_public_counts_without_sensitive_details(
     assert payload["tasks"]["worker_fresh"] is True
     assert payload["tasks"]["worker_count"] == 1
     assert payload["checks"]["task_worker"]["status"] == "ok"
+    assert payload["release"]["release"] == "ops-release"
+    assert payload["release"]["git_sha"] == "1234567890abcdef"
+    assert payload["release"]["git_sha_short"] == "1234567890ab"
 
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     assert worker_secret not in serialized

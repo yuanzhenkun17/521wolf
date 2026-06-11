@@ -834,6 +834,7 @@ function buildOpsMetricRows(payload: SettingsOpsMetrics): OpsMetricRow[] {
   const tasks = recordObject(payload.tasks)
   const runtime = recordObject(payload.runtime)
   const integrations = recordObject(payload.integrations)
+  const release = recordObject(payload.release)
   const langfuse = recordObject(integrations.langfuse)
   const queueCounts = recordObject(tasks.queue_status_counts)
   const healthReady = payload.ready !== false
@@ -849,6 +850,13 @@ function buildOpsMetricRows(payload: SettingsOpsMetrics): OpsMetricRow[] {
   const interrupted = safeNumber(queueCounts.interrupted)
 
   return [
+    {
+      key: 'release',
+      label: '部署版本',
+      value: releaseValue(release),
+      detail: releaseDetail(release),
+      severity: release.configured ? 'ok' : 'warning'
+    },
     {
       key: 'health_ready',
       label: 'API 就绪',
@@ -901,6 +909,23 @@ function buildOpsMetricRows(payload: SettingsOpsMetrics): OpsMetricRow[] {
       severity: langfuse.enabled && langfuse.capture_input_output === false ? 'warning' : statusSeverity(langfuse.status)
     }
   ]
+}
+
+function releaseValue(release: Record<string, any>): string {
+  const name = String(release.release || '').trim()
+  const sha = String(release.git_sha_short || '').trim()
+  if (name && sha) return `${name} · ${sha}`
+  return name || sha || '未配置'
+}
+
+function releaseDetail(release: Record<string, any>): string {
+  const environment = String(release.environment || '').trim()
+  const sha = String(release.git_sha || '').trim()
+  const parts = [
+    environment ? `环境 ${environment}` : '',
+    sha ? `提交 ${sha}` : '',
+  ].filter(Boolean)
+  return parts.length ? parts.join('；') : '建议在部署环境配置 WOLF_APP_RELEASE 或 APP_GIT_SHA。'
 }
 
 function opsAlertSeverity(severity: unknown): OpsAlertRow['severity'] {

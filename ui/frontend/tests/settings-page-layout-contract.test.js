@@ -71,6 +71,10 @@ test('SettingsPage follows local secret safety rules', () => {
   assert.match(source, /const opsAlertRows = computed<OpsAlertRow\[\]>/)
   assert.match(source, /const opsMetricRows = computed<OpsMetricRow\[\]>/)
   assert.match(source, /function buildOpsMetricRows\(payload: SettingsOpsMetrics\): OpsMetricRow\[\]/)
+  assert.match(source, /function releaseValue\(release: Record<string, any>\): string/)
+  assert.match(source, /function releaseDetail\(release: Record<string, any>\): string/)
+  assert.match(source, /部署版本/)
+  assert.match(source, /WOLF_APP_RELEASE 或 APP_GIT_SHA/)
   assert.match(source, /function opsAlertLabel\(code: string\): string/)
   assert.match(source, /Langfuse 输入\/输出捕获关闭/)
   assert.match(source, /class="settings-ops-grid"/)
@@ -112,6 +116,7 @@ test('Settings types carry ops metrics without exposing secrets', () => {
 
   assert.match(types, /export interface SettingsOpsAlert/)
   assert.match(types, /export interface SettingsOpsMetrics/)
+  assert.match(types, /release\?: Record<string, unknown>/)
   assert.match(types, /alerts\?: SettingsOpsAlert\[\]/)
   assert.match(types, /ops_metrics\?: SettingsOpsMetrics/)
   assert.doesNotMatch(types, /api_key: string/)

@@ -45,6 +45,7 @@ def build_ops_metrics_payload(store: Any) -> dict[str, Any]:
         "status": str(health.get("status") or _UNKNOWN),
         "ready": bool(health.get("ready")),
         "summary": str(health.get("summary") or ""),
+        "release": _mapping(health.get("release")),
         "metrics": {
             "health_ready": 1 if health.get("ready") else 0,
             "health_check_status_counts": _status_counts(checks.values()),

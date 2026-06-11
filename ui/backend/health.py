@@ -14,6 +14,7 @@ from app.config import LLM_ENV_PATH, load_llm_config, load_tts_config
 from app.services.llm import create_llm
 from app.util.redaction import redact_text
 from app.util.time import beijing_now_iso
+from ui.backend.release_info import build_release_info
 from ui.backend.settings_runtime_variables import runtime_setting_bool_for_store, runtime_setting_float_for_store
 
 _OK = "ok"
@@ -82,6 +83,7 @@ def _build_health_payload(store: Any) -> dict[str, Any]:
         "ready": ready,
         "mode": "api",
         "summary": _summary_for(status),
+        "release": build_release_info(),
         "checks": checks,
         "gates": gates,
         "degraded_features": degraded_features,
