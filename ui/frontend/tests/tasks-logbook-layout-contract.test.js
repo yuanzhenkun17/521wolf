@@ -29,6 +29,9 @@ test('TasksPage keeps the event timeline inline and collapsed by default', () =>
   assert.match(source, /class="task-events-toggle"[\s\S]*:aria-expanded="eventsExpanded"/)
   assert.match(source, /v-show="eventsExpanded"[\s\S]*id="task-events-content"/)
   assert.match(source, /\.task-events-panel\.expanded/)
+  assert.match(source, /\.task-events-panel\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*var\(--tasks-panel-solid\)/)
+  assert.match(source, /\.task-events-content\s*\{[\s\S]*max-height:\s*clamp\(220px,\s*42vh,\s*430px\);[\s\S]*overflow-y:\s*auto;/)
+  assert.match(source, /@media \(max-width: 960px\)[\s\S]*\.task-events-content\s*\{[\s\S]*max-height:\s*none;[\s\S]*overflow:\s*visible;/)
   assert.doesNotMatch(source, /activeWorkspace|selectWorkspace|queueSectionRef|eventsSectionRef/)
 })
 

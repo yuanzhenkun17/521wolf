@@ -41,6 +41,7 @@ test('runtime health gates are consumed by all launch surfaces', () => {
   assert.match(benchmarkTargetSelector, /v-model\.trim="benchmark\.form\.value\.model_profile_id"/)
   assert.match(benchmarkTargetSelector, /benchmark\.loadModelProfiles\(\)/)
   assert.match(benchmarkTargetSelector, /runtimeHealthPreflightStatusText\(props\.benchmark\.modelProfilePreflight\.value,\s*'benchmark_start'\)/)
+  assert.match(benchmarkTargetSelector, /function modelProfileOptionText\(profile: BenchmarkModelProfile\)[\s\S]*name !== model/)
   assert.match(benchmarkTargetSelector, /\.target-warning \{[\s\S]*overflow-wrap: anywhere;/)
 
   assert.match(evolutionWorkbench, /runtimeHealthGateSummary\(effectiveRuntimeHealth\.value,\s*'evolution_start'\)/)

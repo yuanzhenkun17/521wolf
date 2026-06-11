@@ -1100,7 +1100,14 @@ function eventPayload(event: TaskEventRow): string {
 
 .task-events-panel {
   gap: 0;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  overflow: hidden;
   padding-block: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 245, 0.74), rgba(255, 239, 194, 0.42)),
+    var(--tasks-panel-solid);
 }
 
 .task-events-panel.expanded {
@@ -1173,6 +1180,12 @@ function eventPayload(event: TaskEventRow): string {
   display: grid;
   gap: 8px;
   min-width: 0;
+  max-height: clamp(220px, 42vh, 430px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 94, 52, 0.34) transparent;
 }
 
 .task-table {
@@ -1572,6 +1585,12 @@ function eventPayload(event: TaskEventRow): string {
     max-height: none;
     overflow: visible;
     padding: 12px;
+  }
+
+  .task-events-content {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .tasks-context-rail {

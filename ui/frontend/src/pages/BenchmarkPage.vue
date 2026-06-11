@@ -447,9 +447,7 @@ const planWarningRows = computed(() =>
 const selectedModelProfileLabel = computed(() => {
   const profile = benchmark.selectedModelProfile?.value
   if (!profile) return ''
-  const name = String(profile.name || '模型 Profile').trim()
-  const model = String(profile.model || '未命名模型').trim()
-  return `${name} · ${model}`
+  return modelProfileDisplayLabel(profile)
 })
 const launchSubjectLabel = computed(() => {
   if (benchmark.selectedBenchmarkIsModelSuite.value) {
@@ -718,6 +716,12 @@ function numberOrNull(value) {
 
 function objectOrEmpty(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+}
+
+function modelProfileDisplayLabel(profile: LooseRecord = {}) {
+  const name = String(profile.name || '').trim()
+  const model = String(profile.model || '').trim()
+  return name && model && name !== model ? `${name} · ${model}` : name || model || '未命名模型'
 }
 
 function formatNumber(value, fallback = '--') {

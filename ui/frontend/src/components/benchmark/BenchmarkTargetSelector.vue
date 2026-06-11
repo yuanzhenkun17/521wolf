@@ -82,7 +82,7 @@ const modelProfileStatus = computed(() => {
   if (props.benchmark.modelProfilePreflightError.value) return props.benchmark.modelProfilePreflightError.value
   if (props.benchmark.modelProfilePreflight.value?.ready === false) return runtimeHealthPreflightStatusText(props.benchmark.modelProfilePreflight.value, 'benchmark_start')
   if (props.benchmark.modelProfilePreflight.value?.ready === true) return '模型预检通过'
-  if (selectedModelProfile.value) return `${selectedModelProfile.value.name} · ${selectedModelProfile.value.model}`
+  if (selectedModelProfile.value) return modelProfileOptionText(selectedModelProfile.value)
   if (modelProfiles.value.length) return '自动使用默认模型'
   return '未配置本地模型'
 })
@@ -116,6 +116,13 @@ function versionOptionText(version: BenchmarkRoleTargetVersion) {
   if (version.targetDisabledReason) parts.push('不可选')
   return parts.filter(Boolean).join(' · ')
 }
+
+function modelProfileOptionText(profile: BenchmarkModelProfile) {
+  const name = String(profile?.name || '').trim()
+  const model = String(profile?.model || '').trim()
+  const identity = name && model && name !== model ? `${name} · ${model}` : name || model || '未命名模型'
+  return `${identity}${profile?.default_scopes?.benchmark ? ' · 默认评测' : ''}`
+}
 </script>
 
 <template>
@@ -137,7 +144,7 @@ function versionOptionText(version: BenchmarkRoleTargetVersion) {
             :key="profile.profile_id"
             :value="profile.profile_id"
           >
-            {{ profile.name }} · {{ profile.model }}{{ profile.default_scopes?.benchmark ? ' · 默认评测' : '' }}
+            {{ modelProfileOptionText(profile) }}
           </option>
         </select>
       </label>

@@ -150,6 +150,8 @@ test('Benchmark target selector keeps overview focused on editable inputs', () =
   assert.match(source, /v-model\.trim="benchmark\.form\.value\.model_id"/)
   assert.match(source, /v-model\.trim="benchmark\.form\.value\.model_config_hash"/)
   assert.match(source, /v-model\.trim="benchmark\.form\.value\.target_version_id"/)
+  assert.match(source, /function modelProfileOptionText\(profile: BenchmarkModelProfile\)[\s\S]*name !== model/)
+  assert.doesNotMatch(source, /profile\.name\s*\}\}\s*·\s*\{\{\s*profile\.model/)
   assert.doesNotMatch(source, /targetModeLabel|subjectLabel|selectedRoleLabel|target-note|模型评测写入|角色版本评测写入/)
 })
 
