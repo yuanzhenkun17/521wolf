@@ -32,6 +32,7 @@ _LANGFUSE_ENV_KEYS = (
 
 
 def _clear_langfuse_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     for key in _LANGFUSE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
 

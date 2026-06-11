@@ -610,6 +610,8 @@ def test_record_schema_version_uses_postgres_upsert_without_legacy_catalog_fallb
 
 
 def test_domain_factories_use_database_url_and_schema_search_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    import storage.postgres._pool as pool_mod
+
     raw = _FakeRawConnection()
     calls: list[tuple[str | None, dict[str, Any]]] = []
 
@@ -617,7 +619,11 @@ def test_domain_factories_use_database_url_and_schema_search_path(monkeypatch: p
         calls.append((conninfo, kwargs))
         return raw
 
+    def disable_pool(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("pool disabled for direct connection test")
+
     monkeypatch.setitem(sys.modules, "psycopg", SimpleNamespace(connect=fake_connect))
+    monkeypatch.setattr(pool_mod, "get_pool", disable_pool)
     monkeypatch.setenv("POSTGRES_DATABASE_URL", "postgresql://wolf_app@localhost/db")
 
     adapter = get_registry_postgres_connection()

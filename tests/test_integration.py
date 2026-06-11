@@ -216,19 +216,26 @@ class TestAppConfig:
         assert LLM_ENV_PATH == PathConfig().root / ".env"
 
     def test_load_llm_config_env_path_is_not_cwd_relative(self, tmp_path, monkeypatch):
-        from app.config import LLM_ENV_PATH, load_llm_config
+        import app.config as config
 
         cwd_env = tmp_path / ".env"
         cwd_env.write_text("WEREWOLF_LLM_API_KEY=cwd-key\n", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("WEREWOLF_LLM_API_KEY", raising=False)
 
-        if LLM_ENV_PATH.exists():
-            cfg = load_llm_config()
-            assert cfg["api_key"] != "cwd-key"
-        else:
-            with pytest.raises(RuntimeError, match="Missing LLM API key"):
-                load_llm_config()
+        loaded_paths = []
+
+        def fake_load_dotenv(path, *, override):
+            loaded_paths.append(Path(path))
+            monkeypatch.setenv("WEREWOLF_LLM_API_KEY", "project-key")
+            assert override is False
+
+        monkeypatch.setattr(config, "load_dotenv", fake_load_dotenv)
+
+        cfg = config.load_llm_config()
+
+        assert loaded_paths == [config.LLM_ENV_PATH]
+        assert cfg["api_key"] == "project-key"
 
     def test_default_paths(self):
         from app.config import DEFAULT_PATHS, PathConfig

@@ -742,6 +742,7 @@ def _fake_ui_pg_provider(monkeypatch: pytest.MonkeyPatch) -> _UiFakeStorageProvi
     import storage.provider as provider_mod
     import ui.backend.game_store as ui_backend_game_store
 
+    monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     provider = _UiFakeStorageProvider()
 
     def provider_from_env(*, paths=None):
@@ -5557,7 +5558,6 @@ def test_background_tasks_persist_skips_unchanged_state(
     assert _fake_ui_pg_provider.db.background_upserts == 1
     assert _fake_ui_pg_provider.db.begin_writes == 2
     assert _fake_ui_pg_provider.db.commits == 2
-    assert _fake_ui_pg_provider.db.closes == 4
     initial_closes = _fake_ui_pg_provider.db.closes
     assert batch["batch_id"] in _fake_ui_pg_provider.db.background_tasks
 

@@ -1,4 +1,4 @@
-import type { TaskActionResponse, TaskArtifact, TaskArtifactsResponse, TaskEventRow, TaskEventsResponse, TaskListResponse, TaskQueueRow } from '../../types/task'
+import type { TaskActionResponse, TaskArtifact, TaskArtifactsResponse, TaskEventsResponse, TaskListResponse, TaskQueueRow } from '../../types/task'
 import { arrayOrEmpty, booleanValue, firstNumber, firstString, integerValue, normalizePagination, nullableNumber, objectOrEmpty, shortId, stringValue } from '../common'
 
 const TASK_ACTIVE_STATUSES = new Set(['queued', 'running'])
