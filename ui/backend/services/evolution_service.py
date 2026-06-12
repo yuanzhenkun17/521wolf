@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import nullcontext as _nullcontext
 from typing import Any, Protocol
 
 from fastapi import HTTPException
@@ -146,12 +147,14 @@ class EvolutionService:
         if hasattr(self._store, "_mark_evolution_stopped"):
             self._store._mark_evolution_stopped(entity)
             if entity.get("kind") == "role_evolution_batch":
-                for child_id in list(entity.get("runs", []) or []):
-                    child = self._store.evolution_runs.get(str(child_id))
-                    if child is None:
-                        continue
-                    if str(child.get("status") or "").lower() not in _TERMINAL_TASK_STATUSES:
-                        self._store._mark_evolution_stopped(child)
+                lock = getattr(self._store, "_evolution_state_lock", None)
+                with lock if lock is not None else _nullcontext():
+                    for child_id in list(entity.get("runs", []) or []):
+                        child = self._store.evolution_runs.get(str(child_id))
+                        if child is None:
+                            continue
+                        if str(child.get("status") or "").lower() not in _TERMINAL_TASK_STATUSES:
+                            self._store._mark_evolution_stopped(child)
                 self._store._refresh_evolution_batch(entity.get("batch_id"))
         else:
             entity["status"] = "failed"

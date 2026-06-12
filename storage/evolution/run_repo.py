@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import re
 from typing import Any
 
 from storage.shared.database import StorageConnection, StorageRow
 from storage.shared.interfaces import EvolutionRunData, SkillProposalData, storage_timestamp
+
+_log = logging.getLogger(__name__)
+_VALID_COLUMN_RE = re.compile(r"^[a-z_]+$")
+
+
+class ConcurrencyError(Exception):
+    """Raised when an optimistic locking check fails."""
 
 
 class EvolutionStore:
@@ -35,7 +44,8 @@ class EvolutionStore:
             "runtime_state = excluded.runtime_state, "
             "errors = excluded.errors, "
             "started_at = COALESCE(evolution_runs.started_at, excluded.started_at), "
-            "finished_at = COALESCE(excluded.finished_at, evolution_runs.finished_at)",
+            "finished_at = COALESCE(excluded.finished_at, evolution_runs.finished_at), "
+            "optimistic_version = evolution_runs.optimistic_version + 1",
             (
                 run.run_id,
                 run.role,
@@ -55,7 +65,7 @@ class EvolutionStore:
         )
         self._conn.commit()
 
-    def update_run(self, run_id: str, **fields: Any) -> None:
+    def update_run(self, run_id: str, *, expected_version: int | None = None, **fields: Any) -> None:
         allowed = {
             "status",
             "training_games",
@@ -73,16 +83,33 @@ class EvolutionStore:
         set_parts = []
         params: list[Any] = []
         for key, value in updates.items():
+            if not _VALID_COLUMN_RE.match(key):
+                raise ValueError(f"invalid column name: {key}")
             if key in ("battle_result", "runtime_state", "errors") and value is not None:
                 value = json.dumps(value, ensure_ascii=False)
             set_parts.append(f"{key} = ?")
             params.append(value)
 
+        set_parts.append("optimistic_version = optimistic_version + 1")
         params.append(run_id)
-        self._conn.execute(
-            f"UPDATE evolution_runs SET {', '.join(set_parts)} WHERE id = ?",
-            params,
-        )
+
+        if expected_version is not None:
+            params.append(expected_version)
+            cursor = self._conn.execute(
+                f"UPDATE evolution_runs SET {', '.join(set_parts)} "
+                "WHERE id = ? AND optimistic_version = ?",
+                params,
+            )
+            if cursor.rowcount == 0:
+                raise ConcurrencyError(
+                    f"evolution run {run_id} was modified concurrently "
+                    f"(expected version {expected_version})"
+                )
+        else:
+            self._conn.execute(
+                f"UPDATE evolution_runs SET {', '.join(set_parts)} WHERE id = ?",
+                params,
+            )
         self._conn.commit()
 
     def save_runtime_state(
@@ -195,7 +222,8 @@ class EvolutionStore:
         for row in rows:
             try:
                 value = _json_value(row["battle_result"])
-            except (TypeError, json.JSONDecodeError):
+            except (TypeError, json.JSONDecodeError) as exc:
+                _log.warning("list_battle_summaries: skipping corrupted battle_result: %s", exc)
                 continue
             if isinstance(value, dict):
                 summaries.append(value)

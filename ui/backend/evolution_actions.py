@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from app.lib.version import ReleaseStageNotAllowedError
 from app.util.time import beijing_now_iso
 from ui.backend.errors import domain_error_detail, release_stage_not_allowed_detail
+from ui.backend.services.evolution_proposal_service import _clean_id_list, _merge_id_lists
 
 
 def _promote_evolution_run(store: Any, run: dict[str, Any]) -> None:
@@ -416,7 +417,10 @@ def _evolution_skill_contents(
             if after:
                 lines.extend([after, ""])
     else:
-        lines.extend(["No concrete proposal content was available; keep baseline strategy unchanged.", ""])
+        raise ValueError(
+            f"Evolution run {run_id}: no accepted proposals with content and no diff available; "
+            "cannot build candidate skill package."
+        )
     content = "\n".join(lines).strip()
     name = _safe_registry_id(f"{role}_{run_id}_skill")
     return {
@@ -442,12 +446,6 @@ def _evolution_skill_contents(
 def _safe_registry_id(value: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in value.strip())
     return safe.strip("_-")[:96] or f"version_{uuid.uuid4().hex[:8]}"
-
-
-def _clean_id_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item)]
 
 
 def _release_stage_for_run(run: dict[str, Any]) -> str:
@@ -521,15 +519,3 @@ def _promotion_provenance(run: dict[str, Any], *, release_stage: str) -> dict[st
         "attribution_report_id": trust_bundle.get("attribution_report_id"),
     }
 
-
-def _merge_id_lists(*values: list[str] | None) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        for item in value or []:
-            text = str(item).strip()
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            result.append(text)
-    return result

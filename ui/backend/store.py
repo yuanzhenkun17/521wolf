@@ -341,6 +341,10 @@ class BackendStore(BackgroundTaskStoreMixin, GameStoreMixin):
     def _mark_evolution_stopped(self, entity: dict[str, Any]) -> None:
         self._evolution_run_service().mark_evolution_stopped(entity)
 
+    @property
+    def _evolution_state_lock(self) -> threading.Lock:
+        return self._evolution_run_service()._evolution_state_lock
+
     async def run_queued_evolution(self, run_id: str, request: EvolutionStartRequest) -> None:
         await self._evolution_run_service().run_queued_evolution(run_id, request)
 

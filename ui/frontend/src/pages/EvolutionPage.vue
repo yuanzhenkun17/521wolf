@@ -11,7 +11,6 @@ import EvolutionRunsPanel from '../components/evolution/EvolutionRunsPanel.vue'
 import EvolutionSamplesPanel from '../components/evolution/EvolutionSamplesPanel.vue'
 import EvolutionVersionsPanel from '../components/evolution/EvolutionVersionsPanel.vue'
 import EvolutionWorkbenchShell from '../components/evolution/EvolutionWorkbenchShell.vue'
-import LabWorkbenchShell from '../components/lab/LabWorkbenchShell.vue'
 import { useEvolutionStore } from '../stores/evolution'
 
 defineOptions({
@@ -227,16 +226,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="evo-page" aria-label="自进化">
-    <LabWorkbenchShell
-      v-model:active-tab="activeTab"
-      bridge
-      class="evo-lab-workbench-bridge"
-      workbench-key="evolution"
-      title="自进化"
-      eyebrow="自进化实验室"
-      :tabs="navTabs"
-      aria-label="自进化 LabWorkbenchShell migration bridge"
-    >
       <EvolutionWorkbenchShell
         v-model:active-tab="activeTab"
         title="自进化"
@@ -281,7 +270,6 @@ onBeforeUnmount(() => {
           @replay-sample-game="emit('replay-sample-game', $event)"
         />
       </EvolutionWorkbenchShell>
-    </LabWorkbenchShell>
   </section>
 </template>
 

@@ -226,7 +226,10 @@ class RegistryVersionRepository:
         existing_skills = _loads_json_object(existing["skills"], default={})
         if existing_skills != skills:
             raise ValueError(f"Version {role}/{version_id} already exists with different skill content")
-        if set_as_baseline or _should_update_existing_release_status(str(existing["status"] or ""), status):
+        current_status = str(existing["status"] or "draft")
+        if set_as_baseline or _should_update_existing_release_status(current_status, status):
+            if not set_as_baseline:
+                validate_release_stage_transition(current_status, status)
             self._update_version_status_unlocked(
                 role=role,
                 version_id=version_id,
@@ -402,13 +405,37 @@ def _loads_json_object(value: Any, *, default: dict[str, Any]) -> dict[str, Any]
     return {str(key): item for key, item in data.items()}
 
 
+_RELEASE_STAGE_ORDER = {"active": 0, "shadow": 1, "canary": 2, "baseline": 3, "promoted": 3}
+
+_RELEASE_STAGE_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"active", "shadow", "canary", "baseline"},
+    "active": {"shadow", "canary", "baseline", "rejected"},
+    "shadow": {"canary", "baseline", "rejected", "active"},
+    "canary": {"baseline", "rejected", "active", "shadow"},
+    "baseline": set(),  # terminal — only manual rollback can leave
+    "promoted": set(),
+    "rejected": {"active", "draft"},
+}
+
+
+def validate_release_stage_transition(current: str, target: str) -> None:
+    """Raise ValueError if the transition is not allowed."""
+    current_norm = str(current or "draft").strip().lower()
+    target_norm = str(target or "active").strip().lower()
+    allowed = _RELEASE_STAGE_TRANSITIONS.get(current_norm, {"active"})
+    if target_norm not in allowed:
+        raise ValueError(
+            f"invalid release stage transition: {current_norm} → {target_norm} "
+            f"(allowed: {', '.join(sorted(allowed)) or 'none'})"
+        )
+
+
 def _should_update_existing_release_status(current_status: str, next_status: str) -> bool:
-    order = {"active": 0, "shadow": 1, "canary": 2, "baseline": 3, "promoted": 3}
     current = str(current_status or "active").strip().lower()
     target = str(next_status or "active").strip().lower()
     if current in {"baseline", "promoted", "rejected"}:
         return False
-    return order.get(target, 0) > order.get(current, 0)
+    return _RELEASE_STAGE_ORDER.get(target, 0) > _RELEASE_STAGE_ORDER.get(current, 0)
 
 
 __all__ = ["RegistryVersionRepository"]

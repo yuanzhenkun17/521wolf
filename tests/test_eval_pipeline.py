@@ -993,7 +993,7 @@ def test_best_effort_persistence_helpers_return_warnings():
 
     assert batch_warning is not None
     assert "save_evaluation_batch failed: RuntimeError: disk full" in batch_warning
-    assert batch_warning.diagnostic == {
+    expected_batch = {
         "kind": "persistence_error",
         "stage": "persist_batch.save_evaluation_batch",
         "level": "warning",
@@ -1001,9 +1001,10 @@ def test_best_effort_persistence_helpers_return_warnings():
         "exception_type": "RuntimeError",
         "exception_message": "disk full",
     }
+    assert expected_batch.items() <= batch_warning.diagnostic.items()
     assert leaderboard_warning is not None
     assert "persist_leaderboard_entry failed: RuntimeError: disk full" in leaderboard_warning
-    assert leaderboard_warning.diagnostic == {
+    expected_leaderboard = {
         "kind": "persistence_error",
         "stage": "persist_batch.persist_leaderboard_entry",
         "level": "warning",
@@ -1011,6 +1012,7 @@ def test_best_effort_persistence_helpers_return_warnings():
         "exception_type": "RuntimeError",
         "exception_message": "disk full",
     }
+    assert expected_leaderboard.items() <= leaderboard_warning.diagnostic.items()
 
 
 def test_persist_leaderboard_entry_writes_decision_quality_columns():

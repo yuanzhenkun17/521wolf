@@ -674,6 +674,7 @@ def build_evolution_gate_report(
     role: str = "",
     target_team: str = "",
     thresholds: dict[str, Any] | None = None,
+    scenario_replay_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a machine-readable promotion gate report for the trust loop."""
     run_data = run if isinstance(run, dict) else {}
@@ -682,7 +683,7 @@ def build_evolution_gate_report(
         result = dict(run_data.get("battle_result") or {})
     resolved_role = role or str(run_data.get("role") or "")
     target = target_team or str(result.get("target_team") or "")
-    threshold_values = _gate_thresholds(thresholds)
+    threshold_values = _gate_thresholds(thresholds, role=resolved_role, config=run_data.get("config"))
     paired_rows = build_paired_seed_battle_table(
         run_data,
         battle_result=result,
@@ -711,6 +712,7 @@ def build_evolution_gate_report(
         proposals=proposal_rows,
         proposal_risks=proposal_risks,
         paired_seed_table=paired_rows,
+        scenario_replay_results=scenario_replay_results,
     )
 
     blocked_reasons: list[str] = []
@@ -923,6 +925,7 @@ def build_proposal_attribution_report(
     proposals: list[SkillProposal | dict[str, Any]] | None = None,
     proposal_risks: list[dict[str, Any]] | None = None,
     paired_seed_table: list[dict[str, Any]] | None = None,
+    scenario_replay_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return a conservative attribution report without inventing ablation data.
 
@@ -951,10 +954,19 @@ def build_proposal_attribution_report(
         _proposal_attribution_row(row, risks_by_id.get(str(row.get("proposal_id") or ""), {}), budget=budget)
         for row in proposal_rows
     ]
+    replay_available = bool(scenario_replay_results) and any(
+        r.get("verdict") == "replayed" for r in (scenario_replay_results or [])
+    )
+    if replay_available:
+        _enrich_attribution_with_replay(rows, scenario_replay_results or [])
     required_rows = [row for row in rows if row.get("requires_ablation")]
     if not proposal_rows:
         status = "skipped"
         reason = "no_proposals"
+    elif replay_available:
+        attributed = [row for row in rows if row.get("status") == "attribution_estimated"]
+        status = "attribution_estimated" if attributed else "attribution_inconclusive"
+        reason = "scenario_replay" if attributed else "replay_no_attribution"
     else:
         status = "attribution_inconclusive"
         reason = "ablation_not_run"
@@ -1451,20 +1463,113 @@ def _proposal_rows(
     return []
 
 
-def _gate_thresholds(thresholds: dict[str, Any] | None) -> dict[str, Any]:
+def _gate_thresholds(thresholds: dict[str, Any] | None, *, role: str = "", config: dict[str, Any] | None = None) -> dict[str, Any]:
     values = dict(thresholds or {})
-    min_paired = int(values.get("min_paired_valid_seeds", 4) or 0)
+    # Merge role-specific overrides from config
+    role_overrides = {}
+    if role and isinstance(config, dict):
+        role_thresholds = config.get("role_thresholds")
+        if isinstance(role_thresholds, dict):
+            role_overrides = dict(role_thresholds.get(role) or {})
+    merged = {**values, **{k: v for k, v in role_overrides.items() if v is not None}}
+    min_paired = int(merged.get("min_paired_valid_seeds", 4) or 0)
     return {
         "min_paired_valid_seeds": min_paired,
-        "min_shadow_valid_seeds": int(values.get("min_shadow_valid_seeds", min_paired) or 0),
-        "min_canary_valid_seeds": int(values.get("min_canary_valid_seeds", 8) or 0),
-        "min_baseline_valid_seeds": int(values.get("min_baseline_valid_seeds", 16) or 0),
-        "min_role_score_delta": float(values.get("min_role_score_delta", 0.0) or 0.0),
-        "max_decision_issue_rate": float(values.get("max_decision_issue_rate", 0.10) or 0.0),
-        "max_decision_issue_delta": float(values.get("max_decision_issue_delta", 0.05) or 0.0),
-        "min_candidate_edge_rate": float(values.get("min_candidate_edge_rate", 0.50) or 0.0),
-        "duplicate_similarity_threshold": float(values.get("duplicate_similarity_threshold", 0.72) or 0.0),
-        "min_trust_bundle_completeness": float(values.get("min_trust_bundle_completeness", 1.0) or 0.0),
+        "min_shadow_valid_seeds": int(merged.get("min_shadow_valid_seeds", min_paired) or 0),
+        "min_canary_valid_seeds": int(merged.get("min_canary_valid_seeds", 8) or 0),
+        "min_baseline_valid_seeds": int(merged.get("min_baseline_valid_seeds", 16) or 0),
+        "min_role_score_delta": float(merged.get("min_role_score_delta", 0.0) or 0.0),
+        "max_decision_issue_rate": float(merged.get("max_decision_issue_rate", 0.10) or 0.0),
+        "max_decision_issue_delta": float(merged.get("max_decision_issue_delta", 0.05) or 0.0),
+        "min_candidate_edge_rate": float(merged.get("min_candidate_edge_rate", 0.50) or 0.0),
+        "duplicate_similarity_threshold": float(merged.get("duplicate_similarity_threshold", 0.72) or 0.0),
+        "min_trust_bundle_completeness": float(merged.get("min_trust_bundle_completeness", 1.0) or 0.0),
+        "role_overrides_applied": bool(role_overrides),
+    }
+
+
+def detect_evolution_convergence(
+    role: str,
+    history_runs: list[dict[str, Any]],
+    *,
+    convergence_rounds: int = 3,
+    min_improvement_ratio: float = 0.01,
+) -> dict[str, Any]:
+    """Check if evolution has converged for a given role.
+
+    Uses a rolling window: if the last N completed runs all show
+    role_score_delta / baseline_score < min_improvement_ratio, the
+    evolution is considered converged.
+
+    Returns:
+        {
+            "converged": bool,
+            "reason": str,
+            "rounds_checked": int,
+            "deltas": list[float],
+            "ratios": list[float],
+        }
+    """
+    if convergence_rounds < 1:
+        return {"converged": False, "reason": "convergence_rounds < 1", "rounds_checked": 0, "deltas": [], "ratios": []}
+
+    # Filter to completed runs for this role with gate reports
+    completed = []
+    for run in history_runs:
+        if not isinstance(run, dict):
+            continue
+        run_role = str(run.get("role") or "")
+        status = str(run.get("status") or "").lower()
+        if run_role != role or status not in {"completed", "reviewing", "promoted", "rejected"}:
+            continue
+        gate = run.get("gate_report") if isinstance(run.get("gate_report"), dict) else None
+        if gate:
+            completed.append(run)
+
+    # Sort by started_at descending (most recent first)
+    completed.sort(key=lambda r: str(r.get("started_at") or ""), reverse=True)
+    recent = completed[:convergence_rounds]
+
+    if len(recent) < convergence_rounds:
+        return {
+            "converged": False,
+            "reason": f"only {len(recent)} of {convergence_rounds} required rounds available",
+            "rounds_checked": len(recent),
+            "deltas": [],
+            "ratios": [],
+        }
+
+    deltas: list[float] = []
+    ratios: list[float] = []
+    for run in recent:
+        gate = run.get("gate_report") if isinstance(run.get("gate_report"), dict) else {}
+        metrics = gate.get("metrics") if isinstance(gate.get("metrics"), dict) else {}
+        delta = float(metrics.get("role_score_delta") or 0.0)
+        # Use the baseline score from the role_score or fallback to a nominal value
+        role_score = gate.get("role_score") if isinstance(gate.get("role_score"), dict) else {}
+        baseline_score = float(role_score.get("baseline") or role_score.get("baseline_score") or 1.0)
+        baseline_score = max(baseline_score, 0.01)  # avoid division by zero
+        ratio = abs(delta) / baseline_score
+        deltas.append(delta)
+        ratios.append(ratio)
+
+    all_below = all(r < min_improvement_ratio for r in ratios)
+    if all_below:
+        avg_ratio = sum(ratios) / len(ratios)
+        return {
+            "converged": True,
+            "reason": f"last {convergence_rounds} rounds all below {min_improvement_ratio:.1%} improvement threshold (avg={avg_ratio:.3%})",
+            "rounds_checked": len(recent),
+            "deltas": deltas,
+            "ratios": ratios,
+        }
+
+    return {
+        "converged": False,
+        "reason": "improvement detected in recent rounds",
+        "rounds_checked": len(recent),
+        "deltas": deltas,
+        "ratios": ratios,
     }
 
 
@@ -1703,6 +1808,48 @@ def _proposal_attribution_row(
     }
 
 
+def _enrich_attribution_with_replay(
+    rows: list[dict[str, Any]],
+    replay_results: list[dict[str, Any]],
+) -> None:
+    """Enrich attribution rows with scenario replay evidence.
+
+    For each proposal, checks if any replay snapshot references it and has a
+    non-zero score delta. Sets estimated_contribution and attribution status.
+    """
+    replay_by_proposal: dict[str, list[dict[str, Any]]] = {}
+    for result in replay_results:
+        if not isinstance(result, dict) or result.get("verdict") != "replayed":
+            continue
+        snapshot_proposals = result.get("proposal_ids") or []
+        for pid in snapshot_proposals:
+            replay_by_proposal.setdefault(str(pid), []).append(result)
+    for row in rows:
+        pid = str(row.get("proposal_id") or "")
+        replays = replay_by_proposal.get(pid, [])
+        if not replays:
+            continue
+        deltas = [r.get("rubric_score_delta") for r in replays if r.get("rubric_score_delta") is not None]
+        if not deltas:
+            continue
+        avg_delta = sum(deltas) / len(deltas)
+        row["estimated_contribution"] = round(avg_delta, 3)
+        row["replay_scenario_count"] = len(replays)
+        row["attribution_confidence"] = "low" if len(replays) < 2 else "medium"
+        if avg_delta > 0:
+            row["status"] = "attribution_estimated"
+            row["reason"] = "scenario_replay_positive"
+            row["recommendation"] = "contributes"
+        elif avg_delta < 0:
+            row["status"] = "attribution_estimated"
+            row["reason"] = "scenario_replay_negative"
+            row["recommendation"] = "regression"
+        else:
+            row["status"] = "attribution_estimated"
+            row["reason"] = "scenario_replay_neutral"
+            row["recommendation"] = "neutral"
+
+
 def _trust_bundle_diff_rows(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -1790,8 +1937,20 @@ def _repro_command(run: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     run_id = str(run.get("run_id") or "").strip()
-    suffix = f" for run_id={run_id}" if run_id else ""
-    return f"not_available: dedicated evolution replay CLI is not implemented{suffix}"
+    role = str(run.get("role") or "").strip()
+    cfg = run.get("config") if isinstance(run.get("config"), dict) else {}
+    training_games = int(cfg.get("training_games", 0) or 0)
+    battle_games = int(cfg.get("battle_games", 0) or 0)
+    benchmark_id = str(cfg.get("benchmark_id") or "default")
+    parts = [
+        "uv run python -m tools.research.run_full_local_samples",
+        f"--roles {role}" if role else "",
+        f"--evolution-training-games {training_games}" if training_games else "",
+        f"--evolution-battle-games {battle_games}" if battle_games else "",
+        f"--benchmark-id {benchmark_id}",
+        f"--resume  # run_id={run_id}" if run_id else "",
+    ]
+    return " ".join(p for p in parts if p)
 
 
 def _trust_bundle_manifest_completeness(bundle: dict[str, Any]) -> dict[str, Any]:

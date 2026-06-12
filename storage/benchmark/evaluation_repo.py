@@ -151,7 +151,13 @@ def _persistence_diagnostic(operation: str, exc: Exception, message: str) -> dic
         "message": message,
         "exception_type": type(exc).__name__,
         "exception_message": str(exc),
+        "traceback": _format_traceback(exc),
     }
+
+
+def _format_traceback(exc: Exception) -> str:
+    import traceback
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-2000:]
 
 
 def _persistence_warning(operation: str, exc: Exception) -> PersistenceWarning:

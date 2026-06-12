@@ -86,7 +86,8 @@ class BenchmarkLeaderboardRepository:
                 rankable = excluded.rankable,
                 data_sufficient = excluded.data_sufficient,
                 summary = excluded.summary,
-                updated_at = excluded.updated_at""",
+                updated_at = excluded.updated_at,
+                optimistic_version = benchmark_leaderboard.optimistic_version + 1""",
             (
                 row_id,
                 scope,

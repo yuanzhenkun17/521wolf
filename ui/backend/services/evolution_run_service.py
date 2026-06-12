@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -48,6 +49,7 @@ class EvolutionRunService:
 
     def __init__(self, context: Any) -> None:
         self._context = context
+        self._evolution_state_lock = threading.Lock()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._context, name)
@@ -696,39 +698,40 @@ class EvolutionRunService:
         }
 
     def sync_evolution_progress(self, run_id: str, snapshot: dict[str, Any]) -> None:
-        run = self.evolution_runs.get(run_id)
-        if run is None or run.get("stop_requested") or run.get("cancelled"):
-            return
-        for key in (
-            "status",
-            "current_stage",
-            "parent_hash",
-            "candidate_hash",
-            "candidate_skill_dir",
-            "baseline_skill_dir",
-            "battle_result",
-            "recommendation",
-            "last_heartbeat_at",
-        ):
-            if key in snapshot and snapshot.get(key) is not None:
-                run[key] = snapshot[key]
-        for key in ("training_games", "battle_games", "proposals", "diff", "diagnostics", "warnings", "errors"):
-            value = snapshot.get(key)
-            if isinstance(value, list):
-                run[key] = value
-        if isinstance(snapshot.get("progress"), dict):
-            run["progress"] = dict(snapshot["progress"])
-        run["training_game_count"] = self.count_evolution_games(
-            snapshot.get("training_game_count") or run.get("training_game_count")
-        )
-        run["battle_game_count"] = self.count_evolution_games(
-            snapshot.get("battle_game_count") or run.get("battle_game_count")
-        )
-        run["training_completed"] = self.count_evolution_games(run.get("training_games"))
-        run["battle_completed"] = self.count_evolution_games(run.get("battle_games"))
-        heartbeat = self._touch_background_task(run, timestamp=snapshot.get("last_heartbeat_at"))
-        run["overall_progress"] = self.evolution_overall_progress(run)
-        run["overall_progress"]["updated_at"] = heartbeat
+        with self._evolution_state_lock:
+            run = self.evolution_runs.get(run_id)
+            if run is None or run.get("stop_requested") or run.get("cancelled"):
+                return
+            for key in (
+                "status",
+                "current_stage",
+                "parent_hash",
+                "candidate_hash",
+                "candidate_skill_dir",
+                "baseline_skill_dir",
+                "battle_result",
+                "recommendation",
+                "last_heartbeat_at",
+            ):
+                if key in snapshot and snapshot.get(key) is not None:
+                    run[key] = snapshot[key]
+            for key in ("training_games", "battle_games", "proposals", "diff", "diagnostics", "warnings", "errors"):
+                value = snapshot.get(key)
+                if isinstance(value, list):
+                    run[key] = value
+            if isinstance(snapshot.get("progress"), dict):
+                run["progress"] = dict(snapshot["progress"])
+            run["training_game_count"] = self.count_evolution_games(
+                snapshot.get("training_game_count") or run.get("training_game_count")
+            )
+            run["battle_game_count"] = self.count_evolution_games(
+                snapshot.get("battle_game_count") or run.get("battle_game_count")
+            )
+            run["training_completed"] = self.count_evolution_games(run.get("training_games"))
+            run["battle_completed"] = self.count_evolution_games(run.get("battle_games"))
+            heartbeat = self._touch_background_task(run, timestamp=snapshot.get("last_heartbeat_at"))
+            run["overall_progress"] = self.evolution_overall_progress(run)
+            run["overall_progress"]["updated_at"] = heartbeat
         self.refresh_evolution_batch(run.get("batch_id"))
         self._persist_background_tasks()
 
@@ -785,48 +788,49 @@ class EvolutionRunService:
     def refresh_evolution_batch(self, batch_id: Any) -> None:
         if not batch_id:
             return
-        batch = self.evolution_batches.get(str(batch_id))
-        if batch is None or batch.get("kind") != "role_evolution_batch":
-            return
-        run_ids = [str(item) for item in batch.get("runs", []) or []]
-        summaries = [
-            self.run_summary_for_batch(self.evolution_runs[run_id])
-            for run_id in run_ids
-            if run_id in self.evolution_runs
-        ]
-        batch["run_summaries"] = summaries
-        total = len(run_ids)
-        completed = len([
-            item for item in summaries
-            if str(item.get("status") or "").lower() in {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
-        ])
-        running = next((item for item in summaries if str(item.get("status") or "").lower() in {"queued", "running", "training", "consolidating", "applying", "battling"}), None)
-        heartbeat = self._touch_background_task(batch)
-        batch_status = str(batch.get("status") or "").lower()
-        if batch.get("stop_requested") or batch.get("cancelled"):
-            current_stage = "stopped"
-        elif batch_status in {"completed", "failed", "interrupted"}:
-            current_stage = batch_status
-        elif running:
-            current_stage = running.get("current_stage")
-        else:
-            current_stage = batch.get("current_stage") or batch.get("status")
-        batch["current_stage"] = current_stage
-        batch["progress"] = {
-            "stage": current_stage,
-            "percent": (
-                sum(
-                    float((item.get("overall_progress") or {}).get("percent") or 0.0)
-                    for item in summaries
-                )
-                / total
-            ) if total else 0.0,
-            "completed_roles": completed,
-            "role_count": total,
-            "total_roles": total,
-            "updated_at": heartbeat,
-        }
-        batch["overall_progress"] = dict(batch["progress"])
+        with self._evolution_state_lock:
+            batch = self.evolution_batches.get(str(batch_id))
+            if batch is None or batch.get("kind") != "role_evolution_batch":
+                return
+            run_ids = [str(item) for item in batch.get("runs", []) or []]
+            summaries = [
+                self.run_summary_for_batch(self.evolution_runs[run_id])
+                for run_id in run_ids
+                if run_id in self.evolution_runs
+            ]
+            batch["run_summaries"] = summaries
+            total = len(run_ids)
+            completed = len([
+                item for item in summaries
+                if str(item.get("status") or "").lower() in {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
+            ])
+            running = next((item for item in summaries if str(item.get("status") or "").lower() in {"queued", "running", "training", "consolidating", "applying", "battling"}), None)
+            heartbeat = self._touch_background_task(batch)
+            batch_status = str(batch.get("status") or "").lower()
+            if batch.get("stop_requested") or batch.get("cancelled"):
+                current_stage = "stopped"
+            elif batch_status in {"completed", "failed", "interrupted"}:
+                current_stage = batch_status
+            elif running:
+                current_stage = running.get("current_stage")
+            else:
+                current_stage = batch.get("current_stage") or batch.get("status")
+            batch["current_stage"] = current_stage
+            batch["progress"] = {
+                "stage": current_stage,
+                "percent": (
+                    sum(
+                        float((item.get("overall_progress") or {}).get("percent") or 0.0)
+                        for item in summaries
+                    )
+                    / total
+                ) if total else 0.0,
+                "completed_roles": completed,
+                "role_count": total,
+                "total_roles": total,
+                "updated_at": heartbeat,
+            }
+            batch["overall_progress"] = dict(batch["progress"])
 
     def mark_evolution_stopped(self, entity: dict[str, Any]) -> None:
         entity["status"] = "failed"
@@ -901,6 +905,14 @@ class EvolutionRunService:
 
             runner_config = dict(run.get("config") or {})
             runner_config["resume_snapshot"] = resume_snapshot
+            # Populate evolution history for convergence detection
+            runner_config["evolution_history"] = [
+                dict(r) for r in self.evolution_runs.values()
+                if isinstance(r, dict)
+                and str(r.get("role") or "") == role
+                and str(r.get("status") or "").lower() in {"completed", "reviewing", "promoted", "rejected"}
+                and r.get("run_id") != run_id
+            ]
             result = await self.evolution_runner()(
                 role=role,
                 training_games=request.training_games,
@@ -914,7 +926,7 @@ class EvolutionRunService:
                 progress_sink=sync_progress,
                 cancel_check=lambda: self.evolution_cancel_check(run_id, cancel_check),
             )
-        except Exception as exc:  # pragma: no cover - defensive background failure path
+        except Exception as exc:
             if self.evolution_cancel_check(run_id, cancel_check) or str(exc) == MANUAL_STOP_REASON:
                 self.mark_evolution_stopped(run)
                 self.refresh_evolution_batch(run.get("batch_id"))
@@ -1053,7 +1065,7 @@ class EvolutionRunService:
             elif batch.get("status") == "running":
                 batch["status"] = "completed"
                 _set_task_contract(batch, stop_requested=False, cancelled=False, interrupted=False, failed=False)
-        except Exception as exc:  # pragma: no cover - defensive background failure path
+        except Exception as exc:
             batch["status"] = "failed"
             batch["error"] = str(exc)
             self._append_background_diagnostic(

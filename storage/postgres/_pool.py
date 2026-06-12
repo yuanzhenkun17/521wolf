@@ -95,4 +95,26 @@ def close_pools() -> None:
             pool.close()
         except Exception:  # noqa: BLE001 - best-effort shutdown
             _log.warning("Error closing pool %s", key, exc_info=True)
+
+
+def pool_health() -> dict[str, Any]:
+    """Return health info for all active connection pools."""
+    health: dict[str, Any] = {"pools": {}}
+    for (schema, conninfo, role), pool in _pools.items():
+        try:
+            stats = pool.get_stats()
+            health["pools"][f"{schema}:{role}"] = {
+                "status": "healthy",
+                "min_size": pool.min_size,
+                "max_size": pool.max_size,
+                "connections": getattr(stats, "pool_size", None),
+                "idle": getattr(stats, "idle", None),
+                "waiting": getattr(stats, "waiting", None),
+            }
+        except Exception as exc:
+            health["pools"][f"{schema}:{role}"] = {
+                "status": "unhealthy",
+                "error": str(exc),
+            }
+    return health
     _pools.clear()

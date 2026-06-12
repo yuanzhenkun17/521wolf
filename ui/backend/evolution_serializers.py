@@ -86,7 +86,7 @@ def _overall_progress(
     stage = str(entity.get("current_stage") or progress.get("stage") or entity.get("status") or "")
     terminal = str(entity.get("status") or "").lower() in {"reviewing", "promoted", "rejected", "failed", "completed", "cancelled", "interrupted"}
     weighted_total = training_total + (battle_total * 2)
-    weighted_completed = training_completed + battle_completed
+    weighted_completed = training_completed + (battle_completed * 2)
     if weighted_total > 0:
         percent = weighted_completed / weighted_total
     elif terminal:
@@ -137,25 +137,17 @@ def _evolution_battle_result_summary(result: Any) -> Any:
     return {key: result.get(key) for key in keys if key in result}
 
 def _clean_id_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item)]
+    from ui.backend.services.evolution_proposal_service import _clean_id_list as _svc_clean
+    return _svc_clean(value)
+
 
 def _first_id_list(*values: Any) -> list[str] | None:
-    for value in values:
-        if isinstance(value, list):
-            return _clean_id_list(value)
-    return None
+    from ui.backend.services.evolution_proposal_service import _first_id_list as _svc_first
+    return _svc_first(*values)
 
 def _proposal_status(proposal: dict[str, Any]) -> str:
-    status = str(proposal.get("status") or proposal.get("review_status") or "proposed").strip().lower()
-    if status in {"accept", "approved", "approve"}:
-        return "accepted"
-    if status in {"reject", "declined", "deny", "denied"}:
-        return "rejected"
-    if status in {"", "pending", "reviewing"}:
-        return "proposed"
-    return status
+    from ui.backend.services.evolution_proposal_service import _proposal_status as _svc_status
+    return _svc_status(proposal)
 
 def _proposal_id(proposal: dict[str, Any], index: int | None = None) -> str:
     proposal_id = str(proposal.get("proposal_id") or "").strip()

@@ -1082,3 +1082,129 @@
   --logbook-warning: var(--workbench-logbook-warning);
   --logbook-warning-benchmark: var(--workbench-logbook-warning-benchmark);
 }
+
+/* Evolution high-risk action buttons */
+.evo-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--evo-border, rgba(58, 42, 24, 0.18));
+  border-radius: 6px;
+  background: var(--evo-input-bg, #fffdf6);
+  color: var(--evo-text, #3a2a18);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.evo-action:hover {
+  background: var(--evo-hover, rgba(58, 42, 24, 0.06));
+}
+
+.evo-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.evo-action-promote {
+  border-color: #2e7d32;
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.06);
+}
+
+.evo-action-promote:hover:not(:disabled) {
+  background: rgba(46, 125, 50, 0.14);
+}
+
+.evo-action-reject {
+  border-color: #c62828;
+  color: #c62828;
+  background: rgba(198, 40, 40, 0.06);
+}
+
+.evo-action-reject:hover:not(:disabled) {
+  background: rgba(198, 40, 40, 0.14);
+}
+
+.evo-action-terminate {
+  border-color: #e65100;
+  color: #e65100;
+  background: rgba(230, 81, 0, 0.06);
+}
+
+.evo-action-terminate:hover:not(:disabled) {
+  background: rgba(230, 81, 0, 0.14);
+}
+
+.evo-action-rollback {
+  border-color: #6a1b9a;
+  color: #6a1b9a;
+  background: rgba(106, 27, 154, 0.06);
+}
+
+.evo-action-rollback:hover:not(:disabled) {
+  background: rgba(106, 27, 154, 0.14);
+}
+
+/* Release chain pipeline visualization */
+.evo-release-chain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.evo-release-step {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  position: relative;
+  color: var(--evo-muted, #8a7e6a);
+}
+
+.evo-release-step::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 22px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--evo-border, rgba(58, 42, 24, 0.15));
+}
+
+.evo-release-step:last-child::before {
+  display: none;
+}
+
+.evo-release-step-marker {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--evo-border, rgba(58, 42, 24, 0.2));
+  background: var(--evo-input-bg, #fffdf6);
+  z-index: 1;
+}
+
+.evo-release-step.done .evo-release-step-marker {
+  border-color: #2e7d32;
+  background: #2e7d32;
+}
+
+.evo-release-step.done {
+  color: var(--evo-text, #3a2a18);
+}
+
+.evo-release-step-label {
+  font-size: 12px;
+}
+
+.evo-release-step code,
+.evo-release-step b {
+  font-size: 11px;
+  text-align: right;
+}

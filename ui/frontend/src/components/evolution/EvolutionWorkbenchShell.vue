@@ -356,6 +356,32 @@ function retryRefresh() {
         </section>
 
         <section class="evo-context-section">
+          <h3>发布链路</h3>
+          <ol class="evo-release-chain" aria-label="发布链路状态">
+            <li :class="['evo-release-step', { done: runSummary.hasCandidate }]">
+              <span class="evo-release-step-marker" aria-hidden="true" />
+              <span class="evo-release-step-label">候选版本</span>
+              <code>{{ runSummary.candidateShort || '—' }}</code>
+            </li>
+            <li :class="['evo-release-step', { done: contextGateLabel !== '—' }]">
+              <span class="evo-release-step-marker" aria-hidden="true" />
+              <span class="evo-release-step-label">门禁判定</span>
+              <b>{{ contextGateLabel }}</b>
+            </li>
+            <li :class="['evo-release-step', { done: contextTrustLabel !== '—' }]">
+              <span class="evo-release-step-marker" aria-hidden="true" />
+              <span class="evo-release-step-label">信任束</span>
+              <b>{{ contextTrustLabel }}</b>
+            </li>
+            <li :class="['evo-release-step', { done: runSummary.releaseStage && runSummary.releaseStage !== 'pending' }]">
+              <span class="evo-release-step-marker" aria-hidden="true" />
+              <span class="evo-release-step-label">发布阶段</span>
+              <b>{{ runSummary.releaseStageLabel || runSummary.releaseStage || '—' }}</b>
+            </li>
+          </ol>
+        </section>
+
+        <section class="evo-context-section">
           <h3>诊断</h3>
           <div class="evo-context-kpis three">
             <span>

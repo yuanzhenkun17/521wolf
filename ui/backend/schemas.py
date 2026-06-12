@@ -92,6 +92,10 @@ class EvolutionStartRequest(BaseModel):
     max_days: int = Field(default=DEFAULT_EVOLUTION_MAX_DAYS, ge=1, le=100)
     auto_promote: bool = True
     model_profile_id: str | None = Field(default=None, max_length=200)
+    role_thresholds: dict[str, dict[str, Any]] | None = None
+    convergence_rounds: int = Field(default=3, ge=1, le=20)
+    min_improvement_ratio: float = Field(default=0.01, ge=0.0, le=1.0)
+    regression_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
 
     @field_validator("roles", mode="before")
     @classmethod
