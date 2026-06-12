@@ -178,7 +178,8 @@ meaningful.
 | `WEREWOLF_JUDGE_CONCURRENCY` | Judge concurrency used when a workflow does not provide an explicit policy. |
 | `WEREWOLF_LLM_MAX_CONCURRENCY` | Total LLM request cap within one event loop across games, Judge, and related calls. |
 | `WEREWOLF_GAME_TIMEOUT` / `WEREWOLF_BATCH_GAME_TIMEOUT` | Optional game and batch execution timeouts. |
-| `PG_POOL_MIN_SIZE` / `PG_POOL_MAX_SIZE` | Optional PostgreSQL connection-pool sizing. |
+| `PG_POOL_MIN_SIZE` / `PG_POOL_MAX_SIZE` | Optional PostgreSQL connection-pool sizing fallback. |
+| `PG_API_POOL_MAX_SIZE` / `PG_WORKER_POOL_MAX_SIZE` | Optional role-specific pool caps so long-running workers do not consume API connections. |
 | `WEREWOLF_TTS_*` | Optional DashScope realtime TTS settings for spoken player lines. |
 | `VITE_API_BASE` / `UI_FRONTEND_API_PROXY_TARGET` | Optional frontend API base and Vite dev proxy target. |
 | `WOLF_APP_RELEASE` / `WOLF_GIT_SHA` / `WOLF_APP_ENVIRONMENT` | Optional release metadata shown in health/ops payloads. |

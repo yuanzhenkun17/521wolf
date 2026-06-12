@@ -8,6 +8,8 @@ x-app-env: &app-env
   TASK_WORKER_REQUIRED: "true"
   PG_POOL_MIN_SIZE: ${PG_POOL_MIN_SIZE:-1}
   PG_POOL_MAX_SIZE: ${PG_POOL_MAX_SIZE:-10}
+  PG_API_POOL_MAX_SIZE: ${PG_API_POOL_MAX_SIZE:-8}
+  PG_WORKER_POOL_MAX_SIZE: ${PG_WORKER_POOL_MAX_SIZE:-3}
 
 services:
   postgres:
@@ -49,6 +51,8 @@ services:
       - .env
     environment:
       <<: *app-env
+      PG_POOL_ROLE: api
+      WOLF_PROCESS_ROLE: api
     volumes:
       - app_runs:/app/runs
       - app_data:/app/data
@@ -78,6 +82,8 @@ services:
       - .env
     environment:
       <<: *app-env
+      PG_POOL_ROLE: worker
+      WOLF_PROCESS_ROLE: worker
     volumes:
       - app_runs:/app/runs
       - app_data:/app/data

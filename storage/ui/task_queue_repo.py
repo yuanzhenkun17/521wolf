@@ -31,6 +31,10 @@ _TASK_COLUMNS = (
     "metadata",
 )
 
+_TASK_SUMMARY_COLUMNS = tuple(
+    column for column in _TASK_COLUMNS if column not in {"payload", "result"}
+)
+
 _JSON_FIELDS = {"payload", "result", "error", "progress", "metadata"}
 
 
@@ -114,19 +118,21 @@ class TaskQueueRepository:
         *,
         statuses: Iterable[str] | None = None,
         limit: int = 100,
+        summary: bool = False,
     ) -> list[dict[str, Any]]:
         status_values = [str(status) for status in statuses or [] if str(status)]
+        columns = _task_columns_sql(columns=_TASK_SUMMARY_COLUMNS) if summary else _task_columns_sql()
         if status_values:
             placeholders = ", ".join("?" for _ in status_values)
             rows = self._conn.execute(
-                f"SELECT {_task_columns_sql()} FROM ui_task_queue "
+                f"SELECT {columns} FROM ui_task_queue "
                 f"WHERE status IN ({placeholders}) "
                 "ORDER BY updated_at DESC, task_id LIMIT ?",
                 (*status_values, int(limit)),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                f"SELECT {_task_columns_sql()} FROM ui_task_queue "
+                f"SELECT {columns} FROM ui_task_queue "
                 "ORDER BY updated_at DESC, task_id LIMIT ?",
                 (int(limit),),
             ).fetchall()
@@ -425,10 +431,15 @@ def _postgres_kind_quota_sql(
     )
 
 
-def _task_columns_sql(table_alias: str | None = None) -> str:
+def _task_columns_sql(
+    table_alias: str | None = None,
+    *,
+    columns: Iterable[str] = _TASK_COLUMNS,
+) -> str:
+    column_names = tuple(columns)
     if not table_alias:
-        return ", ".join(_TASK_COLUMNS)
-    return ", ".join(f"{table_alias}.{column}" for column in _TASK_COLUMNS)
+        return ", ".join(column_names)
+    return ", ".join(f"{table_alias}.{column}" for column in column_names)
 
 
 def _json_dumps(value: Any) -> str:

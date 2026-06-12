@@ -26,6 +26,7 @@ class BackgroundTaskServiceProtocol(Protocol):
         *,
         statuses: Iterable[str] | None = None,
         limit: int = 100,
+        summary: bool = False,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -145,10 +146,11 @@ class TaskService:
         *,
         statuses: Iterable[str] | None = None,
         limit: int = 100,
+        summary: bool = False,
     ) -> list[dict[str, Any]]:
         conn = self.open_connection()
         try:
-            return TaskQueueRepository(conn).list_recent(statuses=statuses, limit=limit)
+            return TaskQueueRepository(conn).list_recent(statuses=statuses, limit=limit, summary=summary)
         finally:
             conn.close()
 

@@ -2647,6 +2647,20 @@ async def apply_proposals(
 
     proposed_files: dict[str, str] = parsed.get("files", {})
     changes: list[dict[str, str]] = parsed.get("changes", [])
+    preflight_errors = _preflight_apply_output(current_skills, proposed_files, active, consolidation.role)
+    if preflight_errors:
+        report = {
+            "kind": "apply_output_preflight",
+            "status": "failed",
+            "blocking": True,
+            "error_count": len(preflight_errors),
+            "errors": list(preflight_errors),
+        }
+        consolidation.preflight_reports.append(report)
+        for err in preflight_errors:
+            _record_apply_error(consolidation, f"apply: preflight failed: {err}")
+            _log.error("apply: preflight failed: %s", err)
+        return dict(current_skills), []
     proposed_files = _sanitize_apply_output(
         current_skills,
         proposed_files,
@@ -2719,6 +2733,53 @@ def _sanitize_apply_output(
             )
 
     return sanitized
+
+
+def _preflight_apply_output(
+    current_skills: dict[str, str],
+    proposed_files: dict[str, str],
+    eligible: list[SkillProposal],
+    role: str,
+) -> list[str]:
+    """Strictly validate raw applier output before any sanitizing fallback."""
+    from storage.interfaces import normalize_skill_path, normalize_skill_text
+
+    errors: list[str] = []
+    eligible_targets = {proposal.target_file for proposal in eligible}
+    create_targets = {proposal.target_file for proposal in eligible if proposal.action_type == CREATE_SKILL_ACTION}
+
+    for fname, content in proposed_files.items():
+        try:
+            normalized = normalize_skill_path(fname)
+        except ValueError as exc:
+            errors.append(f"File '{fname}' path is unsafe: {exc}")
+            continue
+        if normalized != fname.replace("\\", "/"):
+            errors.append(f"File '{fname}' path is not normalized")
+        if fname not in eligible_targets:
+            if fname not in current_skills:
+                errors.append(f"File '{fname}' created without an eligible proposal")
+            elif normalize_skill_text(current_skills[fname]) != normalize_skill_text(content):
+                errors.append(f"File '{fname}' modified without an eligible proposal")
+
+    for proposal in eligible:
+        target = proposal.target_file
+        if target not in proposed_files:
+            errors.append(f"File '{target}' missing from applier output for proposal {proposal.proposal_id}")
+        if proposal.action_type == CREATE_SKILL_ACTION:
+            if target in current_skills:
+                errors.append(f"[{target}] create_skill target already exists")
+            if (err := _validate_create_target(target, role)):
+                errors.append(f"[{target}] {err}")
+        elif target not in current_skills:
+            errors.append(f"[{target}] target does not exist; use {CREATE_SKILL_ACTION}")
+
+    for target in create_targets:
+        if target in proposed_files:
+            continue
+        errors.append(f"[{target}] create_skill target missing from output")
+
+    return errors
 
 
 def _filter_eligible(proposals: list[SkillProposal]) -> list[SkillProposal]:

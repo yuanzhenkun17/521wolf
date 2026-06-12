@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/521wolf/app
 EnvironmentFile=/opt/521wolf/.env
+Environment=PG_POOL_ROLE=api
+Environment=WOLF_PROCESS_ROLE=api
 ExecStart=/usr/bin/env uv run uvicorn ui.backend.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5

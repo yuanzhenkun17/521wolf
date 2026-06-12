@@ -34,7 +34,7 @@ function responseFor(path: string) {
 describe('useEvolutionWorkbench lazy loading', () => {
   it('loads only core run data before a tab requests its artifact', async () => {
     const calls: string[] = []
-    const apiFetch = vi.fn(async (path: string) => {
+    const apiFetch = vi.fn(async (path: string, _options?: RequestInit) => {
       calls.push(path)
       return responseFor(path)
     })

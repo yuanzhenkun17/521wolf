@@ -1731,7 +1731,7 @@ function useEvaluationWorkbench(options = {}) {
     if (!silent) benchmarkLeaderboardCompareLoading.value = true
     benchmarkLeaderboardCompareError.value = ''
     try {
-      const data = await apiFetch(benchmarkLeaderboardComparePath(limit))
+      const data = await apiFetch(benchmarkLeaderboardComparePath(limit), { signal: token.signal })
       if (!token.isLatest()) return false
       benchmarkLeaderboardCompare.value = data?.kind === 'benchmark_leaderboard_compare' ? data : null
       return Boolean(benchmarkLeaderboardCompare.value)
@@ -2033,7 +2033,7 @@ function useEvaluationWorkbench(options = {}) {
     if (!silent) benchmarkBatchReportLoading.value = true
     benchmarkBatchReportError.value = ''
     try {
-      const report = normalizeBenchmarkBatchReport(await apiFetch(benchmarkBatchReportPath(id)))
+      const report = normalizeBenchmarkBatchReport(await apiFetch(benchmarkBatchReportPath(id), { signal: token.signal }))
       if (!token.isLatest()) return false
       if (!report) throw new Error('invalid benchmark report payload')
       benchmarkBatchReport.value = report
@@ -2068,7 +2068,7 @@ function useEvaluationWorkbench(options = {}) {
     if (benchmarkBatchReportExports.value[cacheKey]) return benchmarkBatchReportExports.value[cacheKey]
     const token = reportExportRequests.next()
     try {
-      const data = await apiFetch(benchmarkBatchReportPath(id, normalized))
+      const data = await apiFetch(benchmarkBatchReportPath(id, normalized), { signal: token.signal })
       if (!token.isLatest()) return ''
       const payload = normalizeBenchmarkBatchReportExport(data, normalized)
       if (!payload) throw new Error('invalid benchmark report export payload')
@@ -2092,7 +2092,7 @@ function useEvaluationWorkbench(options = {}) {
     if (!silent) benchmarkReportHistoryLoading.value = true
     benchmarkReportHistoryError.value = ''
     try {
-      const data = await apiFetch(benchmarkReportHistoryPath(limit, offset))
+      const data = await apiFetch(benchmarkReportHistoryPath(limit, offset), { signal: token.signal })
       if (!token.isLatest()) return false
       const items = Array.isArray(data?.items) ? data.items : []
       benchmarkReportHistory.value = items.map(normalizeBenchmarkReportSummary).filter(Boolean)
@@ -2151,7 +2151,7 @@ function useEvaluationWorkbench(options = {}) {
     if (!silent) benchmarkDiagnosticAggregateLoading.value = true
     benchmarkDiagnosticAggregateError.value = ''
     try {
-      const data = await apiFetch(benchmarkDiagnosticsAggregatePath(limit))
+      const data = await apiFetch(benchmarkDiagnosticsAggregatePath(limit), { signal: token.signal })
       if (!token.isLatest()) return false
       benchmarkDiagnosticAggregateDiagnostics.value = (data?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
       benchmarkDiagnosticAggregateSummary.value = data?.summary || {}
@@ -2370,7 +2370,7 @@ function useEvaluationWorkbench(options = {}) {
     const token = runRequests.next()
     lastRunsError = null
     try {
-      const data = await apiFetch('/evolution-runs')
+      const data = await apiFetch('/evolution-runs', { signal: token.signal })
       if (!token.isLatest()) return false
       batchRuns.value = (data.batches || []).filter(isBenchmarkBatch)
       if (
@@ -2406,7 +2406,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkDetailLoading.value = true
     benchmarkDetailError.value = ''
     try {
-      const detail = await apiFetch(`/benchmark/batch/${encodeURIComponent(id)}`)
+      const detail = await apiFetch(`/benchmark/batch/${encodeURIComponent(id)}`, { signal: token.signal })
       if (!token.isLatest()) return false
       benchmarkBatchDetail.value = normalizeBenchmarkBatchDetail(detail)
       return true
@@ -2445,7 +2445,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkBatchDiagnosticsLoading.value = true
     benchmarkDetailError.value = ''
     try {
-      const data = await apiFetch(benchmarkBatchDiagnosticsPath(id))
+      const data = await apiFetch(benchmarkBatchDiagnosticsPath(id), { signal: token.signal })
       if (!token.isLatest()) return false
       benchmarkBatchDiagnostics.value = (data?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
       benchmarkBatchDiagnosticsForId.value = id
@@ -2475,7 +2475,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkBatchGamesLoading.value = true
     benchmarkDetailError.value = ''
     try {
-      const data = await apiFetch(benchmarkBatchGamesPath(id, { offset, limit }))
+      const data = await apiFetch(benchmarkBatchGamesPath(id, { offset, limit }), { signal: token.signal })
       if (!token.isLatest()) return false
       const rows = (data?.games || []).map(normalizeBenchmarkGame)
       benchmarkBatchGames.value = append ? mergeBenchmarkGames(benchmarkBatchGames.value, rows) : rows
@@ -2595,7 +2595,7 @@ function useEvaluationWorkbench(options = {}) {
     if (!silent) benchmarkSnapshotLoading.value = true
     benchmarkSnapshotError.value = ''
     try {
-      const data = await apiFetch(benchmarkSnapshotListPath(limit))
+      const data = await apiFetch(benchmarkSnapshotListPath(limit), { signal: token.signal })
       if (!token.isLatest()) return false
       const items = Array.isArray(data) ? data : (data?.items || data?.snapshots || [])
       benchmarkSnapshots.value = items
@@ -2646,7 +2646,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkSnapshotLoading.value = true
     benchmarkSnapshotError.value = ''
     try {
-      const data = await apiFetch(`/benchmark/snapshots/${encodeURIComponent(id)}`)
+      const data = await apiFetch(`/benchmark/snapshots/${encodeURIComponent(id)}`, { signal: token.signal })
       if (!token.isLatest()) return false
       const detail = normalizeBenchmarkSnapshot(data, benchmarkSnapshotScope.value)
       if (!detail) throw new Error('invalid benchmark snapshot payload')
@@ -2687,7 +2687,7 @@ function useEvaluationWorkbench(options = {}) {
     if (!silent) benchmarkSnapshotCompareLoading.value = true
     benchmarkSnapshotCompareError.value = ''
     try {
-      const data = await apiFetch(benchmarkSnapshotComparePath(id, limit, againstSnapshotId))
+      const data = await apiFetch(benchmarkSnapshotComparePath(id, limit, againstSnapshotId), { signal: token.signal })
       if (!token.isLatest()) return false
       const compare = normalizeBenchmarkSnapshotServerCompare(data, benchmarkSnapshotScope.value)
       benchmarkSnapshotServerCompare.value = compare

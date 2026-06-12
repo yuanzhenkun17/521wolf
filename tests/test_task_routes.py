@@ -45,8 +45,14 @@ class _FakeTaskQueueRepo:
             },
         }
 
-    def list_recent(self, *, statuses: list[str] | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        self.list_recent_calls.append({"statuses": statuses, "limit": limit})
+    def list_recent(
+        self,
+        *,
+        statuses: list[str] | None = None,
+        limit: int = 100,
+        summary: bool = False,
+    ) -> list[dict[str, Any]]:
+        self.list_recent_calls.append({"statuses": statuses, "limit": limit, "summary": summary})
         values = list(self.tasks.values())
         if statuses:
             values = [task for task in values if task["status"] in statuses]
@@ -117,8 +123,9 @@ class _FakeTaskService:
         *,
         statuses: list[str] | None = None,
         limit: int = 100,
+        summary: bool = False,
     ) -> list[dict[str, Any]]:
-        self.calls.append(("list_task_queue_rows", statuses, limit))
+        self.calls.append(("list_task_queue_rows", statuses, limit, summary))
         values = list(self.tasks.values())
         if statuses:
             values = [task for task in values if task["status"] in statuses]
@@ -207,14 +214,13 @@ def test_list_tasks_returns_stable_shape_and_passes_filters() -> None:
     assert response.json() == {
         "kind": "task_list",
         "schema_version": 1,
+        "summary": True,
         "tasks": [
             {
                 "task_id": "task_1",
                 "kind": "report_task",
                 "status": "running",
                 "priority": 20,
-                "payload": {"run_id": "run_1"},
-                "result": None,
                 "error": None,
                 "progress": {"step": 2, "total": 5},
                 "attempt": 1,
@@ -232,7 +238,22 @@ def test_list_tasks_returns_stable_shape_and_passes_filters() -> None:
         ],
     }
     assert store.task_queue_repo.list_recent_calls == [
-        {"statuses": ["queued", "running"], "limit": 1}
+        {"statuses": ["queued", "running"], "limit": 1, "summary": True}
+    ]
+
+
+def test_list_tasks_can_return_full_payloads_when_summary_disabled() -> None:
+    client, store = _client()
+
+    response = client.get("/api/tasks?status=running&summary=false&limit=1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"] is False
+    assert payload["tasks"][0]["payload"] == {"run_id": "run_1"}
+    assert payload["tasks"][0]["result"] is None
+    assert store.task_queue_repo.list_recent_calls == [
+        {"statuses": ["running"], "limit": 1, "summary": False}
     ]
 
 
@@ -310,13 +331,13 @@ def test_task_routes_can_read_through_task_service_facade() -> None:
     artifact_response = client.get("/api/tasks/task_1/artifacts")
 
     assert list_response.status_code == 200
-    assert list_response.json()["tasks"][0]["payload"] == {"source": "service"}
+    assert "payload" not in list_response.json()["tasks"][0]
     assert detail_response.status_code == 200
     assert detail_response.json()["task"]["kind"] == "service_task"
     assert artifact_response.status_code == 200
     assert artifact_response.json()["artifacts"][0]["artifact_id"] == "artifact_service_1"
     assert store.task_service.calls == [
-        ("list_task_queue_rows", ["succeeded"], 5),
+        ("list_task_queue_rows", ["succeeded"], 5, True),
         ("get_task_queue_row", "task_1"),
         ("get_task_queue_row", "task_1"),
         ("list_task_artifacts", "task_1"),

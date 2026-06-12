@@ -121,6 +121,8 @@ WEREWOLF_TTS_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/realtime
 UI_BACKEND_USE_FAKE_LLM=false
 PG_POOL_MIN_SIZE=1
 PG_POOL_MAX_SIZE=10
+PG_API_POOL_MAX_SIZE=8
+PG_WORKER_POOL_MAX_SIZE=3
 ```
 
 ## Deployment Templates

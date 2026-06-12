@@ -18,7 +18,13 @@ from fastapi.responses import FileResponse
 
 
 class _TaskQueueReader(Protocol):
-    def list_recent(self, *, statuses: list[str] | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_recent(
+        self,
+        *,
+        statuses: list[str] | None = None,
+        limit: int = 100,
+        summary: bool = False,
+    ) -> list[dict[str, Any]]:
         ...
 
     def get(self, task_id: str) -> dict[str, Any] | None:
@@ -43,8 +49,14 @@ class _TaskServiceTaskReader:
     def __init__(self, task_service: Any) -> None:
         self._task_service = task_service
 
-    def list_recent(self, *, statuses: list[str] | None = None, limit: int = 100) -> list[dict[str, Any]]:
-        return self._task_service.list_task_queue_rows(statuses=statuses, limit=limit)
+    def list_recent(
+        self,
+        *,
+        statuses: list[str] | None = None,
+        limit: int = 100,
+        summary: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self._task_service.list_task_queue_rows(statuses=statuses, limit=limit, summary=summary)
 
     def get(self, task_id: str) -> dict[str, Any] | None:
         return self._task_service.get_task_queue_row(task_id)
@@ -65,14 +77,16 @@ def register_task_routes(api: FastAPI, store: Any) -> None:
     def list_tasks(
         status: list[str] | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=500),
+        summary: bool = Query(default=True),
     ) -> dict[str, Any]:
         task_repo = _task_queue_reader(store)
         statuses = _filter_statuses(status)
-        tasks = task_repo.list_recent(statuses=statuses or None, limit=limit)
+        tasks = _list_recent_tasks(task_repo, statuses=statuses or None, limit=limit, summary=summary)
         return {
             "kind": "task_list",
             "schema_version": 1,
-            "tasks": [_task_payload(task) for task in tasks],
+            "summary": summary,
+            "tasks": [_task_summary_payload(task) if summary else _task_payload(task) for task in tasks],
         }
 
     @api.get("/api/tasks/{task_id}")
@@ -231,6 +245,22 @@ def _task_or_404(task_repo: _TaskQueueReader, task_id: str) -> dict[str, Any]:
     return task
 
 
+def _list_recent_tasks(
+    task_repo: _TaskQueueReader,
+    *,
+    statuses: list[str] | None,
+    limit: int,
+    summary: bool,
+) -> list[dict[str, Any]]:
+    try:
+        return task_repo.list_recent(statuses=statuses, limit=limit, summary=summary)
+    except TypeError as exc:
+        # Keep older in-memory test facades and lightweight adapters working.
+        if "summary" not in str(exc):
+            raise
+        return task_repo.list_recent(statuses=statuses, limit=limit)
+
+
 def _filter_statuses(values: list[str] | None) -> list[str]:
     statuses: list[str] = []
     for value in values or []:
@@ -245,6 +275,39 @@ def _task_payload(task: dict[str, Any]) -> dict[str, Any]:
     payload = dict(task)
     payload.setdefault("payload", {})
     payload.setdefault("result", None)
+    payload.setdefault("error", None)
+    payload.setdefault("progress", None)
+    payload.setdefault("metadata", {})
+    payload.setdefault("cancel_requested", False)
+    return jsonable_encoder(payload)
+
+
+def _task_summary_payload(task: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        key: task.get(key)
+        for key in (
+            "task_id",
+            "kind",
+            "status",
+            "priority",
+            "error",
+            "progress",
+            "attempt",
+            "max_attempts",
+            "lease_owner",
+            "lease_expires_at",
+            "queued_at",
+            "started_at",
+            "updated_at",
+            "finished_at",
+            "cancel_requested",
+            "idempotency_key",
+            "parent_task_id",
+            "source",
+            "metadata",
+        )
+        if key in task
+    }
     payload.setdefault("error", None)
     payload.setdefault("progress", None)
     payload.setdefault("metadata", {})

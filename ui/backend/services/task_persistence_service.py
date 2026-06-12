@@ -114,16 +114,17 @@ class TaskPersistenceService:
                     full_fingerprint = self.background_entity_fingerprint(entity)
                     if self._persisted_entity_fingerprints.get(key) == full_fingerprint:
                         continue
+                    event_fingerprint = self.task_entity_fingerprint(entity)
+                    event_changed = self._store._task_event_fingerprints.get(key) != event_fingerprint
                     last_persisted = self._last_entity_persist_monotonic.get(key, 0.0)
                     has_persisted = key in self._persisted_entity_fingerprints
-                    if has_persisted and not self.is_terminal_background_task(entity) and (
+                    if has_persisted and not event_changed and not self.is_terminal_background_task(entity) and (
                         now_monotonic - last_persisted < persist_interval
                     ):
                         continue
                     entities_to_persist.append(entity)
                     persisted_fingerprints[key] = full_fingerprint
-                    event_fingerprint = self.task_entity_fingerprint(entity)
-                    if self._store._task_event_fingerprints.get(key) != event_fingerprint:
+                    if event_changed:
                         event_entities.append(entity)
                         event_fingerprints[key] = event_fingerprint
             if not entities_to_persist:
@@ -226,13 +227,14 @@ class TaskPersistenceService:
                 "cancelled_at",
                 "interrupted_at",
                 "current_stage",
-                "progress",
                 "diagnostics",
                 "recommendation",
                 "error",
             )
             if key in entity
         }
+        if "progress" in entity:
+            comparable["progress"] = _task_event_progress_fingerprint(entity.get("progress"))
         return json.dumps(to_jsonable(comparable), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
@@ -421,6 +423,16 @@ def _background_persist_interval_seconds() -> float:
     except (TypeError, ValueError):
         return 1.0
     return max(0.0, value)
+
+
+def _task_event_progress_fingerprint(progress: Any) -> Any:
+    if not isinstance(progress, dict):
+        return progress
+    return {
+        key: value
+        for key, value in progress.items()
+        if key not in {"percent", "updated_at"}
+    }
 
 
 __all__ = ["TaskPersistenceService"]

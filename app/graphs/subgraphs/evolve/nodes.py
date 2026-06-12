@@ -619,6 +619,7 @@ async def apply_node(state: EvolveState) -> dict:
 
     _merge_apply_warnings(state, [*consolidation.warnings, *consolidation.errors])
     state["consolidation"] = consolidation.to_dict()
+    state["preflight_reports"] = [dict(item) for item in consolidation.preflight_reports]
 
     if not diffs:
         state["candidate_hash"] = state.get("parent_hash")

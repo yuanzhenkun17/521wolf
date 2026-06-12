@@ -1404,7 +1404,7 @@ def test_apply_node_writes_candidate_skills(tmp_path):
     assert "Wait one round before voting." in written
 
 
-def test_apply_node_preserves_missing_files_and_ignores_unauthorized_outputs(tmp_path):
+def test_apply_node_rejects_unauthorized_apply_output_before_writing_candidate(tmp_path):
     skill_dir = tmp_path / "skills"
     (skill_dir / "seer").mkdir(parents=True)
     (skill_dir / "hunter").mkdir(parents=True)
@@ -1461,17 +1461,16 @@ def test_apply_node_preserves_missing_files_and_ignores_unauthorized_outputs(tmp
 
     out = asyncio.run(apply_node(state))
 
-    assert out["candidate_hash"] == "candidate_evolve_sanitized"
-    assert [item["filename"] for item in out["diff"]] == ["seer/vote.md"]
-    candidate = Path(out["candidate_skill_dir"])
-    assert (candidate / "seer" / "check.md").read_text(encoding="utf-8") == check_skill
-    assert (candidate / "hunter" / "shot_timing.md").read_text(encoding="utf-8") == hunter_skill
-    assert not (candidate / "white_wolf_king" / "self_destruct_timing.md").exists()
-    assert any("ignored unauthorized file modification 'hunter/shot_timing.md'" in item for item in out["warnings"])
-    assert any(
-        "ignored unauthorized file creation 'white_wolf_king/self_destruct_timing.md'" in item
-        for item in out["warnings"]
-    )
+    assert out["candidate_hash"] == "baseline_seer"
+    assert out["candidate_skill_dir"] is None
+    assert out["diff"] == []
+    assert any("preflight failed" in item for item in out["warnings"])
+    assert any("hunter/shot_timing.md" in item for item in out["warnings"])
+    assert any("white_wolf_king/self_destruct_timing.md" in item for item in out["warnings"])
+    report = out["preflight_reports"][-1]
+    assert report["kind"] == "apply_output_preflight"
+    assert report["status"] == "failed"
+    assert report["blocking"] is True
 
 
 def test_apply_node_reuses_persisted_diff_and_candidate_directory(tmp_path, monkeypatch):

@@ -1,8 +1,8 @@
 """Connection pool management for PostgreSQL.
 
-Provides lazy singleton pools keyed by (schema, conninfo) so callers
-transparently reuse connections instead of opening a new TCP session
-on every ``open_*_connection()`` call.
+Provides lazy singleton pools keyed by (schema, conninfo, process role) so
+callers transparently reuse connections without letting API and worker
+processes share the same sizing policy.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-_pools: dict[tuple[str, str], Any] = {}
+_pools: dict[tuple[str, str, str], Any] = {}
 
 
 def get_pool(
@@ -25,13 +25,14 @@ def get_pool(
     from psycopg_pool import ConnectionPool
 
     resolved_conninfo = conninfo or ""
-    key = (schema, resolved_conninfo)
+    role = _pool_role()
+    key = (schema, resolved_conninfo, role)
     pool = _pools.get(key)
     if pool is not None:
         return pool
 
-    min_size = int(os.environ.get("PG_POOL_MIN_SIZE", "1"))
-    max_size = int(os.environ.get("PG_POOL_MAX_SIZE", "10"))
+    min_size = _pool_int("MIN_SIZE", default=1, role=role)
+    max_size = _pool_int("MAX_SIZE", default=10, role=role)
 
     kwargs = dict(connect_kwargs or {})
     conninfo_str = resolved_conninfo or None
@@ -61,12 +62,30 @@ def get_pool(
     )
     _pools[key] = pool
     _log.info(
-        "Created PG connection pool: schema=%s min=%d max=%d",
+        "Created PG connection pool: schema=%s role=%s min=%d max=%d",
         schema,
+        role,
         min_size,
         max_size,
     )
     return pool
+
+
+def _pool_role() -> str:
+    raw = os.environ.get("PG_POOL_ROLE") or os.environ.get("WOLF_PROCESS_ROLE") or "api"
+    role = str(raw).strip().lower().replace("-", "_")
+    return role if role else "api"
+
+
+def _pool_int(suffix: str, *, default: int, role: str) -> int:
+    role_key = f"PG_{role.upper()}_POOL_{suffix}"
+    raw = os.environ.get(role_key)
+    if raw is None:
+        raw = os.environ.get(f"PG_POOL_{suffix}", str(default))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return default
 
 
 def close_pools() -> None:

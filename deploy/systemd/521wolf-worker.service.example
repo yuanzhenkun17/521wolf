@@ -8,6 +8,8 @@ Type=simple
 WorkingDirectory=/opt/521wolf/app
 EnvironmentFile=/opt/521wolf/.env
 Environment=WOLF_USE_PG_TASK_QUEUE=true
+Environment=PG_POOL_ROLE=worker
+Environment=WOLF_PROCESS_ROLE=worker
 ExecStart=/usr/bin/env uv run python -m app.tools.run_ui_task_worker
 Restart=always
 RestartSec=5

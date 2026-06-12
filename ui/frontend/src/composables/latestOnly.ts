@@ -1,5 +1,7 @@
 interface LatestOnlyToken {
   readonly id: number
+  readonly signal?: AbortSignal
+  abort: () => void
   isLatest: () => boolean
 }
 
@@ -19,18 +21,28 @@ type MaybeLatestOnlyToken = LatestOnlyToken | null | undefined
 
 function createLatestOnlyTracker(): LatestOnlyTracker {
   let currentId = 0
+  let currentController: AbortController | null = null
 
   function next(): LatestOnlyToken {
+    currentController?.abort()
+    currentController = typeof AbortController === 'undefined' ? null : new AbortController()
     const id = currentId + 1
     currentId = id
+    const controller = currentController
     return {
       id,
+      signal: controller?.signal,
+      abort: () => {
+        if (id === currentId) controller?.abort()
+      },
       isLatest: () => id === currentId
     }
   }
 
   function invalidate(): void {
     currentId += 1
+    currentController?.abort()
+    currentController = null
   }
 
   return {

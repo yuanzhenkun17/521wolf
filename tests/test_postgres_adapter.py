@@ -14,6 +14,7 @@ from storage.postgres.connection import (
     get_registry_postgres_connection,
     get_wolf_postgres_connection,
 )
+from storage.postgres import _pool
 
 
 _UNSET = object()
@@ -100,6 +101,17 @@ def test_adapter_configures_search_path_for_schema_namespace() -> None:
 
     assert raw.calls == [('SET search_path TO "registry", "public"', _UNSET)]
     assert raw.committed is True
+
+
+def test_pool_role_uses_role_specific_size_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PG_POOL_ROLE", "worker")
+    monkeypatch.setenv("PG_POOL_MAX_SIZE", "10")
+    monkeypatch.setenv("PG_WORKER_POOL_MAX_SIZE", "3")
+    monkeypatch.setenv("PG_API_POOL_MAX_SIZE", "12")
+
+    assert _pool._pool_role() == "worker"
+    assert _pool._pool_int("MAX_SIZE", default=10, role="worker") == 3
+    assert _pool._pool_int("MAX_SIZE", default=10, role="api") == 12
 
 
 def test_execute_converts_qmark_placeholders_and_materializes_parameters() -> None:

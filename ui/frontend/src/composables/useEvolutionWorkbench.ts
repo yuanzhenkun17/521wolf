@@ -186,7 +186,13 @@ function progressFromCount(completed, target, fallbackLabel = '等待') {
   return { percent: 0, label: fallbackLabel }
 }
 
-function progressWithExplicit(explicit, completed, target, fallbackLabel = '等待', options = {}) {
+function progressWithExplicit(
+  explicit,
+  completed,
+  target,
+  fallbackLabel = '等待',
+  options: { countFirst?: boolean } = {}
+) {
   const counted = progressFromCount(completed, target, fallbackLabel)
   if (options.countFirst && (finiteNumber(target) ?? 0) > 0) return counted
   const pct = percentValue(explicit)
@@ -2688,7 +2694,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   async function loadRoles({ includeOverview = false } = {}) {
     const token = roleRequests.next()
     if (includeOverview) try {
-      const overview = await apiFetch('/roles/overview')
+      const overview = await apiFetch('/roles/overview', { signal: token.signal })
       if (!token.isLatest()) return false
       roles.value = overview.roles || []
       if (!selectedRole.value && roles.value.length) selectedRole.value = roles.value[0]
@@ -2706,7 +2712,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       // Keep compatibility with frontend mock data and older backend instances.
     }
 
-    const data = await apiFetch('/roles')
+    const data = await apiFetch('/roles', { signal: token.signal })
     if (!token.isLatest()) return false
     roles.value = data.roles || []
     if (!selectedRole.value && roles.value.length) selectedRole.value = roles.value[0]
@@ -2718,7 +2724,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (!role) return
     const token = versionListRequests.next(role)
     try {
-      const data = await apiFetch(`/roles/${encodeURIComponent(role)}/versions`)
+      const data = await apiFetch(`/roles/${encodeURIComponent(role)}/versions`, { signal: token.signal })
       if (!token.isLatest()) return
       versionsByRole.value = {
         ...versionsByRole.value,
@@ -2733,7 +2739,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (!role) return
     const token = leaderboardRequests.next(role)
     try {
-      const data = await apiFetch(`/roles/${encodeURIComponent(role)}/leaderboard`)
+      const data = await apiFetch(`/roles/${encodeURIComponent(role)}/leaderboard`, { signal: token.signal })
       if (!token.isLatest()) return
       leaderboardsByRole.value = {
         ...leaderboardsByRole.value,
@@ -2752,8 +2758,8 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     return `?${params.toString()}`
   }
 
-  async function fetchRunPage(offset = 0) {
-    const data = await apiFetch(`/evolution-runs${runListQuery(offset)}`)
+  async function fetchRunPage(offset = 0, signal: AbortSignal | undefined = undefined) {
+    const data = await apiFetch(`/evolution-runs${runListQuery(offset)}`, { signal })
     const pageRuns = data.runs || []
     const pageBatches = (data.batches || []).filter(isEvolutionBatch)
     return {
@@ -2763,9 +2769,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     }
   }
 
-  async function fetchRunDetail(id, fallback = null) {
+  async function fetchRunDetail(id, fallback = null, signal: AbortSignal | undefined = undefined) {
     try {
-      return normalizeRun(await apiFetch(`/evolution-runs/${encodeURIComponent(id)}`))
+      return normalizeRun(await apiFetch(`/evolution-runs/${encodeURIComponent(id)}`, { signal }))
     } catch (err) {
       if (fallback) return normalizeRun(fallback)
       throw err
@@ -2789,7 +2795,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     const token = runListRequests.next()
     if (!append) runLoadingMore.value = false
     const offset = append ? runPagination.value.offset + runPagination.value.returned : 0
-    const { pageRuns, pageBatches, pagination } = await fetchRunPage(offset)
+    const { pageRuns, pageBatches, pagination } = await fetchRunPage(offset, token.signal)
     if (!token.isLatest()) return false
     runs.value = append ? mergeById(runs.value, pageRuns, 'run_id') : pageRuns
     batches.value = append ? mergeById(batches.value, pageBatches, 'batch_id').filter(isEvolutionBatch) : pageBatches
@@ -2810,7 +2816,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     clearNotice()
     try {
       const offset = runPagination.value.offset + runPagination.value.returned
-      const { pageRuns, pageBatches, pagination } = await fetchRunPage(offset)
+      const { pageRuns, pageBatches, pagination } = await fetchRunPage(offset, token.signal)
       if (!token.isLatest()) return
       runs.value = mergeById(runs.value, pageRuns, 'run_id')
       batches.value = mergeById(batches.value, pageBatches, 'batch_id').filter(isEvolutionBatch)
@@ -2843,7 +2849,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       if (selectedRole.value && !versionsByRole.value[selectedRole.value]) {
         await loadVersions(selectedRole.value)
       }
-      const { pageRuns, pageBatches, pagination } = await fetchRunPage(0)
+      const { pageRuns, pageBatches, pagination } = await fetchRunPage(0, token.signal)
       if (!token.isLatest()) return
       runs.value = pageRuns
       batches.value = pageBatches
@@ -2867,7 +2873,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     const token = runSelectionRequests.next()
     selectedRunId.value = id
     const row = runRows.value.find((item) => item.id === id)
-    const loaded = await fetchRunDetail(id, row)
+    const loaded = await fetchRunDetail(id, row, token.signal)
     if (!token.isLatest() || selectedRunId.value !== id) return
     selectedRun.value = loaded
     rememberRunDetail(loaded)
@@ -2897,7 +2903,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (!id) return
     const token = diffRequests.next()
     try {
-      const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/diff`)
+      const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/diff`, { signal: token.signal })
       if (!token.isLatest() || (parentToken && !parentToken.isLatest()) || selectedRunId.value !== id) return
       // Legacy flat array format
       selectedDiff.value = data.diffs || data.diff || []
@@ -2943,7 +2949,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       error: ''
     }
     try {
-      const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/proposals`)
+      const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/proposals`, { signal: token.signal })
       if (!token.isLatest() || (parentToken && !parentToken.isLatest()) || selectedRunId.value !== id) return
       selectedProposalReview.value = normalizeProposalReview(data, selectedRun.value, { source: 'api' })
       loadedRunArtifacts.value = {
@@ -2979,8 +2985,8 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     return `?${params.toString()}`
   }
 
-  async function fetchSampleGamePage(id, bucket, offset = 0) {
-    const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/games${sampleGameListQuery(bucket, offset)}`)
+  async function fetchSampleGamePage(id, bucket, offset = 0, signal: AbortSignal | undefined = undefined) {
+    const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/games${sampleGameListQuery(bucket, offset)}`, { signal })
     const rows = data.games || []
     return {
       rows,
@@ -3006,7 +3012,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     }
     let page
     try {
-      page = { bucket: targetBucket, ...(await fetchSampleGamePage(id, targetBucket, 0)), error: '' }
+      page = { bucket: targetBucket, ...(await fetchSampleGamePage(id, targetBucket, 0, token.signal)), error: '' }
     } catch (err) {
       page = {
         bucket: targetBucket,
@@ -3065,7 +3071,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     clearNotice()
     try {
       const offset = pagination.offset + pagination.returned
-      const { rows, pagination: nextPagination } = await fetchSampleGamePage(runId, bucket, offset)
+      const { rows, pagination: nextPagination } = await fetchSampleGamePage(runId, bucket, offset, token.signal)
       if (!token.isLatest() || selectedRunId.value !== runId) return
       selectedGames.value = {
         ...selectedGames.value,
@@ -3116,9 +3122,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     const query = sampleGameQuery(bucket)
     try {
       const [archiveResult, decisionsResult, eventsResult] = await Promise.allSettled([
-        apiFetch(`${base}/archive?${query}`),
-        apiFetch(`${base}/decisions?${query}`),
-        apiFetch(`${base}/events?${query}`)
+        apiFetch(`${base}/archive?${query}`, { signal: token.signal }),
+        apiFetch(`${base}/decisions?${query}`, { signal: token.signal }),
+        apiFetch(`${base}/events?${query}`, { signal: token.signal })
       ])
       if (!token.isLatest() || selectedRunId.value !== runId || selectedGameBucket.value !== bucket || selectedGameId.value !== gameId) return
       const archive = archiveResult.status === 'fulfilled' ? archiveResult.value : null
@@ -3151,7 +3157,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     }
   }
 
-  async function selectSampleGame(bucket, gameId) {
+  async function selectSampleGame(bucket, gameId = null) {
     if (!bucket) return
     selectedGameBucket.value = bucket
     await loadRunGames(selectedRunId.value, { bucket })
@@ -3183,7 +3189,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       data: selectedVersionDetail.value.data?.version_id === versionId ? selectedVersionDetail.value.data : null
     }
     try {
-      const data = await apiFetch(`/roles/${encodeURIComponent(role)}/versions/${encodeURIComponent(versionId)}`)
+      const data = await apiFetch(`/roles/${encodeURIComponent(role)}/versions/${encodeURIComponent(versionId)}`, { signal: token.signal })
       if (!token.isLatest() || selectedRole.value !== role || selectedVersionId.value !== versionId) return
       versionDetailCache.value = {
         ...versionDetailCache.value,

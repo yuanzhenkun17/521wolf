@@ -31,6 +31,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
+    os.environ.setdefault("PG_POOL_ROLE", "worker")
+    os.environ.setdefault("WOLF_PROCESS_ROLE", "worker")
     paths = PathConfig(root=args.root) if args.root is not None else DEFAULT_PATHS
     store = BackendStore(paths=paths)
     try:
