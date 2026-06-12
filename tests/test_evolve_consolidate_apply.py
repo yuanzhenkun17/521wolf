@@ -1429,6 +1429,34 @@ def test_apply_node_preserves_missing_files_and_ignores_unauthorized_outputs(tmp
     )
 
 
+def test_apply_prompt_only_includes_eligible_target_files():
+    from app.lib.evolve import SkillProposal, _build_apply_messages
+
+    messages = _build_apply_messages(
+        {
+            "seer/vote.md": SEER_SKILL,
+            "hunter/shot_timing.md": "HUNTER SECRET",
+        },
+        [
+            SkillProposal(
+                proposal_id="p1",
+                target_file="seer/vote.md",
+                action_type="append_rule",
+                content="Wait one round.",
+                confidence=0.8,
+                risk="low",
+            )
+        ],
+        "seer",
+    )
+
+    prompt = messages[0]["content"]
+    assert "### seer/vote.md" in prompt
+    assert "hunter/shot_timing.md" not in prompt
+    assert "HUNTER SECRET" not in prompt
+    assert "Return ONLY files targeted by the eligible proposals" in prompt
+
+
 @pytest.mark.parametrize(
     "raw_template",
     [

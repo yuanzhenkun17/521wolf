@@ -2773,19 +2773,25 @@ def _build_apply_messages(
         '"changes": [{"filename": "file.md", "action": "modified|created", "description": "brief"}]}\n',
         f"\nRole: {role}\n",
         "Rules:\n"
-        "- Existing files may only be modified when targeted by an eligible proposal.\n"
+        "- Return ONLY files targeted by the eligible proposals below.\n"
+        "- Do not return, modify, or create files for any other role or target.\n"
+        "- Existing target files must be returned with their full updated content.\n"
         f"- New files may only be created by action_type={CREATE_SKILL_ACTION}, named '<slug>.md'.\n"
-        "- Return every existing file in files, unchanged unless targeted.\n"
         "- Do not change front-matter role/name/applicable_actions/evolution for existing files.\n"
         "- Preserve any <!-- slow_update -->...<!-- /slow_update --> region content exactly "
         "(you may append inside it, but must not delete or alter existing content).\n",
-        "## Current skill files\n",
+        "## Current target files\n",
     ]
-    if current_skills:
-        for fname, content in current_skills.items():
+    target_files = {
+        proposal.target_file: current_skills[proposal.target_file]
+        for proposal in eligible
+        if proposal.target_file in current_skills
+    }
+    if target_files:
+        for fname, content in target_files.items():
             parts.append(f"### {fname}\n```\n{content}\n```\n")
     else:
-        parts.append("(empty baseline: no current skill files)\n")
+        parts.append("(no existing target files; create only explicitly authorized new files)\n")
     parts.append("## Proposals to apply\n")
     for p in eligible:
         parts.append(
