@@ -550,7 +550,7 @@ async def apply_node(state: EvolveState) -> dict:
         _record_diagnostic(state, kind="apply_error", stage="apply.proposals", message=message, exc=exc)
         new_skills, diffs = current_skills, []
 
-    _merge_apply_warnings(state, consolidation.errors)
+    _merge_apply_warnings(state, [*consolidation.warnings, *consolidation.errors])
     state["consolidation"] = consolidation.to_dict()
 
     if not diffs:

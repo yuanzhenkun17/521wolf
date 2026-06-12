@@ -1359,6 +1359,76 @@ def test_apply_node_writes_candidate_skills(tmp_path):
     assert "Wait one round before voting." in written
 
 
+def test_apply_node_preserves_missing_files_and_ignores_unauthorized_outputs(tmp_path):
+    skill_dir = tmp_path / "skills"
+    (skill_dir / "seer").mkdir(parents=True)
+    (skill_dir / "hunter").mkdir(parents=True)
+    vote_skill = SEER_SKILL
+    check_skill = SEER_SKILL.replace("name: seer_vote", "name: seer_check").replace(
+        "# Seer voting",
+        "# Seer checks",
+    )
+    hunter_skill = SEER_SKILL.replace("name: seer_vote", "name: hunter_vote").replace(
+        "role: seer",
+        "role: hunter",
+    )
+    (skill_dir / "seer" / "vote.md").write_text(vote_skill, encoding="utf-8")
+    (skill_dir / "seer" / "check.md").write_text(check_skill, encoding="utf-8")
+    (skill_dir / "hunter" / "shot_timing.md").write_text(hunter_skill, encoding="utf-8")
+
+    consolidation = {
+        "role": "seer",
+        "run_id": "evolve_sanitized",
+        "proposals": [{
+            "proposal_id": "p1",
+            "target_file": "seer/vote.md",
+            "action_type": "append_rule",
+            "content": "Wait one round before voting.",
+            "confidence": 0.8,
+            "risk": "low",
+            "status": "proposed",
+        }],
+    }
+    modified_vote = vote_skill + "\n- Wait one round before voting.\n"
+    modified_hunter = hunter_skill + "\n- Unauthorized hunter change.\n"
+    unauthorized_new = hunter_skill.replace("name: hunter_vote", "name: white_wolf_extra").replace(
+        "role: hunter",
+        "role: white_wolf_king",
+    )
+    raw = json.dumps({
+        "files": {
+            "seer/vote.md": modified_vote,
+            "hunter/shot_timing.md": modified_hunter,
+            "white_wolf_king/self_destruct_timing.md": unauthorized_new,
+        },
+        "changes": [],
+    })
+    state = {
+        "role": "seer",
+        "run_id": "evolve_sanitized",
+        "parent_hash": "baseline_seer",
+        "config": {"skill_dir": str(skill_dir)},
+        "paths": _PathsStub(tmp_path),
+        "model": FakeModel([raw]),
+        "consolidation": consolidation,
+        "proposals": consolidation["proposals"],
+    }
+
+    out = asyncio.run(apply_node(state))
+
+    assert out["candidate_hash"] == "candidate_evolve_sanitized"
+    assert [item["filename"] for item in out["diff"]] == ["seer/vote.md"]
+    candidate = Path(out["candidate_skill_dir"])
+    assert (candidate / "seer" / "check.md").read_text(encoding="utf-8") == check_skill
+    assert (candidate / "hunter" / "shot_timing.md").read_text(encoding="utf-8") == hunter_skill
+    assert not (candidate / "white_wolf_king" / "self_destruct_timing.md").exists()
+    assert any("ignored unauthorized file modification 'hunter/shot_timing.md'" in item for item in out["warnings"])
+    assert any(
+        "ignored unauthorized file creation 'white_wolf_king/self_destruct_timing.md'" in item
+        for item in out["warnings"]
+    )
+
+
 @pytest.mark.parametrize(
     "raw_template",
     [

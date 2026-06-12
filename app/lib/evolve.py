@@ -2647,6 +2647,12 @@ async def apply_proposals(
 
     proposed_files: dict[str, str] = parsed.get("files", {})
     changes: list[dict[str, str]] = parsed.get("changes", [])
+    proposed_files = _sanitize_apply_output(
+        current_skills,
+        proposed_files,
+        active,
+        consolidation,
+    )
 
     errors = _validate_all(current_skills, proposed_files, active, consolidation.role)
     if errors:
@@ -2669,6 +2675,50 @@ async def apply_proposals(
 def _record_apply_error(consolidation: SkillConsolidation, message: str) -> None:
     if message not in consolidation.errors:
         consolidation.errors.append(message)
+
+
+def _record_apply_warning(consolidation: SkillConsolidation, message: str) -> None:
+    if message not in consolidation.warnings:
+        consolidation.warnings.append(message)
+
+
+def _sanitize_apply_output(
+    current_skills: dict[str, str],
+    proposed_files: dict[str, str],
+    eligible: list[SkillProposal],
+    consolidation: SkillConsolidation,
+) -> dict[str, str]:
+    """Keep the baseline complete and discard model edits outside proposal scope."""
+    from storage.interfaces import normalize_skill_text
+
+    eligible_targets = {proposal.target_file for proposal in eligible}
+    sanitized = dict(current_skills)
+
+    for target in eligible_targets:
+        if target in proposed_files:
+            sanitized[target] = proposed_files[target]
+        elif target in current_skills:
+            _record_apply_warning(
+                consolidation,
+                f"apply: eligible target '{target}' missing from model output; preserved baseline content",
+            )
+
+    for fname, content in proposed_files.items():
+        if fname in eligible_targets:
+            continue
+        old_content = current_skills.get(fname)
+        if old_content is None:
+            _record_apply_warning(
+                consolidation,
+                f"apply: ignored unauthorized file creation '{fname}'",
+            )
+        elif normalize_skill_text(old_content) != normalize_skill_text(content):
+            _record_apply_warning(
+                consolidation,
+                f"apply: ignored unauthorized file modification '{fname}'",
+            )
+
+    return sanitized
 
 
 def _filter_eligible(proposals: list[SkillProposal]) -> list[SkillProposal]:
