@@ -12,6 +12,7 @@ CHECK_TASK_QUEUE="${CHECK_TASK_QUEUE:-true}"
 CHECK_TASK_WORKER="${CHECK_TASK_WORKER:-true}"
 CHECK_TASK_ARTIFACTS="${CHECK_TASK_ARTIFACTS:-true}"
 CHECK_OPS_METRICS="${CHECK_OPS_METRICS:-true}"
+RECOVER_STALE_RUNNING_TASKS="${RECOVER_STALE_RUNNING_TASKS:-true}"
 FAIL_ON_OPS_DEGRADED_ALERTS="${FAIL_ON_OPS_DEGRADED_ALERTS:-false}"
 FAIL_ON_LANGFUSE_CAPTURE_DISABLED="${FAIL_ON_LANGFUSE_CAPTURE_DISABLED:-false}"
 CHECK_PORTS="${CHECK_PORTS:-true}"
@@ -104,6 +105,14 @@ if os.environ.get("CHECK_TASK_QUEUE", "true").lower() != "false":
     if os.environ.get("CHECK_TASK_WORKER", "true").lower() != "false" and task_control.get("worker_fresh") is not True:
         raise SystemExit(1)
 PY
+fi
+
+if [ "$CHECK_TASK_QUEUE" != "false" ] && [ "$RECOVER_STALE_RUNNING_TASKS" != "false" ]; then
+  info "recovering expired running tasks"
+  (
+    cd "$APP_DIR"
+    uv run python -m app.tools.manage_ui_tasks recover-stale-running
+  ) >/dev/null || fail "failed to recover expired running tasks"
 fi
 
 if [ "$CHECK_OPS_METRICS" != "false" ]; then

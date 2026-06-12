@@ -37,6 +37,7 @@ class FakeTaskService:
         self.db_path = db_path
         self.task_artifact_root = artifact_root
         self.list_statuses: list[str] | None = None
+        self.recovered_stale_running = 0
 
     def open_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -65,6 +66,10 @@ class FakeTaskService:
 
     def retry_task(self, task_id: str) -> dict[str, Any] | None:
         return {"changed": task_id == "interrupted", "task": {"task_id": task_id, "kind": "benchmark_batch", "status": "queued"}}
+
+    def recover_stale_running_tasks(self) -> int:
+        self.recovered_stale_running += 2
+        return 2
 
     def list_task_artifacts(self, task_id: str) -> list[dict[str, Any]]:
         conn = self.open_connection()
@@ -97,6 +102,7 @@ def test_manage_ui_tasks_lists_and_operates_tasks(tmp_path: Path) -> None:
     listed = run_with_service(argparse.Namespace(command="list", status=["queued,running"], limit=10), service)
     cancelled = run_with_service(argparse.Namespace(command="cancel", task_id="task-a"), service)
     retry = run_with_service(argparse.Namespace(command="retry", task_id="interrupted"), service)
+    recovered = run_with_service(argparse.Namespace(command="recover-stale-running"), service)
     missing = run_with_service(argparse.Namespace(command="cancel", task_id="missing"), service)
 
     assert listed["ok"] is True
@@ -105,6 +111,8 @@ def test_manage_ui_tasks_lists_and_operates_tasks(tmp_path: Path) -> None:
     assert cancelled["changed"] is True
     assert cancelled["task"]["status"] == "cancelled"
     assert retry["changed"] is True
+    assert recovered["interrupted_count"] == 2
+    assert service.recovered_stale_running == 2
     assert missing["ok"] is False
     assert missing["exit_code"] == 1
 

@@ -319,6 +319,13 @@ class TaskService:
             self.publish_task_queue_event(updated, event="retry")
         return {"changed": changed, "task": updated}
 
+    def recover_stale_running_tasks(self) -> int:
+        now = beijing_now_iso()
+        with from_connection_factory(self.open_connection) as tx:
+            changed = TaskQueueRepository(tx.connection).mark_expired_running_interrupted(now=now)
+            tx.commit()
+        return changed
+
     def list_task_events(self, task_id: str, *, after_event_id: int = 0) -> list[dict[str, Any]]:
         return self.task_event_log.replay(task_id, after_event_id=after_event_id)
 

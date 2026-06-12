@@ -30,6 +30,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     retry_parser = subparsers.add_parser("retry", help="Retry an interrupted task.")
     retry_parser.add_argument("task_id")
 
+    subparsers.add_parser("recover-stale-running", help="Mark expired running tasks as interrupted.")
+
     verify_parser = subparsers.add_parser("verify-artifacts", help="Verify indexed task artifact files.")
     verify_parser.add_argument("--task-id", default="", help="Limit verification to one task.")
     verify_parser.add_argument("--limit", type=int, default=100)
@@ -54,6 +56,8 @@ def run_with_service(args: argparse.Namespace, service: Any) -> dict[str, Any]:
         return task_action(service, task_id=str(args.task_id), action="cancel")
     if command == "retry":
         return task_action(service, task_id=str(args.task_id), action="retry")
+    if command == "recover-stale-running":
+        return recover_stale_running(service)
     if command == "verify-artifacts":
         return verify_artifacts(service, task_id=str(getattr(args, "task_id", "") or ""), limit=int(args.limit))
     return {"ok": False, "command": command, "error": f"unsupported command: {command}", "exit_code": 2}
@@ -86,6 +90,15 @@ def task_action(service: Any, *, task_id: str, action: str) -> dict[str, Any]:
         "task_id": task_id,
         "changed": bool(result.get("changed")),
         "task": _task_summary(result.get("task") or {}),
+    }
+
+
+def recover_stale_running(service: Any) -> dict[str, Any]:
+    changed = int(service.recover_stale_running_tasks())
+    return {
+        "ok": True,
+        "operation": "recover-stale-running",
+        "interrupted_count": changed,
     }
 
 
