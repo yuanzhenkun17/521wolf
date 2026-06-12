@@ -72,6 +72,20 @@ def _disable_real_langfuse_in_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "false")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_pg_pools() -> None:
+    """Clear the global connection pool cache between tests to prevent pool-is-closed errors."""
+    yield
+    import storage.postgres._pool as pool_mod
+
+    for pool in list(pool_mod._pools.values()):
+        try:
+            pool.close()
+        except Exception:
+            pass
+    pool_mod._pools.clear()
+
+
 def _item_filename(item: pytest.Item) -> str:
     try:
         return Path(str(item.path)).name
