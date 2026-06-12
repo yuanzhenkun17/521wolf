@@ -12,6 +12,7 @@ const rejectDialog = readSource('../src/components/evolution/RejectDialog.vue')
 const trustDrawer = readSource('../src/components/evolution/TrustBundleDrawer.vue')
 const versionsPanel = readSource('../src/components/evolution/EvolutionVersionsPanel.vue')
 const workbench = readSource('../src/composables/useEvolutionWorkbench.ts')
+const normalizers = readSource('../src/composables/evolutionNormalizers.ts')
 
 test('Evolution review, reject, trust, and version panels use Chinese-first visible labels', () => {
   const combined = [proposalPanel, rejectDialog, trustDrawer, versionsPanel].join('\n')
@@ -92,11 +93,11 @@ test('Evolution page avoids non-functional tab icons and account-style chrome', 
 test('Evolution trust audit messages are localized while keeping code field names', () => {
   const routerDeepLinks = readFileSync(new URL('../src/router/workbenchDeepLinks.ts', import.meta.url), 'utf8')
 
-  assert.match(workbench, /authority:\s*'权威信任包'/)
-  assert.match(workbench, /review:\s*'提案审核'/)
+  assert.match(normalizers, /authority:\s*'权威信任包'/)
+  assert.match(normalizers, /review:\s*'提案审核'/)
   assert.match(routerDeepLinks, /message: panel \? ["']等待恢复定位链接目标。["'] : ["']等待恢复自进化定位链接。["']/)
-  assert.match(workbench, /缺少信任包：未收到 trust_bundle_id 或 bundle_hash。/)
+  assert.match(normalizers, /缺少信任包：未收到 trust_bundle_id 或 bundle_hash。/)
   assert.match(workbench, /权威信任包与当前页面缓存不一致。/)
-  assert.match(workbench, /缓存、版本库\/来源运行与权威包一致。/)
+  assert.match(normalizers, /缓存、版本库\/来源运行与权威包一致。/)
   assert.doesNotMatch([workbench, routerDeepLinks].join('\n'), /权威 Trust Bundle|Evolution deep link|deep link 目标|Authority Bundle|Proposal Review/)
 })

@@ -8,9 +8,10 @@ function readSource(relativePath) {
 
 const samplesPanel = readSource('../src/components/evolution/EvolutionSamplesPanel.vue')
 const workbench = readSource('../src/composables/useEvolutionWorkbench.ts')
+const normalizers = readSource('../src/composables/evolutionNormalizers.ts')
 
 test('Evolution samples workspace keeps the three review-evidence buckets', () => {
-  assert.match(workbench, /const SAMPLE_GAME_BUCKETS = \['training', 'baseline', 'candidate'\]/)
+  assert.match(normalizers, /const SAMPLE_GAME_BUCKETS = \['training', 'baseline', 'candidate'\]/)
   assert.match(samplesPanel, /v-for="bucket in evo\.sampleBuckets\.value"/)
   assert.match(samplesPanel, /@click="evo\.selectSampleGame\(bucket\.key\)"/)
   assert.match(samplesPanel, /@click="evo\.selectSampleGame\(game\.bucket, game\.id\)"/)
@@ -39,7 +40,7 @@ test('Evolution sample detail exposes evidence traceability fields and existing 
   assert.match(samplesPanel, /emit\('open-sample-log', historyId\)/)
   assert.match(samplesPanel, /emit\('replay-sample-game', historyId\)/)
   assert.match(samplesPanel, /:disabled="Boolean\(evo\.selectedSampleHistoryUnavailableReason\.value\)"/)
-  assert.match(workbench, /game\?\.historyGameId/)
+  assert.match(normalizers, /game\?\.historyGameId/)
   assert.match(workbench, /selectedGameDetail\.value\.archive\?\.historyGameId/)
   assert.match(workbench, /selectedSampleGame\.value\?\.history_id/)
 })

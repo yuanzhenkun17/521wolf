@@ -96,12 +96,11 @@ test('Benchmark launch and target panels keep Chinese-first benchmark terminolog
   assert.doesNotMatch(boundary, /budget\.value\?\.exceeded\) return '预算超限'/)
 })
 
-test('EvolutionPage has a low-risk LabWorkbenchShell bridge around the existing evolution shell', () => {
+test('EvolutionPage uses EvolutionWorkbenchShell directly without LabWorkbenchShell bridge', () => {
   const evolution = readSource('../src/pages/EvolutionPage.vue')
 
-  assert.match(evolution, /import LabWorkbenchShell from '\.\.\/components\/lab\/LabWorkbenchShell\.vue'/)
-  assert.match(evolution, /<LabWorkbenchShell[\s\S]*v-model:active-tab="activeTab"[\s\S]*bridge[\s\S]*class="evo-lab-workbench-bridge"[\s\S]*workbench-key="evolution"[\s\S]*:tabs="navTabs"/)
-  assert.match(evolution, /<LabWorkbenchShell[\s\S]*<EvolutionWorkbenchShell[\s\S]*v-model:active-tab="activeTab"[\s\S]*@select-role="evolutionStore\.selectRole"[\s\S]*<\/EvolutionWorkbenchShell>[\s\S]*<\/LabWorkbenchShell>/)
+  assert.doesNotMatch(evolution, /import LabWorkbenchShell/)
+  assert.match(evolution, /<EvolutionWorkbenchShell[\s\S]*v-model:active-tab="activeTab"[\s\S]*@select-role="evolutionStore\.selectRole"/)
   assert.match(evolution, /<EvolutionProposalReviewPanel v-if="activeTab === 'review'" :evo="evo" \/>/)
 })
 

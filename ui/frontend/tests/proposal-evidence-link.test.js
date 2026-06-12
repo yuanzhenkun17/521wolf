@@ -11,6 +11,10 @@ const evolutionWorkbench = readFileSync(
   new URL('../src/composables/useEvolutionWorkbench.ts', import.meta.url),
   'utf8'
 )
+const evolutionNormalizers = readFileSync(
+  new URL('../src/composables/evolutionNormalizers.ts', import.meta.url),
+  'utf8'
+)
 
 test('Proposal review renders evidence and counter evidence through EvidenceLink', () => {
   assert.match(proposalPanel, /import EvidenceLink from '\.\.\/history\/EvidenceLink\.vue'/)
@@ -61,15 +65,15 @@ test('Proposal review evidence game ids deep-link to Logs archive workspace', ()
 })
 
 test('Proposal review surfaces reject buffer dedupe and overfit audit results', () => {
-  assert.match(evolutionWorkbench, /function normalizeRejectBuffer\(proposal, risk = \{\}\)/)
-  assert.match(evolutionWorkbench, /proposal\?\.reject_buffer/)
-  assert.match(evolutionWorkbench, /proposal\?\.rejectBuffer/)
-  assert.match(evolutionWorkbench, /proposal\?\.reject_result/)
-  assert.match(evolutionWorkbench, /similarity\.duplicate_rejected/)
-  assert.match(evolutionWorkbench, /buffer\.dedupe_key \|\| buffer\.dedupeKey/)
-  assert.match(evolutionWorkbench, /proposal\?\.overfit_risk_score/)
-  assert.match(evolutionWorkbench, /matchedRejection\.source_run_id/)
-  assert.match(evolutionWorkbench, /rejectBuffer,\s*\n\s*gateDecision:/)
+  assert.match(evolutionNormalizers, /function normalizeRejectBuffer\(proposal, risk = \{\}\)/)
+  assert.match(evolutionNormalizers, /proposal\?\.reject_buffer/)
+  assert.match(evolutionNormalizers, /proposal\?\.rejectBuffer/)
+  assert.match(evolutionNormalizers, /proposal\?\.reject_result/)
+  assert.match(evolutionNormalizers, /similarity\.duplicate_rejected/)
+  assert.match(evolutionNormalizers, /buffer\.dedupe_key \|\| buffer\.dedupeKey/)
+  assert.match(evolutionNormalizers, /proposal\?\.overfit_risk_score/)
+  assert.match(evolutionNormalizers, /matchedRejection\.source_run_id/)
+  assert.match(evolutionNormalizers, /rejectBuffer,\s*\n\s*gateDecision:/)
 
   assert.match(proposalPanel, /function rejectBufferStatusLabel\(buffer = \{\}\)/)
   assert.match(proposalPanel, /function rejectBufferMatchedLabel\(matched = \{\}\)/)
