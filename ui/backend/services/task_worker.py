@@ -5,12 +5,20 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import json
+import os
 import time
 from typing import Any
 
 from app.util.time import beijing_now
 from storage.ui.task_queue_repo import TaskQueueRepository
 from storage.ui.task_worker_repo import TaskWorkerRepository
+
+_DEFAULT_KIND_CONCURRENCY_LIMITS = {
+    "benchmark_batch": 1,
+    "evolution_batch": 1,
+    "evolution_run": 1,
+}
 
 
 class TaskCancelled(RuntimeError):
@@ -153,6 +161,7 @@ class TaskWorker:
         after_repository_update: Callable[[], None] | None = None,
         event_publisher: Callable[[dict[str, Any], str | None], Any] | None = None,
         worker_heartbeat: Callable[[str], None] | None = None,
+        kind_concurrency_limits: Mapping[str, int] | None = None,
     ) -> None:
         self._repository = repository
         self.registry = executors if isinstance(executors, TaskExecutorRegistry) else TaskExecutorRegistry(executors)
@@ -162,6 +171,7 @@ class TaskWorker:
         self._after_repository_update = after_repository_update
         self._event_publisher = event_publisher
         self._worker_heartbeat = worker_heartbeat
+        self._kind_concurrency_limits = _normalize_kind_concurrency_limits(kind_concurrency_limits)
 
     def run_once(self) -> TaskWorkerRunResult:
         kinds = self.registry.kinds()
@@ -174,6 +184,7 @@ class TaskWorker:
             now=now.isoformat(),
             lease_expires_at=(now + timedelta(seconds=self._lease_seconds)).isoformat(),
             kinds=kinds,
+            kind_concurrency_limits=self._kind_concurrency_limits,
         )
         if task is None:
             return TaskWorkerRunResult(task_id=None, kind=None, status="idle")
@@ -314,6 +325,7 @@ class TaskWorkerLoop:
         poll_interval_seconds: float = 1.0,
         clock: Callable[[], datetime] = beijing_now,
         event_publisher: Callable[[dict[str, Any], str | None], Any] | None = None,
+        kind_concurrency_limits: Mapping[str, int] | None = None,
     ) -> None:
         self._connection_factory = connection_factory
         self.registry = executors if isinstance(executors, TaskExecutorRegistry) else TaskExecutorRegistry(executors)
@@ -322,6 +334,11 @@ class TaskWorkerLoop:
         self._poll_interval_seconds = float(poll_interval_seconds)
         self._clock = clock
         self._event_publisher = event_publisher
+        self._kind_concurrency_limits = _normalize_kind_concurrency_limits(
+            kind_concurrency_limits
+            if kind_concurrency_limits is not None
+            else _kind_concurrency_limits_from_environment()
+        )
 
     def run_once(self) -> TaskWorkerRunResult:
         conn = self._connection_factory()
@@ -338,6 +355,7 @@ class TaskWorkerLoop:
                 clock=self._clock,
                 after_repository_update=conn.commit,
                 event_publisher=self._event_publisher,
+                kind_concurrency_limits=self._kind_concurrency_limits,
                 worker_heartbeat=lambda task_id: self._record_worker_heartbeat(
                     conn,
                     status="running",
@@ -427,6 +445,34 @@ def _truthy(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
     return bool(value)
+
+
+def _kind_concurrency_limits_from_environment() -> dict[str, int]:
+    raw = os.environ.get("UI_TASK_KIND_CONCURRENCY_LIMITS")
+    if raw is None or not raw.strip():
+        return dict(_DEFAULT_KIND_CONCURRENCY_LIMITS)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return dict(_DEFAULT_KIND_CONCURRENCY_LIMITS)
+    if not isinstance(parsed, dict):
+        return dict(_DEFAULT_KIND_CONCURRENCY_LIMITS)
+    return _normalize_kind_concurrency_limits(parsed)
+
+
+def _normalize_kind_concurrency_limits(limits: Mapping[str, Any] | None) -> dict[str, int]:
+    normalized: dict[str, int] = {}
+    for kind, raw_limit in (limits or {}).items():
+        name = str(kind).strip()
+        if not name:
+            continue
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError):
+            continue
+        if limit > 0:
+            normalized[name] = limit
+    return normalized
 
 
 __all__ = [

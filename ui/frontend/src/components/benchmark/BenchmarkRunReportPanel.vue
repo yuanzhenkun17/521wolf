@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import JudgeEvidencePanel from '../history/JudgeEvidencePanel.vue'
 
 const props = defineProps({
@@ -682,9 +682,19 @@ const topDiagnosticCaption = computed(() =>
     : '未加载'
 )
 
+onMounted(() => {
+  void props.benchmark.loadBenchmarkReportHistory({ silent: false })
+  if (selectedBatchId.value) {
+    void props.benchmark.loadBenchmarkBatchSection('report', selectedBatchId.value)
+  }
+})
+
 watch(selectedRunId, () => {
   selectedReportExportArtifact.value = null
   exportState.value = ''
+  if (selectedBatchId.value) {
+    void props.benchmark.loadBenchmarkBatchSection('report', selectedBatchId.value)
+  }
 })
 
 const markdownReport = computed(() => {

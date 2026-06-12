@@ -13,6 +13,7 @@ type RuntimeAction = (...args: unknown[]) => unknown
 type BenchmarkRuntimeActions = {
   refreshAll?: RuntimeAction
   selectBenchmarkBatch?: RuntimeAction
+  loadBenchmarkBatchSection?: RuntimeAction
   [key: string]: RuntimeAction | undefined
 }
 
@@ -642,6 +643,7 @@ export const useBenchmarkStore = defineStore('benchmark', () => {
     loadBenchmarkReportHistory: (...args: unknown[]) => runRuntimeAction('loadBenchmarkReportHistory', ...args),
     loadBenchmarkDiagnosticsAggregate: (...args: unknown[]) => runRuntimeAction('loadBenchmarkDiagnosticsAggregate', ...args),
     loadBenchmarkBatchDetail: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchDetail', ...args),
+    loadBenchmarkBatchSection: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchSection', ...args),
     loadBenchmarkBatchGamesPage: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchGamesPage', ...args),
     loadNextBenchmarkBatchGamesPage: (...args: unknown[]) => runRuntimeAction('loadNextBenchmarkBatchGamesPage', ...args),
     loadBenchmarkBatchDiagnostics: (...args: unknown[]) => runRuntimeAction('loadBenchmarkBatchDiagnostics', ...args),

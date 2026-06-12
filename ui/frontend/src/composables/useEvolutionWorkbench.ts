@@ -186,11 +186,12 @@ function progressFromCount(completed, target, fallbackLabel = '等待') {
   return { percent: 0, label: fallbackLabel }
 }
 
-function progressWithExplicit(explicit, completed, target, fallbackLabel = '等待') {
+function progressWithExplicit(explicit, completed, target, fallbackLabel = '等待', options = {}) {
   const counted = progressFromCount(completed, target, fallbackLabel)
-  if ((finiteNumber(target) ?? 0) > 0) return counted
+  if (options.countFirst && (finiteNumber(target) ?? 0) > 0) return counted
   const pct = percentValue(explicit)
   if (pct == null) return counted
+  if ((finiteNumber(target) ?? 0) > 0 && pct === 0 && counted.percent > 0) return counted
   return {
     percent: pct,
     label: counted.label === fallbackLabel ? `${pct}%` : counted.label
@@ -359,7 +360,8 @@ function buildRunProgress(run, trainingSamples, battleSamples, currentStage) {
     stageProgress.percent ?? progress.percent,
     stageProgress.completed_games ?? progress.completed_games,
     stageProgress.target_games ?? progress.target_games,
-    '等待'
+    '等待',
+    { countFirst: true }
   )
   const overallTarget = maxFinite(
     overallProgress.total,
@@ -477,6 +479,16 @@ function normalizeRun(run) {
     diagnosticCount: Array.isArray(run?.diagnostics) ? run.diagnostics.length : 0,
     warningCount: Array.isArray(run?.warnings) ? run.warnings.length : 0,
     errorCount: Number(run?.error_count ?? (Array.isArray(run?.errors) ? run.errors.length : 0)),
+    interrupted: Boolean(run?.interrupted || run?.status === 'interrupted'),
+    interruptedAt: run?.interrupted_at || '',
+    resumeFromStage: run?.resume_from_stage || run?.checkpoint?.stage || run?.overall_progress?.stage || '',
+    canResume: Boolean(
+      run?.resumable ||
+      run?.can_resume ||
+      run?.resume_available ||
+      run?.interrupted ||
+      run?.status === 'interrupted'
+    ),
     isReviewing: run?.status === 'reviewing',
     isTerminal: EVOLUTION_TERMINAL_STATUSES.has(run?.status),
     isActive: EVOLUTION_ACTIVE_STATUSES.has(run?.status)
@@ -1936,6 +1948,7 @@ function evolutionNoticeFromError(error, fallback = '操作失败', context = ''
 }
 
 function runActionSuccessMessage(action) {
+  if (action === 'resume') return '运行已从断点恢复。'
   if (action === 'promote') return '运行已晋升。'
   if (action === 'reject') return '运行已拒绝。'
   if (action === 'terminate') return '运行已终止。'
@@ -1975,6 +1988,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   const selectedDiff = ref([])
   const selectedDiffData = ref(null)
   const selectedProposalReview = ref<LooseRecord>(normalizeProposalReview(null, null, { source: 'none' }))
+  const loadedRunArtifacts = ref<Record<string, LooseRecord>>({})
   const selectedGames = ref(emptySampleGames())
   const selectedGameBucket = ref('training')
   const selectedGameId = ref('')
@@ -2131,7 +2145,10 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
         diffCount: 0,
         diagnosticCount: 0,
         warningCount: 0,
-        errorCount: 0
+        errorCount: 0,
+        interrupted: false,
+        canResume: false,
+        resumeFromStage: ''
       }
     }
     return {
@@ -2159,7 +2176,10 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       diffCount: run.diffCount,
       diagnosticCount: run.diagnosticCount,
       warningCount: run.warningCount,
-      errorCount: run.errorCount
+      errorCount: run.errorCount,
+      interrupted: run.interrupted,
+      canResume: run.canResume,
+      resumeFromStage: run.resumeFromStage
     }
   })
   const sampleBuckets = computed(() => [
@@ -2595,7 +2615,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       if (!selectedRunId.value) {
         pending.push('run')
       } else {
-        if (!selectedProposalReview.value || selectedProposalReview.value.source === 'none') {
+        if (!loadedRunArtifacts.value[selectedRunId.value]?.proposals) {
           await loadProposalReview(selectedRunId.value)
         }
         if (!proposalDeepLinkResolved(proposalId)) pending.push('proposal')
@@ -2665,9 +2685,9 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     selectedRole.value = role
   }
 
-  async function loadRoles() {
+  async function loadRoles({ includeOverview = false } = {}) {
     const token = roleRequests.next()
-    try {
+    if (includeOverview) try {
       const overview = await apiFetch('/roles/overview')
       if (!token.isLatest()) return false
       roles.value = overview.roles || []
@@ -2691,9 +2711,6 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     roles.value = data.roles || []
     if (!selectedRole.value && roles.value.length) selectedRole.value = roles.value[0]
     if (!selectedBatchRoles.value.length) selectedBatchRoles.value = roles.value.slice()
-    await Promise.all(roles.value.map(async (role) => {
-      await Promise.all([loadVersions(role), loadLeaderboard(role)])
-    }))
     return token.isLatest()
   }
 
@@ -2821,8 +2838,11 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     if (!silent) loading.value = true
     setError('')
     try {
-      await Promise.all([loadRoles(), loadModelProfiles()])
+      await Promise.all([loadRoles({ includeOverview: true }), loadModelProfiles()])
       if (!token.isLatest()) return
+      if (selectedRole.value && !versionsByRole.value[selectedRole.value]) {
+        await loadVersions(selectedRole.value)
+      }
       const { pageRuns, pageBatches, pagination } = await fetchRunPage(0)
       if (!token.isLatest()) return
       runs.value = pageRuns
@@ -2852,6 +2872,10 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     selectedRun.value = loaded
     rememberRunDetail(loaded)
     if (selectedRun.value?.role) selectRole(selectedRun.value.role)
+    loadedRunArtifacts.value = { ...loadedRunArtifacts.value, [id]: {} }
+    clearDiffSelection()
+    clearProposalReview()
+    clearSampleSelection()
     if (selectedRun.value?.entityType === 'batch') {
       clearDiffSelection()
       clearProposalReview({
@@ -2862,12 +2886,6 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
         unsupported: true,
         message: '批量任务不直接提供样本局和 diff，请在子运行中查看单角色详情。'
       })
-    } else {
-      void Promise.all([
-        loadDiff(id, { parentToken: token }),
-        loadRunGames(id, { parentToken: token }),
-        loadProposalReview(id, { parentToken: token })
-      ])
     }
     if (!token.isLatest() || selectedRunId.value !== id) return
     if (selectedRun.value?.isActive) {
@@ -2904,6 +2922,10 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       } else {
         selectedDiffData.value = null
       }
+      loadedRunArtifacts.value = {
+        ...loadedRunArtifacts.value,
+        [id]: { ...(loadedRunArtifacts.value[id] || {}), diff: true }
+      }
     } catch {
       if (token.isLatest() && (!parentToken || parentToken.isLatest()) && selectedRunId.value === id) {
         selectedDiff.value = []
@@ -2924,6 +2946,10 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       const data = await apiFetch(`/evolution-runs/${encodeURIComponent(id)}/proposals`)
       if (!token.isLatest() || (parentToken && !parentToken.isLatest()) || selectedRunId.value !== id) return
       selectedProposalReview.value = normalizeProposalReview(data, selectedRun.value, { source: 'api' })
+      loadedRunArtifacts.value = {
+        ...loadedRunArtifacts.value,
+        [id]: { ...(loadedRunArtifacts.value[id] || {}), proposals: true }
+      }
     } catch (err) {
       if (!token.isLatest() || (parentToken && !parentToken.isLatest()) || selectedRunId.value !== id) return
       const missing = isMissingProposalEndpoint(err)
@@ -2962,8 +2988,14 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     }
   }
 
-  async function loadRunGames(id = selectedRunId.value, { parentToken = null } = {}) {
+  async function loadRunGames(
+    id = selectedRunId.value,
+    { parentToken = null, bucket = selectedGameBucket.value, force = false } = {}
+  ) {
     if (!id) return
+    const targetBucket = SAMPLE_GAME_BUCKETS.includes(bucket) ? bucket : 'training'
+    const loadedBuckets = loadedRunArtifacts.value[id]?.sampleBuckets || {}
+    if (!force && loadedBuckets[targetBucket]) return true
     const token = sampleListRequests.next()
     sampleGameLoadingMoreBucket.value = ''
     selectedSampleState.value = {
@@ -2972,43 +3004,45 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       unsupported: false,
       errorsByBucket: {}
     }
-    const pages = await Promise.all(SAMPLE_GAME_BUCKETS.map(async (bucket) => {
-      try {
-        return { bucket, ...(await fetchSampleGamePage(id, bucket, 0)), error: '' }
-      } catch (err) {
-        return {
-          bucket,
-          rows: [],
-          pagination: createPagination(sampleGamePageSize),
-          error: err?.message || `${SAMPLE_BUCKET_LABELS[bucket] || bucket}样本局读取失败`
-        }
+    let page
+    try {
+      page = { bucket: targetBucket, ...(await fetchSampleGamePage(id, targetBucket, 0)), error: '' }
+    } catch (err) {
+      page = {
+        bucket: targetBucket,
+        rows: [],
+        pagination: createPagination(sampleGamePageSize),
+        error: err?.message || `${SAMPLE_BUCKET_LABELS[targetBucket] || targetBucket}样本局读取失败`
       }
-    }))
+    }
     if (!token.isLatest() || (parentToken && !parentToken.isLatest()) || selectedRunId.value !== id) return false
-    const errorsByBucket = Object.fromEntries(pages
-      .filter((page) => page.error)
-      .map((page) => [page.bucket, page.error]))
-    selectedGames.value = Object.fromEntries(SAMPLE_GAME_BUCKETS.map((bucket) => {
-      const page = pages.find((item) => item.bucket === bucket)
-      return [bucket, page?.rows || []]
-    }))
-    sampleGamePagination.value = Object.fromEntries(SAMPLE_GAME_BUCKETS.map((bucket) => {
-      const page = pages.find((item) => item.bucket === bucket)
-      return [bucket, page?.pagination || createPagination(sampleGamePageSize)]
-    }))
+    const errorsByBucket = {
+      ...selectedSampleState.value.errorsByBucket,
+      [targetBucket]: page.error
+    }
+    selectedGames.value = { ...selectedGames.value, [targetBucket]: page.rows || [] }
+    sampleGamePagination.value = {
+      ...sampleGamePagination.value,
+      [targetBucket]: page.pagination || createPagination(sampleGamePageSize)
+    }
     selectedSampleState.value = {
       loading: false,
-      error: Object.values(errorsByBucket)[0] || '',
+      error: page.error || '',
       unsupported: false,
       errorsByBucket
     }
-    const buckets = SAMPLE_GAME_BUCKETS
-    const currentList = selectedGames.value[selectedGameBucket.value] || []
+    loadedRunArtifacts.value = {
+      ...loadedRunArtifacts.value,
+      [id]: {
+        ...(loadedRunArtifacts.value[id] || {}),
+        sampleBuckets: { ...loadedBuckets, [targetBucket]: !page.error }
+      }
+    }
+    selectedGameBucket.value = targetBucket
+    const currentList = selectedGames.value[targetBucket] || []
     const hasCurrent = currentList.some((game) => (game.game_id || game.id) === selectedGameId.value)
     if (!hasCurrent) {
-      const nextBucket = buckets.find((bucket) => selectedGames.value[bucket]?.length) || 'training'
-      selectedGameBucket.value = nextBucket
-      selectedGameId.value = selectedGames.value[nextBucket]?.[0]?.game_id || ''
+      selectedGameId.value = currentList[0]?.game_id || currentList[0]?.id || ''
     }
     if (selectedGameId.value) {
       await loadSampleGameDetail(selectedGameBucket.value, selectedGameId.value)
@@ -3120,6 +3154,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
   async function selectSampleGame(bucket, gameId) {
     if (!bucket) return
     selectedGameBucket.value = bucket
+    await loadRunGames(selectedRunId.value, { bucket })
     const rows = selectedGames.value[bucket] || []
     selectedGameId.value = gameId || rows[0]?.game_id || rows[0]?.id || ''
     if (selectedGameId.value) {
@@ -3214,7 +3249,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
               message: '批量任务不直接提供样本局和 diff，请在子运行中查看单角色详情。'
             })
           } else {
-            await Promise.all([loadDiff(id), loadRunGames(id), loadProposalReview(id)])
+            loadedRunArtifacts.value = { ...loadedRunArtifacts.value, [id]: {} }
           }
           return
         }
@@ -3225,6 +3260,31 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
       if (sse.value === source) sse.value = null
     }
   })
+
+  async function ensureEvolutionTabLoaded(tab, { force = false } = {}) {
+    const id = selectedRunId.value
+    if (!id || selectedIsBatch.value) return
+    const loaded = loadedRunArtifacts.value[id] || {}
+    if (tab === 'console' && (force || !loaded.diff)) {
+      await loadDiff(id)
+      return
+    }
+    if (tab === 'review' && (force || !loaded.proposals)) {
+      await loadProposalReview(id)
+      return
+    }
+    if (tab === 'samples') {
+      await loadRunGames(id, { bucket: selectedGameBucket.value, force })
+      return
+    }
+    if (tab === 'leaderboard' && selectedRole.value) {
+      await loadLeaderboard(selectedRole.value)
+      return
+    }
+    if (tab === 'versions' && selectedRole.value) {
+      await loadVersions(selectedRole.value)
+    }
+  }
 
   function connect(id) {
     if (!id || typeof EventSource === 'undefined') return
@@ -3606,6 +3666,7 @@ function useEvolutionWorkbench(options: LooseRecord = {}) {
     startBatch,
     runAction,
     loadProposalReview,
+    ensureEvolutionTabLoaded,
     consumeEvolutionDeepLink,
     applyEvolutionDeepLink,
     acceptProposal,

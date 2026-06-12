@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   benchmark: {
@@ -275,6 +275,21 @@ const selectedRunLabel = computed(() => {
   if (useAggregateDiagnostics.value) return diagnosticScopeLabel.value
   if (!selectedRun.value) return '未选择运行'
   return selectedRun.value.benchmarkLabel || selectedRun.value.id || selectedBatchId.value
+})
+
+async function loadActiveDiagnostics() {
+  if (selectedBatchId.value) {
+    return props.benchmark.loadBenchmarkBatchSection('diagnostics', selectedBatchId.value)
+  }
+  return props.benchmark.loadBenchmarkDiagnosticsAggregate({ silent: false })
+}
+
+onMounted(() => {
+  void loadActiveDiagnostics()
+})
+
+watch(selectedBatchId, () => {
+  void loadActiveDiagnostics()
 })
 
 watch(diagnosticGroups, (groups) => {

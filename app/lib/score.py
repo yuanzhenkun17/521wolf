@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -58,6 +60,11 @@ class BatchScoreSummary:
     avg_team_score: float = 0.0
     avg_risk_penalty: float = 0.0
     strength_score: float = 0.0
+    score_sample_size: int = 0
+    role_score_stddev: float = 0.0
+    role_score_standard_error: float = 0.0
+    role_score_ci_low: float = 0.0
+    role_score_ci_high: float = 0.0
 
 
 @dataclass(slots=True)
@@ -87,13 +94,20 @@ def aggregate_batch_scores(
 
     summary = BatchScoreSummary(batch_id=batch_id, game_count=resolved_game_count)
     n = len(scores)
+    role_scores = [float(s.role_score) for s in scores]
     summary.avg_speech_score = sum(s.speech_score for s in scores) / n
     summary.avg_vote_score = sum(s.vote_score for s in scores) / n
     summary.avg_skill_score = sum(s.skill_score for s in scores) / n
     summary.avg_logic_score = sum(s.logic_score for s in scores) / n
     summary.avg_team_score = sum(s.team_score for s in scores) / n
     summary.avg_risk_penalty = sum(s.risk_penalty for s in scores) / n
-    summary.avg_role_score = sum(s.role_score for s in scores) / n
+    summary.avg_role_score = sum(role_scores) / n
+    summary.score_sample_size = n
+    summary.role_score_stddev = statistics.stdev(role_scores) if n > 1 else 0.0
+    summary.role_score_standard_error = summary.role_score_stddev / math.sqrt(n) if n > 0 else 0.0
+    margin = 1.96 * summary.role_score_standard_error
+    summary.role_score_ci_low = max(0.0, summary.avg_role_score - margin)
+    summary.role_score_ci_high = min(10.0, summary.avg_role_score + margin)
 
     by_role: dict[str, list[float]] = {}
     for s in scores:

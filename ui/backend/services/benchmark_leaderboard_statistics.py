@@ -90,6 +90,37 @@ def _leaderboard_row_statistics(row: dict[str, Any] | None) -> dict[str, Any]:
         "ci_high": ci_high,
         "standard_error": standard_error,
         "paired_delta": paired_delta,
+        "score_sample_size": _first_int(
+            row.get("score_sample_size"),
+            summary.get("score_sample_size"),
+            default=sample_size,
+        ),
+        "score_stddev": _first_float(
+            row.get("score_stddev"),
+            row.get("role_score_stddev"),
+            summary.get("score_stddev"),
+            summary.get("role_score_stddev"),
+            default=0.0,
+        ),
+        "score_standard_error": _first_float(
+            row.get("score_standard_error"),
+            row.get("role_score_standard_error"),
+            summary.get("score_standard_error"),
+            summary.get("role_score_standard_error"),
+            default=0.0,
+        ),
+        "score_ci": _score_confidence_interval(row, summary),
+        "valid_game_count": _first_int(
+            row.get("valid_game_count"),
+            summary.get("valid_game_count"),
+            summary.get("completed_games"),
+            default=sample_size,
+        ),
+        "abnormal_game_count": _first_int(
+            row.get("abnormal_game_count"),
+            summary.get("abnormal_game_count"),
+            default=0,
+        ),
         "significant": bool(row.get("significant", False)),
         "significance_label": str(row.get("significance_label") or "待比较"),
         "warnings": warnings,
@@ -105,10 +136,27 @@ def _empty_leaderboard_statistics() -> dict[str, Any]:
         "ci_high": 0.0,
         "standard_error": 0.0,
         "paired_delta": None,
+        "score_sample_size": 0,
+        "score_stddev": 0.0,
+        "score_standard_error": 0.0,
+        "score_ci": {"low": 0.0, "high": 0.0, "level": _LEADERBOARD_CONFIDENCE_LEVEL},
+        "valid_game_count": 0,
+        "abnormal_game_count": 0,
         "significant": False,
         "significance_label": "待比较",
         "warnings": ["low_sample"],
     }
+
+
+def _score_confidence_interval(row: dict[str, Any], summary: dict[str, Any]) -> dict[str, float]:
+    for candidate in (row.get("score_ci"), row.get("role_score_ci"), summary.get("score_ci"), summary.get("role_score_ci")):
+        if isinstance(candidate, dict):
+            return {
+                "low": _first_float(candidate.get("low"), default=0.0),
+                "high": _first_float(candidate.get("high"), default=0.0),
+                "level": _first_float(candidate.get("level"), default=_LEADERBOARD_CONFIDENCE_LEVEL),
+            }
+    return {"low": 0.0, "high": 0.0, "level": _LEADERBOARD_CONFIDENCE_LEVEL}
 
 
 def _probability_from_value(value: Any) -> float:
@@ -221,18 +269,13 @@ def _leaderboard_seed_metrics(row: dict[str, Any] | None) -> dict[str, float]:
 
 
 def _leaderboard_seed_metric_key(item: dict[str, Any], index: int) -> str:
+    seed = _first_text(item.get("seed"), item.get("seed_id"), item.get("id"))
+    if seed:
+        return f"seed:{seed}"
     pair_key = _first_text(item.get("pair_key"), item.get("paired_key"), item.get("pair_id"))
     if pair_key:
         return f"pair:{pair_key}"
-    seed = _first_text(item.get("seed"), item.get("seed_id"), item.get("id"))
-    game_index = _first_text(item.get("game_index"), item.get("game_slot"), item.get("slot_index"), item.get("ordinal"))
-    if seed and game_index:
-        return f"seed:{seed}:game:{game_index}"
     game_id = _first_text(item.get("source_game_id"), item.get("game_id"))
-    if seed and game_id:
-        return f"seed:{seed}:source:{game_id}"
-    if seed:
-        return f"seed:{seed}"
     if game_id:
         return f"game:{game_id}"
     return f"index:{index}"
@@ -290,6 +333,52 @@ def _leaderboard_paired_evidence(
     return paired_delta, len(overlap), warnings
 
 
+def _paired_win_statistics(
+    row: dict[str, Any],
+    baseline: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not baseline:
+        return _empty_paired_win_statistics()
+    row_metrics = _leaderboard_seed_metrics(row)
+    baseline_metrics = _leaderboard_seed_metrics(baseline)
+    overlap = sorted(set(row_metrics).intersection(baseline_metrics))
+    deltas = [row_metrics[key] - baseline_metrics[key] for key in overlap]
+    wins = sum(1 for delta in deltas if delta > 0)
+    losses = sum(1 for delta in deltas if delta < 0)
+    ties = len(deltas) - wins - losses
+    decisive = wins + losses
+    paired_win_rate = wins / decisive if decisive else None
+    p_value = _two_sided_binomial_sign_test(wins, losses) if decisive else None
+    return {
+        "paired_wins": wins,
+        "paired_losses": losses,
+        "paired_ties": ties,
+        "paired_decisive_count": decisive,
+        "paired_win_rate": paired_win_rate,
+        "paired_p_value": p_value,
+    }
+
+
+def _empty_paired_win_statistics() -> dict[str, Any]:
+    return {
+        "paired_wins": 0,
+        "paired_losses": 0,
+        "paired_ties": 0,
+        "paired_decisive_count": 0,
+        "paired_win_rate": None,
+        "paired_p_value": None,
+    }
+
+
+def _two_sided_binomial_sign_test(wins: int, losses: int) -> float:
+    sample_size = wins + losses
+    if sample_size <= 0:
+        return 1.0
+    tail = min(wins, losses)
+    probability = sum(math.comb(sample_size, index) for index in range(tail + 1)) / (2 ** sample_size)
+    return min(1.0, 2.0 * probability)
+
+
 def _leaderboard_compare_statistics(
     row: dict[str, Any],
     baseline: dict[str, Any] | None,
@@ -304,6 +393,7 @@ def _leaderboard_compare_statistics(
     if baseline and baseline_stats["sample_size"] < _LEADERBOARD_MIN_CONFIDENT_SAMPLE_SIZE:
         warnings.append("low_sample")
     paired_delta, paired_sample_size, paired_warnings = _leaderboard_paired_evidence(row, baseline)
+    paired_win_stats = _paired_win_statistics(row, baseline)
     warnings.extend(paired_warnings)
     paired_delta_error = None
     if paired_sample_size > 0:
@@ -324,9 +414,8 @@ def _leaderboard_compare_statistics(
         and "low_sample" not in warning_codes
         and "unpaired_seeds" not in warning_codes
         and "insufficient_overlap" not in warning_codes
-        and paired_delta_error
-        and paired_delta_error > 0
-        and abs(float(paired_delta or 0.0)) > (_LEADERBOARD_Z_95 * paired_delta_error)
+        and paired_win_stats["paired_p_value"] is not None
+        and float(paired_win_stats["paired_p_value"]) < 0.05
     )
     if is_reference:
         label = "基线参考"
@@ -342,6 +431,7 @@ def _leaderboard_compare_statistics(
         **row_stats,
         "paired_sample_size": paired_sample_size,
         "paired_delta": paired_delta,
+        **paired_win_stats,
         "standard_error": row_stats["standard_error"],
         "combined_standard_error": combined_standard_error,
         "significant": statistically_significant,

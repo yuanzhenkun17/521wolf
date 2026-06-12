@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -16,9 +17,30 @@ from ui.backend.errors import domain_error_detail
 from ui.backend.evolution_serializers import _evolution_gate_report
 from ui.backend.preflight import require_runtime_ready
 from ui.backend.schemas import EvolutionStartRequest, automatic_evolution_request
-from ui.backend.settings_runtime_variables import WORKFLOW_GAME_CONCURRENCY_KEY, runtime_setting_int_for_store
+from ui.backend.settings_runtime_variables import (
+    EVOLUTION_ROLE_CONCURRENCY_KEY,
+    WORKFLOW_GAME_CONCURRENCY_KEY,
+    runtime_setting_int_for_store,
+)
 from ui.backend.services.evolution_read_service import EvolutionReadService
 from ui.backend.task_state import _set_task_contract
+
+MAX_EVOLUTION_ROLE_CONCURRENCY = 4
+
+_EVOLUTION_STAGE_START = {
+    "queued": 0.0,
+    "init": 0.0,
+    "training": 0.0,
+    "consolidating": 0.45,
+    "applying": 0.60,
+    "scenario_replay": 0.70,
+    "battling": 0.70,
+    "decide": 0.95,
+    "reviewing": 1.0,
+    "promoted": 1.0,
+    "rejected": 1.0,
+    "completed": 1.0,
+}
 
 
 class EvolutionRunService:
@@ -73,6 +95,7 @@ class EvolutionRunService:
         workflow_game_concurrency = self.workflow_game_concurrency()
         if workflow_game_concurrency is not None:
             request_config["game_concurrency"] = workflow_game_concurrency
+        request_config["role_concurrency"] = self.configured_evolution_role_concurrency(request_config)
         model_runtime = self.evolution_model_runtime(request)
         if model_runtime is not None:
             request_config["model_id"] = model_runtime["model_id"]
@@ -609,6 +632,27 @@ class EvolutionRunService:
         return value if value > 0 else None
 
     @staticmethod
+    def evolution_role_concurrency(config: dict[str, Any] | None = None) -> int:
+        configured = (config or {}).get("role_concurrency")
+        if configured in (None, ""):
+            configured = os.getenv(EVOLUTION_ROLE_CONCURRENCY_KEY, "1")
+        try:
+            value = int(configured)
+        except (TypeError, ValueError):
+            value = 1
+        return max(1, min(MAX_EVOLUTION_ROLE_CONCURRENCY, value))
+
+    def configured_evolution_role_concurrency(self, config: dict[str, Any] | None = None) -> int:
+        if isinstance(config, dict) and config.get("role_concurrency") not in (None, ""):
+            return self.evolution_role_concurrency(config)
+        value = runtime_setting_int_for_store(
+            self._context,
+            EVOLUTION_ROLE_CONCURRENCY_KEY,
+            default=self.evolution_role_concurrency(),
+        )
+        return max(1, min(MAX_EVOLUTION_ROLE_CONCURRENCY, int(value or 1)))
+
+    @staticmethod
     def count_evolution_games(value: Any) -> int:
         if isinstance(value, list):
             return len([item for item in value if isinstance(item, dict)])
@@ -624,14 +668,24 @@ class EvolutionRunService:
         battle_per_side = self.count_evolution_games(run.get("battle_game_count") or config.get("battle_games"))
         training_completed = self.count_evolution_games(run.get("training_completed") or run.get("training_games"))
         battle_completed = self.count_evolution_games(run.get("battle_completed") or run.get("battle_games"))
-        total = training_total + battle_per_side * 2
-        completed = training_completed + battle_completed
-        terminal = str(run.get("status") or "").lower() in {"reviewing", "promoted", "rejected", "completed"}
-        percent = (completed / total) if total > 0 else self._task_progress_percent(run)
+        stage = str(run.get("current_stage") or progress.get("stage") or run.get("status") or "").lower()
+        status = str(run.get("status") or "").lower()
+        terminal = status in {
+            "reviewing", "promoted", "rejected", "completed", "failed", "cancelled", "interrupted",
+        }
         if terminal:
-            percent = max(percent, 1.0)
+            percent = 1.0
+        elif stage == "training":
+            fraction = training_completed / training_total if training_total > 0 else 1.0
+            percent = 0.45 * fraction
+        elif stage == "battling":
+            battle_total = battle_per_side * 2
+            fraction = battle_completed / battle_total if battle_total > 0 else 1.0
+            percent = 0.70 + 0.25 * fraction
+        else:
+            percent = _EVOLUTION_STAGE_START.get(stage, self._task_progress_percent(run))
         return {
-            "stage": str(run.get("current_stage") or progress.get("stage") or run.get("status") or ""),
+            "stage": stage,
             "percent": max(0.0, min(1.0, float(percent))),
             "training_completed": training_completed,
             "training_total": training_total,
@@ -711,7 +765,7 @@ class EvolutionRunService:
             "status": run.get("status"),
             "current_stage": run.get("current_stage"),
             "progress": run.get("progress") if isinstance(run.get("progress"), dict) else {},
-            "overall_progress": run.get("overall_progress") if isinstance(run.get("overall_progress"), dict) else self.evolution_overall_progress(run),
+            "overall_progress": self.evolution_overall_progress(run),
             "training_completed": self.count_evolution_games(run.get("training_completed") or run.get("training_games")),
             "training_game_count": self.count_evolution_games(run.get("training_game_count")),
             "battle_completed": self.count_evolution_games(run.get("battle_completed") or run.get("battle_games")),
@@ -760,7 +814,13 @@ class EvolutionRunService:
         batch["current_stage"] = current_stage
         batch["progress"] = {
             "stage": current_stage,
-            "percent": (completed / total) if total else 0.0,
+            "percent": (
+                sum(
+                    float((item.get("overall_progress") or {}).get("percent") or 0.0)
+                    for item in summaries
+                )
+                / total
+            ) if total else 0.0,
             "completed_roles": completed,
             "role_count": total,
             "total_roles": total,
@@ -803,6 +863,27 @@ class EvolutionRunService:
             self._persist_background_tasks()
             return
         role = str(run.get("role") or "villager")
+        resume_snapshot = {
+            key: to_jsonable(run.get(key))
+            for key in (
+                "status",
+                "current_stage",
+                "parent_hash",
+                "baseline_config",
+                "candidate_hash",
+                "candidate_skill_dir",
+                "baseline_skill_dir",
+                "training_games",
+                "battle_games",
+                "battle_result",
+                "proposals",
+                "diff",
+                "diagnostics",
+                "warnings",
+                "errors",
+            )
+            if run.get(key) not in (None, [], {})
+        }
         run["status"] = "training"
         run["current_stage"] = "training"
         run.setdefault("started_at", beijing_now_iso())
@@ -818,6 +899,8 @@ class EvolutionRunService:
                     current = self.evolution_runs.get(run_id, snapshot)
                     progress_sink(self.evolution_queue_progress(current, task_id=run.get("task_id") or run_id))
 
+            runner_config = dict(run.get("config") or {})
+            runner_config["resume_snapshot"] = resume_snapshot
             result = await self.evolution_runner()(
                 role=role,
                 training_games=request.training_games,
@@ -827,7 +910,7 @@ class EvolutionRunService:
                 run_id=run_id,
                 model=self.model_for_evolution_run(request),
                 paths=self.paths,
-                config=run.get("config") if isinstance(run.get("config"), dict) else None,
+                config=runner_config,
                 progress_sink=sync_progress,
                 cancel_check=lambda: self.evolution_cancel_check(run_id, cancel_check),
             )
@@ -908,28 +991,60 @@ class EvolutionRunService:
         if progress_sink is not None:
             progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
         try:
-            for run_id in list(batch.get("runs", [])):
-                if cancel_check is not None and cancel_check():
-                    batch["stop_requested"] = True
-                    batch["cancelled"] = True
-                if batch.get("stop_requested") or batch.get("cancelled") or batch.get("status") in {"failed", "rejected"}:
-                    break
-                self._touch_background_task(batch)
-                self.refresh_evolution_batch(batch_id)
-                self._persist_background_tasks()
-                if progress_sink is not None:
-                    progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
-                await self.run_queued_evolution(
-                    str(run_id),
-                    request,
-                    cancel_check=cancel_check,
-                    progress_sink=lambda progress: progress_sink(progress) if progress_sink is not None else None,
-                )
-                self._touch_background_task(batch)
-                self.refresh_evolution_batch(batch_id)
-                self._persist_background_tasks()
-                if progress_sink is not None:
-                    progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
+            run_ids = [str(run_id) for run_id in batch.get("runs", []) or []]
+            concurrency = self.configured_evolution_role_concurrency(
+                batch.get("config") if isinstance(batch.get("config"), dict) else None
+            )
+            queue: asyncio.Queue[str] = asyncio.Queue()
+            for run_id in run_ids:
+                queue.put_nowait(run_id)
+
+            async def run_worker() -> None:
+                while not queue.empty():
+                    if cancel_check is not None and cancel_check():
+                        batch["stop_requested"] = True
+                        batch["cancelled"] = True
+                    if batch.get("stop_requested") or batch.get("cancelled"):
+                        return
+                    try:
+                        run_id = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        return
+                    run = self.evolution_runs.get(run_id)
+                    if run is None:
+                        queue.task_done()
+                        continue
+                    if str(run.get("status") or "").lower() in {
+                        "reviewing", "promoted", "rejected", "completed",
+                    }:
+                        queue.task_done()
+                        continue
+                    try:
+                        self._touch_background_task(batch)
+                        self.refresh_evolution_batch(batch_id)
+                        self._persist_background_tasks()
+                        if progress_sink is not None:
+                            progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
+                        await self.run_queued_evolution(
+                            run_id,
+                            request,
+                            cancel_check=cancel_check,
+                            progress_sink=lambda progress: progress_sink(progress) if progress_sink is not None else None,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - isolate one role
+                        run["status"] = "failed"
+                        run["error"] = str(exc)
+                        run.setdefault("errors", []).append(str(exc))
+                        _set_task_contract(run, failed=True, cancelled=False, interrupted=False)
+                    finally:
+                        queue.task_done()
+                        self._touch_background_task(batch)
+                        self.refresh_evolution_batch(batch_id)
+                        self._persist_background_tasks()
+                        if progress_sink is not None:
+                            progress_sink(self.evolution_queue_progress(batch, task_id=batch_id))
+
+            await asyncio.gather(*(run_worker() for _ in range(min(concurrency, len(run_ids)))))
             if batch.get("stop_requested") or batch.get("cancelled"):
                 batch["status"] = "failed"
                 batch["error"] = batch.get("error") or MANUAL_STOP_REASON

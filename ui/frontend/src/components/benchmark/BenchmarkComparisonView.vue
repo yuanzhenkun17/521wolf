@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 const MIN_CONFIDENT_GAMES = 30
 const STORAGE_PREFIX = 'benchmark-comparison-view'
@@ -22,6 +22,11 @@ const props = defineProps({
 })
 
 const savedViewState = ref('')
+
+onMounted(async () => {
+  await props.benchmark.loadBenchmarkViews({ silent: true })
+  await props.benchmark.loadCurrentBenchmarkView()
+})
 
 const mode = computed(() =>
   props.benchmark.selectedBenchmarkIsModelSuite.value ? 'model' : 'role_version'
@@ -359,12 +364,41 @@ function normalizeRow(row, index, currentMode) {
     percentFromFraction(row?.winRateStandardError),
     percentFromFraction(row?.se)
   )
+  const standardDeviation = numberFrom(
+    row?.standard_deviation,
+    row?.standardDeviation,
+    row?.stddev,
+    row?.std_dev,
+    row?.score_std,
+    row?.summary?.standard_deviation,
+    row?.summary?.stddev
+  )
   const pairedDelta = numberFrom(
     percentFromFraction(row?.paired_delta),
     percentFromFraction(row?.pairedDelta),
     percentFromFraction(row?.paired_win_rate_delta),
     percentFromFraction(row?.pairedWinRateDelta),
     percentFromFraction(row?.paired_delta_pct)
+  )
+  const pairedWinRate = numberFrom(
+    percentFromFraction(row?.paired_win_rate),
+    percentFromFraction(row?.pairedWinRate),
+    percentFromFraction(row?.paired_seed_win_rate),
+    percentFromFraction(row?.summary?.paired_win_rate)
+  )
+  const validGames = numberFrom(
+    row?.valid_games,
+    row?.validGames,
+    row?.completed_games,
+    row?.summary?.valid_games
+  )
+  const abnormalGames = numberFrom(
+    row?.abnormal_games,
+    row?.abnormalGames,
+    row?.invalid_games,
+    row?.failed_games,
+    row?.summary?.abnormal_games,
+    row?.summary?.invalid_games
   )
   const significant = booleanFrom(row?.significant)
   const warnings = normalizeWarnings(row, sampleSize)
@@ -391,7 +425,11 @@ function normalizeRow(row, index, currentMode) {
     pairedSampleSize,
     apiInterval: normalizeWinRateInterval(row, winRate, standardError),
     standardErrorValue: standardError,
+    standardDeviationValue: standardDeviation,
     pairedDeltaValue: pairedDelta,
+    pairedWinRateValue: pairedWinRate,
+    validGames,
+    abnormalGames,
     significantValue: significant,
     significanceLabel: normalizeSignificanceLabel(row, significant),
     warningCodes: warnings.codes,
@@ -802,6 +840,18 @@ function formatPct(value) {
   return `${Math.round(number)}%`
 }
 
+function formatOptionalNumber(value, digits = 2) {
+  if (value == null || value === '') return '--'
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '--'
+  return number.toFixed(digits)
+}
+
+function formatOptionalPct(value) {
+  if (value == null || value === '') return '--'
+  return formatPct(value)
+}
+
 function formatScore(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return '--'
@@ -964,7 +1014,7 @@ watch(viewStorageKey, () => {
               <b :class="'confidence-chip confidence-chip--' + row.confidenceTone">
                 {{ row.confidenceLabel }}
               </b>
-              <small>{{ formatInterval(row.interval) }} / SE {{ formatStandardError(row.standardErrorValue) }}</small>
+              <small>95%置信区间 {{ formatInterval(row.interval) }} / 标准差 {{ formatOptionalNumber(row.standardDeviationValue) }}</small>
               <small v-if="row.warningText">{{ row.warningText }}</small>
             </span>
             <span v-if="isColumnEnabled('fallback')">{{ formatPct(row.fallbackRateValue) }}</span>
@@ -977,7 +1027,8 @@ watch(viewStorageKey, () => {
             </span>
             <span v-if="isColumnEnabled('games')" class="sample-cell">
               <b>{{ row.sampleSize }} 样本</b>
-              <small>配对 {{ row.pairedSampleSize ?? 0 }}</small>
+              <small>有效 {{ row.validGames ?? '--' }} / 异常 {{ row.abnormalGames ?? '--' }}</small>
+              <small>配对 {{ row.pairedSampleSize ?? 0 }} / 胜率 {{ formatOptionalPct(row.pairedWinRateValue) }}</small>
             </span>
           </template>
 
@@ -997,7 +1048,7 @@ watch(viewStorageKey, () => {
               <b :class="'confidence-chip confidence-chip--' + row.confidenceTone">
                 {{ row.confidenceLabel }}
               </b>
-              <small>{{ formatInterval(row.interval) }} / SE {{ formatStandardError(row.standardErrorValue) }}</small>
+              <small>95%置信区间 {{ formatInterval(row.interval) }} / 标准差 {{ formatOptionalNumber(row.standardDeviationValue) }}</small>
               <small v-if="row.warningText">{{ row.warningText }}</small>
             </span>
             <span v-if="isColumnEnabled('rankable')">
@@ -1007,7 +1058,8 @@ watch(viewStorageKey, () => {
             </span>
             <span v-if="isColumnEnabled('games')" class="sample-cell">
               <b>{{ row.sampleSize }} 样本</b>
-              <small>配对 {{ row.pairedSampleSize ?? 0 }}</small>
+              <small>有效 {{ row.validGames ?? '--' }} / 异常 {{ row.abnormalGames ?? '--' }}</small>
+              <small>配对 {{ row.pairedSampleSize ?? 0 }} / 胜率 {{ formatOptionalPct(row.pairedWinRateValue) }}</small>
             </span>
           </template>
         </div>

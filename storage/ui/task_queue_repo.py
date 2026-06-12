@@ -162,20 +162,28 @@ class TaskQueueRepository:
         now: str,
         lease_expires_at: str,
         kinds: Iterable[str] | None = None,
+        kind_concurrency_limits: dict[str, int] | None = None,
     ) -> dict[str, Any] | None:
         kind_values = [str(kind) for kind in kinds or [] if str(kind)]
+        limits = {
+            str(kind): max(1, int(limit))
+            for kind, limit in (kind_concurrency_limits or {}).items()
+            if str(kind) and int(limit) > 0
+        }
         if callable(getattr(self._conn, "execute_for_update", None)):
             return self._claim_next_postgres(
                 worker_id=worker_id,
                 now=now,
                 lease_expires_at=lease_expires_at,
                 kind_values=kind_values,
+                kind_concurrency_limits=limits,
             )
         return self._claim_next_portable(
             worker_id=worker_id,
             now=now,
             lease_expires_at=lease_expires_at,
             kind_values=kind_values,
+            kind_concurrency_limits=limits,
         )
 
     def _claim_next_portable(
@@ -185,8 +193,14 @@ class TaskQueueRepository:
         now: str,
         lease_expires_at: str,
         kind_values: list[str],
+        kind_concurrency_limits: dict[str, int],
     ) -> dict[str, Any] | None:
         kind_filter = ""
+        quota_filter, quota_parameters = _portable_kind_quota_sql(
+            kind_concurrency_limits,
+            candidate_alias="candidate_task",
+            now=now,
+        )
         set_parameters: list[Any] = [
             worker_id,
             lease_expires_at,
@@ -207,14 +221,15 @@ class TaskQueueRepository:
             "updated_at = ?, "
             "attempt = attempt + 1 "
             "WHERE task_id = ("
-            "SELECT task_id FROM ui_task_queue "
-            "WHERE status = 'queued' AND cancel_requested = ? "
+            "SELECT candidate_task.task_id FROM ui_task_queue AS candidate_task "
+            "WHERE candidate_task.status = 'queued' AND candidate_task.cancel_requested = ? "
             f"{kind_filter}"
+            f"{quota_filter}"
             "ORDER BY priority ASC, queued_at ASC, task_id ASC LIMIT 1"
             ") "
             "AND status = 'queued' AND cancel_requested = ? "
             f"RETURNING {_task_columns_sql()}",
-            (*set_parameters, *where_parameters, False),
+            (*set_parameters, *where_parameters, *quota_parameters, False),
         ).fetchone()
         return _task_from_row(row) if row is not None else None
 
@@ -225,6 +240,7 @@ class TaskQueueRepository:
         now: str,
         lease_expires_at: str,
         kind_values: list[str],
+        kind_concurrency_limits: dict[str, int],
     ) -> dict[str, Any] | None:
         kind_filter = ""
         candidate_parameters: list[Any] = [False]
@@ -232,11 +248,17 @@ class TaskQueueRepository:
             placeholders = ", ".join("?" for _ in kind_values)
             kind_filter = f"AND kind IN ({placeholders}) "
             candidate_parameters.extend(kind_values)
+        quota_filter, quota_parameters = _postgres_kind_quota_sql(
+            kind_concurrency_limits,
+            candidate_alias="candidate_task",
+            now=now,
+        )
         row = self._conn.execute(
             "WITH candidate AS ("
-            "SELECT task_id FROM ui_task_queue "
-            "WHERE status = 'queued' AND cancel_requested = ? "
+            "SELECT candidate_task.task_id FROM ui_task_queue AS candidate_task "
+            "WHERE candidate_task.status = 'queued' AND candidate_task.cancel_requested = ? "
             f"{kind_filter}"
+            f"{quota_filter}"
             "ORDER BY priority ASC, queued_at ASC, task_id ASC "
             "FOR UPDATE SKIP LOCKED LIMIT 1"
             ") "
@@ -253,6 +275,7 @@ class TaskQueueRepository:
             f"RETURNING {_task_columns_sql('q')}",
             (
                 *candidate_parameters,
+                *quota_parameters,
                 worker_id,
                 lease_expires_at,
                 now,
@@ -355,6 +378,51 @@ class TaskQueueRepository:
             (now, now),
         )
         return int(cursor.rowcount)
+
+
+def _portable_kind_quota_sql(
+    limits: dict[str, int],
+    *,
+    candidate_alias: str,
+    now: str,
+) -> tuple[str, list[Any]]:
+    if not limits:
+        return "", []
+    clauses: list[str] = []
+    parameters: list[Any] = []
+    for kind, limit in sorted(limits.items()):
+        clauses.append(
+            f"({candidate_alias}.kind = ? AND "
+            "(SELECT COUNT(*) FROM ui_task_queue AS active_task "
+            "WHERE active_task.kind = ? AND active_task.status = 'running' "
+            "AND active_task.lease_expires_at IS NOT NULL AND active_task.lease_expires_at > ?) < ?)"
+        )
+        parameters.extend((kind, kind, now, limit))
+    placeholders = ", ".join("?" for _ in limits)
+    return (
+        f"AND ({candidate_alias}.kind NOT IN ({placeholders}) OR {' OR '.join(clauses)}) ",
+        [*sorted(limits), *parameters],
+    )
+
+
+def _postgres_kind_quota_sql(
+    limits: dict[str, int],
+    *,
+    candidate_alias: str,
+    now: str,
+) -> tuple[str, list[Any]]:
+    quota_sql, parameters = _portable_kind_quota_sql(
+        limits,
+        candidate_alias=candidate_alias,
+        now=now,
+    )
+    if not quota_sql:
+        return "", []
+    return (
+        quota_sql
+        + f"AND pg_try_advisory_xact_lock(hashtextextended('ui-task-kind:' || {candidate_alias}.kind, 0)) ",
+        parameters,
+    )
 
 
 def _task_columns_sql(table_alias: str | None = None) -> str:

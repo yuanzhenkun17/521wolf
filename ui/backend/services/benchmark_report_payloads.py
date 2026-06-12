@@ -357,6 +357,11 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(summary, dict):
             summary = {}
         summary_payload = sanitize_model_runtime_containers(summary)
+        score_summary = (
+            summary_payload.get("score_summary")
+            if isinstance(summary_payload.get("score_summary"), dict)
+            else {}
+        )
         result_batch_id = _benchmark_result_batch_id(result) or f"{batch_id}_result_{index}"
         target_role = _benchmark_result_role(result)
         rankable = result.get("rankable")
@@ -376,6 +381,15 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
                 "rankable_reason": str(result.get("rankable_reason") or result.get("leaderboard_skipped_reason") or ""),
                 "completed": result.get("completed"),
                 "errored": result.get("errored"),
+                "valid_game_count": result.get("completed", summary_payload.get("valid_game_count")),
+                "abnormal_game_count": sum(
+                    int(result.get(key) or 0)
+                    for key in ("invalid", "timeout", "abnormal", "errored")
+                ),
+                "score_sample_size": score_summary.get("score_sample_size"),
+                "score_stddev": score_summary.get("role_score_stddev"),
+                "score_standard_error": score_summary.get("role_score_standard_error"),
+                "score_ci": score_summary.get("role_score_ci"),
             }
         )
 
@@ -418,6 +432,8 @@ def _benchmark_run_report_payload(batch: dict[str, Any]) -> dict[str, Any]:
         "problem_game_count": len(problem_games),
         "diagnostic_summary": _benchmark_diagnostic_summary(diagnostics),
         "diagnostic_group_count": len(diagnostic_groups),
+        "valid_game_count": sum(int(row.get("valid_game_count") or 0) for row in result_rows),
+        "abnormal_game_count": sum(int(row.get("abnormal_game_count") or 0) for row in result_rows),
     }
     report_id = f"benchmark_report:{batch_id}"
     payload = {

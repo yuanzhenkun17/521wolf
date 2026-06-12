@@ -300,6 +300,9 @@ function retryRefresh() {
             <strong>{{ activeTabLabel }}</strong>
           </span>
           <b>{{ runSummary.statusLabel || '—' }}</b>
+          <small v-if="runSummary.canResume" class="evo-context-resume">
+            可从 {{ runSummary.resumeFromStage || '最近检查点' }} 续跑
+          </small>
         </header>
 
         <section class="evo-context-section">

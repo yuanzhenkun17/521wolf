@@ -24,6 +24,8 @@ _FALSE_VALUES = {"0", "false", "no", "off"}
 _SETTINGS_ADMIN_KEYS = ("SETTINGS_ADMIN_ENABLED", "SETTINGS_ADMIN_TOKEN")
 _LLM_ENV_LOCK_KEYS = ("WEREWOLF_LLM_API_KEY", "WEREWOLF_LLM_BASE_URL", "WEREWOLF_LLM_MODEL")
 WORKFLOW_GAME_CONCURRENCY_KEY = "WEREWOLF_GAME_CONCURRENCY"
+BENCHMARK_ROLE_CONCURRENCY_KEY = "BENCHMARK_ROLE_CONCURRENCY"
+EVOLUTION_ROLE_CONCURRENCY_KEY = "WEREWOLF_EVOLUTION_ROLE_CONCURRENCY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +72,26 @@ _RUNTIME_VARIABLES: tuple[RuntimeVariableDefinition, ...] = (
         description="控制 Benchmark、自进化训练和自进化对战的并发对局数；0 表示使用系统默认。",
         minimum=0,
         maximum=64,
+    ),
+    RuntimeVariableDefinition(
+        key=BENCHMARK_ROLE_CONCURRENCY_KEY,
+        label="评测角色并发数",
+        value_type="integer",
+        default=2,
+        state="next_task",
+        description="控制一个批量评测中同时运行的角色数；实际并发仍受多局和 Judge 总预算约束。",
+        minimum=1,
+        maximum=8,
+    ),
+    RuntimeVariableDefinition(
+        key=EVOLUTION_ROLE_CONCURRENCY_KEY,
+        label="自进化角色并发数",
+        value_type="integer",
+        default=2,
+        state="next_task",
+        description="控制一个自进化批次中同时运行的角色数；建议单机保持 1-2。",
+        minimum=1,
+        maximum=4,
     ),
     RuntimeVariableDefinition(
         key="HEALTH_LLM_PROBE_TTL_SECONDS",

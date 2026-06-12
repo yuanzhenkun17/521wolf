@@ -167,6 +167,9 @@ uv run uvicorn ui.backend.main:app --reload --host 127.0.0.1 --port 8000
 | `SETTINGS_SECRET_ENCRYPTION_KEY` | 保存模型 Profile API Key 必需，必须保持稳定；轮换后旧密钥需要重新录入。 |
 | `WOLF_USE_PG_TASK_QUEUE` / `TASK_WORKER_REQUIRED` | 可选的 PostgreSQL 长任务队列和 worker 健康门禁控制。 |
 | `WEREWOLF_GAME_CONCURRENCY` | 可选的多局并发上限，同时用于评测、自进化训练和自进化对战。 |
+| `BENCHMARK_ROLE_CONCURRENCY` / `WEREWOLF_EVOLUTION_ROLE_CONCURRENCY` | 单个批量任务内的角色并发上限，仍受多局、Judge 和任务类型全局配额约束。 |
+| `UI_TASK_KIND_CONCURRENCY_LIMITS` | 所有 PostgreSQL worker 共享的任务类型并发配额，JSON 对象。 |
+| `UI_BACKGROUND_PERSIST_INTERVAL_SECONDS` | 运行中任务快照的增量持久化节流秒数，终态不受节流影响。 |
 | `WEREWOLF_JUDGE_CONCURRENCY` | 未显式配置 Judge 策略时使用的评审并发上限。 |
 | `WEREWOLF_LLM_MAX_CONCURRENCY` | 单个事件循环内游戏、Judge 等 LLM 请求的总并发上限。 |
 | `WEREWOLF_GAME_TIMEOUT` / `WEREWOLF_BATCH_GAME_TIMEOUT` | 可选的单局和批量任务超时。 |

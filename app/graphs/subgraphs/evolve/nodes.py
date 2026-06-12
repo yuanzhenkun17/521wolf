@@ -35,14 +35,25 @@ from app.lib.evolve import (
 _log = logging.getLogger(__name__)
 
 _STAGE_PROGRESS = {
-    "init": 0.05,
-    "training": 0.25,
+    "init": 0.0,
+    "training": 0.0,
     "consolidating": 0.45,
-    "applying": 0.65,
-    "scenario_replay": 0.75,
-    "battling": 0.85,
+    "applying": 0.60,
+    "scenario_replay": 0.70,
+    "battling": 0.70,
     "decide": 0.95,
     "done": 1.0,
+}
+
+_STAGE_ORDER = {
+    "init": 0,
+    "training": 1,
+    "consolidating": 2,
+    "applying": 3,
+    "scenario_replay": 4,
+    "battling": 5,
+    "decide": 6,
+    "done": 7,
 }
 
 _AGENT_RUNTIME_CONFIG_KEYS: tuple[str, ...] = (
@@ -216,6 +227,14 @@ async def init_evolve_node(state: EvolveState) -> dict:
     defaults = EvolutionConfig()
     role = state.get("role") or state.get("config", {}).get("role") or "villager"
     cfg = dict(state.get("config", {}))
+    resume_snapshot = cfg.pop("resume_snapshot", None)
+    if isinstance(resume_snapshot, dict):
+        state["resume_stage"] = str(
+            resume_snapshot.get("current_stage") or resume_snapshot.get("status") or ""
+        ).lower()
+        for key, value in resume_snapshot.items():
+            if key not in {"status", "current_stage"} and value not in (None, [], {}):
+                state[key] = value
     cfg.setdefault("training_games", state.get("training_game_count", defaults.training_games))
     cfg.setdefault("battle_games", state.get("battle_game_count", defaults.battle_games))
     cfg.setdefault("max_days", defaults.max_days)
@@ -239,10 +258,16 @@ async def init_evolve_node(state: EvolveState) -> dict:
     state["config"] = cfg
     state["run_id"] = run_id
     state.setdefault("started_at", beijing_now_iso())
+    resumed_parent_hash = state.get("parent_hash")
+    resumed_baseline_config = state.get("baseline_config")
+    resumed_baseline_dir = state.get("baseline_skill_dir")
     parent_hash, baseline_config = _freeze_baseline(state, role, cfg)
-    state["parent_hash"] = parent_hash
-    state["baseline_config"] = baseline_config
-    baseline_skill_dir = _resolve_baseline_skill_dir(state, baseline_config)
+    state["parent_hash"] = resumed_parent_hash or parent_hash
+    state["baseline_config"] = resumed_baseline_config or baseline_config
+    baseline_skill_dir = resumed_baseline_dir or _resolve_baseline_skill_dir(
+        state,
+        state["baseline_config"],
+    )
     if baseline_skill_dir is not None:
         state["baseline_skill_dir"] = baseline_skill_dir
     state.setdefault("candidate_hash", None)
@@ -269,7 +294,19 @@ async def training_node(state: EvolveState) -> dict:
     training_games = int(cfg.get("training_games", defaults.training_games) or 0)
     max_days = int(cfg.get("max_days", 20) or 20)
     seed_start = int(cfg.get("seed_start", 0) or 0)
-    _log.info("training: role=%s games=%d", role, training_games)
+    existing_games = _games_by_expected_seed(
+        state.get("training_games", []),
+        seed_start=seed_start,
+        count=training_games,
+    )
+    missing_indices = [index for index in range(training_games) if seed_start + index not in existing_games]
+    _log.info(
+        "training: role=%s games=%d recovered=%d missing=%d",
+        role,
+        training_games,
+        len(existing_games),
+        len(missing_indices),
+    )
     _mark_stage(
         state,
         "training",
@@ -277,24 +314,28 @@ async def training_node(state: EvolveState) -> dict:
         progress={"target_games": training_games, "completed_games": len(state.get("training_games", []))},
     )
     try:
-        games = await _run_games(
-            state,
-            count=training_games,
-            seed_start=seed_start,
-            max_days=max_days,
-            label="train",
-        )
-        state["training_games"] = await _attach_training_evidence(
-            games,
-            role=role,
-            model=state.get("model"),
-            enable_judge=_training_judge_enabled(cfg),
-            judge_max_decisions=_training_judge_max_decisions(cfg),
-            judge_concurrency=_training_judge_concurrency(cfg),
-            judge_timeout_seconds=_training_judge_timeout_seconds(cfg),
-            judge_fn=state.get("decision_judge_fn"),
-            warnings=state.setdefault("warnings", []),
-        )
+        if missing_indices:
+            games = await _run_games(
+                state,
+                count=len(missing_indices),
+                seed_start=seed_start,
+                max_days=max_days,
+                label="train",
+                indices=missing_indices,
+            )
+            enriched = await _attach_training_evidence(
+                games,
+                role=role,
+                model=state.get("model"),
+                enable_judge=_training_judge_enabled(cfg),
+                judge_max_decisions=_training_judge_max_decisions(cfg),
+                judge_concurrency=_training_judge_concurrency(cfg),
+                judge_timeout_seconds=_training_judge_timeout_seconds(cfg),
+                judge_fn=state.get("decision_judge_fn"),
+                warnings=state.setdefault("warnings", []),
+            )
+            existing_games.update({int(game["seed"]): game for game in enriched})
+        state["training_games"] = [existing_games[seed] for seed in sorted(existing_games)]
         _mark_stage(
             state,
             "training",
@@ -303,7 +344,7 @@ async def training_node(state: EvolveState) -> dict:
         )
     except BatchAbortedError as exc:
         _log.error("training: aborted for role=%s: %s", role, exc)
-        state["training_games"] = []
+        state["training_games"] = [existing_games[seed] for seed in sorted(existing_games)]
         message = f"training: {exc}"
         state.setdefault("errors", []).append(message)
         _record_diagnostic(state, kind="training_error", stage="training.run_games", message=message, exc=exc)
@@ -311,7 +352,7 @@ async def training_node(state: EvolveState) -> dict:
         _mark_stage(state, "training", status=state.get("status"), progress={"target_games": training_games, "completed_games": 0})
     except Exception as exc:  # noqa: BLE001 — keep graph state recoverable
         _log.error("training: failed for role=%s: %s", role, exc)
-        state["training_games"] = []
+        state["training_games"] = [existing_games[seed] for seed in sorted(existing_games)]
         message = f"training: {exc}"
         state.setdefault("errors", []).append(message)
         _record_diagnostic(state, kind="training_error", stage="training.run_games", message=message, exc=exc)
@@ -335,6 +376,15 @@ async def consolidate_node(state: EvolveState) -> dict:
     cfg = state.get("config", {})
     max_proposals = int(cfg.get("max_proposals", 3) or 0)
     games = valid_completed_games(state.get("training_games", []))
+    if state.get("proposals") or _resumed_past_stage(state, "consolidating"):
+        _log.info("consolidate: reusing persisted proposals for role=%s", role)
+        _mark_stage(
+            state,
+            "consolidating",
+            status=state.get("status"),
+            progress={"proposal_count": len(state.get("proposals", [])), "resumed": True},
+        )
+        return state
 
     if max_proposals <= 0 or not games:
         state["proposals"] = []
@@ -502,6 +552,23 @@ async def apply_node(state: EvolveState) -> dict:
     role = state.get("role", "")
     _log.info("apply: role=%s", role)
     _mark_stage(state, "applying", status=EvolutionStatus.APPLYING.value)
+    candidate_dir = state.get("candidate_skill_dir")
+    if (
+        (state.get("diff") and candidate_dir and Path(str(candidate_dir)).is_dir())
+        or (
+            _resumed_past_stage(state, "applying")
+            and not state.get("diff")
+            and state.get("candidate_hash") == state.get("parent_hash")
+        )
+    ):
+        _log.info("apply: reusing persisted candidate for role=%s", role)
+        _mark_stage(
+            state,
+            "applying",
+            status=state.get("status"),
+            progress={"diff_count": len(state.get("diff", [])), "resumed": True},
+        )
+        return state
 
     consolidation_data = state.get("consolidation")
     consolidation = (
@@ -1011,20 +1078,46 @@ async def battle_node(state: EvolveState) -> dict:
     target_team = _target_team(role)
 
     try:
-        baseline_games = await _run_games(
-            state, count=battle_games, seed_start=seed_start, max_days=max_days,
-            label="battle_baseline", skill_dir=baseline_dir,
+        existing_baseline = _games_by_expected_seed(
+            [game for game in state.get("battle_games", []) if game.get("side") == "baseline"],
+            seed_start=seed_start,
+            count=battle_games,
         )
+        existing_candidate = _games_by_expected_seed(
+            [game for game in state.get("battle_games", []) if game.get("side") == "candidate"],
+            seed_start=seed_start,
+            count=battle_games,
+        )
+        baseline_missing = [index for index in range(battle_games) if seed_start + index not in existing_baseline]
+        candidate_missing = [index for index in range(battle_games) if seed_start + index not in existing_candidate]
+        if not baseline_missing and not candidate_missing and state.get("battle_result"):
+            _log.info("battle: reusing complete persisted A/B result for role=%s", role)
+            _mark_stage(
+                state,
+                "battling",
+                status=state.get("status"),
+                progress={"target_games": battle_games * 2, "completed_games": battle_games * 2, "resumed": True},
+            )
+            return state
+        new_baseline = await _run_games(
+            state, count=len(baseline_missing), seed_start=seed_start, max_days=max_days,
+            label="battle_baseline", skill_dir=baseline_dir, indices=baseline_missing,
+        )
+        existing_baseline.update({int(game["seed"]): game for game in new_baseline})
+        baseline_games = [existing_baseline[seed] for seed in sorted(existing_baseline)]
         # Candidate side: baseline skills for everyone, candidate skills only for
         # the evolving role — isolates the change to that role.
-        candidate_games = await _run_games(
-            state, count=battle_games, seed_start=seed_start, max_days=max_days,
+        new_candidate = await _run_games(
+            state, count=len(candidate_missing), seed_start=seed_start, max_days=max_days,
             label="battle_candidate", skill_dir=baseline_dir,
             role_skill_dirs={role: candidate_dir},
+            indices=candidate_missing,
         )
+        existing_candidate.update({int(game["seed"]): game for game in new_candidate})
+        candidate_games = [existing_candidate[seed] for seed in sorted(existing_candidate)]
     except BatchAbortedError as exc:
         _log.error("battle: aborted for role=%s: %s", role, exc)
-        state["battle_games"] = []
+        state["battle_games"] = list(state.get("battle_games", []))
         state["battle_result"] = {
             "skipped": True, "reason": "battle_aborted", "error": str(exc),
             "candidate_hash": state.get("candidate_hash"),
@@ -1038,7 +1131,7 @@ async def battle_node(state: EvolveState) -> dict:
         return state
     except Exception as exc:  # noqa: BLE001 — keep graph state recoverable
         _log.error("battle: failed for role=%s: %s", role, exc)
-        state["battle_games"] = []
+        state["battle_games"] = list(state.get("battle_games", []))
         state["battle_result"] = {
             "skipped": True,
             "reason": "battle_failed",
@@ -2326,6 +2419,7 @@ async def _run_games(
     label: str,
     skill_dir: Any = None,
     role_skill_dirs: dict[str, str] | None = None,
+    indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     from app.graphs.shared.nodes.game_batch import (
         per_game_dir,
@@ -2345,7 +2439,10 @@ async def _run_games(
 
     run_base = Path(getattr(paths, "evolution_dir", DEFAULT_PATHS.evolution_dir)) / str(run_id) / label
 
-    def _build(index: int) -> dict[str, Any]:
+    selected_indices = list(indices) if indices is not None else list(range(count))
+
+    def _build(batch_index: int) -> dict[str, Any]:
+        index = selected_indices[batch_index]
         game_id = f"{run_id}_{label}_{index + 1:03d}"
         game_state: dict[str, Any] = {
             "game_id": game_id,
@@ -2374,11 +2471,34 @@ async def _run_games(
 
     return await run_game_batch(
         game_subgraph,
-        count,
+        len(selected_indices),
         _build,
         concurrency=concurrency or DEFAULT_GAME_CONCURRENCY,
         label=label,
     )
+
+
+def _games_by_expected_seed(
+    games: Any,
+    *,
+    seed_start: int,
+    count: int,
+) -> dict[int, dict[str, Any]]:
+    expected = set(range(seed_start, seed_start + max(0, count)))
+    recovered: dict[int, dict[str, Any]] = {}
+    for game in valid_completed_games([item for item in games or [] if isinstance(item, dict)]):
+        try:
+            seed = int(game.get("seed"))
+        except (TypeError, ValueError):
+            continue
+        if seed in expected:
+            recovered[seed] = game
+    return recovered
+
+
+def _resumed_past_stage(state: EvolveState, stage: str) -> bool:
+    resume_stage = str(state.get("resume_stage") or "").lower()
+    return _STAGE_ORDER.get(resume_stage, -1) > _STAGE_ORDER.get(stage, -1)
 
 
 def _storage_run_type_for_game(label: str) -> str:

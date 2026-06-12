@@ -820,6 +820,51 @@ def test_training_node_attaches_compact_evidence(tmp_path):
     assert "查验收益高" in key["reason"]
 
 
+def test_training_node_resumes_only_missing_seeds(tmp_path):
+    game = TrainingEvidenceGameSubgraph()
+    state = {
+        "role": "seer",
+        "run_id": "evolve_resume_training",
+        "config": {"training_games": 3, "seed_start": 7, "max_days": 2, "game_concurrency": 1},
+        "paths": _PathsStub(tmp_path),
+        "game_subgraph": game,
+        "training_games": [
+            {"game_id": "existing", "seed": 7, "winner": "villagers", "evidence": {"existing": True}},
+        ],
+    }
+
+    out = asyncio.run(training_node(state))
+
+    assert [invocation["seed"] for invocation in game.invocations] == [8, 9]
+    assert [item["seed"] for item in out["training_games"]] == [7, 8, 9]
+    assert out["training_games"][0]["evidence"] == {"existing": True}
+
+
+def test_consolidate_node_reuses_persisted_proposals(tmp_path, monkeypatch):
+    async def fail_chain(*_args, **_kwargs):
+        raise AssertionError("consolidation chain should not run")
+
+    monkeypatch.setattr("app.services.chain.run_consolidate_chain", fail_chain)
+    proposal = {
+        "proposal_id": "existing",
+        "target_file": "seer/vote.md",
+        "action_type": "append_rule",
+    }
+    state = {
+        "role": "seer",
+        "run_id": "evolve_resume_proposal",
+        "config": {"max_proposals": 3},
+        "training_games": [{"game_id": "g1", "winner": "villagers"}],
+        "proposals": [proposal],
+        "resume_stage": "applying",
+    }
+
+    out = asyncio.run(consolidate_node(state))
+
+    assert out["proposals"] == [proposal]
+    assert out["progress"]["resumed"] is True
+
+
 def test_training_node_attaches_decision_judge_when_enabled(tmp_path):
     game = TrainingEvidenceGameSubgraph()
     judge_calls = []
@@ -1429,6 +1474,41 @@ def test_apply_node_preserves_missing_files_and_ignores_unauthorized_outputs(tmp
     )
 
 
+def test_apply_node_reuses_persisted_diff_and_candidate_directory(tmp_path, monkeypatch):
+    candidate_dir = tmp_path / "candidate"
+    candidate_dir.mkdir()
+
+    async def fail_chain(*_args, **_kwargs):
+        raise AssertionError("apply chain should not run")
+
+    monkeypatch.setattr("app.services.chain.run_apply_chain", fail_chain)
+    persisted_diff = [{
+        "target_file": "seer/vote.md",
+        "before_hash": "before",
+        "after_hash": "after",
+        "proposal_ref": "p1",
+    }]
+    state = {
+        "role": "seer",
+        "run_id": "resume_apply",
+        "parent_hash": "baseline",
+        "candidate_hash": "candidate",
+        "candidate_skill_dir": str(candidate_dir),
+        "diff": persisted_diff,
+        "proposals": [{
+            "proposal_id": "p1",
+            "target_file": "seer/vote.md",
+            "action_type": "append_rule",
+        }],
+        "resume_stage": "applying",
+    }
+
+    out = asyncio.run(apply_node(state))
+
+    assert out["diff"] == persisted_diff
+    assert out["progress"]["resumed"] is True
+
+
 def test_apply_prompt_only_includes_eligible_target_files():
     from app.lib.evolve import SkillProposal, _build_apply_messages
 
@@ -1758,6 +1838,80 @@ def test_battle_node_runs_ab_and_flags_significant(tmp_path):
     sides = {g["side"] for g in out["battle_games"]}
     assert sides == {"baseline", "candidate"}
     assert len(out["battle_games"]) == 8
+
+
+def test_battle_node_resumes_only_missing_side_seeds(tmp_path):
+    baseline_dir = str(tmp_path / "baseline_skills")
+    candidate_dir = str(tmp_path / "candidate_skills")
+    game = FakeGameSubgraph({baseline_dir: "werewolves", candidate_dir: "villagers"})
+    state = {
+        "role": "seer",
+        "run_id": "resume_battle",
+        "parent_hash": "baseline_seer",
+        "candidate_hash": "candidate_resume",
+        "candidate_skill_dir": candidate_dir,
+        "baseline_skill_dir": baseline_dir,
+        "config": {"battle_games": 2, "battle_seed_start": 100},
+        "proposals": [],
+        "battle_games": [
+            {
+                "game_id": "baseline-existing",
+                "seed": 100,
+                "winner": "werewolves",
+                "side": "baseline",
+            },
+            {
+                "game_id": "candidate-existing",
+                "seed": 100,
+                "winner": "villagers",
+                "side": "candidate",
+            },
+        ],
+        "game_subgraph": game,
+    }
+
+    out = asyncio.run(battle_node(state))
+
+    assert [invocation["seed"] for invocation in game.invocations] == [101, 101]
+    assert len(out["battle_games"]) == 4
+    assert sorted((item["side"], item["seed"]) for item in out["battle_games"]) == [
+        ("baseline", 100),
+        ("baseline", 101),
+        ("candidate", 100),
+        ("candidate", 101),
+    ]
+
+
+def test_battle_node_reuses_complete_persisted_result(tmp_path):
+    baseline_dir = str(tmp_path / "baseline_skills")
+    candidate_dir = str(tmp_path / "candidate_skills")
+    game = FakeGameSubgraph({})
+    battle_games = [
+        {"game_id": f"b-{seed}", "seed": seed, "winner": "werewolves", "side": "baseline"}
+        for seed in (100, 101)
+    ] + [
+        {"game_id": f"c-{seed}", "seed": seed, "winner": "villagers", "side": "candidate"}
+        for seed in (100, 101)
+    ]
+    persisted_result = {"candidate_win_rate": 1.0, "baseline_win_rate": 0.0}
+    state = {
+        "role": "seer",
+        "run_id": "resume_complete_battle",
+        "parent_hash": "baseline_seer",
+        "candidate_hash": "candidate_resume",
+        "candidate_skill_dir": candidate_dir,
+        "baseline_skill_dir": baseline_dir,
+        "config": {"battle_games": 2, "battle_seed_start": 100},
+        "battle_games": battle_games,
+        "battle_result": persisted_result,
+        "game_subgraph": game,
+    }
+
+    out = asyncio.run(battle_node(state))
+
+    assert game.invocations == []
+    assert out["battle_result"] == persisted_result
+    assert out["progress"]["resumed"] is True
 
 
 def test_promotion_gate_blocks_small_sample_auto_promote_even_with_win_rate_edge():

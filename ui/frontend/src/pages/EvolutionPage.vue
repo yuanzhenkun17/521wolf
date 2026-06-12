@@ -50,6 +50,7 @@ const evolutionRuntimeActionNames = [
   'startBatch',
   'runAction',
   'loadProposalReview',
+  'ensureEvolutionTabLoaded',
   'consumeEvolutionDeepLink',
   'applyEvolutionDeepLink',
   'acceptProposal',
@@ -83,6 +84,7 @@ const evo = {
   startBatch: evolutionStore.startBatch,
   runAction: evolutionStore.runAction,
   loadProposalReview: evolutionStore.loadProposalReview,
+  ensureEvolutionTabLoaded: evolutionStore.ensureEvolutionTabLoaded,
   consumeEvolutionDeepLink: evolutionStore.consumeEvolutionDeepLink,
   applyEvolutionDeepLink: evolutionStore.applyEvolutionDeepLink,
   acceptProposal: evolutionStore.acceptProposal,
@@ -206,6 +208,14 @@ watch(
     const target = evo.consumeEvolutionDeepLink(route as any)
     if (target) void evo.applyEvolutionDeepLink(target)
   }
+)
+
+watch(
+  [activeTab, () => evolutionStore.selectedRun?.id || '', () => evolutionStore.selectedGameBucket],
+  ([tab]) => {
+    void evolutionStore.ensureEvolutionTabLoaded(tab)
+  },
+  { immediate: true }
 )
 
 onMounted(() => refreshEvolution())

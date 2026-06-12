@@ -913,6 +913,147 @@ def test_evolution_task_executor_passes_queue_cancel_check(
     assert run["current_stage"] == "stopped"
 
 
+def test_evolution_progress_uses_weighted_stages(tmp_path: Path) -> None:
+    async def runner(**_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    service = EvolutionRunService(_FakeEvolutionRunContext(tmp_path, runner))
+    training = service.evolution_overall_progress(
+        {
+            "status": "training",
+            "current_stage": "training",
+            "training_game_count": 20,
+            "training_games": [{"game_id": str(index)} for index in range(10)],
+            "battle_game_count": 20,
+        }
+    )
+    applying = service.evolution_overall_progress(
+        {"status": "applying", "current_stage": "applying"}
+    )
+    battling = service.evolution_overall_progress(
+        {
+            "status": "battling",
+            "current_stage": "battling",
+            "battle_game_count": 20,
+            "battle_games": [{"game_id": str(index)} for index in range(20)],
+        }
+    )
+
+    assert training["percent"] == pytest.approx(0.225)
+    assert applying["percent"] == pytest.approx(0.60)
+    assert battling["percent"] == pytest.approx(0.825)
+
+
+def test_evolution_batch_progress_averages_child_progress(tmp_path: Path) -> None:
+    async def runner(**_kwargs: Any) -> dict[str, Any]:
+        return {}
+
+    context = _FakeEvolutionRunContext(tmp_path, runner)
+    service = EvolutionRunService(context)
+    context.evolution_runs.update(
+        {
+            "run-training": {
+                "run_id": "run-training",
+                "role": "seer",
+                "status": "training",
+                "current_stage": "training",
+                "training_game_count": 20,
+                "training_games": [{"game_id": str(index)} for index in range(10)],
+            },
+            "run-done": {
+                "run_id": "run-done",
+                "role": "guard",
+                "status": "reviewing",
+                "current_stage": "reviewing",
+            },
+        }
+    )
+    context.evolution_batches["batch"] = {
+        "kind": "role_evolution_batch",
+        "batch_id": "batch",
+        "status": "running",
+        "runs": ["run-training", "run-done"],
+    }
+
+    service.refresh_evolution_batch("batch")
+
+    assert context.evolution_batches["batch"]["progress"]["percent"] == pytest.approx(0.6125)
+
+
+def test_evolution_batch_runs_roles_concurrently_and_isolates_failure(tmp_path: Path) -> None:
+    active = 0
+    max_active = 0
+
+    async def runner(**kwargs: Any) -> dict[str, Any]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.02)
+            if kwargs["role"] == "guard":
+                raise RuntimeError("guard failed")
+            return {
+                "run_id": kwargs["run_id"],
+                "role": kwargs["role"],
+                "status": "reviewing",
+                "training_games": [],
+                "battle_games": [],
+            }
+        finally:
+            active -= 1
+
+    request = EvolutionStartRequest(
+        roles=["seer", "guard", "witch"],
+        training_games=0,
+        battle_games=0,
+        max_days=1,
+    )
+    context = _FakeEvolutionRunContext(tmp_path, runner)
+    service = EvolutionRunService(context)
+    batch = service.queue_evolution(request)
+    batch["config"]["role_concurrency"] = 2
+
+    asyncio.run(service.run_queued_evolution_batch(batch["batch_id"], request))
+
+    statuses = {run["role"]: run["status"] for run in context.evolution_runs.values()}
+    assert max_active == 2
+    assert statuses == {"seer": "reviewing", "guard": "failed", "witch": "reviewing"}
+    assert batch["status"] == "completed"
+    assert batch["progress"]["percent"] == pytest.approx(1.0)
+
+
+def test_evolution_role_concurrency_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEREWOLF_EVOLUTION_ROLE_CONCURRENCY", "99")
+    assert EvolutionRunService.evolution_role_concurrency() == 4
+    assert EvolutionRunService.evolution_role_concurrency({"role_concurrency": 2}) == 2
+
+
+def test_evolution_runner_receives_resume_snapshot(tmp_path: Path) -> None:
+    observed: dict[str, Any] = {}
+
+    async def runner(**kwargs: Any) -> dict[str, Any]:
+        observed.update(kwargs["config"]["resume_snapshot"])
+        return {
+            "run_id": kwargs["run_id"],
+            "role": kwargs["role"],
+            "status": "reviewing",
+            "training_games": kwargs["config"]["resume_snapshot"]["training_games"],
+            "battle_games": [],
+        }
+
+    request = EvolutionStartRequest(roles=["seer"], training_games=2, battle_games=0, max_days=1)
+    context = _FakeEvolutionRunContext(tmp_path, runner)
+    service = EvolutionRunService(context)
+    run = service.queue_evolution(request)
+    run["current_stage"] = "consolidating"
+    run["training_games"] = [{"game_id": "existing", "seed": 0, "winner": "villagers"}]
+
+    asyncio.run(service.run_queued_evolution(run["run_id"], request))
+
+    assert observed["current_stage"] == "consolidating"
+    assert observed["training_games"][0]["game_id"] == "existing"
+
+
 def test_evolution_batch_task_artifacts_include_child_diagnostics(tmp_path: Path) -> None:
     async def runner(**_kwargs: Any) -> dict[str, Any]:
         return {}

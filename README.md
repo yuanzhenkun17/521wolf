@@ -172,6 +172,9 @@ meaningful.
 | `SETTINGS_SECRET_ENCRYPTION_KEY` | Required to store model Profile API keys. Keep stable; rotating it invalidates saved secrets. |
 | `WOLF_USE_PG_TASK_QUEUE` / `TASK_WORKER_REQUIRED` | Optional durable task queue and worker health gate controls. |
 | `WEREWOLF_GAME_CONCURRENCY` | Optional shared concurrency cap for benchmark, evolution training, and evolution battle games. |
+| `BENCHMARK_ROLE_CONCURRENCY` / `WEREWOLF_EVOLUTION_ROLE_CONCURRENCY` | Per-batch role concurrency caps, still bounded by game, Judge, and global task-kind budgets. |
+| `UI_TASK_KIND_CONCURRENCY_LIMITS` | Global per-kind concurrency quotas shared by all PostgreSQL workers, encoded as a JSON object. |
+| `UI_BACKGROUND_PERSIST_INTERVAL_SECONDS` | Incremental running-task snapshot throttle in seconds; terminal states always flush immediately. |
 | `WEREWOLF_JUDGE_CONCURRENCY` | Judge concurrency used when a workflow does not provide an explicit policy. |
 | `WEREWOLF_LLM_MAX_CONCURRENCY` | Total LLM request cap within one event loop across games, Judge, and related calls. |
 | `WEREWOLF_GAME_TIMEOUT` / `WEREWOLF_BATCH_GAME_TIMEOUT` | Optional game and batch execution timeouts. |

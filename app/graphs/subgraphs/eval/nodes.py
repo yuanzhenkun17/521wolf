@@ -208,6 +208,13 @@ async def run_games_node(state: EvalBatchState) -> dict:
         _copy_runner_config(cfg, game_state)
         return game_state
 
+    expected_seeds = explicit_seeds if explicit_seeds else [seed_start + index for index in range(game_count)]
+    resumed_by_seed = _resumable_games_by_seed(cfg.get("resume_games"), expected_seeds)
+    pending_indexes = [
+        index for index, seed in enumerate(expected_seeds)
+        if seed not in resumed_by_seed
+    ]
+
     with _langfuse_eval_context(
         state,
         stage="run_games",
@@ -221,8 +228,12 @@ async def run_games_node(state: EvalBatchState) -> dict:
         },
     ):
         try:
-            games = await run_game_batch(
-                game_subgraph, game_count, _build, concurrency=concurrency, label="eval",
+            pending_games = await run_game_batch(
+                game_subgraph,
+                len(pending_indexes),
+                lambda pending_index: _build(pending_indexes[pending_index]),
+                concurrency=concurrency,
+                label="eval",
             )
         except BatchAbortedError as exc:
             # Systemic failure — record cleanly and let downstream nodes mark the
@@ -233,14 +244,48 @@ async def run_games_node(state: EvalBatchState) -> dict:
             state.setdefault("errors", []).append(str(exc))
             return state
 
+    pending_by_seed = {
+        int(game.get("seed")): game
+        for game in pending_games
+        if isinstance(game, dict) and game.get("seed") is not None
+    }
+    games = [
+        resumed_by_seed.get(seed) or pending_by_seed.get(seed)
+        for seed in expected_seeds
+    ]
+    games = [game for game in games if isinstance(game, dict)]
+
     scores: list[dict[str, Any]] = []
     for game in valid_completed_games(games):
-        scores.extend(_score_game(game))
+        game_scores = _score_game(game)
+        scores.extend(game_scores)
+        if game_scores:
+            game["avg_role_score"] = round(
+                sum(float(item.get("role_score") or 0.0) for item in game_scores) / len(game_scores),
+                6,
+            )
 
     _log.info("run_games_node: completed %d/%d games", len(games), game_count)
     state["games"] = games
     state["player_scores"] = scores
     return state
+
+
+def _resumable_games_by_seed(value: Any, expected_seeds: list[int]) -> dict[int, dict[str, Any]]:
+    expected = set(expected_seeds)
+    resumed: dict[int, dict[str, Any]] = {}
+    if not isinstance(value, list):
+        return resumed
+    for game in value:
+        if not isinstance(game, dict) or not has_valid_winner(game):
+            continue
+        try:
+            seed = int(game.get("seed"))
+        except (TypeError, ValueError):
+            continue
+        if seed in expected:
+            resumed[seed] = dict(game)
+    return resumed
 
 
 def _role_version_specs(cfg: dict[str, Any]) -> dict[str, str]:
@@ -378,6 +423,14 @@ async def aggregate_node(state: EvalBatchState) -> dict:
         "avg_team_score": round(summary.avg_team_score, 4),
         "avg_risk_penalty": round(summary.avg_risk_penalty, 4),
         "strength_score": round(summary.strength_score, 4),
+        "score_sample_size": summary.score_sample_size,
+        "role_score_stddev": round(summary.role_score_stddev, 6),
+        "role_score_standard_error": round(summary.role_score_standard_error, 6),
+        "role_score_ci": {
+            "low": round(summary.role_score_ci_low, 6),
+            "high": round(summary.role_score_ci_high, 6),
+            "level": 0.95,
+        },
         "decision_quality": decision_quality,
         "terminal_stats": terminal_stats,
         "fallback_rate": decision_quality["fallback_rate"],
@@ -739,11 +792,14 @@ def _target_side_win_evidence(games: list[dict[str, Any]], *, target_team: str |
                 "winner": winner,
                 "target_team": target_team,
                 "target_side_win": target_side_win,
+                "score": _safe_float(game.get("avg_role_score")),
             }
         )
     sample_size = len(completed)
     return {
         "sample_size": sample_size,
+        "valid_game_count": sample_size,
+        "abnormal_game_count": max(0, len(games) - sample_size),
         "target_team": target_team,
         "target_wins": target_wins,
         "target_side_win_rate": round(target_wins / sample_size, 6) if sample_size else 0.0,
@@ -1697,6 +1753,12 @@ def _persist_batch(state: EvalBatchState, result: dict[str, Any]) -> list[str]:
         )
         for key, value in target_side_evidence.items():
             leaderboard_summary.setdefault(key, value)
+        terminal_stats = result.get("terminal_stats") if isinstance(result.get("terminal_stats"), dict) else {}
+        leaderboard_summary.setdefault("valid_game_count", int(terminal_stats.get("completed") or 0))
+        leaderboard_summary.setdefault(
+            "abnormal_game_count",
+            sum(int(terminal_stats.get(key) or 0) for key in ("invalid", "timeout", "abnormal", "errored")),
+        )
         entry = {
             "batch_id": result["batch_id"],
             "comparison_group_id": cfg.get("comparison_group_id"),

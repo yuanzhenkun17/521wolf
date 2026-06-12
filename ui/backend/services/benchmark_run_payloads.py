@@ -17,6 +17,7 @@ from ui.backend.services.benchmark_payload_utils import (
 _BENCHMARK_PLAYER_COUNT = 12
 _BENCHMARK_DEFAULT_GAME_CONCURRENCY = 4
 _BENCHMARK_DEFAULT_JUDGE_CONCURRENCY = 1
+_BENCHMARK_DEFAULT_ROLE_CONCURRENCY = 2
 _BENCHMARK_GAME_UNIT_TOKENS = 1120
 _BENCHMARK_JUDGE_DECISION_TOKENS = 810
 _BENCHMARK_COST_PER_1K_TOKENS = 0.002
@@ -69,34 +70,49 @@ def _benchmark_concurrency_policy(
     judge_decision_units: int,
     judge_concurrency: Any,
     game_concurrency: Any = None,
+    role_concurrency: Any = None,
 ) -> dict[str, Any]:
+    requested_role_concurrency = _positive_int(role_concurrency) or _BENCHMARK_DEFAULT_ROLE_CONCURRENCY
+    role_batch_concurrency = max(
+        1,
+        min(requested_role_concurrency, max(1, int(eval_batch_count or 1))),
+    )
     requested_game_concurrency = _positive_int(game_concurrency) or _BENCHMARK_DEFAULT_GAME_CONCURRENCY
-    game_concurrency = max(1, min(requested_game_concurrency, max(1, int(game_count or 1))))
+    global_game_concurrency = max(1, min(requested_game_concurrency, max(1, int(game_count or 1))))
+    per_eval_batch_game_concurrency = max(1, global_game_concurrency // role_batch_concurrency)
     effective_judge_concurrency = 0
+    per_eval_batch_judge_concurrency = 0
     if judge_enabled:
         effective_judge_concurrency = _positive_int(judge_concurrency) or _BENCHMARK_DEFAULT_JUDGE_CONCURRENCY
+        per_eval_batch_judge_concurrency = max(1, effective_judge_concurrency // role_batch_concurrency)
     game_units_per_eval_batch = int(game_count or 0) * int(max_days or 0) * int(player_count or 0)
-    game_waves_per_eval_batch = _ceil_div(game_units_per_eval_batch, game_concurrency)
+    game_waves_per_eval_batch = _ceil_div(game_units_per_eval_batch, per_eval_batch_game_concurrency)
     judge_waves = _ceil_div(int(judge_decision_units or 0), effective_judge_concurrency) if judge_enabled else 0
     expected_duration_seconds = round(
-        int(eval_batch_count or 0) * _BENCHMARK_EVAL_BATCH_SETUP_SECONDS
-        + game_waves_per_eval_batch * int(eval_batch_count or 0) * _BENCHMARK_GAME_UNIT_SECONDS
+        _ceil_div(int(eval_batch_count or 0), role_batch_concurrency) * _BENCHMARK_EVAL_BATCH_SETUP_SECONDS
+        + game_waves_per_eval_batch
+        * _ceil_div(int(eval_batch_count or 0), role_batch_concurrency)
+        * _BENCHMARK_GAME_UNIT_SECONDS
         + judge_waves * _BENCHMARK_JUDGE_DECISION_SECONDS
     )
     return {
         "policy": "bounded_sequential_eval_batches",
-        "role_batch_concurrency": 1,
+        "execution_mode": "bounded_parallel_eval_batches",
+        "role_batch_concurrency": role_batch_concurrency,
+        "requested_role_concurrency": requested_role_concurrency,
         "eval_batch_count": int(eval_batch_count or 0),
-        "game_concurrency": game_concurrency,
+        "game_concurrency": global_game_concurrency,
+        "per_eval_batch_game_concurrency": per_eval_batch_game_concurrency,
         "judge_concurrency": effective_judge_concurrency,
+        "per_eval_batch_judge_concurrency": per_eval_batch_judge_concurrency,
         "judge_enabled": bool(judge_enabled),
         "game_waves_per_eval_batch": game_waves_per_eval_batch,
         "judge_waves": judge_waves,
         "expected_duration_seconds": max(0, int(expected_duration_seconds)),
         "notes": [
-            "role-version benchmarks run one evaluation batch per role",
+            "role-version benchmarks run bounded evaluation batches in parallel",
             "model benchmarks run one full-role evaluation batch",
-            "games inside each evaluation batch use bounded game concurrency",
+            "game and judge concurrency are divided across concurrent role batches",
         ],
     }
 

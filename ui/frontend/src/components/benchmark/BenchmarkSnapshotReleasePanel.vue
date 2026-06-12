@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   benchmark: {
@@ -359,6 +359,10 @@ const snapshotDeltaCsv = computed(() =>
     ...topRemovedRows.value.map((row) => ['removed', row.primary || row.key, row.score ?? '', row.winRate ?? '', row.games ?? '', ''])
   ])
 )
+
+onMounted(() => {
+  void props.benchmark.loadBenchmarkSnapshots({ silent: false })
+})
 
 watch(
   defaultTitle,

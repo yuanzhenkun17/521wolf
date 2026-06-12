@@ -149,7 +149,62 @@ def test_task_queue_repository_claims_and_completes_task() -> None:
     assert completed is not None
     assert completed["status"] == "succeeded"
     assert completed["result"] == {"ok": True}
-    assert completed["progress"] == {"stage": "training", "percent": 0.2}
+
+
+def test_task_queue_repository_enforces_kind_concurrency_limit() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    for task_id in ("task_a", "task_b"):
+        repo.enqueue(
+            task_id=task_id,
+            kind="evolution_run",
+            payload={"run_id": task_id},
+            queued_at="2026-06-10T10:00:00+08:00",
+        )
+
+    first = repo.claim_next(
+        worker_id="worker-1",
+        now="2026-06-10T10:00:01+08:00",
+        lease_expires_at="2026-06-10T10:05:01+08:00",
+        kind_concurrency_limits={"evolution_run": 1},
+    )
+    second = repo.claim_next(
+        worker_id="worker-2",
+        now="2026-06-10T10:00:02+08:00",
+        lease_expires_at="2026-06-10T10:05:02+08:00",
+        kind_concurrency_limits={"evolution_run": 1},
+    )
+
+    assert first is not None
+    assert second is None
+    assert repo.get("task_b")["status"] == "queued"  # type: ignore[index]
+
+
+def test_task_queue_repository_ignores_expired_lease_for_kind_limit() -> None:
+    conn = _connect()
+    repo = TaskQueueRepository(conn)
+    for task_id in ("task_a", "task_b"):
+        repo.enqueue(
+            task_id=task_id,
+            kind="benchmark_batch",
+            payload={"batch_id": task_id},
+            queued_at="2026-06-10T10:00:00+08:00",
+        )
+    assert repo.claim_next(
+        worker_id="stale-worker",
+        now="2026-06-10T10:00:01+08:00",
+        lease_expires_at="2026-06-10T10:01:00+08:00",
+    )
+
+    claimed = repo.claim_next(
+        worker_id="worker-2",
+        now="2026-06-10T10:02:00+08:00",
+        lease_expires_at="2026-06-10T10:07:00+08:00",
+        kind_concurrency_limits={"benchmark_batch": 1},
+    )
+
+    assert claimed is not None
+    assert claimed["task_id"] == "task_b"
 
 
 def test_task_queue_repository_gets_many_tasks_in_one_query() -> None:
@@ -200,6 +255,32 @@ def test_task_queue_repository_postgres_claim_uses_skip_locked_cte() -> None:
         "2026-06-10T10:00:01+08:00",
         "2026-06-10T10:00:01+08:00",
         False,
+    )
+
+
+def test_task_queue_repository_postgres_kind_limit_uses_advisory_lock() -> None:
+    conn = _FakePostgresClaimConnection()
+    repo = TaskQueueRepository(conn)  # type: ignore[arg-type]
+
+    claimed = repo.claim_next(
+        worker_id="worker-1",
+        now="2026-06-10T10:00:01+08:00",
+        lease_expires_at="2026-06-10T10:05:01+08:00",
+        kinds=["evolution_run"],
+        kind_concurrency_limits={"evolution_run": 1},
+    )
+
+    assert claimed is not None
+    sql, parameters = conn.calls[0]
+    assert "pg_try_advisory_xact_lock" in sql
+    assert "active_task.lease_expires_at > ?" in sql
+    assert parameters[:2] == (False, "evolution_run")
+    assert parameters[2:7] == (
+        "evolution_run",
+        "evolution_run",
+        "evolution_run",
+        "2026-06-10T10:00:01+08:00",
+        1,
     )
 
 

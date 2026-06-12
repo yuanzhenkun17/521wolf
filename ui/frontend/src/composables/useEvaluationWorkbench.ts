@@ -1158,13 +1158,16 @@ function useEvaluationWorkbench(options = {}) {
   const benchmarkBatchDetail = ref(null)
   const benchmarkBatchGames = ref([])
   const benchmarkBatchGamesLoading = ref(false)
+  const benchmarkBatchGamesForId = ref('')
   const benchmarkBatchGamePagination = ref({ total: 0, offset: 0, limit: 20, returned: 0, has_more: false })
   const benchmarkBatchDiagnosticsLoading = ref(false)
   const benchmarkBatchDiagnostics = ref([])
+  const benchmarkBatchDiagnosticsForId = ref('')
   const benchmarkBatchDiagnosticSummary = ref({})
   const benchmarkBatchReport = ref(null)
   const benchmarkBatchReportLoading = ref(false)
   const benchmarkBatchReportError = ref('')
+  const benchmarkBatchReportForId = ref('')
   const benchmarkBatchReportExports = ref({})
   const benchmarkReportHistory = ref([])
   const benchmarkReportHistoryLoading = ref(false)
@@ -1904,13 +1907,16 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkBatchDetail.value = null
     benchmarkBatchGames.value = []
     benchmarkBatchGamesLoading.value = false
+    benchmarkBatchGamesForId.value = ''
     benchmarkBatchGamePagination.value = defaultBenchmarkGamePagination()
     benchmarkBatchDiagnosticsLoading.value = false
     benchmarkBatchDiagnostics.value = []
+    benchmarkBatchDiagnosticsForId.value = ''
     benchmarkBatchDiagnosticSummary.value = {}
     benchmarkBatchReport.value = null
     benchmarkBatchReportLoading.value = false
     benchmarkBatchReportError.value = ''
+    benchmarkBatchReportForId.value = ''
     benchmarkBatchReportExports.value = {}
   }
 
@@ -2031,11 +2037,13 @@ function useEvaluationWorkbench(options = {}) {
       if (!token.isLatest()) return false
       if (!report) throw new Error('invalid benchmark report payload')
       benchmarkBatchReport.value = report
+      benchmarkBatchReportForId.value = id
       benchmarkBatchReportExports.value = {}
       return true
     } catch (err) {
       if (token.isLatest()) {
         benchmarkBatchReport.value = null
+        benchmarkBatchReportForId.value = ''
         benchmarkBatchReportExports.value = {}
         benchmarkBatchReportError.value = benchmarkErrorMessage(err, '评测报告读取失败，已使用本地报告。')
       }
@@ -2392,58 +2400,36 @@ function useEvaluationWorkbench(options = {}) {
       return false
     }
     const token = detailRequests.next()
+    const changedBatch = selectedBenchmarkBatchId.value !== id
     selectedBenchmarkBatchId.value = id
+    if (changedBatch) clearBenchmarkBatchDetail()
     benchmarkDetailLoading.value = true
     benchmarkDetailError.value = ''
     try {
-      const gamesPath = benchmarkBatchGamesPath(id)
-      benchmarkBatchReportLoading.value = true
-      benchmarkBatchDiagnosticsLoading.value = true
-      benchmarkBatchReportError.value = ''
-      const reportRequest = apiFetch(benchmarkBatchReportPath(id))
-        .then((report) => ({ ok: true, report: normalizeBenchmarkBatchReport(report) }))
-        .catch((err) => ({ ok: false, err }))
-      const [detail, games, diagnostics, reportResult] = await Promise.all([
-        apiFetch(`/benchmark/batch/${encodeURIComponent(id)}`),
-        apiFetch(gamesPath),
-        apiFetch(benchmarkBatchDiagnosticsPath(id)),
-        reportRequest
-      ])
+      const detail = await apiFetch(`/benchmark/batch/${encodeURIComponent(id)}`)
       if (!token.isLatest()) return false
       benchmarkBatchDetail.value = normalizeBenchmarkBatchDetail(detail)
-      benchmarkBatchGames.value = (games?.games || []).map(normalizeBenchmarkGame)
-      benchmarkBatchGamePagination.value = games?.pagination || defaultBenchmarkGamePagination()
-      benchmarkBatchDiagnostics.value = (diagnostics?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
-      benchmarkBatchDiagnosticSummary.value = diagnostics?.summary || {}
-      if (reportResult?.ok && reportResult.report) {
-        benchmarkBatchReport.value = reportResult.report
-        benchmarkBatchReportError.value = ''
-        benchmarkBatchReportExports.value = {}
-      } else {
-        benchmarkBatchReport.value = null
-        benchmarkBatchReportExports.value = {}
-        benchmarkBatchReportError.value = benchmarkErrorMessage(reportResult?.err, '评测报告读取失败，已使用本地报告。')
-      }
       return true
     } catch (err) {
       if (token.isLatest()) {
         benchmarkDetailError.value = benchmarkErrorMessage(err, '评测详情读取失败。')
         benchmarkBatchDetail.value = null
         benchmarkBatchGames.value = []
+        benchmarkBatchGamesForId.value = ''
         benchmarkBatchGamePagination.value = defaultBenchmarkGamePagination()
         benchmarkBatchDiagnosticsLoading.value = false
         benchmarkBatchDiagnostics.value = []
+        benchmarkBatchDiagnosticsForId.value = ''
         benchmarkBatchDiagnosticSummary.value = {}
         benchmarkBatchReport.value = null
         benchmarkBatchReportError.value = ''
+        benchmarkBatchReportForId.value = ''
         benchmarkBatchReportExports.value = {}
       }
       return false
     } finally {
       if (token.isLatest()) {
         benchmarkDetailLoading.value = false
-        benchmarkBatchReportLoading.value = false
-        benchmarkBatchDiagnosticsLoading.value = false
       }
     }
   }
@@ -2462,12 +2448,14 @@ function useEvaluationWorkbench(options = {}) {
       const data = await apiFetch(benchmarkBatchDiagnosticsPath(id))
       if (!token.isLatest()) return false
       benchmarkBatchDiagnostics.value = (data?.diagnostics || []).map(normalizeBenchmarkDiagnostic)
+      benchmarkBatchDiagnosticsForId.value = id
       benchmarkBatchDiagnosticSummary.value = data?.summary || {}
       return true
     } catch (err) {
       if (token.isLatest()) {
         benchmarkDetailError.value = benchmarkErrorMessage(err, '评测诊断读取失败。')
         benchmarkBatchDiagnostics.value = []
+        benchmarkBatchDiagnosticsForId.value = ''
         benchmarkBatchDiagnosticSummary.value = {}
       }
       return false
@@ -2491,6 +2479,7 @@ function useEvaluationWorkbench(options = {}) {
       if (!token.isLatest()) return false
       const rows = (data?.games || []).map(normalizeBenchmarkGame)
       benchmarkBatchGames.value = append ? mergeBenchmarkGames(benchmarkBatchGames.value, rows) : rows
+      benchmarkBatchGamesForId.value = id
       benchmarkBatchGamePagination.value = data?.pagination || defaultBenchmarkGamePagination(offset, limit)
       return true
     } catch (err) {
@@ -2498,6 +2487,7 @@ function useEvaluationWorkbench(options = {}) {
         benchmarkDetailError.value = benchmarkErrorMessage(err, '评测对局读取失败。')
         if (!append) {
           benchmarkBatchGames.value = []
+          benchmarkBatchGamesForId.value = ''
           benchmarkBatchGamePagination.value = defaultBenchmarkGamePagination()
         }
       }
@@ -2514,6 +2504,29 @@ function useEvaluationWorkbench(options = {}) {
     const limit = Number(pagination.limit || 20) || 20
     void loadBenchmarkBatchGamesPage({ offset, limit, append: true })
     return true
+  }
+
+  async function loadBenchmarkBatchSection(section, batchId = selectedBenchmarkBatchId.value, { force = false } = {}) {
+    const id = String(batchId || '').trim()
+    const normalized = String(section || 'summary').trim().toLowerCase()
+    if (!id) return false
+    if (normalized === 'summary' || normalized === 'detail') {
+      if (!force && benchmarkBatchDetail.value && selectedBenchmarkBatchId.value === id) return true
+      return loadBenchmarkBatchDetail(id)
+    }
+    if (normalized === 'games') {
+      if (!force && benchmarkBatchGamesForId.value === id) return true
+      return loadBenchmarkBatchGamesPage({ offset: 0, append: false })
+    }
+    if (normalized === 'diagnostics') {
+      if (!force && benchmarkBatchDiagnosticsForId.value === id) return true
+      return loadBenchmarkBatchDiagnostics(id)
+    }
+    if (normalized === 'report') {
+      if (!force && benchmarkBatchReportForId.value === id) return true
+      return loadBenchmarkBatchReport(id)
+    }
+    return false
   }
 
   function selectBenchmarkBatch(batchId) {
@@ -2911,16 +2924,11 @@ function useEvaluationWorkbench(options = {}) {
       if (!token.isLatest()) return false
       await loadBenchmarkPlan()
       if (!token.isLatest()) return false
-      const [compareLoaded, viewsLoaded, runsLoaded, reportsLoaded] = await Promise.all([
+      const [compareLoaded, runsLoaded] = await Promise.all([
         loadBenchmarkLeaderboardCompare({ silent: true }),
-        loadBenchmarkViews({ silent: true }),
-        loadRuns(),
-        loadBenchmarkReportHistory({ silent: true })
+        loadRuns()
       ])
       if (!token.isLatest()) return false
-      void loadCurrentBenchmarkView()
-      void loadBenchmarkDiagnosticsAggregate({ silent: true })
-      void loadBenchmarkSnapshots({ silent: true })
       if (!rolesLoaded || !runsLoaded) {
         const message = benchmarkErrorMessage(lastRunsError, '评测数据刷新不完整，请手动刷新。')
         error.value = message
@@ -2928,7 +2936,7 @@ function useEvaluationWorkbench(options = {}) {
         return false
       }
       if (notify) setNotice('success', '评测数据已刷新。')
-      return rolesLoaded || compareLoaded || viewsLoaded || runsLoaded || reportsLoaded
+      return rolesLoaded || compareLoaded || runsLoaded
     } catch (err) {
       if (token.isLatest()) {
         const message = benchmarkErrorMessage(err, '评测数据读取失败')
@@ -3306,6 +3314,7 @@ function useEvaluationWorkbench(options = {}) {
     benchmarkDiagnosticSeedFilter,
     selectBenchmarkBatch,
     loadBenchmarkBatchDetail,
+    loadBenchmarkBatchSection,
     loadBenchmarkBatchGamesPage,
     loadNextBenchmarkBatchGamesPage,
     loadBenchmarkBatchDiagnostics,

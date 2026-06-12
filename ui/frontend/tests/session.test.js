@@ -3608,9 +3608,11 @@ test('evolution workbench paginates runs and selected sample games', async () =>
   await flushPromises()
   assert.equal(requests.find((path) => path.startsWith('/evolution-runs?')), '/evolution-runs?limit=1&offset=0&source=evolution')
   assert.equal(requests.includes('/evolution-runs/evo-run-a'), true)
+  assert.equal(requests.some((path) => path.includes('/games?')), false)
+  await workbench.ensureEvolutionTabLoaded('samples')
   assert.equal(requests.includes('/evolution-runs/evo-run-a/games?phase=training&limit=1&offset=0'), true)
-  assert.equal(requests.includes('/evolution-runs/evo-run-a/games?phase=battle&side=baseline&limit=1&offset=0'), true)
-  assert.equal(requests.includes('/evolution-runs/evo-run-a/games?phase=battle&side=candidate&limit=1&offset=0'), true)
+  assert.equal(requests.includes('/evolution-runs/evo-run-a/games?phase=battle&side=baseline&limit=1&offset=0'), false)
+  assert.equal(requests.includes('/evolution-runs/evo-run-a/games?phase=battle&side=candidate&limit=1&offset=0'), false)
   assert.deepEqual(workbench.runRows.value.map((run) => run.id), ['evo-run-a'])
   assert.deepEqual(workbench.selectedGames.value.training.map((item) => item.game_id), ['train-1'])
   assert.equal(workbench.selectedRunId.value, 'evo-run-a')
@@ -3862,9 +3864,12 @@ test('evolution sample loading surfaces list and detail failures', async () => {
   const workbench = useEvolutionWorkbench({ installLifecycle: false, apiFetch })
   await workbench.refreshAll()
   await flushPromises()
+  await workbench.ensureEvolutionTabLoaded('samples')
 
   assert.equal(workbench.selectedSampleState.value.error, 'training api failed')
-  assert.equal(workbench.selectedSampleBucketError.value, '')
+  assert.equal(workbench.selectedSampleBucketError.value, 'training api failed')
+  assert.equal(workbench.selectedGameBucket.value, 'training')
+  await workbench.selectSampleGame('baseline')
   assert.equal(workbench.selectedGameBucket.value, 'baseline')
   assert.equal(workbench.selectedGameId.value, 'base-1')
   assert.equal(workbench.selectedGameDetail.value.error, '')
@@ -3944,12 +3949,17 @@ test('evolution run selection ignores stale sample responses', async () => {
   await flushPromises()
   assert.equal(requests.includes('/evolution-runs/run-b'), true)
   assert.equal(workbench.selectedRunId.value, 'run-b')
+  await workbench.ensureEvolutionTabLoaded('samples')
   assert.deepEqual(workbench.selectedGames.value.training.map((item) => item.game_id), ['b-train'])
   assert.equal(workbench.selectedSampleHistoryGameId.value, runBTrainingHistoryGameId)
 
-  const staleSelection = workbench.selectRun('run-a')
+  const staleSelection = (async () => {
+    await workbench.selectRun('run-a')
+    await workbench.ensureEvolutionTabLoaded('samples')
+  })()
   await Promise.resolve()
   await workbench.selectRun('run-b')
+  await workbench.ensureEvolutionTabLoaded('samples')
   slowTraining.resolve({
     games: [{ game_id: 'a-train', history_game_id: 'evolution:run-a:training:training_001' }],
     pagination: { total: 1, offset: 0, limit: 80, returned: 1, has_more: false }
@@ -5704,6 +5714,8 @@ test('evaluation workbench loads benchmark batch detail games and diagnostics', 
   const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
   await workbench.refreshAll()
   const loaded = await workbench.loadBenchmarkBatchDetail('bench-detail')
+  await workbench.loadBenchmarkBatchSection('games', 'bench-detail')
+  await workbench.loadBenchmarkBatchSection('diagnostics', 'bench-detail')
 
   assert.equal(loaded, true)
   assert.equal(workbench.selectedBenchmarkBatchId.value, 'bench-detail')
@@ -5834,6 +5846,7 @@ test('evaluation workbench loads aggregate benchmark diagnostics without selecte
 
   const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
   await workbench.refreshAll()
+  await workbench.loadBenchmarkDiagnosticsAggregate()
 
   assert.equal(workbench.selectedBenchmarkBatchId.value, '')
   assert.equal(workbench.benchmarkDiagnosticAggregateDiagnostics.value.length, 2)
@@ -6150,6 +6163,9 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
   const workbench = useEvaluationWorkbench({ installLifecycle: false, apiFetch })
   await workbench.refreshAll()
   const loaded = await workbench.loadBenchmarkBatchDetail('bench-report')
+  await workbench.loadBenchmarkBatchSection('games', 'bench-report')
+  await workbench.loadBenchmarkBatchSection('diagnostics', 'bench-report')
+  await workbench.loadBenchmarkBatchSection('report', 'bench-report')
 
   assert.equal(loaded, true)
   assert.equal(workbench.selectedBenchmarkBatchRun.value.id, 'bench-report')
@@ -6260,6 +6276,7 @@ test('evaluation workbench composes reportable benchmark run data from detail ga
 
   reportShouldFail = true
   const loadedWithReportFailure = await workbench.loadBenchmarkBatchDetail('bench-report')
+  await workbench.loadBenchmarkBatchSection('report', 'bench-report', { force: true })
   assert.equal(loadedWithReportFailure, true)
   assert.equal(Boolean(workbench.benchmarkBatchReportError.value), true)
   assert.equal(workbench.benchmarkBatchDetail.value.batch_id, 'bench-report')
@@ -6528,6 +6545,7 @@ test('evaluation workbench loads report history and keeps canonical report selec
   assert.equal(success.workbench.benchmarkReportHistoryLoading.value, false)
 
   const loaded = await success.workbench.loadBenchmarkBatchDetail(success.workbench.benchmarkReportHistory.value[0].batch_id)
+  await success.workbench.loadBenchmarkBatchSection('report', success.workbench.benchmarkReportHistory.value[0].batch_id)
   assert.equal(loaded, true)
   assert.equal(success.workbench.selectedBenchmarkBatchRun.value.id, 'bench-history')
   assert.equal(success.requests.some((item) => item.path === '/benchmark/batch/bench-history/report'), true)
@@ -6686,6 +6704,8 @@ test('evaluation workbench refreshAll loads benchmark views without blocking pri
 
   const success = createHarness()
   const refreshed = await success.workbench.refreshAll()
+  await success.workbench.loadBenchmarkViews()
+  await success.workbench.loadCurrentBenchmarkView()
   await flushPromises()
   assert.equal(refreshed, true)
   assert.equal(success.workbench.benchmarkSuites.value[0].id, 'role-baseline-quick-v1')
@@ -6705,6 +6725,8 @@ test('evaluation workbench refreshAll loads benchmark views without blocking pri
   localStorage.clear()
   const failure = createHarness({ viewsShouldFail: true, currentViewShouldFail: true })
   const refreshedWithViewFailure = await failure.workbench.refreshAll()
+  await failure.workbench.loadBenchmarkViews()
+  await failure.workbench.loadCurrentBenchmarkView()
   assert.equal(refreshedWithViewFailure, true)
   assert.equal(failure.workbench.error.value, '')
   assert.equal(failure.workbench.benchmarkSuites.value[0].id, 'role-baseline-quick-v1')

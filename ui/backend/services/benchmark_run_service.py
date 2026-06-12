@@ -18,11 +18,16 @@ from app.util.time import beijing_now_iso
 from ui.backend.constants import MANUAL_STOP_REASON
 from ui.backend.errors import domain_error_detail, release_stage_diagnostic
 from ui.backend.schemas import BenchmarkRequest
-from ui.backend.settings_runtime_variables import WORKFLOW_GAME_CONCURRENCY_KEY, runtime_setting_int_for_store
+from ui.backend.settings_runtime_variables import (
+    BENCHMARK_ROLE_CONCURRENCY_KEY,
+    WORKFLOW_GAME_CONCURRENCY_KEY,
+    runtime_setting_int_for_store,
+)
 from ui.backend.services.benchmark_catalog_service import BenchmarkCatalogService
 from ui.backend.services.task_service import BackgroundTaskServiceProtocol
 from ui.backend.services.benchmark_run_payloads import (
     _BENCHMARK_CURRENCY,
+    _BENCHMARK_DEFAULT_ROLE_CONCURRENCY,
     _BENCHMARK_PLAYER_COUNT,
     _apply_benchmark_gates,
     _apply_benchmark_judge,
@@ -130,6 +135,7 @@ class BenchmarkRunService:
         self.validate_benchmark_target_versions(roles, request, target_type=target_type)
         model_runtime = self.benchmark_model_runtime(request)
         workflow_game_concurrency = self.workflow_game_concurrency()
+        role_concurrency = self.benchmark_role_concurrency()
         if spec is not None:
             game_count = _benchmark_effective_game_count(int(spec.game_count))
             max_days = int(spec.max_days)
@@ -169,6 +175,7 @@ class BenchmarkRunService:
             judge_decision_units=judge_decision_units,
             judge_concurrency=judge.get("judge_concurrency"),
             game_concurrency=workflow_game_concurrency,
+            role_concurrency=role_concurrency,
         )
         expected_duration_seconds = int(concurrency_policy["expected_duration_seconds"])
         budget = _benchmark_budget_payload(
@@ -240,6 +247,7 @@ class BenchmarkRunService:
             "currency": _BENCHMARK_CURRENCY,
             "expected_duration_seconds": expected_duration_seconds,
             "workflow_game_concurrency": workflow_game_concurrency,
+            "role_concurrency": concurrency_policy["role_batch_concurrency"],
             "concurrency_policy": concurrency_policy,
             "assumptions": assumptions,
             "judge": {
@@ -286,6 +294,12 @@ class BenchmarkRunService:
         )
         if planned_game_concurrency is not None:
             request_config["game_concurrency"] = int(planned_game_concurrency)
+        planned_role_concurrency = int(
+            concurrency_policy.get("role_batch_concurrency")
+            or self.benchmark_role_concurrency()
+        )
+        if planned_role_concurrency > 1:
+            request_config["role_concurrency"] = planned_role_concurrency
         if spec is not None or request.target_type == "model" or request.model_id or request.model_config_hash:
             request_config["model_id"] = model_runtime["model_id"]
             request_config["model_config_hash"] = model_runtime["model_config_hash"]
@@ -463,36 +477,50 @@ class BenchmarkRunService:
         else:
             roles = [r for r in (batch.get("roles") or request.roles or []) if r] or [None]
         role_count = len(roles)
-        results: list[dict[str, Any]] = []
+        result_by_key = self._completed_benchmark_results(batch)
+        result_lock = asyncio.Lock()
+        completed_count = len(result_by_key)
+        role_concurrency = self._effective_role_concurrency(batch, role_count)
         self._tasks.mark_benchmark_stage(
             batch,
             "preparing",
             status="running",
             percent=0.0,
             role_count=role_count,
-            completed_roles=0,
+            completed_roles=completed_count,
         )
+        if isinstance(batch.get("progress"), dict):
+            batch["progress"]["role_concurrency"] = role_concurrency
         self._tasks.persist_background_tasks()
         queue_progress("preparing")
         try:
-            for index, role in enumerate(roles):
-                if stop_requested():
-                    break
+            semaphore = asyncio.Semaphore(role_concurrency)
+
+            async def evaluate_role(index: int, role: str | None) -> None:
+                nonlocal completed_count
+                result_key = self._benchmark_role_result_key(role)
+                if result_key in result_by_key or stop_requested():
+                    return
                 role_label = role or "all"
-                self._tasks.mark_benchmark_stage(
-                    batch,
-                    "evaluating",
-                    status="running",
-                    percent=index / role_count if role_count else 0.0,
-                    role=role_label,
-                    role_index=index + 1,
-                    role_count=role_count,
-                    completed_roles=index,
-                )
-                self._tasks.persist_background_tasks()
-                queue_progress("evaluating")
-                results.append(
-                    await self._await_benchmark_step(
+                async with semaphore:
+                    if stop_requested():
+                        return
+                    current_completed = completed_count
+                    self._tasks.mark_benchmark_stage(
+                        batch,
+                        "evaluating",
+                        status="running",
+                        percent=current_completed / role_count if role_count else 0.0,
+                        role=role_label,
+                        role_index=index + 1,
+                        role_count=role_count,
+                        completed_roles=current_completed,
+                    )
+                    if isinstance(batch.get("progress"), dict):
+                        batch["progress"]["role_concurrency"] = role_concurrency
+                    self._tasks.persist_background_tasks()
+                    queue_progress("evaluating")
+                    result = await self._await_benchmark_step(
                         self._context.evaluate_benchmark_batch(
                             batch_config=self.benchmark_batch_config(batch_id, role, request, index),
                             model=self.model_for_benchmark_run(request),
@@ -503,19 +531,33 @@ class BenchmarkRunService:
                         cancel_check=cancel_check,
                         progress_sink=progress_sink,
                     )
+                async with result_lock:
+                    result_by_key[result_key] = result
+                    completed_count = len(result_by_key)
+                    batch["results"] = self._ordered_benchmark_results(roles, result_by_key)
+                    batch["result"] = batch["results"][0] if batch["results"] else None
+                    self._tasks.mark_benchmark_stage(
+                        batch,
+                        "evaluating",
+                        status="running",
+                        percent=completed_count / role_count if role_count else 1.0,
+                        role=role_label,
+                        role_index=index + 1,
+                        role_count=role_count,
+                        completed_roles=completed_count,
+                    )
+                    if isinstance(batch.get("progress"), dict):
+                        batch["progress"]["role_concurrency"] = role_concurrency
+                    self._tasks.persist_background_tasks()
+                    queue_progress("evaluating")
+
+            await asyncio.gather(
+                *(
+                    evaluate_role(index, role)
+                    for index, role in enumerate(roles)
+                    if self._benchmark_role_result_key(role) not in result_by_key
                 )
-                self._tasks.mark_benchmark_stage(
-                    batch,
-                    "evaluating",
-                    status="running",
-                    percent=(index + 1) / role_count if role_count else 1.0,
-                    role=role_label,
-                    role_index=index + 1,
-                    role_count=role_count,
-                    completed_roles=index + 1,
-                )
-                self._tasks.persist_background_tasks()
-                queue_progress("evaluating")
+            )
         except Exception as exc:  # pragma: no cover - defensive background failure path
             if stop_requested() or str(exc) == MANUAL_STOP_REASON:
                 batch["finished_at"] = batch.get("finished_at") or beijing_now_iso()
@@ -526,7 +568,7 @@ class BenchmarkRunService:
                     "stopped",
                     status="failed",
                     percent=self._tasks.task_progress_percent(batch),
-                    completed_roles=len(results),
+                    completed_roles=len(result_by_key),
                     role_count=role_count,
                     diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
                 )
@@ -560,7 +602,7 @@ class BenchmarkRunService:
                 "stopped",
                 status="failed",
                 percent=self._tasks.task_progress_percent(batch),
-                completed_roles=len(results),
+                completed_roles=len(result_by_key),
                 role_count=role_count,
                 diagnostic={"kind": "benchmark_stopped", "message": batch["error"]},
             )
@@ -570,6 +612,7 @@ class BenchmarkRunService:
 
         batch["status"] = "completed"
         _set_task_contract(batch, stop_requested=False, cancelled=False, interrupted=False, failed=False)
+        results = self._ordered_benchmark_results(roles, result_by_key)
         batch["started_at"] = (
             (results[0].get("started_at") if results else None)
             or batch.get("started_at")
@@ -664,6 +707,9 @@ class BenchmarkRunService:
             "paired_seed": paired_seed,
         }
         frozen_config = batch.get("config") if isinstance(batch.get("config"), dict) else {}
+        resume_result = self._result_for_role(batch, role)
+        if resume_result is not None and isinstance(resume_result.get("games"), list):
+            cfg["resume_games"] = _json_clone(resume_result["games"])
         frozen_runtime = batch.get("model_runtime")
         if not isinstance(frozen_runtime, dict) or not frozen_runtime:
             frozen_runtime = frozen_config.get("model_runtime")
@@ -715,6 +761,22 @@ class BenchmarkRunService:
         ):
             if frozen_config.get(key) is not None:
                 cfg[key] = frozen_config[key]
+        policy = batch.get("run_plan", {}).get("concurrency_policy", {}) if isinstance(batch.get("run_plan"), dict) else {}
+        role_concurrency = self._effective_role_concurrency(batch, max(1, len(batch.get("roles") or [role])))
+        if role_concurrency > 1:
+            global_game_concurrency = int(frozen_config.get("game_concurrency") or cfg.get("game_concurrency") or 1)
+            cfg["game_concurrency"] = max(1, global_game_concurrency // role_concurrency)
+            global_judge_concurrency = int(
+                frozen_config.get("eval_judge_concurrency")
+                or frozen_config.get("judge_concurrency")
+                or cfg.get("eval_judge_concurrency")
+                or cfg.get("judge_concurrency")
+                or 0
+            )
+            if global_judge_concurrency > 0:
+                cfg["eval_judge_concurrency"] = max(1, global_judge_concurrency // role_concurrency)
+        elif isinstance(policy, dict) and policy.get("per_eval_batch_game_concurrency"):
+            cfg["game_concurrency"] = int(policy["per_eval_batch_game_concurrency"])
         if role and target_type == "role_version":
             explicit_target = request.target_versions.get(role)
             if explicit_target:
@@ -755,6 +817,73 @@ class BenchmarkRunService:
     def workflow_game_concurrency(self) -> int | None:
         value = runtime_setting_int_for_store(self._context, WORKFLOW_GAME_CONCURRENCY_KEY, default=0)
         return value if value > 0 else None
+
+    def benchmark_role_concurrency(self) -> int:
+        value = runtime_setting_int_for_store(
+            self._context,
+            BENCHMARK_ROLE_CONCURRENCY_KEY,
+            default=_BENCHMARK_DEFAULT_ROLE_CONCURRENCY,
+        )
+        return max(1, min(int(value or _BENCHMARK_DEFAULT_ROLE_CONCURRENCY), 8))
+
+    def _effective_role_concurrency(self, batch: dict[str, Any], role_count: int) -> int:
+        config = batch.get("config") if isinstance(batch.get("config"), dict) else {}
+        try:
+            requested = int(config.get("role_concurrency") or self.benchmark_role_concurrency())
+        except (TypeError, ValueError):
+            requested = self.benchmark_role_concurrency()
+        game_budget = int(config.get("game_concurrency") or 1)
+        judge_budget = int(
+            config.get("eval_judge_concurrency")
+            or config.get("judge_concurrency")
+            or requested
+        )
+        return max(1, min(requested, max(1, role_count), max(1, game_budget), max(1, judge_budget)))
+
+    @staticmethod
+    def _benchmark_role_result_key(role: str | None) -> str:
+        return str(role or "__model__")
+
+    def _completed_benchmark_results(self, batch: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        results = batch.get("results")
+        if not isinstance(results, list):
+            results = [batch.get("result")] if isinstance(batch.get("result"), dict) else []
+        completed: dict[str, dict[str, Any]] = {}
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            config = result.get("config") if isinstance(result.get("config"), dict) else {}
+            role = result.get("target_role") or config.get("target_role")
+            requested = int(config.get("game_count") or result.get("attempted_game_count") or 0)
+            valid = int(result.get("completed") or result.get("game_count") or 0)
+            if result.get("rankable") is not None and (requested <= 0 or valid >= requested):
+                completed[self._benchmark_role_result_key(str(role) if role else None)] = result
+        return completed
+
+    def _result_for_role(self, batch: dict[str, Any], role: str | None) -> dict[str, Any] | None:
+        key = self._benchmark_role_result_key(role)
+        results = batch.get("results")
+        if not isinstance(results, list):
+            results = [batch.get("result")] if isinstance(batch.get("result"), dict) else []
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            config = result.get("config") if isinstance(result.get("config"), dict) else {}
+            result_role = result.get("target_role") or config.get("target_role")
+            if self._benchmark_role_result_key(str(result_role) if result_role else None) == key:
+                return result
+        return None
+
+    def _ordered_benchmark_results(
+        self,
+        roles: list[str | None],
+        result_by_key: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            result_by_key[key]
+            for key in (self._benchmark_role_result_key(role) for role in roles)
+            if key in result_by_key
+        ]
 
     @staticmethod
     def _benchmark_model_runtime_from_plan(run_plan: dict[str, Any]) -> dict[str, Any] | None:

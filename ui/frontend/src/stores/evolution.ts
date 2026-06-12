@@ -401,6 +401,7 @@ export const useEvolutionStore = defineStore('evolution', () => {
     startBatch: (...args: unknown[]) => runRuntimeAction('startBatch', ...args),
     runAction: (...args: unknown[]) => runRuntimeAction('runAction', ...args),
     loadProposalReview: (...args: unknown[]) => runRuntimeAction('loadProposalReview', ...args),
+    ensureEvolutionTabLoaded: (...args: unknown[]) => runRuntimeAction('ensureEvolutionTabLoaded', ...args),
     consumeEvolutionDeepLink: (...args: unknown[]) => runRuntimeAction('consumeEvolutionDeepLink', ...args),
     applyEvolutionDeepLink: (...args: unknown[]) => runRuntimeAction('applyEvolutionDeepLink', ...args),
     acceptProposal: (...args: unknown[]) => runRuntimeAction('acceptProposal', ...args),

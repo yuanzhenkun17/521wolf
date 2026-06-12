@@ -105,8 +105,10 @@ test('useEvaluationWorkbench requests filtered batch games and diagnostics pages
   assert.match(source, /function benchmarkBatchDiagnosticsPath\(batchId\) \{/)
   assert.match(source, /\['kind', benchmarkDiagnosticKindFilter\.value\]/)
   assert.match(source, /\['status', benchmarkDiagnosticStatusFilter\.value\]/)
-  assert.match(source, /const gamesPath = benchmarkBatchGamesPath\(id\)/)
-  assert.match(source, /benchmarkBatchGamePagination\.value = games\?\.pagination \|\| defaultBenchmarkGamePagination\(\)/)
+  assert.match(source, /async function loadBenchmarkBatchSection\(section, batchId = selectedBenchmarkBatchId\.value/)
+  assert.match(source, /normalized === 'games'/)
+  assert.match(source, /normalized === 'diagnostics'/)
+  assert.match(source, /normalized === 'report'/)
   assert.match(source, /function setBenchmarkGameStatusFilter\(status\) \{/)
   assert.match(source, /void loadBenchmarkBatchGamesPage\(\{ offset: 0, append: false \}\)/)
   assert.match(source, /function setBenchmarkDiagnosticFilter\(name, value\) \{/)
@@ -188,11 +190,19 @@ test('useEvaluationWorkbench reloads and appends filtered run evidence pages', a
 
   assert.equal(loaded, true)
   assert.equal(workbench.benchmarkGameStatusFilter.value, 'problem')
+  assert.deepEqual(requests, ['/benchmark/batch/run-evidence'])
+
+  await workbench.loadBenchmarkBatchSection('games')
   assert.equal(workbench.benchmarkBatchGamePagination.value.has_more, true)
   assert.equal(
     requests.includes('/benchmark/batch/run-evidence/games?status=problem&limit=20&offset=0'),
     true
   )
+
+  await workbench.loadBenchmarkBatchSection('diagnostics')
+  await workbench.loadBenchmarkBatchSection('report')
+  assert.equal(requests.includes('/benchmark/batch/run-evidence/diagnostics'), true)
+  assert.equal(requests.includes('/benchmark/batch/run-evidence/report'), true)
 
   assert.equal(workbench.loadNextBenchmarkBatchGamesPage(), true)
   await flushPromises()
@@ -244,6 +254,44 @@ test('useEvaluationWorkbench reloads and appends filtered run evidence pages', a
     requests.includes('/benchmark/batch/run-evidence/diagnostics?kind=game_failure&seed=260902'),
     true
   )
+})
+
+test('benchmark detail UI loads games, diagnostics, and reports only from active views', () => {
+  const runsSource = readSource('../src/components/benchmark/BenchmarkBatchRunsTable.vue')
+  const diagnosticsSource = readSource('../src/components/benchmark/BenchmarkDiagnosticsExplorer.vue')
+  const reportSource = readSource('../src/components/benchmark/BenchmarkRunReportPanel.vue')
+  const snapshotSource = readSource('../src/components/benchmark/BenchmarkSnapshotReleasePanel.vue')
+  const comparisonSource = readSource('../src/components/benchmark/BenchmarkComparisonView.vue')
+  const workbenchSource = readSource('../src/composables/useEvaluationWorkbench.ts')
+
+  assert.match(runsSource, /const activeDetailTab = ref\('summary'\)/)
+  assert.match(runsSource, /loadBenchmarkBatchSection\(tab\)/)
+  assert.match(runsSource, /activeDetailTab === 'games'/)
+  assert.match(runsSource, /activeDetailTab === 'diagnostics'/)
+  assert.match(runsSource, /\{ key: 'report', label: '报告' \}/)
+  assert.match(diagnosticsSource, /onMounted\(\(\) => \{[\s\S]*loadActiveDiagnostics/)
+  assert.match(reportSource, /onMounted\(\(\) => \{[\s\S]*loadBenchmarkReportHistory[\s\S]*loadBenchmarkBatchSection\('report'/)
+  assert.match(snapshotSource, /onMounted\(\(\) => \{[\s\S]*loadBenchmarkSnapshots/)
+  assert.match(comparisonSource, /onMounted\(async \(\) => \{[\s\S]*loadBenchmarkViews[\s\S]*loadCurrentBenchmarkView/)
+
+  const refreshBody = workbenchSource.match(/async function refreshAll[\s\S]*?\n  }\n\n  async function startEvaluation/)?.[0] || ''
+  assert.doesNotMatch(refreshBody, /loadBenchmarkViews/)
+  assert.doesNotMatch(refreshBody, /loadBenchmarkReportHistory/)
+  assert.doesNotMatch(refreshBody, /loadBenchmarkDiagnosticsAggregate/)
+  assert.doesNotMatch(refreshBody, /loadBenchmarkSnapshots/)
+})
+
+test('benchmark leaderboards expose optional statistical evidence without requiring fields', () => {
+  const comparisonSource = readSource('../src/components/benchmark/BenchmarkComparisonView.vue')
+  const leaderboardSource = readSource('../src/components/benchmark/BenchmarkLeaderboardTable.vue')
+
+  for (const source of [comparisonSource, leaderboardSource]) {
+    assert.match(source, /standard_deviation/)
+    assert.match(source, /valid_games/)
+    assert.match(source, /abnormal_games/)
+    assert.match(source, /paired_win_rate/)
+    assert.match(source, /95%置信区间/)
+  }
 })
 
 test('useEvaluationWorkbench sends diagnostic filters to aggregate diagnostics', async () => {

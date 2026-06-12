@@ -33,6 +33,9 @@ interface EvolutionRunRow {
   entityLabel?: string
   currentStageLabel?: string
   overallProgressLabel?: string
+  stageProgressLabel?: string
+  canResume?: boolean
+  resumeFromStage?: string
 }
 
 interface EvolutionRunsModel {
@@ -106,7 +109,10 @@ function progressPercent(run: EvolutionRunRow) {
           <span class="evo-run-status" :data-status="run.status">{{ run.statusLabel }}</span>
           <span class="evo-run-main">
             <strong>{{ run.displayRole }} · {{ run.entityLabel }}</strong>
-            <small>{{ run.id }} · {{ run.currentStageLabel }} · {{ run.overallProgressLabel }}</small>
+            <small>
+              {{ run.id }} · {{ run.currentStageLabel }} · {{ run.stageProgressLabel || run.overallProgressLabel }}
+              <template v-if="run.canResume"> · 可从 {{ run.resumeFromStage || '检查点' }} 续跑</template>
+            </small>
             <span class="evo-run-progress" aria-hidden="true">
               <i :style="{ width: `${progressPercent(run)}%` }"></i>
             </span>

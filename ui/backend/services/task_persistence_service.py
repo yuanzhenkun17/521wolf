@@ -37,6 +37,8 @@ class TaskPersistenceService:
         self._background_load_state_lock = threading.Lock()
         self._background_refreshing = False
         self._last_background_load_monotonic = 0.0
+        self._persisted_entity_fingerprints: dict[str, str] = {}
+        self._last_entity_persist_monotonic: dict[str, float] = {}
 
     @staticmethod
     def touch_background_task(entity: dict[str, Any], *, timestamp: str | None = None) -> str:
@@ -94,49 +96,102 @@ class TaskPersistenceService:
         return json.dumps(comparable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     def persist_background_tasks(self) -> None:
-        changed: list[dict[str, Any]]
-        payload: dict[str, Any]
-        fingerprint: str
-        previous_fingerprint: str | None = None
+        entities_to_persist: list[dict[str, Any]] = []
+        event_entities: list[dict[str, Any]] = []
+        persisted_fingerprints: dict[str, str] = {}
+        event_fingerprints: dict[str, str] = {}
+        now_monotonic = time.monotonic()
+        persist_interval = _background_persist_interval_seconds()
         try:
             with self._store.background_state_lock:
                 payload = self.background_tasks_payload()
-                fingerprint = self.background_tasks_fingerprint(payload)
-                if fingerprint == self._store._background_state_fingerprint:
-                    return
-                previous_fingerprint = self._store._background_state_fingerprint
-                changed = self.changed_background_entities()
-                self._store._background_state_fingerprint = fingerprint
-            self.persist_background_entities(payload)
+                for entity in [*payload.get("evolution_runs", []), *payload.get("evolution_batches", [])]:
+                    if not isinstance(entity, dict):
+                        continue
+                    key = self.task_entity_key(entity)
+                    if not key:
+                        continue
+                    full_fingerprint = self.background_entity_fingerprint(entity)
+                    if self._persisted_entity_fingerprints.get(key) == full_fingerprint:
+                        continue
+                    last_persisted = self._last_entity_persist_monotonic.get(key, 0.0)
+                    has_persisted = key in self._persisted_entity_fingerprints
+                    if has_persisted and not self.is_terminal_background_task(entity) and (
+                        now_monotonic - last_persisted < persist_interval
+                    ):
+                        continue
+                    entities_to_persist.append(entity)
+                    persisted_fingerprints[key] = full_fingerprint
+                    event_fingerprint = self.task_entity_fingerprint(entity)
+                    if self._store._task_event_fingerprints.get(key) != event_fingerprint:
+                        event_entities.append(entity)
+                        event_fingerprints[key] = event_fingerprint
+            if not entities_to_persist:
+                return
+            incremental_payload = {
+                "updated_at": payload.get("updated_at") or beijing_now_iso(),
+                "evolution_runs": [
+                    entity for entity in entities_to_persist if entity.get("run_id")
+                ],
+                "evolution_batches": [
+                    entity for entity in entities_to_persist if not entity.get("run_id")
+                ],
+            }
+            self.persist_background_entities(incremental_payload)
         except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
-            with self._store.background_state_lock:
-                if "fingerprint" in locals() and self._store._background_state_fingerprint == fingerprint:
-                    self._store._background_state_fingerprint = previous_fingerprint
             _log.warning("failed to persist ui backend task index to PostgreSQL", exc_info=True)
-            changed = changed if "changed" in locals() else []
-        for entity in changed:
+            return
+        with self._store.background_state_lock:
+            for key, fingerprint in persisted_fingerprints.items():
+                self._persisted_entity_fingerprints[key] = fingerprint
+                self._last_entity_persist_monotonic[key] = now_monotonic
+            for key, fingerprint in event_fingerprints.items():
+                self._store._task_event_fingerprints[key] = fingerprint
+            self._store._background_state_fingerprint = self.background_tasks_fingerprint(
+                self.background_tasks_payload()
+            )
+        for entity in event_entities:
             try:
                 self._task_event_log().publish(entity)
             except Exception:  # noqa: BLE001 - task event replay is best-effort UI metadata
                 _log.warning("failed to publish task event for %s", self.task_entity_key(entity), exc_info=True)
 
     def persist_background_entities(self, payload: dict[str, Any]) -> None:
-        with from_connection_factory(self._open_connection) as tx:
-            repo = BackgroundTaskRepository(tx.connection)
-            for entity in [*payload.get("evolution_runs", []), *payload.get("evolution_batches", [])]:
-                if not isinstance(entity, dict):
-                    continue
-                entity_id = self.task_entity_key(entity)
-                if not entity_id:
-                    continue
-                repo.upsert(
-                    entity_id=entity_id,
-                    entity_kind=entity.get("kind"),
-                    status=entity.get("status"),
-                    payload=to_jsonable(entity),
-                    updated_at=payload.get("updated_at") or beijing_now_iso(),
-                )
-            tx.commit()
+        try:
+            with from_connection_factory(self._open_connection) as tx:
+                self._persist_background_entities_with_connection(payload, tx.connection)
+                tx.commit()
+        except RuntimeError as exc:
+            if "requires a PostgreSQL storage adapter" not in str(exc):
+                raise
+            self._persist_background_entities_direct(payload)
+
+    def _persist_background_entities_direct(self, payload: dict[str, Any]) -> None:
+        conn = self._open_connection()
+        try:
+            self._persist_background_entities_with_connection(payload, conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _persist_background_entities_with_connection(self, payload: dict[str, Any], conn: Any) -> None:
+        repo = BackgroundTaskRepository(conn)
+        for entity in [*payload.get("evolution_runs", []), *payload.get("evolution_batches", [])]:
+            if not isinstance(entity, dict):
+                continue
+            entity_id = self.task_entity_key(entity)
+            if not entity_id:
+                continue
+            repo.upsert(
+                entity_id=entity_id,
+                entity_kind=entity.get("kind"),
+                status=entity.get("status"),
+                payload=to_jsonable(entity),
+                updated_at=payload.get("updated_at") or beijing_now_iso(),
+            )
 
     def changed_background_entities(self) -> list[dict[str, Any]]:
         changed: list[dict[str, Any]] = []
@@ -179,6 +234,21 @@ class TaskPersistenceService:
             if key in entity
         }
         return json.dumps(to_jsonable(comparable), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def background_entity_fingerprint(entity: dict[str, Any]) -> str:
+        return json.dumps(to_jsonable(entity), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def is_terminal_background_task(entity: dict[str, Any]) -> bool:
+        return str(entity.get("status") or "").lower() in {
+            "cancelled",
+            "completed",
+            "failed",
+            "interrupted",
+            "rejected",
+            "succeeded",
+        }
 
     def load_background_tasks(self, *, force: bool = False) -> None:
         refresh_interval = _background_refresh_interval_seconds()
@@ -247,6 +317,8 @@ class TaskPersistenceService:
                 key = self.task_entity_key(entity)
                 if key:
                     self._store._task_event_fingerprints[key] = self.task_entity_fingerprint(entity)
+                    self._persisted_entity_fingerprints[key] = self.background_entity_fingerprint(entity)
+                    self._last_entity_persist_monotonic[key] = time.monotonic()
             self._last_background_load_monotonic = time.monotonic()
 
     def recover_background_tasks(self) -> int:
@@ -340,6 +412,14 @@ def _background_refresh_interval_seconds() -> float:
         value = float(os.environ.get("UI_BACKGROUND_REFRESH_INTERVAL_SECONDS", "10"))
     except (TypeError, ValueError):
         return 10.0
+    return max(0.0, value)
+
+
+def _background_persist_interval_seconds() -> float:
+    try:
+        value = float(os.environ.get("UI_BACKGROUND_PERSIST_INTERVAL_SECONDS", "1"))
+    except (TypeError, ValueError):
+        return 1.0
     return max(0.0, value)
 
 

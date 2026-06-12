@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   benchmark: {
@@ -18,9 +18,33 @@ const detailDiagnostics = computed(() => props.benchmark.benchmarkBatchDiagnosti
 const detailPagination = computed(() => props.benchmark.benchmarkBatchGamePagination.value || {})
 const detailGamesLoading = computed(() => Boolean(props.benchmark.benchmarkBatchGamesLoading?.value))
 const detailDiagnosticsLoading = computed(() => Boolean(props.benchmark.benchmarkBatchDiagnosticsLoading?.value))
+const detailReport = computed(() => props.benchmark.benchmarkBatchReport?.value || null)
+const detailReportLoading = computed(() => Boolean(props.benchmark.benchmarkBatchReportLoading?.value))
+const detailReportError = computed(() => String(props.benchmark.benchmarkBatchReportError?.value || ''))
+const activeDetailTab = ref('summary')
+const detailTabs = [
+  { key: 'summary', label: '摘要' },
+  { key: 'games', label: '对局' },
+  { key: 'diagnostics', label: '诊断' },
+  { key: 'report', label: '报告' }
+]
 const loadedGameCount = computed(() => detailGames.value.length)
 const totalGameCount = computed(() => Number(detailPagination.value.total ?? detailGames.value.length) || 0)
 const hasMoreGames = computed(() => Boolean(detailPagination.value.has_more))
+
+watch(
+  () => props.benchmark.selectedBenchmarkBatchId.value,
+  () => {
+    activeDetailTab.value = 'summary'
+  }
+)
+
+function selectDetailTab(tab) {
+  activeDetailTab.value = tab
+  if (tab !== 'summary') {
+    void props.benchmark.loadBenchmarkBatchSection(tab)
+  }
+}
 const hasDiagnosticFilters = computed(() => Boolean(
   props.benchmark.benchmarkDiagnosticKindFilter?.value ||
   props.benchmark.benchmarkDiagnosticLevelFilter?.value ||
@@ -487,45 +511,59 @@ function diagnosticReplayHash(item) {
             {{ benchmark.benchmarkDetailError.value }}
           </div>
           <template v-if="selectedDetail">
-            <section class="bench-detail-summary">
-              <span v-for="item in detailStatRows" :key="item.label">
-                <small>{{ item.label }}</small>
-                <b>{{ item.value }}</b>
-              </span>
-            </section>
+            <nav class="bench-detail-tabs" aria-label="运行详情内容">
+              <button
+                v-for="tab in detailTabs"
+                :key="tab.key"
+                type="button"
+                :class="{ active: activeDetailTab === tab.key }"
+                @click="selectDetailTab(tab.key)"
+              >
+                {{ tab.label }}
+              </button>
+            </nav>
 
-            <section class="bench-role-run-list">
-              <div class="bench-side-title">
-                <span>隔离边界</span>
-                <small>{{ displayTargetType(selectedDetail.targetTypeLabel || selectedDetail.target_type) }}</small>
-              </div>
-              <div class="bench-detail-kv-list">
-                <div v-for="item in detailBenchmarkRows" :key="item.label" class="bench-detail-kv">
-                  <span>{{ item.label }}</span>
+            <template v-if="activeDetailTab === 'summary'">
+              <section class="bench-detail-summary">
+                <span v-for="item in detailStatRows" :key="item.label">
+                  <small>{{ item.label }}</small>
                   <b>{{ item.value }}</b>
-                </div>
-              </div>
-            </section>
+                </span>
+              </section>
 
-            <section class="bench-role-run-list">
-              <div class="bench-side-title">
-                <span>结果批次</span>
-                <small>{{ detailResults.length }} 条</small>
-              </div>
-              <div v-if="detailResults.length" class="bench-detail-result-list">
-                <div v-for="item in detailResults" :key="item.result_batch_id" class="bench-detail-result">
-                  <div>
-                    <strong>{{ item.targetRoleLabel }}</strong>
-                    <span>{{ item.targetVersionShort }}</span>
+              <section class="bench-role-run-list">
+                <div class="bench-side-title">
+                  <span>隔离边界</span>
+                  <small>{{ displayTargetType(selectedDetail.targetTypeLabel || selectedDetail.target_type) }}</small>
+                </div>
+                <div class="bench-detail-kv-list">
+                  <div v-for="item in detailBenchmarkRows" :key="item.label" class="bench-detail-kv">
+                    <span>{{ item.label }}</span>
+                    <b>{{ item.value }}</b>
                   </div>
-                  <b :class="{ warning: !item.rankable }">{{ displayRankable(item.rankableLabel, item.rankable) }}</b>
-                  <em>{{ item.completed }}/{{ item.attempted_game_count || item.game_count }} 局</em>
                 </div>
-              </div>
-              <div v-else class="bench-empty compact">暂无结果批次</div>
-            </section>
+              </section>
 
-            <section class="bench-role-run-list">
+              <section class="bench-role-run-list">
+                <div class="bench-side-title">
+                  <span>结果批次</span>
+                  <small>{{ detailResults.length }} 条</small>
+                </div>
+                <div v-if="detailResults.length" class="bench-detail-result-list">
+                  <div v-for="item in detailResults" :key="item.result_batch_id" class="bench-detail-result">
+                    <div>
+                      <strong>{{ item.targetRoleLabel }}</strong>
+                      <span>{{ item.targetVersionShort }}</span>
+                    </div>
+                    <b :class="{ warning: !item.rankable }">{{ displayRankable(item.rankableLabel, item.rankable) }}</b>
+                    <em>{{ item.completed }}/{{ item.attempted_game_count || item.game_count }} 局</em>
+                  </div>
+                </div>
+                <div v-else class="bench-empty compact">暂无结果批次</div>
+              </section>
+            </template>
+
+            <section v-else-if="activeDetailTab === 'games'" class="bench-role-run-list">
               <div class="bench-side-title">
                 <span>游戏样本</span>
                 <small>{{ loadedGameCount }} / {{ totalGameCount }} 条</small>
@@ -594,7 +632,7 @@ function diagnosticReplayHash(item) {
               </div>
             </section>
 
-            <section class="bench-role-run-list">
+            <section v-else-if="activeDetailTab === 'diagnostics'" class="bench-role-run-list">
               <div class="bench-side-title">
                 <span>诊断</span>
                 <small>{{ detailDiagnostics.length }} 条</small>
@@ -675,6 +713,30 @@ function diagnosticReplayHash(item) {
               </div>
               <div v-else-if="detailDiagnosticsLoading" class="bench-empty compact">正在读取诊断</div>
               <div v-else class="bench-empty compact">暂无诊断</div>
+            </section>
+
+            <section v-else class="bench-role-run-list">
+              <div class="bench-side-title">
+                <span>运行报告</span>
+                <small>{{ detailReport ? '已加载' : '按需读取' }}</small>
+              </div>
+              <div v-if="detailReport" class="bench-detail-kv-list">
+                <div class="bench-detail-kv">
+                  <span>报告 ID</span>
+                  <b>{{ detailReport.report_id || detailReport.batch_id || detailReport.run_id || '—' }}</b>
+                </div>
+                <div class="bench-detail-kv">
+                  <span>生成时间</span>
+                  <b>{{ detailReport.generated_at || detailReport.created_at || '—' }}</b>
+                </div>
+                <div class="bench-detail-kv">
+                  <span>内容 Hash</span>
+                  <b>{{ detailReport.content_hash || '—' }}</b>
+                </div>
+              </div>
+              <div v-else-if="detailReportLoading" class="bench-empty compact">正在读取运行报告</div>
+              <div v-else-if="detailReportError" class="bench-detail-error">{{ detailReportError }}</div>
+              <div v-else class="bench-empty compact">暂无正式报告</div>
             </section>
           </template>
         </template>
@@ -1021,6 +1083,35 @@ function diagnosticReplayHash(item) {
   max-width: 100%;
   min-width: 0;
   padding: 12px;
+}
+
+.bench-detail-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 0 12px 12px;
+  border: 1px solid var(--bench-border);
+}
+
+.bench-detail-tabs button {
+  min-width: 0;
+  height: 32px;
+  border: 0;
+  border-right: 1px solid var(--bench-border);
+  background: rgba(255, 252, 245, 0.28);
+  color: var(--bench-text-secondary);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.bench-detail-tabs button:last-child {
+  border-right: 0;
+}
+
+.bench-detail-tabs button.active {
+  background: rgba(139, 94, 52, 0.12);
+  color: var(--bench-accent-strong);
 }
 
 .bench-status-grid span,

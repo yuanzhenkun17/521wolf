@@ -39,6 +39,22 @@ interface BenchmarkLeaderboardRow {
   significance_label?: string
   significanceLabel?: string
   significant?: boolean
+  standard_deviation?: number | string
+  standardDeviation?: number | string
+  stddev?: number | string
+  std_dev?: number | string
+  score_std?: number | string
+  valid_games?: number | string
+  validGames?: number | string
+  completed_games?: number | string
+  abnormal_games?: number | string
+  abnormalGames?: number | string
+  invalid_games?: number | string
+  failed_games?: number | string
+  paired_win_rate?: number | string
+  pairedWinRate?: number | string
+  paired_seed_win_rate?: number | string
+  summary?: Record<string, unknown>
   warnings?: unknown[]
   delta_vs_baseline?: {
     paired_delta?: number | string
@@ -226,6 +242,41 @@ function pairedSampleSize(item) {
   return numberFrom(item?.paired_sample_size, item?.pairedSampleSize, item?.paired_n, item?.seed_overlap) ?? 0
 }
 
+function standardDeviationLabel(item) {
+  const value = numberFrom(
+    item?.standard_deviation,
+    item?.standardDeviation,
+    item?.stddev,
+    item?.std_dev,
+    item?.score_std,
+    item?.summary?.standard_deviation,
+    item?.summary?.stddev
+  )
+  return value == null ? '--' : value.toFixed(2)
+}
+
+function validityLabel(item) {
+  const valid = numberFrom(item?.valid_games, item?.validGames, item?.completed_games, item?.summary?.valid_games)
+  const abnormal = numberFrom(
+    item?.abnormal_games,
+    item?.abnormalGames,
+    item?.invalid_games,
+    item?.failed_games,
+    item?.summary?.abnormal_games
+  )
+  return `有效 ${valid ?? '--'} / 异常 ${abnormal ?? '--'}`
+}
+
+function pairedWinRateLabel(item) {
+  const value = numberFrom(
+    percentFromFraction(item?.paired_win_rate),
+    percentFromFraction(item?.pairedWinRate),
+    percentFromFraction(item?.paired_seed_win_rate),
+    percentFromFraction(item?.summary?.paired_win_rate)
+  )
+  return value == null ? '--' : formatPct(value)
+}
+
 function confidenceIntervalLabel(item) {
   const direct = item?.win_rate_ci || item?.winRateCi || item?.confidence_interval || item?.ci
   let low = null
@@ -344,10 +395,12 @@ function warningText(item) {
               </span>
               <span class="bench-stat-cell">
                 <b>{{ sampleSize(item) }} 样本</b>
-                <small>{{ warningText(item) || '样本正常' }}</small>
+                <small>{{ validityLabel(item) }}</small>
+                <small>配对胜率 {{ pairedWinRateLabel(item) }}</small>
               </span>
               <span class="bench-stat-cell">
-                <b>{{ confidenceIntervalLabel(item) }}</b>
+                <b>95%置信区间 {{ confidenceIntervalLabel(item) }}</b>
+                <small>标准差 {{ standardDeviationLabel(item) }}</small>
                 <small>{{ significanceLabel(item) }}</small>
               </span>
             </template>
@@ -358,10 +411,12 @@ function warningText(item) {
               <span>{{ item.winRatePct }}%</span>
               <span class="bench-stat-cell">
                 <b>{{ sampleSize(item) }} 样本</b>
-                <small>配对 {{ pairedSampleSize(item) }}</small>
+                <small>{{ validityLabel(item) }}</small>
+                <small>配对 {{ pairedSampleSize(item) }} / 胜率 {{ pairedWinRateLabel(item) }}</small>
               </span>
               <span class="bench-stat-cell">
-                <b>{{ confidenceIntervalLabel(item) }}</b>
+                <b>95%置信区间 {{ confidenceIntervalLabel(item) }}</b>
+                <small>标准差 {{ standardDeviationLabel(item) }}</small>
                 <small>{{ warningText(item) || significanceLabel(item) }}</small>
               </span>
             </template>

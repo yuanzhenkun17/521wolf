@@ -90,6 +90,9 @@ interface EvolutionRun {
   trainingProgressLabel?: string
   battleProgressPercent?: MaybeNumber
   battleProgressLabel?: string
+  interrupted?: boolean
+  canResume?: boolean
+  resumeFromStage?: string
   recommendation?: string
   recommendationLabel?: string
   battle_result?: BattleResult | null
@@ -178,7 +181,7 @@ interface EvolutionConsoleModel {
   loadModelProfiles?: () => void | Promise<void>
   statusText?: (value: unknown) => string
   startSingle: () => void | Promise<void>
-  runAction: (id: string, action: 'promote' | 'reject' | 'terminate') => void | Promise<void>
+  runAction: (id: string, action: 'promote' | 'reject' | 'terminate' | 'resume') => void | Promise<void>
   selectRun: (id: string) => void | Promise<void>
 }
 
@@ -204,6 +207,7 @@ function actionLoadingText(value: unknown, loading = false): string {
   if (text.startsWith('promote')) return '晋升中'
   if (text.startsWith('reject')) return '拒绝中'
   if (text.startsWith('terminate')) return '终止中'
+  if (text.startsWith('resume')) return '恢复中'
   if (text.startsWith('rollback')) return '回滚中'
   return loading ? '读取中' : ''
 }
@@ -525,6 +529,20 @@ function modelProfileOptionTitle(profile: Record<string, any>): string {
           </div>
           <div v-if="evo.hasSelection.value" class="evo-run-actions" aria-label="候选操作">
             <span
+              v-if="evo.selectedRun.value?.canResume"
+              class="evo-action-tooltip"
+              :title="`从 ${evo.selectedRun.value.resumeFromStage || '最近检查点'} 继续执行`"
+            >
+              <button
+                type="button"
+                class="evo-action evo-action-promote"
+                :disabled="Boolean(evo.actionLoading.value)"
+                @click="evo.runAction(evo.selectedRunId.value, 'resume')"
+              >
+                断点续跑
+              </button>
+            </span>
+            <span
               class="evo-action-tooltip"
               :title="selectedPromoteDisabledReason || undefined"
             >
@@ -608,6 +626,9 @@ function modelProfileOptionTitle(profile: Record<string, any>): string {
               {{ progressLabel(evo.selectedRun.value) }}
               · {{ stageLabel(evo) }}
               · {{ selectedIsBatch ? '批量聚合' : recommendationLabel(evo.selectedRun.value) }}
+            </p>
+            <p v-if="evo.selectedRun.value.interrupted" class="evo-progress-resume">
+              已中断，可从 {{ evo.selectedRun.value.resumeFromStage || '最近检查点' }} 继续。
             </p>
           </div>
         </div>
