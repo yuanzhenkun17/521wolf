@@ -315,3 +315,11 @@ def _storage_run_type_for_game(state: EvolveState) -> str:
 
 def _copy_runner_config(cfg: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in cfg.items() if key not in _AGENT_RUNTIME_CONFIG_KEYS}
+
+
+def _safe_id(value: str) -> str:
+    """Sanitize an arbitrary string into a registry-safe version id."""
+    import re
+
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", value).strip("_")
+    return cleaned or "candidate"

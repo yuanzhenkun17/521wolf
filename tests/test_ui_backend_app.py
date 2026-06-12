@@ -3242,6 +3242,9 @@ def test_evolution_and_benchmark_create_and_list_contract(
         "battle_games": 0,
         "max_days": 1,
         "auto_promote": True,
+        "convergence_rounds": 3,
+        "min_improvement_ratio": 0.01,
+        "regression_threshold": 0.05,
     }
     assert listed_benchmark["status"] == "completed"
     assert listed_benchmark["current_stage"] == "completed"
@@ -3377,6 +3380,9 @@ def test_evolution_start_uses_pg_task_queue_when_enabled(
                 "battle_games": 0,
                 "max_days": 1,
                 "auto_promote": True,
+                "convergence_rounds": 3,
+                "min_improvement_ratio": 0.01,
+                "regression_threshold": 0.05,
             },
         )
     ]
@@ -3588,6 +3594,9 @@ def test_evolution_start_preserves_requested_counts_when_enabling_auto_promote(
         "battle_games": 10,
         "max_days": 5,
         "auto_promote": True,
+        "convergence_rounds": 3,
+        "min_improvement_ratio": 0.01,
+        "regression_threshold": 0.05,
     }
 
 

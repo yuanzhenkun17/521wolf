@@ -18,10 +18,11 @@ from app.lib.evolve import (
 from ._shared import (
     _STAGE_ORDER,
     _mark_stage,
-    _persist_run_state,
+    _read_skill_contents,
     _record_diagnostic,
     _registry,
     _resumed_past_stage,
+    _safe_id,
     _unique_str,
 )
 
@@ -158,6 +159,7 @@ async def decide_node(state: EvolveState) -> dict:
     state["result"]["last_heartbeat_at"] = state.get("last_heartbeat_at")
     state["result"]["started_at"] = state.get("started_at")
     state["result"]["diagnostics"] = state.get("diagnostics", [])
+    from .nodes import _persist_run_state
     _persist_run_state(state)
     if isinstance(state.get("result"), dict):
         state["result"]["warnings"] = state.get("warnings", [])

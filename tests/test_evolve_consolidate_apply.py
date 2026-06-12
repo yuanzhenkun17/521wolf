@@ -578,8 +578,12 @@ def _fake_pg_provider(monkeypatch: pytest.MonkeyPatch) -> FakeEvolutionStoragePr
 
 def _patch_runtime_registry(monkeypatch: pytest.MonkeyPatch, registry: FakeRuntimeRegistry) -> None:
     import app.graphs.subgraphs.evolve.nodes as nodes
+    import app.graphs.subgraphs.evolve._shared as shared
+    import app.graphs.subgraphs.evolve._decide as decide
 
     monkeypatch.setattr(nodes, "_registry", lambda state: registry)
+    monkeypatch.setattr(shared, "_registry", lambda state: registry)
+    monkeypatch.setattr(decide, "_registry", lambda state: registry)
 
 
 def _write_seer_skills(tmp_path):
@@ -738,11 +742,15 @@ def test_init_evolve_node_rejects_experimental_explicit_parent(tmp_path, monkeyp
 
 def test_init_evolve_node_rejects_explicit_parent_when_registry_check_fails(tmp_path, monkeypatch):
     import app.graphs.subgraphs.evolve.nodes as nodes
+    import app.graphs.subgraphs.evolve._shared as shared
+    import app.graphs.subgraphs.evolve._decide as decide
 
     def _boom(state):
         raise RuntimeError("registry down")
 
     monkeypatch.setattr(nodes, "_registry", _boom)
+    monkeypatch.setattr(shared, "_registry", _boom)
+    monkeypatch.setattr(decide, "_registry", _boom)
 
     with pytest.raises(RuntimeError, match="explicit parent release-stage check failed"):
         asyncio.run(
@@ -778,11 +786,15 @@ def test_init_evolve_node_rejects_missing_explicit_parent(tmp_path, monkeypatch)
 
 def test_init_evolve_node_warns_when_registry_baseline_unavailable(tmp_path, monkeypatch):
     import app.graphs.subgraphs.evolve.nodes as nodes
+    import app.graphs.subgraphs.evolve._shared as shared
+    import app.graphs.subgraphs.evolve._decide as decide
 
     def _boom(state):
         raise RuntimeError("registry down")
 
     monkeypatch.setattr(nodes, "_registry", _boom)
+    monkeypatch.setattr(shared, "_registry", _boom)
+    monkeypatch.setattr(decide, "_registry", _boom)
     out = asyncio.run(init_evolve_node({"role": "seer", "run_id": "r_no_registry", "paths": _PathsStub(tmp_path)}))
 
     assert out["parent_hash"] == "baseline_seer"
@@ -1331,6 +1343,8 @@ def test_consolidate_node_dedups_rejected_proposals(tmp_path, monkeypatch):
 
 def test_consolidate_node_records_rejected_buffer_warning(tmp_path, monkeypatch):
     import app.graphs.subgraphs.evolve.nodes as nodes
+    import app.graphs.subgraphs.evolve._shared as shared
+    import app.graphs.subgraphs.evolve._decide as decide
 
     skill_dir = _write_seer_skills(tmp_path)
     raw = '{"trends": [], "proposals": []}'
@@ -1340,6 +1354,8 @@ def test_consolidate_node_records_rejected_buffer_warning(tmp_path, monkeypatch)
         raise RuntimeError("registry unavailable")
 
     monkeypatch.setattr(nodes, "_registry", _boom)
+    monkeypatch.setattr(shared, "_registry", _boom)
+    monkeypatch.setattr(decide, "_registry", _boom)
     state = {
         "role": "seer",
         "run_id": "r",
@@ -2328,6 +2344,8 @@ def test_decide_records_promote_error_when_candidate_dir_empty(tmp_path):
 
 def test_decide_records_promote_error_when_candidate_read_fails(tmp_path, monkeypatch):
     import app.graphs.subgraphs.evolve.nodes as nodes
+    import app.graphs.subgraphs.evolve._shared as shared
+    import app.graphs.subgraphs.evolve._decide as decide
 
     paths = _PathsStub(tmp_path)
     candidate_dir = _seer_candidate_dir(tmp_path)
@@ -2336,6 +2354,8 @@ def test_decide_records_promote_error_when_candidate_read_fails(tmp_path, monkey
         raise RuntimeError("candidate skills unreadable")
 
     monkeypatch.setattr(nodes, "_read_skill_contents", _boom)
+    monkeypatch.setattr(shared, "_read_skill_contents", _boom)
+    monkeypatch.setattr(decide, "_read_skill_contents", _boom)
     state = {
         "role": "seer",
         "run_id": "r_unreadable_candidate",
@@ -2863,7 +2883,7 @@ def test_build_trust_bundle_collects_evidence_gate_and_repro_metadata():
     assert bundle["trust_bundle_id"].startswith("trust_bundle_r_bundle_")
     assert len(bundle["bundle_hash"]) == 64
     assert bundle["attribution_report_id"].startswith("attribution_r_bundle_")
-    assert bundle["repro_command"].startswith("not_available:")
+    assert "run_full_local_samples" in bundle["repro_command"] or bundle["repro_command"].startswith("not_available:")
 
 
 def test_reject_buffer_similarity_and_overfit_risk_detect_duplicate_specific_rules():

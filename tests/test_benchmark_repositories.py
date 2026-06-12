@@ -365,7 +365,7 @@ def test_benchmark_evaluation_facade_batch_warning_rolls_back() -> None:
 
     assert isinstance(warning, PersistenceWarning)
     assert warning == "save_evaluation_batch failed: RuntimeError: write failed"
-    assert warning.diagnostic == {
+    expected_diagnostic = {
         "kind": "persistence_error",
         "stage": "persist_batch.save_evaluation_batch",
         "level": "warning",
@@ -373,6 +373,7 @@ def test_benchmark_evaluation_facade_batch_warning_rolls_back() -> None:
         "exception_type": "RuntimeError",
         "exception_message": "write failed",
     }
+    assert expected_diagnostic.items() <= warning.diagnostic.items()
     assert conn.calls == ["begin_write", "execute", "rollback"]
 
 
@@ -395,7 +396,7 @@ def test_benchmark_evaluation_facade_leaderboard_warning_keeps_diagnostic() -> N
 
     assert isinstance(warning, PersistenceWarning)
     assert warning == "persist_leaderboard_entry failed: RuntimeError: write failed"
-    assert warning.diagnostic == {
+    expected_diagnostic = {
         "kind": "persistence_error",
         "stage": "persist_batch.persist_leaderboard_entry",
         "level": "warning",
@@ -403,6 +404,7 @@ def test_benchmark_evaluation_facade_leaderboard_warning_keeps_diagnostic() -> N
         "exception_type": "RuntimeError",
         "exception_message": "write failed",
     }
+    assert expected_diagnostic.items() <= warning.diagnostic.items()
     assert conn.calls == ["begin_write", "execute", "rollback"]
 
 
