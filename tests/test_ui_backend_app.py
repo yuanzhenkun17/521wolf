@@ -512,7 +512,7 @@ class _UiMemoryConnection:
                 self._db.background_upserts += 1
             return _UiCursor()
 
-        if text.startswith("SELECT entity_id, entity_kind, status, payload, updated_at FROM ui_background_tasks"):
+        if text.startswith("SELECT entity_id, entity_kind, status,") and "FROM ui_background_tasks" in text:
             with self._db.lock:
                 self._db.background_reads += 1
                 rows = sorted(
@@ -710,6 +710,9 @@ class _UiMemoryConnection:
             return _UiCursor([row])
 
         if "FROM benchmark_leaderboard" in text:
+            return _UiCursor()
+
+        if "FROM ui_background_tasks" in text:
             return _UiCursor()
 
         raise AssertionError(f"unexpected SQL: {text}")
