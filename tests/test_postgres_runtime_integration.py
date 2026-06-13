@@ -263,7 +263,7 @@ def test_postgres_provider_supports_game_persistence_runtime_smoke(
         ).fetchone()
         assert game is not None
         assert json.loads(game["config"])["mode"] == "pg-runtime"
-        assert json.loads(game["public_events"])[0]["type"] == "death"
+        assert json.loads(game["public_events"])[0]["event_type"] == "death"
         assert json.loads(game["final_state"])["winner"] == "villagers"
         assert game["learning_eligible"] == 1
 
