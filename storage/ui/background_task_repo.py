@@ -50,3 +50,24 @@ class BackgroundTaskRepository:
             "SELECT entity_id, entity_kind, status, payload, updated_at "
             "FROM ui_background_tasks ORDER BY updated_at, entity_id"
         ).fetchall()
+
+    def list_all_summary(self) -> list[StorageRow]:
+        """List all tasks without the large payload column for fast startup."""
+        return self._conn.execute(
+            "SELECT entity_id, entity_kind, status, updated_at "
+            "FROM ui_background_tasks ORDER BY updated_at, entity_id"
+        ).fetchall()
+
+    def get_payload(self, entity_id: str) -> dict[str, Any] | None:
+        """Fetch only the payload for a single task."""
+        row = self._conn.execute(
+            "SELECT payload FROM ui_background_tasks WHERE entity_id = ?",
+            (entity_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            import json
+            return json.loads(row["payload"]) if isinstance(row["payload"], str) else row["payload"]
+        except (TypeError, json.JSONDecodeError):
+            return None

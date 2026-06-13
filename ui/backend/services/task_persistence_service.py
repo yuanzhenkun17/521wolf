@@ -283,7 +283,8 @@ class TaskPersistenceService:
             conn = None
             try:
                 conn = self._open_connection()
-                rows = BackgroundTaskRepository(conn).list_all()
+                repo = BackgroundTaskRepository(conn)
+                rows = repo.list_all_summary()
             except Exception:  # noqa: BLE001 - task index is best-effort UI recovery metadata
                 _log.warning("failed to load ui backend task index from PostgreSQL", exc_info=True)
                 return
@@ -294,26 +295,27 @@ class TaskPersistenceService:
                     except Exception:  # noqa: BLE001 - cleanup is best-effort
                         pass
             for row in rows:
-                payload = _background_payload_from_row(row)
-                if payload is None:
-                    continue
-                entity_id = str(payload.get("run_id") or payload.get("batch_id") or row["entity_id"])
+                entity_id = str(row.get("entity_id") or "")
+                entity_kind = str(row.get("entity_kind") or "")
+                status = str(row.get("status") or "")
                 if not entity_id:
                     continue
-                if payload.get("run_id") or payload.get("kind") == "role_evolution_run":
-                    payload.setdefault("run_id", entity_id)
-                    if (
-                        entity_id not in self._store.evolution_runs
-                        or self.is_queue_backed_background_task(payload)
-                    ):
-                        self._store.evolution_runs[entity_id] = payload
-                elif payload.get("batch_id") or payload.get("kind") in {"role_evolution_batch", "benchmark_batch"}:
-                    payload.setdefault("batch_id", entity_id)
-                    if (
-                        entity_id not in self._store.evolution_batches
-                        or self.is_queue_backed_background_task(payload)
-                    ):
-                        self._store.evolution_batches[entity_id] = payload
+                # Reconstruct minimal index from summary fields
+                is_evolution = entity_kind in {"role_evolution_run", "role_evolution_batch"} or "evolve" in entity_id
+                if is_evolution:
+                    if entity_id not in self._store.evolution_runs:
+                        self._store.evolution_runs[entity_id] = {
+                            "run_id": entity_id,
+                            "kind": entity_kind or "role_evolution_run",
+                            "status": status or "queued",
+                        }
+                elif entity_kind in {"role_evolution_batch", "benchmark_batch"} or "batch" in entity_id:
+                    if entity_id not in self._store.evolution_batches:
+                        self._store.evolution_batches[entity_id] = {
+                            "batch_id": entity_id,
+                            "kind": entity_kind or "role_evolution_batch",
+                            "status": status or "queued",
+                        }
             self._store._background_state_fingerprint = self.background_tasks_fingerprint(self.background_tasks_payload())
             for entity in [*self._store.evolution_runs.values(), *self._store.evolution_batches.values()]:
                 key = self.task_entity_key(entity)
