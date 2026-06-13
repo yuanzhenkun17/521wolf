@@ -5752,11 +5752,20 @@ def test_background_task_loads_are_coalesced_with_force_refresh(
     store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path), model=FakeModel())
 
     store.task_service.load_background_tasks()
+    # Wait for background thread to complete
+    persistence = store.task_service._persistence
+    if hasattr(persistence, '_background_load_lock'):
+        with persistence._background_load_lock:
+            pass
+    import time
+    time.sleep(0.5)
+
     store.task_service.load_background_tasks()
 
     assert _fake_ui_pg_provider.db.background_reads == 1
 
     store.task_service._persistence.load_background_tasks(force=True)
+    time.sleep(0.5)
 
     assert _fake_ui_pg_provider.db.background_reads == 2
 
@@ -5770,6 +5779,11 @@ def test_expired_background_task_refresh_does_not_block_requests(
     store = ui_backend_store.BackendStore(paths=PathConfig(root=tmp_path), model=FakeModel())
     persistence = store.task_service._persistence
     persistence.load_background_tasks()
+    # Wait for first background thread to finish
+    if hasattr(persistence, '_background_load_lock'):
+        with persistence._background_load_lock:
+            pass
+    time.sleep(0.5)
 
     started = threading.Event()
     release = threading.Event()
@@ -5862,6 +5876,12 @@ def test_background_tasks_restore_active_runs_as_interrupted(tmp_path: Path) -> 
 
     restarted_app = ui_backend_app.create_app(paths=paths, model=FakeModel())
     restarted_store = restarted_app.state.backend_store
+    # Wait for background task refresh thread to complete
+    import time
+    for _ in range(20):
+        if restarted_store.evolution_runs.get(active_run_id, {}).get("status") == "interrupted":
+            break
+        time.sleep(0.2)
     active_run = restarted_store.evolution_runs[active_run_id]
     restarted_batch = restarted_store.evolution_batches[active_batch["batch_id"]]
     restarted_benchmark = restarted_store.evolution_batches[benchmark["batch_id"]]

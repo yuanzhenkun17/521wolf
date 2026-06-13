@@ -44,6 +44,7 @@ def get_pool(
             "SET search_path TO "
             + ", ".join(f'"{name}"' for name in search_path)
         )
+        conn.execute("SET statement_timeout = '30s'")
         conn.commit()
 
     check_connection = os.environ.get("PG_POOL_CHECK_CONNECTION", "true").lower() not in {"0", "false", "no"}
