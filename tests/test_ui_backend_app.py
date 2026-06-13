@@ -1061,7 +1061,8 @@ def _install_sqlite_benchmark_leaderboard(monkeypatch: pytest.MonkeyPatch, tmp_p
                 rankable integer DEFAULT 0,
                 data_sufficient integer DEFAULT 0,
                 summary text,
-                updated_at text NOT NULL
+                updated_at text NOT NULL,
+                optimistic_version integer NOT NULL DEFAULT 1
             )
             """
         )
@@ -1173,6 +1174,14 @@ def _wait_for_game_terminal(
 
 def test_health_and_roles_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WEREWOLF_TTS_API_KEY", "")
+    import ui.backend.startup_checks as startup_checks_mod
+
+    original_check_alembic = startup_checks_mod._check_alembic
+    monkeypatch.setattr(
+        startup_checks_mod,
+        "_check_alembic",
+        lambda store: {"status": "ok", "message": "mocked", "expected_heads": [], "current_versions": []},
+    )
     with _test_client(tmp_path) as client:
         health_response = client.get("/api/health")
         roles_response = client.get("/api/roles")
@@ -1307,6 +1316,13 @@ def test_ops_metrics_reports_public_counts_without_sensitive_details(
     monkeypatch: pytest.MonkeyPatch,
     _fake_ui_pg_provider: _UiFakeStorageProvider,
 ) -> None:
+    import ui.backend.startup_checks as startup_checks_mod
+
+    monkeypatch.setattr(
+        startup_checks_mod,
+        "_check_alembic",
+        lambda store: {"status": "ok", "message": "mocked", "expected_heads": [], "current_versions": []},
+    )
     monkeypatch.setenv("WOLF_USE_PG_TASK_QUEUE", "true")
     monkeypatch.delenv("WOLF_APP_RELEASE", raising=False)
     monkeypatch.delenv("WOLF_GIT_SHA", raising=False)
